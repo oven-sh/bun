@@ -86,12 +86,85 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
-    pub fn on_server_name(
-        &mut self,
-        cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
-    ) {
-        us_listen_socket_on_server_name(self, cb)
+    /// Install `H` as this listener's dynamic SNI resolver (runs first for
+    /// every ClientHello carrying a servername; see `us_select_cert_cb`).
+    pub fn on_server_name<H: ServerNameHandler>(&mut self) {
+        us_listen_socket_on_server_name(self, listen_server_name_thunk::<H>)
     }
+}
+
+/// What a dynamic SNI resolver decided for one ClientHello.
+pub enum SniDecision {
+    /// No dynamic selection: fall through to the static SNI tree, then the
+    /// default context.
+    Default,
+    /// Serve this context for the in-flight handshake. The reference is
+    /// handed to the C side, which installs it (`SSL_set_SSL_CTX` takes its
+    /// own) and releases this one.
+    Context(bun_boringssl_sys::OwnedSslCtx),
+    /// The resolver is asynchronous: suspend the handshake until
+    /// `us_socket_sni_resolve`.
+    Suspend,
+    /// Drop the connection without an alert.
+    Abort,
+}
+
+impl SniDecision {
+    /// Encode into the `(SSL_CTX*, *abort_handshake)` pair `openssl.c` reads.
+    fn into_c(self, abort_handshake: *mut c_int) -> *mut SslCtx {
+        let (ctx, abort) = match self {
+            SniDecision::Default => (core::ptr::null_mut(), 0),
+            SniDecision::Context(ctx) => (ctx.into_raw(), 0),
+            SniDecision::Suspend => (core::ptr::null_mut(), 2),
+            SniDecision::Abort => (core::ptr::null_mut(), 1),
+        };
+        if abort != 0 && !abort_handshake.is_null() {
+            // SAFETY: `openssl.c` passes the address of its local
+            // `abort_handshake` for the duration of the callback.
+            unsafe { *abort_handshake = abort };
+        }
+        ctx
+    }
+}
+
+/// A dynamic SNI resolver: the listener-level one registered with
+/// [`ListenSocket::on_server_name`], or the socket-level one registered with
+/// [`us_socket_t::on_server_name`] for a server-side socket adopted into TLS
+/// (no listen socket).
+pub trait ServerNameHandler {
+    /// `socket` is the accepted socket whose ClientHello asked for `hostname`.
+    fn resolve(socket: &mut us_socket_t, hostname: &core::ffi::CStr) -> SniDecision;
+}
+
+extern "C" fn listen_server_name_thunk<H: ServerNameHandler>(
+    _ls: *mut ListenSocket,
+    hostname: *const c_char,
+    abort_handshake: *mut c_int,
+    socket: *mut c_void,
+) -> *mut c_void {
+    if hostname.is_null() || socket.is_null() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: `openssl.c` passes its NUL-terminated `hostname[256]` buffer,
+    // live for the call.
+    let hostname = unsafe { core::ffi::CStr::from_ptr(hostname) };
+    H::resolve(us_socket_t::opaque_mut(socket.cast()), hostname)
+        .into_c(abort_handshake)
+        .cast()
+}
+
+pub(crate) extern "C" fn socket_server_name_thunk<H: ServerNameHandler>(
+    socket: *mut us_socket_t,
+    hostname: *const c_char,
+    abort_handshake: *mut c_int,
+) -> *mut SslCtx {
+    if hostname.is_null() || socket.is_null() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: `openssl.c` passes its NUL-terminated `hostname[256]` buffer,
+    // live for the call.
+    let hostname = unsafe { core::ffi::CStr::from_ptr(hostname) };
+    H::resolve(us_socket_t::opaque_mut(socket), hostname).into_c(abort_handshake)
 }
 
 // This file IS the *_sys crate, so externs live here.

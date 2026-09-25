@@ -91,6 +91,21 @@ describe("SocketAddress constructor", () => {
     },
   );
 
+  // The address reaches C as a NUL-terminated string: an interior NUL ends it
+  // there (no crash, no rejection), matching a release build.
+  it("accepts an address with an interior NUL byte", () => {
+    const v4 = new SocketAddress({ address: "127.0.0.1\0x", port: 80 });
+    expect(v4.family).toBe("ipv4");
+    expect(v4.port).toBe(80);
+    expect(v4.address).toBe("127.0.0.1\0x");
+    const v6 = new SocketAddress({ address: "::1\0zz", family: "ipv6" });
+    expect(v6.family).toBe("ipv6");
+    expect(() => new SocketAddress({ address: "not-an-ip\0127.0.0.1" })).toThrowWithCode(
+      Error,
+      "ERR_INVALID_IP_ADDRESS",
+    );
+  });
+
   // ===========================================================================
   // ============================= LEAK DETECTION ==============================
   // ===========================================================================

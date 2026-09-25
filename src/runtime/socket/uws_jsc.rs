@@ -3,9 +3,7 @@
 //! sites do not change.
 
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_uws::{
-    AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t,
-};
+use bun_uws::{AnyWebSocket, RawWebSocket, create_bun_socket_error_t};
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
@@ -119,28 +117,23 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
     uws_ws_get_topics_as_js_array(ssl, ws, global_object)
 }
 
-// ── us_socket_buffered_js_write (C-exported, called from JSNodeHTTPServerSocket.cpp) ──
-/// # Safety
-/// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
-/// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`).
-#[unsafe(no_mangle)]
-unsafe extern "C" fn us_socket_buffered_js_write(
-    socket: *mut us_socket_t,
-    // kept for ABI parity with the C++ caller; TLS is now per-socket
+// ── us_socket_buffered_js_write (called from JSNodeHTTPServerSocket.cpp) ──
+/// `buffer` is the caller's stream buffer, shared rather than `&mut`: the JS
+/// calls below (`from_js_with_encoding_value_allow_request_response`,
+/// `throw_*`) can re-enter `JSNodeHTTPServerSocket.write` on the same socket,
+/// so it is only borrowed mutably for the short, JS-free stretches that
+/// touch it. `_ssl` is kept for ABI parity with the C++ caller; TLS is now
+/// per-socket.
+// HOST_EXPORT(us_socket_buffered_js_write, c)
+pub fn us_socket_buffered_js_write(
+    socket: &mut bun_uws::us_socket_t,
     _ssl: bool,
     ended: bool,
-    buffer: *mut us_socket_stream_buffer_t,
+    buffer: &bun_jsc::JsCell<bun_uws::us_socket_stream_buffer_t>,
     global_object: &JSGlobalObject,
     data: JSValue,
     encoding: JSValue,
 ) -> JSValue {
-    // NOTE: `socket`/`buffer` are kept as raw `*mut` for the function lifetime and only
-    // dereferenced to `&mut` at each point of use. The JS calls below
-    // (`from_js_with_encoding_value_allow_request_response`, `throw_*`) can re-enter
-    // `JSNodeHTTPServerSocket.write` on the same socket, which would alias a long-lived
-    // `&mut *socket` / `&mut *buffer` under Stacked Borrows, so raw pointers with
-    // no uniqueness assertion are used throughout.
-
     // Convert `data`/`encoding` BEFORE materializing the stream buffer into an owning
     // `Vec<u8>`: the conversion can run arbitrary JS (toString/Symbol.toPrimitive,
     // Request/Response body coercion) which can re-enter this function on the same
@@ -180,10 +173,9 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         }
     }
 
-    // SAFETY: caller (JSNodeHTTPServerSocket.cpp) guarantees `buffer` is valid for the call.
     // No JS executes between here and the `update()` below, so this owning `Vec` is the
     // sole owner of `list_ptr` for the remainder of the function.
-    let mut stream_buffer = unsafe { &mut *buffer }.to_stream_buffer();
+    let mut stream_buffer = buffer.with_mut(|b| b.to_stream_buffer());
     let mut total_written: usize = 0;
 
     // Labeled block + post-block cleanup so the `buffer.update` / `buffer.wrote`
@@ -191,11 +183,7 @@ unsafe extern "C" fn us_socket_buffered_js_write(
     // exit path without a scopeguard borrow conflict.
     let result: JSValue = 'body: {
         let data_slice = node_buffer.slice();
-        // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        // No JS executes between here and `JSValue::TRUE/FALSE` below, so the
-        // single `&mut` does not alias the re-entrant write path documented at
-        // the top of this fn (raw `socket` is still kept for that reason).
-        let socket_ref = us_socket_t::opaque_mut(socket);
+        let socket_ref = socket;
         if stream_buffer.is_not_empty() {
             let to_flush = stream_buffer.slice();
             let to_flush_len = to_flush.len();
@@ -224,11 +212,9 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         JSValue::TRUE
     };
 
-    // SAFETY: caller guarantees `buffer` is valid for the call; no JS executes between here
-    // and return, so no re-entrancy aliasing.
-    unsafe {
-        (*buffer).update(stream_buffer);
-        (*buffer).wrote(total_written);
-    }
+    buffer.with_mut(|b| {
+        b.update(stream_buffer);
+        b.wrote(total_written);
+    });
     result
 }

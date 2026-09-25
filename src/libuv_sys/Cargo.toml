@@ -17,3 +17,4 @@ libc.workspace = true
 bun_windows_sys.workspace = true
 bun_wyhash.workspace = true
 bun_core.workspace = true
+bun_ptr.workspace = true

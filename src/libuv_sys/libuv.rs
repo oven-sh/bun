@@ -835,6 +835,109 @@ pub unsafe trait UvStream: UvHandle {
         // SAFETY: stream prefix invariant.
         unsafe { uv_read_start(self.as_stream(), Some(uv_allocb::<T>), Some(uv_readcb::<T>)) }
     }
+
+    /// `uv_read_start` into `owner`'s [`StreamOwner::read_buffer`]. `owner`
+    /// must outlive the read registration (the [`bun_ptr::BackRef`]
+    /// obligation: stop reading / close the handle first): it is what
+    /// `handle.data` names while reading.
+    #[inline]
+    fn read_start_owned<T: StreamOwner>(&mut self, owner: bun_ptr::BackRef<T>) -> ReturnCode {
+        // SAFETY: stream prefix invariant — `&mut Self` reinterprets as
+        // `&mut Handle` for the leading `UV_HANDLE_FIELDS`.
+        let h: &mut Handle = unsafe { &mut *(self as *mut Self).cast::<Handle>() };
+        h.data = owner.as_const_ptr().cast_mut().cast();
+
+        unsafe extern "C" fn uv_allocb<T: StreamOwner>(
+            handle: *mut uv_handle_t,
+            suggested_size: usize,
+            buffer: *mut uv_buf_t,
+        ) {
+            // SAFETY: `handle.data` is the `BackRef<T>` `read_start_owned`
+            // stored; its pointee outlives the read registration.
+            let owner = unsafe { bun_ptr::BackRef::<T>::from_raw((*handle).data.cast::<T>()) };
+            // The spare region handed out stays reserved until `uv_readcb`
+            // (`StreamOwner::read_buffer` contract: nothing else touches the
+            // buffer in between).
+            let (base, len) = owner.get().read_buffer().with_mut(|v| {
+                v.reserve(suggested_size);
+                let spare = v.spare_capacity_mut();
+                (
+                    spare.as_mut_ptr().cast::<u8>(),
+                    spare.len().min(suggested_size),
+                )
+            });
+            // SAFETY: `buffer` is libuv's out-param; `base[..len]` is
+            // allocated (uninitialised) capacity libuv only writes to.
+            unsafe {
+                *buffer = uv_buf_t {
+                    len: len as ULONG,
+                    base,
+                }
+            };
+        }
+        unsafe extern "C" fn uv_readcb<T: StreamOwner>(
+            stream: *mut uv_stream_t,
+            nreads: ReturnCodeI64,
+            _buffer: *const uv_buf_t,
+        ) {
+            // SAFETY: as in `uv_allocb`.
+            let owner = unsafe { bun_ptr::BackRef::<T>::from_raw((*stream).data.cast::<T>()) };
+            let owner = owner.get();
+            let n = nreads.int();
+            if n == 0 {
+                return; // EAGAIN / EWOULDBLOCK
+            }
+            if n < 0 {
+                // SAFETY: stream prefix invariant.
+                let _ = unsafe { uv_read_stop(stream) };
+                owner.on_read_error(n as c_int);
+            } else {
+                owner.read_buffer().with_mut(|v| {
+                    // SAFETY: libuv wrote `n` bytes into the spare capacity
+                    // `uv_allocb` reserved on this same buffer; nothing touched
+                    // it in between (`read_buffer` contract).
+                    unsafe { v.set_len(v.len() + n as usize) }
+                });
+                owner.on_read(n as usize);
+            }
+        }
+        // SAFETY: stream prefix invariant.
+        unsafe { uv_read_start(self.as_stream(), Some(uv_allocb::<T>), Some(uv_readcb::<T>)) }
+    }
+}
+
+/// The owner of a listening pipe (see [`Pipe::listen_named_pipe_with`]).
+pub trait ConnectionHandler: Sized {
+    fn on_connection(&self, status: ReturnCode);
+}
+
+/// A heap object embedding a [`Pipe`] (see [`Pipe::close_owner`]). Nothing
+/// may hold a borrow of the cell across a return to the event loop.
+pub trait PipeOwner: Sized {
+    fn pipe(&self) -> &bun_ptr::JsCell<Pipe>;
+}
+
+/// The owner of an in-flight `uv_pipe_connect2` (see [`Pipe::connect_with`]).
+pub trait ConnectHandler: Sized {
+    /// The request libuv uses for the connect; nothing may borrow it while a
+    /// connect is in flight.
+    fn connect_req(&self) -> &bun_ptr::JsCell<uv_connect_t>;
+    fn on_connect(&self, status: ReturnCode);
+}
+
+/// The owner of a stream being read with [`UvStream::read_start_owned`]:
+/// libuv reads straight into [`read_buffer`](Self::read_buffer)'s spare
+/// capacity and the trampoline appends what arrived before calling
+/// [`on_read`](Self::on_read).
+pub trait StreamOwner: Sized {
+    /// The buffer incoming bytes are appended to. Nothing may hold a borrow
+    /// of it across a return to the event loop.
+    fn read_buffer(&self) -> &bun_ptr::JsCell<Vec<u8>>;
+    /// `nread` more bytes were appended to [`read_buffer`](Self::read_buffer).
+    fn on_read(&self, nread: usize);
+    /// `err` is the raw negative libuv errno (e.g. `UV_EOF`); reading has
+    /// been stopped.
+    fn on_read_error(&self, err: c_int);
 }
 
 /// Callback bundle for [`UvStream::read_start_ctx`].
@@ -1249,10 +1352,106 @@ impl Pipe {
             )
         }
     }
+    /// [`listen_named_pipe`](Self::listen_named_pipe) dispatching each
+    /// incoming connection to `H::on_connection(owner, status)`. `owner`
+    /// must outlive the listening handle (the [`bun_ptr::BackRef`]
+    /// obligation): it is what `handle.data` names until the pipe is closed.
+    #[inline]
+    pub fn listen_named_pipe_with<H: ConnectionHandler>(
+        &mut self,
+        named_pipe: &[u8],
+        backlog: i32,
+        owner: bun_ptr::BackRef<H>,
+    ) -> ReturnCode {
+        unsafe extern "C" fn on_connection<H: ConnectionHandler>(
+            server: *mut uv_stream_t,
+            status: ReturnCode,
+        ) {
+            // SAFETY: `server.data` is the `BackRef<H>` `listen_named_pipe_with`
+            // stored; its pointee outlives the listening handle.
+            let owner = unsafe { bun_ptr::BackRef::<H>::from_raw((*server).data.cast::<H>()) };
+            H::on_connection(owner.get(), status);
+        }
+        self.listen_named_pipe(
+            named_pipe,
+            backlog,
+            owner.as_const_ptr().cast_mut().cast(),
+            on_connection::<H>,
+        )
+    }
+    /// [`connect`](Self::connect) through `owner`'s embedded request
+    /// ([`ConnectHandler::connect_req`]), completing into
+    /// `H::on_connect(owner, status)`. `owner` — and so the request — must
+    /// outlive the in-flight connect (the [`bun_ptr::BackRef`] obligation):
+    /// libuv holds both until the callback fires.
+    #[inline]
+    pub fn connect_with<H: ConnectHandler>(
+        &mut self,
+        name: &[u8],
+        owner: bun_ptr::BackRef<H>,
+    ) -> ReturnCode {
+        unsafe extern "C" fn on_connect<H: ConnectHandler>(
+            req: *mut uv_connect_t,
+            status: ReturnCode,
+        ) {
+            // SAFETY: `req.data` is the `BackRef<H>` `connect_with` stored;
+            // its pointee outlives the in-flight request.
+            let owner = unsafe { bun_ptr::BackRef::<H>::from_raw((*req).data.cast::<H>()) };
+            H::on_connect(owner.get(), status);
+        }
+        let ctx: *mut c_void = owner.as_const_ptr().cast_mut().cast();
+        let req: *mut uv_connect_t = owner.get().connect_req().as_ptr();
+        // SAFETY: `req` is a field of the live `*owner` nothing else borrows
+        // (the `connect_req` contract); libuv owns it from here until
+        // `on_connect`.
+        let req = unsafe { &mut *req };
+        req.data = ctx;
+        self.connect(req, name, ctx, on_connect::<H>)
+    }
     #[inline]
     pub fn accept(&mut self, client: &mut Pipe) -> ReturnCode {
         // SAFETY: both pipes embed `uv_stream_t` at offset 0.
         unsafe { uv_accept(self.as_stream(), client.as_stream()) }
+    }
+    /// [`close_and_destroy`](Self::close_and_destroy) for a pipe the caller
+    /// still owns as a `Box`: closes the handle if it was initialised and
+    /// frees the allocation once libuv is done with it.
+    #[inline]
+    pub fn close_and_free(self: Box<Self>) {
+        // SAFETY: `Box::into_raw` is exactly the pointer `close_and_destroy`
+        // reclaims; ownership moves to it.
+        unsafe { Self::close_and_destroy(Box::into_raw(self)) }
+    }
+    /// Close the pipe `T` embeds ([`PipeOwner::pipe`]) and drop `owner` once
+    /// libuv has released the handle (or right away if it was never
+    /// initialised). Nothing but the close callback touches `owner` after
+    /// this, so back-references into it stay valid until then.
+    pub fn close_owner<T: PipeOwner>(owner: bun_ptr::OwnedThis<T>) {
+        unsafe extern "C" fn on_close<T: PipeOwner>(pipe: *mut Pipe) {
+            // SAFETY: `pipe.data` is the `OwnedThis<T>` `close_owner` released
+            // into it; this callback fires once and is its only reader.
+            drop(unsafe { bun_ptr::OwnedThis::<T>::from_raw((*pipe).data.cast::<T>()) });
+        }
+        let pipe: *mut Pipe = owner.pipe().as_ptr();
+        // SAFETY: `pipe` is a field of the live `*owner`; nothing else borrows
+        // it here (the `PipeOwner::pipe` contract), and after `uv_close` only
+        // libuv and `on_close` touch it.
+        unsafe {
+            if (*pipe).loop_.is_null() {
+                drop(owner);
+                return;
+            }
+            if (*pipe).is_closing() {
+                // Someone already closed the pipe with their own callback;
+                // that callback owns the handle's lifetime, so `owner` (which
+                // embeds it) must not be freed here.
+                debug_assert!(false, "close_owner on an already-closing pipe");
+                let _ = owner.into_raw();
+                return;
+            }
+            (*pipe).data = owner.into_raw().cast();
+            (*pipe).close(on_close::<T>);
+        }
     }
     /// Close the pipe handle (if
     /// needed) and then `Box::from_raw`-drop it. Handles all states:

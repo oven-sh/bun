@@ -24,7 +24,11 @@ import {
 } from "./wire-frames";
 
 const thrown = new Error("boom from toJSON");
-const overflow = { rejected: expect.objectContaining({ code: "ERR_MYSQL_OVERFLOW" }) };
+const cyclic: Record<string, unknown> = {};
+cyclic.self = cyclic;
+const rejectedWith = (properties: object) => ({ rejected: expect.objectContaining(properties) });
+const overflow = rejectedWith({ code: "ERR_MYSQL_OVERFLOW" });
+const bigint = rejectedWith({ message: "JSON.stringify cannot serialize BigInt." });
 
 // Each parameter makes COM_STMT_EXECUTE fail on the client.
 const failures: [name: string, parameter: () => unknown, outcome: unknown][] = [
@@ -37,6 +41,9 @@ const failures: [name: string, parameter: () => unknown, outcome: unknown][] = [
     }),
     { rejected: thrown },
   ],
+  ["a parameter that holds a BigInt", () => ({ id: 10n }), bigint],
+  ["a parameter that holds itself", () => cyclic, rejectedWith({ message: expect.stringContaining("cyclic") })],
+  ["a Date that DATETIME cannot hold", () => new Date(8.64e15), rejectedWith({ code: "ERR_INVALID_ARG_TYPE" })],
   ["a parameter too large for one packet", () => Buffer.alloc(0xffffff, 0x41), overflow],
 ];
 
@@ -47,10 +54,10 @@ const oversizedText = () => Buffer.alloc(0xffffff, "-").toString();
 // waits until every query has settled, for five seconds at most, and then
 // rejects the rest with ERR_MYSQL_CONNECTION_CLOSED. So a query that never
 // settles fails the assertion of its test.
-async function settle(sql: SQL, queries: SQL.Query<any>[]) {
+async function settle(sql: SQL, queries: (SQL.Query<any> | Promise<unknown>)[]) {
   const outcomes: unknown[] = queries.map(() => "pending");
   queries.forEach((query, i) =>
-    query.execute().then(
+    ("execute" in query ? query.execute() : query).then(
       rows => (outcomes[i] = rows),
       reason => (outcomes[i] = { rejected: reason }),
     ),
@@ -102,7 +109,7 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     ).toEqual([
       [{ marker: 1 }],
       overflow,
-      { rejected: expect.objectContaining({ message: expect.stringContaining("failed to prepare query") }) },
+      rejectedWith({ message: expect.stringContaining("failed to prepare query") }),
       [{ marker: 2 }],
       [{ marker: 3 }],
     ]);
@@ -112,7 +119,7 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     const { sql, marker } = await connect();
     const table = "no_such_table_" + randomUUIDv7("hex").replaceAll("-", "");
     const missing = () => sql`SELECT * FROM ${sql(table)} WHERE id = ${1}`;
-    const noSuchTable = { rejected: expect.objectContaining({ errno: 1146 }) };
+    const noSuchTable = rejectedWith({ errno: 1146 });
 
     expect(await settle(sql, [missing(), missing(), missing(), marker(1), marker(2)])).toEqual([
       noSuchTable,
@@ -123,12 +130,21 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     ]);
   });
 
+  test("a transaction whose query fails in the queue rejects, and the pool runs the next query", async () => {
+    const { sql, marker } = await connect();
+
+    expect(await settle(sql, [sql.begin(tx => tx`SELECT ${{ id: 10n }} AS v`), marker(1)])).toEqual([
+      bigint,
+      [{ marker: 1 }],
+    ]);
+  });
+
   test.each<[string, (sql: SQL) => SQL.Query<any>, unknown]>([
     ["a parameter too large for one packet", sql => sql`SELECT ${Buffer.alloc(0xffffff, 0x41)} AS v`, overflow],
     [
       "a wrong number of parameters",
       sql => sql.unsafe("SELECT ? AS a, ? AS b", [1]),
-      { rejected: expect.objectContaining({ code: "ERR_MYSQL_WRONG_NUMBER_OF_PARAMETERS_PROVIDED" }) },
+      rejectedWith({ code: "ERR_MYSQL_WRONG_NUMBER_OF_PARAMETERS_PROVIDED" }),
     ],
   ])("%s rejects a lone query, and close() with no timeout returns", async (_, query, rejected) => {
     const { sql } = await connect();

@@ -1575,7 +1575,8 @@ fn rows_outside_synced_maps(lockfile: &Lockfile, known_npm_aliases: &NpmAliasMap
     let package_name_hashes = lockfile.packages.items_name_hash();
     let dependency_lists = lockfile.packages.items_dependencies();
     let reached = reachable::packages(lockfile, resolutions, reachable::Options::all(0));
-    let plannable_peers = plannable_peer_rows(lockfile, &DirectDependencies::default());
+    let plannable_peers =
+        plannable_peer_rows(lockfile, &DirectDependencies::default(), Some(&reached));
 
     let mut rows = Vec::new();
     for owner in 0..lockfile.packages.len() {
@@ -1724,7 +1725,7 @@ fn enqueue_named_updates(
     lockfile_name: &'static str,
 ) -> crate::Result<NamedUpdates> {
     let walkable = crate::update_scope::UpdateScope::of(&*manager).walkable_rows(&manager.lockfile);
-    let plannable_peers = plannable_peer_rows(&manager.lockfile, direct);
+    let plannable_peers = plannable_peer_rows(&manager.lockfile, direct, None);
     let collect_latest_rows = manager.options.do_.update_to_latest();
     let requests = manager.update_requests.len();
     let mut matched = DynamicBitSet::init_empty(requests).unwrap_or_oom();

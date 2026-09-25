@@ -273,6 +273,7 @@ const { owner_symbol } = require("internal/async_hooks").symbols;
 // native Listener reachable via accepted socket handles (see a93d2fa48e).
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
+const kLastWriteQueueSize = Symbol("kLastWriteQueueSize");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 // tls.Server exposes its native SecureContext constructor through this key so
 // the SNI dispatch (below) can recognize a raw native context the way Node's
@@ -669,6 +670,8 @@ const SocketHandlers = {
       } else if (res) {
         self._pendingData = self[kwriteCallback] = null;
         unrefAfterDrain(self, socket);
+        self[kLastWriteQueueSize] = 0;
+        self._unrefTimer();
         callback(null);
       } else {
         self._pendingData = null;
@@ -1507,6 +1510,8 @@ const SocketHandlers2 = {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
         unrefAfterDrain(self, socket);
+        self[kLastWriteQueueSize] = 0;
+        self._unrefTimer();
         callback(null);
       } else {
         self[kBytesWritten] = socket.bytesWritten;
@@ -2001,10 +2006,21 @@ Socket.prototype._onTimeout = function () {
   }
 
   const handle = this._handle;
-  // if there is a handle, and it has pending data,
-  // we suppress the timeout because a write is in progress
-  if (handle && getBufferedAmount(handle) > 0) {
-    return;
+  if (handle) {
+    // A queue that moved since the last tick is draining, so reschedule; one
+    // that has not moved is stalled, which is what the timeout exists to
+    // surface. Draining to empty counts as movement — firing on the tick that
+    // first reads 0 would cut the idle period short. Defaulting to 0 keeps an
+    // ordinary idle socket (queue 0, unchanged) firing on its first tick.
+    const writeQueueSize = getBufferedAmount(handle);
+    const lastWriteQueueSize = this[kLastWriteQueueSize] ?? 0;
+    if (writeQueueSize !== lastWriteQueueSize) {
+      this[kLastWriteQueueSize] = writeQueueSize;
+      // this[kTimeout] is one-shot; without this the timer is consumed here and
+      // no later tick ever runs.
+      this._unrefTimer();
+      return;
+    }
   }
   this.emit("timeout");
 };

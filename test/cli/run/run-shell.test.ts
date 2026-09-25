@@ -70,10 +70,12 @@ describe.concurrent("run-shell", () => {
   // https://github.com/oven-sh/bun/issues/29669
   // Mixed endings: LF on one line, CRLF on the next. Each `\r\n` must be
   // handled independently so `bun run build\r\n` still resolves `build`.
+  // The inner `bun` is the absolute bunExe() so a `bun` on PATH can't be
+  // picked up instead of the binary under test.
   test("mixed LF/CRLF line endings resolve package scripts", async () => {
     using dir = tempDir("bun-shell-mixed-eol", {
       "package.json": JSON.stringify({ scripts: { build: "echo built-ok" } }),
-      "repro.sh": "export VITE_PARAM=value\nbun run build\r\n",
+      "repro.sh": `export VITE_PARAM=value\n"${bunExe()}" run build\r\n`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(String(dir), "repro.sh")],

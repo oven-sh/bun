@@ -2,7 +2,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { writeFileSync } from "fs";
-import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, isLinux, nodeExe, runtimesWithNode, tempDir } from "harness";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -1934,6 +1934,131 @@ describe.concurrent("a client paused while connecting", () => {
       stdout: ["secureConnect paused=true", "exit 0"],
       exitCode: 0,
       failureDetail: "",
+    });
+  });
+});
+
+// Node cancels a write that is still in flight when the socket is destroyed: its callback gets
+// UV_ECANCELED, one time, after 'error' and before 'close'.
+describe("TLS socket torn down with a write still in flight", () => {
+  // Prints the events of the client and every call of the callback that Writable hands to _write.
+  const fixture = /* js */ `
+    const CERT = ${JSON.stringify(COMMON_CERT_)};
+    const net = require("node:net");
+    const tls = require("node:tls");
+    const shape = err => (err ? [err.code, err.syscall].filter(Boolean).join(" ") : "ok");
+    const events = [];
+    const calls = [];
+    const sockets = [];
+    let client;
+
+    // Counts the calls of the callback that Writable hands to _write. _write can pass it to itself again.
+    function countWriteCallbackCalls(socket) {
+      const counted = new WeakSet();
+      const _write = socket._write;
+      socket._write = function (chunk, encoding, callback) {
+        if (!counted.has(callback)) {
+          const inner = callback;
+          callback = function (err) {
+            calls.push(shape(err));
+            return inner.apply(this, arguments);
+          };
+          counted.add(callback);
+        }
+        return _write.call(this, chunk, encoding, callback);
+      };
+    }
+
+    function watch(server) {
+      countWriteCallbackCalls(client);
+      client.on("error", err => events.push("error " + shape(err)));
+      client.on("end", () => events.push("end"));
+      client.on("close", hadError => {
+        events.push("close " + hadError);
+        // The other 'close' listeners run first: _write adds one for a write that waits for 'connect'.
+        setImmediate(() => {
+          console.log(JSON.stringify({ events, calls }));
+          for (const socket of sockets) socket.destroy();
+          server.close();
+        });
+      });
+    }
+
+    if (process.env.CASE === "established") {
+      const server = tls.createServer(CERT, peer => {
+        sockets.push(peer);
+        peer.on("error", () => {});
+      });
+      server.listen(0, "127.0.0.1", () => {
+        client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+        watch(server);
+        client.on("secureConnect", () =>
+          setImmediate(() => {
+            // The peer never reads, so the kernel cannot take all of this.
+            client.write(Buffer.alloc(64 * 1024 * 1024, "a"), err => events.push("write " + shape(err)));
+            // A TLS write that the kernel took whole calls back on the next tick.
+            setImmediate(() => {
+              if (events.length > 0) throw new Error("the write did not stay in flight: " + events);
+              client.destroy();
+            });
+          }),
+        );
+      });
+    } else {
+      // This peer resets when it has the ClientHello, so the write is still behind the handshake.
+      const server = net.createServer(peer => {
+        sockets.push(peer);
+        peer.on("error", () => {});
+        peer.once("data", () => peer.resetAndDestroy());
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const raw = net.connect(server.address().port, "127.0.0.1");
+        sockets.push(raw);
+        raw.on("error", () => {});
+        client = tls.connect({ socket: raw, rejectUnauthorized: false });
+        watch(server);
+        if (!client.connecting) throw new Error("the TLS socket is not connecting");
+        client.write("hello", err => events.push("write " + shape(err)));
+      });
+    }
+  `;
+
+  // Node 22.0 still called a canceled write's callback without an error, so only Node 24 or later is a reference.
+  // Not on Windows: there a 64 MB write to a peer that never reads completes, and a write that is still
+  // pending when write() returns can complete a moment later, so Node cannot pin a write in flight.
+  describe.each(runtimesWithNode(24, { nodeOnWindows: false }))("%s", (_, exe) => {
+    async function run(CASE: string) {
+      await using proc = Bun.spawn({
+        cmd: [exe, "-e", fixture],
+        env: { ...bunEnv, CASE },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { report: stdout.trim() ? JSON.parse(stdout) : stdout, stderr, exitCode };
+    }
+
+    // The native TLS close can finish after 'close' was emitted, so the write cannot wait for it.
+    it.concurrent("destroy() on an established connection", async () => {
+      expect(await run("established")).toEqual({
+        report: { events: ["write ECANCELED write", "close false"], calls: ["ECANCELED write"] },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The write was made while the wrapped socket was still connecting. A wrapped socket opens
+    // without 'connect', so the 'close' listener of that wait is still there at teardown.
+    // Linux only: see "peer reset" in node-net.test.ts.
+    it.concurrent.skipIf(!isLinux)("peer reset during the handshake", async () => {
+      expect(await run("connecting")).toEqual({
+        report: {
+          events: ["error ECONNRESET read", "write ECANCELED write", "close true"],
+          calls: ["ECANCELED write"],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 });

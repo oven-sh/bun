@@ -14,7 +14,7 @@ exports[`should report error on invalid format for dependencies 1`] = `
                                     ^
 error: dependencies expects a map of specifiers, e.g.
   "dependencies": {
-    <green>"bun"<r>: <green>"latest"<r>
+    "bun": "latest"
   }
     at [dir]/package.json:1:33
 "
@@ -49,7 +49,7 @@ exports[`bun-install should report error on invalid format for dependencies 1`] 
                                     ^
 error: dependencies expects a map of specifiers, e.g.
   "dependencies": {
-    <green>"bun"<r>: <green>"latest"<r>
+    "bun": "latest"
   }
     at [dir]/package.json:1:33
 "

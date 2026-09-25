@@ -280,4 +280,93 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       gatedResumed: "connection closed without a response",
     });
   });
+
+  // agent3 (CN agent3) is a second certificate so a test can tell which
+  // entry served the handshake.
+  const otherKey = readFileSync(join(tlsFixtures, "agent3-key.pem"), "utf8");
+  const otherCert = readFileSync(join(tlsFixtures, "agent3-cert.pem"), "utf8");
+  const openEntry = { key: serverKey, cert: serverCert };
+  const gatedEntry = {
+    key: otherKey,
+    cert: otherCert,
+    ca: clientCa,
+    requestCert: true,
+    rejectUnauthorized: true,
+  };
+
+  function peerCN(port: number, servername: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false });
+    socket.on("secureConnect", () => {
+      resolve(socket.getPeerCertificate()?.subject?.CN ?? "-");
+      socket.destroy();
+    });
+    socket.on("error", reject);
+    socket.on("close", () => reject(new Error("closed before the handshake completed")));
+    return promise;
+  }
+
+  // Each case lists two entries for admin.example.com. The later one sets a
+  // client certificate policy. Like tls.Server#addContext(), the later entry
+  // wins: the name serves agent3 and rejects a handshake with no client cert.
+  const duplicateCases: [string, Parameters<typeof Bun.serve>[0]["tls"]][] = [
+    [
+      "a later entry with the same serverName replaces the earlier one",
+      [
+        { ...openEntry },
+        { serverName: "admin.example.com", ...openEntry },
+        { serverName: "admin.example.com", ...gatedEntry },
+      ],
+    ],
+    [
+      "a serverName with a trailing root dot names the same host",
+      [
+        { ...openEntry },
+        { serverName: "admin.example.com", ...openEntry },
+        { serverName: "admin.example.com.", ...gatedEntry },
+      ],
+    ],
+    [
+      "a later entry replaces the default entry's own serverName",
+      [
+        { ...openEntry, serverName: "admin.example.com" },
+        { serverName: "admin.example.com", ...gatedEntry },
+      ],
+    ],
+  ];
+  for (const [label, tlsConfig] of duplicateCases) {
+    test(label, async () => {
+      using server = Bun.serve({
+        port: 0,
+        tls: tlsConfig,
+        fetch: req => new Response(`served ${req.headers.get("host")}`),
+      });
+      const servedCN = await peerCN(server.port, "admin.example.com");
+      const { status: gatedNoCert } = await request(server.port, "admin.example.com");
+      const { status: gatedTrustedCert } = await request(server.port, "admin.example.com", trustedClient);
+      const { status: defaultNoCert } = await request(server.port, "localhost");
+      expect({ servedCN, gatedNoCert, gatedTrustedCert, defaultNoCert }).toEqual({
+        servedCN: "agent3",
+        gatedNoCert: "connection closed without a response",
+        gatedTrustedCert: "HTTP/1.1 200 OK",
+        defaultNoCert: "HTTP/1.1 200 OK",
+      });
+    });
+  }
+
+  test("the last of three entries for one serverName wins", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { ...openEntry },
+        { serverName: "admin.example.com", ...gatedEntry },
+        { serverName: "admin.example.com", ...openEntry },
+        { serverName: "admin.example.com.", key: otherKey, cert: otherCert },
+      ],
+      fetch: () => new Response("served"),
+    });
+    const servedCN = await peerCN(server.port, "admin.example.com");
+    const { status: noCert } = await request(server.port, "admin.example.com");
+    expect({ servedCN, noCert }).toEqual({ servedCN: "agent3", noCert: "HTTP/1.1 200 OK" });
+  });
 });

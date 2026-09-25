@@ -99,3 +99,5 @@ Bun.serve({
   ],
 });
 ```
+
+If two entries share a `serverName`, the later entry replaces the earlier one. This matches `tls.Server#addContext()`. A trailing dot is ignored, so `my-server1.com.` and `my-server1.com` name the same host.

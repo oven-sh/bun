@@ -441,8 +441,11 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
 static SSL_CTX *us_quic_match_sni(us_quic_socket_context_t *ctx, const char *sni) {
     if (!sni) return ctx->ssl_ctx;
     size_t sl = strlen(sni);
+    /* Entries are stored without the root dot; ignore it on the client's name too. */
+    if (sl > 1 && sni[sl - 1] == '.') sl--;
     for (unsigned i = 0; i < ctx->sni_count; i++) {
-        if (strcmp(ctx->sni[i].name, sni) == 0) return ctx->sni[i].ctx;
+        const char *n = ctx->sni[i].name;
+        if (strlen(n) == sl && memcmp(n, sni, sl) == 0) return ctx->sni[i].ctx;
     }
     for (unsigned i = 0; i < ctx->sni_count; i++) {
         const char *n = ctx->sni[i].name;
@@ -886,14 +889,31 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     us_quic_prepare_ssl_ctx(ssl, &options);
     SSL_CTX_set_verify(ssl, SSL_CTX_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(ctx->ssl_ctx),
         SSL_CTX_get_verify_callback(ssl));
+    /* Store the name without the root dot, as the TCP listener's SNI tree
+     * does, so `a.example.com.` and `a.example.com` are one entry. */
+    size_t hl = strlen(hostname);
+    if (hl > 1 && hostname[hl - 1] == '.') hl--;
+    char *name = (char *) us_malloc(hl + 1);
+    if (!name) { SSL_CTX_free(ssl); return -1; }
+    memcpy(name, hostname, hl);
+    name[hl] = 0;
+    /* A later entry for a name replaces the earlier one, like the TCP
+     * listener's registry (uWS addServerName). */
+    for (unsigned i = 0; i < ctx->sni_count; i++) {
+        if (strcmp(ctx->sni[i].name, name) == 0) {
+            us_free(ctx->sni[i].name);
+            SSL_CTX_free(ctx->sni[i].ctx);
+            ctx->sni[i].name = name;
+            ctx->sni[i].ctx = ssl;
+            return 0;
+        }
+    }
     if (ctx->sni_count == ctx->sni_cap) {
         unsigned ncap = ctx->sni_cap ? ctx->sni_cap * 2 : 4;
         struct us_quic_sni *n = (struct us_quic_sni *) us_realloc(ctx->sni, ncap * sizeof(*n));
-        if (!n) { SSL_CTX_free(ssl); return -1; }
+        if (!n) { us_free(name); SSL_CTX_free(ssl); return -1; }
         ctx->sni = n; ctx->sni_cap = ncap;
     }
-    char *name = us_strdup(hostname);
-    if (!name) { SSL_CTX_free(ssl); return -1; }
     ctx->sni[ctx->sni_count].name = name;
     ctx->sni[ctx->sni_count].ctx = ssl;
     ctx->sni_count++;

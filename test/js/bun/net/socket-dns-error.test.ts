@@ -97,8 +97,16 @@ test.skipIf(!isIPv6()).each(["::1/64", "::1/0", "2001:db8::1/0", "::ffff:127.1",
 test.each([
   ["127.0.0.1", "connected"],
   ...(isWindows ? [] : [["127.1", "connected"] as const, ["0x7f000001", "connected"] as const]),
+  // One row for each byte that isspace() takes: space, \t, \n, \v, \f, \r.
   ["127.0.0.1 db.allowed.example", "ENOTFOUND"],
+  ["127.1 .allowed.example", "ENOTFOUND"],
+  ["0x7f.1 junk", "ENOTFOUND"],
+  ["127.0.0.1\tx", "ENOTFOUND"],
   ["127.0.0.1\n", "ENOTFOUND"],
+  ["127.0.0.1\vx", "ENOTFOUND"],
+  ["127.0.0.1\fx", "ENOTFOUND"],
+  ["127.0.0.1\rx", "ENOTFOUND"],
+  ["12\t7.0.0.1", "ENOTFOUND"],
 ])("Bun.connect to %j: %s", async (hostname, expected) => {
   // On every address, so that a connection to 127.1.0.0 also arrives.
   const dialed: string[] = [];
@@ -120,9 +128,13 @@ test.each([
     socket: { open() {}, data() {}, close: () => onClose() },
   }).then(
     () => closed.then(() => "connected"),
-    (e: any) => e.code,
+    (e: any) => ({ code: e.code, syscall: e.syscall, hostname: e.hostname }),
   );
-  expect({ result, dialed }).toEqual({ result: expected, dialed: expected === "connected" ? ["127.0.0.1"] : [] });
+  expect({ result, dialed }).toEqual(
+    expected === "connected"
+      ? { result: "connected", dialed: ["127.0.0.1"] }
+      : { result: { code: expected, syscall: "getaddrinfo", hostname }, dialed: [] },
+  );
 });
 
 test("Bun.connect rejects the promise with the resolver error when connectError is not set", async () => {

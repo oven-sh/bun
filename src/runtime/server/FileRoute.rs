@@ -14,7 +14,9 @@ use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::node::types::PathOrFileDescriptor;
-use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
+use crate::server::file_response_stream::{
+    StartOptions as FileResponseStreamOptions, StreamOwner, UnsizedBody,
+};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
 
@@ -69,6 +71,7 @@ enum Serve {
         pollable: bool,
         offset: u64,
         length: Option<u64>,
+        limit: Option<u64>,
     },
 }
 
@@ -299,6 +302,7 @@ impl FileRoute {
                 pollable,
                 offset,
                 length,
+                limit,
             } => {
                 let server = route.server.get().unwrap();
                 FileResponseStream::start(FileResponseStreamOptions {
@@ -310,6 +314,7 @@ impl FileRoute {
                     pollable,
                     offset,
                     length,
+                    limit,
                     idle_timeout: server.config().idle_timeout,
                     owner: StreamOwner::FileRoute(route),
                 });
@@ -325,6 +330,7 @@ impl FileRoute {
         resp: AnyResponse,
         method: Method,
     ) -> Serve {
+        let mut unsized_body: Option<UnsizedBody> = None;
         let (can_serve_file, offset, size, file_type, pollable) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
@@ -341,10 +347,23 @@ impl FileRoute {
                 break 'brk (false, 0, 0, FileType::File, false);
             }
 
+            if stat_size == 0 && bun_sys::S::ISREG(mode) && self.blob.size.get() > 0 {
+                let window = (self.blob.offset.get(), self.blob.size.get());
+                match UnsizedBody::probe(fd, window, false) {
+                    Ok(body) => unsized_body = body,
+                    Err(_) => break 'brk (false, 0, 0, FileType::File, false),
+                }
+            }
+
             // `Cell::take` → mutate → `set`: single-threaded event loop, no
             // re-entry reads `stat_hash` between take/set.
             let mut sh = self.stat_hash.take();
-            sh.hash(&stat, path);
+            if unsized_body.is_some() {
+                // The mtime of such a file says nothing about its content.
+                sh = StatHash::default();
+            } else {
+                sh.hash(&stat, path);
+            }
             self.stat_hash.set(sh);
 
             if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
@@ -370,6 +389,7 @@ impl FileRoute {
         // set Content-Range — they're managing partial responses themselves.
         let range: RangeRequest::Result = if (method == Method::GET || method == Method::HEAD)
             && file_type == FileType::File
+            && unsized_body.is_none()
             && self.status_code == 200
             && !self.has_content_range_header
         {
@@ -391,6 +411,15 @@ impl FileRoute {
         };
         let status_code =
             status_for_preconditions(req, method, self.status_code, etag, last_modified_ms, range);
+        if let Some(body) = &mut unsized_body
+            && method != Method::HEAD
+            && status_code != 412
+            && !(HTTPStatusText::is_null_body(status_code) || matches!(status_code, 307 | 308))
+            && body.fill(fd).is_err()
+        {
+            req.set_yield(true);
+            return Serve::Done;
+        }
 
         req.set_yield(false);
 
@@ -413,7 +442,7 @@ impl FileRoute {
             return Serve::Done;
         }
 
-        // `None` (read to EOF) is only for pipes and sockets; a file's body is its Content-Length.
+        // `None` (read to EOF) is for pipes, sockets and a file that does not tell its size.
         let (body_offset, body_len): (u64, Option<u64>) = match range {
             RangeRequest::Result::Satisfiable { .. } => {
                 let (start, len) = write_content_range(resp, range, size).unwrap();
@@ -425,7 +454,9 @@ impl FileRoute {
                 return Serve::Done;
             }
             RangeRequest::Result::None => {
-                if file_type == FileType::File {
+                if let Some(body) = &unsized_body {
+                    (offset, body.whole_len())
+                } else if file_type == FileType::File {
                     (offset, Some(size))
                 } else {
                     (0, None)
@@ -450,11 +481,25 @@ impl FileRoute {
             return Serve::Done;
         }
 
+        if let Some(body) = unsized_body {
+            let Some(rest) = body.send(resp) else {
+                return Serve::Done;
+            };
+            return Serve::Stream {
+                file_type,
+                pollable,
+                offset: rest.offset,
+                length: None,
+                limit: Some(rest.limit),
+            };
+        }
+
         Serve::Stream {
             file_type,
             pollable,
             offset: body_offset,
             length: body_len,
+            limit: None,
         }
     }
 

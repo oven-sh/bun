@@ -2606,6 +2606,10 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
       this._handle = result;
+      // Node starts the TLSWrap read side even when the injected transport was
+      // paused by its previous owner. The TLS handshake must not inherit that
+      // application-level pause.
+      this.read(0);
       this.emit(kUpgradeAttached);
       return;
     }
@@ -2632,6 +2636,9 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
     this._handle = tlsHandle;
+    // Match Node's initRead(): an injected socket may be paused, but TLS still
+    // needs to consume the ClientHello before exposing its readable stream.
+    this.read(0);
     this.emit(kUpgradeAttached);
   });
 };

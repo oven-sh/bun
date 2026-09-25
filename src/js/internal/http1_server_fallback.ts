@@ -521,6 +521,10 @@ function connectionListenerHTTP1(server, socket, options) {
       parser.close();
     } catch {}
   });
+  // Node's HTTP parser consumes an injected socket's native handle directly,
+  // so a pause from its previous owner does not prevent request parsing. The
+  // JS fallback reads through the stream and must resume it explicitly.
+  socket.resume();
 }
 
 function closeIdleHttp1Connections(server) {

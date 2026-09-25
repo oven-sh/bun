@@ -157,6 +157,8 @@ impl JSMySQLQuery {
         }
         this.set_target(target);
         if let Err(err) = this.run(connection) {
+            // Nothing else completes this request: it never reaches the queue.
+            this.mark_as_failed();
             if !global_object.has_exception() {
                 return Err(global_object.throw_value(mysql_error_to_js(
                     global_object,

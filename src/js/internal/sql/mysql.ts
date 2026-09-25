@@ -24,7 +24,7 @@ const {
 } = $rust("mysql.rs", "createBinding") as MySQLDotZig;
 
 function wrapError(error: Error | (MySQLErrorOptions & { message: string })) {
-  if (Error.isError(error)) {
+  if (!$isObject(error) || Error.isError(error)) {
     return error;
   }
   return new MySQLError(error.message, error);

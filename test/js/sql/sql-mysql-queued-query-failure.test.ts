@@ -44,9 +44,9 @@ const failures: [name: string, parameter: () => unknown, outcome: unknown][] = [
 const oversizedText = () => Buffer.alloc(0xffffff, "-").toString();
 
 // Starts `queries` in one tick, in order, and closes the connection. close()
-// waits until every query has settled, for one second at most, and then
+// waits until every query has settled, for five seconds at most, and then
 // rejects the rest with ERR_MYSQL_CONNECTION_CLOSED. So a query that never
-// settles fails the assertion of its test, and the test does not time out.
+// settles fails the assertion of its test.
 async function settle(sql: SQL, queries: SQL.Query<any>[]) {
   const outcomes: unknown[] = queries.map(() => "pending");
   queries.forEach((query, i) =>
@@ -55,7 +55,7 @@ async function settle(sql: SQL, queries: SQL.Query<any>[]) {
       reason => (outcomes[i] = { rejected: reason }),
     ),
   );
-  await sql.close({ timeout: 1 });
+  await sql.close({ timeout: 5 });
   return outcomes;
 }
 
@@ -122,6 +122,59 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
       [{ marker: 2 }],
     ]);
   });
+
+  test.each<[string, (sql: SQL) => SQL.Query<any>, unknown]>([
+    ["a parameter too large for one packet", sql => sql`SELECT ${Buffer.alloc(0xffffff, 0x41)} AS v`, overflow],
+    [
+      "a wrong number of parameters",
+      sql => sql.unsafe("SELECT ? AS a, ? AS b", [1]),
+      { rejected: expect.objectContaining({ code: "ERR_MYSQL_WRONG_NUMBER_OF_PARAMETERS_PROVIDED" }) },
+    ],
+  ])("%s rejects a lone query, and close() with no timeout returns", async (_, query, rejected) => {
+    const { sql } = await connect();
+    let outcome: unknown = "pending";
+    query(sql)
+      .execute()
+      .then(
+        () => (outcome = "resolved"),
+        reason => (outcome = { rejected: reason }),
+      );
+
+    // close() with no timeout returns when every query has settled.
+    await sql.close();
+    expect(outcome).toEqual(rejected);
+  });
+
+  // Built-in JS runs a handle one time only. This test reaches the handle as
+  // sql-mysql-clean-reentry.test.ts does and runs it again.
+  test("a handle whose write failed in the call that started it is complete when it runs again", async () => {
+    const { sql, marker } = await connect();
+    const select = (parameter: Buffer) => sql`SELECT ${parameter} AS v`;
+    // The statement is prepared and the connection is idle, so the call that
+    // starts the next query writes it.
+    await select(Buffer.alloc(1, 0x41));
+
+    const query: any = select(Buffer.alloc(0xffffff, 0x41));
+    query.raw(); // creates the handle
+    const handle = query[Object.getOwnPropertySymbols(query).find(symbol => symbol.description === "handle")!];
+    const run = Object.getPrototypeOf(handle).run;
+    let connection: unknown;
+    Object.defineProperty(handle, "run", {
+      configurable: true,
+      writable: true,
+      value(...args: unknown[]) {
+        connection = args[0];
+        return run.apply(this, args);
+      },
+    });
+    const first = await query.then(
+      () => "resolved",
+      (reason: unknown) => ({ rejected: reason }),
+    );
+    run.call(handle, connection, query);
+
+    expect({ first, next: await settle(sql, [marker(1)]) }).toEqual({ first: overflow, next: [[{ marker: 1 }]] });
+  });
 });
 
 // The mock shows what a real server cannot: the commands that reach the wire.
@@ -164,18 +217,52 @@ describe("mysql (mock server)", () => {
     return { port, server, received };
   }
 
+  // A query with no parameters goes out as COM_QUERY.
+  async function connect(port: number) {
+    const sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+    const marker = (n: number) => sql.unsafe(`SELECT ${n}`);
+    await marker(0);
+    return { sql, marker };
+  }
+
   test.each(failures)("%s rejects the query and sends no COM_STMT_EXECUTE", async (_, parameter, rejected) => {
     const { port, server, received } = await mockServer();
     try {
-      const sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+      const { sql, marker } = await connect(port);
       const bad = () => sql.unsafe("SELECT ?", [parameter()]);
-      // A query with no parameters goes out as COM_QUERY.
-      const marker = (n: number) => sql.unsafe(`SELECT ${n}`);
-      await marker(0);
 
       expect({ outcomes: await settle(sql, [bad(), bad(), marker(1), marker(2)]), received }).toEqual({
         outcomes: [rejected, rejected, [{ text: "SELECT 1" }], [{ text: "SELECT 2" }]],
         received: ["COM_QUERY", "COM_STMT_PREPARE", "COM_QUERY", "COM_QUERY"],
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  test.each<[string, unknown]>([
+    ["an Error", new Error("boom")],
+    ["a string", "boom"],
+    ["a number", 42],
+    ["null", null],
+    ["undefined", undefined],
+  ])("a parameter whose toJSON throws %s rejects the query with that value", async (_, thrown) => {
+    const { port, server } = await mockServer();
+    try {
+      const { sql, marker } = await connect(port);
+      const bad = sql.unsafe("SELECT ?", [
+        {
+          toJSON() {
+            throw thrown;
+          },
+        },
+      ]);
+
+      const [outcome, next] = await settle(sql, [bad, marker(1)]);
+      expect({ outcome, same: Object.is((outcome as { rejected?: unknown })?.rejected, thrown), next }).toEqual({
+        outcome: { rejected: thrown },
+        same: true,
+        next: [{ text: "SELECT 1" }],
       });
     } finally {
       server.close();

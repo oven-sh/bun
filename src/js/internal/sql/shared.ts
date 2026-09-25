@@ -1349,17 +1349,19 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       return;
     }
     const { promise, resolve } = Promise.withResolvers<void>();
+    // setTimeout turns a longer delay into 1 ms
+    const delay = Math.min(seconds * 1000, 2 ** 31 - 1);
     const timer = setTimeout(() => {
       // timeout is reached, lets close and probably fail some queries
       this.#stopWaitingForQueries();
       resolve();
-    }, seconds * 1000);
+    }, delay);
     timer.unref(); // dont block the event loop
     const settle = () => {
       clearTimeout(timer);
       resolve();
     };
-    closing.then(settle, settle);
+    closing.$then(settle, settle);
     return promise;
   }
 

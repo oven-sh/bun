@@ -342,6 +342,8 @@ for (const [name, scheme, closedCode] of drivers) {
     [undefined, undefined],
     [{ timeout: 30 }, undefined],
     [undefined, { timeout: 30 }],
+    // more milliseconds than a timer can hold
+    [undefined, { timeout: 3_000_000 }],
   ];
   for (const [first, later] of joining) {
     test(`${name}: ${show(later)} settles with a pool that waits in ${show(first)}`, async () => {

@@ -395,6 +395,25 @@ function endNT(socket, callback, err) {
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
+// A write that waits for 'connect' or for the TLS handle still holds its chunk in _pendingData: the native handle never had it.
+function takeInFlightWrite(self) {
+  const callback = self[kwriteCallback];
+  if (!callback || self._pendingData != null) return null;
+  self[kwriteCallback] = null;
+  return callback;
+}
+// uv_close() fails a queued write with UV_ECANCELED: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L464
+function cancelWriteNT(callback) {
+  callback(new ErrnoException(uv().UV_ECANCELED, "write"));
+}
+// The cancel follows the 'error' tick that callback(err) queues. A destroy(err, cb) callback that throws must not lose it.
+function finishDestroy(callback, err, canceledWrite) {
+  try {
+    callback(err);
+  } finally {
+    if (canceledWrite && err) process.nextTick(cancelWriteNT, canceledWrite);
+  }
+}
 // Shared-fd TLS pair teardown: mirrors node's close ordering, where the
 // close-callbacks phase runs after the check phase (lib/net.js close path in
 // node v26.3.0), so destroy()-time setImmediates still see the pair alive.
@@ -2357,6 +2376,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+  // Taken before anything closes the handle: the native close handler fails a write it still finds with ERR_SOCKET_CLOSED.
+  const canceledWrite = takeInFlightWrite(this);
+  // Node: after 'error', before 'close'. With no error it goes first, so the stream is errored before the EOF that the native close handler pushes can emit 'end'.
+  if (canceledWrite && !err) process.nextTick(cancelWriteNT, canceledWrite);
+
   // Tear down a wrapped generic duplex with this socket: the native handle's
   // close only flushes close_notify and lets the wrapper drain; without an
   // explicit destroy here a late RST on the underlying transport can surface
@@ -2429,10 +2453,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._handle = null;
       this._sockname = null;
     }
-    callback(err);
+    finishDestroy(callback, err, canceledWrite);
     closeOwedRaw(this, upgraded);
   } else {
-    callback(err);
+    finishDestroy(callback, err, canceledWrite);
     closeOwedRaw(this, upgraded);
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
@@ -2958,6 +2982,9 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     this._pendingData = chunk;
     this._pendingEncoding = encoding;
     function onClose() {
+      // A wrapped socket opens without 'connect', so this listener outlives the wait and the teardown may have settled the write.
+      if (this[kwriteCallback] !== callback) return;
+      this[kwriteCallback] = null;
       callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION());
     }
     this.once("connect", function connect() {

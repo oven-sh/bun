@@ -874,7 +874,7 @@ describe("lex shell", () => {
     ],
     [
       "backslash CRLF inside a variable name joins the name",
-      "echo $FOO\\\r\nls \"$\\\r\nFOO\" $1\\\r\n2",
+      'echo $FOO\\\r\nls "$\\\r\nFOO" $1\\\r\n2',
       [
         { Text: "echo" },
         { Delimit: {} },

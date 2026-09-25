@@ -2756,7 +2756,8 @@ pub struct RuntimeHooks {
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
     /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
-    pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
+    /// `judge_rejections`: the turn ends with the unhandled-rejection pass.
+    pub auto_tick: unsafe fn(vm: *mut VirtualMachine, judge_rejections: bool),
     /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
     /// the uSockets loop while it has active handles.
     /// Separate slot because the body skips `runImminentGCTimer` /
@@ -3377,12 +3378,20 @@ impl VirtualMachine {
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
     pub fn auto_tick(&mut self) {
+        self.auto_tick_judging(true);
+    }
+
+    /// [`auto_tick`](Self::auto_tick). `judge_rejections`: the turn ends with the unhandled-rejection pass.
+    #[inline]
+    pub(crate) fn auto_tick_judging(&mut self, judge_rejections: bool) {
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `self` is the live per-thread VM.
-            unsafe { (hooks.auto_tick)(self) };
-        } else {
+            unsafe { (hooks.auto_tick)(self, judge_rejections) };
+        } else if judge_rejections {
             // No high tier (unit tests) — fall back to a non-blocking tick.
             self.event_loop_mut().tick();
+        } else {
+            self.event_loop_mut().tick_leaving_rejections();
         }
     }
 

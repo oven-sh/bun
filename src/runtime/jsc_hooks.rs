@@ -899,7 +899,7 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
-unsafe fn auto_tick(vm: *mut VirtualMachine) {
+unsafe fn auto_tick(vm: *mut VirtualMachine, judge_rejections: bool) {
     // Note: reshaped for borrowck — `EventLoop` is a value field of
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
@@ -965,8 +965,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // Still run the post-poll hooks.
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
-        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-        let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
+        if judge_rejections {
+            // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+            let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
+        }
         return;
     }
 
@@ -1053,8 +1055,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
-    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-    let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
+    if judge_rejections {
+        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+        let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
+    }
 }
 
 /// `eventLoop().autoTickActive()`. Same shape as

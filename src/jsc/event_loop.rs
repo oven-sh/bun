@@ -775,15 +775,29 @@ impl EventLoop {
     }
 
     pub fn tick(&mut self) {
+        self.tick_judging::<true>();
+    }
+
+    /// [`tick`](Self::tick) without the unhandled-rejection passes: the caller runs them.
+    pub(crate) fn tick_leaving_rejections(&mut self) {
+        self.tick_judging::<false>();
+    }
+
+    #[inline(always)]
+    fn tick_judging<const JUDGE_REJECTIONS: bool>(&mut self) {
         jsc::mark_binding();
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
         // `Err(Stopped)`: a fold or checkpoint met the VM's termination; the turn is over.
-        let _ = self.tick_turn(&mut scope);
+        let _ = self.tick_turn::<JUDGE_REJECTIONS>(&mut scope);
         self.entered_event_loop_count -= 1;
     }
 
-    fn tick_turn(&mut self, scope: &mut crate::TopExceptionScope) -> Result<(), Stopped> {
+    #[inline(always)]
+    fn tick_turn<const JUDGE_REJECTIONS: bool>(
+        &mut self,
+        scope: &mut crate::TopExceptionScope,
+    ) -> Result<(), Stopped> {
         let ctx = self.vm();
         self.tick_concurrent();
         self.process_gc_timer();
@@ -804,9 +818,11 @@ impl EventLoop {
                 }
                 refills += 1;
                 self.tick_concurrent();
-                self.global_ref()
-                    .handle_rejected_promises()
-                    .map_err(|_| Stopped)?;
+                if JUDGE_REJECTIONS {
+                    self.global_ref()
+                        .handle_rejected_promises()
+                        .map_err(|_| Stopped)?;
+                }
             }
             self.drain_microtasks_with_global(global, global_vm)?;
             if scope.has_exception() {
@@ -834,6 +850,9 @@ impl EventLoop {
             self.tick_concurrent();
         }
 
+        if !JUDGE_REJECTIONS {
+            return Ok(());
+        }
         self.global_ref()
             .handle_rejected_promises()
             .map_err(|_| Stopped)

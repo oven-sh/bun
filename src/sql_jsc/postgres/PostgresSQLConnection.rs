@@ -1909,14 +1909,10 @@ impl PostgresSQLConnection {
 
     /// Pop the requests at the head of the queue that have settled.
     fn discard_finished_requests(&self) {
-        // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
-        // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
-        while let Some(result) = self.current() {
-            // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
-            // so we do the cleanup here
-            match result.status.get() {
-                QueryStatus::Success | QueryStatus::Fail => self.discard_request(&result),
-                _ => break, // truly current item
+        while let Some(request) = self.current() {
+            match request.status.get() {
+                QueryStatus::Success | QueryStatus::Fail => self.discard_request(&request),
+                _ => break,
             }
         }
     }

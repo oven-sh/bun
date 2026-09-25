@@ -1,44 +1,11 @@
 // Seeded differential fuzz of Bun.JSONC.parse against JSON.parse; replay a
 // failure with BUN_JSON_FUZZ_SEED=<seed> (and BUN_JSON_FUZZ_ITERS for a soak).
+import { envIters, envSeed, Rng } from "_util/fuzz";
 import { expect, test } from "bun:test";
 
-const DEFAULT_SEED = 0x6a736f6e;
-const SEED = process.env.BUN_JSON_FUZZ_SEED !== undefined ? Number(process.env.BUN_JSON_FUZZ_SEED) >>> 0 : DEFAULT_SEED;
-
-function envIters(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined) return fallback;
-  const n = Number(raw) | 0;
-  return n > 0 ? n : fallback;
-}
-
+const SEED = envSeed("BUN_JSON_FUZZ_SEED", 0x6a736f6e);
 const DOC_ITERS = envIters("BUN_JSON_FUZZ_ITERS", 400);
 const MUTATION_ITERS = envIters("BUN_JSON_FUZZ_ITERS", 1500);
-
-class Rng {
-  private a: number;
-  constructor(seed: number) {
-    this.a = seed >>> 0;
-  }
-  next(): number {
-    this.a = (this.a + 0x6d2b79f5) | 0;
-    let t = Math.imul(this.a ^ (this.a >>> 15), 1 | this.a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  }
-  int(n: number): number {
-    return Math.floor(this.next() * n);
-  }
-  range(lo: number, hi: number): number {
-    return lo + this.int(hi - lo + 1);
-  }
-  chance(p: number): boolean {
-    return this.next() < p;
-  }
-  pick<T>(arr: readonly T[]): T {
-    return arr[this.int(arr.length)];
-  }
-}
 
 const PLAIN_STRING_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-./:'<>!@#$%^&*()=~|;?";
 const STRING_ESCAPES = ["\\n", "\\t", "\\r", "\\b", "\\f", "\\\\", '\\"', "\\/", "\\u0000", "\\u001f", "\\uffff"];

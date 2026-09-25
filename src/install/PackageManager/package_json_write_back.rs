@@ -58,9 +58,8 @@ fn root_target() -> WorkspaceTarget {
     }
 }
 
-/// Phase 1 (before bun.lock is cleaned and saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them.
+/// Phase 1 (before bun.lock is cleaned and saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them. Returns whether the root's `overrides` and `catalogs` were copied: rows resolved under the previous values may not satisfy the new ones.
 #[inline]
-/// Returns whether the root's `overrides` and `catalogs` were copied: rows resolved under the previous values may not satisfy the new ones.
 pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<bool> {
     if manager.pending_filtered_write.is_none()
         && manager.update_target_workspaces.is_none()

@@ -10,7 +10,7 @@
 // cancelled before it was dispatched never settled at all.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import { isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
+import { expiredTls, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -50,10 +50,20 @@ const SSL_REQUEST = Buffer.from([0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f]);
  *
  * With `tls` every connection has to start with an SSLRequest. The backend answers
  * `S` and reads everything else through TLS, and `plaintext` keeps what each
- * connection sent in the clear. With `answersCancel` it answers a CancelRequest
- * like the start of a session and does not hang up, which no real backend does.
+ * connection sent in the clear.
+ *
+ * `cancelConnection` makes the second connection meet a server no real backend is:
+ * one that answers a CancelRequest like the start of a session and does not hang
+ * up, one that declines TLS, or one whose certificate the session's CA did not sign.
  */
-async function backend(options: { tls?: boolean; host?: string; socketPath?: string; answersCancel?: boolean } = {}) {
+async function backend(
+  options: {
+    tls?: boolean;
+    host?: string;
+    socketPath?: string;
+    cancelConnection?: "answers" | "declines-tls" | "other-certificate";
+  } = {},
+) {
   const host = options.host ?? "127.0.0.1";
   const plaintext: Buffer[] = [];
   const cancelPacket = Promise.withResolvers<Buffer>();
@@ -65,6 +75,7 @@ async function backend(options: { tls?: boolean; host?: string; socketPath?: str
   let connections = 0;
   let queryUnits = 0;
   let autoReply = true;
+  let cancelPacketSeen = false;
 
   // Answer a Parse+Describe+Bind+Execute with one text row: ParseComplete and
   // the two Describe replies, then the Execute replies.
@@ -92,10 +103,19 @@ async function backend(options: { tls?: boolean; host?: string; socketPath?: str
     const connection = ++connections;
     if (!options.tls) return serve(connection, rawSocket);
 
+    const cancel = connection > 1 ? options.cancelConnection : undefined;
+    if (connection > 1) rawSocket.on("close", () => cancelConnectionClosed.resolve());
     let buffered = Buffer.alloc(0);
     const onPlaintext = (data: Buffer) => {
+      const answered = buffered.length >= SSL_REQUEST.length;
       buffered = Buffer.concat([buffered, data]);
       if (buffered.length < SSL_REQUEST.length) return;
+      if (cancel === "declines-tls") {
+        // Keep everything the client sends in the clear after it was told N.
+        plaintext[connection - 1] = buffered;
+        if (!answered) rawSocket.write("N");
+        return;
+      }
       plaintext[connection - 1] = buffered.subarray(0, SSL_REQUEST.length);
       // What follows the SSLRequest is the ClientHello: hand it to the TLS engine.
       rawSocket.removeListener("data", onPlaintext);
@@ -103,7 +123,8 @@ async function backend(options: { tls?: boolean; host?: string; socketPath?: str
       const leftover = buffered.subarray(SSL_REQUEST.length);
       if (leftover.length) rawSocket.unshift(leftover);
       rawSocket.write("S");
-      const secure = new tls.TLSSocket(rawSocket, { isServer: true, ...tlsCert });
+      const certificate = cancel === "other-certificate" ? expiredTls : tlsCert;
+      const secure = new tls.TLSSocket(rawSocket, { isServer: true, ...certificate });
       secure.on("error", () => {});
       serve(connection, secure);
     };
@@ -117,9 +138,10 @@ async function backend(options: { tls?: boolean; host?: string; socketPath?: str
       socket.on("data", data => {
         buffered = Buffer.concat([buffered, data]);
         if (buffered.length < 16) return;
+        cancelPacketSeen = true;
         cancelPacket.resolve(buffered);
         // A real backend acts on the CancelRequest and hangs up.
-        if (!options.answersCancel) return void socket.end();
+        if (options.cancelConnection !== "answers") return void socket.end();
         socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
       });
       return;
@@ -155,8 +177,11 @@ async function backend(options: { tls?: boolean; host?: string; socketPath?: str
     /** What each connection sent before TLS, by connection order. */
     plaintext,
     cancelPacket: cancelPacket.promise,
-    /** Resolves once the connection that carried the CancelRequest is closed. */
+    /** Resolves once the second connection is closed. */
     cancelConnectionClosed: cancelConnectionClosed.promise,
+    get cancelPacketSeen() {
+      return cancelPacketSeen;
+    },
     /** Resolves once the client has closed the connection its queries run on. */
     queryConnectionClosed: queryConnectionClosed.promise,
     get connections() {
@@ -269,6 +294,59 @@ test("cancel() on a TLS session sends the CancelRequest through TLS", async () =
   expect((await settled).errno).toBe("57014");
 });
 
+// A session that is encrypted must not lose its cancel key to a cancel connection
+// that is not. `prefer` counts once the session has negotiated TLS.
+test.each(["prefer", "require"])(
+  "cancel() on a TLS session (sslmode=%s) sends nothing when TLS is declined",
+  async sslmode => {
+    await using server = await backend({ tls: true, cancelConnection: "declines-tls" });
+    server.autoReply = false;
+    await using sql = new SQL({ url: `${server.url}?sslmode=${sslmode}`, max: 1, connectionTimeout: 5 });
+
+    const query = sql`select pg_sleep(10)`.execute();
+    const settled = query.then(
+      rows => rows,
+      err => err,
+    );
+    await server.untilQueryUnits(1);
+    query.cancel();
+
+    await server.cancelConnectionClosed;
+    // The SSLRequest, then nothing: no CancelRequest after the N.
+    expect(server.plaintext[1]).toEqual(SSL_REQUEST);
+
+    server.reply(
+      pgRowDescription([{ name: "v", typeOid: TEXT_OID }]),
+      pgCommandComplete("SELECT 0"),
+      pgReadyForQuery(),
+    );
+    expect(await settled).toEqual([]);
+  },
+);
+
+test("cancel() on a verify-full session sends nothing to a server it cannot verify", async () => {
+  await using server = await backend({ tls: true, cancelConnection: "other-certificate" });
+  server.autoReply = false;
+  await using sql = new SQL({ url: server.url, tls: { ca: tlsCert.cert }, max: 1, connectionTimeout: 5 });
+
+  const query = sql`select pg_sleep(10)`.execute();
+  const settled = query.then(
+    rows => rows,
+    err => err,
+  );
+  await server.untilQueryUnits(1);
+  query.cancel();
+
+  await server.cancelConnectionClosed;
+  expect({ plaintext: server.plaintext[1], cancelPacketSeen: server.cancelPacketSeen }).toEqual({
+    plaintext: SSL_REQUEST,
+    cancelPacketSeen: false,
+  });
+
+  server.reply(pgRowDescription([{ name: "v", typeOid: TEXT_OID }]), pgCommandComplete("SELECT 0"), pgReadyForQuery());
+  expect(await settled).toEqual([]);
+});
+
 // URL parsing keeps the brackets of an IPv6 literal in the hostname. The session's
 // connect strips them, so the cancel connection has to as well.
 test.skipIf(!isIPv6())("cancel() reaches a server that is addressed by an IPv6 literal", async () => {
@@ -320,7 +398,7 @@ test.skipIf(isWindows)("cancel() reaches a server on a unix socket", async () =>
 // The cancel connection carries one packet. It must not turn into a session, with
 // no timeout and no owner, because a server answers it.
 test("the cancel connection closes when the server answers it", async () => {
-  await using server = await backend({ answersCancel: true });
+  await using server = await backend({ cancelConnection: "answers" });
   server.autoReply = false;
   await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
 

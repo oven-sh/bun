@@ -115,7 +115,7 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
 
     // marker(1) is running, so the queries behind it wait in the queue. The
     // first oversized text goes out as COM_QUERY, the second one as
-    // COM_STMT_PREPARE, which reports the failure with no code.
+    // COM_STMT_PREPARE, which reports the failure with no code (#43993).
     expect(
       await settle(sql, [
         marker(1),

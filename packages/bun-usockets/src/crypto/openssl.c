@@ -1655,6 +1655,11 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_explicit);
     SSL_set_connect_state(ssl);
     if (sni) SSL_set_tlsext_host_name(ssl, sni);
+    /* The CTX's session id context partitions a server's sessions by context
+     * configuration (create_ssl_context_with_digest). A client fails its
+     * handshake when a resumed session's id differs from its own, so clients
+     * keep none: a `session` stays usable under any client options. */
+    SSL_set_session_id_context(ssl, NULL, 0);
     /* The CTX is mode-neutral and may have verify_mode == NONE (no
      * ca/requestCert in options). Clients must always run verification so
      * verify_error is populated for the JS rejectUnauthorized check — but
@@ -2955,7 +2960,15 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
  * per-serverName entry's requestCert/rejectUnauthorized are added on top of
  * it (the connection's inherited requirement is kept). A context without a
  * recorded policy (node:tls SecureContext, whose policy is server-level)
- * leaves the connection's verify mode untouched. */
+ * leaves the connection's verify mode untouched.
+ *
+ * SSL_set_SSL_CTX also copies the context's session id context, which for
+ * contexts built in Rust is the digest of their options
+ * (create_ssl_context_with_digest). BoringSSL checks it after this switch, so
+ * a session issued under other options is not resumed and the client is
+ * authenticated again, against this context's CA. That refusal is deliberate
+ * (RFC 6066 section 3; openssl/ssl.h: "partition session caches between SNI
+ * hosts") and must not be relaxed for parity with another runtime. */
 static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
   SSL_set_SSL_CTX(ssl, ctx);
   if (us_ctx_sni_policy_ex_idx < 0) return;
@@ -3080,12 +3093,11 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
 
   /* The dynamic resolver (the user's SNICallback) runs FIRST, matching Node
    * where a user-provided SNICallback replaces the default SNI handling
-   * entirely - including for the bind hostname, which Listener.rs always
-   * registers in the static tree (so tree-first would shadow the callback
-   * for the most-requested name and break per-connection cert rotation).
-   * The static tree (bind hostname + addContext entries) is the fallback
-   * when the resolver selects nothing, which is also the no-user-callback
-   * path: the JS dispatch returns undefined immediately in that case. */
+   * entirely (tree-first would shadow the callback for every name that also
+   * has an addContext entry). The static tree (addContext entries) is the
+   * fallback when the resolver selects nothing, which is also the
+   * no-user-callback path: the JS dispatch returns undefined immediately in
+   * that case. */
 
   void *saved_loop_state[US_SSL_LOOP_STATE_SLOTS];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
@@ -3113,8 +3125,8 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     return ssl_select_cert_success;
   }
 
-  /* No dynamic selection: fall back to the static SNI tree (the bind
-   * hostname and addContext() entries). An adopted socket has no tree. */
+  /* No dynamic selection: fall back to the static SNI tree (the
+   * addContext() entries). An adopted socket has no tree. */
   if (ls) {
     struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
     if (node) {
@@ -3136,9 +3148,8 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
     /* A dynamic resolver (user SNICallback) exists: us_select_cert_cb already
      * ran it - and the static-tree fallback - at the earlier
      * select-certificate stage. Consulting the tree again here would
-     * OVERWRITE the resolver's per-connection selection with the tree entry
-     * (the bind hostname is always registered there), undoing the
-     * SNICallback-takes-precedence contract. */
+     * OVERWRITE the resolver's per-connection selection with the tree entry,
+     * undoing the SNICallback-takes-precedence contract. */
     return SSL_TLSEXT_ERR_OK;
   }
   const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
@@ -3210,6 +3221,23 @@ struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket
   if (!node || !node->ctx) return NULL;
   SSL_CTX_up_ref(node->ctx);
   return node->ctx;
+}
+
+void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
+                                          SSL_CTX *ctx) {
+  if (ls->ssl_ctx == ctx) return;
+  SSL_CTX_up_ref(ctx);
+  /* Carry over the listener-level callbacks registered on the old default. */
+  if (ls->sni) {
+    SSL_CTX_set_tlsext_servername_callback(ctx, sni_cb);
+  }
+  if (ls->on_server_name) {
+    SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+  }
+  if (ls->ssl_ctx) {
+    us_internal_ssl_ctx_unref(ls->ssl_ctx);
+  }
+  ls->ssl_ctx = ctx;
 }
 
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,

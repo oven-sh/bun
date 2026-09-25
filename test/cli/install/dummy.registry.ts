@@ -27,15 +27,14 @@
  * });
  * ```
  */
-import { file, Server } from "bun";
-import { tmpdirSync } from "harness";
-
-let expect: (typeof import("bun:test"))["expect"];
+import { file } from "bun";
+import { tempDir, tmpdirSync, toTOMLString } from "harness";
 
 import { writeFile } from "fs/promises";
 import { basename, join } from "path";
 
 type Handler = (req: Request) => Response | Promise<Response>;
+type ExpectToBe = (value: unknown) => { toBe(expected: unknown): void };
 type Pkg = {
   name: string;
   version: string;
@@ -43,10 +42,18 @@ type Pkg = {
     tarball: string;
   };
 };
+type DummyRegistryVersion = Record<string, unknown> & {
+  as?: string;
+};
+type DummyRegistryInfo = Record<string, DummyRegistryVersion | string | undefined> & {
+  latest?: string;
+};
 
-let server: Server;
+let expect: ExpectToBe;
+
+let server: ReturnType<typeof Bun.serve>;
 export let root_url: string;
-export let check_npm_auth_type = { check: true };
+export const check_npm_auth_type = { check: true };
 
 // ============================================================================
 // Concurrent Test Context Support
@@ -63,7 +70,7 @@ export interface TestContext {
   /** Unique identifier for this test context (e.g., "test-1") */
   id: string;
   /** The package directory for this test (a unique temp directory) */
-  package_dir: string;
+  package_dir: ReturnType<typeof tempDir>;
   /** Number of requests made to this test's handler */
   requested: number;
   /** The handler for this test's registry requests */
@@ -110,7 +117,7 @@ function extractTestPrefix(url: string): { prefix: string; remainingPath: string
  */
 export async function createTestContext(opts?: { linker: "hoisted" | "isolated" }): Promise<TestContext> {
   const id = `test-${++testIdCounter}`;
-  const pkg_dir = tmpdirSync();
+  const pkg_dir = tempDir("dummy-registry", {});
 
   const ctx: TestContext = {
     id,
@@ -125,7 +132,7 @@ export async function createTestContext(opts?: { linker: "hoisted" | "isolated" 
   // Create bunfig.toml with the prefixed registry URL
   await writeFile(
     join(pkg_dir, "bunfig.toml"),
-    Bun.TOML.stringify({
+    toTOMLString({
       install: {
         cache: false,
         registry: ctx.registry_url,
@@ -144,6 +151,7 @@ export async function createTestContext(opts?: { linker: "hoisted" | "isolated" 
  */
 export function destroyTestContext(ctx: TestContext): void {
   testContexts.delete(ctx.id);
+  ctx.package_dir[Symbol.dispose]();
 }
 
 /**
@@ -154,6 +162,32 @@ export function setContextHandler(ctx: TestContext, newHandler: Handler): void {
   ctx.handler = newHandler;
 }
 
+function buildVersions(
+  info: DummyRegistryInfo,
+  name: string,
+  tarballPrefix: string,
+): { versions: Record<string, Pkg>; latestVersion: string | undefined } {
+  const versions: Record<string, Pkg> = {};
+  // Without an explicit `info.latest`, `latest` resolves to the last valid
+  // version key in object insertion order, not the highest version.
+  let latestVersion: string | undefined;
+  for (const version in info) {
+    if (!/^[0-9]/.test(version)) continue;
+    const metadata = info[version];
+    if (!metadata || typeof metadata !== "object") continue;
+    latestVersion = version;
+    versions[version] = {
+      name,
+      version,
+      dist: {
+        tarball: `${tarballPrefix}-${metadata.as ?? version}.tgz`,
+      },
+      ...metadata,
+    };
+  }
+  return { versions, latestVersion };
+}
+
 /**
  * Creates a dummy registry handler for a specific test context.
  * This is the concurrent-safe version that uses the context's registry_url for tarballs.
@@ -162,14 +196,16 @@ export function setContextHandler(ctx: TestContext, newHandler: Handler): void {
  * @param urls - Array to collect requested URLs (passed by reference)
  * @param info - Package version info (default: { "0.0.2": {} })
  * @param numberOfTimesTo500PerURL - Number of times to return 500 before success (for retry testing)
+ * @param tgzDir - Directory containing package tarballs (defaults to this file's directory)
  */
 export function dummyRegistryForContext(
   ctx: TestContext,
   urls: string[],
-  info: any = { "0.0.2": {} },
+  info: DummyRegistryInfo = { "0.0.2": {} },
   numberOfTimesTo500PerURL = 0,
+  tgzDir?: string,
 ): Handler {
-  let retryCountsByURL = new Map<string, number>();
+  const retryCountsByURL = new Map<string, number>();
   const _handler: Handler = async request => {
     urls.push(request.url);
     const url = request.url.replaceAll("%2f", "/");
@@ -177,7 +213,7 @@ export function dummyRegistryForContext(
     let status = 200;
 
     if (numberOfTimesTo500PerURL > 0) {
-      let currentCount = retryCountsByURL.get(request.url);
+      const currentCount = retryCountsByURL.get(request.url);
       if (currentCount === undefined) {
         retryCountsByURL.set(request.url, numberOfTimesTo500PerURL);
         status = 500;
@@ -189,7 +225,7 @@ export function dummyRegistryForContext(
 
     expect(request.method).toBe("GET");
     if (url.endsWith(".tgz")) {
-      return new Response(file(join(import.meta.dir, basename(url).toLowerCase())), { status });
+      return new Response(file(join(tgzDir ?? import.meta.dir, basename(url).toLowerCase())), { status });
     }
     expect(request.headers.get("accept")).toBe(
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
@@ -204,26 +240,14 @@ export function dummyRegistryForContext(
     const pathAfterPrefix = urlObj.pathname.replace(`/${ctx.id}/`, "/");
     const name = pathAfterPrefix.slice(1); // Remove leading slash
 
-    const versions: Record<string, Pkg> = {};
-    let version;
-    for (version in info) {
-      if (!/^[0-9]/.test(version)) continue;
-      versions[version] = {
-        name,
-        version,
-        dist: {
-          tarball: `${ctx.registry_url}${name}-${info[version].as ?? version}.tgz`,
-        },
-        ...info[version],
-      };
-    }
+    const { versions, latestVersion } = buildVersions(info, name, `${ctx.registry_url}${name}`);
 
     return new Response(
       JSON.stringify({
         name,
         versions,
         "dist-tags": {
-          latest: info.latest ?? version,
+          latest: info.latest ?? latestVersion,
         },
       }),
       { status },
@@ -241,11 +265,11 @@ export function dummyRegistryForContext(
  */
 export function dummyRegistry(
   urls: string[],
-  info: any = { "0.0.2": {} },
+  info: DummyRegistryInfo = { "0.0.2": {} },
   numberOfTimesTo500PerURL = 0,
   tgzDir?: string,
 ): Handler {
-  let retryCountsByURL = new Map<string, number>();
+  const retryCountsByURL = new Map<string, number>();
   const _handler: Handler = async request => {
     urls.push(request.url);
     const url = request.url.replaceAll("%2f", "/");
@@ -253,7 +277,7 @@ export function dummyRegistry(
     let status = 200;
 
     if (numberOfTimesTo500PerURL > 0) {
-      let currentCount = retryCountsByURL.get(request.url);
+      const currentCount = retryCountsByURL.get(request.url);
       if (currentCount === undefined) {
         retryCountsByURL.set(request.url, numberOfTimesTo500PerURL);
         status = 500;
@@ -277,26 +301,14 @@ export function dummyRegistry(
     expect(await request.text()).toBe("");
 
     const name = url.slice(url.indexOf("/", root_url.length) + 1);
-    const versions: Record<string, Pkg> = {};
-    let version;
-    for (version in info) {
-      if (!/^[0-9]/.test(version)) continue;
-      versions[version] = {
-        name,
-        version,
-        dist: {
-          tarball: `${url}-${info[version].as ?? version}.tgz`,
-        },
-        ...info[version],
-      };
-    }
+    const { versions, latestVersion } = buildVersions(info, name, url);
 
     return new Response(
       JSON.stringify({
         name,
         versions,
         "dist-tags": {
-          latest: info.latest ?? version,
+          latest: info.latest ?? latestVersion,
         },
       }),
       { status },
@@ -309,7 +321,7 @@ export function dummyRegistry(
 // Legacy API (for backward compatibility with non-concurrent tests)
 // ============================================================================
 
-/** @deprecated Use createTestContext() for concurrent tests */
+/** @deprecated Use {@linkcode createTestContext()} for concurrent tests */
 export let package_dir: string;
 
 /** @deprecated Use ctx.requested for concurrent tests */
@@ -328,7 +340,7 @@ export function read(path: string) {
   return Bun.file(join(package_dir, path));
 }
 
-/** @deprecated Use setContextHandler() for concurrent tests */
+/** @deprecated Use {@linkcode setContextHandler()} for concurrent tests */
 export function setHandler(newHandler: Handler) {
   legacyHandler = newHandler;
 }
@@ -376,14 +388,14 @@ let packageDirGetter: () => string = () => {
   return tmpdirSync();
 };
 
-/** @deprecated Use createTestContext() for concurrent tests */
+/** @deprecated Use {@linkcode createTestContext()} for concurrent tests */
 export async function dummyBeforeEach(opts?: { linker: "hoisted" | "isolated" }) {
   resetHandler();
   requested = 0;
   package_dir = packageDirGetter();
   await writeFile(
     join(package_dir, "bunfig.toml"),
-    Bun.TOML.stringify({
+    toTOMLString({
       install: {
         cache: false,
         registry: `http://localhost:${server.port}/`,
@@ -400,7 +412,6 @@ export async function dummyAfterEach() {
 }
 
 if (Bun.main === import.meta.path) {
-  // @ts-expect-error
   expect = value => {
     return {
       toBe(expected) {
@@ -414,7 +425,7 @@ if (Bun.main === import.meta.path) {
     packageDirGetter = () => process.env.PACKAGE_DIR_TO_USE!;
   }
 
-  await dummyBeforeAll();
+  dummyBeforeAll();
   await dummyBeforeEach();
   setHandler(dummyRegistry([]));
   console.log("Running dummy registry!\n\n URL: ", root_url!, "\n", "DIR: ", package_dir!);

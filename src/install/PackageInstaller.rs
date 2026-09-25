@@ -369,7 +369,7 @@ fn abs_node_modules_path(
 /// anything that could escape `node_modules`: empty names, `.`/`..`
 /// components, absolute paths, drive letters, backslashes, NUL bytes, and any
 /// separator other than the single `/` in a scoped name (`@scope/name`).
-pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
+pub fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     if alias.is_empty() || alias.len() >= MAX_PATH_BYTES || strings::contains_any(alias, b"\\:\0") {
         return false;
     }
@@ -565,7 +565,6 @@ impl<'a> PackageInstaller<'a> {
                 .slice(string_buf);
             let package_name_ = strings::StringOrTinyString::init(alias);
             let mut target_package_name = package_name_;
-            let mut can_retry_without_native_binlink_optimization = false;
             let mut target_node_modules_path_opt: Option<AbsPath> = None;
             let mut defer_this_bin = false;
             // `defer if (target_node_modules_path_opt) |*path| path.deinit()` — Option<AbsPath> drops.
@@ -630,7 +629,6 @@ impl<'a> PackageInstaller<'a> {
                                     pkg_names[replacement_pkg_id as usize].slice(string_buf);
                                 target_package_name =
                                     strings::StringOrTinyString::init(replacement_name);
-                                can_retry_without_native_binlink_optimization = true;
                             }
                         }
                         PostinstallOptimizer::Ignore => {}
@@ -691,10 +689,7 @@ impl<'a> PackageInstaller<'a> {
 
                 bin_linker.link(global);
 
-                if can_retry_without_native_binlink_optimization
-                    && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
-                {
-                    can_retry_without_native_binlink_optimization = false;
+                if bin_linker.should_retry_without_native_binlink() {
                     if PackageManager::verbose_install() {
                         bun_core::pretty_errorln!(
                             "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",

@@ -1,6 +1,6 @@
-use bun_collections::DynamicBitSet;
 use bun_collections::bit_set::Range as BitRange;
-use bun_core::{Global, strings};
+use bun_collections::{DynamicBitSet, index_sort};
+use bun_core::{Global, Output, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_sys::{Fd, File};
@@ -58,9 +58,14 @@ fn root_target() -> WorkspaceTarget {
     }
 }
 
-/// Phase 1 (before bun.lock is cleaned and saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them. Returns whether the root's `overrides` and `catalogs` were copied: rows resolved under the previous values may not satisfy the new ones.
+/// Override names the re-derived root map no longer has a rule for: a `$name` whose referent the members now declare differently.
+pub(crate) type DroppedOverrides = Vec<PackageNameHash>;
+
+/// Phase 1 (before bun.lock is cleaned and saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them. `Some` when the root's `overrides` and `catalogs` were copied: rows resolved under the previous values may not satisfy the new ones.
 #[inline]
-pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<bool> {
+pub(crate) fn edit_after_resolve(
+    manager: &mut PackageManager,
+) -> crate::Result<Option<DroppedOverrides>> {
     if manager.pending_filtered_write.is_none()
         && manager.update_target_workspaces.is_none()
         && !manager
@@ -68,13 +73,15 @@ pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<
             .iter()
             .any(|e| e.received_requests)
     {
-        return Ok(false);
+        return Ok(None);
     }
     edit_after_resolve_slow(manager)
 }
 
 #[inline(never)]
-fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<bool> {
+fn edit_after_resolve_slow(
+    manager: &mut PackageManager,
+) -> crate::Result<Option<DroppedOverrides>> {
     let mut edited: Vec<EditedPackageJson> = core::mem::take(&mut manager.edited_package_jsons);
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
     let exact = manager.options.enable.exact_versions();
@@ -274,11 +281,11 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
     ids
 }
 
-/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change. Returns whether the root maps were copied.
+/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change. `Some` when the root maps were copied.
 fn sync_lockfile(
     manager: &mut PackageManager,
     edited: &[EditedPackageJson],
-) -> crate::Result<bool> {
+) -> crate::Result<Option<DroppedOverrides>> {
     let mut scratch = super::workspace_manifests::ScratchManifests::new();
     scratch.parse_root(manager)?;
     let mut root_pkg = Some(core::mem::take(&mut scratch.root));
@@ -291,7 +298,9 @@ fn sync_lockfile(
         parsed.push((i, scratch.parse_member(manager, &e.target)?));
     }
     let super::workspace_manifests::ScratchManifests {
-        lockfile: scratch, ..
+        lockfile: scratch,
+        log: scratch_log,
+        ..
     } = scratch;
 
     let target_ids = target_package_ids(&manager.lockfile, edited);
@@ -369,17 +378,31 @@ fn sync_lockfile(
         || scratch.catalogs.has_any()
         || !manager.lockfile.overrides.is_empty()
         || manager.lockfile.catalogs.has_any();
-    if sync_maps {
-        let known = &mut manager.known_npm_aliases;
-        let (mut builder, lf) = manager.lockfile.string_builder_split();
-        scratch.overrides.count(sbuf, &mut builder);
-        scratch.catalogs.count(sbuf, &mut builder);
-        builder.allocate()?;
-        *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
-        *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
-        builder.clamp();
+    if !sync_maps {
+        return Ok(None);
     }
-    Ok(sync_maps)
+    let mut dropped: DroppedOverrides = Vec::new();
+    manager
+        .lockfile
+        .overrides
+        .append_overridden_name_hashes(&mut dropped);
+    dropped.retain(|name_hash| !scratch.overrides.has_rule_for_name(*name_hash));
+    index_sort::sort_slice_unstable_by(&mut dropped, |a, b| a.cmp(b));
+    dropped.dedup();
+    if !dropped.is_empty() {
+        // The re-parse says why the rule went away.
+        scratch_log.print(core::ptr::from_mut(Output::error_writer()))?;
+    }
+
+    let known = &mut manager.known_npm_aliases;
+    let (mut builder, lf) = manager.lockfile.string_builder_split();
+    scratch.overrides.count(sbuf, &mut builder);
+    scratch.catalogs.count(sbuf, &mut builder);
+    builder.allocate()?;
+    *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
+    *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
+    builder.clamp();
+    Ok(Some(dropped))
 }
 
 fn same_row(scratch: &Dependency, row: &Dependency) -> bool {

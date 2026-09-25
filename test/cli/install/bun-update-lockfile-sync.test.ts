@@ -905,6 +905,30 @@ describe.concurrent("$ref overrides", () => {
     await runBunInstall(envFor(dir), dir, { frozenLockfile: true });
   });
 
+  // After the update the members disagree on the referent, so the rule is dropped with a warning, as the next `bun install` would do.
+  test("bun update <name> in one of two members that declare a root $name referent drops the rule", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const dir = await setup(
+      WORKSPACES(
+        { overrides },
+        {
+          pkg1: { dependencies: { "one-range-dep": "1.0.0", "dep-with-tags": "1.0.0" } },
+          pkg2: { dependencies: { "dep-with-tags": "1.0.0" } },
+        },
+      ),
+    );
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await writePkg(dir, member("pkg1", { dependencies: { "one-range-dep": "1.0.0", "dep-with-tags": "^1.0.0" } }), PKG1);
+    await reinstall(dir, member("pkg2", { dependencies: { "dep-with-tags": "^1.0.0" } }), PKG2);
+    const { stderr } = await tryRun(dir, PKG1, "update", "dep-with-tags");
+    expect(stderr).toContain('workspaces declare different versions of "dep-with-tags"');
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "one-range-dep": "1.0.0", "dep-with-tags": "^1.0.1" });
+    expect((await pkg(dir, PKG2)).dependencies).toStrictEqual({ "dep-with-tags": "^1.0.0" });
+    expect((await lock(dir)).overrides).toBeUndefined();
+    await runBunInstall(envFor(dir), dir, { frozenLockfile: true, allowWarnings: true });
+  });
+
   test("bun update <name> --latest keeps the rows of a $name override in sync", async () => {
     const overrides = { "no-deps": "$@types/no-deps" };
     const dir = await setup({

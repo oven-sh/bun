@@ -11,7 +11,7 @@ use bun_semver::String as SemverString;
 
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::Subcommand;
-use crate::dependency::{Behavior, DependencyExt as _, Tag as DependencyVersionTag};
+use crate::dependency::{self, Behavior, DependencyExt as _, Tag as DependencyVersionTag};
 use crate::lockfile::{self, Lockfile, reachable};
 use crate::resolution::Tag as ResolutionTag;
 use crate::update_transitive::{
@@ -1496,7 +1496,7 @@ fn enqueue_transitive(
     transitive.enqueue_tracked(manager)
 }
 
-/// Writes the resolved versions into the edited package.json entries and bun.lock's declared columns. A `$name` override or a catalog entry re-derived from a rewritten literal can differ from the value the rows resolved under, so the rows that value no longer covers resolve once more before the clean. Returns those rows paired with the package they resolved to before, for `redirect_moved_edges`, the plan and the security scanner.
+/// The package.json write-back, then the rows its re-derived root maps no longer cover resolve again; returns those rows with the package they left.
 fn write_back_package_jsons(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
@@ -1508,10 +1508,10 @@ fn write_back_package_jsons(
         }
     }
 
-    if !super::package_json_write_back::edit_after_resolve(manager)? {
+    let Some(dropped) = super::package_json_write_back::edit_after_resolve(manager)? else {
         return Ok(Vec::new());
-    }
-    let rows = rows_outside_synced_maps(&manager.lockfile, &manager.known_npm_aliases);
+    };
+    let rows = rows_outside_synced_maps(&manager.lockfile, &manager.known_npm_aliases, &dropped);
     bun_output::scoped_log!(
         PackageManager,
         "package.json write-back copied the root overrides and catalogs; {} rows resolve again",
@@ -1566,8 +1566,12 @@ fn write_back_package_jsons(
     Ok(moved)
 }
 
-/// Resolved rows of reached packages that an override or a catalog entry governs and whose package does not satisfy the value bun.lock now declares. Left alone, as in the resolver and in `enqueue_named_updates`: workspace edges, bundled rows and peer rows with a provider (they follow it through `redirect_moved_edges`), plain rows of a name that a known `npm:` alias redirects, and values of a kind that `satisfies_dependency_version` cannot compare (a dist-tag, a folder, a tarball). A peer row that is its target's only reason to exist (`plannable_peer_rows`) resolves again like a plain row.
-fn rows_outside_synced_maps(lockfile: &Lockfile, known_npm_aliases: &NpmAliasMap) -> Vec<usize> {
+/// Rows of reached packages whose package no longer satisfies the override or catalog value bun.lock declares, or their own range once their rule was `dropped`. A row keeps its resolution when the declared value already accepts it: `bun add <name>@<version> --catalog` pins rows inside the catalog range on purpose.
+fn rows_outside_synced_maps(
+    lockfile: &Lockfile,
+    known_npm_aliases: &NpmAliasMap,
+    dropped: &[PackageNameHash],
+) -> Vec<usize> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -1595,22 +1599,19 @@ fn rows_outside_synced_maps(lockfile: &Lockfile, known_npm_aliases: &NpmAliasMap
             {
                 continue;
             }
-            if dependency.version.tag == DependencyVersionTag::Npm
-                && !dependency.version.npm().is_alias
-                && known_npm_aliases.contains_key(&dependency.name_hash)
-            {
-                continue;
-            }
             if dependency.version.tag != DependencyVersionTag::Catalog
                 && !lockfile.overrides.has_rule_for_name(dependency.name_hash)
+                && dropped.binary_search(&dependency.name_hash).is_err()
             {
                 continue;
             }
-            let Some(version) = crate::dedupe::effective_version(
-                lockfile,
-                dependency_i as DependencyID,
-                dependency,
-            ) else {
+            // The resolver hands a plain row to a known `npm:` alias of its name before it looks at overrides.
+            let alias = known_npm_aliases
+                .get(&dependency.name_hash)
+                .filter(|aliased| follows_known_alias(dependency, aliased, buf));
+            let Some(version) = alias.cloned().or_else(|| {
+                crate::dedupe::effective_version(lockfile, dependency_i as DependencyID, dependency)
+            }) else {
                 continue;
             };
             if !matches!(
@@ -1639,7 +1640,32 @@ fn rows_outside_synced_maps(lockfile: &Lockfile, known_npm_aliases: &NpmAliasMap
     rows
 }
 
-/// Drops the row's resolution and queues it to resolve again; returns the package it resolved to. `enqueue_dependency_with_main` can grow `buffers.dependencies`, so the row is copied out first. With `as_plain` a peer row resolves through the plain path, like `update_transitive::reresolve`.
+/// `enqueue_dependency_with_main` follows the alias when the row's range touches an end of the alias range (`PackageManagerEnqueue.rs`).
+fn follows_known_alias(dependency: &Dependency, aliased: &dependency::Version, buf: &[u8]) -> bool {
+    if dependency.version.tag != DependencyVersionTag::Npm
+        || dependency.version.npm().is_alias
+        || aliased.tag != DependencyVersionTag::Npm
+    {
+        return false;
+    }
+    let group = &dependency.version.npm().version;
+    let mut list = Some(&aliased.npm().version.head);
+    while let Some(queries) = list {
+        let mut query = Some(&queries.head);
+        while let Some(q) = query {
+            if group.satisfies(q.range.left.version, buf, buf)
+                || group.satisfies(q.range.right.version, buf, buf)
+            {
+                return true;
+            }
+            query = q.next.as_deref();
+        }
+        list = queries.next.as_deref();
+    }
+    false
+}
+
+/// Drops the row's resolution and queues it to resolve again; returns the package it left. With `as_plain` a peer row takes the plain path, like `update_transitive::reresolve`.
 fn reenqueue_row(manager: &mut PackageManager, dependency_i: usize, as_plain: bool) -> PackageID {
     let mut dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
     if as_plain {

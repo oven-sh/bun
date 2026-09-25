@@ -1874,7 +1874,7 @@ function parseOptions(
   let username: string | null | undefined;
   let password: string | (() => Bun.MaybePromise<string>) | undefined | null;
   let database: string | undefined;
-  let tls: Bun.TLSOptions | (Bun.BunFile & Bun.TLSOptions) | boolean | undefined;
+  let tls: Bun.SQL.TLSOptions | (Bun.BunFile & Bun.SQL.TLSOptions) | boolean | undefined;
   let query: string = "";
   let idleTimeout: number | null | undefined;
   let connectionTimeout: number | null | undefined;
@@ -2148,15 +2148,24 @@ function parseOptions(
     }
   }
 
-  if ($isObject(tls) && sslMode < SSLMode.verify_ca) {
-    if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && (tls.ca || tls.caFile))) {
+  if ($isObject(tls)) {
+    const { checkServerIdentity, rejectUnauthorized } = tls;
+    if (checkServerIdentity !== undefined && !$isCallable(checkServerIdentity)) {
+      throw $ERR_INVALID_ARG_TYPE("tls.checkServerIdentity", "function", checkServerIdentity);
+    }
+    // These options imply certificate verification unless it is explicitly turned off.
+    if (
+      sslMode < SSLMode.verify_ca &&
+      (rejectUnauthorized === true || (rejectUnauthorized !== false && (tls.ca || tls.caFile || checkServerIdentity)))
+    ) {
       sslMode = SSLMode.verify_full;
     }
   }
 
-  if (sslMode !== SSLMode.disable && !(tls as Exclude<typeof tls, boolean>)?.serverName) {
+  const tlsObject = tls as Exclude<typeof tls, boolean>;
+  if (sslMode !== SSLMode.disable && !tlsObject?.serverName && !tlsObject?.servername) {
     if (hostname) {
-      tls = { ...(tls as Exclude<typeof tls, boolean>), serverName: hostname };
+      tls = { ...tlsObject, serverName: hostname };
     } else if (tls) {
       tls = true;
     }

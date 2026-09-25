@@ -201,6 +201,24 @@ declare module "bun" {
       onclose?: ((err: Error | null) => void) | undefined;
     }
 
+    /**
+     * TLS options for a PostgreSQL or MySQL connection
+     */
+    interface TLSOptions extends Bun.TLSOptions {
+      /**
+       * Replaces the built-in check of the server certificate against
+       * `serverName` (by default the connection's hostname), as in
+       * `tls.connect()`. It runs once the certificate chain is verified, under
+       * the `verify-ca` and `verify-full` SSL modes. Like `ca`, setting it
+       * turns certificate verification on unless an SSL mode or
+       * `rejectUnauthorized: false` says otherwise.
+       * @param hostname The name the certificate is expected to match
+       * @param cert The server's certificate
+       * @returns An `Error` to refuse the connection, or `undefined` to accept it
+       */
+      checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]> | undefined;
+    }
+
     interface PostgresOrMySQLOptions {
       /**
        * Connection URL, for example `postgres://user:pass@localhost:5432/mydb`

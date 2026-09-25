@@ -5,7 +5,7 @@ use bun_jsc::{
     JsRef, JsResult,
 };
 
-use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
+use super::js_valkey::{JSValkeyClient, Js, SubscriptionCtx};
 use super::protocol_jsc as protocol;
 use super::valkey;
 use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
@@ -2093,6 +2093,9 @@ impl JSValkeyClient {
         new_client
             ._subscription_ctx
             .set(SubscriptionCtx::init(new_client)?);
+        if let Some(check_server_identity) = this.check_server_identity_callback() {
+            Js::check_server_identity_set_cached(new_client_js, global, check_server_identity);
+        }
         // If the original client is already connected and not manually closed, start connecting the new client.
         if this.client.get().status == valkey::Status::Connected
             && !this.client.get().flags.is_manually_closed

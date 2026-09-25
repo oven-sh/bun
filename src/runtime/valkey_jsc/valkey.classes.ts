@@ -638,6 +638,6 @@ export default [
       xgroup: { fn: "xgroup", length: 2 },
       xsetid: { fn: "xsetid", length: 2 },
     },
-    values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
+    values: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap", "checkServerIdentity"],
   }),
 ];

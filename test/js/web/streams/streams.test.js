@@ -5117,3 +5117,27 @@ describe("direct stream edge cases", () => {
     });
   });
 });
+
+// node:vm's `timeout` ends a run with a termination request, and the process keeps going.
+// streams-termination-fixture.ts spins one streams operation per row under a timeout, so the
+// request lands inside it, and checks the stream afterwards.
+describe.concurrent("a node:vm timeout inside a streams operation", () => {
+  for (const [family, rows] of Object.entries({ writer: 8, reader: 7 })) {
+    test(family, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "streams-termination-fixture.ts"), family],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // On a failure stdout is "FAIL" plus one line per failure ("<row>: <what> x<count>"), and
+      // stderr carries the crash report when the process died.
+      expect({ stdout: stdout.trim(), exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+        stdout: `ok ${rows}`,
+        exitCode: 0,
+        stderr: "",
+      });
+    });
+  }
+});

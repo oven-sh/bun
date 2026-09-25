@@ -478,6 +478,19 @@ void markPromiseAsHandled(VM&, JSPromise* promise)
     promise->markAsHandled();
 }
 
+void rejectPromiseAsHandled(JSGlobalObject* globalObject, JSPromise* promise, JSValue reason)
+{
+    promise->rejectAsHandled(getVM(globalObject), reason);
+}
+
+JSPromise* promiseRejectedWithAsHandled(JSGlobalObject* globalObject, JSValue reason)
+{
+    auto& vm = getVM(globalObject);
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->rejectAsHandled(vm, reason);
+    return promise;
+}
+
 // The stream-level closed promise. The Pending guard makes every settle site unconditionally
 // safe: a terminal transition can only run once, but the promise may already have been created
 // in a terminal state by webStreamClosedPromise().

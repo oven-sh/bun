@@ -2558,9 +2558,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.tokens.push(Token::Newline);
                             fell_through = true;
                         }
-                        // CRLF: drop a `\r` right before `\n` in Normal state so
-                        // the `\n` arm handles the newline. Inside quotes `\r`
-                        // stays literal (matches bash/dash).
+                        // CRLF normalization; `\r` stays literal inside quotes (bash/dash).
                         c if c == u32::from(b'\r') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'\r' as usize));
                             if self.chars.state == CharState::Single
@@ -2902,9 +2900,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 }
                 continue;
             }
-            // `\<CR><LF>` line-continuation (CRLF parity with escaped-`\n`).
-            // Bare escaped CR in Double state re-emits the swallowed
-            // backslash so `\<CR>` stays literal `\` + CR (bash/POSIX).
+            // `\<CR><LF>` line-continuation. A bare `\<CR>` in double quotes is
+            // literal `\` + CR (POSIX), so re-emit the backslash read_char() ate.
             else if char == u32::from(b'\r') {
                 debug_assert!(input.escaped);
                 if let Some(next) = self.peek() {
@@ -3786,8 +3783,7 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
                     Src::Unicode(u) => u.index_next().map(|v| v.char),
                 }?;
                 match peeked {
-                    // Backslash only applies to these characters. `\r` lets
-                    // `\<CR><LF>` reach the escaped-`\r` handler (parity with `\<LF>`).
+                    // Backslash only applies to these characters (`\r` for CRLF line-continuation).
                     c if c == u32::from(b'$')
                         || c == u32::from(b'`')
                         || c == u32::from(b'"')

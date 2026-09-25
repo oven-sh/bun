@@ -1409,7 +1409,10 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
         stdout: "pipe",
         stderr: "pipe",
       });
-      return (await proc.stdout.text()).trim();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout.trim();
     };
     expect([await resolved("ws-a"), await resolved("ws-b")]).toEqual(["A_TWO", "B_ONE"]);
     const lockContent = await file(join(String(dir), "bun.lock")).text();

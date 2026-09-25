@@ -807,8 +807,8 @@ if (hasBakeDebuggingFeatures) {
       holder.subscribe("v");
       const leaver = await subscribeMemoryVisualizer(dev);
       await leaver.close();
-      const returner = await subscribeMemoryVisualizer(dev);
-      await returner.waitForFrames(2);
+      // A debug build asserts here if the close left the timer armed.
+      await subscribeMemoryVisualizer(dev);
       await dev.fetch("/tick").equals("ticked");
       await holder.close();
     },

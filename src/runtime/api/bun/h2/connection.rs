@@ -942,12 +942,8 @@ impl Connection {
                 .entry(hdr.stream_id)
                 .or_insert_with(|| Stream::new(send_init, recv_init))
                 .state;
-            let ev = if end_stream {
-                stream::Event::RecvHeadersEndStream
-            } else {
-                stream::Event::RecvHeaders
-            };
-            match stream::transition(cur_state, ev) {
+            // END_STREAM is applied in finish_header_block, once the block is complete.
+            match stream::transition(cur_state, stream::Event::RecvHeaders) {
                 Ok(next) => {
                     if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
                         s.state = next;
@@ -1313,12 +1309,19 @@ impl Connection {
         {
             s.recv_final_headers = true;
         }
+        let end_state = if end_stream {
+            self.streams.get_mut(&target).map(|s| {
+                if let Ok(next) = stream::transition(s.state, stream::Event::RecvEndStream) {
+                    s.state = next;
+                }
+                s.state as u8
+            })
+        } else {
+            None
+        };
         sink.on_headers_complete(target, end_stream, flags);
-        if end_stream {
-            let state = self.streams.get(&target).map(|s| s.state as u8);
-            if let Some(state) = state {
-                sink.on_stream_end(target, state);
-            }
+        if let Some(state) = end_state {
+            sink.on_stream_end(target, state);
         }
         false
     }
@@ -2293,6 +2296,49 @@ mod tests {
             client.streams.get(&2).map(|s| s.state),
             Some(State::ReservedRemote)
         );
+    }
+
+    #[test]
+    fn pushed_stream_ends_when_end_stream_headers_and_continuation_arrive_in_separate_reads() {
+        let ssink = CaptureSink::default();
+        let mut server = Connection::new(true, Settings::default());
+        server.begin_header_block();
+        assert!(server.encode_header(b":method", b"GET", false));
+        assert!(server.encode_header(b":scheme", b"http", false));
+        assert!(server.encode_header(b":path", b"/pushed", false));
+        assert!(server.encode_header(b":authority", b"localhost", false));
+        server.send_push_promise(&ssink, 1, 2);
+        let promise = ssink.out.borrow().clone();
+
+        let csink = CaptureSink::default();
+        let mut client = Connection::new(false, Settings::default());
+        client.preface_received = wire::CONNECTION_PREFACE.len();
+        // First read: PUSH_PROMISE, then HEADERS [:status 200] with END_STREAM, no END_HEADERS.
+        let mut first = promise;
+        first.extend_from_slice(&frame(
+            FrameType::Headers,
+            wire::flags::END_STREAM,
+            2,
+            &[0x88],
+        ));
+        let fed = client.receive(&csink, &first);
+        assert!(!fed.fatal);
+        assert_eq!(fed.consumed, first.len());
+        assert!(csink.ended.borrow().is_empty());
+        // Not Closed yet, so the end-of-read eviction keeps the entry.
+        assert_eq!(
+            client.streams.get(&2).map(|s| s.state),
+            Some(State::HalfClosedLocal)
+        );
+
+        // Second read: the CONTINUATION with END_HEADERS completes the block.
+        let cont = frame(FrameType::Continuation, wire::flags::END_HEADERS, 2, &[]);
+        let fed = client.receive(&csink, &cont);
+        assert!(!fed.fatal);
+        assert_eq!(fed.consumed, cont.len());
+        assert_eq!(*csink.headers_done.borrow(), vec![(2, false), (2, true)]);
+        assert_eq!(*csink.ended.borrow(), vec![2]);
+        assert!(client.streams.get(&2).is_none());
     }
 
     #[test]

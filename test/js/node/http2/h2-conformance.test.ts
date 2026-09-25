@@ -798,6 +798,109 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       raw.close();
     }
   });
+
+  test("a pushed stream closes when its END_STREAM HEADERS and CONTINUATION arrive in separate reads", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    const events: string[] = [];
+    const pushedClosed = Promise.withResolvers<void>();
+    client.on("stream", pushed => {
+      pushed.on("error", () => {});
+      pushed.on("push", (headers: http2.IncomingHttpHeaders) => events.push(`push ${headers[":status"]}`));
+      pushed.on("end", () => events.push("end"));
+      pushed.on("close", () => {
+        events.push("close");
+        pushedClosed.resolve();
+      });
+      pushed.resume();
+    });
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      const promised = Buffer.alloc(4);
+      promised.writeUInt32BE(2, 0);
+      const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, Buffer.concat([promised, block]));
+      // The pushed response: HEADERS [:status 200] with END_STREAM but without END_HEADERS, so
+      // the stream reaches its final state while its header block is still open.
+      raw.sendFrame(FrameType.HEADERS, 0x1 /* END_STREAM */, 2, Buffer.from([0x88]));
+      // The client's SETTINGS ACK shows it has processed that whole read before the CONTINUATION
+      // arrives in a read of its own.
+      await raw.waitFor(f => f.type === FrameType.SETTINGS && f.streamId === 0 && (f.flags & 0x1) !== 0);
+      raw.sendFrame(
+        FrameType.CONTINUATION,
+        0x4 /* END_HEADERS */,
+        2,
+        Buffer.concat([Buffer.from([0x00]), hpackLiteral("x-late"), hpackLiteral("1")]),
+      );
+      raw.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, Buffer.from([0x88]));
+      await once(req, "close");
+      await pushedClosed.promise;
+      expect(events).toEqual(["push 200", "end", "close"]);
+      // With every stream closed, the session can finish closing.
+      client.close();
+      await once(client, "close");
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a pushed stream closes when its END_STREAM trailers and CONTINUATION arrive in separate reads", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    const events: string[] = [];
+    const pushedClosed = Promise.withResolvers<void>();
+    client.on("stream", pushed => {
+      pushed.on("error", () => {});
+      pushed.on("push", (headers: http2.IncomingHttpHeaders) => events.push(`push ${headers[":status"]}`));
+      pushed.on("data", (chunk: Buffer) => events.push(`data ${chunk}`));
+      pushed.on("trailers", (headers: http2.IncomingHttpHeaders) => events.push(`trailers ${headers["x-trailer"]}`));
+      pushed.on("end", () => events.push("end"));
+      pushed.on("close", () => {
+        events.push("close");
+        pushedClosed.resolve();
+      });
+    });
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      const promised = Buffer.alloc(4);
+      promised.writeUInt32BE(2, 0);
+      const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, Buffer.concat([promised, block]));
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 2, Buffer.from([0x88]));
+      raw.sendFrame(FrameType.DATA, 0, 2, Buffer.from("hi"));
+      // The trailer block [x-trailer: 1] with END_STREAM, split across HEADERS and CONTINUATION.
+      raw.sendFrame(
+        FrameType.HEADERS,
+        0x1 /* END_STREAM */,
+        2,
+        Buffer.concat([Buffer.from([0x00]), hpackLiteral("x-trailer")]),
+      );
+      await raw.waitFor(f => f.type === FrameType.SETTINGS && f.streamId === 0 && (f.flags & 0x1) !== 0);
+      raw.sendFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, 2, hpackLiteral("1"));
+      raw.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, Buffer.from([0x88]));
+      await once(req, "close");
+      await pushedClosed.promise;
+      expect(events).toEqual(["push 200", "data hi", "trailers 1", "end", "close"]);
+      client.close();
+      await once(client, "close");
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
 });
 
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {

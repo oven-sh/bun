@@ -143,7 +143,7 @@ impl SupportsCondition {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             SupportsCondition::Not(condition) => {
-                dest.write_str(b" not ")?;
+                dest.write_str(b"not ")?;
                 condition.to_css_with_parens_if_needed(dest, condition.needs_parens(self))?;
             }
             SupportsCondition::And(conditions) => {

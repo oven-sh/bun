@@ -9303,18 +9303,28 @@ unsafe fn adapter_write_all(
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.cap == 0 {
-        let _ = fd_write_all_quiet(this.fd, bytes);
-        return Ok(());
+        return if fd_write_all_quiet(this.fd, bytes) {
+            Ok(())
+        } else {
+            Err(bun_core::Error::WriteFailed)
+        };
     }
     if this.pos + bytes.len() > this.cap {
         // Drain buffered bytes first.
         if this.pos > 0 {
-            let _ = fd_write_all_quiet(this.fd, this.buffered());
+            if !fd_write_all_quiet(this.fd, this.buffered()) {
+                return Err(bun_core::Error::WriteFailed);
+            }
             this.pos = 0;
         }
-        // Large writes bypass the buffer so the next small write still coalesces.
+        // Keep large reports bounded by the adapter buffer instead of relying
+        // on the destination pipe's capacity.
         if bytes.len() >= this.cap {
-            let _ = fd_write_all_quiet(this.fd, bytes);
+            for chunk in bytes.chunks(this.cap) {
+                if !fd_write_all_quiet(this.fd, chunk) {
+                    return Err(bun_core::Error::WriteFailed);
+                }
+            }
             return Ok(());
         }
     }
@@ -9331,7 +9341,9 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer) -> core::result::Result<()
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.pos > 0 {
-        let _ = fd_write_all_quiet(this.fd, this.buffered());
+        if !fd_write_all_quiet(this.fd, this.buffered()) {
+            return Err(bun_core::Error::WriteFailed);
+        }
         this.pos = 0;
     }
     Ok(())

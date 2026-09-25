@@ -559,6 +559,17 @@ fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: NonNull<ProxyTu
     }
 }
 
+/// The inner connection's form of `HTTPClient::server_identity`.
+fn server_identity(
+    ctx: *mut HTTPClient,
+    ssl: &mut bun_boringssl::c::SSL,
+) -> bun_boringssl::ServerIdentity {
+    // SAFETY: `ctx` is the live client that drives this tunnel's handshake.
+    let client = unsafe { &*ctx };
+    let native = client.target_verification() == PeerVerification::Native;
+    bun_boringssl::server_identity(ssl, native.then(|| crate::get_tls_hostname(client, false)))
+}
+
 // ─── ProxyTunnel methods ─────────────────────────────────────────────────────
 
 impl ProxyTunnel {
@@ -599,6 +610,7 @@ impl ProxyTunnel {
                 // opting out keeps its SSL off the parked queues entirely.
                 on_session: None,
                 on_keylog: None,
+                server_identity: Some(server_identity),
                 ctx: this.as_erased_ptr().as_ptr(),
             },
         ) {
@@ -774,6 +786,13 @@ impl ProxyTunnel {
         client: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
     ) {
+        raw_as_mut(tunnel.as_ptr()).socket = Socket::from_generic::<IS_SSL>(socket);
+        Self::adopt_owner(tunnel, client);
+    }
+
+    /// `adopt` without the socket, so it is compiled once for both `IS_SSL`.
+    #[inline(never)]
+    fn adopt_owner(tunnel: RefPtr<ProxyTunnel>, client: &mut HTTPClient) {
         scoped_log!(
             http_proxy_tunnel,
             "ProxyTunnel adopt (reusing pooled tunnel)"
@@ -792,7 +811,6 @@ impl ProxyTunnel {
             handlers.ctx = client.as_erased_ptr().as_ptr();
             wrapper.handlers.set(handlers);
         }
-        this.socket = Socket::from_generic::<IS_SSL>(socket);
         // Restore the cert-error flag captured in detachOwner() — no handshake
         // runs here, so the client's own flag would otherwise stay false and
         // re-pooling would erase the record.

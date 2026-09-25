@@ -30,7 +30,6 @@ namespace WebCore {
 class JSPerformance : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = Performance;
     static JSPerformance* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Performance>&& impl)
     {
         JSPerformance* ptr = new (NotNull, JSC::allocateCell<JSPerformance>(globalObject->vm())) JSPerformance(structure, *globalObject, WTF::move(impl));

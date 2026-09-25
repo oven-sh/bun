@@ -659,6 +659,7 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            latest_session: Cell::new(None),
         });
         let s = this_socket;
         s.ref_();
@@ -705,6 +706,7 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            latest_session: Cell::new(None),
         });
         let s = this_socket;
         s.ref_();
@@ -1273,6 +1275,7 @@ impl Listener {
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
                             verify_error: JsCell::new(None),
+                            latest_session: Cell::new(None),
                         })
                     };
                     let tls_ref = tls;
@@ -1366,6 +1369,7 @@ impl Listener {
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
                             verify_error: JsCell::new(None),
+                            latest_session: Cell::new(None),
                         })
                     };
                     let tcp_ref = tcp;
@@ -1610,6 +1614,7 @@ fn connect_finish<const IS_SSL: bool>(
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            latest_session: Cell::new(None),
         })
     };
     // Either the caller's JS-owned socket (reconnect) or the fresh one above.
@@ -1983,6 +1988,7 @@ impl WindowsNamedPipeListeningContext {
 /// # Safety
 /// `socket` is the live us_socket_t processing this ClientHello and `hostname`
 /// is NUL-terminated for the call. JS-thread only.
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_socket_server_name(
     socket: *mut uws_sys::us_socket_t,
     hostname: *const core::ffi::c_char,

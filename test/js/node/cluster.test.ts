@@ -853,6 +853,69 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("reply: echo:hi");
 }, 30_000);
 
+test("TLS cluster worker state matches the event that ends listen(): 'listening' or 'error'", async () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "cert.pem": tlsCerts.cert,
+    "key.pem": tlsCerts.key,
+    "main.ts": `
+const cluster = require("node:cluster");
+const tls = require("node:tls");
+const fs = require("node:fs");
+const path = require("node:path");
+const key = fs.readFileSync(path.join(__dirname, "key.pem"));
+const cert = fs.readFileSync(path.join(__dirname, "cert.pem"));
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", msg => console.log("state:", JSON.stringify(msg)));
+  cluster.on("listening", (w, address) => {
+    const c = tls.connect({ port: address.port, host: "127.0.0.1", rejectUnauthorized: false });
+    c.setEncoding("utf8");
+    c.on("data", d => {
+      console.log("reply:", d);
+      c.end();
+      worker.kill();
+      process.exit(0);
+    });
+    c.on("error", e => {
+      console.log("client error:", e.code);
+      process.exit(1);
+    });
+  });
+} else {
+  const onConnection = socket => socket.end("ok");
+  const first = tls.createServer({ key, cert }, onConnection);
+  // Bun rejects the second name when it loads the entries into the listener
+  // that adopted the shared fd (#43092). Node accepts both.
+  const name = "a.b.c.d.e.f.g.h.i.j.k.example";
+  first.addContext(name, { key, cert });
+  first.addContext(name + ".", { key, cert });
+  const report = outcome =>
+    process.send({
+      outcome,
+      listening: first.listening,
+      hasAddress: first.address() !== null,
+      hasHandle: first._handle != null,
+    });
+  first.on("listening", () => report("listening"));
+  first.on("error", () => {
+    report("error");
+    // The worker's cluster state is still usable after the failure.
+    tls.createServer({ key, cert }, onConnection).listen(0);
+  });
+  first.listen(0);
+}
+`,
+  });
+  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  const state = stdout.match(/^state: (.*)$/m)?.[1];
+  expect([
+    '{"outcome":"listening","listening":true,"hasAddress":true,"hasHandle":true}',
+    '{"outcome":"error","listening":false,"hasAddress":false,"hasHandle":false}',
+  ]).toContain(state);
+  expect(stdout).toContain("reply: ok");
+}, 30_000);
+
 test("plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "cert.pem": tlsCerts.cert,

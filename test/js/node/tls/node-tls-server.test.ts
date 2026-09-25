@@ -1437,6 +1437,38 @@ it("an asynchronous SNICallback resolving cb(null, null) still honors addContext
   await once(server, "close");
 });
 
+it("the server state matches the event that ends listen(): 'listening' or 'error'", async () => {
+  // Bun loads the addContext() entries into the native listener after the
+  // bind, and rejects the second of these two names there (#43092). Node
+  // accepts both and emits 'listening'. After either event the server state
+  // has to match it: a failed listen() leaves the server closed, as in Node.
+  const altCert = { key: rawKey, cert: cert };
+  const server: Server = createServer(COMMON_CERT, socket => socket.end());
+  const name = "a.b.c.d.e.f.g.h.i.j.k.example";
+  server.addContext(name, altCert);
+  server.addContext(name + ".", altCert);
+  server.listen(0, "127.0.0.1");
+  const outcome = await new Promise<string>(resolve => {
+    server.once("listening", () => resolve("listening"));
+    server.once("error", () => resolve("error"));
+  });
+  const state = {
+    outcome,
+    listening: server.listening,
+    hasAddress: server.address() !== null,
+    hasHandle: (server as any)._handle != null,
+  };
+  if (outcome === "listening") {
+    expect(state).toEqual({ outcome: "listening", listening: true, hasAddress: true, hasHandle: true });
+    server.close();
+    await once(server, "close");
+  } else {
+    expect(state).toEqual({ outcome: "error", listening: false, hasAddress: false, hasHandle: false });
+    const closeErr = await new Promise<any>(resolve => server.close(resolve));
+    expect(closeErr.code).toBe("ERR_SERVER_NOT_RUNNING");
+  }
+});
+
 describe("tls.Server socket destroySoon", () => {
   // destroySoon() after end(big) must deliver every byte even when the TLS write
   // batcher's final flush spills (#31584). The spill/kernel-buffer race hits ~4% of

@@ -4122,26 +4122,6 @@ Server.prototype[kRealListen] = function (
       data: this,
       pauseOnConnect: this.pauseOnConnect,
     });
-    // Mirror libuv uv_pipe_chmod: readableAll/writableAll relax the unix socket
-    // file's group/other permission bits. Skipped on Windows and abstract
-    // sockets (no filesystem entry). uSockets binds synchronously, so the file
-    // exists by the time Bun.listen returns.
-    // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L1899
-    if ((readableAll || writableAll) && process.platform !== "win32" && path.charCodeAt(0) !== 0) {
-      let desired = 0;
-      if (readableAll) desired |= 0o44; // S_IRGRP | S_IROTH
-      if (writableAll) desired |= 0o22; // S_IWGRP | S_IWOTH
-      try {
-        const fs = require("node:fs");
-        const cur = fs.statSync(path).mode;
-        if ((cur & desired) !== desired) fs.chmodSync(path, cur | desired);
-      } catch (e) {
-        // _handle is a Bun.listen SocketListener: it exposes stop(), not close().
-        this._handle?.stop?.(true);
-        this._handle = null;
-        throw e;
-      }
-    }
   } else if (fd != null) {
     this._handle = Bun.listen({
       fd,
@@ -4155,6 +4135,9 @@ Server.prototype[kRealListen] = function (
       data: this,
       pauseOnConnect: this.pauseOnConnect,
     });
+    // The native listener owns the fd now, so the cluster handle must not close it.
+    const clusterHandle = this[kClusterHandle];
+    if (clusterHandle != null && clusterHandle.sharedFd === fd) clusterHandle.adopted = true;
   } else {
     this._handle = Bun.listen({
       port,
@@ -4170,21 +4153,38 @@ Server.prototype[kRealListen] = function (
     });
   }
 
-  this._handle[owner_symbol] = this;
-  this._handle.onconnection = onconnection;
-
-  const addr = this.address();
-  if (addr && typeof addr === "object") {
-    const familyLast = String(addr.family).slice(-1);
-    this._connectionKey = `${familyLast}:${addr.address}:${port}`;
-  }
-
-  if (contexts) {
-    for (const [name, context] of contexts) {
-      // tls.ts stores the InternalSecureContext wrapper; the native side wants
-      // the native SSL_CTX wrapper at `.context`.
-      addServerName(this._handle, name, context.context ?? context);
+  try {
+    // uv_pipe_chmod: https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L1899
+    if (path && (readableAll || writableAll) && process.platform !== "win32" && path.charCodeAt(0) !== 0) {
+      let desired = 0;
+      if (readableAll) desired |= 0o44; // S_IRGRP | S_IROTH
+      if (writableAll) desired |= 0o22; // S_IWGRP | S_IWOTH
+      const fs = require("node:fs");
+      const cur = fs.statSync(path).mode;
+      if ((cur & desired) !== desired) fs.chmodSync(path, cur | desired);
     }
+
+    this._handle[owner_symbol] = this;
+    this._handle.onconnection = onconnection;
+
+    const addr = this.address();
+    if (addr && typeof addr === "object") {
+      const familyLast = String(addr.family).slice(-1);
+      this._connectionKey = `${familyLast}:${addr.address}:${port}`;
+    }
+
+    if (contexts) {
+      for (const [name, context] of contexts) {
+        // tls.ts stores the InternalSecureContext wrapper; the native side wants
+        // the native SSL_CTX wrapper at `.context`.
+        addServerName(this._handle, name, context.context ?? context);
+      }
+    }
+  } catch (e) {
+    // _handle is a Bun.listen SocketListener: it exposes stop(), not close().
+    this._handle.stop(true);
+    this._handle = null;
+    throw e;
   }
 
   // Unref the handle if the server was unref'ed prior to listening
@@ -4374,8 +4374,8 @@ function listenInCluster(
           onListen,
           sharedFd,
         );
-        handle.adopted = true;
       } catch (err) {
+        // With `handle.adopted` set by kRealListen, close() releases the key but not the fd.
         server[kClusterHandle] = null;
         server[kClusterUnixPath] = undefined;
         handle[kClusterOwner] = null;

@@ -2639,8 +2639,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         )
     }
 
-    /// `false` parks the node:net callback until the transport drains. A BYPASS_TLS
-    /// twin writes raw bytes and never gets a drain, so it reports like TCP.
+    /// `false` parks the node:net callback until the transport drains (a BYPASS_TLS twin gets none).
     #[inline]
     fn flushed_to_transport(&self) -> bool {
         !SSL || self.flags.get().contains(Flags::BYPASS_TLS) || self.socket.get().transport_idle()

@@ -18,17 +18,17 @@
 import { RedisClient, SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
 import { tls as harnessTls, isWindows, tempDir } from "harness";
-import { randomUUID } from "node:crypto";
+import { randomUUID, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 import {
+  listeningServer,
   MYSQL_CLIENT_LONG_PASSWORD,
   MYSQL_CLIENT_SSL,
   MYSQL_DEFAULT_CAPABILITIES,
-  listeningServer,
   mysqlHandshakeV10,
   pgSSLResponse,
 } from "../../sql/wire-frames";
@@ -988,5 +988,81 @@ describe("a client that accepts a bad chain still completes the handshake", () =
       srv.seen.closed,
     );
     expect(srv.seen.peerCN).toBe("agent3");
+  });
+});
+
+// A host in IP shorthand is a name for these clients, as it is for
+// tls.checkServerIdentity(). The native check asked ares_inet_pton, which reads
+// "0x7f000001" and "127.0.0.1/32" as 127.0.0.1, an address in the harness
+// certificate.
+describe("a rejecting client takes a host in IP shorthand for a name", () => {
+  const pinned = { ca: trustedCA };
+  const certificate = new X509Certificate(serverCert).toLegacyObject();
+  const mismatch = (host: string) => {
+    const error: any = tls.checkServerIdentity(host, certificate);
+    return { code: error?.code, message: error?.message };
+  };
+
+  // "1.2.3.4" is an address, and it is not in the certificate.
+  test.each(["0x7f000001", "127.000.000.001", "127.0.0.1/32", "127.1", "::1/64", "1.2.3.4"])(
+    "Bun.connect under %j",
+    async serverName => {
+      await using srv = await mtlsServer({});
+      let fromGetter: any;
+      const err = await bunConnectOutcome(
+        srv.port,
+        { ...pinned, serverName },
+        { onHandshake: socket => (fromGetter = socket.getAuthorizationError()) },
+      );
+      expect(mismatch(serverName).code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+      expect({ code: err?.code, message: err?.message }).toEqual(mismatch(serverName));
+      expect({ code: fromGetter?.code, message: fromGetter?.message }).toEqual(mismatch(serverName));
+      await srv.seen.closed;
+    },
+  );
+
+  test("control: Bun.connect under an address the certificate carries", async () => {
+    await using srv = await mtlsServer({ onSecure: dropAfterHandshake });
+    expect(await bunConnectOutcome(srv.port, { ...pinned, serverName: "127.0.0.1" })).toBeNull();
+    await srv.seen.closed;
+  });
+
+  test("socket.upgradeTLS", async () => {
+    await using srv = await mtlsServer({});
+    const err = await bunConnectOutcome(srv.port, { ...pinned, serverName: "0x7f000001" }, { upgrade: true });
+    expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+    await srv.seen.closed;
+  });
+
+  // The server ends the connection after a handshake. A client that rejects
+  // the certificate never gets that far, so the server sees no peer.
+  // RedisClient matches the host that it dials, and the Windows resolver does
+  // not read this one.
+  test.skipIf(isWindows)("Bun.RedisClient", async () => {
+    await using srv = await mtlsServer({ onSecure: dropAfterHandshake });
+    const client = new RedisClient(`rediss://0x7f000001:${srv.port}`, { tls: pinned, maxRetries: 0 } as any);
+    const [, commandErr] = await Promise.all([settle(client.connect()), settle(client.send("PING", []))]);
+    client.close();
+    await srv.seen.closed;
+    expect({ code: commandErr?.code, peerCN: srv.seen.peerCN }).toEqual({
+      code: "ERR_TLS_CERT_ALTNAME_INVALID",
+      peerCN: null,
+    });
+  });
+
+  test.each(sqlAdapters)("Bun.SQL %s sslmode=verify-full", async (adapter, prelude) => {
+    await using srv = await mtlsServer({ plain: prelude, onSecure: dropAfterHandshake });
+    const sql = new SQL({
+      url: sqlUrl(adapter, "127.0.0.1", srv.port, "verify-full"),
+      max: 1,
+      tls: { ...pinned, serverName: "0x7f000001" },
+    });
+    const query = settle(sql`SELECT 1`);
+    await srv.seen.closed;
+    await sql.close();
+    expect({ code: (await query)?.code, peerCN: srv.seen.peerCN }).toEqual({
+      code: "ERR_TLS_CERT_ALTNAME_INVALID",
+      peerCN: null,
+    });
   });
 });

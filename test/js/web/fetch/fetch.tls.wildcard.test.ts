@@ -875,6 +875,37 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     });
   });
 
+  // A host is an IP address only in the strict form that net.isIP takes. The
+  // native matcher asked ares_inet_pton, which also reads "127.1" (as
+  // 127.1.0.0), "10", hex, zero-padded octets and a trailing "/bits". Such a
+  // host is a name: it matches no iPAddress, and it matches a dNSName or a CN
+  // with the same text, as in tls.checkServerIdentity().
+  const shorthandRows: Array<[host: string, cn: string, sans: San[], match: boolean]> = [
+    ["127.0.0.1", "x", [["ip", "127.0.0.1"]], true],
+    ["0x7f000001", "x", [["ip", "127.0.0.1"]], false],
+    ["127.000.000.001", "x", [["ip", "127.0.0.1"]], false],
+    ["127.0.0.1/32", "x", [["ip", "127.0.0.1"]], false],
+    ["127.0.0.1/8", "x", [["ip", "127.0.0.1"]], false],
+    ["127.1", "x", [["ip", "127.1.0.0"]], false],
+    ["127.1", "x", [["ip", "127.0.0.1"]], false],
+    ["10", "x", [["ip", "10.0.0.0"]], false],
+    ["1.2.3", "x", [["ip", "1.2.3.0"]], false],
+    ["127.1", "x", [["dns", "127.1"]], true],
+    ["10", "x", [["dns", "10"]], true],
+    ["0x7f000001", "x", [["dns", "0x7f000001"]], true],
+    ["127.1", "127.1", [], true],
+    ["127.1", "127.1", [["ip", "127.0.0.1"]], true],
+  ];
+  describe.concurrent("a host in IP shorthand is a name", () => {
+    it.each(shorthandRows)("%j vs CN %j, SAN %j", async (host, cn, sans, match) => {
+      const m = makeCert(cn, sans);
+      expect({ csi: csi(m.x509, host), fetch: await fetchOk(m, host) }).toEqual({
+        csi: match,
+        fetch: match ? { ok: true } : { ok: false, code: "ERR_TLS_CERT_ALTNAME_INVALID" },
+      });
+    });
+  });
+
   // X509Certificate#checkHost options. Every expected value was taken from
   // Node.js v26.3.0 (OpenSSL X509_check_host semantics).
   describe("checkHost options", () => {

@@ -3206,10 +3206,16 @@ describe("interpolated values in reserved-word position", () => {
     .stderr("bun: command not found: then\n")
     .runAsTest("interpolated then stays a single command word");
 
-  TestBuilder.command`if BUNISBAD; then echo A; ${"elif"} true; then echo B; fi`
+  TestBuilder.command`if BUNISBAD; then echo A; ${"elif"} true; fi`
     .stdout("")
     .stderr("bun: command not found: BUNISBAD\n")
     .runAsTest("interpolated elif stays a single command word");
+
+  test("a then after an interpolated elif has no elif to belong to", () => {
+    expect(() => {
+      $`if BUNISBAD; then echo A; ${"elif"} true; then echo B; fi`;
+    }).toThrow("Unexpected token: `then`");
+  });
 
   TestBuilder.command`if BUNISBAD; then echo A; elif BUNISBAD2; then echo B; ${"else"} echo C; fi`
     .stdout("")
@@ -3245,7 +3251,7 @@ function shellParseError(source: string): string | undefined {
 // Bun Shell does not implement these words. One in command position fails the
 // parse, so the lines of a loop body never run as plain commands.
 describe("unsupported reserved words", () => {
-  const words = ["for", "while", "until", "select", "case", "esac", "function", "do", "done"] as const;
+  const words = ["for", "while", "until", "select", "case", "esac", "function", "do", "done", "!"] as const;
   const msg = (w: string) =>
     `"${w}" is a reserved word that Bun Shell does not support yet. To run a command named "${w}", quote it.`;
   const script = (source: string) => TestBuilder.command`${{ raw: source }}`;
@@ -3278,8 +3284,40 @@ describe("unsupported reserved words", () => {
     ["in an if condition", "if while false; do echo b; done; then echo c; fi", "while"],
     ["in a then body", "if true; then while false; do echo b; done; fi", "while"],
     ["in an else body", "if false; then echo a; else while false; do echo b; done; fi", "while"],
+    ["! in an if condition", "if ! false; then echo THEN; else echo ELSE; fi", "!"],
+    ["! before a command", "! true && echo NEVER_RUNS", "!"],
+    ["a brace group", "false && {\n  echo IN_GROUP\n}\necho tail", "{"],
+    ["a brace group on one line", "{ echo a; echo b; }", "{"],
+    ["a closing brace with no group", "echo a\n}", "}"],
   ])("%s", (_name, source, word) => {
     expect(shellParseError(source)).toBe(msg(word));
+  });
+
+  test.each([
+    ["<<", "cat <<EOF\necho BODY_LINE_RAN\nEOF\necho tail"],
+    ["<<-", "cat <<-EOF\n\techo BODY_LINE_RAN\n\tEOF\necho tail"],
+    ["0<<", "cat 0<<EOF\necho BODY_LINE_RAN\nEOF"],
+    ["1<<", "cat 1<<EOF\necho BODY_LINE_RAN\nEOF"],
+    ["2<<", "cat 2<<EOF\necho BODY_LINE_RAN\nEOF"],
+  ])("a here-document with %s fails the parse", (_name, source) => {
+    expect(shellParseError(source)).toBe('Here-documents "<<" are not supported yet.');
+  });
+
+  test.each([
+    ["fi", "echo a; fi; echo b", "fi"],
+    ["then", "then echo NEVER_RUNS", "then"],
+    ["else", "echo a\nelse\necho b", "else"],
+    ["elif", "echo a; elif true; then echo b; fi", "elif"],
+    ["fi after an empty then body", "if true; then\nfi", "fi"],
+    ["then after an escaped if", "\\if true; then echo NEVER_RUNS; fi", "then"],
+  ])("%s with no open if fails the parse", (_name, source, word) => {
+    expect(shellParseError(source)).toBe(`Unexpected token: \`${word}\``);
+  });
+
+  test("an escaped fi does not close an if", () => {
+    expect(shellParseError("if true; then echo NEVER_RUNS; \\fi")).toBe(
+      'Expected "else", "elif", or "fi" but got: Eof',
+    );
   });
 
   describe("a word that is not a bare reserved word stays a plain word", () => {
@@ -3308,8 +3346,8 @@ describe("unsupported reserved words", () => {
       .exitCode(1)
       .runAsTest("a Bun.file path");
 
-    script("echo for while until select case esac function do done")
-      .stdout("for while until select case esac function do done\n")
+    script("echo for while until select case esac function do done ! { }")
+      .stdout("for while until select case esac function do done ! { }\n")
       .runAsTest("in argument position");
 
     script("f\\or").stderr("bun: command not found: for\n").exitCode(1).runAsTest("a backslash inside the word");
@@ -3322,6 +3360,53 @@ describe("unsupported reserved words", () => {
     script("x=1; for$x").stderr("bun: command not found: for1\n").exitCode(1).runAsTest("a word with a variable");
     script("for=1; echo $for").stdout("1\n").runAsTest("an assignment");
     script("FOO=1 for f in a b").stderr("bun: command not found: for\n").exitCode(1).runAsTest("after an assignment");
+
+    script(`"{"`).stderr("bun: command not found: {\n").exitCode(1).runAsTest("a quoted brace");
+    TestBuilder.command`${"{"}`.stderr("bun: command not found: {\n").exitCode(1).runAsTest("an interpolated brace");
+    script("echo {a,b}").stdout("a b\n").runAsTest("brace expansion");
+    TestBuilder.command`${"fi"}`.stderr("bun: command not found: fi\n").exitCode(1).runAsTest("interpolated fi");
+    script(`"fi"`).stderr("bun: command not found: fi\n").exitCode(1).runAsTest("quoted fi");
+    for (const w of ["if", "then", "elif", "else", "fi"]) {
+      script(`\\${w}`).stderr(`bun: command not found: ${w}\n`).exitCode(1).runAsTest(`backslash-escaped ${w}`);
+    }
+    script("f\\i").stderr("bun: command not found: fi\n").exitCode(1).runAsTest("a backslash inside fi");
+
+    script("x=1; if$x true").stderr("bun: command not found: if1\n").exitCode(1).runAsTest("if with a variable");
+    script("x=1; if true; then echo a; fi$x; fi")
+      .stdout("a\n")
+      .stderr("bun: command not found: fi1\n")
+      .exitCode(1)
+      .runAsTest("fi with a variable");
+    script("x=1; if false; then echo a; else$x; fi").runAsTest("else with a variable");
+    script("if true; then echo a; fi'x'; fi")
+      .stdout("a\n")
+      .stderr("bun: command not found: fix\n")
+      .exitCode(1)
+      .runAsTest("fi with a quoted part");
+  });
+
+  describe("a redirect of stdin from a file still works", () => {
+    for (const redirect of ["< input.txt", "0< input.txt", "0<input.txt"]) {
+      script(`cat ${redirect}`).file("input.txt", "from a file\n").stdout("from a file\n").runAsTest(redirect);
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/12602
+  describe("a < after a digit does not write to the file", () => {
+    for (const fd of [1, 2]) {
+      script(`echo hi${fd}< notes.txt`)
+        .file("notes.txt", "ORIGINAL\n")
+        .stdout(`hi${fd}\n`)
+        .fileEquals("notes.txt", "ORIGINAL\n")
+        .runAsTest(`a word that ends in ${fd}`);
+      // bash reads this digit as a file descriptor. Bun Shell has no read
+      // redirect for fd 1 or fd 2, so the digit is an argument, as it is for `3<`.
+      script(`echo hi ${fd}< notes.txt`)
+        .file("notes.txt", "ORIGINAL\n")
+        .stdout(`hi ${fd}\n`)
+        .fileEquals("notes.txt", "ORIGINAL\n")
+        .runAsTest(`${fd} as a word of its own`);
+    }
   });
 
   test("$.escape quotes every reserved word", () => {

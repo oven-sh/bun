@@ -57,6 +57,25 @@ describe.concurrent("run-shell", () => {
       exitCode: 1,
     });
   });
+
+  test("a script with a here-document runs no command", async () => {
+    using dir = tempDir("run-shell-heredoc", {
+      "heredoc.sh": "echo before\ncat <<-EOF\n\techo BODY_LINE_RAN\n\tEOF\necho tail\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "heredoc.sh"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: 'error: Failed to run heredoc.sh due to error Here-documents "<<" are not supported yet.\n',
+      exitCode: 1,
+    });
+  });
 });
 
 test.skipIf(isWindows)(

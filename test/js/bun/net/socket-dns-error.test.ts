@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isIPv6, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isIPv6, isWindows, tls as tlsCert } from "harness";
 
 // `Bun.connect` to a hostname that fails to resolve must surface the resolver
 // error (code `ENOTFOUND`, `syscall: "getaddrinfo"`, `hostname`), matching
@@ -49,6 +49,92 @@ test("Bun.connect reports a failed hostname lookup as the resolver error, not EC
   expect(pick(await connectErrored)).toEqual(EXPECTED);
   expect(pick(promiseError)).toEqual(EXPECTED);
   expect(connectErrorCalls).toBe(1);
+});
+
+// An IPv6 address with a prefix length, or with a shortened IPv4 part, is not
+// an address. ares_inet_pton read "::1/64" as the first 64 bits of ::1, so
+// Bun.connect dialed "::" and reached a listener on ::1. Brackets come off an
+// IPv6 address only.
+test.skipIf(!isIPv6()).each(["::1/64", "::1/0", "2001:db8::1/0", "::ffff:127.1", "[::1/64]"])(
+  "Bun.connect does not dial %j",
+  async hostname => {
+    let accepted = 0;
+    using listener = Bun.listen({
+      hostname: "::1",
+      port: 0,
+      socket: {
+        open(socket) {
+          accepted++;
+          socket.end();
+        },
+        data() {},
+      },
+    });
+    const error: Error = await Bun.connect({
+      hostname,
+      port: listener.port,
+      socket: { open: socket => void socket.end(), data() {} },
+    }).then(
+      () => new Error("connected"),
+      (e: Error) => e,
+    );
+    expect({ ...pick(error), accepted }).toEqual({
+      name: "Error",
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname,
+      message: `getaddrinfo ENOTFOUND ${hostname}`,
+      accepted: 0,
+    });
+  },
+);
+
+// An IPv4 host is an address when the resolver of the platform reads all of
+// it as one. getaddrinfo() reads the inet_aton shorthand. inet_aton itself
+// stops at whitespace and reads what comes before. Each row here is decided
+// without a lookup: the Windows resolver reads no shorthand, so those rows are
+// in udp_socket.test.ts.
+test.each([
+  ["127.0.0.1", "connected"],
+  ...(isWindows ? [] : [["127.1", "connected"] as const, ["0x7f000001", "connected"] as const]),
+  // One row for each byte that isspace() takes: space, \t, \n, \v, \f, \r.
+  ["127.0.0.1 db.allowed.example", "ENOTFOUND"],
+  ["127.1 .allowed.example", "ENOTFOUND"],
+  ["0x7f.1 junk", "ENOTFOUND"],
+  ["127.0.0.1\tx", "ENOTFOUND"],
+  ["127.0.0.1\n", "ENOTFOUND"],
+  ["127.0.0.1\vx", "ENOTFOUND"],
+  ["127.0.0.1\fx", "ENOTFOUND"],
+  ["127.0.0.1\rx", "ENOTFOUND"],
+  ["12\t7.0.0.1", "ENOTFOUND"],
+])("Bun.connect to %j: %s", async (hostname, expected) => {
+  // On every address, so that a connection to 127.1.0.0 also arrives.
+  const dialed: string[] = [];
+  using listener = Bun.listen({
+    hostname: "0.0.0.0",
+    port: 0,
+    socket: {
+      open(socket) {
+        dialed.push(socket.localAddress);
+        socket.end();
+      },
+      data() {},
+    },
+  });
+  const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+  const result = await Bun.connect({
+    hostname,
+    port: listener.port,
+    socket: { open() {}, data() {}, close: () => onClose() },
+  }).then(
+    () => closed.then(() => "connected"),
+    (e: any) => ({ code: e.code, syscall: e.syscall, hostname: e.hostname }),
+  );
+  expect({ result, dialed }).toEqual(
+    expected === "connected"
+      ? { result: "connected", dialed: ["127.0.0.1"] }
+      : { result: { code: expected, syscall: "getaddrinfo", hostname }, dialed: [] },
+  );
 });
 
 test("Bun.connect rejects the promise with the resolver error when connectError is not set", async () => {

@@ -3467,6 +3467,9 @@ void GlobalObject::reload()
     if ((this->reloadCount++ + 1) % 2 == 0) {
         this->vm().heap.collectSync();
     }
+
+    // The console iterator (ConsoleObject.ts) takes stdin over from replaced code once this is set.
+    this->putDirect(vm, WebCore::builtinNames(vm).hotReloadedPrivateName(), jsBoolean(true));
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)

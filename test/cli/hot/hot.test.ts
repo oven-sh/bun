@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -776,3 +776,325 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+describe.concurrent("stdin across a reload", () => {
+  // Runs `bun --hot entry.ts` with a piped stdin. Every wait is for a line of stdout, never for time.
+  function runHot(cwd: string) {
+    const entry = join(cwd, "entry.ts");
+    const proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.ts"],
+      env: bunEnv,
+      cwd,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const lines: string[] = [];
+    let changed = Promise.withResolvers<void>();
+    let ended = false;
+    let failure: unknown;
+    (async () => {
+      const decoder = new TextDecoder();
+      let rest = "";
+      try {
+        for await (const chunk of proc.stdout) {
+          const parts = (rest + decoder.decode(chunk, { stream: true })).split("\n");
+          rest = parts.pop()!;
+          for (const part of parts) lines.push(part.replace(/\r$/, ""));
+          changed.resolve();
+          changed = Promise.withResolvers<void>();
+        }
+      } catch (e) {
+        failure = e;
+      } finally {
+        ended = true;
+        changed.resolve();
+      }
+    })();
+    let stderr = "";
+    (async () => {
+      const decoder = new TextDecoder();
+      try {
+        for await (const chunk of proc.stderr) stderr += decoder.decode(chunk, { stream: true });
+      } catch (e) {
+        failure ??= e;
+      }
+    })();
+
+    async function line(wanted: string | RegExp) {
+      for (let next = 0; ; await changed.promise) {
+        for (; next < lines.length; next++) {
+          const text = lines[next];
+          if (typeof wanted === "string" ? text === wanted : wanted.test(text)) return text;
+          // No loop in these tests ends or fails, and after one did, the wanted line may never come.
+          if (/^generation \d+ (error|done)/.test(text)) throw new Error(`${text}\nstdout:\n${lines.join("\n")}`);
+        }
+        if (failure) throw failure;
+        if (ended) throw new Error(`bun --hot exited before it printed ${wanted}. stdout:\n${lines.join("\n")}`);
+      }
+    }
+
+    return {
+      proc,
+      line,
+      send(text: string) {
+        proc.stdin.write(text);
+        proc.stdin.flush();
+      },
+      // A watcher can drop a save, so save again until the new source has run.
+      async save(source: string, started: string) {
+        let running = false;
+        const seen = line(started).then(() => void (running = true));
+        while (!running) {
+          writeFileSync(entry, source);
+          await Promise.race([seen, Bun.sleep(1_000)]);
+        }
+      },
+      // What the generations printed after their start lines, and the errors of a stream that bun reported itself.
+      result: () => ({
+        stdout: lines.filter(text => !text.endsWith(" start")),
+        stderr: stderr.split("\n").filter(text => text.includes("Invalid state")),
+      }),
+    };
+  }
+
+  // A loop that reports each line it reads, and what no loop of these tests may do: end, or fail.
+  const loop = (generation: number, body = "") => `
+    (async () => {
+      try {
+        for await (const line of console) {
+          console.log("generation ${generation} got", JSON.stringify(line));
+          ${body}
+        }
+        console.log("generation ${generation} done");
+      } catch (e) {
+        console.log("generation ${generation} error", e.message);
+      }
+    })();
+  `;
+  const start = (generation: number) => `console.log("generation ${generation} start");`;
+  // The process emits "beforeExit" when the reader of stdin does not keep the event loop alive.
+  const reportBeforeExit = `globalThis.reportsBeforeExit ??= process.on("beforeExit", () => console.log("beforeExit"));`;
+  const consoleLoop = (generation: number, body = "") => start(generation) + reportBeforeExit + loop(generation, body);
+  // A save can reload twice. This makes the loop of one generation start once.
+  const once = (generation: number, code: string) =>
+    `if (!globalThis.loop${generation}) { globalThis.loop${generation} = true; ${code} }`;
+
+  it("the next generation reads the next line of `for await (const line of console)`", async () => {
+    using dir = tempDir("hot-stdin-console", { "entry.ts": consoleLoop(1) });
+    const hot = runHot(String(dir));
+    await using _ = hot.proc;
+
+    await hot.line("generation 1 start");
+    hot.send("line-a\n");
+    await hot.line('generation 1 got "line-a"');
+
+    await hot.save(consoleLoop(2), "generation 2 start");
+    hot.send("line-b\n");
+    await hot.line(/ got "line-b"$/);
+
+    expect(hot.result()).toEqual({
+      stdout: ['generation 1 got "line-a"', 'generation 2 got "line-b"'],
+      stderr: [],
+    });
+  });
+
+  it("the next generation gets the rest of a line that the replaced one read in part", async () => {
+    using dir = tempDir("hot-stdin-partial", { "entry.ts": consoleLoop(1) });
+    const hot = runHot(String(dir));
+    await using _ = hot.proc;
+
+    await hot.line("generation 1 start");
+    hot.send("line-a\npar");
+    await hot.line('generation 1 got "line-a"');
+
+    await hot.save(consoleLoop(2), "generation 2 start");
+    hot.send("tial\nline-c\n");
+    await hot.line(/ got "line-c"$/);
+
+    expect(hot.result()).toEqual({
+      stdout: ['generation 1 got "line-a"', 'generation 2 got "partial"', 'generation 2 got "line-c"'],
+      stderr: [],
+    });
+  });
+
+  it("replaced generations that were in their loop body read nothing more", async () => {
+    // One chunk holds four lines and the start of a fifth. Generation 1 stops in its loop body after "l1",
+    // generation 2 after "l2". On Windows the lines end in "\r\n", which every yield of the iterator strips there.
+    const blocked = (generation: number) =>
+      start(generation) +
+      reportBeforeExit +
+      once(
+        generation,
+        loop(
+          generation,
+          `await new Promise(resolve => (globalThis.resumeGeneration${generation} = resolve));
+           console.log("generation ${generation} resumed");`,
+        ),
+      );
+    // Generation 3 lets both continue while "l4" is still unread, then waits one turn of the event loop.
+    const third = consoleLoop(
+      3,
+      `if (line.startsWith("l3")) {
+         globalThis.resumeGeneration1();
+         globalThis.resumeGeneration2();
+         await new Promise(resolve => setImmediate(resolve));
+       }`,
+    );
+    const newline = isWindows ? "\r\n" : "\n";
+    using dir = tempDir("hot-stdin-body", { "entry.ts": blocked(1) });
+    const hot = runHot(String(dir));
+    await using _ = hot.proc;
+
+    await hot.line("generation 1 start");
+    hot.send(["l1", "l2", "l3", "l4", "par"].join(newline));
+    await hot.line('generation 1 got "l1"');
+
+    await hot.save(blocked(2), "generation 2 start");
+    await hot.line(/^generation 2 got /);
+
+    await hot.save(third, "generation 3 start");
+    await hot.line(/ got "l4/);
+    hot.send("tial" + newline);
+    await hot.line(/ got "(par)?tial/);
+
+    expect(hot.result()).toEqual({
+      stdout: [
+        'generation 1 got "l1"',
+        'generation 2 got "l2"',
+        'generation 3 got "l3"',
+        "generation 1 resumed",
+        "generation 2 resumed",
+        'generation 3 got "l4"',
+        'generation 3 got "partial"',
+      ],
+      stderr: [],
+    });
+  });
+
+  it("a generation that starts its loop late does not keep stdin from the newest one", async () => {
+    // Generation 2 starts its loop only when generation 3 asks, so both loops start after the last reload.
+    const second = start(2) + `globalThis.startLoop2 = () => { ${loop(2)} };`;
+    const third = start(3) + `globalThis.startLoop2();` + loop(3);
+    using dir = tempDir("hot-stdin-late", { "entry.ts": consoleLoop(1) });
+    const hot = runHot(String(dir));
+    await using _ = hot.proc;
+
+    await hot.line("generation 1 start");
+    hot.send("line-a\n");
+    await hot.line('generation 1 got "line-a"');
+
+    await hot.save(second, "generation 2 start");
+    await hot.save(third, "generation 3 start");
+    hot.send("line-b\n");
+    await hot.line(/ got "line-b"$/);
+
+    expect(hot.result()).toEqual({
+      stdout: ['generation 1 got "line-a"', 'generation 3 got "line-b"'],
+      stderr: [],
+    });
+  });
+
+  it("the next generation reads stdin after the replaced one paused process.stdin", async () => {
+    // pause() stops the source that the console iterator shares with process.stdin.
+    const first =
+      start(1) +
+      loop(
+        1,
+        `process.stdin.pause();
+         await new Promise(resolve => setImmediate(resolve));
+         console.log("generation 1 paused stdin");`,
+      );
+    using dir = tempDir("hot-stdin-paused", { "entry.ts": first });
+    const hot = runHot(String(dir));
+    await using _ = hot.proc;
+
+    await hot.line("generation 1 start");
+    hot.send("line-a\n");
+    await hot.line("generation 1 paused stdin");
+
+    await hot.save(start(2) + loop(2), "generation 2 start");
+    hot.send("line-b\n");
+    await hot.line(/ got "line-b"$/);
+
+    expect(hot.result()).toEqual({
+      stdout: ['generation 1 got "line-a"', "generation 1 paused stdin", 'generation 2 got "line-b"'],
+      stderr: [],
+    });
+  });
+
+  it("a replaced generation that got the last line of stdin does not end its loop", async () => {
+    // stdin ends on a line with no newline. Generation 1 is in its loop body with that line when the save lands.
+    const first =
+      start(1) +
+      loop(
+        1,
+        `await new Promise(resolve => (globalThis.resumeGeneration1 = resolve));
+         console.log("generation 1 resumed");`,
+      );
+    // Generation 2 reads the end of stdin, lets generation 1 continue, and waits one turn of the event loop.
+    const second =
+      start(2) +
+      once(
+        2,
+        `(async () => {
+           try {
+             for await (const line of console) console.log("generation 2 got", JSON.stringify(line));
+             console.log("generation 2 saw the end of stdin");
+             globalThis.resumeGeneration1();
+             await new Promise(resolve => setImmediate(resolve));
+             console.log("generation 2 checked");
+           } catch (e) {
+             console.log("generation 2 error", e.message);
+           }
+         })();`,
+      );
+    using dir = tempDir("hot-stdin-end", { "entry.ts": first });
+    const hot = runHot(String(dir));
+    await using _ = hot.proc;
+
+    await hot.line("generation 1 start");
+    hot.send("tail");
+    hot.proc.stdin.end();
+    await hot.line('generation 1 got "tail"');
+
+    await hot.save(second, "generation 2 start");
+    await hot.line("generation 2 checked");
+
+    expect(hot.result()).toEqual({
+      stdout: [
+        'generation 1 got "tail"',
+        "generation 2 saw the end of stdin",
+        "generation 1 resumed",
+        "generation 2 checked",
+      ],
+      stderr: [],
+    });
+  });
+
+  it("a loop that the script keeps on globalThis stays the reader", async () => {
+    const kept = (generation: number) => `
+      console.log("generation ${generation} start");
+      globalThis.handle = line => console.log("generation ${generation} got", JSON.stringify(line));
+      globalThis.loop ??= (async () => {
+        for await (const line of console) globalThis.handle(line);
+      })();
+    `;
+    using dir = tempDir("hot-stdin-kept", { "entry.ts": kept(1) });
+    const hot = runHot(String(dir));
+    await using _ = hot.proc;
+
+    await hot.line("generation 1 start");
+    hot.send("line-a\n");
+    await hot.line('generation 1 got "line-a"');
+
+    await hot.save(kept(2), "generation 2 start");
+    hot.send("line-b\n");
+    await hot.line(/ got "line-b"$/);
+
+    expect(hot.result()).toEqual({
+      stdout: ['generation 1 got "line-a"', 'generation 2 got "line-b"'],
+      stderr: [],
+    });
+  });
+});

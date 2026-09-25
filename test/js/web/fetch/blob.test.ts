@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, unlinkSync } from "node:fs";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -866,6 +866,26 @@ describe("Bun.file(path).slice() with a negative index", () => {
       stream: 36,
       size: 36,
       text: content + "0123456789",
+    });
+  });
+
+  test("the parent Bun.file still sees a later unlink", async () => {
+    using dir = tempDir("blob-file-slice-negative", { "data.txt": content });
+    const file = Bun.file(`${dir}/data.txt`);
+    file.slice(-5);
+    unlinkSync(`${dir}/data.txt`);
+    expect(await file.exists()).toBe(false);
+  });
+
+  test("an empty file gives an empty slice", async () => {
+    using dir = tempDir("blob-file-slice-negative", { "empty.txt": "" });
+    const file = () => Bun.file(`${dir}/empty.txt`);
+    expect({
+      tail: { size: file().slice(-5).size, text: await file().slice(-5).text() },
+      head: { size: file().slice(0, -3).size, text: await file().slice(0, -3).text() },
+    }).toEqual({
+      tail: { size: 0, text: "" },
+      head: { size: 0, text: "" },
     });
   });
 

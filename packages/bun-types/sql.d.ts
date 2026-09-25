@@ -474,7 +474,8 @@ declare module "bun" {
        * `CancelRequest` on a second connection. If the server stops the query, it
        * rejects with SQLSTATE 57014. If the query finishes first, it resolves as
        * usual, and the request can stop the next query on that connection
-       * instead. A query that was already sent behind another query rejects with
+       * instead. The server ignores a request that arrives before the query
+       * does. A query that was already sent behind another query rejects with
        * `ERR_POSTGRES_QUERY_CANCELLED` and a `hint`, but the server still runs it.
        */
       cancel(): Query<T>;

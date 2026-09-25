@@ -73,7 +73,8 @@ const code = (query: Promise<unknown>) =>
 
 if (process.argv[2] === "connect") {
   const filler = await fillBacklog();
-  const sql = new SQL({ url, max: 1, connectionTimeout: 1 });
+  // Nothing has to succeed within the timeout, so it can be short.
+  const sql = new SQL({ url, max: 1, connectionTimeout: 0.2 });
   console.log(await code(sql`select 1`));
   filler.destroy();
 } else {

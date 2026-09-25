@@ -302,7 +302,6 @@ test.skipIf(isWindows || isMusl)(
     expect(stdout).toBe("ERR_POSTGRES_CONNECTION_TIMEOUT\n");
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
 test("mysql: graceful close() resolves while a connect retry is pending", async () => {

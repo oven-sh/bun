@@ -11,6 +11,7 @@
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, expiredTls, isIPv6, isMusl, isWindows, tempDir, tls as tlsCert } from "harness";
+import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -36,6 +37,12 @@ const SECRET_KEY = 13371337;
 // has already prepared).
 const TEXT_OID = 25;
 
+// A certificate that names `localhost` and no address: both of its names are DNS entries.
+const hostNameOnlyTls = {
+  cert: readFileSync(join(import.meta.dir, "docker-tls", "server.crt"), "utf8"),
+  key: readFileSync(join(import.meta.dir, "docker-tls", "server.key"), "utf8"),
+};
+
 // Int32(8) Int32(80877103): the one message a client sends in plaintext before TLS.
 const SSL_REQUEST = Buffer.from([0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f]);
 
@@ -59,6 +66,7 @@ const SSL_REQUEST = Buffer.from([0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f]);
 async function backend(
   options: {
     tls?: boolean;
+    certificate?: { cert: string; key: string };
     host?: string;
     socketPath?: string;
     cancelConnection?: "answers" | "declines-tls" | "other-certificate";
@@ -123,7 +131,7 @@ async function backend(
       const leftover = buffered.subarray(SSL_REQUEST.length);
       if (leftover.length) rawSocket.unshift(leftover);
       rawSocket.write("S");
-      const certificate = cancel === "other-certificate" ? expiredTls : tlsCert;
+      const certificate = cancel === "other-certificate" ? expiredTls : (options.certificate ?? tlsCert);
       const secure = new tls.TLSSocket(rawSocket, { isServer: true, ...certificate });
       secure.on("error", () => {});
       serve(connection, secure);
@@ -347,6 +355,40 @@ test("cancel() on a verify-full session sends nothing to a server it cannot veri
   expect(await settled).toEqual([]);
 });
 
+// The cancel connection dials the address of the session's peer, not its host
+// name. The certificate still has to match the host name. This one names only
+// `localhost`, so a check against the dialed address refuses it, as the session
+// that is addressed by 127.0.0.1 shows.
+test("cancel() on a verify-full session checks the certificate against the host name", async () => {
+  const tls = { ca: hostNameOnlyTls.cert };
+  {
+    await using byAddress = await backend({ tls: true, certificate: hostNameOnlyTls });
+    await using sql = new SQL({ url: byAddress.url, tls, max: 1, connectionTimeout: 5 });
+    const err = await sql`select 1`.catch((e: any) => e);
+    expect(err.message).toBe("Hostname/IP does not match certificate's altnames");
+  }
+
+  await using server = await backend({ tls: true, certificate: hostNameOnlyTls, host: "localhost" });
+  server.autoReply = false;
+  await using sql = new SQL({ url: server.url, tls, max: 1, connectionTimeout: 5 });
+
+  const query = sql`select pg_sleep(10)`.execute();
+  const settled = query.then(
+    rows => rows,
+    err => err,
+  );
+  await server.untilQueryUnits(1);
+  query.cancel();
+
+  expect(await server.cancelPacket).toEqual(pgCancelRequest(PROCESS_ID, SECRET_KEY));
+
+  server.reply(
+    pgErrorResponse({ S: "ERROR", C: "57014", M: "canceling statement due to user request" }),
+    pgReadyForQuery(),
+  );
+  expect((await settled).errno).toBe("57014");
+});
+
 // URL parsing keeps the brackets of an IPv6 literal in the hostname. The session's
 // connect strips them, so the cancel connection has to as well.
 test.skipIf(!isIPv6())("cancel() reaches a server that is addressed by an IPv6 literal", async () => {
@@ -436,7 +478,6 @@ test.skipIf(isWindows || isMusl)(
     expect(stdout).toBe("ERR_POSTGRES_CONNECTION_CLOSED\n");
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
 // The first run of a statement sends its Parse together with the Bind and the

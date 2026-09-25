@@ -24,7 +24,7 @@ const {
 } = $rust("mysql.rs", "createBinding") as MySQLDotZig;
 
 function wrapError(error: Error | (MySQLErrorOptions & { message: string })) {
-  if (!$isObject(error) || Error.isError(error)) {
+  if (Error.isError(error)) {
     return error;
   }
   return new MySQLError(error.message, error);
@@ -72,7 +72,9 @@ initMySQL(
     reject: Error | (MySQLErrorOptions & { message: string }),
     queries: Query<any, any>[],
   ) {
-    reject = wrapError(reject);
+    // A parameter can throw a value that is not an object. The query rejects
+    // with that value.
+    if ($isObject(reject)) reject = wrapError(reject);
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {

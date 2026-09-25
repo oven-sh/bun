@@ -63,9 +63,11 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   });
 
   test.each<[string, unknown]>([
+    ["an Error", new Error("boom")],
+    ["a string", "boom"],
+    ["a number", 42],
     ["null", null],
     ["undefined", undefined],
-    ["a string", "boom"],
   ])("a parameter whose toJSON throws %s rejects the query with that value", async (_, thrown) => {
     await container.ready;
     const sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });

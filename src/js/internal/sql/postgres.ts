@@ -245,7 +245,7 @@ function serializeArray(values: any[], type: ArrayType) {
 }
 
 function wrapPostgresError(error: Error | (PostgresErrorOptions & { message: string })) {
-  if (!$isObject(error) || Error.isError(error)) {
+  if (Error.isError(error)) {
     return error;
   }
   return new PostgresError(error.message, error);
@@ -298,7 +298,9 @@ initPostgres(
     reject: Error | (PostgresErrorOptions & { message: string }),
     queries: Query<any, any>[],
   ) {
-    reject = wrapPostgresError(reject);
+    // A parameter can throw a value that is not an object. The query rejects
+    // with that value.
+    if ($isObject(reject)) reject = wrapPostgresError(reject);
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {

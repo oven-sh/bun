@@ -933,6 +933,27 @@ describe.concurrent("$ref overrides", () => {
     await runBunInstall(envFor(dir), dir, { frozenLockfile: true, allowWarnings: true });
   });
 
+  // one-range-dep's no-deps row follows the root's npm: alias of that name, as the resolver does, and stays with it.
+  test("a row that follows an npm: alias of its name keeps it through the write-back", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const deps = (tags: string) =>
+      root({
+        dependencies: { "one-range-dep": "1.0.0", "no-deps": "npm:@types/no-deps@1.0.0", "dep-with-tags": tags },
+        overrides,
+      });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "@types/no-deps")).toStrictEqual(["@types/no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    const before = (await lock(dir)).packages;
+    await run(dir, "update", "dep-with-tags");
+    const { packages } = await lock(dir);
+    expect(packages["one-range-dep/no-deps"] ?? packages["no-deps"]).toStrictEqual(
+      before["one-range-dep/no-deps"] ?? before["no-deps"],
+    );
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
   test("bun update <name> --latest keeps the rows of a $name override in sync", async () => {
     const overrides = { "no-deps": "$@types/no-deps" };
     const dir = await setup({

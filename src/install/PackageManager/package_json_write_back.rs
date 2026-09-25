@@ -287,16 +287,11 @@ fn sync_lockfile(
     edited: &[EditedPackageJson],
 ) -> crate::Result<Option<DroppedOverrides>> {
     let mut scratch = super::workspace_manifests::ScratchManifests::new();
-    scratch.parse_root(manager)?;
-    let mut root_pkg = Some(core::mem::take(&mut scratch.root));
-    let mut parsed: Vec<(usize, Package)> = Vec::with_capacity(edited.len());
-    for (i, e) in edited.iter().enumerate() {
-        if e.target.name_hash.is_none() {
-            parsed.extend(root_pkg.take().map(|pkg| (i, pkg)));
-            continue;
-        }
-        parsed.push((i, scratch.parse_member(manager, &e.target)?));
-    }
+    // The parse registers every `npm:` alias it meets with strings in the scratch buffer; the aliases of `manager.lockfile` stay as they are.
+    let known_npm_aliases = core::mem::take(&mut manager.known_npm_aliases);
+    let parsed = parse_scratch(manager, &mut scratch, edited);
+    manager.known_npm_aliases = known_npm_aliases;
+    let parsed = parsed?;
     let super::workspace_manifests::ScratchManifests {
         lockfile: scratch,
         log: scratch_log,
@@ -403,6 +398,25 @@ fn sync_lockfile(
     *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
     builder.clamp();
     Ok(Some(dropped))
+}
+
+/// The root, then each edited member, into `scratch`; the root's parse fills the workspace paths the members resolve through.
+fn parse_scratch(
+    manager: &mut PackageManager,
+    scratch: &mut super::workspace_manifests::ScratchManifests,
+    edited: &[EditedPackageJson],
+) -> crate::Result<Vec<(usize, Package)>> {
+    scratch.parse_root(manager)?;
+    let mut root_pkg = Some(core::mem::take(&mut scratch.root));
+    let mut parsed: Vec<(usize, Package)> = Vec::with_capacity(edited.len());
+    for (i, e) in edited.iter().enumerate() {
+        if e.target.name_hash.is_none() {
+            parsed.extend(root_pkg.take().map(|pkg| (i, pkg)));
+            continue;
+        }
+        parsed.push((i, scratch.parse_member(manager, &e.target)?));
+    }
+    Ok(parsed)
 }
 
 fn same_row(scratch: &Dependency, row: &Dependency) -> bool {

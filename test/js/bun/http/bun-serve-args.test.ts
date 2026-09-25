@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "../../../harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -26,6 +26,73 @@ describe("Bun.serve basic options", () => {
     });
     expect(server.port).toBeGreaterThan(0);
     server.stop();
+  });
+});
+
+describe("Bun.serve port precedence", () => {
+  const printPort = `const s = Bun.serve({ fetch: () => new Response("x") }); console.log(s.port); s.stop(true);`;
+  const noPortEnv = { ...bunEnv, BUN_PORT: undefined, PORT: undefined, NODE_PORT: undefined };
+
+  test.concurrent.each(["BUN_PORT", "PORT", "NODE_PORT"])(
+    "--port flag takes precedence over %s env var",
+    async envVar => {
+      // Hold a port so that if the env var wins the child fails with EADDRINUSE.
+      await using holder = Bun.serve({ port: 0, fetch: () => new Response() });
+      const heldPort = holder.port;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--port", "0", "-e", printPort],
+        env: { ...noPortEnv, [envVar]: String(heldPort) },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const childPort = Number(stdout.trim());
+      expect(childPort).toBeGreaterThan(0);
+      expect(childPort).not.toBe(heldPort);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent.each(["BUN_PORT", "PORT", "NODE_PORT"])(
+    "%s env var is used when --port is not passed",
+    async envVar => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", printPort],
+        env: { ...noPortEnv, [envVar]: "0" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(Number(stdout.trim())).toBeGreaterThan(0);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("port in Bun.serve options takes precedence over --port flag and env", async () => {
+    await using holder = Bun.serve({ port: 0, fetch: () => new Response() });
+    const heldPort = holder.port;
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--port",
+        String(heldPort),
+        "-e",
+        `const s = Bun.serve({ port: 0, fetch: () => new Response("x") }); console.log(s.port); s.stop(true);`,
+      ],
+      env: { ...noPortEnv, PORT: String(heldPort) },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const childPort = Number(stdout.trim());
+    expect(childPort).toBeGreaterThan(0);
+    expect(childPort).not.toBe(heldPort);
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -94,7 +94,8 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     function count() {
       return arguments.length;
     }
-    // Module code is strict, so this `arguments` object is the strict kind. A sloppy one still wraps.
+    // Module code is strict, so this `arguments` object is the strict kind. The sloppy kinds are in
+    // sloppy-arguments-length.test.ts.
     function makeArguments(..._: unknown[]) {
       arguments.length = 2 ** 32 + 1;
       return arguments;

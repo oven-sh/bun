@@ -1577,11 +1577,10 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       beforeAll(async () => {
         selfKillDir = tempDir("build-compile-bytecode-order-self-kill", {
           "app.js": `
-            // Not a constant: the bundler replaces a call of a function that always returns one value.
-            function used(text) {
-              return text;
+            function used() {
+              return "ran";
             }
-            console.log(used("ran"));
+            console.log(used());
             const signal = process.argv[2];
             if (process.argv[3] === "from its handler") {
               // What a CLI does on Ctrl-C: clean up in a handler, then let the signal end the process after all.

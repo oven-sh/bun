@@ -216,18 +216,6 @@ const SLOT_COUNT_DIVERGENCE: Record<string, number[]> = Object.assign(Object.cre
   // splits `getX` and the JSX into two memo blocks: `_c(2)`. Bun keeps the value
   // of the store, so there is no stray read and one block holds both.
   "hoisting-invalid-tdz-let": [1],
-  // These fixtures declare an empty function (`function foo() {}`) as a stand-in
-  // for an unknown call. The bundler folds a call of such a function to
-  // `undefined` before the compiler sees the component
-  // (bundler_inline_constant_calls.test.ts). The compiler then knows the call
-  // mutates nothing, so the scopes upstream merges or splits around it differ.
-  "call": [2],
-  "hook-call": [1],
-  "independent-across-if": [1],
-  "interdependent-across-if": [1],
-  "jsx-tag-evaluation-order-non-global": [5],
-  "ssa-call-jsx": [2],
-  "ssa-call-jsx-2": [3],
 });
 
 // `minify: { syntax: true }` runs the parser's visit-phase folding and the

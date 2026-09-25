@@ -131,6 +131,210 @@ fn args_are_inert(args: &[G::Arg]) -> bool {
         .all(|arg| matches!(arg.binding.data, BData::BIdentifier(_)) && arg.default.is_none())
 }
 
+/// Parse pass: reports the names `expr` calls. `deep` also looks under `&&`, `||`, `??` and `,`.
+fn scan_guard(expr: &Expr, deep: bool, depth: u32, found: &mut dyn FnMut(Ref)) {
+    if depth > MAX_GUARD_DEPTH {
+        return;
+    }
+    match expr.data {
+        ExprData::ECall(call) => {
+            if call.optional_chain.is_none()
+                && call
+                    .args
+                    .slice()
+                    .iter()
+                    .all(|arg| is_literal_arg(&arg.data))
+            {
+                if let ExprData::EIdentifier(id) = call.target.data {
+                    found(id.ref_);
+                }
+            }
+        }
+        ExprData::EUnary(unary) if unary.op == js_ast::OpCode::UnNot => {
+            scan_guard(&unary.value, deep, depth + 1, found);
+        }
+        ExprData::EBinary(binary) => {
+            use js_ast::OpCode as Op;
+            let follow = match binary.op {
+                Op::BinStrictEq | Op::BinStrictNe | Op::BinLooseEq | Op::BinLooseNe => true,
+                Op::BinLogicalAnd | Op::BinLogicalOr | Op::BinNullishCoalescing | Op::BinComma => {
+                    deep
+                }
+                _ => false,
+            };
+            if follow {
+                scan_guard(&binary.left, deep, depth + 1, found);
+                scan_guard(&binary.right, deep, depth + 1, found);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Parse pass: `scan_guard` on what the body of a top-level function returns.
+fn scan_returns(stmts: &[Stmt], steps: &mut u32, found: &mut dyn FnMut(Ref)) {
+    for stmt in stmts {
+        if *steps == 0 {
+            return;
+        }
+        *steps -= 1;
+        match stmt.data {
+            StmtData::SReturn(ret) => {
+                if let Some(value) = &ret.value {
+                    scan_guard(value, true, 0, found);
+                }
+            }
+            StmtData::SBlock(block) => scan_returns(block.stmts.slice(), steps, found),
+            StmtData::SIf(if_) => {
+                scan_returns(core::slice::from_ref(&if_.yes), steps, found);
+                if let Some(no) = &if_.no {
+                    scan_returns(core::slice::from_ref(no), steps, found);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl ConstCalls {
+    fn record(&mut self, ref_: Ref, name_loc: Loc, value: Expr) {
+        if self.unsound_all || self.merged_with_var.contains(&ref_) {
+            return;
+        }
+        self.values.insert(
+            ref_,
+            Fact {
+                value,
+                name_loc,
+                folds: 0,
+            },
+        );
+    }
+
+    /// `record_assignment` on the root of a link chain.
+    #[cold]
+    pub(crate) fn rebound(&mut self, ref_: Ref) {
+        if let Some(fact) = self.values.remove(&ref_) {
+            if fact.folds > 0 {
+                self.unsound.push(fact.name_loc);
+            }
+        }
+    }
+
+    fn direct_eval(&mut self) {
+        self.unsound_all = self.values.values().any(|fact| fact.folds > 0);
+        self.values.clear();
+    }
+
+    /// The imports the bundler must look up for this file, if any.
+    fn imports<'a>(
+        &self,
+        stmts: &[Stmt],
+        records: &[js_ast::ImportRecord],
+    ) -> Option<Vec<ConstCallImport<'a>>> {
+        let guards = &self.guard_imports;
+        if guards.is_empty() {
+            return None;
+        }
+        let mut imports = Vec::new();
+        for stmt in stmts {
+            let StmtData::SImport(import) = stmt.data else {
+                continue;
+            };
+            let record = &records[import.import_record_index as usize];
+            let specifier = record.path.text;
+            // An attribute can change what the specifier loads, and a builtin has no source.
+            if record.loader.is_some()
+                || record.tag != js_ast::ImportRecordTag::None
+                || specifier.starts_with(b"node:")
+                || specifier.starts_with(b"bun:")
+            {
+                continue;
+            }
+            // `export default function` is not recorded, so a default import alone has no value to get.
+            let items = import.items.slice();
+            if !items
+                .iter()
+                .any(|item| guards.contains_key(&item.name.ref_))
+            {
+                continue;
+            }
+            // The bundler waits for this file anyway, so it is asked about every item of the statement.
+            let aliases = import
+                .default_name
+                .map(|_| &b"default"[..])
+                .into_iter()
+                .chain(items.iter().map(|item| item.alias.slice()));
+            for alias in aliases {
+                imports.push(ConstCallImport {
+                    import_record_index: import.import_record_index,
+                    alias,
+                    specifier,
+                    range: record.range,
+                });
+            }
+        }
+        (!imports.is_empty()).then_some(imports)
+    }
+
+    fn install_seeds(&mut self, seeds: &[ConstCallSeed<'_>], stmts: &[Stmt]) {
+        for stmt in stmts {
+            let StmtData::SImport(import) = stmt.data else {
+                continue;
+            };
+            for seed in seeds {
+                if seed.import_record_index != import.import_record_index {
+                    continue;
+                }
+                // `import a, { default as b } from` binds the same export twice.
+                let names = import
+                    .default_name
+                    .filter(|_| seed.alias == b"default")
+                    .into_iter()
+                    .chain(
+                        import
+                            .items
+                            .slice()
+                            .iter()
+                            .filter(|item| item.alias.slice() == seed.alias)
+                            .map(|item| item.name),
+                    );
+                for name in names {
+                    self.values.insert(
+                        name.ref_,
+                        Fact {
+                            value: seed.value,
+                            name_loc: name.loc,
+                            folds: 0,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// What importers may fold: only function declarations, which exist before any module runs.
+    fn exports(
+        &self,
+        symbols: &[js_ast::Symbol],
+        module_scope: &js_ast::Scope,
+    ) -> js_ast::ast_result::ConstCallValues {
+        let mut exports = js_ast::ast_result::ConstCallValues::default();
+        for (ref_, fact) in self.values.iter() {
+            let symbol = &symbols[ref_.inner_index() as usize];
+            if symbol.kind == SymbolKind::HoistedFunction
+                && module_scope
+                    .members
+                    .get(symbol.original_name.slice())
+                    .is_some_and(|member| member.ref_ == *ref_)
+            {
+                exports.put(*ref_, fact.value).expect("oom");
+            }
+        }
+        exports
+    }
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Runs once, after the parse pass: macro imports are known by then.
     pub(crate) fn enable_const_calls(&mut self) {
@@ -223,18 +427,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return;
         }
-        let calls = self.const_calls.get_or_insert_with(Default::default);
-        if calls.unsound_all || calls.merged_with_var.contains(&ref_) {
-            return;
-        }
-        calls.values.insert(
-            ref_,
-            Fact {
-                value,
-                name_loc,
-                folds: 0,
-            },
-        );
+        self.const_calls
+            .get_or_insert_with(Default::default)
+            .record(ref_, name_loc, value);
     }
 
     /// A declaration in a block is a second binding in sloppy mode, and a `switch` body is entered at any `case`.
@@ -364,47 +559,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn note_const_call_guard(&mut self, test: &Expr, deep: bool) {
         // An import statement below its first use is legal, and such a use is not seen here.
         if self.const_call_prefilter && !self.is_import_item.is_empty() {
-            self.scan_const_call_guard(test, deep, 0);
-        }
-    }
-
-    fn scan_const_call_guard(&mut self, expr: &Expr, deep: bool, depth: u32) {
-        if depth > MAX_GUARD_DEPTH {
-            return;
-        }
-        match expr.data {
-            ExprData::ECall(call) => {
-                if call.optional_chain.is_none()
-                    && call
-                        .args
-                        .slice()
-                        .iter()
-                        .all(|arg| is_literal_arg(&arg.data))
-                {
-                    if let ExprData::EIdentifier(id) = call.target.data {
-                        self.note_const_call_guard_name(id.ref_);
-                    }
-                }
-            }
-            ExprData::EUnary(unary) if unary.op == js_ast::OpCode::UnNot => {
-                self.scan_const_call_guard(&unary.value, deep, depth + 1);
-            }
-            ExprData::EBinary(binary) => {
-                use js_ast::OpCode as Op;
-                let follow = match binary.op {
-                    Op::BinStrictEq | Op::BinStrictNe | Op::BinLooseEq | Op::BinLooseNe => true,
-                    Op::BinLogicalAnd
-                    | Op::BinLogicalOr
-                    | Op::BinNullishCoalescing
-                    | Op::BinComma => deep,
-                    _ => false,
-                };
-                if follow {
-                    self.scan_const_call_guard(&binary.left, deep, depth + 1);
-                    self.scan_const_call_guard(&binary.right, deep, depth + 1);
-                }
-            }
-            _ => {}
+            scan_guard(test, deep, 0, &mut |name| {
+                self.note_const_call_guard_name(name)
+            });
         }
     }
 
@@ -435,81 +592,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return;
         }
-        self.scan_const_call_returns(func.body.stmts.slice(), &mut { MAX_STEPS });
+        scan_returns(func.body.stmts.slice(), &mut { MAX_STEPS }, &mut |name| {
+            self.note_const_call_guard_name(name)
+        });
     }
 
-    fn scan_const_call_returns(&mut self, stmts: &[Stmt], steps: &mut u32) {
-        for stmt in stmts {
-            if *steps == 0 {
-                return;
-            }
-            *steps -= 1;
-            match stmt.data {
-                StmtData::SReturn(ret) => {
-                    if let Some(value) = &ret.value {
-                        self.scan_const_call_guard(value, true, 0);
-                    }
-                }
-                StmtData::SBlock(block) => self.scan_const_call_returns(block.stmts.slice(), steps),
-                StmtData::SIf(if_) => {
-                    self.scan_const_call_returns(core::slice::from_ref(&if_.yes), steps);
-                    if let Some(no) = &if_.no {
-                        self.scan_const_call_returns(core::slice::from_ref(no), steps);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// The imports the bundler must look up before this file is visited, if any.
+    /// The imports the bundler must look up for this file, if any.
     pub(crate) fn const_call_imports(&self, stmts: &[Stmt]) -> Option<Vec<ConstCallImport<'a>>> {
         if !self.const_calls_enabled || self.options.const_call_seeds.is_some() {
             return None;
         }
-        let guards = &self.const_calls.as_ref()?.guard_imports;
-        if guards.is_empty() {
-            return None;
-        }
-        let mut imports = Vec::new();
-        for stmt in stmts {
-            let StmtData::SImport(import) = stmt.data else {
-                continue;
-            };
-            let record = &self.import_records.items()[import.import_record_index as usize];
-            let specifier = record.path.text;
-            // An attribute can change what the specifier loads, and a builtin has no source.
-            if record.loader.is_some()
-                || record.tag != js_ast::ImportRecordTag::None
-                || specifier.starts_with(b"node:")
-                || specifier.starts_with(b"bun:")
-            {
-                continue;
-            }
-            // `export default function` is not recorded, so a default import alone has no value to get.
-            let items = import.items.slice();
-            if !items
-                .iter()
-                .any(|item| guards.contains_key(&item.name.ref_))
-            {
-                continue;
-            }
-            // The bundler waits for this file anyway, so it is asked about every item of the statement.
-            let aliases = import
-                .default_name
-                .map(|_| &b"default"[..])
-                .into_iter()
-                .chain(items.iter().map(|item| item.alias.slice()));
-            for alias in aliases {
-                imports.push(ConstCallImport {
-                    import_record_index: import.import_record_index,
-                    alias,
-                    specifier: record.path.text,
-                    range: record.range,
-                });
-            }
-        }
-        (!imports.is_empty()).then_some(imports)
+        self.const_calls
+            .as_ref()?
+            .imports(stmts, self.import_records.items())
     }
 
     /// After the parse pass of a run the bundler seeded.
@@ -520,78 +615,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if seeds.is_empty() || !self.const_calls_enabled {
             return;
         }
-        for stmt in stmts {
-            let StmtData::SImport(import) = stmt.data else {
-                continue;
-            };
-            for seed in seeds {
-                if seed.import_record_index != import.import_record_index {
-                    continue;
-                }
-                // `import a, { default as b } from` binds the same export twice.
-                let names = import
-                    .default_name
-                    .filter(|_| seed.alias == b"default")
-                    .into_iter()
-                    .chain(
-                        import
-                            .items
-                            .slice()
-                            .iter()
-                            .filter(|item| item.alias.slice() == seed.alias)
-                            .map(|item| item.name),
-                    );
-                for name in names {
-                    self.const_calls
-                        .get_or_insert_with(Default::default)
-                        .values
-                        .insert(
-                            name.ref_,
-                            Fact {
-                                value: seed.value,
-                                name_loc: name.loc,
-                                folds: 0,
-                            },
-                        );
-                }
-            }
-        }
+        self.const_calls
+            .get_or_insert_with(Default::default)
+            .install_seeds(seeds, stmts);
     }
 
-    /// What importers may fold: only function declarations, which exist before any module runs.
     pub(crate) fn const_call_exports(&self) -> js_ast::ast_result::ConstCallValues {
-        let mut exports = js_ast::ast_result::ConstCallValues::default();
-        let Some(calls) = self.const_calls.as_ref() else {
-            return exports;
-        };
-        if !self.const_calls_enabled {
-            return exports;
-        }
-        let module_scope = self.module_scope();
-        for (ref_, fact) in calls.values.iter() {
-            let symbol = &self.symbols[ref_.inner_index() as usize];
-            if symbol.kind == SymbolKind::HoistedFunction
-                && module_scope
-                    .members
-                    .get(symbol.original_name.slice())
-                    .is_some_and(|member| member.ref_ == *ref_)
-            {
-                exports.put(*ref_, fact.value).expect("oom");
+        match &self.const_calls {
+            Some(calls) if self.const_calls_enabled => {
+                calls.exports(&self.symbols, self.module_scope())
             }
-        }
-        exports
-    }
-
-    /// `record_assignment` on the root of a link chain.
-    #[cold]
-    pub(crate) fn const_call_rebound(&mut self, ref_: Ref) {
-        let Some(calls) = self.const_calls.as_mut() else {
-            return;
-        };
-        if let Some(fact) = calls.values.remove(&ref_) {
-            if fact.folds > 0 {
-                calls.unsound.push(fact.name_loc);
-            }
+            _ => Default::default(),
         }
     }
 
@@ -603,8 +637,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.const_calls_enabled = false;
         if let Some(calls) = self.const_calls.as_mut() {
-            calls.unsound_all = calls.values.values().any(|fact| fact.folds > 0);
-            calls.values.clear();
+            calls.direct_eval();
         }
     }
 

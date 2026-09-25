@@ -2149,8 +2149,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let symbol = &mut self.symbols[ref_.inner_index() as usize];
             if !symbol.has_link() {
                 symbol.set_has_been_assigned_to(true);
-                if self.const_calls.is_some() {
-                    self.const_call_rebound(ref_);
+                if let Some(calls) = self.const_calls.as_mut() {
+                    calls.rebound(ref_);
                 }
                 return;
             }

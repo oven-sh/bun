@@ -1015,10 +1015,7 @@ describe("bundler", () => {
     minifyIdentifiers: false,
     onAfterBundle(api) {
       const file = api.readFile("out.js");
-      // Only `return "foo"` is left of test1, so its call folds and the function is unused.
-      expect(file).toContain('console.log("foo")');
-      expect(file).not.toContain("test1");
-      expect(file).not.toContain("bar");
+      expect(file).toContain('function test1(){return"foo"}');
       expect(file).toContain("return foo=!0;try{var foo}catch{}");
       expect(file).toContain("return foo=!0;try{}catch{var foo}");
       expect(file).toContain('async function test4(){return{status:"disabled_for_development"}}');

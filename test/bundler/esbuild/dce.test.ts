@@ -1173,8 +1173,7 @@ describe("bundler", () => {
       // preserve the pure comments in the same way esbuild does
       files: {
         "/entry.js": /* js */ `
-          // Not an empty function: a call of one folds to undefined, which is removable.
-          function bar() { sideEffect(); }
+          function bar() {}
           let bare = foo(bar);
 
           let at_yes = /* @__PURE__ */ foo(bar);

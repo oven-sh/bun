@@ -131,7 +131,7 @@ pub(crate) fn strongly_connected_components(edges: &[Vec<usize>]) -> Vec<usize> 
 }
 
 impl<'a> BundleV2<'a> {
-    /// Takes a result whose conditions call imports out of `parse_result`. Returns the number of parse tasks it scheduled.
+    /// Takes a result whose conditions call imports out of `parse_result`, for `drain_ready_held_files`. Returns the number of parse tasks it scheduled.
     pub(crate) fn hold_for_const_call_values(
         &mut self,
         parse_result: &mut parse_task::Result,
@@ -201,7 +201,6 @@ impl<'a> BundleV2<'a> {
             },
         );
         self.graph.const_calls.ready.push(importer);
-        self.drain_ready_held_files();
         Some(scheduled)
     }
 
@@ -225,11 +224,13 @@ impl<'a> BundleV2<'a> {
             return;
         };
         self.graph.const_calls.ready.extend(importers);
-        self.drain_ready_held_files();
     }
 
-    fn drain_ready_held_files(&mut self) {
-        if core::mem::replace(&mut self.graph.const_calls.draining, true) {
+    /// Runs after a result is complete, so that no result completes inside another.
+    pub(crate) fn drain_ready_held_files(&mut self) {
+        if self.graph.const_calls.ready.is_empty()
+            || core::mem::replace(&mut self.graph.const_calls.draining, true)
+        {
             return;
         }
         while let Some(importer) = self.graph.const_calls.ready.pop() {
@@ -507,7 +508,7 @@ impl<'a> BundleV2<'a> {
         {
             return Lookup::Unknown;
         }
-        let path = self.graph.input_files.items_source()[index].path.clone();
+        let path = self.graph.input_files.items_source()[index].path;
         if !self.is_plain_javascript_import(&path, specifier, target) {
             return Lookup::Unknown;
         }

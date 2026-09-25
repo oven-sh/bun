@@ -2454,22 +2454,22 @@ pub mod bv2_impl {
             }
 
             // A held file that goes on without a second run finishes here, so the count can reach zero.
-            while self.graph.pending_items != 0 {
-                if !self.release_held_files_if_idle() {
+            while self.graph.pending_items != 0 && self.release_held_files_if_idle() {}
+
+            if self.graph.pending_items == 0 {
+                let this: *mut Self = self;
+                // reshaped for borrowck — `&self.graph` and
+                // `self` go to the same call. Take a raw ptr so the two `&mut` don't
+                // overlap from rustc's view.
+                // SAFETY: `drain_deferred_tasks` only touches `self.graph.deferred_*`
+                // fields and the `BundleV2` callback surface; no aliasing UB.
+                if unsafe { (*this).graph.drain_deferred_tasks(&mut *this) } {
                     return false;
                 }
+                return true;
             }
 
-            let this: *mut Self = self;
-            // reshaped for borrowck — `&self.graph` and
-            // `self` go to the same call. Take a raw ptr so the two `&mut` don't
-            // overlap from rustc's view.
-            // SAFETY: `drain_deferred_tasks` only touches `self.graph.deferred_*`
-            // fields and the `BundleV2` callback surface; no aliasing UB.
-            if unsafe { (*this).graph.drain_deferred_tasks(&mut *this) } {
-                return false;
-            }
-            true
+            false
         }
 
         pub(crate) fn wait_for_parse(&mut self) {
@@ -7492,6 +7492,7 @@ pub mod bv2_impl {
             // Not a completion yet: the file keeps its unit of `pending_items` while its result is held.
             if let Some(scheduled) = this.hold_for_const_call_values(parse_result) {
                 this.graph.pending_items += u32::try_from(scheduled).expect("int cast");
+                this.drain_ready_held_files();
                 return;
             }
             // Borrowck rejects holding a `&this.graph` alias
@@ -7940,6 +7941,7 @@ pub mod bv2_impl {
             this.graph.pending_items =
                 u32::try_from(i32::try_from(this.graph.pending_items).expect("int cast") + diff)
                     .expect("int cast");
+            this.drain_ready_held_files();
             if diff < 0 {
                 this.on_after_decrement_scan_counter();
             }

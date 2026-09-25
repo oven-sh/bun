@@ -1712,7 +1712,7 @@ impl PostgresSQLConnection {
             bun_jsc::rare_data::SocketGroups::of((*raw).group())
                 .postgres_group::<false>(self.vm_mut().uws_loop())
         };
-        let opened = Self::open(
+        let dialed = Self::open(
             self.global(),
             group,
             ConnectParams {
@@ -1745,8 +1745,8 @@ impl PostgresSQLConnection {
             },
         );
         // Best effort: a cancel that cannot be dialed leaves the query running.
-        if opened.is_err() {
-            let _ = self.global().try_take_exception();
+        if let Err(err) = dialed {
+            debug!("cancel request not dialed: {:?}", err);
         }
     }
 

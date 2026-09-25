@@ -2900,8 +2900,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 }
                 continue;
             }
-            // `\<CR><LF>` line-continuation. A bare `\<CR>` in double quotes is
-            // literal `\` + CR (POSIX), so re-emit the backslash read_char() ate.
+            // A bare `\<CR>` in double quotes is literal `\` + CR (POSIX): restore the backslash read_char() consumed.
             else if char == u32::from(b'\r') {
                 debug_assert!(input.escaped);
                 if let Some(next) = self.peek() {

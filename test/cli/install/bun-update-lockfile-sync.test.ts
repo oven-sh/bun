@@ -825,7 +825,7 @@ describe.concurrent("$ref overrides", () => {
     await expectInSync(dir, [""], { reinstall: true });
   });
 
-  test("bun update <name> --latest re-resolves a package whose $name override value changed", async () => {
+  test("bun update <name> --latest keeps the rows of a $name override in sync", async () => {
     const overrides = { "no-deps": "$@types/no-deps" };
     const dir = await setup({
       "package.json": root({ dependencies: { "one-range-dep": "1.0.0", "@types/no-deps": "1.0.0" }, overrides }),

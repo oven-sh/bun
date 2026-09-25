@@ -549,9 +549,11 @@ impl<'a> BundleV2<'a> {
             } = *visited;
             if seeds.is_empty() {
                 // SAFETY: the task is arena-owned, and its worker let go of it when it posted the result.
-                let task = unsafe { &mut *task };
-                task.release_owned_fields();
-                parse_task::complete_held_result(self, task, success, watcher_data, external);
+                let ctx = unsafe {
+                    (*task).release_owned_fields();
+                    (*task).ctx
+                };
+                parse_task::complete_held_result(self, ctx, success, watcher_data, external);
                 return;
             }
             // The second run reads the same source, so the buffer of a native plugin stays until the end.

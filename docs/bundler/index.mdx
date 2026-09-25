@@ -1362,7 +1362,7 @@ Ensure the file is included in your `tsconfig.json` (for example, `"include": ["
 
 ### Constant function calls
 
-When a function returns the same primitive value on every call, the bundler replaces each call of the function with that value. The value can come from [`define`](#define) or from [`feature()`](#features), so a small helper function works like a build-time constant.
+A small function can wrap a build-time value. When a function reads a [`define`](#define) or a [`feature()`](#features) value and returns the same primitive value on every call, the bundler replaces each call of the function with that value. The result is the same as when you write the value in place of the call.
 
 ```ts title="app.ts" icon="/icons/typescript.svg"
 function isDev() {
@@ -1385,12 +1385,20 @@ A function qualifies when all of these are true:
 - It is a function declaration. A `const` that holds an arrow function or a function expression also qualifies when only `const` declarations come before it in its scope.
 - It is not `async` and it is not a generator.
 - Each parameter is a plain name with no default value.
-- The body is empty, or it has only `return` and `if` statements and always returns the same `true`, `false`, `null`, `undefined`, number, or string of at most 64 bytes.
+- The body has only `return` and `if` statements, and it always returns the same `true`, `false`, `null`, `undefined`, number, or string of at most 64 bytes.
+- The value comes from a `define`, from `feature()`, or from a call of another function that qualifies. With [`minify.syntax`](#minify), this rule does not apply: a function that returns a literal qualifies, and so does a function with an empty body.
 - Nothing assigns to the function, and the file has no direct `eval`.
+
+`feature()` is only valid in a condition, so return a value from the condition: `return feature("PREMIUM") ? true : false`.
+
+The bundler replaces these calls:
+
+- A call of the function by its name, below the declaration of the function. `true`, `false`, `null` and `undefined` replace a call in any position.
+- A number or a string replaces a call only in the test of `if` or `?:`, as in `if (mode() === "dev")`.
 
 The bundler keeps the arguments of a call when they have side effects: `isDev(track())` becomes `(track(), false)`.
 
-The bundler does not replace `new f()`, `f.call()`, `f?.()`, a tagged template, or a call in the argument of `import()` or `require()`. A call above the declaration is replaced only for a top-level function, in a file that has `import` or `export` syntax.
+The bundler does not replace `new f()`, `f.call()`, `f?.()`, a tagged template, or a call in the argument of `import()`, `require()` or `require.resolve()`.
 
 #### Functions from other files
 
@@ -1414,12 +1422,20 @@ The bundler does not resolve or parse `./devtools`. The build succeeds when `./d
 
 These rules apply to an import:
 
-- A condition calls the import, with no argument or with literal arguments only. A condition is the test of `if` or `?:`, or an operand of `&&`, `||`, `??` or `!`. When one import of an `import` statement qualifies, the bundler also replaces the other calls of the imports of that statement.
-- The export is a top-level function declaration in an ES module. The bundler does not replace a call of `export const f = () => ...`, because the call can throw before the file of `f` runs. It does not replace a CommonJS export.
+- A condition in the file calls the import, with no argument or with literal arguments only. A condition is the test of `if` or `?:`, or an operand of `&&`, `||`, `??` or `!`. A top-level function that returns such a call also counts: `export function isInternal() { return isDev() && INTERNAL; }`.
+- The file that calls the import is not in `node_modules`.
+- The export is a top-level function declaration in an ES module. The bundler does not replace a call of `export const f = () => ...`, because the call can throw before the file of `f` runs. It does not replace a call of `export default function`, of a name from `export *`, or of a CommonJS export.
 - The bundler follows `export { isDev } from "./env"` and an import that a file exports again, up to 8 files. It does not follow a re-export of a pure barrel file that [`optimizeImports`](#optimizeimports) applies to. Import the function from the file that declares it.
-- The bundler does not replace `ns.isDev()` on `import * as ns`, an import between files that import each other, or an import that an `onResolve` plugin resolves.
+- The bundler does not replace `ns.isDev()` on `import * as ns`, an import between files that import each other, an import with an attribute (`with { type: ... }`), or an import that an `onResolve` plugin resolves.
 
-The bundler parses a file two times when a condition in it calls an import in this way, because it must parse the imported file first.
+The bundler waits for the imported file before it adds the file with the condition to the bundle. When the imported file has a value for a call, the bundler parses the file with the condition a second time.
+
+#### When the bundler does not replace calls
+
+- The file imports a [macro](/bundler/macros).
+- The build uses `--react-compiler` or the development server.
+- The build does not bundle (`--no-bundle`, `Bun.Transpiler`, `bun run`).
+- The environment variable `BUN_FEATURE_FLAG_DISABLE_CONST_CALL_FOLDING=1` is set. Use it to find out if this replacement causes a difference in the output.
 
 ### optimizeImports
 

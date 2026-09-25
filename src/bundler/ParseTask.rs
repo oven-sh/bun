@@ -2921,13 +2921,13 @@ pub mod parse_worker {
     // CONCURRENCY: see `task_callback` — `&mut ParseTask` is unique per callback
     // invocation; all shared state is accessed via `&BundleV2` (read-only) or
     // the per-OS-thread `Worker` arena.
-    pub(crate) fn run_from_thread_pool(this: *mut ParseTask) {
-        run_from_thread_pool_impl(this);
+    pub(crate) fn run_from_thread_pool(task: *mut ParseTask) {
+        // SAFETY: see `task_callback`: the worker that runs a task is the only one that has it.
+        run_from_thread_pool_impl(unsafe { &mut *task }, task);
     }
 
-    fn run_from_thread_pool_impl(task: *mut ParseTask) {
-        // SAFETY: see `task_callback`: the worker that runs a task is the only one that has it.
-        let this = unsafe { &mut *task };
+    /// `task` is `this`, for the bundle thread to schedule again. It is not read here.
+    fn run_from_thread_pool_impl(this: &mut ParseTask, task: *mut ParseTask) {
         // SAFETY: ctx backref valid for the bundle pass (outlives this task).
         let ctx = unsafe { this.ctx() };
         let worker: &mut crate::Worker = crate::Worker::get(ctx);
@@ -3137,13 +3137,13 @@ pub mod parse_worker {
     /// Completes a result that the bundle thread held, as `on_complete_mini` does for a result from a worker.
     pub(crate) fn complete_held_result(
         bundle: &mut BundleV2<'_>,
-        task: &ParseTask,
+        ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
         success: Success,
         watcher_data: WatcherData,
         external: ExternalFreeFunction,
     ) {
         let mut result = core::mem::ManuallyDrop::new(Result {
-            ctx: task.ctx.expect("ParseTask.ctx unset"),
+            ctx: ctx.expect("ParseTask.ctx unset"),
             task: EventLoop::Task::default(),
             value: ResultValue::Success(success),
             external,

@@ -1396,7 +1396,10 @@ pub(crate) fn is_allowed_host_header(
         Some(Address::Tcp {
             hostname: Some(h), ..
         }) => strings::eql_case_insensitive_ascii(host, h.as_bytes(), true),
-        Some(Address::Tcp { hostname: None, .. }) | Some(Address::Unix(_)) | None => false,
+        Some(Address::Tcp { hostname: None, .. })
+        | Some(Address::Unix(_))
+        | Some(Address::Fd { .. })
+        | None => false,
     }
 }
 

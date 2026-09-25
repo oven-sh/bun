@@ -160,14 +160,11 @@ void readableStreamDefaultReaderRelease(JSGlobalObject* globalObject, JSReadable
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = reader->m_stream.get();
     readableStreamReaderGenericRelease(globalObject, reader);
     RETURN_IF_EXCEPTION(scope, void());
     JSObject* error = Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Releasing reader"_s);
     RETURN_IF_EXCEPTION(scope, void());
-    readableStreamDefaultReaderErrorReadRequests(globalObject, reader, error);
-    RETURN_IF_EXCEPTION(scope, void());
-    RELEASE_AND_RETURN(scope, readableStreamReleaseNativeSourceRef(globalObject, stream));
+    RELEASE_AND_RETURN(scope, readableStreamDefaultReaderErrorReadRequests(globalObject, reader, error));
 }
 
 // The `{value, size, done}` readMany result shape.

@@ -232,12 +232,7 @@ void resolvePromise(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSValue); // use
 void rejectPromise(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
 // "Set promise.[[PromiseIsHandled]] to true"
 void markPromiseAsHandled(JSC::VM&, JSC::JSPromise*); // userJS: no — WebStreamsMisc.cpp
-// "reject promise with r" and "set promise.[[PromiseIsHandled]] to true" as one step, for the
-// promises the spec always marks (reader.closed, writer.closed, writer.ready). Like the settle
-// helpers above that take no thenable (promiseFulfilledWith, promiseRejectedWith, rejectPromise),
-// these never throw, and a state update made of them has no exception check between its steps:
-// a check is also where a termination is taken (node:vm `timeout`, worker.terminate()), and a
-// node:vm timeout leaves the process running with what the update had reached.
+// Reject as handled in one step: a termination taken between reject and mark reports the rejection.
 void rejectPromiseAsHandled(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSValue); // userJS: no, never throws — WebStreamsMisc.cpp
 // "a promise rejected with r" whose [[PromiseIsHandled]] is true from the start.
 JSC::JSPromise* promiseRejectedWithAsHandled(JSC::JSGlobalObject*, JSC::JSValue); // userJS: no, never throws — WebStreamsMisc.cpp
@@ -286,9 +281,7 @@ void setUpReadableStreamDefaultReader(JSC::JSGlobalObject*, JSReadableStreamDefa
 void setUpReadableStreamBYOBReader(JSC::JSGlobalObject*, JSReadableStreamBYOBReader*, JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 JSC::JSPromise* readableStreamReaderGenericCancel(JSC::JSGlobalObject*, JSReadableStreamReaderBase*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
 void readableStreamReaderGenericInitialize(JSC::JSGlobalObject*, JSReadableStreamReaderBase*, JSReadableStream*); // userJS: no, never throws — ReadableStreamOperations.cpp
-void readableStreamReaderGenericRelease(JSC::JSGlobalObject*, JSReadableStreamReaderBase*); // userJS: no — ReadableStreamOperations.cpp
-// Bun's native-handle updateRef(false) gate: the last step of a default reader's release.
-void readableStreamReleaseNativeSourceRef(JSC::JSGlobalObject*, JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
+void readableStreamReaderGenericRelease(JSC::JSGlobalObject*, JSReadableStreamReaderBase*); // userJS: no (also runs Bun's native-handle updateRef(false) gate) — ReadableStreamOperations.cpp
 
 // Stream-level state ops.
 JSC::JSPromise* readableStreamCancel(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp

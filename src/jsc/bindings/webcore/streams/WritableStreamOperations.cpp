@@ -141,8 +141,7 @@ void setUpWritableStreamDefaultWriter(JSGlobalObject* globalObject, JSWritableSt
         throwException(globalObject, scope, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: WritableStream is locked"_s));
         return;
     }
-    // Promises first, links last, no check in between: the stream settles the promises of the
-    // writer it is linked to (see rejectPromiseAsHandled).
+    // Promises first, links last: the stream settles the promises of the writer it is linked to.
     JSPromise* ready = nullptr;
     JSPromise* closed = nullptr;
     switch (stream->m_state) {

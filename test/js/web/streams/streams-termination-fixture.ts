@@ -148,7 +148,12 @@ const FAMILIES: Record<string, Record<string, Row>> = {
         }
       },
       settle: l => void l.writer.close().catch(noop),
-      check: l => (status(l.writer.closed) === "pending" ? "writer.closed never settles" : reported()),
+      check(l) {
+        const ready = status(l.writer.ready);
+        const closed = status(l.writer.closed);
+        if (ready !== "fulfilled" || closed !== "fulfilled") return `ready=${ready} closed=${closed}`;
+        return reported();
+      },
     },
     "controller.error() with a writer": {
       spin() {

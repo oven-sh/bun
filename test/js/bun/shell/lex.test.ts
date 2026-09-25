@@ -1031,6 +1031,21 @@ describe("lex shell", () => {
       "echo ** #b",
       [{ Text: "echo" }, { Delimit: {} }, { DoubleAsterisk: {} }, { Eof: {} }],
     ],
+    [
+      "comment inside backticks ends at the closing backtick",
+      "echo `echo hi # note`",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { CmdSubstBegin: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "hi" },
+        { Delimit: {} },
+        { CmdSubstEnd: {} },
+        { Eof: {} },
+      ],
+    ],
   ])("comments: %s", (_name, source, expected) => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
   });
@@ -1059,6 +1074,12 @@ describe("lex shell", () => {
     expect(exitCode).toBe(0);
   });
 
+  // bash: the first unescaped backtick closes the substitution, even inside a comment.
+  test("Bun.$ comment inside backticks", async () => {
+    const { stdout, exitCode } = await $`${{ raw: "echo `echo hi # note`\necho `echo x # c\necho y`\n" }}`.quiet();
+    expect(stdout.toString()).toBe("hi\nx y\n");
+    expect(exitCode).toBe(0);
+  });
 
   test("Bun.$ template with CRLF and a trailing comment", async () => {
     const { stdout, exitCode } = await $`${{ raw: "echo one # c\r\necho two\r\n" }}`.quiet();

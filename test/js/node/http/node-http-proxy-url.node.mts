@@ -6,7 +6,8 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert";
-import { Agent, createServer, request as httpRequest } from "node:http";
+import http, { Agent, createServer, request as httpRequest } from "node:http";
+import https from "node:https";
 import type { AddressInfo } from "node:net";
 
 // Helper to make a request and get the response.
@@ -159,3 +160,52 @@ describe("HTTP server with proxy-style absolute URLs", () => {
     }
   });
 });
+
+const { setGlobalProxyFromEnv } = http as any;
+
+describe(
+  "ERR_PROXY_INVALID_CONFIG for a proxy URL that does not parse",
+  { skip: typeof setGlobalProxyFromEnv !== "function" },
+  () => {
+    // Node prints the userinfo of the proxy URL in these messages. Bun removes it.
+    const printsUserinfo = process.versions.bun === undefined;
+
+    // [name, proxy URL, the same URL without its userinfo]
+    const cases = [
+      ["no credentials", "http://proxy.example.com:99999", "http://proxy.example.com:99999"],
+      ["no credentials, LF in the host", "http://proxy.exa\nmple.com:8080", "http://proxy.exa\nmple.com:8080"],
+      ["port out of range", "http://user:s3cret@proxy.example.com:99999", "http://proxy.example.com:99999"],
+      ["LF in the password", "http://user:s3c\nret@proxy.example.com:8080", "http://proxy.example.com:8080"],
+      ["unescaped / in the password", "http://user:s3/cret@proxy.example.com:8080", "http://proxy.example.com:8080"],
+      ["unescaped @ in the password", "http://user:s3@cret@proxy.example.com:99999", "http://proxy.example.com:99999"],
+      ["space in the host", "http://user:s3cret@proxy example.com:8080", "http://proxy example.com:8080"],
+    ];
+
+    for (const [name, proxyUrl, withoutUserinfo] of cases) {
+      test(name, () => {
+        const printed = printsUserinfo ? proxyUrl : withoutUserinfo;
+        const prefixed = `Invalid proxy URL: ${printed}`;
+
+        assert.throws(() => new Agent({ proxyEnv: { HTTP_PROXY: proxyUrl } } as any), {
+          code: "ERR_PROXY_INVALID_CONFIG",
+          message: prefixed,
+        });
+        assert.throws(() => new https.Agent({ proxyEnv: { HTTPS_PROXY: proxyUrl } } as any), {
+          code: "ERR_PROXY_INVALID_CONFIG",
+          message: prefixed,
+        });
+
+        // setGlobalProxyFromEnv() prints the bare URL. CR and LF are the exception: the shared
+        // environment parser rejects them first, with the prefix.
+        const message = /[\r\n]/.test(proxyUrl) ? prefixed : printed;
+        for (const variable of ["HTTP_PROXY", "HTTPS_PROXY"]) {
+          // Call the returned restore function, so that a missing throw does not replace the global agents.
+          assert.throws(() => setGlobalProxyFromEnv({ [variable]: proxyUrl })(), {
+            code: "ERR_PROXY_INVALID_CONFIG",
+            message,
+          });
+        }
+      });
+    }
+  },
+);

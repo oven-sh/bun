@@ -131,10 +131,10 @@ describe.concurrent("run-shell", () => {
 
   // A `\<newline>` with no surrounding whitespace joins the halves into ONE
   // word (POSIX 2.2.1), for both LF and CRLF. bash: `--flag=\<LF>value` is a
-  // single argument.
+  // single argument. Uses the `echo` builtin: Windows has no `printf`.
   test.each([
-    ["LF", "printf '[%s]\\n' --flag=\\\nvalue\n"],
-    ["CRLF", "printf '[%s]\\n' --flag=\\\r\nvalue\r\n"],
+    ["LF", "echo --flag=\\\nvalue\n"],
+    ["CRLF", "echo --flag=\\\r\nvalue\r\n"],
   ])("backslash-newline inside a word joins it (%s)", async (_eol, script) => {
     using dir = tempDir("bun-shell-cont-join", { "j.sh": script });
     await using proc = Bun.spawn({
@@ -146,7 +146,7 @@ describe.concurrent("run-shell", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stripAsanWarning(stderr)).toBe("");
-    expect(stdout).toBe("[--flag=value]\n");
+    expect(stdout).toBe("--flag=value\n");
     expect(exitCode).toBe(0);
   });
 

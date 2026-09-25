@@ -867,8 +867,7 @@ impl ReadFile {
                         // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
                         unsafe { bun_core::vec::commit_spare(&mut buffer, read_amount) };
                     }
-                    // `max_length` is the end of a `slice()` window, or the `fstat` size
-                    // of this read (`stop_at_own_size`), or `MAX_SIZE`.
+                    // `max_length` is the end of a `slice()` window, this read's `fstat` size, or `MAX_SIZE`.
                     if !self.read_eof && buffer.len() >= self.max_length as usize {
                         break;
                     }

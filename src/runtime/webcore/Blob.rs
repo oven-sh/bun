@@ -747,8 +747,7 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
-                // Version 4: the window end of a file-backed slice. An unsliced blob writes
-                // `MAX_SIZE` (unknown), and the receiver stats the file, like v3.
+                // Version 4: the window end of a file-backed slice, or `MAX_SIZE` (unknown) for an unsliced blob.
                 writer.write_int_le::<u64>(self.size.get())?;
                 self.resolve_size();
                 store.serialize(writer)?;

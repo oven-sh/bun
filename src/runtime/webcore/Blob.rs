@@ -1279,8 +1279,7 @@ impl BlobExt for Blob {
         JSValue::from(match file.pathlike {
             // `mode` is 0 until a stat succeeds.
             PathOrFileDescriptor::Path(_) => file.mode != 0 && !bun_sys::S::ISDIR(file.mode),
-            // Programs read stdin only if `Bun.stdin.exists()` is true, so a
-            // terminal and /dev/null must answer false.
+            // Programs guard stdin reads with this, so a terminal and /dev/null answer false.
             PathOrFileDescriptor::Fd(_) => {
                 bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode)
             }
@@ -1360,8 +1359,7 @@ impl BlobExt for Blob {
         }
     }
 
-    // For a path this means 'is something other than a directory there?', not
-    // 'can it be read?': open(2) fails on a socket path.
+    // For a path, true does not mean that a read succeeds.
     fn get_exists(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         if self.is_s3() {
             return crate::webcore::s3_file::S3BlobStatTask::exists(

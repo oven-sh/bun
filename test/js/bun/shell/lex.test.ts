@@ -739,13 +739,14 @@ describe("lex shell", () => {
       ],
     ],
     [
-      "escaped newline after a variable",
+      // `\<newline>` is removed before tokenizing (POSIX 2.2.1), so it must not
+      // emit a delimiter: the variable and `ls` stay one word.
+      "escaped newline after a variable joins the word",
       "echo $FOO\\\nls",
       [
         { Text: "echo" },
         { Delimit: {} },
         { Var: "FOO" },
-        { Delimit: {} },
         { Text: "ls" },
         { Delimit: {} },
         { Eof: {} },

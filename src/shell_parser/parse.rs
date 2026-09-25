@@ -2893,12 +2893,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 // `fell_through` marks cases that should re-enter the loop;
                 // cases that break 'escaped fall through to appendCharToStrPool below.
             }
-            // Treat newline preceded by backslash as whitespace
+            // `\<newline>` is removed before tokenizing (POSIX 2.2.1), so it joins
+            // `foo\<LF>bar` into one word rather than breaking it.
             else if char == u32::from(b'\n') {
                 debug_assert!(input.escaped);
-                if self.chars.state != CharState::Double {
-                    self.break_word(AddDelimiter::AfterWord)?;
-                }
                 continue;
             }
             // A bare `\<CR>` in double quotes is literal `\` + CR (POSIX): restore the backslash read_char() consumed.
@@ -2907,9 +2905,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 if let Some(next) = self.peek() {
                     if !next.escaped && next.char == u32::from(b'\n') {
                         let _ = self.eat();
-                        if self.chars.state != CharState::Double {
-                            self.break_word(AddDelimiter::AfterWord)?;
-                        }
                         continue;
                     }
                 }

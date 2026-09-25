@@ -560,39 +560,55 @@ describe.skipIf(isWindows)("Bun.serve({ fd })", () => {
   });
 });
 
-// In node the number names a descriptor of the cluster primary. Bun does not
-// ask the primary yet. The worker must fail, and it must not listen on the
-// descriptor that has this number in the worker.
-test("node:http listen({ fd }) in a cluster worker emits an error", async () => {
-  using dir = tempDir("fd-worker", {
-    "primary.cjs": `
-      const cluster = require("node:cluster");
-      if (cluster.isPrimary) {
-        cluster.fork().on("message", message => {
-          console.log(JSON.stringify(message));
-          process.exit(0);
-        });
-      } else {
-        const server = require("node:http").createServer(() => {});
-        server.once("listening", () => process.send({ listening: server.address() }));
-        server.once("error", e => process.send({ code: e.code, syscall: e.syscall, listening: server.listening }));
-        server.listen({ fd: 0 });
-      }
-    `,
+// In node the number names a descriptor of the cluster primary. Each worker
+// asks the primary and listens on the socket that the primary shares. Node
+// v26.3.0 gives the same answers with these fixtures.
+describe.skipIf(isWindows).concurrent("node:http listen({ fd }) in a cluster worker", () => {
+  const fixture = join(import.meta.dir, "../../node/http/node-http-listen-fd-cluster-fixture.ts");
+
+  test.each([
+    // Each worker closes its server.
+    { tls: false, stop: "close", workers: [{ listening: false }, { listening: false }] },
+    // The primary disconnects the workers, and each worker closes its server and leaves.
+    {
+      tls: true,
+      stop: "disconnect",
+      workers: [
+        { code: 0, exitedAfterDisconnect: true },
+        { code: 0, exitedAfterDisconnect: true },
+      ],
+    },
+  ])("serves on the descriptor of the primary until $stop, tls: $tls", async ({ tls, stop, workers }) => {
+    await using primary = await inheritListener({ fixture, kind: "tcp", tls, env: { LISTEN_STOP: stop } });
+    const listening = { address: { address: "127.0.0.1", family: "IPv4", port: primary.port }, listening: true };
+    expect(primary.ready).toEqual([listening, listening]);
+    for (let i = 0; i < 4; i++) {
+      expect(await primary.request()).toEqual({ status: 200, body: "served by " + primary.nonce });
+    }
+    // The primary closes its descriptor when the last worker leaves.
+    expect(await primary.stop()).toEqual({ fd: "closed", workers });
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "primary.cjs"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdin: "ignore",
-    stderr: "pipe",
+
+  test("a server that closes before the primary answers does not listen", async () => {
+    await using primary = await inheritListener({
+      fixture,
+      kind: "tcp",
+      env: { LISTEN_WORKERS: "1", LISTEN_CLOSE_EARLY: "1" },
+    });
+    expect(primary.ready).toEqual([{ listening: false, events: ["closed"] }]);
+    // The worker gave the handle of the late answer back.
+    expect(await primary.stop()).toEqual({ fd: "closed", workers: [{ listening: false }] });
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-    out: { code: "ENOTSUP", syscall: "listen", listening: false },
-    stderr: "",
+
+  test("emits the error of the primary for a descriptor that is not a socket", async () => {
+    // Descriptor 0 of the primary is not a socket.
+    await using primary = await inheritListener({
+      fixture,
+      kind: "tcp",
+      env: { LISTEN_FD: "0", LISTEN_WORKERS: "1" },
+    });
+    expect(primary.ready).toEqual([{ error: { code: "EINVAL", syscall: "bind" } }]);
   });
-  expect(exitCode).toBe(0);
 });
 
 test.skipIf(!isWindows)("Bun.serve({ fd }) throws on Windows", () => {

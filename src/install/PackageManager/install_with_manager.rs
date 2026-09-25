@@ -592,8 +592,6 @@ pub fn install_with_manager(
     direct_deps_before.redirect_dependents(&mut manager.lockfile);
     transitive.redirect_dependents(&mut manager.lockfile);
     redirect_moved_edges(&mut manager.lockfile, &named.moved);
-    transitive.print_plan(manager, &direct_deps_before, &named.moved);
-    print_kept_patched(manager);
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager
@@ -611,6 +609,8 @@ pub fn install_with_manager(
         redirect_moved_edges(&mut manager.lockfile, &named.moved);
         named.moved.extend(wave_moved);
     }
+    transitive.print_plan(manager, &direct_deps_before, &named.moved);
+    print_kept_patched(manager);
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
     // Both old and new lockfiles must stay live for the later
@@ -1496,7 +1496,7 @@ fn enqueue_transitive(
     transitive.enqueue_tracked(manager)
 }
 
-/// Writes the resolved versions into the edited package.json entries and bun.lock's declared columns. A `$name` override or a catalog entry re-derived from a rewritten literal can differ from the value the rows resolved under, so the rows that value no longer covers resolve once more before the clean. Returns those rows paired with the package they resolved to before, for `redirect_moved_edges` and the security scanner.
+/// Writes the resolved versions into the edited package.json entries and bun.lock's declared columns. A `$name` override or a catalog entry re-derived from a rewritten literal can differ from the value the rows resolved under, so the rows that value no longer covers resolve once more before the clean. Returns those rows paired with the package they resolved to before, for `redirect_moved_edges`, the plan and the security scanner.
 fn write_back_package_jsons(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
@@ -1520,6 +1520,11 @@ fn write_back_package_jsons(
     if rows.is_empty() {
         return Ok(Vec::new());
     }
+    let from: Vec<PackageID> = rows
+        .iter()
+        .map(|&dependency_i| manager.lockfile.buffers.resolutions[dependency_i])
+        .collect();
+    crate::update_transitive::register_moved(manager, &from)?;
     let moved: Vec<(DependencyID, PackageID)> = rows
         .into_iter()
         .map(|dependency_i| {

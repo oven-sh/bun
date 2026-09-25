@@ -104,6 +104,14 @@ fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<bool> 
     }
     .and_then(|()| sync_lockfile(manager, &edited));
 
+    // `sync_lockfile` may have grown the string buffer the requests point into.
+    if result.is_ok() && !updates.is_empty() {
+        manager.lockfile.bind_update_requests(
+            manager.pending_filtered_write.as_deref(),
+            manager.workspace_name_hash,
+            &mut updates,
+        );
+    }
     manager.update_requests = updates;
     manager.edited_package_jsons = edited;
     result
@@ -271,7 +279,6 @@ fn sync_lockfile(
     manager: &mut PackageManager,
     edited: &[EditedPackageJson],
 ) -> crate::Result<bool> {
-    let mut synced_maps = false;
     let mut scratch = super::workspace_manifests::ScratchManifests::new();
     scratch.parse_root(manager)?;
     let mut root_pkg = Some(core::mem::take(&mut scratch.root));
@@ -294,7 +301,6 @@ fn sync_lockfile(
         if target_id == invalid_package_id {
             continue;
         }
-        let is_root = edited[*i].target.name_hash.is_none();
         let row = manager.lockfile.packages.items_dependencies()[target_id as usize];
         let scratch_deps = pkg
             .dependencies
@@ -341,12 +347,7 @@ fn sync_lockfile(
             changed
         };
 
-        let sync_maps = is_root
-            && (!scratch.overrides.is_empty()
-                || scratch.catalogs.has_any()
-                || !manager.lockfile.overrides.is_empty()
-                || manager.lockfile.catalogs.has_any());
-        if changed.is_empty() && !sync_maps {
+        if changed.is_empty() {
             continue;
         }
 
@@ -355,23 +356,30 @@ fn sync_lockfile(
         for &(_, si) in &changed {
             scratch_deps[si].count(sbuf, &mut builder);
         }
-        if sync_maps {
-            scratch.overrides.count(sbuf, &mut builder);
-            scratch.catalogs.count(sbuf, &mut builder);
-        }
         builder.allocate()?;
         let rows = row.mut_(lf.dependencies.as_mut_slice());
         for &(ti, si) in &changed {
             rows[ti] = scratch_deps[si].clone_in(known, sbuf, &mut builder)?;
         }
-        if sync_maps {
-            *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
-            *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
-            synced_maps = true;
-        }
         builder.clamp();
     }
-    Ok(synced_maps)
+
+    // A `$name` override or a catalog entry takes its value from a root or member literal that may have been rewritten, so the root maps are re-derived whatever file was edited.
+    let sync_maps = !scratch.overrides.is_empty()
+        || scratch.catalogs.has_any()
+        || !manager.lockfile.overrides.is_empty()
+        || manager.lockfile.catalogs.has_any();
+    if sync_maps {
+        let known = &mut manager.known_npm_aliases;
+        let (mut builder, lf) = manager.lockfile.string_builder_split();
+        scratch.overrides.count(sbuf, &mut builder);
+        scratch.catalogs.count(sbuf, &mut builder);
+        builder.allocate()?;
+        *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
+        *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
+        builder.clamp();
+    }
+    Ok(sync_maps)
 }
 
 fn same_row(scratch: &Dependency, row: &Dependency) -> bool {

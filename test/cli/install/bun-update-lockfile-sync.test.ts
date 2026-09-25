@@ -875,6 +875,21 @@ describe.concurrent("$ref overrides", () => {
     await expectInSync(dir, [""], { reinstall: true });
   });
 
+  // The root declares the override; only the member declares the dependency it refers to.
+  test("bun update <name> in a member re-resolves a package whose root $name override value changed", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const memberDeps = (tags: string) => ({ "one-range-dep": "1.0.0", "dep-with-tags": tags });
+    const dir = await setup(MONOREPO({ dependencies: memberDeps("1.0.0") }, { overrides }));
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, member("pkg1", { dependencies: memberDeps("^1.0.0") }), PKG1);
+    await runIn(dir, PKG1, "update", "dep-with-tags");
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual(memberDeps("^1.0.1"));
+    expect((await lock(dir)).overrides).toStrictEqual({ "no-deps": "^1.0.1" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    await runBunInstall(envFor(dir), dir, { frozenLockfile: true });
+  });
+
   test("bun update <name> --latest keeps the rows of a $name override in sync", async () => {
     const overrides = { "no-deps": "$@types/no-deps" };
     const dir = await setup({

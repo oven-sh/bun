@@ -919,9 +919,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
       !!allowPublicKeyRetrieval,
     );
   } catch (e) {
-    // The slot closes on a later turn of the event loop. The adapter can still be filling
-    // this.connections (the close scans that array), and an onclose that dials again must
-    // not keep timers and I/O from running.
+    // setImmediate: the pool can still be starting, and an onclose that dials again must not starve the event loop
     setImmediate(closeNT, onClose, e);
     return null;
   }

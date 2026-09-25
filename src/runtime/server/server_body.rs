@@ -2175,8 +2175,11 @@ where
 
     pub(crate) fn get_port(&self) -> Option<u16> {
         let config_port = match &self.config.get().address {
-            server_config::Address::Unix(_) => return None,
+            server_config::Address::Unix(_) | server_config::Address::Fd { unix: true, .. } => {
+                return None;
+            }
             server_config::Address::Tcp { port, .. } => *port,
+            server_config::Address::Fd { unix: false, .. } => 0,
         };
 
         if let Some(listener) = self.listener.get() {
@@ -2213,7 +2216,15 @@ where
             server_config::Address::Unix(unix) => {
                 return bun_string_jsc::create_utf8_for_js(cx.global(), unix.as_bytes());
             }
+            server_config::Address::Fd { unix: true, .. } => {
+                let path = self.adopted_unix_path();
+                if path.is_empty() {
+                    return Ok(JSValue::NULL);
+                }
+                return bun_string_jsc::create_utf8_for_js(cx.global(), &path);
+            }
             server_config::Address::Tcp { port, .. } => *port,
+            server_config::Address::Fd { unix: false, .. } => 0,
         };
 
         if let Some(listener) = self.listener.get() {
@@ -2267,8 +2278,17 @@ where
     pub(crate) fn get_hostname(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
         let hostname = match &self.config.get().address {
-            server_config::Address::Unix(_) => return Ok(JSValue::UNDEFINED),
+            server_config::Address::Unix(_) | server_config::Address::Fd { unix: true, .. } => {
+                return Ok(JSValue::UNDEFINED);
+            }
             server_config::Address::Tcp { hostname, .. } => hostname,
+            server_config::Address::Fd { unix: false, .. } => {
+                let mut text = [0u8; 64];
+                return match self.adopted_host(&mut text) {
+                    Some(host) => bun_string_jsc::create_utf8_for_js(global, host),
+                    None => BunString::static_("localhost").to_js(global),
+                };
+            }
         };
         if let Some(listener) = self.listener.get() {
             let mut buf = [0u8; 1024];

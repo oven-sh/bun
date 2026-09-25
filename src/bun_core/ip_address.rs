@@ -49,6 +49,27 @@ fn parse_strict_v6(input: &[u8]) -> Option<Ipv6Addr> {
     crate::fmt::parse_ascii::<Ipv6Addr>(input)
 }
 
+/// An IPv6 address with a zone id: `fe80::1%eth0` is the address `fe80::1` and the zone `eth0`. The split is at the first `%`, as in libuv's `uv_inet_pton`, and the address is in the strict form of `parse_strict`. The zone names an interface of this machine: it is not part of the address, and it is not checked here.
+pub fn parse_zoned_ipv6(input: &[u8]) -> Option<(Ipv6Addr, &[u8])> {
+    let (address, zone) = crate::strings::split_once_char(input, b'%')?;
+    Some((parse_strict_v6(address)?, zone))
+}
+
+/// `parse_zoned_ipv6` for a host: Node.js's `net.isIP` takes the zone only when it is one or more of letters, digits, `-`, `.` and `:`.
+pub fn parse_zoned_ipv6_host(host: &[u8]) -> Option<Ipv6Addr> {
+    let (address, zone) = parse_zoned_ipv6(host)?;
+    let is_zone_id = !zone.is_empty()
+        && zone
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b':'));
+    is_zone_id.then_some(address)
+}
+
+/// `is_ip_address`, or an IPv6 address with a zone id. A TLS client sends no SNI for such a host (RFC 6066).
+pub fn is_ip_address_or_zoned(host: &[u8]) -> bool {
+    is_ip_address(host) || parse_zoned_ipv6_host(host).is_some()
+}
+
 /// Parses what the platform resolver treats as a numeric host: dotted-quad, IPv6 (an optional `%zone` is stripped, not validated), and the `inet_aton` shorthand `getaddrinfo` accepts but `is_ip_address` rejects (`127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`). The Windows resolver reads no shorthand.
 pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
     // A `%zone` suffix belongs to a numeric v6 host; resolving the zone is the caller's business.

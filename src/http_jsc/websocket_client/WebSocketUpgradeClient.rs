@@ -681,7 +681,7 @@ where
                 if let Some(ssl) = socket.ssl_mut() {
                     bun_http::configure_http_client_with_alpn(
                         ssl,
-                        if bun_core::ip_address::is_ip_address(hostname.as_bytes()) {
+                        if bun_core::ip_address::is_ip_address_or_zoned(hostname.as_bytes()) {
                             core::ptr::null()
                         } else {
                             hostname.as_ptr()

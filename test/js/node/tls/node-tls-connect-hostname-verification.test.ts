@@ -164,6 +164,71 @@ describe("tls.connect over an existing socket verifies the certificate against o
     });
   });
 
+  // The zone id names an interface of the client. It is not part of the address
+  // that the certificate lists, and an IP address is not sent as SNI.
+  test("matches an IPv6 address with a zone id in options.host on its address", async () => {
+    const sni: string[] = [];
+    const serverOptions: tls.TlsOptions = {
+      key: ipSanCert.key,
+      cert: ipSanCert.cert,
+      SNICallback(servername, done) {
+        sni.push(servername);
+        done(null);
+      },
+    };
+    await withRawSocketTo(serverOptions, async raw => {
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        calledWith: string | undefined;
+        authorized: boolean;
+      }>();
+      let calledWith: string | undefined;
+      const socket = tls.connect({
+        socket: raw,
+        host: "::1%lo",
+        ca: ipSanCert.cert,
+        checkServerIdentity(hostname, cert) {
+          calledWith = hostname;
+          return tls.checkServerIdentity(hostname, cert);
+        },
+      });
+      socket.on("secureConnect", () => {
+        resolve({ calledWith, authorized: socket.authorized });
+        socket.destroy();
+      });
+      socket.on("error", err => {
+        socket.destroy();
+        reject(err);
+      });
+      assert.deepStrictEqual(await promise, { calledWith: "::1%lo", authorized: true });
+    });
+    assert.deepStrictEqual(sni, []);
+  });
+
+  test("rejects an IPv6 address with a zone id that the certificate does not list", async () => {
+    await withRawSocketTo({ key: ipSanCert.key, cert: ipSanCert.cert }, async raw => {
+      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException & { host?: string }>();
+      const socket = tls.connect({ socket: raw, host: "::2%lo", ca: ipSanCert.cert }, () => {
+        const detail = { authorized: socket.authorized, authorizationError: socket.authorizationError };
+        socket.destroy();
+        reject(Object.assign(new Error("secureConnect fired for a certificate that does not list the IP"), detail));
+      });
+      socket.on("error", err => {
+        socket.destroy();
+        resolve(err);
+      });
+      const err = await promise;
+      assert.deepStrictEqual(
+        { code: err.code, host: err.host, message: err.message },
+        {
+          code: "ERR_TLS_CERT_ALTNAME_INVALID",
+          host: "::2%lo",
+          message:
+            "Hostname/IP does not match certificate's altnames: IP: ::2%lo is not in the cert's list: 127.0.0.1, ::1",
+        },
+      );
+    });
+  });
+
   test("rejects a certificate that is only valid for localhost when options.host is an IP", async () => {
     await withRawSocketTo({ key: localhostOnlyKey, cert: localhostOnlyCert }, async raw => {
       const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();

@@ -481,7 +481,7 @@ function checkServerIdentity(hostname, cert) {
 
   // As in Node.js (https://github.com/nodejs/node/commit/1d87a24050), a host is an IP address only as typed.
   if (net.isIP(hostname)) {
-    // canonicalizeIP() is undefined for "::1%lo" and for a malformed IP SAN, and undefined must not match undefined.
+    // canonicalizeIP() drops the zone id of "fe80::1%eth0". It is undefined for a malformed IP SAN, and undefined must not match undefined.
     const ip = canonicalizeIP(hostname);
     valid = ip !== undefined && ArrayPrototypeIncludes.$call(ips, ip);
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");

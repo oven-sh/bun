@@ -212,7 +212,7 @@ impl WebSocketProxyTunnel {
         // is driven.
         if let Some(ssl_ptr) = ssl {
             if let Some(hostname) = this.sni_hostname.as_deref() {
-                if !bun_core::ip_address::is_ip_address(hostname) {
+                if !bun_core::ip_address::is_ip_address_or_zoned(hostname) {
                     // Set SNI hostname
                     let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
                     // Route through bun_http's

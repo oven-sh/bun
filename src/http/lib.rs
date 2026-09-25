@@ -1860,7 +1860,7 @@ impl<'a> HTTPClient<'a> {
                 // below with `null` SNI in the IP case.
                 let mut owned: Vec<u8>; // drops on scope exit
                 let host_z: *const core::ffi::c_char =
-                    if !bun_core::ip_address::is_ip_address(raw_hostname) {
+                    if !bun_core::ip_address::is_ip_address_or_zoned(raw_hostname) {
                         // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
                         let temp = scratch::temp_hostname();
                         if raw_hostname.len() < temp.len() {

@@ -483,18 +483,26 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       );
     });
 
+    const tooLarge = [
+      "napi_create_external_buffer(data): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_external_arraybuffer(data): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_external_buffer(NULL): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_external_arraybuffer(NULL): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_buffer: status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_buffer_copy: status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
+      "napi_create_external_buffer(result=NULL): status=1 pending=false",
+      "with an exception pending: napi_create_external_buffer status=10 napi_create_external_arraybuffer status=10",
+    ];
+
     it("fails like Node above Node's own limit", async () => {
-      const result = await checkSameOutput("test_buffer_too_large_parity", []);
-      expect(result.split(/\r?\n/)).toEqual([
-        "napi_create_external_buffer(data): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
-        "napi_create_external_arraybuffer(data): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
-        "napi_create_external_buffer(NULL): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
-        "napi_create_external_arraybuffer(NULL): status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
-        "napi_create_buffer: status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
-        "napi_create_buffer_copy: status=9 pending=true error=Error code=ERR_BUFFER_TOO_LARGE",
-        "napi_create_external_buffer(result=NULL): status=1 pending=false",
-        "with an exception pending: napi_create_external_buffer status=10 napi_create_external_arraybuffer status=10",
-      ]);
+      const result = await checkSameOutput("test_buffer_too_large_parity", [2 ** 53]);
+      expect(result.split(/\r?\n/)).toEqual(tooLarge);
+    });
+
+    // Node 22 and later accept this length, so only Bun runs it.
+    it("fails the same way for every Buffer constructor one byte above 2 ** 32", async () => {
+      const result = await runOn(bunExe(), "test_buffer_too_large_parity", [2 ** 32 + 1]);
+      expect(result.trim().split(/\r?\n/)).toEqual(tooLarge);
     });
   });
 

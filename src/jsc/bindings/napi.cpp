@@ -1740,9 +1740,7 @@ extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
-// Node throws this above its own kMaxLength (2^53 - 1) and also runs finalize_cb there: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L478-L482
-// Bun does not run finalize_cb: valid addons reach JSC's lower limit, and node-addon-api deletes its finalizer data on
-// every failed status. The caller keeps the bytes.
+// Node 15 to 21 had this limit and threw this error: https://github.com/nodejs/node/blob/v20.18.0/src/node_buffer.cc#L457-L461
 static NEVER_INLINE void throwBufferTooLarge(napi_env env)
 {
     Zig::GlobalObject* globalObject = toJS(env);
@@ -1752,7 +1750,7 @@ static NEVER_INLINE void throwBufferTooLarge(napi_env env)
     scope.throwException(globalObject, createErrorWithCode(vm, globalObject, "ERR_BUFFER_TOO_LARGE"_s, "Cannot create a Buffer larger than 0x100000000 bytes"_s, JSC::ErrorType::Error));
 }
 
-// ArrayBuffer::createFromBytes asserts above MAX_ARRAY_BUFFER_SIZE, so fail before anything adopts the addon's bytes.
+// Node also runs finalize_cb on this failure. Bun does not, because node-addon-api then frees its finalizer data twice.
 #define NAPI_RETURN_IF_BUFFER_TOO_LARGE(_env, _length)                   \
     do {                                                                 \
         if ((_length) > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {            \
@@ -2529,7 +2527,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
 
     // Uses NapiExternalBufferDestructor instead of createSharedTask so that
     // finalize_cb is only invoked once JSArrayBuffer::create has succeeded.
-    // Per the Node-API contract, the caller retains ownership of
+    // In Bun the caller retains ownership of
     // external_data when this function fails, so calling finalize_cb on a
     // failure path would cause a double-free. JSArrayBuffer::create(vm, ...)
     // currently asserts on OOM rather than throwing, so there is no

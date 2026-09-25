@@ -4205,13 +4205,17 @@ test_external_buffer_length_limit(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
-// 2^53 is above Node's limit too, so both runtimes take their too-large path
-// and print the same lines. The message is not printed because it names each
-// runtime's limit. The finalizer is NULL because Node runs it on this path
-// and Bun leaves the bytes with the caller.
+// test_buffer_too_large_parity(gc, length): every Buffer constructor with a
+// length that the runtime refuses. 2^53 is above Node's limit too, so both
+// runtimes print the same lines. The message is not printed because it names
+// each runtime's limit. The finalizer is NULL because Node runs it on this
+// path and Bun leaves the bytes with the caller.
 static napi_value test_buffer_too_large_parity(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
-  const size_t too_large = size_t{1} << 53;
+  double length = 0;
+  NODE_API_CALL(env, napi_get_value_double(env, info[1], &length));
+  const size_t too_large = static_cast<size_t>(length);
+  // A runtime that refuses the length never reads the bytes.
   static uint8_t never_read;
 
   auto report = [&](const char *what, napi_status status) {

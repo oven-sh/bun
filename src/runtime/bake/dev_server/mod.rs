@@ -453,28 +453,29 @@ impl HotReloadEvent {
                         };
                         it = next;
 
-                        // SAFETY: `specifier` points into the dep's owned `Box<[u8]>`.
-                        // Nothing mutates or frees it before `free_dependency_index` below.
-                        let specifier: &[u8] = unsafe { &*specifier };
-                        // SAFETY: see `Dep` doc. Neither slice is mutated mid-resolve.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
-                            .resolver
-                            .resolve(
-                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                    source_file_path.slice(),
-                                ),
-                                specifier,
-                                import_kind,
-                            )
-                            .is_ok();
-
-                        bun_core::scoped_log!(
-                            DevServer,
-                            "DirectoryWatchStore retry({}, {}) = {}",
-                            bun_core::fmt::quote(specifier),
-                            bstr::BStr::new(import_kind.label()),
-                            resolved,
-                        );
+                        let resolved = {
+                            // SAFETY: the dep owns this slice, and nothing frees it in this block.
+                            let specifier: &[u8] = unsafe { &*specifier };
+                            // SAFETY: server_transpiler is initialized before any event fires.
+                            let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
+                                .resolver
+                                .resolve(
+                                    bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                                        source_file_path.slice(),
+                                    ),
+                                    specifier,
+                                    import_kind,
+                                )
+                                .is_ok();
+                            bun_core::scoped_log!(
+                                DevServer,
+                                "DirectoryWatchStore retry({}, {}) = {}",
+                                bun_core::fmt::quote(specifier),
+                                bstr::BStr::new(import_kind.label()),
+                                resolved,
+                            );
+                            resolved
+                        };
 
                         if resolved {
                             // this resolution result is not preserved as passing it
@@ -1109,8 +1110,7 @@ pub(crate) mod directory_watch_store {
         pub(crate) source_file_path: bun_ptr::RawSlice<u8>,
         /// The specifier that failed. Allocated memory.
         pub(crate) specifier: Box<[u8]>,
-        /// The import kind the bundler resolved `specifier` with. The retry
-        /// uses it too: the resolver has rules that depend on the kind.
+        /// The import kind the bundler resolved `specifier` with. The retry resolves with it too.
         pub(crate) import_kind: bun_ast::ImportKind,
     }
     impl Default for Dep {
@@ -1249,6 +1249,10 @@ impl DirectoryWatchStore {
         if !bun_paths::is_absolute(import_source) {
             return Ok(());
         }
+        // With the "./" prefix the resolver removes the query of "?v=2" and resolves the directory.
+        if kind.is_from_css() && specifier[0] == b'?' {
+            return Ok(());
+        }
 
         match loader {
             Loader::Tsx | Loader::Ts | Loader::Jsx | Loader::Js => {
@@ -1344,20 +1348,15 @@ impl DirectoryWatchStore {
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 
-        // The `./` prefix keeps the retry on the relative path, which is all that a
-        // directory watch can see. For a CSS kind the resolver removes a `?query`,
-        // but not one that starts the specifier: `./?v=2` would resolve to the directory.
-        let specifier_cloned: Box<[u8]> = if specifier[0] == b'.'
-            || bun_paths::is_absolute(specifier)
-            || (kind.is_from_css() && specifier[0] == b'?')
-        {
-            Box::<[u8]>::from(specifier)
-        } else {
-            let mut v = Vec::with_capacity(2 + specifier.len());
-            v.extend_from_slice(b"./");
-            v.extend_from_slice(specifier);
-            v.into_boxed_slice()
-        };
+        let specifier_cloned: Box<[u8]> =
+            if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
+                Box::<[u8]>::from(specifier)
+            } else {
+                let mut v = Vec::with_capacity(2 + specifier.len());
+                v.extend_from_slice(b"./");
+                v.extend_from_slice(specifier);
+                v.into_boxed_slice()
+            };
         // errdefer free(specifier_cloned) — handled by Drop on `?` paths.
 
         if found_existing {

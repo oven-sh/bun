@@ -247,6 +247,93 @@ export function pgReadFrontendMessages(buffered: Buffer, onMessage: (type: numbe
   return buffered;
 }
 
+// PostgreSQL FE/BE protocol §55.7 Bind (frontend) body: String(portal) String(statement) Int16(nformats) Int16[nformats]
+//   Int16(nparams) per param: Int32(byteLen | -1) Byte[len], then the result-column format codes (not read here)
+/** The parameter values of a frontend Bind message body, for a mock that answers with what was bound. */
+export function pgBindParameters(body: Buffer): (Buffer | null)[] {
+  let o = body.indexOf(0) + 1; // portal name
+  o = body.indexOf(0, o) + 1; // statement name
+  o += 2 + 2 * body.readUInt16BE(o); // parameter format codes
+  const params: (Buffer | null)[] = [];
+  const count = body.readUInt16BE(o);
+  o += 2;
+  for (let i = 0; i < count; i++) {
+    const len = body.readInt32BE(o);
+    o += 4;
+    params.push(len < 0 ? null : body.subarray(o, o + len));
+    if (len > 0) o += len;
+  }
+  return params;
+}
+
+// Frontend messages as a client writes them. The mocks only read these; the builders let a test state the exact
+// bytes it expects on the wire.
+
+function pgInt16List(values: number[]): Buffer {
+  const b = Buffer.alloc(2 + 2 * values.length);
+  b.writeInt16BE(values.length, 0);
+  for (let i = 0; i < values.length; i++) b.writeInt16BE(values[i], 2 + 2 * i);
+  return b;
+}
+
+// PostgreSQL FE/BE protocol §55.7 Parse: Byte1('P') Int32(len) String(statement) String(query) Int16(nparams) Int32[nparams](typeOid)
+export function pgParse(statement: string, query: string, typeOids: number[] = []): Buffer {
+  const oids = Buffer.alloc(2 + 4 * typeOids.length);
+  oids.writeInt16BE(typeOids.length, 0);
+  for (let i = 0; i < typeOids.length; i++) oids.writeInt32BE(typeOids[i], 2 + 4 * i);
+  return pgRaw("P", Buffer.concat([pgCString(statement), pgCString(query), oids]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 Describe: Byte1('D') Int32(len) Byte1('S' = statement | 'P' = portal) String(name)
+export function pgDescribe(kind: "S" | "P", name: string): Buffer {
+  return pgRaw("D", Buffer.concat([Buffer.from(kind, "latin1"), pgCString(name)]));
+}
+
+export type PgBindFrame = {
+  portal?: string;
+  statement: string;
+  /** One format code per parameter: 0 = text, 1 = binary. */
+  paramFormats: (0 | 1)[];
+  /** One value per parameter, already encoded; null is SQL NULL (length -1, no bytes). */
+  params: (Buffer | null)[];
+  /** Empty = every result column in text. Otherwise one code per column. */
+  resultFormats: (0 | 1)[];
+};
+
+// PostgreSQL FE/BE protocol §55.7 Bind: Byte1('B') Int32(len) String(portal) String(statement) Int16(nformats) Int16[nformats]
+//   Int16(nparams) per param: Int32(byteLen | -1) Byte[len], Int16(nresultformats) Int16[nresultformats]
+export function pgBind(bind: PgBindFrame): Buffer {
+  const count = Buffer.alloc(2);
+  count.writeInt16BE(bind.params.length, 0);
+  const values = bind.params.flatMap(p => (p === null ? [pgInt32(-1)] : [pgInt32(p.length), p]));
+  return pgRaw(
+    "B",
+    Buffer.concat([
+      pgCString(bind.portal ?? ""),
+      pgCString(bind.statement),
+      pgInt16List(bind.paramFormats),
+      count,
+      ...values,
+      pgInt16List(bind.resultFormats),
+    ]),
+  );
+}
+
+// PostgreSQL FE/BE protocol §55.7 Execute: Byte1('E') Int32(len) String(portal) Int32(maxRows, 0 = no limit)
+export function pgExecute(portal: string = "", maxRows: number = 0): Buffer {
+  return pgRaw("E", Buffer.concat([pgCString(portal), pgInt32(maxRows)]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 Flush: Byte1('H') Int32(4)
+export function pgFlush(): Buffer {
+  return pgRaw("H", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 Sync: Byte1('S') Int32(4)
+export function pgSync(): Buffer {
+  return pgRaw("S", Buffer.alloc(0));
+}
+
 // PostgreSQL FE/BE protocol §55.7 DataRow: Byte1('D') Int32(len) Int16(ncols) per col: Int32(byteLen | -1) Byte[len]
 export function pgDataRow(cols: (Buffer | null)[]): Buffer {
   const parts: Buffer[] = [Buffer.alloc(2)];
@@ -273,18 +360,30 @@ export async function pgMinimalReadyServer(): Promise<{ port: number; server: ne
   });
 }
 
+/** In a `pgMockServer` reply: the mock keeps back every later frame of that connection until `release()`. */
+export const pgHold = Symbol("pgHold");
+
 /**
  * Postgres mock that answers the StartupMessage with AuthenticationOk +
  * ReadyForQuery and then hands every complete frontend message (type as a
  * one-char string, e.g. "P", "B", "E", "S", "Q", "X") to `respond`; whatever it
  * returns is written back in order after the whole chunk has been parsed.
+ * A reply can stop part-way with `pgHold`; `release()` sends what was kept back.
  */
 export async function pgMockServer(
-  respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | Buffer[] | void,
-): Promise<{ port: number; server: net.Server }> {
-  return listeningServer(socket => {
+  respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | (Buffer | typeof pgHold)[] | void,
+): Promise<{ port: number; server: net.Server; release(): void }> {
+  const releases = new Set<() => void>();
+  const { port, server } = await listeningServer(socket => {
     let buffered = Buffer.alloc(0);
     let startup = true;
+    let held: Buffer[] | undefined;
+    const release = () => {
+      if (held?.length) socket.write(Buffer.concat(held));
+      held = undefined;
+    };
+    releases.add(release);
+    socket.on("close", () => releases.delete(release));
     socket.on("data", chunk => {
       buffered = Buffer.concat([buffered, chunk]);
       const out: Buffer[] = [];
@@ -296,12 +395,17 @@ export async function pgMockServer(
       }
       buffered = pgReadFrontendMessages(buffered, (type, body) => {
         const reply = respond(String.fromCharCode(type), body, socket);
-        if (reply) out.push(...(Array.isArray(reply) ? reply : [reply]));
+        if (!reply) return;
+        for (const frame of Array.isArray(reply) ? reply : [reply]) {
+          if (frame === pgHold) held ??= [];
+          else (held ?? out).push(frame);
+        }
       });
       if (out.length) socket.write(Buffer.concat(out));
     });
     socket.on("error", () => {});
   });
+  return { port, server, release: () => releases.forEach(release => release()) };
 }
 
 // ---------------------------------------------------------------------------

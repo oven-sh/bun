@@ -13,6 +13,7 @@
 #include <JavaScriptCore/APICast.h>
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CallFrameInlines.h>
 #include <JavaScriptCore/ClassInfo.h>
 #include <JavaScriptCore/CodeBlock.h>
@@ -640,8 +641,6 @@ JSC_DEFINE_HOST_FUNCTION(functionReoptimizationRetryCount,
     return JSValue::encode(jsNumber(block->reoptimizationRetryCounter()));
 }
 
-extern "C" void Bun__drainMicrotasks();
-
 JSC_DECLARE_HOST_FUNCTION(functionDrainMicrotasks);
 JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     (JSGlobalObject * globalObject, CallFrame*))
@@ -650,7 +649,8 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks,
     auto scope = DECLARE_THROW_SCOPE(vm);
     vm.drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
-    Bun__drainMicrotasks();
+    // Not EventLoop::tick(): it runs queued tasks beneath the caller.
+    defaultGlobalObject()->drainMicrotasks();
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
@@ -973,10 +973,42 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
     return JSValue::encode(jsNull());
 }
 
+// null unless this executable's bytecode was laid out by an order file (`bun build --compile --bytecode-order`).
+JSC_DEFINE_HOST_FUNCTION(functionBytecodeOrderStats, (JSGlobalObject * globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    auto* payloads = vm.persistentBytecodePayloadsIfExists();
+    auto* statistics = payloads ? payloads->linkedPayloadStatistics() : nullptr;
+    if (!statistics)
+        return JSValue::encode(jsNull());
+
+    JSObject* regions = constructEmptyObject(globalObject);
+    static constexpr ASCIILiteral regionNames[] = { "moduleHeads"_s, "hot"_s, "unknown"_s, "lateModuleHeads"_s, "cold"_s, "expressionInfo"_s };
+    static_assert(std::size(regionNames) == JSC::BytecodeLinkRegions::Count);
+    uint32_t start = 0;
+    for (unsigned i = 0; i < JSC::BytecodeLinkRegions::Count; ++i) {
+        uint32_t end = std::max(start, statistics->regionEnds[i]);
+        regions->putDirect(vm, Identifier::fromString(vm, regionNames[i]), jsNumber(end - start));
+        start = end;
+    }
+
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "hot"_s), jsNumber(statistics->hot.count));
+    result->putDirect(vm, Identifier::fromString(vm, "unknown"_s), jsNumber(statistics->unknown.count));
+    result->putDirect(vm, Identifier::fromString(vm, "cold"_s), jsNumber(statistics->cold.count));
+    result->putDirect(vm, Identifier::fromString(vm, "hotBytes"_s), jsNumber(statistics->hot.bytes));
+    result->putDirect(vm, Identifier::fromString(vm, "unknownBytes"_s), jsNumber(statistics->unknown.bytes));
+    result->putDirect(vm, Identifier::fromString(vm, "coldBytes"_s), jsNumber(statistics->cold.bytes));
+    result->putDirect(vm, Identifier::fromString(vm, "regions"_s), regions);
+    return JSValue::encode(result);
+}
+
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(BunJSC, 36);
+    INIT_NATIVE_MODULE(BunJSC, 37);
+
+    putNativeFn(Identifier::fromString(vm, "bytecodeOrderStats"_s), functionBytecodeOrderStats);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);

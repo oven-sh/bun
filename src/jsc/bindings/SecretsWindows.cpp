@@ -143,7 +143,18 @@ static void updateError(Error& err, DWORD errorCode)
     }
 }
 
-Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess)
+static DWORD toCredPersist(Persist persist)
+{
+    switch (persist) {
+    case Persist::Local:
+        return CRED_PERSIST_LOCAL_MACHINE;
+    case Persist::Enterprise:
+        return CRED_PERSIST_ENTERPRISE;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess, Persist persist)
 {
     Error err;
 
@@ -177,7 +188,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     cred.UserName = nameNameWide.data();
     cred.CredentialBlobSize = password.length();
     cred.CredentialBlob = (LPBYTE)password.data();
-    cred.Persist = CRED_PERSIST_ENTERPRISE;
+    cred.Persist = toCredPersist(persist);
 
     if (!framework->CredWriteW(&cred, 0)) {
         updateError(err, GetLastError());

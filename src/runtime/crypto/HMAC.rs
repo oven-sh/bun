@@ -6,7 +6,7 @@ use bun_boringssl_sys as boringssl;
 
 use super::evp;
 
-pub struct HMAC {
+pub(crate) struct HMAC {
     ctx: boringssl::HMAC_CTX,
     pub(crate) algorithm: evp::Algorithm,
 }

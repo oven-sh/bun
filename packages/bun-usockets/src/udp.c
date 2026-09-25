@@ -20,10 +20,6 @@
 
 #include <string.h>
 
-// int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index) {
-//     return bsd_udp_packet_buffer_ecn((struct udp_recvbuf *)buf, index);
-// }
-
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index) {
     return bsd_udp_packet_buffer_peer((struct udp_recvbuf *)buf, index);
 }

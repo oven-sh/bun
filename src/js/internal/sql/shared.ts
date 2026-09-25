@@ -1,4 +1,4 @@
-import type { Query as QueryType } from "./query";
+import type { QueryStrings, Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
 const {
@@ -7,6 +7,7 @@ const {
   symbols: { _strings, _values },
 } = require("internal/sql/query");
 const AsyncContextFrame = require("internal/async_context_frame");
+const { isStoppedModuleGraphRunning } = require("internal/shared");
 
 declare global {
   interface NumberConstructor {
@@ -389,7 +390,7 @@ function pushBindParam(
 // - All other types are handled natively
 function normalizeQuery(
   adapter: QueryNormalizationAdapter,
-  strings: string | TemplateStringsArray,
+  strings: QueryStrings,
   values: unknown[],
   binding_idx = 1,
 ): [string, unknown[]] {
@@ -594,7 +595,7 @@ const enum PooledConnectionFlags {
   /// onConnectFired is used to indicate that handleConnected ran for this slot, so the user's onconnect callback already fired (with null or an error)
   onConnectFired = 1 << 3,
 }
-export type { PooledConnectionState };
+export type { BasePooledConnection, PooledConnectionState };
 
 function onQueryFinish(this: BasePooledConnection, onClose: (err: Error) => void) {
   this.queries.delete(onClose);
@@ -641,13 +642,18 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
    */
   protected abstract isConnectFailureError(err: Error | null): boolean;
 
+  /// `method` bound to this slot for the native connection to call.
+  protected nativeCallback(method: (...args: any[]) => void): (...args: any[]) => void {
+    return this.adapter.ownerCallback(method.bind(this));
+  }
+
   async #beginConnecting() {
     // a fresh connect cycle (not a backoff retry) starts the retry budget
     if (this.connectStartedAt === 0) {
       this.connectStartedAt = Date.now();
       this.connectAttempts = 0;
     }
-    await this.startConnection();
+    await this.adapter.runAsOwner(this.startConnection, this);
     if (this.onFinish !== null) {
       // the pool was force-closed while the native handle was being created;
       // close it now so onClose fires and onFinish settles
@@ -877,6 +883,10 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     allowPublicKeyRetrieval = false,
   } = options;
 
+  // What script of a disposed Bun.ModuleGraph starts does not start: nothing is dialed, and what
+  // waits for this connection waits.
+  if (isStoppedModuleGraphRunning()) return null;
+
   let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
 
   try {
@@ -937,9 +947,34 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /// inside it rather than in whatever context the native callback happens to fire in
   /// (none for a socket event, the close() caller's when the socket closes synchronously).
   public readonly callbackAsyncContext: unknown;
+  /// The Bun.ModuleGraph context frame the SQL instance was created inside of, if any:
+  /// every connection of the pool is opened in it, so it belongs to that graph.
+  public readonly ownerGraphFrame: unknown;
+
+  /// Calls `dial` as the SQL instance's owner, whoever is calling: a connection is its owner's,
+  /// the Bun.ModuleGraph the instance was made in (a redial starts from a close event, which has
+  /// no async context), or no graph's when the host made it, even if a graph's query or listen()
+  /// is what makes it dial. That graph's dispose() would otherwise close the host's connection
+  /// under the host, and its leftover script could leave the host waiting for one never opened.
+  public runAsOwner<This, Result>(dial: (this: This) => Result, thisValue: This): Result {
+    const graphFrame = this.ownerGraphFrame;
+    return graphFrame === undefined && AsyncContextFrame.currentGraph() === undefined
+      ? dial.$call(thisValue)
+      : AsyncContextFrame.run(graphFrame, dial, thisValue);
+  }
+
+  /// `callback` for a native connection to call (from a socket event, which has no async
+  /// context): as the SQL instance's owner, so a retry timer it arms is the owner's too, and is
+  /// cancelled with the Bun.ModuleGraph that owns the instance.
+  public ownerCallback<Args extends unknown[]>(callback: (...args: Args) => void): (...args: Args) => void {
+    const graphFrame = this.ownerGraphFrame;
+    if (graphFrame === undefined) return callback;
+    return (...args) => AsyncContextFrame.run(graphFrame, callback, undefined, ...args);
+  }
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
+    this.ownerGraphFrame = AsyncContextFrame.currentGraphFrame();
     this.callbackAsyncContext =
       connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
     // Slots are filled one at a time in connect()'s pool-start loop, and
@@ -982,7 +1017,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     }
   }
 
-  normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
+  normalizeQuery(strings: QueryStrings, values: unknown[], binding_idx = 1): [string, unknown[]] {
     return normalizeQuery(this, strings, values, binding_idx);
   }
 
@@ -1052,13 +1087,13 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     return pooledConnection.connection;
   }
 
-  attachConnectionCloseHandler(connection: PooledConnection, handler: () => void): void {
+  attachConnectionCloseHandler(connection: PooledConnection, handler: (err: Error) => void): void {
     if (connection.onClose) {
       connection.onClose(handler);
     }
   }
 
-  detachConnectionCloseHandler(connection: PooledConnection, handler: () => void): void {
+  detachConnectionCloseHandler(connection: PooledConnection, handler: (err: Error) => void): void {
     const queries = connection.queries;
     if (queries) {
       queries.delete(handler);
@@ -1326,7 +1361,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       const timer = setTimeout(() => {
         // timeout is reached, lets close and probably fail some queries
         this.#close().finally(resolve);
-      }, timeout * 1000);
+      }, timeout! * 1000);
       timer.unref(); // dont block the event loop
 
       this.onAllQueriesFinished = () => {
@@ -1844,13 +1879,13 @@ function parseOptions(
   let username: string | null | undefined;
   let password: string | (() => Bun.MaybePromise<string>) | undefined | null;
   let database: string | undefined;
-  let tls: Bun.TLSOptions | boolean | undefined;
+  let tls: Bun.TLSOptions | (Bun.BunFile & Bun.TLSOptions) | boolean | undefined;
   let query: string = "";
   let idleTimeout: number | null | undefined;
   let connectionTimeout: number | null | undefined;
   let maxLifetime: number | null | undefined;
-  let onconnect: ((error?: Error | undefined) => void) | undefined;
-  let onclose: ((error?: Error | undefined) => void) | undefined;
+  let onconnect: ((err: Error | null) => void) | undefined;
+  let onclose: ((err: Error | null) => void) | undefined;
   let max: number | null | undefined;
   let bigint: boolean | undefined;
   let path: string;
@@ -2125,12 +2160,13 @@ function parseOptions(
   }
 
   if (sslMode !== SSLMode.disable) {
-    const given = tls?.serverName;
+    const tlsOptions = tls as Exclude<typeof tls, boolean>;
+    const given = tlsOptions?.serverName;
     const serverName = stripIPv6Brackets(given || hostname);
     if (!serverName) {
       if (tls) tls = true;
     } else if (serverName !== given) {
-      tls = { ...tls, serverName };
+      tls = { ...tlsOptions, serverName };
     }
   }
 
@@ -2208,7 +2244,7 @@ export interface TransactionCommands {
 }
 
 export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
-  normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [sql: string, values: unknown[]];
+  normalizeQuery(strings: QueryStrings, values: unknown[]): [sql: string, values: unknown[]];
   createQueryHandle(sql: string, values: unknown[], flags: number): QueryHandle;
   connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
   release(connection: Connection, connectingEvent?: boolean): void;
@@ -2221,8 +2257,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   supportsReservedConnections?(): boolean;
   cancelReserve?(onConnected: OnConnected<Connection>): boolean;
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
-  attachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
-  detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
+  attachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
+  detachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
 
   getTransactionCommands(options?: string): TransactionCommands;
   array(values: any[], typeNameOrID?: number | string): SQLArrayParameter;

@@ -17,7 +17,7 @@ use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
 use bun_collections::VecExt;
 
-pub struct Cmd {
+pub(crate) struct Cmd {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Cmd>,
     pub(crate) io: IO,
@@ -46,7 +46,7 @@ pub enum CmdState {
 }
 
 #[derive(Default)]
-pub enum Exec {
+pub(crate) enum Exec {
     #[default]
     None,
     Builtin(Box<Builtin>),
@@ -65,7 +65,7 @@ impl Cmd {
     }
 }
 
-pub struct SubprocExec {
+pub(crate) struct SubprocExec {
     pub(crate) child: *mut ShellSubprocess,
     pub(crate) buffered_closed: BufferedIoClosed,
     /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
@@ -83,14 +83,14 @@ pub struct SubprocExec {
 /// completion. `Some(state)` means it was piped and must reach `Closed` before
 /// [`Cmd::has_finished`] returns true.
 #[derive(Default)]
-pub struct BufferedIoClosed {
+pub(crate) struct BufferedIoClosed {
     pub(crate) stdin: Option<bool>,
     pub(crate) stdout: Option<BufferedIoState>,
     pub(crate) stderr: Option<BufferedIoState>,
 }
 
 #[derive(Default)]
-pub enum BufferedIoState {
+pub(crate) enum BufferedIoState {
     #[default]
     Open,
     Closed(Vec<u8>),

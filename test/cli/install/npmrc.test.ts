@@ -773,6 +773,89 @@ describe("--registry override", () => {
   });
 });
 
+describe.concurrent("a registry URL whose host is easy to misread", () => {
+  // The requests go to the URL as `new URL()` reads it, so the credentials have to be chosen for
+  // the host `new URL()` reads. A loopback proxy records the requests and answers them itself:
+  // no name is resolved and nothing leaves the machine.
+  type Config = { files?: Record<string, string>; args?: string[]; env?: Record<string, string> };
+
+  async function install({ files, args = [], env: extraEnv }: Config) {
+    const requests: { host: string; auth: string | null }[] = [];
+    await using proxy = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        requests.push({ host: new URL(req.url).host, auth: req.headers.get("authorization") });
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const proxyUrl = `http://127.0.0.1:${proxy.port}`;
+    using dir = tempDir("npmrc-backslash-registry", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+      ...files,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-cache", ...args],
+      cwd: String(dir),
+      env: { ...env, http_proxy: proxyUrl, HTTP_PROXY: proxyUrl, no_proxy: "", NO_PROXY: "", ...extraEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The proxy answers 404 to the manifest request, so the install itself fails.
+    return { requests, exitCode };
+  }
+
+  test.each<[string, (url: string) => Config]>([
+    ["--registry", url => ({ args: [`--registry=${url}`] })],
+    [".npmrc", url => ({ files: { ".npmrc": `registry=${url}\n` } })],
+    ["bunfig.toml", url => ({ files: { "bunfig.toml": `[install]\nregistry = '${url}'\n` } })],
+    ["BUN_CONFIG_REGISTRY", url => ({ env: { BUN_CONFIG_REGISTRY: url } })],
+  ])("the credentials of the URL go to the host in front of the backslash: %s", async (_, configure) => {
+    expect(await install(configure(String.raw`http://u:p@first.example\x@second.example/`))).toEqual({
+      requests: [{ host: "first.example", auth: `Basic ${btoa("u:p")}` }],
+      exitCode: 1,
+    });
+  });
+
+  test("the token keyed to the host behind the backslash is not sent", async () => {
+    expect(
+      await install({
+        files: {
+          ".npmrc":
+            String.raw`registry=http://first.example\@second.example/` +
+            "\n//second.example/:_authToken=second-host-SECRET-token\n",
+        },
+      }),
+    ).toEqual({ requests: [{ host: "first.example", auth: null }], exitCode: 1 });
+  });
+
+  test("--registry does not inherit the token of the host behind the backslash", async () => {
+    expect(
+      await install({
+        files: {
+          ".npmrc": "registry=http://second.example/\n//second.example/:_authToken=second-host-SECRET-token\n",
+        },
+        args: [String.raw`--registry=http://first.example\@second.example/`],
+      }),
+    ).toEqual({ requests: [{ host: "first.example", auth: null }], exitCode: 1 });
+  });
+
+  test("a second scheme inside the registry URL does not claim the token of the host after it", async () => {
+    // `new URL("http:first.example://second.example/")` reads `first.example` as the host: a scheme
+    // ends at the first `:`. The token keyed to `second.example` must not go to `first.example`.
+    expect(
+      await install({
+        files: {
+          ".npmrc":
+            "registry=http:first.example://second.example/\n" +
+            "//second.example/:_authToken=second-host-SECRET-token\n",
+        },
+      }),
+    ).toEqual({ requests: [{ host: "first.example", auth: null }], exitCode: 1 });
+  });
+});
+
 describe.skipIf(!isIPv6())("registry on a bracketed IPv6 host", () => {
   test("sends the token keyed to //[::1]:port/ to the default and the scoped registry", async () => {
     type Req = { path: string; auth: string | null };

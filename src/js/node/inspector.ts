@@ -136,7 +136,7 @@ function waitForDebugger() {
 const runtimeEnabledSessions: Set<Session> = new SafeSet();
 const hookedConsoleMethods: Array<[string, Function, Function]> = [];
 
-const CONSOLE_API_TYPES: Record<string, string> = {
+const CONSOLE_API_TYPES = {
   __proto__: null,
   log: "log",
   info: "info",
@@ -482,7 +482,7 @@ class Session extends EventEmitter {
 
   post(
     method: string,
-    params?: object | ((err: Error | null, result?: any) => void),
+    params?: Record<string, unknown> | ((err: Error | null, result?: any) => void),
     callback?: (err: Error | null, result?: any) => void,
   ) {
     validateString(method, "method");

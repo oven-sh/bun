@@ -6,7 +6,7 @@ use crate::shell::yield_::Yield;
 use bun_collections::index_sort;
 
 #[derive(Default)]
-pub struct Export {
+pub(crate) struct Export {
     state: State,
 }
 

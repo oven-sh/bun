@@ -3,7 +3,7 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -172,6 +172,49 @@ it("process.env defineProperty matches assignment semantics", () => {
     enumerable: true,
   });
   expect(process.env[""]).toBeUndefined();
+});
+
+it("a write to an object that inherits from process.env changes nothing about the process", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const offset = () => new Date("2024-07-15T12:00:00Z").getTimezoneOffset();
+        const before = offset();
+        const child = Object.create(process.env);
+        child.TZ = "Asia/Kolkata";
+        child.NODE_TLS_REJECT_UNAUTHORIZED = 0;
+        child.SOME_NUMBER = 5;
+        console.log(JSON.stringify({
+          offsetUnchanged: offset() === before,
+          parentTZ: process.env.TZ,
+          parentReject: process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null,
+          parentNumber: process.env.SOME_NUMBER ?? null,
+          // The values land on the child as given, not coerced to strings.
+          child: [Object.hasOwn(child, "TZ"), child.TZ, child.NODE_TLS_REJECT_UNAUTHORIZED, child.SOME_NUMBER],
+          // Certificate verification is still on for the process.
+          reject: require("node:tls").rootCertificates.length > 0 && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0",
+        }));
+      `,
+    ],
+    env: { ...bunEnv, TZ: "UTC", NODE_TLS_REJECT_UNAUTHORIZED: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: {
+      offsetUnchanged: true,
+      parentTZ: "UTC",
+      parentReject: null,
+      parentNumber: null,
+      child: [true, "Asia/Kolkata", 0, 5],
+      reject: true,
+    },
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("process.env.TZ writes inside a worker do not change the main thread's timezone", async () => {
@@ -850,6 +893,27 @@ describe.concurrent(() => {
       expect(stdout.trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
     });
 
+    // The script never touches process.nextTick, so no tick queue exists when the event is emitted.
+    it("runs the microtasks and the ticks that a listener queues, before 'exit'", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", async () => {
+             await null;
+             console.log("microtask");
+             process.nextTick(() => console.log("tick"));
+           });
+           process.on("exit", () => console.log("exit"));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "microtask\ntick\nexit\n", stderr: "", exitCode: 0 });
+    });
+
     it("throwing inside preserves exit code", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", `process.on("beforeExit", () => {throw new Error("boom")});`],
@@ -1121,6 +1185,51 @@ describe.concurrent(() => {
     expect(closestDelta(() => jscMemoryUsage().peak, maxRSS)).toBeLessThan(slack);
     expect(closestDelta(() => process.report.getReport().resourceUsage.maxRss, maxRSS)).toBeLessThan(slack);
     expect(maxRSS() + slack).toBeGreaterThan(rss());
+  });
+
+  it("process.report's JavaScript stack names frames as error.stack does", () => {
+    // The report and the error are made at the same place, and nothing here is in tail position.
+    const seen = {};
+    const record = kind => {
+      seen[kind] = {
+        report: process.report.getReport().javascriptStack.stack,
+        error: new Error().stack.split("\n").slice(1),
+      };
+    };
+    class Widget {
+      constructor() {
+        record("constructor");
+        this.done = true;
+      }
+    }
+    function viaConstructor() {
+      const widget = new Widget();
+      expect(widget.done).toBe(true);
+    }
+    function viaEval() {
+      const made = (0, eval)("(function (record) { record('eval'); return true; })")(record);
+      expect(made).toBe(true);
+    }
+    function viaBuiltin() {
+      const made = [0].map(() => {
+        record("builtin");
+        return true;
+      });
+      expect(made).toEqual([true]);
+    }
+    viaConstructor();
+    viaEval();
+    viaBuiltin();
+
+    // "at new Widget (file:1:2)" -> "new Widget". The first frame is record().
+    const names = lines => lines.slice(1, 3).map(line => /^\s*at (.*?) ?\(/.exec(line)?.[1]);
+    const framesOf = kind => ({ report: names(seen[kind].report), error: names(seen[kind].error) });
+    expect({ constructor: framesOf("constructor"), eval: framesOf("eval"), builtin: framesOf("builtin") }).toEqual({
+      // `new Widget`, as in Node's report.
+      constructor: { report: ["new Widget", "viaConstructor"], error: ["new Widget", "viaConstructor"] },
+      eval: { report: ["<anonymous>", "viaEval"], error: ["<anonymous>", "viaEval"] },
+      builtin: { report: ["<anonymous>", "map"], error: ["<anonymous>", "map"] },
+    });
   });
 
   // JSC measures the live size of the heap at the end of each collection and
@@ -1744,6 +1853,147 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
+  // Pins which events fire, and in what order, whatever order the rejections of a
+  // turn are handled in, and that the queue keeps a promise alive exactly as long
+  // as it can still be reported. The "handling N rejected promises is O(N)" tests
+  // below cover the cost.
+  it("reports exactly the rejections that stay unhandled, in order, whatever order the others are handled in", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { heapStats } from "bun:jsc";
+          const noop = () => {};
+          const drain = async () => { for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r)); };
+          // Nothing else in this script makes a Date, so this counts the rejection reasons that are alive.
+          const datesAlive = () => (Bun.gc(true), heapStats().objectTypeCounts.Date ?? 0);
+          let seen = [];
+          let rejectionHandled = 0;
+          let onUnhandled = noop;
+          process.on("unhandledRejection", reason => {
+            seen.push(reason instanceof Date ? reason.getTime() : reason);
+            onUnhandled(reason);
+          });
+          process.on("rejectionHandled", () => rejectionHandled++);
+          const result = {};
+
+          // Every 7th promise stays unhandled. Each of the others is handled one
+          // step late, when it is no longer the newest rejection.
+          let previous;
+          for (let i = 0; i < 1000; i++) {
+            const promise = Promise.reject(i % 7 === 0 ? new Date(i) : i);
+            if (i % 7 === 0) continue;
+            previous?.catch(noop);
+            previous = promise;
+          }
+          previous.catch(noop);
+          // The promises that stay unhandled, and their reasons, are reachable only through the queue now.
+          const queuedAlive = datesAlive();
+          await drain();
+          result.oneStepLate = { seen, rejectionHandled, queuedAlive };
+
+          // The same in a loop that awaits, so that each handled promise is garbage at once. The queue
+          // must not keep them until the end of the turn: the number alive stays far below the 2,000 made.
+          const before = datesAlive();
+          let mostAlive = 0;
+          previous = Promise.reject(new Date(0));
+          for (let i = 1; i <= 2000; i++) {
+            const promise = Promise.reject(new Date(i));
+            try { await previous; } catch {}
+            previous = promise;
+            if (i % 500 === 0) mostAlive = Math.max(mostAlive, datesAlive() - before);
+          }
+          try { await previous; } catch {}
+          result.handledAreReleased = mostAlive < 200 ? true : mostAlive;
+
+          // Handled oldest first, as Promise.all does. Every 50th stays unhandled.
+          seen = [];
+          const oldestFirst = [];
+          for (let i = 0; i < 200; i++) oldestFirst.push(Promise.reject("o" + i));
+          for (let i = 0; i < 200; i++) if (i % 50 !== 49) oldestFirst[i].catch(noop);
+          await drain();
+          result.oldestFirst = { seen, rejectionHandled };
+
+          // Handled newest first. The oldest and one in the middle stay unhandled.
+          seen = [];
+          const newestFirst = [];
+          for (let i = 0; i < 100; i++) newestFirst.push(Promise.reject("n" + i));
+          for (let i = 99; i > 0; i--) if (i !== 50) newestFirst[i].catch(noop);
+          await drain();
+          result.newestFirst = { seen, rejectionHandled };
+
+          // A few rejections, handled in no particular order.
+          seen = [];
+          const few = [];
+          for (let i = 0; i < 8; i++) few.push(Promise.reject("f" + i));
+          for (const i of [3, 0, 7, 6, 4]) few[i].catch(noop);
+          await drain();
+          result.few = { seen, rejectionHandled };
+
+          // A long queue loses an entry in the middle and its newest entry, then grows again.
+          seen = [];
+          const regrown = [];
+          for (let i = 0; i < 300; i++) regrown.push(Promise.reject("r" + i));
+          regrown[5].catch(noop);
+          Bun.gc(true);
+          regrown[299].catch(noop);
+          const older = Promise.reject("older");
+          const newer = Promise.reject("newer");
+          older.catch(noop);
+          newer.catch(noop);
+          await drain();
+          result.regrown = { seen, rejectionHandled };
+
+          // The listener for the first rejection handles every odd one after it.
+          // Their 'unhandledRejection' has not fired, so they get neither event.
+          // b2 is handled after this batch reported it: one 'rejectionHandled'.
+          seen = [];
+          const batch = [];
+          onUnhandled = reason => {
+            if (reason === "b0") for (let i = 1; i < 600; i += 2) batch[i].catch(noop);
+            if (reason === "b2") Bun.gc(true);
+            if (reason === "b4") batch[2].catch(noop);
+          };
+          for (let i = 0; i < 600; i++) batch.push(Promise.reject("b" + i));
+          await drain();
+          result.handledByListener = { seen, rejectionHandled };
+
+          // Handled after the report, while other rejections wait in the queue:
+          // one 'rejectionHandled' each (b2 already had its own).
+          seen = [];
+          onUnhandled = noop;
+          for (let i = 0; i < 300; i++) Promise.reject("q" + i);
+          for (let i = 0; i < 600; i += 2) batch[i].catch(noop);
+          await drain();
+          result.handledAfterReport = { seen, rejectionHandled };
+
+          console.log(JSON.stringify(result));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      oneStepLate: {
+        seen: Array.from({ length: Math.ceil(1000 / 7) }, (_, i) => i * 7),
+        rejectionHandled: 0,
+        queuedAlive: Math.ceil(1000 / 7),
+      },
+      handledAreReleased: true,
+      oldestFirst: { seen: ["o49", "o99", "o149", "o199"], rejectionHandled: 0 },
+      newestFirst: { seen: ["n0", "n50"], rejectionHandled: 0 },
+      few: { seen: ["f1", "f2", "f5"], rejectionHandled: 0 },
+      regrown: { seen: Array.from({ length: 299 }, (_, i) => "r" + i).filter(r => r !== "r5"), rejectionHandled: 0 },
+      handledByListener: { seen: Array.from({ length: 300 }, (_, i) => "b" + i * 2), rejectionHandled: 1 },
+      handledAfterReport: { seen: Array.from({ length: 300 }, (_, i) => "q" + i), rejectionHandled: 300 },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",
@@ -1767,6 +2017,187 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
   process.setUncaughtExceptionCaptureCallback(() => {});
   expect(process.hasUncaughtExceptionCaptureCallback()).toBe(true);
   process.setUncaughtExceptionCaptureCallback(null);
+});
+
+// Attaching a handler to a rejected promise used to search the rejections that
+// were not reported yet one by one (and shift the ones behind the hit), so
+// handling N of them cost O(N^2). Not concurrent: these measure time.
+describe("handling N rejected promises is O(N)", () => {
+  const N = 100_000;
+  // Measured for N = 100,000 (oldest first / from the listener):
+  //   before: release 23,900 / 4,600 ms, debug+ASAN ~55,000 / ~85,000 ms
+  //   after:  release 7 / 6 ms, debug+ASAN 350 / 240 ms
+  const limit = isDebug || isASAN ? 5_000 : 1_000;
+  // A machine too slow for `limit` still passes if the calls stay within 20x of
+  // `baseline`: the same calls again, on promises that are handled by then, so
+  // none of them reaches the rejection tracker. Measured ms / baseline: 0.4 to
+  // 1.2 after, 190 and up before.
+  const expectLinear = ({ ms, baseline }) => expect(ms).toBeLessThan(Math.max(limit, 20 * baseline));
+  // A debug build needs about 2 s to start and make the promises, too close to
+  // the 5 s default. The spawn timeout turns a quadratic run into a failure.
+  const timeout = 30_000;
+
+  async function run(script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        // The ASAN lane sets these. They slow every promise call several times over.
+        BUN_JSC_validateExceptionChecks: undefined,
+        BUN_JSC_dumpSimulatedThrows: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+    return JSON.parse(stdout);
+  }
+
+  it(
+    "while they wait to be reported, oldest first (the order Promise.allSettled attaches handlers)",
+    async () => {
+      const { ms, baseline, ...events } = await run(`
+      const noop = () => {};
+      const events = { unhandledRejection: 0, rejectionHandled: 0 };
+      process.on("unhandledRejection", () => events.unhandledRejection++);
+      process.on("rejectionHandled", () => events.rejectionHandled++);
+      const promises = [];
+      for (let i = 0; i < ${N}; i++) promises.push(Promise.reject(i));
+      let start = performance.now();
+      for (const promise of promises) promise.catch(noop);
+      const ms = performance.now() - start;
+      start = performance.now();
+      for (const promise of promises) promise.catch(noop);
+      const baseline = performance.now() - start;
+      for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+      console.log(JSON.stringify({ ms, baseline, ...events }));
+    `);
+      expect(events).toEqual({ unhandledRejection: 0, rejectionHandled: 0 });
+      expectLinear({ ms, baseline });
+    },
+    timeout,
+  );
+
+  it(
+    "while they wait to be reported, in no particular order",
+    async () => {
+      const { ms, baseline, ...events } = await run(`
+      const noop = () => {};
+      const events = { unhandledRejection: 0, rejectionHandled: 0 };
+      process.on("unhandledRejection", () => events.unhandledRejection++);
+      process.on("rejectionHandled", () => events.rejectionHandled++);
+      const promises = [];
+      for (let i = 0; i < ${N}; i++) promises.push(Promise.reject(i));
+      // 7919 is coprime to N: every promise once, none next to the one before.
+      let start = performance.now();
+      for (let i = 0; i < ${N}; i++) promises[(i * 7919) % ${N}].catch(noop);
+      const ms = performance.now() - start;
+      start = performance.now();
+      for (let i = 0; i < ${N}; i++) promises[(i * 7919) % ${N}].catch(noop);
+      const baseline = performance.now() - start;
+      for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+      console.log(JSON.stringify({ ms, baseline, ...events }));
+    `);
+      expect(events).toEqual({ unhandledRejection: 0, rejectionHandled: 0 });
+      expectLinear({ ms, baseline });
+    },
+    timeout,
+  );
+
+  // Nanoseconds per promise must not depend on how many are rejected in one turn.
+  // Measured, release: batches of 17 / 64 / 300 take 69 / 64 / 64 (before: 85 / 83 / 93).
+  // The allSettled loop takes 297 / 292 at N = 100 / 1,000 (before: 310 / 2,017).
+  const perPromise = `
+    const noop = () => {};
+    const total = ${isDebug || isASAN ? 6_000 : 240_000};
+    async function bestOf3(round) {
+      let best = Infinity;
+      for (let i = 0; i < 3; i++) {
+        const start = performance.now();
+        await round();
+        best = Math.min(best, performance.now() - start);
+      }
+      return (best * 1e6) / total;
+    }
+  `;
+
+  it(
+    "in batches of 17 to 300, oldest first",
+    async () => {
+      const ns = await run(`
+      ${perPromise}
+      const ns = {};
+      for (const size of [17, 64, 300]) {
+        ns[size] = await bestOf3(async () => {
+          for (let done = 0; done < total; done += size) {
+            const batch = [];
+            for (let i = 0; i < size; i++) batch.push(Promise.reject(i));
+            for (const promise of batch) promise.catch(noop);
+            await 0;
+          }
+        });
+      }
+      console.log(JSON.stringify(ns));
+    `);
+      expect(ns[64] / ns[17]).toBeLessThan(3);
+      expect(ns[300] / ns[17]).toBeLessThan(3);
+    },
+    timeout,
+  );
+
+  it(
+    "in a loop of Promise.allSettled over 100 and over 1,000 calls that throw",
+    async () => {
+      const ns = await run(`
+      ${perPromise}
+      const error = new Error("x");
+      async function fails() { throw error; }
+      const ns = {};
+      for (const size of [100, 1000]) {
+        const calls = Array.from({ length: size });
+        ns[size] = await bestOf3(async () => {
+          for (let done = 0; done < total; done += size) await Promise.allSettled(calls.map(fails));
+        });
+      }
+      console.log(JSON.stringify(ns));
+    `);
+      expect(ns[1000] / ns[100]).toBeLessThan(3);
+    },
+    timeout,
+  );
+
+  it(
+    "while they are being reported, from the 'unhandledRejection' listener",
+    async () => {
+      const { ms, baseline, ...events } = await run(`
+      const noop = () => {};
+      const events = { unhandledRejection: 0, rejectionHandled: 0 };
+      const promises = [];
+      let ms, baseline;
+      process.on("unhandledRejection", () => {
+        if (++events.unhandledRejection > 1) return;
+        // The first report. The other N - 1 promises are in the batch being
+        // reported. Newest first was the longest walk of that batch.
+        let start = performance.now();
+        for (let i = ${N} - 1; i > 0; i--) promises[i].catch(noop);
+        ms = performance.now() - start;
+        start = performance.now();
+        for (let i = ${N} - 1; i > 0; i--) promises[i].catch(noop);
+        baseline = performance.now() - start;
+      });
+      process.on("rejectionHandled", () => events.rejectionHandled++);
+      for (let i = 0; i < ${N}; i++) promises.push(Promise.reject(i));
+      for (let i = 0; i < 3; i++) await new Promise(r => setImmediate(r));
+      console.log(JSON.stringify({ ms, baseline, ...events }));
+    `);
+      expect(events).toEqual({ unhandledRejection: 1, rejectionHandled: 0 });
+      expectLinear({ ms, baseline });
+    },
+    timeout,
+  );
 });
 
 it("process.execArgv", async () => {

@@ -1,8 +1,10 @@
 import type { Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
+import { readFileSync } from "fs";
+import { bunEnv, bunExe, isIPv6, tls } from "harness";
 import type { IncomingMessage } from "http";
 import { join } from "path";
+import { startRecordingProxy } from "../../web/websocket/proxy-test-utils";
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "ignore"> | null = null;
 beforeAll(async () => {
@@ -368,5 +370,214 @@ it("should fail if renegotiation fails using tls module", async () => {
     expect.unreachable();
   } catch (e: any) {
     expect(e.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+  }
+});
+
+// Plays a WebSocket server by hand and renegotiates when the client's first frame arrives.
+// By then the connected WebSocket client owns the socket, not the upgrade client that
+// verified the certificate. After the renegotiation it sends a text frame and a Close frame
+// with code 1000. It answers a CONNECT request first, so it can also play an HTTPS proxy in
+// front of a ws:// target. With OTHER_CERT it presents that certificate in the renegotiation.
+// Its second line of output says how the renegotiation ended, so that a broken fixture
+// does not pass for a client that refused the renegotiation.
+const renegotiatingWebSocketServer = /* js */ `
+  const tls = require("tls");
+  const crypto = require("crypto");
+  const server = tls.createServer(
+    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+    socket => {
+      socket.on("error", err => {
+        const alert = /SSL alert number (\\d+)/.exec(err.message);
+        console.log(alert ? "client sent alert " + alert[1] : "error " + err.code);
+      });
+      let head = "";
+      socket.on("data", function onHead(chunk) {
+        head += chunk.toString("latin1");
+        if (!head.includes("\\r\\n\\r\\n")) return;
+        if (head.startsWith("CONNECT ")) {
+          head = "";
+          socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+          return;
+        }
+        socket.off("data", onHead);
+        const key = /sec-websocket-key:\\s*(\\S+)/i.exec(head)[1];
+        const accept = crypto.createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n" +
+            "Sec-WebSocket-Accept: " + accept + "\\r\\n\\r\\n",
+        );
+        socket.once("data", () => {
+          if (process.env.OTHER_CERT) {
+            socket.setKeyCert(tls.createSecureContext({ cert: process.env.OTHER_CERT, key: process.env.OTHER_KEY }));
+          }
+          socket.renegotiate({ rejectUnauthorized: false }, err => {
+            if (err) return socket.destroy(err);
+            console.log("renegotiated");
+            const text = Buffer.from("after renegotiation");
+            socket.write(Buffer.concat([Buffer.from([0x81, text.length]), text, Buffer.from([0x88, 0x02, 0x03, 0xe8])]));
+          });
+        });
+      });
+    },
+  );
+  server.listen(0, () => console.log(server.address().port));
+`;
+
+// A second self-signed certificate for the same names as the harness certificate.
+const otherCertificate = {
+  cert: readFileSync(join(import.meta.dir, "..", "..", "bun", "http", "fixtures", "cert.pem"), "utf8"),
+  key: readFileSync(join(import.meta.dir, "..", "..", "bun", "http", "fixtures", "cert.key"), "utf8"),
+};
+
+async function webSocketAcrossRenegotiation(
+  url: (port: number) => string,
+  options: { proxy?: (port: number) => string; changeCertificate?: boolean } = {},
+): Promise<{ client: string[]; server: string | undefined }> {
+  await using server = Bun.spawn({
+    cmd: ["node", "-e", renegotiatingWebSocketServer],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: {
+      ...bunEnv,
+      SERVER_CERT: tls.cert,
+      SERVER_KEY: tls.key,
+      ...(options.changeCertificate && { OTHER_CERT: otherCertificate.cert, OTHER_KEY: otherCertificate.key }),
+    },
+  });
+  const reader = server.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  // Line `index` of the server's output, or undefined when the server exits before it prints that line.
+  async function serverLine(index: number): Promise<string | undefined> {
+    while (output.split("\n").length < index + 2) {
+      const { value, done } = await reader.read();
+      if (done) return undefined;
+      output += decoder.decode(value, { stream: true });
+    }
+    return output.split("\n")[index].trim();
+  }
+  const port = Number(await serverLine(0));
+
+  const events: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  const ws = new WebSocket(url(port), {
+    tls: { ca: [tls.cert, otherCertificate.cert] },
+    ...(options.proxy && { proxy: options.proxy(port) }),
+  });
+  ws.onopen = () => {
+    events.push("open");
+    ws.send("renegotiate now");
+  };
+  ws.onmessage = event => events.push(`message: ${event.data}`);
+  ws.onclose = event => {
+    events.push(`close ${event.code}`);
+    closed.resolve();
+  };
+  await closed.promise;
+  return { client: events, server: await serverLine(1) };
+}
+
+// An IP address host sends no SNI, so the name for the certificate check of the
+// renegotiation cannot come from the TLS session.
+it.concurrent.each(["localhost", "127.0.0.1", ...(isIPv6() ? ["[::1]"] : [])])(
+  "WebSocket to %s stays open when the server renegotiates",
+  async host => {
+    expect(await webSocketAcrossRenegotiation(port => `wss://${host}:${port}/`)).toEqual({
+      client: ["open", "message: after renegotiation", "close 1000"],
+      server: "renegotiated",
+    });
+  },
+);
+
+// The TLS peer is the proxy, so the certificate is checked against the name of the proxy,
+// not against the host in the WebSocket URL.
+it.concurrent.each(["localhost", "127.0.0.1"])(
+  "WebSocket through an HTTPS proxy at %s stays open when the proxy renegotiates",
+  async host => {
+    const result = await webSocketAcrossRenegotiation(() => "ws://target.invalid/", {
+      proxy: port => `https://${host}:${port}`,
+    });
+    expect(result).toEqual({
+      client: ["open", "message: after renegotiation", "close 1000"],
+      server: "renegotiated",
+    });
+  },
+);
+
+// The client trusts both certificates and both are valid for the host. The second one is
+// refused only because a renegotiation must present the certificate of the first handshake.
+// Alert 47 is illegal_parameter, which BoringSSL sends for a changed certificate.
+it.concurrent.each(["localhost", "127.0.0.1"])(
+  "WebSocket to %s closes when the server changes its certificate in a renegotiation",
+  async host => {
+    const result = await webSocketAcrossRenegotiation(port => `wss://${host}:${port}/`, {
+      changeCertificate: true,
+    });
+    expect(result).toEqual({ client: ["open", "close 1006"], server: "client sent alert 47" });
+  },
+);
+
+// A server can ask for the client certificate in a renegotiation only (IIS, Apache per-location SSLVerifyClient).
+const nodeKeys = join(import.meta.dir, "..", "test", "fixtures", "keys");
+const agent3 = {
+  cert: readFileSync(join(nodeKeys, "agent3-cert.pem"), "utf8"),
+  key: readFileSync(join(nodeKeys, "agent3-key.pem"), "utf8"),
+};
+
+it("fetch sends the client certificate a renegotiation asks for", async () => {
+  const res = await fetch(url, { keepalive: false, tls: { ca: tls.cert, ...agent3 } });
+  expect({ body: await res.text(), peerCN: res.headers.get("x-peer-cn") }).toEqual({
+    body: "Hello World",
+    peerCN: "agent3",
+  });
+});
+
+it("fetch through a CONNECT proxy sends the client certificate a renegotiation asks for", async () => {
+  // An ambient NO_PROXY applies to an explicit `proxy` option too and would send this request direct.
+  const noProxyKeys = ["NO_PROXY", "no_proxy"];
+  const saved = noProxyKeys.map(key => [key, Bun.env[key]] as const);
+  for (const key of noProxyKeys) Bun.env[key] = "";
+  try {
+    using proxy = await startRecordingProxy();
+    const res = await fetch(url, {
+      keepalive: false,
+      tls: { ca: tls.cert, ...agent3 },
+      proxy: `http://127.0.0.1:${proxy.port}`,
+    });
+    expect({ body: await res.text(), peerCN: res.headers.get("x-peer-cn") }).toEqual({
+      body: "Hello World",
+      peerCN: "agent3",
+    });
+    expect(proxy.requests.map(r => r.requestLine)).toEqual([`CONNECT localhost:${url.port} HTTP/1.1`]);
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete Bun.env[key];
+      else Bun.env[key] = value;
+    }
+  }
+});
+
+it("Bun.connect sends the client certificate a renegotiation asks for", async () => {
+  const response = Promise.withResolvers<string>();
+  let received = "";
+  const socket = await Bun.connect({
+    hostname: url.hostname,
+    port: Number(url.port),
+    tls: { ca: tls.cert, ...agent3 },
+    socket: {
+      open: socket => void socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+      data(_socket, chunk) {
+        received += chunk.toString();
+        if (received.includes("0\r\n\r\n")) response.resolve(received);
+      },
+      error: (_socket, error) => response.reject(error),
+      close: () => response.reject(new Error("closed before the response: " + received)),
+    },
+  });
+  try {
+    expect(await response.promise).toContain("X-Peer-CN: agent3\r\n");
+  } finally {
+    socket.end();
   }
 });

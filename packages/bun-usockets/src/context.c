@@ -323,6 +323,9 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             us_internal_socket_group_link_connecting_socket(group, c);
         }
     }
+    if (old_group != group && new_s->ssl) {
+        us_internal_ssl_socket_left_group(new_s);
+    }
     new_s->group = group;
     new_s->kind = kind;
     new_s->timeout = 255;
@@ -787,6 +790,12 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     break;
                 }
                 default: {
+                    /* The probe only says the socket is not connected
+                     * (WSAENOTCONN); SO_ERROR has why the connect failed. */
+                    int so_error = us_socket_get_error(s);
+                    if (so_error > 0) {
+                        error = so_error;
+                    }
                     break;
                 }
             }

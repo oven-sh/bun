@@ -94,7 +94,6 @@ pub(crate) struct RuntimeState {
     /// has not been proven safe; keep the prior behavior of leaking any
     /// still-occupied slot while still freeing the pool allocation itself.
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
-    pub(crate) active_handles: ActiveHandles,
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
@@ -103,39 +102,6 @@ pub(crate) struct RuntimeState {
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
 }
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-/// A native handle behind a JS object that must be stopped while the VM is
-/// alive rather than by a GC finalizer during `~VM` (Node's `HandleWrap` list):
-/// registered while open, removed by its own close, and closed by
-/// [`stop_active_handles_for_vm_teardown`] in every teardown's stop phase and at the
-/// `bun test --isolate` global swap.
-pub(crate) enum ActiveHandle {
-    FsWatcher(ptr::NonNull<crate::node::node_fs_watcher::FSWatcher>),
-    StatWatcher(ptr::NonNull<crate::node::node_fs_stat_watcher::StatWatcher>),
-    Server(crate::server::AnyServer),
-    Listener(ptr::NonNull<crate::socket::Listener>),
-    /// A `Bun.udpSocket` / node:dgram socket: not in any uSockets group; on
-    /// Windows its armed receive is a request only closing the handle ends.
-    UdpSocket(ptr::NonNull<crate::socket::udp_socket::UDPSocket>),
-    /// TLS over a JS duplex (`tls.connect({ socket })`, `new TLSSocket(duplex)`):
-    /// not in any uSockets group, so closed through its owner.
-    DuplexUpgrade(ptr::NonNull<crate::socket::DuplexUpgradeContext>),
-    /// A socket over a Windows named pipe: not in any uSockets group either.
-    #[cfg(windows)]
-    WindowsNamedPipe(ptr::NonNull<crate::socket::WindowsNamedPipeContext>),
-    /// A `fetch()` out on the HTTP thread; stopping it aborts the transport.
-    Fetch(ptr::NonNull<crate::webcore::fetch::FetchTasklet>),
-    /// An S3 request / streaming download out on the HTTP thread; same.
-    S3Request(ptr::NonNull<crate::webcore::s3::simple_request::S3HttpSimpleTask>),
-    S3Download(ptr::NonNull<crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask>),
-    /// A `Bun.build` running on the bundle thread with this VM's plugins/env.
-    Bundle(ptr::NonNull<crate::api::js_bundle_completion_task::JSBundleCompletionTask>),
-    /// A `dns.Resolver` (or the VM-global one) with a live c-ares channel.
-    DnsResolver(ptr::NonNull<crate::dns_jsc::Resolver>),
-}
-
-pub(crate) type ActiveHandles = bun_collections::ArrayHashMap<ActiveHandle, ()>;
 
 thread_local! {
     /// One `RuntimeState` per JS thread (`VirtualMachine` is per-thread).
@@ -204,33 +170,6 @@ pub(crate) fn cron_jobs_mut() -> Option<&'static mut Vec<bun_ptr::RefPtr<crate::
     }
     // SAFETY: live boxed per-thread `RuntimeState`; single JS thread.
     Some(unsafe { &mut (*state).cron_jobs })
-}
-
-#[inline]
-pub(crate) fn active_handles() -> Option<&'static mut ActiveHandles> {
-    let state = runtime_state();
-    if state.is_null() {
-        return None;
-    }
-    // SAFETY: live boxed per-thread `RuntimeState`.
-    Some(unsafe { &mut (*state).active_handles })
-}
-
-impl ActiveHandle {
-    /// This owner now holds something the stop phase must stop (JS thread).
-    pub(crate) fn register(self) {
-        if let Some(handles) = active_handles() {
-            bun_core::handle_oom(handles.put(self, ()));
-        }
-    }
-
-    /// The owner closed it itself (JS thread; a no-op off-thread, where the
-    /// registry is unreachable and the owner must already have unregistered).
-    pub(crate) fn unregister(&self) {
-        if let Some(handles) = active_handles() {
-            handles.swap_remove(self);
-        }
-    }
 }
 
 /// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
@@ -406,7 +345,6 @@ unsafe fn init_runtime_state(
                 )
             }
         },
-        active_handles: ActiveHandles::default(),
         wake_ctx: None,
         cron_jobs: Vec::new(),
     }));
@@ -473,7 +411,6 @@ unsafe fn init_runtime_state(
                 unsafe {
                     let t = &mut (*vm).transpiler;
                     t.options.emit_dce_annotations = false;
-                    t.resolver.store_fd = opts.store_fd;
                     t.resolver.prefer_module_field = false;
                     // Propagate `--preserve-symlinks`
                     // from CLI args to the resolver so symlinked node_modules
@@ -1315,6 +1252,16 @@ unsafe fn timer_remove(
     unsafe { &mut (*state).timer }.remove(t);
 }
 
+/// For `AbortSignal::Timeout`, which turns its delay into a deadline below this tier.
+fn timer_min_delay_ms() -> u32 {
+    let all = timer_all();
+    if all.is_null() {
+        return 0;
+    }
+    // SAFETY: `all` is the live per-thread `All`; leaf hook, field read only.
+    unsafe { (*all).fake_timers.min_delay_ms() }
+}
+
 /// `Node.fs.NodeFS{ .vm = … }` lazy creation.
 /// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
 ///
@@ -1516,6 +1463,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     print_exception,
     timer_insert,
     timer_remove,
+    timer_min_delay_ms,
     default_client_ssl_ctx,
     ssl_ctx_cache_get_or_create,
     create_node_fs,
@@ -1530,7 +1478,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_cron_for_vm_teardown,
     cron_clear_all_reload,
     retroactively_report_discovered_tests,
-    cancel_all_timers,
+    cancel_timers,
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
@@ -1619,29 +1567,55 @@ fn cron_clear_all_reload(vm: &mut VirtualMachine) {
     CronJob::clear_all_for_vm::<{ ClearMode::Reload }>(vm);
 }
 
-/// `RuntimeHooks::cancel_all_timers` — cancel every `TimeoutObject` /
+/// `RuntimeHooks::cancel_timers` — cancel every `TimeoutObject` /
 /// `ImmediateObject` still linked in the current thread's timer heap so the
-/// in-heap `+1` ref and the JS pin drop before the GC sweep / `~VM`.
+/// in-heap `+1` ref and the JS pin drop before the GC sweep / `~VM`; or, for
+/// `only`, just those script of that (stopped) context set.
 /// `timer::All` lives in `bun_runtime`; callers (`global_exit`,
 /// `WebWorker::shutdown`) are in `bun_jsc`, hence the hook.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM; `runtime_state()` must still be installed.
 /// Must run on the JS thread before JSC teardown.
-unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
+unsafe fn cancel_timers(vm: *mut VirtualMachine, only: Option<bun_jsc::ContextId>) {
     let state = runtime_state();
     if state.is_null() {
         return;
     }
-    // Drain the `fs.watchFile` scheduler queue while the timer heap and JSC
-    // are both still live. Each queued `StatWatcher` holds a `RefPtr` back to
-    // the scheduler and the scheduler holds a queue ref on the watcher, so any
-    // watcher still queued at exit forms a cycle and leaks. Runs before
-    // `cancel_all_timeout_objects` so the scheduler's `EventLoopTimer` is still
-    // linked when `set_timer(0)` removes it.
-    // SAFETY: `vm` per fn contract; JS thread, before JSC teardown.
-    unsafe {
-        crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
+    if only.is_none() {
+        // Drain the `fs.watchFile` scheduler queue while the timer heap and JSC
+        // are both still live. Each queued `StatWatcher` holds a `RefPtr` back to
+        // the scheduler and the scheduler holds a queue ref on the watcher, so any
+        // watcher still queued at exit forms a cycle and leaks. Runs before
+        // `cancel_all_timeout_objects` so the scheduler's `EventLoopTimer` is still
+        // linked when `set_timer(0)` removes it.
+        // SAFETY: `vm` per fn contract; JS thread, before JSC teardown.
+        unsafe {
+            crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
+        }
+    }
+    if let Some(context) = only {
+        // A graph's context keeps the set of its own live timers.
+        // SAFETY: `vm` per fn contract.
+        let Some(timers) = (unsafe { (*vm).timer_context(context) }).map(|c| c.take_timers())
+        else {
+            return;
+        };
+        for (&timer, &kind) in timers.iter() {
+            // SAFETY: tracked ⇒ live (each untracks itself in its deinit); a
+            // cancel may free the one it cancels, never another tracked one.
+            unsafe {
+                match kind {
+                    bun_jsc::ContextTimer::Object => {
+                        (*timer.cast::<crate::timer::TimerObjectInternals>()).cancel(vm)
+                    }
+                    bun_jsc::ContextTimer::AbortSignal => {
+                        bun_jsc::abort_signal::Timeout::discard(timer.cast())
+                    }
+                }
+            }
+        }
+        return;
     }
     // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
@@ -1651,7 +1625,7 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
 }
 
 /// `RuntimeHooks::close_timer_loop_handles_after_vm_destroyed`: teardown-only companion of
-/// `cancel_all_timers` (which the `--isolate` swap also uses on a live VM).
+/// `cancel_timers` (which the `--isolate` swap also uses on a live VM).
 ///
 /// # Safety
 /// `runtime_state()` is installed; JS thread; the JSC VM is already destroyed.
@@ -1712,31 +1686,22 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
 
 /// `--isolate` swap: a microtask still pending at end-of-file (queued by
 /// `tick_immediate_tasks` or `handle_rejected_promises`) can register new
-/// handles when it runs, so drain first so they land in the registry before it
-/// empties, then stop. (VM teardown must *not* drain here — its
+/// handles when it runs, so drain first so they are armed before the sweep,
+/// then stop. (VM teardown must *not* drain here — its
 /// prepareForDestruction discards the pre-exit queues.)
 pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = vm.event_loop_mut().drain_microtasks();
-    let _ = stop_active_handles(vm, StopReason::TestIsolation);
+    let _ = stop_active_handles(vm, bun_jsc::StopReason::Disposed);
 }
 
 pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
-    stop_active_handles(vm, StopReason::VmTeardown)
+    stop_active_handles(vm, bun_jsc::StopReason::VmTeardown)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum StopReason {
-    VmTeardown,
-    /// The VM keeps running (`bun test --isolate` global swap).
-    TestIsolation,
-}
-
-fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResult {
-    let state = runtime_state();
-    if state.is_null() {
-        return SweepResult::Idle;
-    }
-    let mut result = SweepResult::Idle;
+/// One stop-phase sweep over what the VM's contexts own: every armed
+/// [`bun_jsc::AbortHandle`] (Node's `HandleWrap` list) is closed natively now,
+/// while the VM is alive, rather than by a GC finalizer during `~VM`.
+fn stop_active_handles(vm: &mut VirtualMachine, reason: bun_jsc::StopReason) -> SweepResult {
     // Fake-timer state lives in the per-thread `timer::All`, not the JS
     // global, so a file that leaves it active routes every later file's
     // `setTimeout` into the never-driven fake heap. Leave the heap itself
@@ -1746,8 +1711,7 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
     // touch the outgoing signals.
     {
         let all = timer_all();
-        // SAFETY: `state` is non-null so `timer_all()` is non-null; single
-        // JS thread, no re-entry while we hold the field borrow.
+        // SAFETY: single JS thread, no re-entry while we hold the field borrow.
         if !all.is_null() && unsafe { (*all).fake_timers.is_active() } {
             let global = vm.global();
             // SAFETY: as above; only touches `fake_timers.active` and the
@@ -1760,76 +1724,7 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             unsafe { (*all).event_loop_delay.disable() };
         }
     }
-    // Entries that stay registered across a test-isolation swap.
-    let mut kept: Vec<ActiveHandle> = Vec::new();
-    loop {
-        // SAFETY: live boxed per-thread `RuntimeState`; the borrow ends before
-        // the close below re-enters JS.
-        let Some(kv) = (unsafe { &mut (*state).active_handles }).pop() else {
-            break;
-        };
-        result = SweepResult::Stopped;
-        match kv.key {
-            // SAFETY: live until it unregisters in `detach`.
-            ActiveHandle::FsWatcher(w) => unsafe { w.as_ref() }.close_for_isolation(),
-            // Live until it unregisters in `close()` (JS thread, us) — a
-            // registered entry implies `close()` has not run, and `deinit`
-            // cannot fire before `close()` drops the wrapper's Strong ref.
-            ActiveHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
-            ActiveHandle::Server(mut s) => s.stop(true),
-            ActiveHandle::Listener(l) => {
-                // SAFETY: live until it unregisters in `do_stop`/`finalize`.
-                crate::socket::Listener::stop_for_vm_teardown(unsafe { l.as_ref() })
-            }
-            ActiveHandle::UdpSocket(u) => {
-                // SAFETY: live until it unregisters in `on_close`.
-                crate::socket::udp_socket::UDPSocket::stop_for_vm_teardown(unsafe { u.as_ref() })
-            }
-            ActiveHandle::DuplexUpgrade(c) => {
-                // SAFETY: live until it unregisters in `deinit`.
-                let c = unsafe { bun_ptr::ThisPtr::new(c.as_ptr()) };
-                crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c)
-            }
-            // SAFETY: live until it unregisters when its deinit task runs.
-            #[cfg(windows)]
-            ActiveHandle::WindowsNamedPipe(c) => unsafe {
-                crate::socket::WindowsNamedPipeContext::stop_for_vm_teardown(c.as_ptr())
-            },
-            // SAFETY: live until it unregisters in `deinit`.
-            ActiveHandle::Fetch(t) => unsafe {
-                crate::webcore::fetch::FetchTasklet::stop_for_vm_teardown(t.as_ptr())
-            },
-            // SAFETY: live until they unregister in `on_response`.
-            ActiveHandle::S3Request(t) => unsafe {
-                crate::webcore::s3::simple_request::S3HttpSimpleTask::stop_for_vm_teardown(
-                    t.as_ptr(),
-                )
-            },
-            // SAFETY: as above.
-            ActiveHandle::S3Download(t) => unsafe {
-                crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask::stop_for_vm_teardown(t.as_ptr())
-            },
-            // A live VM cannot cancel a build: hop tasks it already queued here
-            // would still be dispatched against the finished pass. The build
-            // runs on; its completion lands on the next file's global.
-            ActiveHandle::Bundle(_) if reason == StopReason::TestIsolation => kept.push(kv.key),
-            // SAFETY: live until it unregisters in `on_complete_anytask`.
-            ActiveHandle::Bundle(c) => unsafe {
-                crate::api::js_bundle_completion_task::JSBundleCompletionTask::stop_for_vm_teardown(
-                    c.as_ptr(),
-                )
-            },
-            // Live until it unregisters in `destroy_channel`.
-            // SAFETY: registered ⇒ live; may free itself inside, not touched after.
-            ActiveHandle::DnsResolver(r) => unsafe {
-                let _ = crate::dns_jsc::Resolver::close_channel_for_terminate(r.as_ptr());
-            },
-        }
-    }
-    for handle in kept {
-        handle.register();
-    }
-    result
+    vm.stop_context_handles(reason)
 }
 
 /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent, next_test_id)`.
@@ -3266,7 +3161,6 @@ fn transpile_source_code_inner(
                 if written_len > 1024 * 1024 * 2 || unsafe { &*jsc_vm }.smol {
                     *printer =
                         bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
-                    printer.ctx.append_null_byte = false;
                 }
 
                 // (fd close handled by `_fd_guard` registered above; spec
@@ -3772,9 +3666,8 @@ export default db;
             });
         }
 
-        // SAFETY: `file.module_info`/`file.bytecode` are live subranges of
-        // the embedded section (set in `Graph::from_bytes`).
-        let (module_info, bytecode) = unsafe { (&*file.module_info, &*file.bytecode) };
+        // SAFETY: `file.module_info` is a live subrange of the embedded section (set in `Graph::from_bytes`).
+        let module_info = unsafe { &*file.module_info };
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
             .map_or(&[], |graph| graph.module_info_string_table);
         return Some(ResolvedSource {
@@ -3787,7 +3680,7 @@ export default db;
             } else {
                 bun_core::String::from_bytes(file.bytecode_origin_path)
             },
-            bytecode_cache: Bytecode::persistent(bytecode),
+            bytecode_cache: Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
             source_code_hash: file.source_hash,
             module_info: if !module_info.is_empty() {
                 let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
@@ -4152,7 +4045,7 @@ const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
 /// # Safety
 /// `jsc_vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__transpileFile(
+pub(crate) unsafe extern "C" fn Bun__transpileFile(
     jsc_vm: *mut VirtualMachine,
     global: &JSGlobalObject,
     specifier: &bun_core::String,
@@ -4162,6 +4055,9 @@ pub unsafe extern "C" fn Bun__transpileFile(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
+    // The `JSModuleLoader` that is fetching when it is not the global object's (a
+    // `Bun.ModuleGraph`'s), else empty: handed back to `Bun__onFulfillAsyncModule`.
+    module_loader: JSValue,
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
@@ -4328,6 +4224,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
                     referrer.clone(),
                     concurrent_loader,
                     lr.package_json,
+                    module_loader,
                 )
             };
         }
@@ -4402,8 +4299,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
         let mut p = cell.get();
         if p.is_null() {
             let writer = bun_js_printer::BufferWriter::init();
-            let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             p = bun_core::heap::into_raw(bp);
             cell.set(p);
         }
@@ -4422,7 +4318,8 @@ pub unsafe extern "C" fn Bun__transpileFile(
         loader: synchronous_loader,
         module_type,
         source_code_printer: printer_ptr,
-        promise_ptr: if allow_promise {
+        // Resolving a package asynchronously is the global object's loader's only.
+        promise_ptr: if allow_promise && module_loader.is_empty() {
             &raw mut promise
         } else {
             ptr::null_mut()
@@ -4490,7 +4387,7 @@ fn transpile_error_value(
 /// Transpiles plugin-provided source through the per-thread
 /// `TRANSPILE_PRINTER`, writing the result into `ret`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__transpileVirtualModule(
+pub(crate) extern "C" fn Bun__transpileVirtualModule(
     global: &JSGlobalObject,
     specifier_str: &bun_core::String,
     referrer_str: &bun_core::String,
@@ -4553,8 +4450,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
         let mut p = cell.get();
         if p.is_null() {
             let writer = bun_js_printer::BufferWriter::init();
-            let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             p = bun_core::heap::into_raw(bp);
             cell.set(p);
         }
@@ -4709,7 +4605,7 @@ fn extract_owner_uid() -> u32 {
 
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
+pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
     bun_jsc::mark_binding();
     if VirtualMachine::get().standalone_module_graph.is_none() {
         return bun_core::String::DEAD;
@@ -4725,7 +4621,7 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_c
 /// C++ entry point: if `specifier` names a builtin module, writes its resolved
 /// source into `ret` and returns `true`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
+pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
     specifier: &bun_core::String,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {

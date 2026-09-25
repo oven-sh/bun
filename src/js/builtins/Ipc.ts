@@ -1,4 +1,11 @@
 // have to use jsdoc type definitions because bundle-functions is based on regex
+interface DgramSocketFields {
+  type: import("node:dgram").SocketType;
+}
+type IpcHandle =
+  | import("node:net").Server
+  | import("node:net").Socket
+  | (import("node:dgram").Socket & DgramSocketFields);
 /**
  * @typedef {Object} Serialized
  * @property {"NODE_HANDLE"} cmd
@@ -12,7 +19,7 @@
  * @param {Handle} handle
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(message, handle, options) {
+export function serialize(message, handle: IpcHandle, options) {
   const net = require("node:net");
   if (handle instanceof net.Server) {
     const native = handle._handle;

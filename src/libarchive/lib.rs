@@ -5,7 +5,6 @@
 // below; higher-level extraction logic (`Archiver`, `BufferReadStream`) sits
 // on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
-use core::ffi::c_int;
 use core::ptr;
 
 use bun_collections::StringArrayHashMap;
@@ -907,7 +906,6 @@ pub struct BufferReadStream {
     buf: *const [u8],
 
     archive: *mut Archive,
-    reading: bool,
 }
 
 impl BufferReadStream {
@@ -925,7 +923,6 @@ impl BufferReadStream {
         Self {
             buf: std::ptr::from_ref::<[u8]>(buf),
             archive: Archive::read_new(),
-            reading: false,
         }
     }
 
@@ -965,11 +962,7 @@ impl BufferReadStream {
         // the first concatenated archive would be read.
         let _ = archive.read_set_options(c"read_concatenated_archives");
 
-        let rc = archive.read_open_memory(self.buf());
-
-        self.reading = (rc as c_int) > -1;
-
-        rc
+        archive.read_open_memory(self.buf())
     }
 }
 
@@ -978,6 +971,25 @@ impl Drop for BufferReadStream {
         let _ = self.archive().read_close();
         let _ = self.archive().read_free();
     }
+}
+
+/// `mkdirat` mode for a directory entry. `perm` is whatever the header
+/// encoded (a GNU base-256 field need not fit in `0o7777`), so mask it, then
+/// make readable directories listable like node-tar does:
+/// https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
+#[cfg(not(windows))]
+pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
+    let mut mode = perm & 0o7777;
+    if (mode & 0o400) != 0 {
+        mode |= 0o100;
+    }
+    if (mode & 0o40) != 0 {
+        mode |= 0o10;
+    }
+    if (mode & 0o4) != 0 {
+        mode |= 0o1;
+    }
+    mode
 }
 
 /// Validates that a symlink target doesn't escape the extraction directory.
@@ -1593,39 +1605,20 @@ impl Archiver {
 
                     match kind {
                         bun_sys::FileKind::Directory => {
-                            // SAFETY: entry valid
-                            let mut mode = i32::try_from(lib::Entry::opaque_ref(entry).perm())
-                                .expect("int cast");
-
-                            // if dirs are readable, then they should be listable
-                            // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
-                            if (mode & 0o400) != 0 {
-                                mode |= 0o100;
-                            }
-                            if (mode & 0o40) != 0 {
-                                mode |= 0o10;
-                            }
-                            if (mode & 0o4) != 0 {
-                                mode |= 0o1;
-                            }
-
                             #[cfg(windows)]
                             {
                                 make_path_u16(dir, path_slice)?;
-                                let _ = mode;
                             }
                             #[cfg(not(windows))]
                             {
+                                // SAFETY: entry valid
+                                let mode = directory_mode(lib::Entry::opaque_ref(entry).perm());
                                 // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
                                 // so path_slice is a NUL-terminated [:0]u8.
                                 let path_z: &ZStr = unsafe {
                                     ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
                                 };
-                                match bun_sys::mkdirat_z(
-                                    dir_fd,
-                                    path_z,
-                                    bun_sys::Mode::try_from(mode).expect("int cast"),
-                                ) {
+                                match bun_sys::mkdirat_z(dir_fd, path_z, mode) {
                                     Ok(()) => {}
                                     Err(err) => {
                                         // It's possible for some tarballs to return a directory twice, with and

@@ -1168,15 +1168,62 @@ _bun_remove_param_package_completion() {
 
     local pkg_file="${target_cwd}/package.json"
     if [[ -f "${pkg_file}" && -r "${pkg_file}" ]]; then
-        if ! command -v jq &>/dev/null; then
-            return
-        fi
-
         local -a deps
-        deps=( "${(@f)$(jq -r '
-            .dependencies, .devDependencies, .peerDependencies, .optionalDependencies
-            | objects | keys[]
-        ' "${pkg_file}" 2>/dev/null)}" )
+        if command -v jq &>/dev/null; then
+            deps=( "${(@f)$(jq -r '
+                .dependencies, .devDependencies, .peerDependencies, .optionalDependencies
+                | objects | keys[]
+            ' "${pkg_file}" 2>/dev/null)}" )
+        else
+            deps=( "${(@f)$(awk '
+                in_deps {
+                    while (in_deps) {
+                        sub(/^[[:space:]]+/, "", $0)
+                        if (sub(/^,/, "", $0)) {
+                            sub(/^[[:space:]]+/, "", $0)
+                        }
+                        if (sub(/^\}/, "", $0)) {
+                            in_deps = 0
+                            break
+                        }
+                        if (match($0, /^"([^"\]+)"[[:space:]]*:[[:space:]]*"([^"\]|\.)*"/)) {
+                            key = substr($0, RSTART, RLENGTH)
+                            sub(/^"/, "", key)
+                            sub(/"[[:space:]]*:.*$/, "", key)
+                            print key
+                            $0 = substr($0, RSTART + RLENGTH)
+                        } else {
+                            break
+                        }
+                    }
+                }
+                {
+                    while (match($0, /"(dependencies|devDependencies|peerDependencies|optionalDependencies)"[[:space:]]*:[[:space:]]*\{/)) {
+                        $0 = substr($0, RSTART + RLENGTH)
+                        in_deps = 1
+                        while (in_deps) {
+                            sub(/^[[:space:]]+/, "", $0)
+                            if (sub(/^,/, "", $0)) {
+                                sub(/^[[:space:]]+/, "", $0)
+                            }
+                            if (sub(/^\}/, "", $0)) {
+                                in_deps = 0
+                                break
+                            }
+                            if (match($0, /^"([^"\]+)"[[:space:]]*:[[:space:]]*"([^"\]|\.)*"/)) {
+                                key = substr($0, RSTART, RLENGTH)
+                                sub(/^"/, "", key)
+                                sub(/"[[:space:]]*:.*$/, "", key)
+                                print key
+                                $0 = substr($0, RSTART + RLENGTH)
+                            } else {
+                                break
+                            }
+                        }
+                    }
+                }
+            ' "${pkg_file}" 2>/dev/null)}" )
+        fi
         deps=(${deps:#})
 
         if (( ${#deps} > 0 )); then

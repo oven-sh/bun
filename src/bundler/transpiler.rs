@@ -1594,6 +1594,7 @@ impl<'a> Transpiler<'a> {
                     warn_about_unbundled_modules: !target.is_bun(),
                     allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
                     module_type: to_parser_module_type(this_parse.module_type),
+                    jsc_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
                     import_meta_main_value: None,

@@ -311,10 +311,6 @@ pub(crate) fn parse_declaration<'bump>(
     )
 }
 
-// Composes handling dispatches through the `ComposesCtx`
-// trait (defined in `css_parser.rs`); `NoComposesCtx` returns
-// `DisallowEntirely` so the no-tracking fast-path collapses into the match's
-// no-op arm.
 pub(crate) fn parse_declaration_impl<'bump, C>(
     name: &[u8],
     input: &mut css::Parser,
@@ -349,10 +345,19 @@ where
 
     if input.flags.css_modules() {
         if let css::Property::Composes(composes) = &mut property {
+            // `StyleRule::to_css_base` relies on rejected declarations being dropped here.
             match composes_ctx.composes_state() {
-                css::ComposesState::DisallowEntirely => {}
                 css::ComposesState::Allow(_) => {
                     composes_ctx.record_composes(composes);
+                }
+                css::ComposesState::DisallowEntirely => {
+                    options.warn_fmt(
+                        format_args!("\"composes\" is not valid here"),
+                        source_location.line,
+                        source_location.column,
+                    );
+                    composes.discard(input);
+                    return Ok(());
                 }
                 css::ComposesState::DisallowNested(info) => {
                     options.warn_fmt(
@@ -360,6 +365,8 @@ where
                         info.line,
                         info.column,
                     );
+                    composes.discard(input);
+                    return Ok(());
                 }
                 css::ComposesState::DisallowNotSingleClass(info) => {
                     options.warn_fmt_with_notes(
@@ -373,6 +380,8 @@ where
                             location: Some(info.to_logger_location(options.filename)),
                         }]),
                     );
+                    composes.discard(input);
+                    return Ok(());
                 }
             }
         }

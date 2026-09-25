@@ -1102,71 +1102,26 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     };
     let (secure, tls_config) = (args.secure, args.tls_config);
 
-    // `StringBuilder::append` takes `&mut self` and returns a borrow
-    // of the backing buffer, so successive appends can't keep their `&[u8]`
-    // results live across each other. The buffer is allocated once and never
-    // moved (`move_to_slice` hands back the same allocation), so detach each
-    // result to a `RawSlice` immediately — the struct stores them as
-    // `RawSlice` (self-referential into `options_buf`).
-    let username: bun_ptr::RawSlice<u8>;
-    let password: bun_ptr::RawSlice<u8>;
-    let database: bun_ptr::RawSlice<u8>;
-    let options: bun_ptr::RawSlice<u8>;
-    let path: bun_ptr::RawSlice<u8>;
-
     let options_str = arguments[7].to_bun_string(global_object)?;
-
     let path_str = arguments[8].to_bun_string(global_object)?;
-
-    let options_buf: Box<[u8]> = 'brk: {
-        let mut b = bun_core::StringBuilder::default();
-        b.cap += args.username_str.utf8_byte_length()
-            + 1
-            + args.password_str.utf8_byte_length()
-            + 1
-            + args.database_str.utf8_byte_length()
-            + 1
-            + options_str.utf8_byte_length()
-            + 1
-            + path_str.utf8_byte_length()
-            + 1;
-
-        let _ = b.allocate();
-        let u = args.username_str.to_utf8();
-        username = bun_ptr::RawSlice::new(b.append(u.slice()));
-        drop(u);
-
-        let p = args.password_str.to_utf8();
-        password = bun_ptr::RawSlice::new(b.append(p.slice()));
-        drop(p);
-
-        let d = args.database_str.to_utf8();
-        database = bun_ptr::RawSlice::new(b.append(d.slice()));
-        drop(d);
-
-        let o = options_str.to_utf8();
-        options = bun_ptr::RawSlice::new(b.append(o.slice()));
-        drop(o);
-
-        let _path = path_str.to_utf8();
-        path = bun_ptr::RawSlice::new(b.append(_path.slice()));
-        drop(_path);
-
-        break 'brk b.move_to_slice();
-    };
+    let (username, password, database, options, path) = (
+        args.username_str.to_utf8(),
+        args.password_str.to_utf8(),
+        args.database_str.to_utf8(),
+        options_str.to_utf8(),
+        path_str.to_utf8(),
+    );
 
     // Reject null bytes in connection parameters to prevent Postgres startup
     // message parameter injection (null bytes act as field terminators in the
     // wire protocol's key\0value\0 format).
     for (entry, name) in [
-        (username, &b"username"[..]),
-        (password, b"password"),
-        (database, b"database"),
-        (path, b"path"),
+        (username.slice(), &b"username"[..]),
+        (password.slice(), b"password"),
+        (database.slice(), b"database"),
+        (path.slice(), b"path"),
     ] {
-        let entry = entry.slice();
         if !entry.is_empty() && strings::contains_char(entry, 0) {
-            drop(options_buf);
             return Err(global_object.throw_invalid_arguments(format_args!(
                 "{} must not contain null bytes",
                 bstr::BStr::new(name)
@@ -1181,12 +1136,13 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         ConnectParams {
             hostname: hostname.slice(),
             port: args.port,
-            options_buf,
-            user: username,
-            password,
-            database,
-            options,
-            path,
+            strings: ConnectionStrings::new(
+                username.slice(),
+                password.slice(),
+                database.slice(),
+                options.slice(),
+                path.slice(),
+            ),
             secure,
             tls_config,
             ssl_mode: args.ssl_mode,
@@ -1206,18 +1162,50 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     })
 }
 
+/// The strings of a connection, in one buffer that moves into the connection with them.
+pub(crate) struct ConnectionStrings {
+    buf: Box<[u8]>,
+    user: bun_ptr::RawSlice<u8>,
+    password: bun_ptr::RawSlice<u8>,
+    database: bun_ptr::RawSlice<u8>,
+    options: bun_ptr::RawSlice<u8>,
+    path: bun_ptr::RawSlice<u8>,
+}
+
+impl ConnectionStrings {
+    pub(crate) fn new(
+        user: &[u8],
+        password: &[u8],
+        database: &[u8],
+        options: &[u8],
+        path: &[u8],
+    ) -> Self {
+        let mut b = bun_core::StringBuilder::default();
+        b.cap += user.len() + password.len() + database.len() + options.len() + path.len() + 5;
+        let _ = b.allocate();
+        // The buffer never moves again, so each slice can outlive the borrow of `b`.
+        let user = bun_ptr::RawSlice::new(b.append(user));
+        let password = bun_ptr::RawSlice::new(b.append(password));
+        let database = bun_ptr::RawSlice::new(b.append(database));
+        let options = bun_ptr::RawSlice::new(b.append(options));
+        let path = bun_ptr::RawSlice::new(b.append(path));
+        Self {
+            buf: b.move_to_slice(),
+            user,
+            password,
+            database,
+            options,
+            path,
+        }
+    }
+}
+
 /// What `PostgresSQLConnection::open` builds a connection from.
 pub(crate) struct ConnectParams<'a> {
-    /// Dialed when `path` is empty.
+    /// Dialed when the path of `strings` is empty.
     pub hostname: &'a [u8],
     pub port: i32,
-    /// The five slices below point into it.
-    pub options_buf: Box<[u8]>,
-    pub user: bun_ptr::RawSlice<u8>,
-    pub password: bun_ptr::RawSlice<u8>,
-    pub database: bun_ptr::RawSlice<u8>,
-    pub options: bun_ptr::RawSlice<u8>,
-    pub path: bun_ptr::RawSlice<u8>,
+    pub strings: ConnectionStrings,
     pub secure: Option<OwnedSslCtx>,
     pub tls_config: jsc::api::ServerConfig::SSLConfig,
     pub ssl_mode: SSLMode,
@@ -1239,12 +1227,15 @@ impl PostgresSQLConnection {
         let ConnectParams {
             hostname,
             port,
-            options_buf,
-            user: username,
-            password,
-            database,
-            options,
-            path,
+            strings:
+                ConnectionStrings {
+                    buf: options_buf,
+                    user: username,
+                    password,
+                    database,
+                    options,
+                    path,
+                },
             secure,
             tls_config,
             ssl_mode,
@@ -1314,15 +1305,11 @@ impl PostgresSQLConnection {
                 channel_names: JsCell::new(Vec::new()),
             }));
 
-        // `heap::into_raw` is `Box::into_raw` — never null. Sole owner until
-        // `to_js` below. R-2: every field is interior-mutable, so a shared
-        // `ParentRef` deref is sufficient for the writes below.
+        // Sole owner until `to_js` below. Every field is interior-mutable.
         let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
         {
-            // Postgres always opens plain TCP first (SSLRequest happens in-band),
-            // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
-            // adopts into `postgres_tls_group` after the server's `S`.
+            // Plain TCP in every sslmode: `setup_tls` adopts the socket after the server's `S`.
             let path_slice = this.path.slice();
             let result = if !path_slice.is_empty() {
                 uws::SocketTCP::connect_unix_group(

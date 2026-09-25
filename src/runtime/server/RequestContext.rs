@@ -2708,10 +2708,16 @@ where
                 // Response from `response_weakref`, so no borrow of the Response
                 // (here, `blob`) may still be live across it. Nothing is written
                 // to the socket in between, so the wire output is unchanged.
+                let window = (blob.offset.get(), blob.size.get());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
+                // GET frames such a file from its reads, so no length is known here.
+                let length_known = blob_size != 0 || !unsized_file_has_bytes(blob, window);
                 this.render_metadata();
 
+                if !length_known {
+                    return this.end_without_body(this.should_close_connection());
+                }
                 if blob_size == crate::webcore::blob::MAX_SIZE {
                     resp.write_header_int(b"content-length", 0);
                 } else {
@@ -4847,6 +4853,40 @@ fn file_error_to_js(
     match pathlike {
         PathOrFileDescriptor::Path(path) => err.with_path(path.slice()).to_js(global_this),
         PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd).to_js(global_this),
+    }
+}
+
+/// Whether one read finds bytes in the regular file `blob` names, whose `st_size` is 0; for HEAD, so the file position of a caller's descriptor stays.
+#[cold]
+fn unsized_file_has_bytes(blob: &Blob, (offset, size): (BlobSizeType, BlobSizeType)) -> bool {
+    use crate::webcore::node_types::PathOrFileDescriptor;
+    let Some(store) = blob.store.get().as_ref() else {
+        return false;
+    };
+    let crate::webcore::blob::store::Data::File(file) = &store.data else {
+        return false;
+    };
+    if !UnsizedBody::SUPPORTED || size == 0 || file.max_size != 0 || file.seekable != Some(true) {
+        return false;
+    }
+    let window = (offset as u64, size as u64);
+    let has_bytes =
+        |fd, own_fd| matches!(UnsizedBody::read(fd, window, false, own_fd), Ok(Some(_)));
+    match &file.pathlike {
+        PathOrFileDescriptor::Fd(fd) => has_bytes(*fd, false),
+        PathOrFileDescriptor::Path(path) => {
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let Ok(fd) = bun_sys::open(
+                path.slice_z(&mut path_buf),
+                bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
+                0,
+            ) else {
+                return false;
+            };
+            let found = has_bytes(fd, true);
+            fd.close();
+            found
+        }
     }
 }
 

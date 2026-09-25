@@ -4235,6 +4235,169 @@ describe("direct stream edge cases", () => {
       });
     });
 
+    // tee() makes one read of the source for both branches, so a read that fails is the failure of both.
+    describe("the source's close(reason) hook throwing while the stream is teed", () => {
+      const teed = (t, pull) =>
+        direct(t, pull, {
+          close(reason) {
+            t.closes.push(reason);
+            throw new Error("close hook");
+          },
+        });
+      const text = stream => Bun.readableStreamToText(stream);
+      // Each returns a fresh pull(): two of them count their calls.
+      const sources = {
+        "close() inside pull()": () => c => {
+          c.write("a");
+          c.close();
+        },
+        "end() inside pull()": () => c => {
+          c.write("a");
+          c.end();
+        },
+        "close() inside pull(), in a try/catch": () => c => {
+          c.write("a");
+          try {
+            c.close();
+          } catch {}
+        },
+        "the second pull() closes": () => {
+          let calls = 0;
+          return c => {
+            if (calls++ === 0) {
+              c.write("a");
+              c.flush();
+            } else {
+              c.write("b");
+              c.close();
+            }
+          };
+        },
+        // The tee makes this read from its chunk microtask, not from a branch's pull.
+        "a write outside pull(), then the second pull() closes": () => {
+          let calls = 0;
+          return c => {
+            if (calls++ === 0) {
+              setImmediate(() => {
+                c.write("a");
+                c.flush();
+              });
+            } else {
+              c.write("b");
+              c.close();
+            }
+          };
+        },
+      };
+      const consumers = {
+        "stream.tee()": [2, rs => rs.tee().map(text)],
+        "Response.clone()": [
+          2,
+          rs => {
+            const res = new Response(rs);
+            const clone = res.clone();
+            return [res.text(), clone.bytes()];
+          },
+        ],
+        "Request.clone()": [
+          2,
+          rs => {
+            const req = new Request("http://localhost/", { method: "POST", body: rs });
+            const clone = req.clone();
+            return [req.bytes(), clone.text()];
+          },
+        ],
+        "a tee of a tee": [
+          3,
+          rs => {
+            const [a, b] = rs.tee();
+            return [...a.tee(), b].map(text);
+          },
+        ],
+        "only the first branch is read": [1, rs => [text(rs.tee()[0])]],
+        "only the second branch is read": [1, rs => [text(rs.tee()[1])]],
+      };
+      describe.each(Object.keys(sources))("%s", sourceName => {
+        test.each(Object.keys(consumers))("%s", async consumerName => {
+          const t = tally();
+          const [branches, consume] = consumers[consumerName];
+          const results = await Promise.all(consume(teed(t, sources[sourceName]())).map(settle));
+          expect({ closes: t.closes.length, cancels: t.cancels.length, results }).toEqual({
+            closes: 1,
+            cancels: 0,
+            results: Array(branches).fill({ err: "close hook" }),
+          });
+        });
+      });
+
+      test("a cancel() of the other branch settles", async () => {
+        const t = tally();
+        const [a, b] = teed(t, c => {
+          c.write("a");
+          c.close();
+        }).tee();
+        const canceled = b.cancel("not needed");
+        expect({ read: await settle(text(a)), canceled: await settle(canceled), cancels: t.cancels.length }).toEqual({
+          read: { err: "close hook" },
+          canceled: { ok: undefined },
+          cancels: 0,
+        });
+      });
+
+      // Pins today's outcome, not a contract. Once the source gave the branches their outcome (it
+      // closed them, or it failed with its own error), no branch is left to take the hook's error:
+      // it is reported, and each branch keeps what the source gave it, a queued chunk included.
+      test("an error that no branch can take is reported and the branches keep the source's outcome", async () => {
+        const script = `
+          const uncaught = [];
+          process.on("uncaughtException", e => uncaught.push(e.message));
+          const tick = () => new Promise(r => setImmediate(r));
+          const settle = p => p.then(v => ({ ok: v }), e => ({ err: e.message }));
+          const readAll = async branch => {
+            let out = "";
+            for (const reader = branch.getReader(); ; ) {
+              const { value, done } = await reader.read();
+              if (done) return out;
+              out += new TextDecoder().decode(value);
+            }
+          };
+          const run = async pull => {
+            uncaught.length = 0;
+            let calls = 0;
+            const source = { type: "direct", pull: c => pull(c, calls++), close() { throw new Error("close hook"); } };
+            const [a, b] = new ReadableStream(source).tee();
+            await tick(); // the tee's first pull runs before a reader exists
+            const result = { a: await settle(readAll(a)), b: await settle(readAll(b)) };
+            await tick();
+            return { ...result, uncaught: [...uncaught] };
+          };
+          console.log(JSON.stringify({
+            closeOnly: await run(c => { c.close(); }),
+            secondPullClosesOnly: await run((c, call) => { if (call === 0) { c.write("a"); c.flush(); } else { c.close(); } }),
+            pullThrowsAsWell: await run(c => { c.write("a"); throw new Error("pull failed"); }),
+            closeWithError: await run(c => { c.write("a"); c.close(new Error("reason")); }),
+          }, null, 2));
+        `;
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const uncaught = ["close hook"];
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify(
+            {
+              closeOnly: { a: { ok: "" }, b: { ok: "" }, uncaught },
+              secondPullClosesOnly: { a: { ok: "a" }, b: { ok: "a" }, uncaught },
+              pullThrowsAsWell: { a: { err: "pull failed" }, b: { err: "pull failed" }, uncaught },
+              closeWithError: { a: { err: "reason" }, b: { err: "reason" }, uncaught },
+            },
+            null,
+            2,
+          ),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+
     test("the source's close() hook calling controller.close() again does not recurse", async () => {
       let controller;
       const t = tally();

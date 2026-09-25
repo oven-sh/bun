@@ -665,10 +665,12 @@ impl PostgresSQLQuery {
                                     this.release_statement();
                                     // Nothing else dispatches what the conversion queued.
                                     let thrown = global_object.try_take_exception();
-                                    // A termination cannot be taken. No JS can run then.
-                                    if connection.pending_requests.get() > 0
-                                        && !global_object.has_exception()
-                                    {
+                                    if global_object.has_exception() {
+                                        // A termination cannot be taken. No JS can run now.
+                                        this.this_value.with_mut(|r| r.upgrade(global_object));
+                                        js::target_set_cached(this_value, global_object, query);
+                                        connection.reject_later(this);
+                                    } else if connection.pending_requests.get() > 0 {
                                         connection.advance_and_flush();
                                     }
                                     // Nothing was sent for this request, so no reply releases the ref.

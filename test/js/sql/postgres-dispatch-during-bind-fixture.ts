@@ -16,8 +16,6 @@ const text = (value: string) => ({ toString: () => value });
 
 let conversions = 0;
 let dispatched: Promise<unknown>[] = [];
-// close() waits for every query. A query that a termination stopped never settles.
-let closeAtEnd = true;
 /** A text parameter whose first conversion runs `dispatch`, from inside the Bind encoder. */
 function dispatching(value: string, dispatch: () => void) {
   let fired = false;
@@ -302,13 +300,13 @@ const scenarios: Record<string, () => Promise<unknown>> = {
   // The timeout of node:vm stops the conversion with a termination, after it dispatched a query.
   async "prepared statement, node:vm timeout stops the conversion after it dispatched"() {
     await sql`select ${text("0")}::text as x`;
-    closeAtEnd = false;
     return stoppedByTimeout(sql);
   },
 
   // advance() encodes the request, not run().
   async "prepare: false, node:vm timeout stops the conversion after it dispatched"() {
-    return stoppedByTimeout(new SQL({ url, max: 1, prepare: false }));
+    await using unprepared = new SQL({ url, max: 1, prepare: false });
+    return await stoppedByTimeout(unprepared);
   },
 
   // advance() rejects the request through the reject callback.
@@ -333,7 +331,7 @@ const scenarios: Record<string, () => Promise<unknown>> = {
   },
 };
 
-/** close() waits for every query, and the stopped query never settles: `db` stays open. */
+/** close() waits for every query, so it resolves only if the stopped query settles too. */
 async function stoppedByTimeout(db: SQL) {
   const pid = await backendPid(db);
   const param = {
@@ -345,7 +343,8 @@ async function stoppedByTimeout(db: SQL) {
     },
   };
   let thrown: unknown;
-  (globalThis as any).run = () => db`select ${param}::text as x`.execute();
+  let outer!: Promise<unknown>;
+  (globalThis as any).run = () => (outer = db`select ${param}::text as x`).execute();
   try {
     vm.runInThisContext("run()", { timeout: 50 });
   } catch (e: any) {
@@ -353,6 +352,7 @@ async function stoppedByTimeout(db: SQL) {
   }
   return {
     thrown,
+    outer: await settle(outer),
     dispatched: await Promise.all(dispatched.map(settle)),
     conversions,
     sameBackend: (await backendPid(db)) === pid,
@@ -521,7 +521,6 @@ for (const name of JSON.parse(process.env.SCENARIOS!) as string[]) {
   conversions = 0;
   dispatched = [];
   aheadConverted = false;
-  closeAtEnd = true;
   console.log(JSON.stringify(await scenario()));
-  if (closeAtEnd) await sql.close();
+  await sql.close();
 }

@@ -168,22 +168,24 @@ const groups: Record<string, Record<string, object>> = {
       sameBackend: true,
     },
   },
-  // These groups do not close their pools: a request left on a connection keeps the process alive.
   "a termination stops the conversion": {
     "prepared statement, node:vm timeout stops the conversion after it dispatched": {
       thrown: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+      outer: { err: "ERR_POSTGRES_INVALID_QUERY_BINDING" },
       dispatched: [ok({ y: "2" })],
       conversions: 1,
       sameBackend: true,
     },
     "prepare: false, node:vm timeout stops the conversion after it dispatched": {
       thrown: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+      outer: { err: "ERR_POSTGRES_INVALID_QUERY_BINDING" },
       dispatched: [ok({ y: "2" })],
       conversions: 1,
       sameBackend: true,
     },
   },
   // close() rejects every request of the connection. The pool then opens a new connection.
+  // These groups do not close their pools: a request left on a connection keeps the process alive.
   "close() from a conversion": {
     "close() from a conversion, first execution": { outer: closed, afterwards },
     "close() from a conversion, prepared statement": { outer: closed, afterwards },

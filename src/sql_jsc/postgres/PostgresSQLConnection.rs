@@ -116,6 +116,8 @@ pub struct PostgresSQLConnection {
     read_buffer: JsCell<OffsetByteList>,
     last_message_start: Cell<u32>,
     pub(crate) requests: JsCell<PostgresRequest::Queue>,
+    /// Requests whose conversion a termination stopped. They are rejected when JS can run again.
+    stopped_requests: JsCell<Vec<RefPtr<PostgresSQLQuery>>>,
     /// number of pipelined requests (Bind/Execute/Prepared statements)
     pub(crate) pipelined_requests: Cell<u32>,
     /// number of non-pipelined requests (Simple/Copy)
@@ -1002,6 +1004,7 @@ impl PostgresSQLConnection {
         let event_loop = self.event_loop();
         event_loop.enter();
 
+        self.reject_stopped_requests();
         self.flush_data();
 
         let flags = self.flags.get();
@@ -1228,6 +1231,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             read_buffer: JsCell::new(OffsetByteList::default()),
             last_message_start: Cell::new(0),
             requests: JsCell::new(PostgresRequest::Queue::new()),
+            stopped_requests: JsCell::new(Vec::new()),
             pipelined_requests: Cell::new(0),
             nonpipelinable_requests: Cell::new(0),
             pending_requests: Cell::new(0),
@@ -1483,7 +1487,29 @@ impl PostgresSQLConnection {
         });
     }
 
+    /// A termination stopped the conversion of `req`, and no JS can run until it is withdrawn.
+    pub(crate) fn reject_later(&self, req: &PostgresSQLQuery) {
+        req.status.set(QueryStatus::Fail);
+        self.stopped_requests.with_mut(|s| s.push(req.ref_guard()));
+        self.dispatch_later();
+    }
+
+    fn reject_stopped_requests(&self) {
+        if self.stopped_requests.get().is_empty() || self.global().has_exception() {
+            return;
+        }
+        for req in self.stopped_requests.with_mut(core::mem::take) {
+            let stopped = postgres_error_to_js(
+                self.global(),
+                Some(b"A parameter conversion was stopped before it finished"),
+                AnyPostgresError::InvalidQueryBinding,
+            );
+            req.on_js_error(stopped, self.global());
+        }
+    }
+
     fn clean_up_requests(&self, js_reason: Option<JSValue>) {
+        self.reject_stopped_requests();
         // R-2: `&self` carries no `noalias`; every field accessed below is
         // `Cell`/`JsCell`-backed, so re-entrant JS callbacks (promise reject →
         // user `.catch()` → new query enqueue) that mutate `self.requests`
@@ -1927,7 +1953,11 @@ impl PostgresSQLConnection {
         err: AnyPostgresError,
     ) {
         if let Some(err_) = self.global().try_take_exception() {
-            req.on_js_error(err_, self.global());
+            if self.global().has_exception() {
+                self.reject_later(req);
+            } else {
+                req.on_js_error(err_, self.global());
+            }
             return;
         }
         if let Some(statement) = new_statement {

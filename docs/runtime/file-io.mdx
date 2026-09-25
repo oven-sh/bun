@@ -94,7 +94,13 @@ The second argument is the data to write. It can be any of the following:
 - `Blob` (including `BunFile`)
 - `ArrayBuffer` or `SharedArrayBuffer`
 - `TypedArray` (`Uint8Array`, et. al.)
-- `Response`
+- `Response` or `Request`
+- `ReadableStream`
+- `Bun.Archive`
+- `Bun.Image` (encoded in the pipeline's output format)
+- An array of `BlobPart`s, as `new Blob()` accepts
+
+Any other value throws a `TypeError` with code `ERR_INVALID_ARG_TYPE`.
 
 Bun handles each combination with the fastest available system call on the current platform.
 

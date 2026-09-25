@@ -1444,6 +1444,142 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/43996: these wrote String(data), so
+  // Bun.write(path, img.png()) wrote "[object Image]" and resolved with 14.
+  describe("Bun.write(dest, Bun.Image) and unsupported input", () => {
+    // 1x1 RGBA PNG.
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const isPng = bytes => bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+    const sha256 = bytes => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+    const caught = async fn => {
+      try {
+        await fn();
+      } catch (e) {
+        return e;
+      }
+      throw new Error("did not throw or reject");
+    };
+
+    it("writes the encoded bytes, the same bytes as Image.write and Image.bytes", async () => {
+      using dir = tempDir("bun-write-image", {});
+      const viaBunWrite = join(String(dir), "bun-write.png");
+      const viaImageWrite = join(String(dir), "image-write.png");
+      const expected = await new Bun.Image(png).png().bytes();
+
+      const n = await Bun.write(viaBunWrite, new Bun.Image(png).png());
+      const written = await Bun.file(viaBunWrite).bytes();
+      expect({ n, size: written.length, png: isPng(written) }).toEqual({
+        n: expected.length,
+        size: expected.length,
+        png: true,
+      });
+      await new Bun.Image(png).png().write(viaImageWrite);
+      expect(sha256(written)).toBe(sha256(expected));
+      expect(sha256(await Bun.file(viaImageWrite).bytes())).toBe(sha256(expected));
+    });
+
+    it("encodes in the source format when no format method was chained", async () => {
+      using dir = tempDir("bun-write-image-source-format", {});
+      const out = join(String(dir), "out.bin");
+      const n = await Bun.write(out, new Bun.Image(png));
+      const written = await Bun.file(out).bytes();
+      expect({ n, png: isPng(written) }).toEqual({ n: written.length, png: true });
+    });
+
+    it("honors the chained format over the destination extension", async () => {
+      using dir = tempDir("bun-write-image-format", {});
+      const out = join(String(dir), "wrong.png");
+      await Bun.write(out, new Bun.Image(png).jpeg({ quality: 50 }));
+      const written = await Bun.file(out).bytes();
+      expect([written[0], written[1]]).toEqual([0xff, 0xd8]);
+    });
+
+    it("Bun.file(dest).write(image) and a Bun.file source", async () => {
+      using dir = tempDir("bun-write-image-file", { "src.png": png });
+      const out = Bun.file(join(String(dir), "out.png"));
+      const n = await out.write(new Bun.Image(Bun.file(join(String(dir), "src.png"))).png());
+      const written = await out.bytes();
+      expect({ n, png: isPng(written) }).toEqual({ n: written.length, png: true });
+    });
+
+    it("S3 writes: Bun.s3.write(key, image, options) sends the encoded bytes with the per-call options", async () => {
+      const puts = [];
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          puts.push({ url: req.url, auth: req.headers.get("authorization"), body: await req.bytes() });
+          return new Response(null, { status: 200, headers: { ETag: '"x"' } });
+        },
+      });
+      const options = {
+        accessKeyId: "per-call-key",
+        secretAccessKey: "per-call-secret",
+        endpoint: server.url.href,
+        bucket: "per-call-bucket",
+        region: "us-east-1",
+      };
+      const expected = await new Bun.Image(png).png().bytes();
+      const n = await Bun.s3.write("out.png", new Bun.Image(png).png(), options);
+      const n2 = await new Bun.S3Client(options).write("out2.png", new Bun.Image(png));
+      expect({ n, n2, count: puts.length }).toEqual({ n: expected.length, n2: expected.length, count: 2 });
+      for (const put of puts) {
+        expect(put.url).toStartWith(`${server.url.href}per-call-bucket/out`);
+        expect(put.auth).toContain("Credential=per-call-key/");
+        expect(sha256(put.body)).toBe(sha256(expected));
+      }
+    });
+
+    it("passes the write options through: createPath", async () => {
+      using dir = tempDir("bun-write-image-options", {});
+      const nested = join(String(dir), "missing", "nested.png");
+      await expect(Bun.write(nested, new Bun.Image(png).png(), { createPath: false })).rejects.toThrow(
+        expect.objectContaining({ code: "ENOENT" }),
+      );
+      expect(fs.existsSync(nested)).toBe(false);
+      await Bun.write(nested, new Bun.Image(png).png(), { createPath: true });
+      expect(isPng(await Bun.file(nested).bytes())).toBe(true);
+    });
+
+    it.each([
+      ["a plain object", () => ({})],
+      ["a number", () => 123],
+      ["a boolean", () => true],
+      ["a bigint", () => 10n],
+      ["a symbol", () => Symbol("s")],
+      ["a Date", () => new Date(0)],
+      ["a URL", () => new URL("http://example.com/")],
+      ["a Map", () => new Map()],
+      ["a FormData", () => new FormData()],
+    ])("rejects %s with ERR_INVALID_ARG_TYPE and does not touch the file", async (_, make) => {
+      using dir = tempDir("bun-write-invalid", { "existing.txt": "keep" });
+      const missing = join(String(dir), "missing.txt");
+      const existing = join(String(dir), "existing.txt");
+      for (const dest of [missing, Bun.file(missing), existing, Bun.file(existing)]) {
+        const e = await caught(() => Bun.write(dest, make()));
+        expect({ name: e.name, code: e.code }).toEqual({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+        expect(e.message).toStartWith('The "data" argument must be of type string or an instance of ');
+        const e2 = await caught(() => (typeof dest === "string" ? Bun.file(dest) : dest).write(make()));
+        expect(e2.code).toBe("ERR_INVALID_ARG_TYPE");
+      }
+      expect({ missing: fs.existsSync(missing), existing: fs.readFileSync(existing, "utf8") }).toEqual({
+        missing: false,
+        existing: "keep",
+      });
+    });
+
+    it("the array form and String objects keep the Blob constructor's String() semantics", async () => {
+      using dir = tempDir("bun-write-array-parts", {});
+      const out = join(String(dir), "parts.txt");
+      expect(await Bun.write(out, ["a", {}, 1])).toBe("a[object Object]1".length);
+      expect(await Bun.file(out).text()).toBe("a[object Object]1");
+      expect(await Bun.write(out, new String("s"))).toBe(1);
+      expect(await Bun.file(out).text()).toBe("s");
+    });
+  });
+
   it("BunFile.name survives concurrent write() calls + GC", async () => {
     using dir = tempDir("bun-file-name-concurrent-write-gc", {});
     const filePath = join(String(dir), "out.txt");

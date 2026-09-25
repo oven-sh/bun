@@ -1215,7 +1215,8 @@ fn run_tasks_erased(
                             let meta = &mut manager.lockfile.packages.items_meta_mut()
                                 [package_id as usize];
                             let old_integrity = meta.integrity;
-                            if old_integrity.tag.is_supported()
+                            if log_level != Options::LogLevel::Silent
+                                && old_integrity.tag.is_supported()
                                 && bun_core::bytes_of(&old_integrity)
                                     != bun_core::bytes_of(&new_integrity)
                             {

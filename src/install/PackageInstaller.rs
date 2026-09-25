@@ -1559,13 +1559,15 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        // Initial pass only; a fetch that already completed this run leaves a
-        // fresh cache to install from instead of re-enqueueing.
-        let force_refresh_tarball = needs_verify
+        // A refreshed tarball always reinstalls, also when a deferred context is
+        // replayed. Only the initial pass enqueues the fetch; once it completed
+        // this run the fresh cache is installed from below.
+        let refresh_tarball = self
+            .manager_mut()
+            .should_refresh_tarball(dependency_id, package_id, resolution.tag);
+        let force_refresh_tarball = refresh_tarball
+            && needs_verify
             && !is_pending_package_install
-            && self
-                .manager_mut()
-                .should_refresh_tarball(dependency_id, package_id, resolution.tag)
             && {
                 let url = match resolution.tag {
                     resolution::Tag::RemoteTarball => {
@@ -1576,7 +1578,7 @@ impl<'a> PackageInstaller<'a> {
                 !self.manager_mut().tarball_fetch_drained_this_run(url)
             };
 
-        let needs_install = force_refresh_tarball
+        let needs_install = refresh_tarball
             || self.force_install
             || self.skip_verify_installed_version_number
             || !needs_verify

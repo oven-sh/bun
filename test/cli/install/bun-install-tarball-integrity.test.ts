@@ -883,11 +883,12 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
   it("re-downloads the changed tarball instead of reusing the stale cache", async () => {
     const v1 = buildTarball("VERSION_ONE");
     const v2 = buildTarball("VERSION_TWO");
+    const v3 = buildTarball("VERSION_THREE");
     expect(v1.integrity).not.toBe(v2.integrity);
 
-    // Same URL serves v1 until `serveV2` flips, then v2. Track every tarball
-    // request so we can prove `--force` actually hit the network again.
-    let serveV2 = false;
+    // Same URL serves whatever `served` points at. Track every tarball request
+    // so we can prove `--force` actually hit the network again.
+    let served = v1;
     const tarballRequests: string[] = [];
     await using server = Bun.serve({
       port: 0,
@@ -895,8 +896,8 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
       fetch(req) {
         const url = new URL(req.url);
         if (url.pathname.endsWith("/my-url-pkg.tgz")) {
-          tarballRequests.push(serveV2 ? "v2" : "v1");
-          const { tgz } = serveV2 ? v2 : v1;
+          tarballRequests.push(served === v1 ? "v1" : served === v2 ? "v2" : "v3");
+          const { tgz } = served;
           return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
         }
         return new Response("Not found", { status: 404 });
@@ -936,7 +937,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
     // Swap the bytes served at the same URL, then force a reinstall. Before the
     // fix, `--force` copied the stale extraction and never re-requested the
     // tarball, so node_modules stayed on VERSION_ONE.
-    serveV2 = true;
+    served = v2;
     tarballRequests.length = 0;
     {
       await using proc = spawn({ cmd: [bunExe(), "install", "--force"], ...spawnOpts });
@@ -945,6 +946,9 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
       // A naive re-download without recomputing integrity would reject v2
       // against v1's lockfile-pinned hash.
       expect(stdout + stderr).not.toContain("Integrity check failed");
+      expect(stderr).toContain(
+        `warn: my-url-pkg changed since it was last installed; updating its integrity in the lockfile (was ${v1.integrity}, now ${v2.integrity})`,
+      );
       expect(exitCode).toBe(0);
     }
 
@@ -956,6 +960,19 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
     const lockContent = await file(join(String(dir), "bun.lock")).text();
     expect(lockContent).toContain(v2.integrity);
     expect(lockContent).not.toContain(v1.integrity);
+
+    // `--silent` suppresses the warning like the other install warnings.
+    served = v3;
+    tarballRequests.length = 0;
+    {
+      await using proc = spawn({ cmd: [bunExe(), "install", "--force", "--silent"], ...spawnOpts });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout + stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+    expect(tarballRequests).toEqual(["v3"]);
+    expect(await file(installedIndex).text()).toBe('module.exports = "VERSION_THREE";\n');
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain(v3.integrity);
   });
 
   it("re-reads a changed local tarball at the same path", async () => {
@@ -1189,10 +1206,10 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
     expect(await file(installedIndex).text()).toBe('module.exports = "VERSION_TWO";\n');
   });
 
-  it("does not refresh under --frozen-lockfile", async () => {
-    // A frozen lockfile cannot record a new hash, so a refresh would leave
-    // node_modules holding bytes the lockfile does not pin. `--force` must
-    // keep the cached extraction and the lockfile untouched.
+  it.each(["--frozen-lockfile", "--no-save"])("does not refresh under %s", async flag => {
+    // A run that does not save the lockfile cannot record a new hash, so a
+    // refresh would leave node_modules holding bytes the lockfile does not
+    // pin. `--force` must keep the cached extraction and the lockfile untouched.
     const v1 = buildTarball("VERSION_ONE");
     const v2 = buildTarball("VERSION_TWO");
 
@@ -1211,7 +1228,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
       },
     });
 
-    using dir = tempDir("issue-31864-frozen-" + linker, {
+    using dir = tempDir("issue-31864-nosave-" + linker, {
       "package.json": JSON.stringify({
         name: "app",
         version: "1.0.0",
@@ -1238,7 +1255,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
     serveV2 = true;
     tarballRequests.length = 0;
     {
-      await using proc = spawn({ cmd: [bunExe(), "install", "--force", "--frozen-lockfile"], ...spawnOpts });
+      await using proc = spawn({ cmd: [bunExe(), "install", "--force", flag], ...spawnOpts });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout + stderr).not.toContain("Integrity check failed");
       expect(exitCode).toBe(0);

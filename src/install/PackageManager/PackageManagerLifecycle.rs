@@ -496,8 +496,8 @@ impl PackageManager {
     /// Whether a URL/local tarball dependency should be re-fetched this run.
     /// Its cache key is the URL/path, not the content, so new bytes hide behind
     /// the same key. Requires `--force` or the dependency named on the command
-    /// line, a lockfile that can record the new hash, network access, and no
-    /// global-store key derived from the current hash.
+    /// line, a run that saves the lockfile (so it records the new hash),
+    /// network access, and no global-store key derived from the current hash.
     pub fn should_refresh_tarball(
         &self,
         dependency_id: DependencyID,
@@ -505,7 +505,7 @@ impl PackageManager {
         tag: ResolutionTag,
     ) -> bool {
         tag.is_tarball_cache_keyed_by_url()
-            && !self.options.enable.frozen_lockfile()
+            && self.options.do_.save_lockfile()
             && self.options.offline != OfflineMode::Offline
             && !self.integrity_pinned_packages.contains(&package_id)
             && (self.options.enable.force_install()

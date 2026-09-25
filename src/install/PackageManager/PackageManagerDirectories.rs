@@ -11,7 +11,7 @@ use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{PackageID, Resolution};
+use bun_install::{Integrity, PackageID, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
 #[cfg(windows)]
@@ -755,11 +755,66 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
     sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
 }
 
-/// Cache hit for an unpatched entry: npm folders must contain `package.json`, git checkouts the `.bun-tag` written last.
-pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: ResolutionTag) -> bool {
+/// `<folder>.bun-tag` beside a URL/local tarball cache folder records which
+/// bytes it was extracted from. It lives outside the folder so installs do
+/// not copy it into `node_modules`.
+fn tarball_integrity_tag_path<'a>(buf: &'a mut PathBuffer, folder_path: &[u8]) -> &'a ZStr {
+    let len = folder_path.len() + b".bun-tag".len();
+    buf[..folder_path.len()].copy_from_slice(folder_path);
+    buf[folder_path.len()..len].copy_from_slice(b".bun-tag");
+    buf[len] = 0;
+    ZStr::from_buf(buf, len)
+}
+
+pub fn write_tarball_integrity_tag(cache_dir: Fd, folder_path: &[u8], integrity: &Integrity) {
+    if !integrity.tag.is_supported() {
+        return;
+    }
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let tag_path = tarball_integrity_tag_path(&mut buf, folder_path);
+    if File::openat(
+        cache_dir,
+        tag_path,
+        sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
+        0o664,
+    )
+    .and_then(|f| f.write_all(integrity.to_string().as_bytes()))
+    .is_err()
+    {
+        let _ = sys::unlinkat(cache_dir, tag_path);
+    }
+}
+
+/// Cache hit for an unpatched entry: npm folders must contain `package.json`,
+/// git checkouts the `.bun-tag` written last. A URL/local tarball folder is a
+/// hit only if its `<folder>.bun-tag` matches the lockfile pin, since the
+/// folder name is the URL and another project can refresh it with different
+/// bytes. A folder with no tag predates the tag and is accepted.
+pub fn is_package_in_cache_at(
+    cache_dir: Fd,
+    folder_path: &ZStr,
+    tag: ResolutionTag,
+    pinned_integrity: &Integrity,
+) -> bool {
     let marker: &[u8] = match tag {
         ResolutionTag::Npm => b"package.json",
         ResolutionTag::Git => b".bun-tag",
+        ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
+            if !sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false) {
+                return false;
+            }
+            if !pinned_integrity.tag.is_supported() {
+                return true;
+            }
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let tag_path = tarball_integrity_tag_path(&mut buf, folder_path.as_bytes());
+            return match File::openat(cache_dir, tag_path, sys::O::RDONLY, 0)
+                .and_then(|f| f.read_to_end_small())
+            {
+                Ok(contents) => contents == pinned_integrity.to_string().as_bytes(),
+                Err(_) => true,
+            };
+        }
         _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
     };
     let mut buf = bun_paths::path_buffer_pool::get();
@@ -774,8 +829,9 @@ pub fn is_package_in_cache(
     this: &mut PackageManager,
     folder_path: &ZStr,
     tag: ResolutionTag,
+    pinned_integrity: &Integrity,
 ) -> bool {
-    is_package_in_cache_at(get_cache_directory(this), folder_path, tag)
+    is_package_in_cache_at(get_cache_directory(this), folder_path, tag, pinned_integrity)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────

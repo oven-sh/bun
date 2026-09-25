@@ -1400,6 +1400,91 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
     expect(requests).toEqual(["a"]);
   });
 
+  it("a refresh in one project does not satisfy another project's older pin from the shared cache", async () => {
+    // Two projects share the cache and pin the same URL tarball. After project A
+    // refreshes it, the cache folder holds the new bytes under the same URL
+    // key. Project B still pins the old hash, so its install must not take the
+    // folder as a hit: it re-downloads against its pin and fails while the
+    // server keeps serving the new bytes.
+    const v1 = buildTarball("VERSION_ONE");
+    const v2 = buildTarball("VERSION_TWO");
+
+    let served = v1;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        if (new URL(req.url).pathname.endsWith("/my-url-pkg.tgz")) {
+          const { tgz } = served;
+          return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    const pkgJson = JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { "my-url-pkg": `http://127.0.0.1:${server.port}/my-url-pkg.tgz` },
+    });
+    const bunfig = `[install]\nlinker = "${linker}"\n`;
+    using dir = tempDir("issue-31864-shared-" + linker, {
+      "a/package.json": pkgJson,
+      "a/bunfig.toml": bunfig,
+      "b/package.json": pkgJson,
+      "b/bunfig.toml": bunfig,
+    });
+    const env2 = { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") };
+    const run = async (project: string, args: string[]) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: join(String(dir), project),
+        env: env2,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { output: stdout + stderr, exitCode };
+    };
+    const installedIndex = (project: string) => join(String(dir), project, "node_modules", "my-url-pkg", "index.js");
+    const lockfile = (project: string) => file(join(String(dir), project, "bun.lock")).text();
+
+    for (const project of ["a", "b"]) {
+      const { output, exitCode } = await run(project, []);
+      expect(output).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await file(installedIndex(project)).text()).toBe('module.exports = "VERSION_ONE";\n');
+    }
+    const lockB = await lockfile("b");
+    expect(lockB).toContain(v1.integrity);
+
+    served = v2;
+    {
+      const { output, exitCode } = await run("a", ["--force"]);
+      expect(output).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await file(installedIndex("a")).text()).toBe('module.exports = "VERSION_TWO";\n');
+      expect(await lockfile("a")).toContain(v2.integrity);
+    }
+    // B installs into a fresh node_modules, like a new checkout or a CI job.
+    await rm(join(String(dir), "b", "node_modules"), { recursive: true, force: true });
+    {
+      const { output, exitCode } = await run("b", ["--frozen-lockfile"]);
+      expect(output).toContain("Integrity check failed");
+      expect(exitCode).not.toBe(0);
+      expect(await lockfile("b")).toBe(lockB);
+    }
+
+    // Once the server serves the pinned bytes again, B installs them.
+    served = v1;
+    {
+      const { output, exitCode } = await run("b", ["--frozen-lockfile"]);
+      expect(output).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await file(installedIndex("b")).text()).toBe('module.exports = "VERSION_ONE";\n');
+      expect(await lockfile("b")).toBe(lockB);
+    }
+  });
+
   it.skipIf(linker !== "isolated")(
     "keeps the lockfile pin for a global-store entry whose tarball left the cache",
     async () => {

@@ -163,7 +163,12 @@ impl PackageManager {
                 let in_cache = if patch_hash.is_some() {
                     directories::is_folder_in_cache(self, folder_path)
                 } else {
-                    directories::is_package_in_cache(self, folder_path, pkg.resolution.tag)
+                    directories::is_package_in_cache(
+                        self,
+                        folder_path,
+                        pkg.resolution.tag,
+                        &pkg.meta.integrity,
+                    )
                 };
                 if in_cache {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
@@ -188,8 +193,12 @@ impl PackageManager {
                         });
                     // Owned NUL-terminated copy.
                     let non_patched_path = ZBox::from_bytes(&folder_path.as_bytes()[..idx]);
-                    if directories::is_package_in_cache(self, &non_patched_path, pkg.resolution.tag)
-                    {
+                    if directories::is_package_in_cache(
+                        self,
+                        &non_patched_path,
+                        pkg.resolution.tag,
+                        &pkg.meta.integrity,
+                    ) {
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::ApplyPatch);
                         // yay step 1 is already done for us
                         return PreinstallState::ApplyPatch;

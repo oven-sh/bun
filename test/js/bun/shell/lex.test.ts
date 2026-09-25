@@ -978,6 +978,16 @@ describe("lex shell", () => {
     expect(exitCode).toBe(0);
   });
 
+  // An interpolated value is its own word even when `\<newline>` separates it
+  // from `$FOO`: `$FOO${x}` and `$FOO\<LF>${x}` both expand FOO, not FOObar.
+  test("Bun.$ interpolation after a backslash-newline does not extend the variable name", async () => {
+    const x = "bar";
+    const lf = await $`${{ raw: "FOO=a; FOObar=b; echo [$FOO" }}${x}] [${{ raw: "$FOO\\\n" }}${x}]`.quiet();
+    expect(lf.stdout.toString()).toBe("[abar] [abar]\n");
+    const crlf = await $`${{ raw: "FOO=a; FOObar=b; echo [$FOO\\\r\n" }}${x}]`.quiet();
+    expect(crlf.stdout.toString()).toBe("[abar]\n");
+  });
+
   test("Bun.$ template with CRLF and a trailing comment", async () => {
     const { stdout, exitCode } = await $`${{ raw: "echo one # c\r\necho two\r\n" }}`.quiet();
     expect(stdout.toString()).toBe("one\ntwo\n");

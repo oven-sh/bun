@@ -541,6 +541,67 @@ describe("bundler", async () => {
           api.assertFileExists(join("out", module.default));
         },
       });
+
+      // A 0-byte file is a valid (empty) SQLite database, so the sqlite loaders
+      // must see it like any other database: a Database on target bun, and the
+      // usual target error everywhere else. It used to become `export default {}`.
+      const useDb = /* js */ `
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        console.log(db.constructor.name, db.query("select message from messages").get().message);
+      `;
+      const sqliteEntry = /* js */ `import db from './empty.db' with {type: "sqlite", embed: "true"};${useDb}`;
+      const sqliteLoaderMapEntry = /* js */ `import db from './empty.db';${useDb}`;
+      if (target === "bun") {
+        itBundled(`${target}/loader-empty-sqlite-embedded`, {
+          target,
+          outdir: "/out",
+          files: {
+            "/entry.ts": sqliteEntry,
+            "/empty.db": "",
+          },
+          onAfterBundle(api) {
+            // The empty database is still copied into outdir next to the bundle.
+            const asset = readdirSync(api.outdir).find(x => x.endsWith(".db"))!;
+            expect(asset).toBeDefined();
+            expect(fs.statSync(join(api.outdir, asset)).size).toBe(0);
+          },
+          run: { stdout: "Database Hello, world!" },
+        });
+
+        itBundled(`${target}/loader-empty-sqlite-loader-map`, {
+          target,
+          loader: { ".db": "sqlite" },
+          files: {
+            "/entry.ts": sqliteLoaderMapEntry,
+            "/empty.db": "",
+          },
+          run: { stdout: "Database Hello, world!" },
+        });
+      } else {
+        itBundled(`${target}/loader-empty-sqlite-embedded`, {
+          target,
+          files: {
+            "/entry.ts": sqliteEntry,
+            "/empty.db": "",
+          },
+          bundleErrors: {
+            "/empty.db": ['To use the "sqlite" loader, set target to "bun"'],
+          },
+        });
+
+        itBundled(`${target}/loader-empty-sqlite-loader-map`, {
+          target,
+          loader: { ".db": "sqlite" },
+          files: {
+            "/entry.ts": sqliteLoaderMapEntry,
+            "/empty.db": "",
+          },
+          bundleErrors: {
+            "/empty.db": ['To use the "sqlite" loader, set target to "bun"'],
+          },
+        });
+      }
     }
   });
 

@@ -7,12 +7,14 @@ import { join } from "path";
 
 describe.concurrent("Bun.ModuleGraph scrambler", () => {
   const chains = isDebug || isASAN ? 120 : 600;
+  // How long the fixture waits for every chain to end before it says which did not: less than the test's timeout.
+  const deadline = 20_000;
   test.each([1, 2, 3, 4])(
     "every hop runs in the context it was scheduled in, and every error is heard by its graph: seed %d",
     async seed => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(import.meta.dir, "scrambler", "scrambler.mjs")],
-        env: { ...bunEnv, SEED: String(seed), CHAINS: String(chains) },
+        env: { ...bunEnv, SEED: String(seed), CHAINS: String(chains), DEADLINE: String(deadline) },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -28,5 +30,6 @@ describe.concurrent("Bun.ModuleGraph scrambler", () => {
       });
       expect(exitCode).toBe(0);
     },
+    deadline + 10_000,
   );
 });

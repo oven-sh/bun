@@ -10,10 +10,11 @@
 //   promise a handler of that name is given;
 // - a handler runs in the context its graph was made in.
 //
-//   bun scrambler.mjs      env: SEED=1 CHAINS=600 DEPTH=6
+//   bun scrambler.mjs      env: SEED=1 CHAINS=600 DEPTH=6 DEADLINE=20000 (ms to wait for every chain to end)
 const SEED = Number(process.env.SEED ?? 1);
 const CHAINS = Number(process.env.CHAINS ?? 600);
 const DEPTH = Number(process.env.DEPTH ?? 6);
+const DEADLINE = Number(process.env.DEADLINE ?? 20_000);
 
 // mulberry32
 let seed = SEED >>> 0;
@@ -86,6 +87,7 @@ function hears(index, kind) {
 
 const hopNames = Object.keys(hostCell.hops);
 const expected = new Map(); // tag -> what should hear it
+const underWay = new Map(); // id of a chain that has not got to its end -> where it is
 let hops = 0;
 function chain(id) {
   const steps = [];
@@ -104,6 +106,7 @@ function chain(id) {
 
   const at = (step, context) => () => {
     hops++;
+    underWay.set(id, { step, described });
     const current = indexOf(Bun.ModuleGraph.current);
     if (current !== context)
       problem(
@@ -112,6 +115,7 @@ function chain(id) {
     if (step === steps.length) {
       const tag = `chain ${id}: ${form}, in the code of ${nameOf(code)}, in the context of ${nameOf(context)}, after ${described()}`;
       expected.set(tag, hears(context, kind));
+      underWay.delete(id);
       cellOf(code)[kind === "uncaughtException" ? "throws" : "rejects"][form](tag);
       return;
     }
@@ -128,9 +132,12 @@ for (let id = 0; id < CHAINS; id++) {
   if (random(8) === 0) await new Promise(resolve => setTimeout(resolve, 0));
 }
 
-const deadline = Date.now() + 30_000;
+const deadline = Date.now() + DEADLINE;
 while ((expected.size < CHAINS || heard.size < expected.size) && Date.now() < deadline && !problems.length)
   await new Promise(resolve => setImmediate(resolve));
+
+for (const [id, { step, described }] of underWay)
+  problem(`chain ${id} (${described()}) got to step ${step} and no further`);
 
 for (const [tag, should] of expected) {
   const was = heard.get(tag);

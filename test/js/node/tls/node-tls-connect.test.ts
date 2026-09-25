@@ -2664,6 +2664,14 @@ describe("how a TLS client's way of closing reaches the server", () => {
     expect(await closeReport(mode, version)).toEqual(expected);
   });
 
+  // node gives this verdict too. It also reports the junk record as an error of the socket.
+  it("TLSv1.3 a junk record behind the Finished does not change the verdict on the certificate", async () => {
+    const mode = "a junk record behind the Finished of a server that the client does not verify";
+    expect(await closeReport(mode, "TLSv1.3")).toEqual(
+      turnedDown("authorized:false", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "close:false"),
+    );
+  });
+
   it.skipIf(!nodeExe())("node gives the same reports", async () => {
     const { reports } = await reportsFromNode(
       "tls-client-close-fixture.mjs",

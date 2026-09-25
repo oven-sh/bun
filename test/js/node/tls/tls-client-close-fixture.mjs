@@ -233,6 +233,7 @@ export async function report(mode, version) {
   const behindFinished = {
     "a junk record behind the server's Finished": () => junkRecord,
     "a close_notify behind the server's Finished": flight => sealedCloseNotify(flight, secrets.SERVER_TRAFFIC_SECRET_0),
+    "a junk record behind the Finished of a server that the client does not verify": () => junkRecord,
   }[mode];
 
   let fromClient = [];
@@ -358,6 +359,15 @@ export async function report(mode, version) {
       raw.on("error", () => {});
       await once(raw, "connect");
       closed = watch(tls.connect({ ...refused, socket: raw }));
+      break;
+    }
+    case "a junk record behind the Finished of a server that the client does not verify": {
+      // The verdict on the certificate must not depend on the record that follows the Finished.
+      const socket = tls.connect({ ...accepted, ca: undefined, rejectUnauthorized: false }, () => {
+        client.push(`authorized:${socket.authorized}`, String(socket.authorizationError));
+        socket.destroy();
+      });
+      closed = watch(socket);
       break;
     }
     case helloRequestMode: {

@@ -19,6 +19,8 @@ pub(crate) struct LabelFrame {
     resolved: Vec<EmphDelim>,
     delim_cursor: usize,
     no_autolink_before: usize,
+    strict_base: usize,
+    strict_cursor: usize,
     leave: LabelLeave,
 }
 
@@ -212,6 +214,7 @@ impl Parser<'_> {
         let mut base: usize = 0;
 
         // Phase 1: Collect and resolve emphasis delimiters
+        self.strict_autolinks.clear();
         self.collect_emphasis_delimiters(cur, &brackets, base);
         self.resolve_emphasis_delimiters();
 
@@ -224,6 +227,9 @@ impl Parser<'_> {
         let mut delim_cursor: usize = 0;
         // No permissive autolink starts before this offset: a cut candidate already scanned these bytes.
         let mut no_autolink_before: usize = 0;
+        // `self.strict_autolinks[strict_base..]` are the links that phase 1 found in the current slice.
+        let mut strict_base: usize = 0;
+        let mut strict_cursor: usize = 0;
 
         // Enter the label of a just-parsed link/image/wikilink: snapshot the
         // current walk state and restart the walk on the label slice.
@@ -238,8 +244,12 @@ impl Parser<'_> {
                     resolved: core::mem::take(&mut resolved),
                     delim_cursor,
                     no_autolink_before,
+                    strict_base,
+                    strict_cursor,
                     leave: parse.leave,
                 });
+                strict_base = self.strict_autolinks.len();
+                strict_cursor = strict_base;
                 base += parse.label_start;
                 cur = &cur[parse.label_start..parse.label_end];
                 self.collect_emphasis_delimiters(cur, &brackets, base);
@@ -474,13 +484,21 @@ impl Parser<'_> {
                 // Note: Strikethrough (~) is handled above via the resolved delimiter system
 
                 // Permissive autolinks: detect URL, email, and WWW autolinks
-                if i >= no_autolink_before && self.is_permissive_autolink_trigger(c) {
-                    // First try with strict boundaries, then with relaxed (emphasis-aware)
-                    let cut_end = &mut no_autolink_before;
-                    let mut al = find_permissive_autolink(content, i, false, &resolved, cut_end);
-                    if al.is_none() {
-                        al = find_permissive_autolink(content, i, true, &resolved, cut_end);
+                if self.is_permissive_autolink_trigger(c) {
+                    while self
+                        .strict_autolinks
+                        .get(strict_cursor)
+                        .is_some_and(|l| l.trigger < i)
+                    {
+                        strict_cursor += 1;
                     }
+                    let al = match self.strict_autolinks.get(strict_cursor) {
+                        Some(l) if l.trigger == i => Some(*l),
+                        _ if i < no_autolink_before => None,
+                        _ => {
+                            find_permissive_autolink(content, i, &resolved, &mut no_autolink_before)
+                        }
+                    };
                     if let Some(a) = al {
                         if a.beg > text_start {
                             self.emit_text(TextType::Normal, &content[text_start..a.beg])?;
@@ -573,6 +591,9 @@ impl Parser<'_> {
                     resolved = frame.resolved;
                     delim_cursor = frame.delim_cursor;
                     no_autolink_before = frame.no_autolink_before;
+                    self.strict_autolinks.truncate(strict_base);
+                    strict_base = frame.strict_base;
+                    strict_cursor = frame.strict_cursor;
                 }
                 None => break 'frames,
             }
@@ -762,6 +783,7 @@ impl Parser<'_> {
             // A permissive autolink with plain boundaries is a link however emphasis resolves: its `*_~` are URL bytes.
             if self.is_permissive_autolink_trigger(c) {
                 if let Some(al) = find_strict_permissive_autolink(content, i) {
+                    self.strict_autolinks.push(al);
                     i = al.end;
                     continue;
                 }

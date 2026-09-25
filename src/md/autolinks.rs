@@ -11,6 +11,8 @@ pub(crate) fn is_list_item_mark(c: u8) -> bool {
 
 #[derive(Copy, Clone)]
 pub struct Autolink {
+    /// Position of the trigger character ('@', ':', or '.').
+    pub(crate) trigger: usize,
     pub(crate) beg: usize,
     pub(crate) end: usize,
 }
@@ -172,11 +174,10 @@ struct Scheme {
 pub(crate) fn find_permissive_autolink(
     content: &[u8],
     pos: usize,
-    allow_emph: bool,
     resolved: &[EmphDelim],
     cut_end: &mut usize,
 ) -> AutolinkResult {
-    let emph = allow_emph.then_some(resolved);
+    let emph = Some(resolved);
     let al = scan_permissive_autolink(content, pos, emph, content.len())?;
     // No paired run lies between the start of a link and `pos`.
     let runs = &resolved[resolved.partition_point(|d| d.pos < pos)..];
@@ -281,7 +282,11 @@ fn scan_permissive_autolink(
                         continue;
                     }
 
-                    return Some(Autolink { beg, end });
+                    return Some(Autolink {
+                        trigger: pos,
+                        beg,
+                        end,
+                    });
                 }
             }
         }
@@ -327,7 +332,11 @@ fn scan_permissive_autolink(
             return None;
         }
 
-        return Some(Autolink { beg, end });
+        return Some(Autolink {
+            trigger: pos,
+            beg,
+            end,
+        });
     } else if c == b'.' {
         // WWW autolink: check for "www." prefix
         if pos < 3 {
@@ -365,7 +374,11 @@ fn scan_permissive_autolink(
             return None;
         }
 
-        return Some(Autolink { beg, end });
+        return Some(Autolink {
+            trigger: pos,
+            beg,
+            end,
+        });
     }
 
     None

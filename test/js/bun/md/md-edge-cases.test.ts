@@ -1344,6 +1344,10 @@ describe("permissive autolinks and emphasis delimiters", () => {
 
   test.each([
     // The link ends in front of the closer of the emphasis around it.
+    [
+      "**https://example.com/path/to/page**",
+      '<p><strong><a href="https://example.com/path/to/page">https://example.com/path/to/page</a></strong></p>\n',
+    ],
     ["__a@b.cob__", '<p><strong><a href="mailto:a@b.cob">a@b.cob</a></strong></p>\n'],
     ["_a@b.co__", '<p><em><a href="mailto:a@b.co">a@b.co</a></em>_</p>\n'],
     ["**http://example.com/a**", '<p><strong><a href="http://example.com/a">http://example.com/a</a></strong></p>\n'],
@@ -1381,6 +1385,17 @@ describe("permissive autolinks and emphasis delimiters", () => {
     ],
     ["*a http://x.yz/b*c d*", '<p><em>a <a href="http://x.yz/b*c">http://x.yz/b*c</a> d</em></p>\n'],
     ["2*3 http://x.yz/a*b", '<p>2*3 <a href="http://x.yz/a*b">http://x.yz/a*b</a></p>\n'],
+    // It stays a link in the part of the text that a cut link did not take.
+    [
+      "*a*http://a.bc/*y?q=(www.d.ef) z*",
+      '<p><em>a</em><a href="http://a.bc/">http://a.bc/</a><em>y?q=(<a href="http://www.d.ef">www.d.ef</a>) z</em></p>\n',
+    ],
+    // Image labels have links of their own. The links after a label are still found.
+    [
+      "http://a.bc/x ![a www.d.ef/y](i) www.g.hi/z ![b](j) k@l.mn",
+      '<p><a href="http://a.bc/x">http://a.bc/x</a> <img src="i" alt="a www.d.ef/y" /> ' +
+        '<a href="http://www.g.hi/z">www.g.hi/z</a> <img src="j" alt="b" /> <a href="mailto:k@l.mn">k@l.mn</a></p>\n',
+    ],
     [
       "https://foo.bar/a*b\nhttps://foo.bar/a*b",
       '<p><a href="https://foo.bar/a*b">https://foo.bar/a*b</a>\n<a href="https://foo.bar/a*b">https://foo.bar/a*b</a></p>\n',

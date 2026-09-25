@@ -206,8 +206,7 @@ public:
                 return;
             }
         }
-        // Non-ASCII path: transcode. The NUL terminator of the CString is
-        // the frame delimiter.
+        // Non-ASCII path: transcode. The NUL terminator is the frame delimiter.
         auto utf8 = m_sb.toString().utf8();
         auto bytes = byteCast<char>(utf8.spanIncludingNullTerminator());
         sink(bytes.data(), bytes.size());

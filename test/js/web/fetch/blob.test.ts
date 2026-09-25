@@ -4,6 +4,7 @@ import { mkfifo } from "mkfifo";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import fs from "node:fs";
+import { devNull } from "node:os";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -864,6 +865,28 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
     await check(new Blob(["<", await new Response(file).blob(), ">"]), "<ABCDEFGHIJ>");
   });
 
+  test("Response, Request and Bun.write join the parts of an array the same way", async () => {
+    using dir = tempDir("blob-file-part-callers", { "f.bin": "ABCDEFGHIJ" });
+    const file = Bun.file(path.join(String(dir), "f.bin"));
+    const out = path.join(String(dir), "out.bin");
+    const body = (part: Blob) => ["x", part] as unknown as BodyInit;
+    expect({
+      response: await new Response(body(file)).text(),
+      request: await new Request("http://localhost/", { method: "POST", body: body(file) }).text(),
+      written: await Bun.write(out, ["x", file]),
+      out: fs.readFileSync(out, "utf8"),
+    }).toEqual({ response: "xABCDEFGHIJ", request: "xABCDEFGHIJ", written: 11, out: "xABCDEFGHIJ" });
+
+    // The parts are joined before Bun.write makes its promise, so it throws and does not reject.
+    const missing = Bun.file(path.join(String(dir), "missing"));
+    const enoent = expect.objectContaining({ code: "ENOENT" });
+    fs.rmSync(out);
+    expect(() => new Response(body(missing))).toThrow(enoent);
+    expect(() => new Request("http://localhost/", { method: "POST", body: body(missing) })).toThrow(enoent);
+    expect(() => Bun.write(out, ["x", missing])).toThrow(enoent);
+    expect(fs.existsSync(out)).toBe(false);
+  });
+
   test("keeps every byte of the file", async () => {
     const all = Uint8Array.from({ length: 256 }, (_, i) => i);
     using dir = tempDir("blob-file-part-bytes", { "all.bin": Buffer.from(all), "utf8.txt": "héllo wörld ✓" });
@@ -1012,18 +1035,50 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
     expect(await constructInChild("Bun.stdin")).toEqual(refused);
   });
 
+  // The null device has no bytes and a read of it cannot block. Node gives an empty part for it too.
+  test("a null device part is an empty part", async () => {
+    using dir = tempDir("blob-null-device-part", { "f.bin": "ABC" });
+    const file = Bun.file(path.join(String(dir), "f.bin"));
+    const fd = fs.openSync(devNull, "r");
+    try {
+      // The file part shows that the parts are read: a build that drops each file part gives "x" too.
+      await check(new Blob([Bun.file(devNull), file, "x"]), "ABCx");
+      await check(new Blob(["x", file, Bun.file(fd)]), "xABC");
+      await check(new File([file, Bun.file(devNull), "x"], "n"), "ABCx");
+      await check(new Blob([Bun.file(devNull), "x"]), "x");
+      await check(new Blob(["", Bun.file(devNull)]), "");
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  test.skipIf(isWindows)("only the null device is an empty part", async () => {
+    using dir = tempDir("blob-null-device-link", { "f.bin": "ABC" });
+    const link = path.join(String(dir), "null");
+    fs.symlinkSync("/dev/null", link);
+    await check(new Blob([Bun.file(path.join(String(dir), "f.bin")), Bun.file(link), "x"]), "ABCx");
+    // /dev/zero never ends, so a child process constructs the Blob.
+    expect(await constructInChild("Bun.file('/dev/zero')")).toEqual(refused);
+  });
+
   test.skipIf(isWindows)("a FIFO part throws and leaves its writer waiting", async () => {
     using dir = tempDir("blob-fifo-part", {});
     const fifo = path.join(String(dir), "fifo");
     mkfifo(fifo);
-    // The writer waits in open(2) until a reader opens the FIFO.
+    // The writer says that it runs, then waits in open(2) until a reader opens the FIFO.
     await using writer = Bun.spawn({
-      cmd: ["sh", "-c", `printf 'from the writer' > "$1"`, "sh", fifo],
-      stdout: "ignore",
+      cmd: ["sh", "-c", `echo ready; printf 'from the writer' > "$1"`, "sh", fifo],
+      stdout: "pipe",
       stderr: "inherit",
     });
+    for await (const chunk of writer.stdout) {
+      expect(new TextDecoder().decode(chunk)).toBe("ready\n");
+      break;
+    }
     expect(await constructInChild("Bun.file(process.env.FIFO_PATH)", { FIFO_PATH: fifo })).toEqual(refused);
-    // The constructor did not open the FIFO, so the next reader still gets the bytes of the writer.
+    // An open of the FIFO by the constructor lets the writer run: it exits, or SIGPIPE kills it.
+    expect({ exitCode: writer.exitCode, signalCode: writer.signalCode }).toEqual({ exitCode: null, signalCode: null });
+    // The next reader still gets the bytes of the writer.
     await using reader = Bun.spawn({ cmd: ["cat", fifo], stdout: "pipe", stderr: "inherit" });
     expect(await reader.stdout.text()).toBe("from the writer");
     expect(await writer.exited).toBe(0);

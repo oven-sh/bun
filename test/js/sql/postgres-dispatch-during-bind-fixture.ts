@@ -1,17 +1,20 @@
-// Runs one scenario (SCENARIO) against the server at DATABASE_URL and prints what every query
-// settled with. It is a subprocess because a broken build aborts or hangs in these scenarios.
+// Runs the scenarios in SCENARIOS (a JSON array of names) against the server at DATABASE_URL, each
+// on a new connection, and prints one line per scenario: what every query settled with.
+// It is a subprocess because a broken build aborts or hangs in these scenarios.
 import { SQL, type ReservedSQL } from "bun";
 import { drainMicrotasks } from "bun:jsc";
+import vm from "node:vm";
 
 const url = process.env.DATABASE_URL!;
-const sql = new SQL({ url, max: 1, idleTimeout: 30 });
-await sql.connect();
+let sql!: SQL;
 
 // A plain object goes out as text: the Bind encoder calls its toString().
 const text = (value: string) => ({ toString: () => value });
 
 let conversions = 0;
-const dispatched: Promise<unknown>[] = [];
+let dispatched: Promise<unknown>[] = [];
+// close() waits for every query. A query that a termination stopped never settles.
+let closeAtEnd = true;
 /** A text parameter whose first conversion runs `dispatch`, from inside the Bind encoder. */
 function dispatching(value: string, dispatch: () => void) {
   let fired = false;
@@ -35,6 +38,22 @@ function settle(promise: Promise<unknown>) {
 }
 
 const backendPid = async (db: SQL) => (await db`select pg_backend_pid() as pid`)[0].pid;
+
+/** Runs the event loop until `promise` settles: Bun.build() waits for an async plugin setup(). */
+function waitInsideConversion(promise: Promise<unknown>) {
+  const settled = promise.then(
+    () => {},
+    () => {},
+  );
+  Bun.build({
+    entrypoints: [import.meta.path],
+    target: "bun",
+    plugins: [{ name: "wait", setup: () => settled }],
+  }).catch(() => {});
+}
+
+/** The deferred flush has run: what was executed before is on the wire. */
+const onTheWire = () => new Promise(resolve => setImmediate(resolve));
 
 async function report(db: SQL, pid: number, outer: Promise<unknown>) {
   const result = {
@@ -189,7 +208,143 @@ const scenarios: Record<string, () => Promise<unknown>> = {
     const rest = throwAfterDispatching(sql, pid);
     return { ahead: await settle(ahead), ...(await rest) };
   },
+
+  // The simple query is the first thing that the conversion dispatches: the connection looks idle.
+  async "prepared statement, nested simple query"() {
+    const pid = await backendPid(sql);
+    await sql`select ${text("0")}::text as x`;
+    return report(
+      sql,
+      pid,
+      sql`select ${dispatching("1", () => dispatched.push(sql.unsafe("select 'simple' as s").execute()))}::text as x`,
+    );
+  },
+
+  // The outer request goes between the two requests in flight and the three that it dispatched.
+  async "prepared statement behind two in-flight queries, nested burst"() {
+    const pid = await backendPid(sql);
+    await sql`select ${text("0")}::text as x`;
+    await sql`select ${"warm"}::text as t`;
+    const ahead = [sql`select ${text("7")}::text as x`.execute(), sql`select ${"8"}::text as t`.execute()];
+    const outer = sql`select ${dispatching("1", () => {
+      dispatched.push(sql`select ${"a"}::text as t`.execute());
+      dispatched.push(sql`select 3 as y`.execute());
+      dispatched.push(sql`select ${text("2")}::text as x`.execute());
+    })}::text as x`.execute();
+    const later = [sql`select ${text("9")}::text as x`.execute(), sql`select ${"10"}::text as t`.execute()];
+    return {
+      ahead: await Promise.all(ahead.map(settle)),
+      later: await Promise.all(later.map(settle)),
+      ...(await report(sql, pid, outer)),
+    };
+  },
+
+  // The reply of the request in flight is handled while the outer Bind is half written.
+  async "prepared statement, a reply comes in during the conversion"() {
+    return replyDuringConversion(1);
+  },
+
+  async "prepared statement, two replies come in during the conversion"() {
+    return replyDuringConversion(2);
+  },
+
+  // advance() encodes `nested` when the reply of `first` comes in. `blocked` and `outer` are in
+  // flight ahead of it, and their replies come in while the parameter of `nested` is converted.
+  async "a request that advance() encodes, two replies come in during the conversion"() {
+    const pid = await backendPid(sql);
+    const key = process.pid;
+    await using other = new SQL({ url, max: 1 });
+    await sql`select ${text("0")}::text as x`;
+    await sql`select pg_advisory_xact_lock(${text(String(key))}::text::bigint), ${text("0")}::text as x`;
+    // `blocked` waits on the server until `other` releases the lock.
+    await other`select pg_advisory_lock(${key})`;
+    const first = settle(sql`select ${text("first")}::text as x`.execute());
+    const blocked = settle(
+      sql`select pg_advisory_xact_lock(${text(String(key))}::text::bigint), ${text("blocked")}::text as x`.execute(),
+    );
+    let nested!: Promise<unknown>;
+    const waits = dispatching("nested", () =>
+      waitInsideConversion(other`select pg_advisory_unlock(${key})`.then(() => Promise.all([blocked, outer]))),
+    );
+    const outer = settle(
+      sql`select ${dispatching("outer", () => (nested = settle(sql`select ${waits}::text as x`.execute())))}::text as x`.execute(),
+    );
+    const later = settle(sql`select ${text("later")}::text as x`.execute());
+    const result = {
+      first: await first,
+      blocked: await blocked,
+      outer: await outer,
+      nested: await nested,
+      later: await later,
+      conversions,
+    };
+    return { ...result, sameBackend: (await backendPid(sql)) === pid };
+  },
+
+  // The timeout of node:vm stops the conversion with a termination, after it dispatched a query.
+  async "prepared statement, node:vm timeout stops the conversion after it dispatched"() {
+    const pid = await backendPid(sql);
+    await sql`select ${text("0")}::text as x`;
+    const param = {
+      toString() {
+        conversions++;
+        dispatched.push(sql`select 2 as y`.execute());
+        for (;;) {}
+      },
+    };
+    let thrown: unknown;
+    closeAtEnd = false;
+    (globalThis as any).run = () => sql`select ${param}::text as x`.execute();
+    try {
+      vm.runInThisContext("run()", { timeout: 50 });
+    } catch (e: any) {
+      thrown = e?.code;
+    }
+    return {
+      thrown,
+      dispatched: await Promise.all(dispatched.map(settle)),
+      conversions,
+      sameBackend: (await backendPid(sql)) === pid,
+    };
+  },
+
+  // advance() rejects the request through the reject callback.
+  async "prepare: false, conversion throws a value that is not an Error"() {
+    await using unprepared = new SQL({ url, max: 1, idleTimeout: 30, prepare: false });
+    const pid = await backendPid(unprepared);
+    const thrown: unknown[] = [];
+    for (const value of [undefined, null, 0, "text"]) {
+      const param = {
+        toString() {
+          throw value;
+        },
+      };
+      thrown.push(
+        await unprepared`select ${param}::text as x`.then(
+          () => "resolved",
+          e => ({ rejected: e === undefined ? "undefined" : e }),
+        ),
+      );
+    }
+    return { thrown, sameBackend: (await backendPid(unprepared)) === pid };
+  },
 };
+
+async function replyDuringConversion(inFlight: number) {
+  const pid = await backendPid(sql);
+  await sql`select ${text("0")}::text as x`;
+  await sql`select pg_sleep(${text("0")}::text::float8), ${text("0")}::text as x`;
+  // The server answers the first one after 0.2 s, so the replies are not here before the conversion.
+  const ahead = Array.from({ length: inFlight }, (_, i) =>
+    settle(
+      sql`select pg_sleep(${text(i === 0 ? "0.2" : "0")}::text::float8), ${text(`ahead ${i}`)}::text as x`.execute(),
+    ),
+  );
+  await onTheWire();
+  const outer = sql`select ${dispatching("1", () => waitInsideConversion(Promise.all(ahead)))}::text as x`.execute();
+  const later = settle(sql`select ${text("later")}::text as x`.execute());
+  return { ahead: await Promise.all(ahead), later: await later, ...(await report(sql, pid, outer)) };
+}
 
 /** A text parameter whose conversion closes the connection that its query is written to. */
 function closing(reserved: ReservedSQL) {
@@ -205,8 +360,33 @@ function closing(reserved: ReservedSQL) {
   };
 }
 
+let aheadConverted = false;
+/** The parameter of the request ahead of the one that closes. It records that its Bind was encoded. */
+const ahead = {
+  toString() {
+    aheadConverted = true;
+    return "2";
+  },
+};
+
+/** The values of a query whose first value is read by a getter that closes the connection. */
+function closingValues(reserved: ReservedSQL) {
+  let closed = false;
+  return Object.defineProperty([] as unknown[], 0, {
+    enumerable: true,
+    get() {
+      if (!closed) {
+        closed = true;
+        reserved.close();
+      }
+      return "1";
+    },
+  });
+}
+
 async function closeScenario(options: { prepare?: boolean }, run: (reserved: ReservedSQL) => Promise<object>) {
-  await using db = new SQL({ url, max: 1, ...options });
+  // Not closed at the end: a request left on the closed connection keeps the process alive.
+  const db = new SQL({ url, max: 1, ...options });
   const reserved = await db.reserve();
   const result = await run(reserved);
   // The pool opens a new connection in place of the closed one.
@@ -223,9 +403,9 @@ const closeScenarios: Record<string, () => Promise<unknown>> = {
   // advance() encodes the first request, then the one that closes.
   async "close() from a conversion, request queued ahead"() {
     return closeScenario({}, async reserved => {
-      const ahead = reserved`select ${text("2")}::text as x`.execute();
+      const first = reserved`select ${ahead}::text as x`.execute();
       const outer = reserved`select ${closing(reserved)}::text as x`.execute();
-      return { ahead: await settle(ahead), outer: await settle(outer) };
+      return { ahead: await settle(first), outer: await settle(outer), aheadConverted };
     });
   },
 
@@ -240,15 +420,35 @@ const closeScenarios: Record<string, () => Promise<unknown>> = {
   async "close() from a conversion, request buffered ahead"() {
     return closeScenario({}, async reserved => {
       await reserved`select ${text("0")}::text as x`;
-      const ahead = reserved`select ${text("2")}::text as x`.execute();
+      const first = reserved`select ${ahead}::text as x`.execute();
       const outer = reserved`select ${closing(reserved)}::text as x`.execute();
-      return { ahead: await settle(ahead), outer: await settle(outer) };
+      return { ahead: await settle(first), outer: await settle(outer), aheadConverted };
     });
   },
 
   async "close() from a conversion, prepare: false"() {
     return closeScenario({ prepare: false }, async reserved => ({
       outer: await settle(reserved`select ${closing(reserved)}::text as x`),
+    }));
+  },
+
+  // The getter runs when the statement's signature is made, before any Bind is encoded.
+  async "close() from a getter of the values, first execution"() {
+    return closeScenario({}, async reserved => ({
+      outer: await settle(reserved.unsafe("select $1::text as x", closingValues(reserved))),
+    }));
+  },
+
+  async "close() from a getter of the values, prepared statement"() {
+    return closeScenario({}, async reserved => {
+      await reserved.unsafe("select $1::text as x", ["0"]);
+      return { outer: await settle(reserved.unsafe("select $1::text as x", closingValues(reserved))) };
+    });
+  },
+
+  async "close() from a getter of the values, prepare: false"() {
+    return closeScenario({ prepare: false }, async reserved => ({
+      outer: await settle(reserved.unsafe("select $1::text as x", closingValues(reserved))),
     }));
   },
 };
@@ -265,10 +465,18 @@ async function throwAfterDispatching(db: SQL, pid: number) {
   return report(db, pid, db`select ${param}::text as x`);
 }
 
-const scenario = scenarios[process.env.SCENARIO!] ?? closeScenarios[process.env.SCENARIO!];
-if (!scenario) {
-  console.log(JSON.stringify({ error: `unknown scenario ${process.env.SCENARIO}` }));
-  process.exit(1);
+for (const name of JSON.parse(process.env.SCENARIOS!) as string[]) {
+  const scenario = scenarios[name] ?? closeScenarios[name];
+  if (!scenario) {
+    console.log(JSON.stringify({ error: `unknown scenario ${name}` }));
+    process.exit(1);
+  }
+  sql = new SQL({ url, max: 1, idleTimeout: 30 });
+  await sql.connect();
+  conversions = 0;
+  dispatched = [];
+  aheadConverted = false;
+  closeAtEnd = true;
+  console.log(JSON.stringify(await scenario()));
+  if (closeAtEnd) await sql.close();
 }
-console.log(JSON.stringify(await scenario()));
-await sql.close();

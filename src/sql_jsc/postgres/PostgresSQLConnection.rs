@@ -990,6 +990,8 @@ impl PostgresSQLConnection {
             self.flush_data();
         }
         event_loop.exit();
+        // advance() can reject a request with nothing sent, so no reply releases the ref.
+        self.update_poll_ref();
     }
 
     pub(crate) fn on_data(&self, data: &[u8]) {
@@ -1572,6 +1574,7 @@ impl PostgresSQLConnection {
             .get()
             .contains(ConnectionFlags::IS_READY_FOR_QUERY)
             || self.current().is_some()
+            || self.is_encoding.get()
     }
 
     #[inline]
@@ -1601,6 +1604,7 @@ impl PostgresSQLConnection {
             && !flags.contains(ConnectionFlags::WAITING_TO_PREPARE) // cannot pipeline when waiting prepare
             && !flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // dont make sense to buffer more if we have backpressure
             && (self.write_buffer.get().len() as usize) < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
+            && !self.is_encoding.get() // a request is half written
     }
 }
 
@@ -1682,6 +1686,7 @@ impl PostgresSQLConnection {
     }
 
     pub(crate) fn writer(&self) -> protocol::NewWriter<Writer> {
+        debug_assert!(!self.is_encoding.get(), "a request is being encoded");
         self.bump_write_epoch();
         protocol::NewWriter {
             wrapped: Writer {
@@ -1849,6 +1854,11 @@ impl PostgresSQLConnection {
     /// unnamed prepared statements with params skip writeQuery+Sync and need
     /// advance() to send everything atomically on an idle connection.
     pub(crate) fn advance_and_flush(&self) {
+        if self.is_encoding.get() {
+            // The encoder's caller dispatches. The flusher does if a termination stops it.
+            self.register_auto_flusher();
+            return;
+        }
         let flags = self.flags.get();
         if !flags.contains(ConnectionFlags::HAS_BACKPRESSURE)
             && flags.contains(ConnectionFlags::IS_READY_FOR_QUERY)
@@ -1858,15 +1868,25 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// Encode the batch of a request that `advance()` took out of `pending_requests`.
+    /// Encode the batch of the request at `offset`, which `advance()` took out of `pending_requests`.
     fn encode_queued(
         &self,
         req: &PostgresSQLQuery,
+        offset: &mut usize,
         request: EncodeRequest<'_>,
     ) -> Result<(), AnyPostgresError> {
         // A close() from inside a conversion must not count a Pending request twice.
         req.status.set(QueryStatus::Binding);
-        self.encode_request(self.global(), request)
+        let result = self.encode_request(self.global(), request);
+        // A reply handled during the conversion pops settled requests off the head of the queue.
+        let is_req = |r: &RefPtr<PostgresSQLQuery>| core::ptr::eq(r.as_ptr(), req);
+        let requests = self.requests.get();
+        if !requests.get(*offset).is_some_and(is_req) {
+            if let Some(at) = requests.iter().take(*offset).position(is_req) {
+                *offset = at;
+            }
+        }
+        result
     }
 
     /// Reject `req`. A non-JS error also fails `new_statement`, first parsed in the failed write.
@@ -1887,10 +1907,25 @@ impl PostgresSQLConnection {
         req.on_write_fail(err, self.global(), self.get_queries_array());
     }
 
+    /// Pop the requests at the head of the queue that have settled.
+    fn discard_finished_requests(&self) {
+        // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
+        // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
+        while let Some(result) = self.current() {
+            // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
+            // so we do the cleanup here
+            match result.status.get() {
+                QueryStatus::Success | QueryStatus::Fail => self.discard_request(&result),
+                _ => break, // truly current item
+            }
+        }
+    }
+
     fn advance(&self) {
-        // The encoder's caller dispatches what was queued meanwhile.
         if self.is_encoding.get() {
+            // A reply handled during a conversion still leaves the queue. The encoder's caller dispatches.
             debug!("advance: encoding");
+            self.discard_finished_requests();
             return;
         }
         let mut offset: usize = 0;
@@ -1898,25 +1933,9 @@ impl PostgresSQLConnection {
         // The cleanup loop runs after the main loop returns;
         // expanded as a closure called at every return point below.
         macro_rules! defer_cleanup {
-            ($self:ident) => {{
-                // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
-                // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
-                while let Some(result) = $self.current() {
-                    // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
-                    // so we do the cleanup here
-                    match result.status.get() {
-                        QueryStatus::Success => {
-                            $self.discard_request(&result);
-                            continue;
-                        }
-                        QueryStatus::Fail => {
-                            $self.discard_request(&result);
-                            continue;
-                        }
-                        _ => break, // truly current item
-                    }
-                }
-            }};
+            ($self:ident) => {
+                $self.discard_finished_requests()
+            };
         }
 
         while self.requests.get().len() > offset
@@ -2039,6 +2058,7 @@ impl PostgresSQLConnection {
                                         let query_str = req.query.to_utf8();
                                         if let Err(err) = self.encode_queued(
                                             &req,
+                                            &mut offset,
                                             EncodeRequest::ParseBindAndExecute {
                                                 query: query_str.slice(),
                                                 statement,
@@ -2065,6 +2085,7 @@ impl PostgresSQLConnection {
                                         debug!("binding and executing stmt");
                                         if let Err(err) = self.encode_queued(
                                             &req,
+                                            &mut offset,
                                             EncodeRequest::BindAndExecute {
                                                 statement,
                                                 binding_value,
@@ -2142,6 +2163,7 @@ impl PostgresSQLConnection {
                                         debug!("prepareAndQueryWithSignature");
                                         if let Err(err) = self.encode_queued(
                                             &req,
+                                            &mut offset,
                                             EncodeRequest::PrepareAndQuery {
                                                 query: query_str.slice(),
                                                 signature: &mut statement.signature,
@@ -2204,6 +2226,7 @@ impl PostgresSQLConnection {
                                         debug!("parseAndBindAndExecute (unnamed, first execution)");
                                         if let Err(err) = self.encode_queued(
                                             &req,
+                                            &mut offset,
                                             EncodeRequest::ParseBindAndExecute {
                                                 query: query_str.slice(),
                                                 statement,

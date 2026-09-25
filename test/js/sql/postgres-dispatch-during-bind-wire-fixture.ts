@@ -1,5 +1,6 @@
-// Runs one scenario (SCENARIO) against a mock server in this process and prints the frontend
-// messages that the client sent. It is a subprocess because a broken build aborts in these scenarios.
+// Runs the scenarios in SCENARIOS (a JSON array of names) against a mock server in this process and
+// prints, one line per scenario, the frontend messages that the client sent.
+// It is a subprocess because a broken build aborts in these scenarios.
 import { SQL } from "bun";
 import {
   pgBindComplete,
@@ -43,6 +44,14 @@ const mock = await pgMockServer((type, body) => {
     case "S":
       frames.push("S");
       return pgReadyForQuery();
+    case "Q":
+      frames.push("Q");
+      return [
+        pgRowDescription([{ name: "v", typeOid: 25 }]),
+        pgDataRow([Buffer.from("simple")]),
+        pgCommandComplete("SELECT 1"),
+        pgReadyForQuery(),
+      ];
     default:
       frames.push(type);
   }
@@ -55,7 +64,8 @@ const settle = (promise: Promise<unknown>) =>
     (e: any) => ({ err: e?.code ?? e?.message ?? String(e) }),
   );
 
-async function run(options: { prepare?: boolean }, warmOuter: boolean, nestedHasParameter = true) {
+type Nested = "parameter" | "no parameter" | "simple";
+async function run(options: { prepare?: boolean }, warmOuter: boolean, kind: Nested = "parameter") {
   await using sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1, ...options });
   await sql`select ${"warm"} as v /* nested */`;
   if (warmOuter) await sql`select ${text("warm")} as v /* outer */`;
@@ -65,9 +75,13 @@ async function run(options: { prepare?: boolean }, warmOuter: boolean, nestedHas
   const param = {
     toString() {
       // Starts while the outer Bind is encoded. It must reach the wire behind it.
-      nested = (
-        nestedHasParameter ? sql`select ${"nested"} as v /* nested */` : sql`select '' as v /* no parameter */`
-      ).execute();
+      nested = {
+        "parameter": () => sql`select ${"nested"} as v /* nested */`,
+        "no parameter": () => sql`select '' as v /* no parameter */`,
+        "simple": () => sql.unsafe("select 'simple' as v"),
+      }
+        [kind]()
+        .execute();
       return "outer";
     },
   };
@@ -77,10 +91,13 @@ async function run(options: { prepare?: boolean }, warmOuter: boolean, nestedHas
 
 const scenarios: Record<string, () => Promise<unknown>> = {
   "prepared statement": () => run({}, true),
-  "prepared statement, nested query without parameters": () => run({}, true, false),
+  "prepared statement, nested query without parameters": () => run({}, true, "no parameter"),
+  "prepared statement, nested simple query": () => run({}, true, "simple"),
   "first execution": () => run({}, false),
   "prepare: false": () => run({ prepare: false }, false),
 };
 
-console.log(JSON.stringify(await scenarios[process.env.SCENARIO!]()));
+for (const name of JSON.parse(process.env.SCENARIOS!) as string[]) {
+  console.log(JSON.stringify(await scenarios[name]()));
+}
 mock.server.close();

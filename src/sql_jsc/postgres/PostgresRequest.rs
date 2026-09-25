@@ -460,10 +460,9 @@ impl PostgresSQLConnection {
         global: &JSGlobalObject,
         request: EncodeRequest<'_>,
     ) -> Result<(), AnyPostgresError> {
-        debug_assert!(!self.is_encoding.get());
+        let writer = self.writer();
         self.is_encoding.set(true);
         scopeguard::defer! { self.is_encoding.set(false); }
-        let writer = self.writer();
         let result = match request {
             EncodeRequest::BindAndExecute {
                 statement,

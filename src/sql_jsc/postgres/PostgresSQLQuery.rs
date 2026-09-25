@@ -483,8 +483,6 @@ impl PostgresSQLQuery {
         let this_value = callframe.this();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let query_str = this.query.to_utf8();
-        // Dispatched from inside another request's parameter conversion: only enqueue.
-        let encoding = connection.is_encoding.get();
         // The queue entry's ref: keeps the query alive until the server
         // answers; dropped on every error return below.
         let queued = this.ref_guard();
@@ -504,10 +502,13 @@ impl PostgresSQLQuery {
         // A connection that failed or closed answers nothing: a query queued on it would hold the
         // event loop for ever. The pool hears of a close through `onclose` and stops handing the
         // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.
-        if matches!(
-            connection.status.get(),
-            bun_sql::postgres::Status::Failed | bun_sql::postgres::Status::Disconnected
-        ) {
+        let is_closed = || {
+            matches!(
+                connection.status.get(),
+                bun_sql::postgres::Status::Failed | bun_sql::postgres::Status::Disconnected
+            )
+        };
+        if is_closed() {
             return Err(throw_write_error(
                 b"Connection closed",
                 AnyPostgresError::ConnectionClosed,
@@ -528,7 +529,7 @@ impl PostgresSQLQuery {
             // Query is simple and it's the only owner of the statement
             this.statement.set(Some(stmt));
 
-            let can_execute = !encoding && !connection.has_query_running();
+            let can_execute = !connection.has_query_running();
             if can_execute {
                 if let Err(err) =
                     PostgresRequest::execute_query(query_str.slice(), connection.writer())
@@ -570,6 +571,7 @@ impl PostgresSQLQuery {
                 connection.flush_data_and_reset_timeout();
             } else {
                 connection.reset_connection_timeout();
+                connection.advance_and_flush();
             }
             return Ok(JSValue::UNDEFINED);
         }
@@ -596,6 +598,13 @@ impl PostgresSQLQuery {
                 return Err(JsError::Thrown);
             }
         };
+        // A getter of a parameter can close the connection.
+        if is_closed() {
+            return Err(throw_write_error(
+                b"Connection closed",
+                AnyPostgresError::ConnectionClosed,
+            ));
+        }
 
         let has_params = signature.fields.len() > 0;
         let mut did_write = false;
@@ -638,8 +647,7 @@ impl PostgresSQLQuery {
                             // request has already emitted its bytes; otherwise this
                             // Bind+Execute would overtake an earlier unwritten
                             // request on the wire while reply attribution stays FIFO.
-                            if !encoding
-                                && (!connection.has_query_running() || connection.can_pipeline())
+                            if (!connection.has_query_running() || connection.can_pipeline())
                                 && connection.pending_requests.get() == 0
                             {
                                 this.update_flags(|f| f.binary = !stmt.fields.is_empty());
@@ -662,9 +670,9 @@ impl PostgresSQLQuery {
                                         && !global_object.has_exception()
                                     {
                                         connection.advance_and_flush();
-                                        // A dispatched request can be rejected with nothing sent.
-                                        connection.update_poll_ref();
                                     }
+                                    // Nothing was sent for this request, so no reply releases the ref.
+                                    connection.update_poll_ref();
                                     return Err(match thrown {
                                         Some(thrown) => global_object.throw_value(thrown),
                                         None => throw_write_error(
@@ -712,7 +720,7 @@ impl PostgresSQLQuery {
                 };
                 connection_entry_value = Some(entry_value_ptr);
             }
-            let can_execute = !encoding && !connection.has_query_running();
+            let can_execute = !connection.has_query_running();
 
             if can_execute {
                 // If it does not have params, we can write and execute immediately in one go
@@ -836,7 +844,10 @@ impl PostgresSQLQuery {
             .requests
             .with_mut(|q| match queued_by_conversion {
                 0 => q.push_back(queued),
-                behind => q.insert(q.len().saturating_sub(behind), queued),
+                behind => {
+                    debug_assert!(behind <= q.len(), "pending_requests exceeds the queue");
+                    q.insert(q.len().saturating_sub(behind), queued)
+                }
             });
         if this.status.get() == Status::Pending {
             connection.note_request_pending();

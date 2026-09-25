@@ -471,6 +471,12 @@ impl us_socket_t {
         c::us_socket_is_established(self) > 0
     }
 
+    /// TLS ciphertext `write` already counted as written that still waits on a
+    /// writable event to reach the kernel. 0 for plain TCP.
+    pub(crate) fn ssl_spill_pending(&self) -> u32 {
+        c::us_socket_ssl_spill_pending(self)
+    }
+
     pub(crate) fn queued_input(&self) -> QueuedInput {
         match c::us_socket_queued_input(self) {
             LIBUS_QUEUED_INPUT_DATA => QueuedInput::Data,
@@ -586,6 +592,7 @@ mod c {
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_queued_input(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_ssl_spill_pending(s: &us_socket_t) -> c_uint;
 
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(

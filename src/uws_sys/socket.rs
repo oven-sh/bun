@@ -296,9 +296,11 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// Only a JS Duplex can still hold bytes after `write` returned (until its callback).
+    /// Every byte `write` counted is with the kernel or the JS Duplex's callback ran.
+    /// TLS over an fd can still hold a spilled record; a Duplex can still hold the chunk.
     pub fn transport_idle(&self) -> bool {
         match self.socket {
+            InternalSocket::Connected(s) => sock(s).ssl_spill_pending() == 0,
             InternalSocket::UpgradedDuplex(d) => duplex(d).transport_idle(),
             _ => true,
         }

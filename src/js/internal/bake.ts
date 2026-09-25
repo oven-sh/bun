@@ -455,8 +455,9 @@ async function start() {
   // An empty one is no hostname: `Bun.serve()` would listen on every interface.
   const exportedHostname = (exported?.hostname ?? exported?.host) || undefined;
   const exportedPort = exported?.port;
-  // A `unix` socket in the export is kept unless a flag asks for a TCP address.
-  const useUnix = exported?.unix !== undefined && flags.hostname === undefined && flags.port === undefined;
+  // A `unix` socket or an `fd` in the export is kept unless a flag asks for a TCP address. As for `Bun.serve()`, `fd: null` is no `fd`.
+  const useSocket =
+    (exported?.unix !== undefined || exported?.fd != null) && flags.hostname === undefined && flags.port === undefined;
   let server: Server<undefined>;
   try {
     server = serveOnFreePort(
@@ -471,19 +472,20 @@ async function start() {
         own("routes", routes);
         own("fetch", fetch);
         own("development", { console: flags.console, hmr: undefined });
-        if (useUnix) {
+        if (useSocket) {
           own("hostname", undefined);
           own("host", undefined);
           own("port", undefined);
         } else {
           own("unix", undefined);
+          own("fd", undefined);
           own("hostname", flags.hostname ?? exportedHostname ?? "localhost");
           // `undefined` uses the default port via existing port detection code.
           own("port", port);
         }
         return options as Serve.Options<undefined>;
       },
-      useUnix ? undefined : (flags.port ?? exportedPort),
+      useSocket ? undefined : (flags.port ?? exportedPort),
     );
   } catch (error: any) {
     // Cannot listen at an address that the export of `app/server.ts` did not give (a flag, `PORT`,
@@ -491,7 +493,7 @@ async function start() {
     // an edit can fix.
     // The export's only when no flag set any part of it.
     const addressFromExport =
-      useUnix ||
+      useSocket ||
       (flags.port === undefined &&
         flags.hostname === undefined &&
         (exportedPort !== undefined || exportedHostname !== undefined));

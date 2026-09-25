@@ -7064,6 +7064,35 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(value).toBe("value");
       });
 
+      test("overlapping unsubscribe() calls all resolve and restore normal command mode", async () => {
+        const channel1 = testChannel();
+        const channel2 = testChannel();
+
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        await subscriber.subscribe(channel1, () => {});
+        await subscriber.subscribe(channel2, () => {});
+
+        // Both UNSUBSCRIBEs are issued before either ack arrives. The first ack
+        // already takes the client out of subscriber mode, and the second ack
+        // used to trip an assertion in debug builds instead of resolving.
+        expect(await Promise.all([subscriber.unsubscribe(channel1), subscriber.unsubscribe(channel2)])).toEqual([
+          undefined,
+          undefined,
+        ]);
+
+        expect(await ctx.redis.publish(channel1, testMessage())).toBe(0);
+        expect(await ctx.redis.publish(channel2, testMessage())).toBe(0);
+        expect(await subscriber.set(testKey(), testValue())).toBe("OK");
+      });
+
+      test("punsubscribe() from a client that is not in subscriber mode resolves", async () => {
+        const pattern = `${testChannel()}*`;
+        const client = await ctx.newSubscriberClient(connectionType);
+
+        expect(await client.punsubscribe(pattern)).toEqual({ type: "punsubscribe", data: [pattern, 0] });
+        expect(await client.set(testKey(), testValue())).toBe("OK");
+      });
+
       test("publishing without subscribers succeeds", async () => {
         const channel = "no-subscribers-channel";
 

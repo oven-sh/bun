@@ -1616,22 +1616,55 @@ describe("a TLS socket over a Duplex transport reports that transport's error", 
     transport.destroy();
   });
 
-  // Out of process: with nothing listening on the transport the error is
-  // thrown, which takes the process down. Each list is what node v26.3.0 prints.
-  it.concurrent.each([
-    ["client", "early", "_tlsError:transport failed|error:transport failed|close:false"],
-    ["client", "late", "_tlsError:transport failed|error:transport failed|close:false"],
-    // A server wrap still owns its socket, so there is no 'error'. A tls.Server
-    // reports its '_tlsError' as 'tlsClientError'.
-    ["server", "early", "_tlsError:transport failed|close:false"],
-    ["server", "late", "_tlsError:transport failed|close:false"],
-    // The http layer listens on the TLS socket only.
-    ["https", "late", "req.error:transport failed|req.close:true"],
-  ])("%s: a transport error %s reaches the TLS socket", async (side, when, stdout) => {
+  it("a transport error reaches the TLS socket and leaves the process alive", async () => {
+    // Out of process: with nothing listening on the transport the error is
+    // thrown, which takes the process down. Each line is what node v26.3.0 prints.
     const fixture = join(import.meta.dir, "node-tls-duplex-transport-error-fixture.ts");
     const { key, cert } = COMMON_CERT_;
-    const result = await bunRun(fixture, { SIDE: side, WHEN: when, KEY: key, CERT: cert });
-    expect(result).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
+    const result = await bunRun(fixture, { KEY: key, CERT: cert });
+    expect(result).toEqual({
+      stdout: [
+        "client early: _tlsError:transport failed|error:transport failed|close:false",
+        "client late: _tlsError:transport failed|error:transport failed|close:false",
+        // A server wrap still owns its socket, so there is no 'error'. A
+        // tls.Server reports its '_tlsError' as 'tlsClientError'.
+        "server early: _tlsError:transport failed|close:false",
+        "server late: _tlsError:transport failed|close:false",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  it("a transport error fails an https.request over the wrap", async () => {
+    // The http layer listens on the TLS socket only.
+    let started = false;
+    const transport = new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+        if (started) return;
+        started = true;
+        // The engine runs: this write is its ClientHello.
+        process.nextTick(() => transport.destroy(new Error("transport failed")));
+      },
+    });
+    const req = https.request({
+      host: "localhost",
+      path: "/",
+      createConnection: () => tls.connect({ socket: transport, rejectUnauthorized: false }),
+    });
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    req.on("error", err => events.push(`error:${err.message}`));
+    req.on("close", () => {
+      events.push(`close destroyed=${req.destroyed}`);
+      closed.resolve();
+    });
+    req.end();
+    await closed.promise;
+    expect(events).toEqual(["error:transport failed", "close destroyed=true"]);
   });
 });
 

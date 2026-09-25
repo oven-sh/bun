@@ -1,58 +1,53 @@
-// Wraps a Duplex in a TLS socket and destroys the Duplex with an error.
-// SIDE=client wraps it with tls.connect(), SIDE=server with
-// new tls.TLSSocket(transport, { isServer: true }), and SIDE=https gives the
-// tls.connect() socket to https.request().
-// WHEN=early destroys the Duplex in the tick of the wrap, before the TLS engine
-// exists. WHEN=late destroys it once the engine runs: after the ClientHello for
-// a client, one event-loop turn after the wrap for a server.
-// Prints the events that the TLS socket, or the request, emitted.
-// KEY and CERT come from the test. Importing "harness" here costs each run
-// several seconds of startup on a debug build.
-import https from "node:https";
+// Wraps a Duplex in a TLS socket and destroys the Duplex with an error, once
+// per case. Prints one line per case: the events that the TLS socket emitted.
+// "client" wraps the Duplex with tls.connect(), "server" with
+// new tls.TLSSocket(transport, { isServer: true }).
+// "early" destroys the Duplex in the tick of the wrap, before the TLS engine
+// exists. "late" destroys it once the engine runs: after the ClientHello for a
+// client, one event-loop turn after the wrap for a server.
+// Every case runs in this one process, and KEY and CERT come from the test: a
+// debug build needs seconds to load node:tls or "harness".
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 
-const { SIDE: side, WHEN: when, KEY: key, CERT: cert } = process.env;
-const seen: string[] = [];
-process.on("exit", () => console.log(seen.join("|")));
-
-let started = false;
-const transport = new Duplex({
-  read() {},
-  write(_chunk, _encoding, callback) {
-    callback();
-    if (started) return;
-    started = true;
-    if (when === "late") process.nextTick(kill);
-  },
+const { KEY: key, CERT: cert } = process.env;
+const cases: Record<string, string[]> = {};
+process.on("exit", () => {
+  for (const name in cases) console.log(`${name}: ${cases[name].join("|")}`);
 });
 
-function kill() {
-  transport.destroy(new Error("transport failed"));
-}
+function run(side: "client" | "server", when: "early" | "late") {
+  const seen: string[] = (cases[`${side} ${when}`] = []);
+  let started = false;
+  const transport = new Duplex({
+    read() {},
+    write(_chunk, _encoding, callback) {
+      callback();
+      if (started) return;
+      started = true;
+      if (when === "late") process.nextTick(kill);
+    },
+  });
 
-function record(socket: tls.TLSSocket) {
+  function kill() {
+    transport.destroy(new Error("transport failed"));
+  }
+
+  const socket =
+    side === "client"
+      ? tls.connect({ socket: transport, rejectUnauthorized: false })
+      : new tls.TLSSocket(transport, { isServer: true, key, cert });
   socket.on("_tlsError", err => seen.push(`_tlsError:${err.message}`));
   socket.on("error", err => seen.push(`error:${err.message}`));
   socket.on("close", hadError => seen.push(`close:${hadError}`));
-}
 
-if (side === "server") {
-  record(new tls.TLSSocket(transport, { isServer: true, key, cert }));
   // A server writes nothing until its peer does. The task that creates the
   // engine is queued ahead of this one.
-  if (when === "late") setImmediate(kill);
-} else if (side === "https") {
-  const req = https.request({
-    host: "localhost",
-    path: "/",
-    createConnection: () => tls.connect({ socket: transport, rejectUnauthorized: false }),
-  });
-  req.on("error", err => seen.push(`req.error:${err.message}`));
-  req.on("close", () => seen.push(`req.close:${req.destroyed}`));
-  req.end();
-} else {
-  record(tls.connect({ socket: transport, rejectUnauthorized: false }));
+  if (side === "server" && when === "late") setImmediate(kill);
+  if (when === "early") kill();
 }
 
-if (when === "early") kill();
+run("client", "early");
+run("client", "late");
+run("server", "early");
+run("server", "late");

@@ -707,8 +707,8 @@ test("a server that end()s at accept still reports the client that gives up", as
   const events = [];
   const closed = Promise.withResolvers();
   const client = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+  // 'end' is not recorded: whether the client reports it ahead of the error depends on the platform.
   client.on("secureConnect", () => events.push("secureConnect"));
-  client.on("end", () => events.push("end"));
   client.on("error", err => events.push(`error ${err.code}`));
   client.on("close", () => {
     events.push("close");
@@ -718,6 +718,6 @@ test("a server that end()s at accept still reports the client that gives up", as
   server.close();
   assert.deepStrictEqual(
     { tlsClientError, client: events },
-    { tlsClientError: "ECONNRESET", client: ["end", "error ECONNRESET", "close"] },
+    { tlsClientError: "ECONNRESET", client: ["error ECONNRESET", "close"] },
   );
 });

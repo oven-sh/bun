@@ -1,6 +1,6 @@
 import { write } from "bun";
 import { describe, expect, test } from "bun:test";
-import { unlinkSync } from "fs";
+import { closeSync, constants, openSync, unlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { devNull, tmpdir } from "os";
@@ -25,6 +25,20 @@ test("exists() is true for a path to the null device", async () => {
   expect(await Bun.file(devNull).exists()).toBeTrue();
 });
 
+test("exists() on a file descriptor is true for a regular file, false for the null device", async () => {
+  const regular = openSync(import.meta.path, "r");
+  const nullDevice = openSync(devNull, "r");
+  try {
+    expect({
+      regular: await Bun.file(regular).exists(),
+      nullDevice: await Bun.file(nullDevice).exists(),
+    }).toEqual({ regular: true, nullDevice: false });
+  } finally {
+    closeSync(regular);
+    closeSync(nullDevice);
+  }
+});
+
 describe.skipIf(isWindows)("exists() on a file that is not a regular file", () => {
   test("a path is true for a FIFO and a socket, false for a directory", async () => {
     using dir = tempDir("bun-file-exists", { "regular": "hello" });
@@ -47,8 +61,20 @@ describe.skipIf(isWindows)("exists() on a file that is not a regular file", () =
     });
   });
 
+  test("a file descriptor for a FIFO is true", async () => {
+    using dir = tempDir("bun-file-exists-fifo", {});
+    const path = join(String(dir), "fifo");
+    mkfifo(path);
+    const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    try {
+      expect(await Bun.file(fd).exists()).toBeTrue();
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   // Programs read stdin only if Bun.stdin.exists() is true. With stdin from /dev/null there is nothing to read.
-  test("a file descriptor for /dev/null stays false", async () => {
+  test("Bun.stdin from /dev/null stays false", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

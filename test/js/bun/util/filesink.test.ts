@@ -1024,6 +1024,12 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
   // stdin must. The child starts to read only once end() has been called, so
   // the first write has filled the pipe by then. It inherits stdout, so its
   // count arrives on the parent's stdout after it has read everything.
+  //
+  // The fixture can exit as soon as the pipe has taken the last byte, before
+  // the child prints, so the child has to outlive it. On Windows only a
+  // `detached` child does: libuv puts any other child in a job that kills it
+  // when the fixture exits. With BUN_FEATURE_FLAG_NO_ORPHANS, which the ASAN
+  // lanes set, the fixture kills its descendants when it exits.
   it.concurrent("Bun.spawn stdin pipe with an unref'd child", async () => {
     const flag = join(tmpdirSync(), "ended");
     // Polls for the flag with a deadline so that it cannot outlive a parent
@@ -1047,7 +1053,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
         `
           const child = Bun.spawn(
             [process.execPath, "-e", ${JSON.stringify(reader)}, ${JSON.stringify(flag)}],
-            { stdin: "pipe", stdout: "inherit", stderr: "inherit" },
+            { stdin: "pipe", stdout: "inherit", stderr: "inherit", detached: true },
           );
           try {
             child.stdin.write(Buffer.alloc(${size}, 65));
@@ -1058,7 +1064,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
           }
         `,
       ],
-      env: bunEnv,
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });

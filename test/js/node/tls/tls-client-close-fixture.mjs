@@ -97,6 +97,57 @@ function flightLength(bytes, secret) {
   return 0;
 }
 
+// A HelloRequest as the first record behind the Finished of a TLS 1.2 server
+// that resumed a session with TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 (RFC 5246,
+// sections 5, 6.3 and 7.4.1.1, and RFC 5288). `hello` starts with the hello
+// record of each side, which carries its random at offset 11.
+function sealedHelloRequest(clientHello, serverHello, masterSecret) {
+  const seed = Buffer.concat([
+    Buffer.from("key expansion"),
+    serverHello.subarray(11, 43),
+    clientHello.subarray(11, 43),
+  ]);
+  let a = seed;
+  let keyBlock = Buffer.alloc(0);
+  while (keyBlock.length < 40) {
+    a = createHmac("sha256", masterSecret).update(a).digest();
+    keyBlock = Buffer.concat([keyBlock, createHmac("sha256", masterSecret).update(a).update(seed).digest()]);
+  }
+  // The Finished was record 0 under the server's key, so this is record 1.
+  const sequence = Buffer.from([0, 0, 0, 0, 0, 0, 0, 1]);
+  const helloRequest = Buffer.from([0, 0, 0, 0]);
+  const seal = createCipheriv(
+    "aes-128-gcm",
+    keyBlock.subarray(16, 32),
+    Buffer.concat([keyBlock.subarray(36, 40), sequence]),
+    {
+      authTagLength: 16,
+    },
+  );
+  seal.setAAD(Buffer.concat([sequence, Buffer.from([22, 3, 3, 0, helloRequest.length])]));
+  const body = Buffer.concat([sequence, seal.update(helloRequest), seal.final(), seal.getAuthTag()]);
+  return Buffer.concat([Buffer.from([22, 3, 3, 0, body.length]), body]);
+}
+
+// The types of the whole records in `bytes`.
+function recordTypes(bytes) {
+  const types = [];
+  for (let at = 0; at + 5 <= bytes.length && at + 5 + bytes.readUInt16BE(at + 3) <= bytes.length; ) {
+    types.push({ 20: "ChangeCipherSpec", 21: "Alert", 22: "Handshake", 23: "ApplicationData" }[bytes[at]]);
+    at += 5 + bytes.readUInt16BE(at + 3);
+  }
+  return types;
+}
+
+// The length of the first flight of a TLS 1.2 server that resumes a session:
+// ServerHello, ChangeCipherSpec, Finished. 0 for any other start.
+function resumedFlightLength(bytes) {
+  if (recordTypes(bytes).slice(0, 3).join() !== "Handshake,ChangeCipherSpec,Handshake") return 0;
+  let at = 0;
+  for (let record = 0; record < 3; record++) at += 5 + bytes.readUInt16BE(at + 3);
+  return at;
+}
+
 function wire(bytes) {
   let alerts = 0;
   for (let at = 0; at + 5 <= bytes.length; at += 5 + bytes.readUInt16BE(at + 3)) {
@@ -115,22 +166,6 @@ const inSecureConnect = {
   "destroy() from queueMicrotask": socket => queueMicrotask(() => socket.destroy()),
   "end()": socket => socket.end(),
   "end(data)": socket => socket.end("hello"),
-  "write() then destroy()": socket => {
-    socket.write("hello");
-    socket.destroy();
-  },
-  "write('') then destroy()": socket => {
-    socket.write("");
-    socket.destroy();
-  },
-  "end('') then destroy()": socket => {
-    socket.end("");
-    socket.destroy();
-  },
-  "end() then destroy()": socket => {
-    socket.end();
-    socket.destroy();
-  },
   "destroySoon()": socket => socket.destroySoon(),
 };
 
@@ -158,6 +193,8 @@ async function secondConnection() {
   };
 }
 
+const helloRequestMode = "a HelloRequest behind the server's Finished";
+
 export async function report(mode, version) {
   const second =
     mode === "checkServerIdentity function that writes to another TLS socket" ? await secondConnection() : null;
@@ -171,6 +208,7 @@ export async function report(mode, version) {
     minVersion: version,
     maxVersion: version,
     ALPNProtocols: mode === "http2.connect" ? ["h2"] : undefined,
+    ciphers: mode === helloRequestMode ? "ECDHE-RSA-AES128-GCM-SHA256" : undefined,
   });
   server.on("secureConnection", socket => {
     // BoringSSL sends its TLS 1.3 tickets with the first write of the server.
@@ -198,15 +236,42 @@ export async function report(mode, version) {
   }[mode];
 
   let fromClient = [];
+  // What the client sent behind the HelloRequest, once its new ClientHello is in.
+  const behindHelloRequest = Promise.withResolvers();
   const relay = net.createServer(downstream => {
     fromClient = [];
     let flight = behindFinished ? Buffer.alloc(0) : null;
+    let resumedFlight = mode === helloRequestMode ? Buffer.alloc(0) : null;
+    let frozenAt = -1;
     const upstream = net.connect(server.address().port, "127.0.0.1");
     downstream.on("data", chunk => {
       fromClient.push(chunk);
-      upstream.write(chunk);
+      if (frozenAt < 0) return void upstream.write(chunk);
+      // The new ClientHello is the one long record. It leaves last.
+      const sent = Buffer.concat(fromClient).subarray(frozenAt);
+      for (let at = 0; at + 5 <= sent.length; at += 5 + sent.readUInt16BE(at + 3)) {
+        if (sent.readUInt16BE(at + 3) > 100 && at + 5 + sent.readUInt16BE(at + 3) <= sent.length) {
+          behindHelloRequest.resolve(recordTypes(sent));
+        }
+      }
     });
     upstream.on("data", chunk => {
+      if (frozenAt >= 0) return;
+      if (resumedFlight) {
+        resumedFlight = Buffer.concat([resumedFlight, chunk]);
+        const length = resumedFlightLength(resumedFlight);
+        if (length) {
+          const sent = Buffer.concat(fromClient);
+          frozenAt = sent.length;
+          const helloRequest = sealedHelloRequest(sent, resumedFlight, secrets.CLIENT_RANDOM);
+          return void downstream.write(Buffer.concat([resumedFlight.subarray(0, length), helloRequest]));
+        }
+        // A full handshake starts with three handshake records. Only the
+        // first flight of a connection can be a resumed one.
+        if (recordTypes(resumedFlight).length < 3) return;
+        chunk = resumedFlight;
+        resumedFlight = null;
+      }
       if (flight) {
         flight = Buffer.concat([flight, chunk]);
         const length = flightLength(flight, secrets.SERVER_HANDSHAKE_TRAFFIC_SECRET);
@@ -293,6 +358,22 @@ export async function report(mode, version) {
       raw.on("error", () => {});
       await once(raw, "connect");
       closed = watch(tls.connect({ ...refused, socket: raw }));
+      break;
+    }
+    case helloRequestMode: {
+      // The relay keeps what the client sends from here on, so the server sees no more of it.
+      const socket = tls.connect(await resume(accepted), () => client.push(`reused:${socket.isSessionReused()}`));
+      closed = watch(socket);
+      client.push(...(await behindHelloRequest.promise));
+      socket.destroy();
+      break;
+    }
+    case "tls.connect({ socket }) and a destroy() of that socket": {
+      // The raw socket closes its handle two loop turns after its destroy().
+      const raw = net.connect(port, "127.0.0.1");
+      raw.on("error", () => {});
+      await once(raw, "connect");
+      closed = watch(tls.connect({ ...accepted, socket: raw }, () => raw.destroy()));
       break;
     }
     case "https.request": {

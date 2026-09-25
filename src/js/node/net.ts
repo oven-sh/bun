@@ -262,6 +262,9 @@ const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
 const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
+// destroy() inside the handshake callback turns the peer down: the native layer
+// drops the handshake flight that it holds for that callback.
+const releaseHeldFlight = $newRustFunction("runtime/socket/socket.rs", "jsReleaseHeldFlight", 1);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
 
@@ -2392,6 +2395,13 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("close");
   if (this._handle) {
     $debug("close handle");
+    // node drops the pending output of a TLS socket that is destroyed in its
+    // handshake callback. Some branches below close the handle a loop turn
+    // later, after the native layer has sent the flight, so ask for it here.
+    // https://github.com/nodejs/node/blob/v26.10.0/src/crypto/crypto_tls.cc#L1409-L1433
+    if (typeof this[bunTlsSymbol] === "function" || this._handle[kAdoptedTLSRaw]) {
+      releaseHeldFlight(this._handle);
+    }
     const isException = err ? true : false;
     // `bytesRead` and `kBytesWritten` should be accessible after `.destroy()`
     // this[kBytesRead] = this._handle.bytesRead;

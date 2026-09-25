@@ -382,6 +382,10 @@ void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
  * server that fails verification. Must run before the handshake is driven
  * (on_open, or between adopt_tls and start_tls_handshake). No-op otherwise. */
 void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
+/* Drops the handshake flight that is held for `s` across its handshake
+ * callback, for an owner that turns the peer down there. No-op when `s` holds
+ * none. */
+void us_socket_release_held_flight(us_socket_r s) nonnull_fn_decl;
 
 /* ── Listen ───────────────────────────────────────────────────────────────
  * The listener owns: an embedded group for accepted sockets, the SSL_CTX

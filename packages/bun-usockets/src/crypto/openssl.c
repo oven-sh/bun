@@ -1128,6 +1128,19 @@ void us_socket_set_inline_reject(struct us_socket_t *s) {
   SSL_set_verify(s_ssl(s), SSL_VERIFY_PEER, us_inline_reject_verify_callback);
 }
 
+/* node:net destroy() inside the handshake callback turns the peer down. The
+ * flight that is held across that callback is dropped, and the session takes
+ * no more writes: the peer never gets our Finished. node drops its pending
+ * output there:
+ * https://github.com/nodejs/node/blob/v26.10.0/src/crypto/crypto_tls.cc#L1409-L1433 */
+void us_socket_release_held_flight(struct us_socket_t *s) {
+  if (!s->ssl || us_socket_is_closed(s)) return;
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  if (!loop_ssl_data || !loop_ssl_data->ssl_write_batch_len || loop_ssl_data->ssl_write_batch_owner != s) return;
+  ssl_release_batch(s->group->loop, s);
+  s->ssl_fatal_error = 1;
+}
+
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
  * (the only consumer of the passwd_cb), so the secret never outlives ctx
  * construction and SSL_CTX_free() is sufficient on every later path. Also
@@ -2018,26 +2031,14 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     return s;
   }
   {
-    /* Ciphertext batched in this dispatch and still held: the handshake's
-     * final flight, or a fatal alert sealed by a failing SSL_read (the driver
-     * closes with code 0 for that). A graceful close sends it before its
-     * close_notify/FIN. A partial write spills; the graceful-close deferral
-     * below then waits for the drain.
-     * A forceful close from inside the dispatch is the owner turning the peer
-     * down, so the flight is released: under TLS 1.3 it carries the client's
-     * Certificate. node drops its pending output when destroy() runs in the
-     * handshake callback:
-     * https://github.com/nodejs/node/blob/v26.10.0/src/crypto/crypto_tls.cc#L1409-L1433
-     * The peer never gets our Finished, so it could not read a close_notify. */
+    /* Ciphertext batched in this dispatch and still held (the handshake's
+     * final flight, a fatal alert sealed by a failing SSL_read) goes to the
+     * wire before the close_notify/FIN this teardown sends. A partial write
+     * spills; the graceful-close deferral below then waits for the drain. */
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     if (loop_ssl_data && loop_ssl_data->ssl_write_batch_len &&
         loop_ssl_data->ssl_write_batch_owner == s && !us_socket_is_closed(s)) {
-      if (code == LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN) {
-        ssl_flush_write_batch(loop_ssl_data, s);
-      } else {
-        ssl_release_batch(s->group->loop, s);
-        s->ssl_fatal_error = 1;
-      }
+      ssl_flush_write_batch(loop_ssl_data, s);
     }
   }
   /* Neither node's `_handle.close()` (FAST_SHUTDOWN, no reason) nor a graceful
@@ -2363,6 +2364,27 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   return s;
 }
 
+/* A read can finish the handshake and then leave the arms of
+ * us_internal_ssl_on_data that report it: a later record fails, or the peer
+ * asks to renegotiate. Report the handshake first, as those arms do. The owner
+ * may turn the peer down there. If it does not, the flight that was held for
+ * it goes out before anything else. Returns 0 when the socket is gone. */
+static int ssl_report_finished_handshake(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data) {
+  if (s->ssl_handshake_state != HANDSHAKE_PENDING || !SSL_is_init_finished(s_ssl(s))) return 1;
+  char *saved_input = loop_ssl_data->ssl_read_input;
+  unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
+  unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
+  ERR_clear_error();
+  ssl_trigger_handshake(s, 1);
+  if (ssl_gone(s)) return 0;
+  loop_ssl_data->ssl_read_input = saved_input;
+  loop_ssl_data->ssl_read_input_length = saved_length;
+  loop_ssl_data->ssl_read_input_offset = saved_offset;
+  loop_ssl_data->ssl_socket = s;
+  ssl_flush_write_batch(loop_ssl_data, s);
+  return 1;
+}
+
 struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, int length) {
   /* See ssl_update_handshake: start this socket's SSL processing with a clean
    * per-thread error queue so a captured reason cannot belong to another
@@ -2460,6 +2482,7 @@ restart:
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE &&
           err != SSL_ERROR_PENDING_CERTIFICATE) {
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
+          if (!ssl_report_finished_handshake(s, loop_ssl_data)) return NULL;
           if (ssl_renegotiate(s)) continue;
           if (ssl_gone(s)) return NULL;
           err = SSL_ERROR_SSL;
@@ -2512,16 +2535,7 @@ restart:
           return s;
         }
 
-        if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
-          /* The read that finished the handshake failed on a later record.
-           * Report the handshake before the close, as the no-data completion
-           * below does. The owner may turn the peer down there, and that
-           * close releases the held flight: a peer must not collect it with
-           * a bad record behind its Finished. */
-          ERR_clear_error();
-          ssl_trigger_handshake(s, 1);
-          if (ssl_gone(s)) return NULL;
-        }
+        if (!ssl_report_finished_handshake(s, loop_ssl_data)) return NULL;
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
           ssl_park_fatal_reason(s);
         }

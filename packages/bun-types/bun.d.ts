@@ -6765,7 +6765,7 @@ declare module "bun" {
     /**
      * Forcefully closes the socket connection immediately. This is an abrupt termination, unlike the graceful shutdown initiated by `end()`.
      * It uses `SO_LINGER` with `l_onoff=1` and `l_linger=0` before calling `close(2)`.
-     * Consider using {@link end end()} for a graceful shutdown.
+     * Consider using {@link close close()} or {@link end end()} for graceful shutdowns.
      *
      * @example
      * ```ts
@@ -7140,21 +7140,12 @@ declare module "bun" {
     upgradeTLS<Data>(options: TLSUpgradeOptions<Data>): [raw: Socket<Data>, tls: Socket<Data>];
 
     /**
-     * Closes the socket at once. Data that `write()` already accepted is still
-     * delivered, then the connection ends with a TCP FIN. A TLS socket sends no
-     * `close_notify` alert.
+     * Closes the socket.
      *
-     * Called from the `handshake` callback of a TLS socket, `close()` turns the
-     * peer down: Bun drops the part of the handshake that it has not sent yet.
-     * For a TLS 1.3 client that is usually its last flight, which carries the
-     * client certificate. {@link terminate terminate()} does the same. A socket
-     * with no `handshake` callback gets its `open` callback at that point, so
-     * the same holds there.
-     *
-     * Use {@link end end()} for a graceful close.
+     * This is a wrapper around `end()` and `shutdown()`.
      *
      * @see {@link end}
-     * @see {@link terminate}
+     * @see {@link shutdown}
      */
     close(): void;
 

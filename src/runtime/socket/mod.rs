@@ -121,7 +121,8 @@ pub(crate) use udp_socket::UDPSocket;
 pub(crate) mod socket {
     pub(crate) use super::socket_body::{
         js_create_socket_pair, js_get_buffered_amount, js_is_named_pipe_socket,
-        js_set_socket_options, js_upgrade_duplex_to_tls, js_upgrade_tls_deferred, testing_ap_is,
+        js_release_held_flight, js_set_socket_options, js_upgrade_duplex_to_tls,
+        js_upgrade_tls_deferred, testing_ap_is,
     };
 }
 

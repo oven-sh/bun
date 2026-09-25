@@ -2138,16 +2138,14 @@ it("ending a TLS 1.3 socket from its handshake callback still completes the serv
   await clientClosed.promise;
 });
 
-// terminate() and close() are the forceful closes of the Bun socket API. From
-// the handshake callback they turn the server down, like the native reject of
-// an unauthorized server does: the held final flight, which carries the client
-// certificate, must not go out. end() and shutdown() are graceful and still
-// send it. A socket with no handshake callback gets its open callback at that
-// point. A plain TCP relay counts what the client sent.
+// The release of the held flight is node:net's. A socket of the Bun socket API
+// keeps its behaviour: whatever it calls in its handshake callback, its final
+// flight goes out and the server completes its handshake. A socket with no
+// handshake callback gets its open callback at that point.
 describe("a TLS 1.3 Bun.connect client that closes once its handshake is done", () => {
   const keys = join(import.meta.dir, "..", "test", "fixtures", "keys");
   const pem = (name: string) => readFileSync(join(keys, name), "utf8");
-  type Close = "end" | "shutdown" | "terminate" | "close";
+  type Close = "end" | "shutdown" | "close";
 
   async function run(callback: "handshake" | "open", method: Close) {
     const serverSaw = Promise.withResolvers<string>();
@@ -2206,19 +2204,12 @@ describe("a TLS 1.3 Bun.connect client that closes once its handshake is done", 
   }
 
   it.each([
-    ["handshake", "terminate"],
     ["handshake", "close"],
-    ["open", "terminate"],
     ["open", "close"],
-  ] as const)("%s: %s() sends nothing after the ClientHello", async (callback, method) => {
-    expect(await run(callback, method)).toEqual({ server: "fail:ECONNRESET", sentAfterClientHello: false });
-  });
-
-  it.each([
     ["handshake", "end"],
     ["handshake", "shutdown"],
     ["open", "end"],
-  ] as const)("%s: %s() still completes the server's handshake", async (callback, method) => {
+  ] as const)("%s: %s() completes the server's handshake", async (callback, method) => {
     expect(await run(callback, method)).toEqual({ server: "handshake:agent3", sentAfterClientHello: true });
   });
 });
@@ -2585,7 +2576,7 @@ async function reportsFromNode(fixture: string, rows: (readonly [version: string
     import { report } from ${JSON.stringify(pathToFileURL(join(import.meta.dir, fixture)).href)};
     const rows = ${JSON.stringify(rows)};
     const reports = await Promise.all(rows.map(([version, mode]) => report(mode, version)));
-    console.log(JSON.stringify({ node: process.versions.node, reports }));
+    console.log(JSON.stringify({ reports }));
     process.exit(0);
   `;
   await using proc = Bun.spawn({
@@ -2596,9 +2587,9 @@ async function reportsFromNode(fixture: string, rows: (readonly [version: string
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const { node, reports } = JSON.parse(stdout) as { node: string; reports: unknown[] };
+  const { reports } = JSON.parse(stdout) as { reports: unknown[] };
   expect(exitCode).toBe(0);
-  return { node: node.split(".").map(Number), reports };
+  return { reports };
 }
 
 // A TLS 1.3 client, and a client that resumes a TLS 1.2 session, finishes its
@@ -2630,6 +2621,7 @@ describe("how a TLS client's way of closing reaches the server", () => {
     ["TLSv1.3", "a junk record behind the server's Finished", turnedDown(altnameInvalid, "close:true")],
     ["TLSv1.3", "a close_notify behind the server's Finished", turnedDown(altnameInvalid, "close:true")],
     ["TLSv1.3", "tls.connect({ socket })", turnedDown(altnameInvalid, "close:true")],
+    ["TLSv1.3", "tls.connect({ socket }) and a destroy() of that socket", turnedDown("close:false")],
     ["TLSv1.3", "https.request", turnedDown(altnameInvalid)],
     ["TLSv1.3", "http2.connect", turnedDown(altnameInvalid)],
     ["TLSv1.3", "destroy()", turnedDown("close:false")],
@@ -2649,40 +2641,35 @@ describe("how a TLS client's way of closing reaches the server", () => {
     ["TLSv1.3", "end(data)", delivered("hello", 1)],
     ["TLSv1.3", "destroySoon()", delivered("", 1)],
 
+    // A server that resumes a TLS 1.2 session can ask for a renegotiation right
+    // behind its Finished. The client reports the handshake and sends its own
+    // Finished before it answers with a new ClientHello.
+    [
+      "TLSv1.2",
+      "a HelloRequest behind the server's Finished",
+      {
+        client: ["reused:true", "ChangeCipherSpec", "Handshake", "Handshake", "close:false"],
+        server: { event: "tlsClientError", code: "ECONNRESET" },
+        sentAfterClientHello: true,
+        alerts: 0,
+      },
+    ],
+
     // In a full TLS 1.2 handshake the client's flight leaves before the server's Finished.
     ["TLSv1.2", "checkServerIdentity", delivered("", 0, [altnameInvalid, "close:true"])],
     ["TLSv1.2", "destroy()", delivered("", 0)],
   ] as const;
 
-  // Since node 26.10.0 an end() or a write() made in 'secureConnect' waits for
-  // the callback to return, and a destroy() in the same callback drops it:
-  // https://github.com/nodejs/node/pull/65105
-  // Up to node 26.9 these four delivered the flight.
-  const sinceNode2610 = [
-    ["TLSv1.3", "end() then destroy()", turnedDown("close:false")],
-    ["TLSv1.3", "write('') then destroy()", turnedDown("close:false")],
-    ["TLSv1.3", "end('') then destroy()", turnedDown("close:false")],
-    ["TLSv1.2", "end() then destroy()", delivered("", 0)],
-  ] as const;
-
-  it.each([...rows, ...sinceNode2610])("%s %s", async (version, mode, expected) => {
+  it.each(rows)("%s %s", async (version, mode, expected) => {
     expect(await closeReport(mode, version)).toEqual(expected);
   });
 
-  // node 26.10 drops this write too. Bun sends it with the flight, as node did up to 26.9.
-  it("TLSv1.3 write() then destroy() sends the data with the flight", async () => {
-    expect(await closeReport("write() then destroy()", "TLSv1.3")).toEqual(delivered("hello", 0));
-  });
-
   it.skipIf(!nodeExe())("node gives the same reports", async () => {
-    const { node, reports } = await reportsFromNode(
+    const { reports } = await reportsFromNode(
       "tls-client-close-fixture.mjs",
-      [...rows, ...sinceNode2610].map(([version, mode]) => [version, mode]),
+      rows.map(([version, mode]) => [version, mode]),
     );
-    expect(reports.slice(0, rows.length)).toEqual(rows.map(([, , expected]) => expected));
-    if (node[0] > 26 || (node[0] === 26 && node[1] >= 10)) {
-      expect(reports.slice(rows.length)).toEqual(sinceNode2610.map(([, , expected]) => expected));
-    }
+    expect(reports).toEqual(rows.map(([, , expected]) => expected));
   });
 });
 

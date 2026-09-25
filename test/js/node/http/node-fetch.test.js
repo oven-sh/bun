@@ -417,6 +417,24 @@ test("node-fetch json() resolves null for a body that is the JSON text null", as
   expect(await (await fetch2(server.url)).json()).toBeNull();
 });
 
+test("node-fetch Response.json(), Response.redirect() and Response.error() return a node-fetch Response", async () => {
+  const json = Response.json({ a: 1 });
+  expect(json).toBeInstanceOf(Response);
+  expect((await json.buffer()).toString()).toBe('{"a":1}');
+  expect(Response.json({ a: 1 }).body).toBeInstanceOf(stream.Readable);
+
+  const redirect = Response.redirect("http://example.test/next", 301);
+  expect(redirect).toBeInstanceOf(Response);
+  expect(redirect.status).toBe(301);
+  expect(redirect.type).toBe("default");
+  expect(redirect.headers.raw()).toEqual({ location: ["http://example.test/next"] });
+
+  const error = Response.error();
+  expect(error).toBeInstanceOf(Response);
+  expect(error.status).toBe(0);
+  expect(error.type).toBe("error");
+});
+
 test("node-fetch request body streams properly", async () => {
   let responseResolve;
   const responsePromise = new Promise(resolve => {

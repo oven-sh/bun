@@ -76,6 +76,15 @@ test("frontend message builders encode per §55.7", () => {
   expect(pgSync()).toEqual(Buffer.from("S\x00\x00\x00\x04", "binary"));
 });
 
+test("listeningServer rejects when the bind fails", async () => {
+  // 203.0.113.1 is in TEST-NET-3 (RFC 5737). No interface has it, so the bind fails and nothing leaves the machine.
+  const outcome = await listeningServer(() => {}, "203.0.113.1").then(
+    () => "listening",
+    error => error.code,
+  );
+  expect(outcome).toBe("EADDRNOTAVAIL");
+});
+
 test("postgres: pgAuthenticationOk + pgReadyForQuery are accepted by Bun's parser", async () => {
   // Minimal Postgres mock: on the startup packet, reply AuthenticationOk +
   // ReadyForQuery. connect() resolving proves both frames decode.

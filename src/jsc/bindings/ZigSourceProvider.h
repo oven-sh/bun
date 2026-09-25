@@ -16,6 +16,8 @@ class SourceProvider;
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/Structure.h>
 
+#include "LineIndex.h"
+
 struct bun_ModuleInfoDeserialized;
 
 namespace Zig {
@@ -38,6 +40,10 @@ public:
     ~SourceProvider();
     unsigned hash() const override;
     StringView source() const override;
+    bool lineAndColumnForOffset(unsigned offset, unsigned& line0Based, unsigned& column0Based) final
+    {
+        return m_lineIndex.lineAndColumn(source(), offset, line0Based, column0Based);
+    }
 
     RefPtr<JSC::CachedBytecode> cachedBytecode() const final
     {
@@ -69,6 +75,7 @@ private:
     void* m_bunVM;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     Ref<WTF::StringImpl> m_source;
+    Bun::LineIndex m_lineIndex;
     unsigned m_hash = 0;
 };
 

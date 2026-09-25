@@ -43,6 +43,20 @@ export const highwayStringsForTesting: (
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
+// The zero-based line and column that Bun::LineIndex gives for each offset in a Latin-1 text.
+export const lineIndexForTesting: (text: Uint8Array, offsets: Uint32Array) => Uint32Array = $newCppFunction(
+  "LineIndex.cpp",
+  "Bun__lineIndexForTesting",
+  2,
+);
+
+// True when JavaScriptCore built its table of every line for the source of `fn`.
+export const lineStartTableIsBuilt: (fn: Function) => boolean = $newCppFunction(
+  "LineIndex.cpp",
+  "Bun__lineStartTableIsBuiltForTesting",
+  1,
+);
+
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
 export const patchInternals = {

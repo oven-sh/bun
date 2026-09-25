@@ -127,6 +127,16 @@ impl Default for Address {
     }
 }
 
+impl Address {
+    #[inline]
+    pub(crate) fn is_unix(&self) -> bool {
+        match self {
+            Address::Unix(_) => true,
+            Address::Tcp { .. } => false,
+        }
+    }
+}
+
 // ZBox frees on Drop; resetting is `*self = Address::default()`.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -615,10 +625,6 @@ impl ServerConfig {
         let env = vm.env_loader();
 
         let mut args = ServerConfig {
-            address: Address::Tcp {
-                port: 3000,
-                hostname: None,
-            },
             development: if let Some(hmr) = vm.transpiler.options.transform_options.serve_hmr {
                 if !hmr {
                     DevelopmentOption::DevelopmentWithoutHmr
@@ -634,7 +640,10 @@ impl ServerConfig {
             reuse_port: env.get(b"NODE_UNIQUE_ID").is_some(),
             ..ServerConfig::default()
         };
-        let mut has_hostname = false;
+        // The listen target. `args.address` is built from these once every
+        // option is read.
+        let mut hostname: Option<ZBox> = None;
+        let mut unix: Option<ZBox> = None;
 
         if env.get(b"NODE_ENV").unwrap_or(b"") == b"production" {
             args.development = DevelopmentOption::Production;
@@ -645,34 +654,22 @@ impl ServerConfig {
         }
 
         // Set tcp port from env / options
-        {
-            let port = 'brk: {
-                const PORT_ENV: [&[u8]; 3] = [b"BUN_PORT", b"PORT", b"NODE_PORT"];
+        let mut port: u16 = 'brk: {
+            const PORT_ENV: [&[u8]; 3] = [b"BUN_PORT", b"PORT", b"NODE_PORT"];
 
-                for port_env in PORT_ENV {
-                    if let Some(port) = env.get(port_env) {
-                        if let Ok(_port) = bun_core::strings::parse_int::<u16>(port, 10) {
-                            break 'brk _port;
-                        }
+            for port_env in PORT_ENV {
+                if let Some(port) = env.get(port_env) {
+                    if let Ok(_port) = bun_core::strings::parse_int::<u16>(port, 10) {
+                        break 'brk _port;
                     }
                 }
-
-                if let Some(port) = arguments.vm.transpiler.options.transform_options.port {
-                    break 'brk port;
-                }
-
-                match &args.address {
-                    Address::Tcp { port, .. } => *port,
-                    _ => unreachable!(),
-                }
-            };
-            if let Address::Tcp { port: p, .. } = &mut args.address {
-                *p = port;
             }
-        }
-        let mut port = match &args.address {
-            Address::Tcp { port, .. } => *port,
-            _ => unreachable!(),
+
+            if let Some(port) = arguments.vm.transpiler.options.transform_options.port {
+                break 'brk port;
+            }
+
+            3000
         };
 
         if let Some(origin) = &arguments.vm.transpiler.options.transform_options.origin {
@@ -1078,11 +1075,7 @@ impl ServerConfig {
                     },
                 ));
             }
-            let p = number as u16;
-            if let Address::Tcp { port: tp, .. } = &mut args.address {
-                *tp = p;
-            }
-            port = p;
+            port = number as u16;
         }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
@@ -1104,24 +1097,20 @@ impl ServerConfig {
             if !host_str.slice().is_empty() {
                 // Does not reject interior
                 // NUL; the C `bind()` consumer will simply truncate at it.
-                let hostname = ZBox::from_bytes(host_str.slice());
-                if let Address::Tcp { hostname: h, .. } = &mut args.address {
-                    *h = Some(hostname);
-                }
-                has_hostname = true;
+                hostname = Some(ZBox::from_bytes(host_str.slice()));
             }
         }
 
-        if let Some(unix) = arg.get_stringish(global, "unix")? {
-            let unix_str = unix.to_utf8();
+        if let Some(unix_value) = arg.get_stringish(global, "unix")? {
+            let unix_str = unix_value.to_utf8();
             if !unix_str.slice().is_empty() {
-                if has_hostname {
+                if hostname.is_some() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Cannot specify both hostname and unix",
                     )));
                 }
 
-                args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
+                unix = Some(ZBox::from_bytes(unix_str.slice()));
             }
         }
 
@@ -1296,7 +1285,12 @@ impl ServerConfig {
                 "Cannot disable http1 without enabling http2 or http3"
             )));
         }
-        if !args.http1 && !args.http2 && matches!(args.address, Address::Unix(_)) {
+        args.address = match unix {
+            Some(path) => Address::Unix(path),
+            None => Address::Tcp { port, hostname },
+        };
+
+        if !args.http1 && !args.http2 && args.address.is_unix() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));
@@ -1379,13 +1373,12 @@ impl ServerConfig {
                 args.base_uri = buf.into_boxed_slice();
             }
         } else {
-            let hostname: &[u8] = if has_hostname {
-                match &args.address {
-                    Address::Tcp { hostname, .. } => hostname.as_ref().unwrap().as_bytes(),
-                    _ => unreachable!(),
-                }
-            } else {
-                b"0.0.0.0"
+            let hostname: &[u8] = match &args.address {
+                Address::Tcp {
+                    hostname: Some(hostname),
+                    ..
+                } => hostname.as_bytes(),
+                Address::Tcp { hostname: None, .. } | Address::Unix(_) => b"0.0.0.0",
             };
 
             let needs_brackets: bool =

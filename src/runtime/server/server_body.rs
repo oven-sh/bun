@@ -1523,7 +1523,7 @@ where
     }
 
     pub(crate) fn request_ip(&self, request: &Request) -> JsResult<JSValue> {
-        if matches!(self.config.address, server_config::Address::Unix(_)) {
+        if self.config.address.is_unix() {
             return Ok(JSValue::NULL);
         }
         let Some(info) = request.request_context.get_remote_socket_info() else {
@@ -1550,7 +1550,7 @@ where
 
         let seconds = arguments[1];
 
-        if matches!(self.config.address, server_config::Address::Unix(_)) {
+        if self.config.address.is_unix() {
             return Ok(JSValue::NULL);
         }
 
@@ -2492,54 +2492,51 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        match &self.config.address {
+        let mut port: u16 = match &self.config.address {
             server_config::Address::Unix(unix) => {
-                bun_string_jsc::create_utf8_for_js(global, unix.as_bytes())
+                return bun_string_jsc::create_utf8_for_js(global, unix.as_bytes());
             }
-            server_config::Address::Tcp { port: tcp_port, .. } => {
-                let mut port: u16 = *tcp_port;
+            server_config::Address::Tcp { port, .. } => *port,
+        };
 
-                if let Some(listener) = self.listener {
-                    // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-                    let listener = bun_opaque::opaque_deref_mut(listener);
-                    port = listener.get_local_port().unwrap_or(port);
+        if let Some(listener) = self.listener {
+            // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+            let listener = bun_opaque::opaque_deref_mut(listener);
+            port = listener.get_local_port().unwrap_or(port);
 
-                    let mut buf = [0u8; 64];
-                    let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
+            let mut buf = [0u8; 64];
+            let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
+                return Ok(JSValue::NULL);
+            };
+            let addr = match SocketAddress::init(address_bytes, port) {
+                Ok(a) => a,
+                Err(_) => {
+                    bun_core::hint::cold();
+                    return Ok(JSValue::NULL);
+                }
+            };
+            return addr.into_dto(&self.global());
+        }
+        if Self::HAS_H3 {
+            if let Some(h3l) = self.h3_listener {
+                // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                let h3l = bun_opaque::opaque_deref_mut(h3l);
+                port = h3l.get_local_port().unwrap_or(port);
+                let mut buf = [0u8; 64];
+                let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
+                    return Ok(JSValue::NULL);
+                };
+                let addr = match SocketAddress::init(address_bytes, port) {
+                    Ok(a) => a,
+                    Err(_) => {
+                        bun_core::hint::cold();
                         return Ok(JSValue::NULL);
-                    };
-                    let addr = match SocketAddress::init(address_bytes, port) {
-                        Ok(a) => a,
-                        Err(_) => {
-                            bun_core::hint::cold();
-                            return Ok(JSValue::NULL);
-                        }
-                    };
-                    return addr.into_dto(&self.global());
-                }
-                if Self::HAS_H3 {
-                    if let Some(h3l) = self.h3_listener {
-                        // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                        let h3l = bun_opaque::opaque_deref_mut(h3l);
-                        port = h3l.get_local_port().unwrap_or(port);
-                        let mut buf = [0u8; 64];
-                        let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
-                            return Ok(JSValue::NULL);
-                        };
-                        let addr = match SocketAddress::init(address_bytes, port) {
-                            Ok(a) => a,
-                            Err(_) => {
-                                bun_core::hint::cold();
-                                return Ok(JSValue::NULL);
-                            }
-                        };
-                        return addr.into_dto(&self.global());
                     }
-                }
-                let _ = port;
-                Ok(JSValue::NULL)
+                };
+                return addr.into_dto(&self.global());
             }
         }
+        Ok(JSValue::NULL)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2552,35 +2549,26 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_hostname(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        match &self.config.address {
+        let hostname = match &self.config.address {
             server_config::Address::Unix(_) => return Ok(JSValue::UNDEFINED),
-            server_config::Address::Tcp { .. } => {}
-        }
-        {
-            if let Some(listener) = self.listener {
-                let mut buf = [0u8; 1024];
-                // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-                if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
-                    .socket()
-                    .remote_address(&mut buf[..1024])
-                {
-                    if !addr.is_empty() {
-                        return bun_string_jsc::create_utf8_for_js(global, addr);
-                    }
-                }
-            }
+            server_config::Address::Tcp { hostname, .. } => hostname,
+        };
+        if let Some(listener) = self.listener {
+            let mut buf = [0u8; 1024];
+            // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+            if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
+                .socket()
+                .remote_address(&mut buf[..1024])
             {
-                match &self.config.address {
-                    server_config::Address::Tcp { hostname, .. } => {
-                        if let Some(hostname) = hostname {
-                            return bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes());
-                        } else {
-                            return BunString::static_("localhost").to_js(global);
-                        }
-                    }
-                    server_config::Address::Unix(_) => unreachable!(),
+                if !addr.is_empty() {
+                    return bun_string_jsc::create_utf8_for_js(global, addr);
                 }
             }
+        }
+        if let Some(hostname) = hostname {
+            bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes())
+        } else {
+            BunString::static_("localhost").to_js(global)
         }
     }
 
@@ -2692,7 +2680,7 @@ where
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         jsc::mark_binding!();
-        if !matches!(self.config.address, server_config::Address::Unix(_))
+        if !self.config.address.is_unix()
             && (!bake::is_allowed_host_header(req, Some(&self.config.address))
                 || !resp
                     .get_remote_socket_info()

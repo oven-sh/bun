@@ -584,11 +584,6 @@ impl PostgresSQLQuery {
             query_str.slice(),
             binding_value,
             columns_value,
-            connection.prepared_statement_id.get(),
-            connection
-                .flags
-                .get()
-                .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS),
         ) {
             Ok(s) => s,
             Err(err) => {
@@ -721,6 +716,7 @@ impl PostgresSQLQuery {
                     }
                 };
                 connection_entry_value = Some(entry_value_ptr);
+                signature.set_prepared_statement_name(connection.take_prepared_statement_id());
             }
             let can_execute = !connection.has_query_running();
 
@@ -804,9 +800,6 @@ impl PostgresSQLQuery {
             {
                 // we only have connection_entry_value if we are using named prepared statements
                 if let Some(entry_value) = connection_entry_value {
-                    connection
-                        .prepared_statement_id
-                        .set(connection.prepared_statement_id.get() + 1);
                     // One ref for this.statement, one for the connection.statements map.
                     let stmt = {
                         let mut s = PostgresSQLStatement::default();

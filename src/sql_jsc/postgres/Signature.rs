@@ -19,6 +19,20 @@ impl Signature {
 
     // No explicit `Drop` impl needed: the `Box<[T]>` fields free the four owned slices automatically.
 
+    // max u64 length is 20, max prepared_statement_name length is 63
+    pub(crate) fn set_prepared_statement_name(&mut self, prepared_statement_id: u64) {
+        use std::io::Write;
+        let mut v: Vec<u8> = Vec::new();
+        write!(
+            &mut v,
+            "P{}${}",
+            bstr::BStr::new(&self.name[..self.name.len().min(40)]),
+            prepared_statement_id,
+        )
+        .expect("unreachable");
+        self.prepared_statement_name = v.into_boxed_slice();
+    }
+
     // JSError (from QueryBindingIterator /
     // Tag::from_js), OOM, and InvalidQueryBinding are collapsed to the
     // crate-wide `crate::Error`.
@@ -27,8 +41,6 @@ impl Signature {
         query: &[u8],
         array_value: JSValue,
         columns: JSValue,
-        prepared_statement_id: u64,
-        unnamed: bool,
     ) -> crate::Result<Signature> {
         use crate::jsc::js_error_to_postgres;
         use crate::postgres::types::tag_jsc;
@@ -91,24 +103,9 @@ impl Signature {
         if iter.any_failed() {
             return Err(crate::Error::InvalidQueryBinding);
         }
-        // max u64 length is 20, max prepared_statement_name length is 63
-        let prepared_statement_name: Box<[u8]> = if unnamed {
-            Box::default()
-        } else {
-            use std::io::Write;
-            let mut v: Vec<u8> = Vec::new();
-            write!(
-                &mut v,
-                "P{}${}",
-                bstr::BStr::new(&name[..name.len().min(40)]),
-                prepared_statement_id,
-            )
-            .expect("unreachable");
-            v.into_boxed_slice()
-        };
 
         Ok(Signature {
-            prepared_statement_name,
+            prepared_statement_name: Box::default(),
             name: name.into_boxed_slice(),
             fields: fields.into_boxed_slice(),
         })

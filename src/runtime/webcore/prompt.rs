@@ -67,7 +67,8 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments();
     let output = Output::writer();
-    let has_message = !arguments.is_empty();
+    // `confirm(optional DOMString message = "")`: `undefined` is the default.
+    let has_message = arguments.first().is_some_and(|v| !v.is_undefined());
 
     if has_message {
         // 2. Set message to the result of normalizing newlines given message.
@@ -232,13 +233,13 @@ pub(crate) mod prompt {
     fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments();
         let output = Output::writer();
-        let has_message = !arguments.is_empty();
-        let message = if has_message {
-            Some(arguments[0].to_utf8(global)?)
-        } else {
-            None
+        // `prompt(optional DOMString message = "", optional DOMString default = "")`:
+        // an omitted or `undefined` argument is the default.
+        let message = match arguments.first() {
+            Some(value) if !value.is_undefined() => Some(value.to_utf8(global)?),
+            _ => None,
         };
-        // `optional DOMString default = ""`: an omitted or `undefined` default is "".
+        let has_message = message.is_some();
         let default: Option<&JSString> = match arguments.get(1) {
             Some(value) if !value.is_undefined() => Some(value.to_js_string(global)?),
             _ => None,

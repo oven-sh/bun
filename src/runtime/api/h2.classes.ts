@@ -77,6 +77,10 @@ export default [
         fn: "setStreamReading",
         length: 2,
       },
+      setStreamClosing: {
+        fn: "setStreamClosing",
+        length: 2,
+      },
       getStreamContext: {
         fn: "getStreamContext",
         length: 1,

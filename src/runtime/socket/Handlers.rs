@@ -450,7 +450,7 @@ impl Scope {
     }
 }
 
-use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
+use bun_jsc::generated::SocketConfigBinaryType as GeneratedBinaryType;
 
 pub(crate) struct SocketConfig {
     pub(crate) hostname_or_unix: Utf8Bytes<'static>,
@@ -604,4 +604,4 @@ impl SocketConfig {
     }
 }
 
-use bun_jsc::generated::SocketConfigTls as GeneratedTls;
+use bun_jsc::generated::SocketConfigTLS as GeneratedTls;

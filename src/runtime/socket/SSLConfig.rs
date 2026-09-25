@@ -240,11 +240,11 @@ impl SSLConfigFromJs for SSLConfig {
         }
 
         let protocols: *const c_char = match &generated.alpn_protocols {
-            jsc::generated::SSLConfigAlpnProtocols::None => core::ptr::null(),
-            jsc::generated::SSLConfigAlpnProtocols::String(val) => {
+            jsc::generated::ALPNProtocols::None => core::ptr::null(),
+            jsc::generated::ALPNProtocols::String(val) => {
                 zbox_into_raw(&val.as_ref().to_owned_slice_z())
             }
-            jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
+            jsc::generated::ALPNProtocols::Buffer(val) => {
                 // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
                 // owned by the GenVal for the duration of `generated`.
                 let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };

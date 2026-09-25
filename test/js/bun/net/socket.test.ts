@@ -4026,6 +4026,48 @@ Reo=
         plain.close();
       }
     });
+
+    it("getAuthorizationError() agrees with a handshake that failed with no error", async () => {
+      const handshake = Promise.withResolvers<{
+        successArg: boolean;
+        callbackCode: string | null;
+        getterCode: string | null;
+      }>();
+      // Never answers, and keeps the connection open after the client's FIN.
+      const peer = net.createServer({ allowHalfOpen: true }, socket => socket.on("error", () => {}));
+      await once(peer.listen(0, "127.0.0.1"), "listening");
+      try {
+        using client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: (peer.address() as net.AddressInfo).port,
+          tls: { rejectUnauthorized: false },
+          socket: {
+            // Before the ClientHello, so the handshake never starts.
+            open(socket) {
+              socket.shutdown();
+            },
+            handshake(socket, success, authorizationError) {
+              handshake.resolve({
+                successArg: success,
+                callbackCode: (authorizationError as NodeJS.ErrnoException | null)?.code ?? null,
+                getterCode: (socket.getAuthorizationError() as NodeJS.ErrnoException | null)?.code ?? null,
+              });
+            },
+            data() {},
+            close() {},
+            error() {},
+            connectError(_socket, err) {
+              handshake.reject(err);
+            },
+          },
+        });
+        expect(await handshake.promise).toEqual({ successArg: false, callbackCode: null, getterCode: null });
+        // This client does not reject, and its peer did not close: the socket is still open.
+        expect(client.getAuthorizationError()).toBeNull();
+      } finally {
+        peer.close();
+      }
+    });
   });
 });
 

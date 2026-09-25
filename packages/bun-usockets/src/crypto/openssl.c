@@ -1101,9 +1101,11 @@ static int us_cert_verify_cb(X509_STORE_CTX *ctx, void *arg) {
   (void)arg;
   int ok = X509_verify_cert(ctx);
   SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
-  if (!ssl || SSL_is_server(ssl) || X509_STORE_CTX_get_error(ctx) != X509_V_OK) return ok;
+  if (!ssl) return ok;
   void *wrapper = us_ssl_wrapper(ssl);
   struct us_socket_t *s = wrapper ? NULL : us_ssl_socket(ssl);
+  if (s) s->ssl_peer_chain_checked = 1;
+  if (SSL_is_server(ssl) || X509_STORE_CTX_get_error(ctx) != X509_V_OK) return ok;
   int verdict = wrapper ? us_ssl_wrapper_server_identity(wrapper, ssl)
                 : s     ? us_dispatch_server_identity(s, ssl)
                         : US_IDENTITY_UNCHECKED;
@@ -1700,6 +1702,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_inline_reject = 0;
   s->ssl_verify_failed = 0;
   s->ssl_identity_checked = 0;
+  s->ssl_peer_chain_checked = 0;
   s->ssl_sni_pending = US_SNI_NONE;
   s->ssl_sni_resolver = 0;
   s->ssl_has_pending_events = 0;
@@ -1817,12 +1820,12 @@ struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s)
 }
 
 /* What a failed handshake reports. After our own FIN the SSL's verdict stands
- * only if the peer sent a certificate: with none the SSL answers
- * UNABLE_TO_GET_ISSUER_CERT, and node:tls reads a failure with an X509 code as
- * an established session and one with no error after end() as its own close. */
+ * only for a chain that this handshake checked. With none the SSL answers
+ * UNABLE_TO_GET_ISSUER_CERT, or the verdict of the session that a client
+ * offered. node:tls reads a failure with an X509 code as an established
+ * session, and one with no error after end() as its own close. */
 static struct us_bun_verify_error_t ssl_failed_handshake_verify_error(struct us_socket_t *s) {
-  if (us_internal_ssl_is_shut_down(s) &&
-      !(s->ssl && SSL_get0_peer_certificates(s_ssl(s)))) {
+  if (us_internal_ssl_is_shut_down(s) && !s->ssl_peer_chain_checked) {
     return (struct us_bun_verify_error_t){.error = 0, .code = NULL, .reason = NULL};
   }
   return us_internal_ssl_verify_error(s);

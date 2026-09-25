@@ -1247,6 +1247,74 @@ it("an asynchronous SNICallback error aborts the suspended handshake with tlsCli
   await once(server, "close");
 });
 
+it("a socket that end()s while an asynchronous SNICallback is pending reports tlsClientError, then 'close'", async () => {
+  const events: string[] = [];
+  const sniCalled = Promise.withResolvers<void>();
+  const sawServerFin = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<void>();
+  let answerSni: (() => void) | undefined;
+  let serverSocket: net.Socket | undefined;
+  const server: Server = createServer({
+    ...COMMON_CERT,
+    requestCert: true,
+    rejectUnauthorized: true,
+    SNICallback: (_name, cb) => {
+      answerSni = () => cb(null, tls.createSecureContext({ ...COMMON_CERT }));
+      sniCalled.resolve();
+    },
+  });
+  server.on("secureConnection", () => events.push("secureConnection"));
+  server.on("tlsClientError", err => events.push(`tlsClientError ${(err as NodeJS.ErrnoException).code}`));
+  server.on("connection", socket => {
+    serverSocket = socket;
+    socket.on("error", () => {});
+    socket.on("close", hadError => {
+      events.push(`close hadError=${hadError}`);
+      closed.resolve();
+    });
+  });
+  server.listen(0);
+  await once(server, "listening");
+  // The proxy does not pass the server's FIN on, so the client stays connected.
+  const proxied: net.Socket[] = [];
+  const proxy = net.createServer({ allowHalfOpen: true }, downstream => {
+    const upstream = net.connect({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      allowHalfOpen: true,
+    });
+    proxied.push(downstream, upstream);
+    downstream.on("data", chunk => upstream.write(chunk));
+    upstream.on("data", chunk => downstream.write(chunk));
+    upstream.on("end", () => sawServerFin.resolve());
+    downstream.on("error", () => {});
+    upstream.on("error", () => {});
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+  const client = connect({
+    port: (proxy.address() as AddressInfo).port,
+    host: "127.0.0.1",
+    servername: "pending.example.com",
+    rejectUnauthorized: false,
+  });
+  client.on("error", () => {});
+  try {
+    await sniCalled.promise;
+    serverSocket!.end();
+    await sawServerFin.promise;
+    // The handshake fails inside this call: the socket is shut down.
+    answerSni!();
+    await closed.promise;
+    expect(events).toEqual(["tlsClientError ECONNRESET", "close hadError=true"]);
+  } finally {
+    client.destroy();
+    for (const socket of proxied) socket.destroy();
+    proxy.close();
+    server.close();
+  }
+});
+
 it("destroying the connection while an asynchronous SNICallback is pending does not crash", async () => {
   let resolveLater: (() => void) | undefined;
   const server: Server = createServer({

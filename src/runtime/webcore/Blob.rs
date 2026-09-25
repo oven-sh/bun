@@ -22,6 +22,7 @@ use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd};
 
+use crate::webcore::form_data_body::{self, FormDataParts};
 use crate::webcore::node_types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 use crate::webcore::s3 as S3;
 use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams};
@@ -180,7 +181,10 @@ pub(crate) trait BlobExt {
     ) -> Blob
     where
         Self: Sized;
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob
+    fn from_dom_form_data(
+        global_this: &JSGlobalObject,
+        form_data: &mut jsc::DOMFormData,
+    ) -> JsResult<webcore::body::Value>
     where
         Self: Sized;
     fn content_type(&self) -> &[u8];
@@ -846,90 +850,32 @@ impl BlobExt for Blob {
         blob
     }
 
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
+    /// The body of a `FormData`: the bytes when every part is in memory, and
+    /// a pending body over the parts when one of them is a file or an S3 object.
+    fn from_dom_form_data(
+        global_this: &JSGlobalObject,
+        form_data: &mut jsc::DOMFormData,
+    ) -> JsResult<webcore::body::Value> {
         let boundary_buf = make_multipart_boundary(global_this);
         let boundary: &[u8] = &boundary_buf;
 
         let mut context = FormDataContext {
             joiner: bun_core::string_joiner::StringJoiner::default(),
             boundary,
-            failed: false,
-            global_this,
+            has_lazy_part: false,
         };
         // Size the node list up front: a file entry pushes at most 13 slices, a
         // string entry 8, plus 3 for the closing boundary.
         context.joiner.reserve(form_data.count() * 13 + 3);
 
-        // Every raw deref is wrapped locally; the safe fn item coerces to the
-        // callback-pointer type at `DOMFormData__forEach`.
-        //
-        // The strings and the Blob of an entry are owned by the `DOMFormData`.
-        // Nothing changes it before `joiner.done()` below, so each borrow
-        // taken here lives as long as the context that keeps it.
-        extern "C" fn for_each_thunk(
-            ctx_ptr: *mut c_void,
-            name_: *mut EncodedSlice,
-            value_ptr: *mut c_void,
-            filename: *mut EncodedSlice,
-            is_blob: u8,
-        ) {
-            // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below; the
-            // erased lifetime is the caller's stack frame in `from_dom_form_data`.
-            let ctx = unsafe { bun_ptr::callback_ctx::<FormDataContext<'_>>(ctx_ptr) };
-            let entry = if is_blob == 0 {
-                // SAFETY: when `is_blob == 0`, `value_ptr` points to an `EncodedSlice`.
-                FormDataEntry::String(unsafe { *value_ptr.cast::<EncodedSlice>() })
-            } else {
-                FormDataEntry::File {
-                    // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`),
-                    // which the entry keeps alive.
-                    blob: unsafe { &*value_ptr.cast::<Blob>() },
-                    filename: if filename.is_null() {
-                        EncodedSlice::EMPTY
-                    } else {
-                        // SAFETY: non-null `filename` is a valid `*EncodedSlice` for this call.
-                        unsafe { *filename }
-                    },
-                }
-            };
-            // SAFETY: `name_` is always a valid non-null `*EncodedSlice` for this callback.
-            ctx.on_entry(unsafe { *name_ }, entry);
-        }
-        unsafe extern "C" {
-            // `this` is the `&mut DOMFormData` param (coerced); `ctx`/`cb` are
-            // stored opaquely and only used synchronously. Module-private with
-            // one call site below — no caller-side precondition remains. Kept
-            // `*mut` (not `&mut`) to match the `bun_jsc` decl and avoid
-            // `clashing_extern_declarations`.
-            safe fn DOMFormData__forEach(
-                this: *mut jsc::DOMFormData,
-                ctx: *mut c_void,
-                // Safe fn-ptr: `for_each_thunk` is a safe `extern "C" fn` (its
-                // body localises every raw deref individually), so the callback
-                // type carries no caller-side precondition. ABI-identical to
-                // `bun_jsc`'s `ForEachFunction` alias.
-                cb: extern "C" fn(
-                    *mut c_void,
-                    *mut EncodedSlice,
-                    *mut c_void,
-                    *mut EncodedSlice,
-                    u8,
-                ),
-            );
-        }
-        // C++ invokes the callback synchronously and does not retain `ctx`/`cb`
-        // past this call.
-        DOMFormData__forEach(
-            form_data,
-            (&raw mut context).cast::<c_void>(),
-            for_each_thunk,
-        );
-        if context.failed {
-            // Drop the joiner (Drop runs StringJoiner::deinit) so every
-            // heap-owned slice already pushed — escaped names, non-ASCII
-            // conversions, NodeFS read_file result buffers — is freed.
-            drop(context.joiner);
-            return Blob::init_empty(global_this);
+        for_each_form_data_entry(form_data, |name, entry| context.on_entry(name, entry));
+        if context.has_lazy_part {
+            // Drop the joiner: it borrows the entries that the second walk reads.
+            drop(context);
+            let parts = FormDataPartsBuilder::build(global_this, form_data, boundary)?;
+            return Ok(webcore::body::Value::Locked(
+                FormDataParts::to_pending_value(parts, global_this),
+            ));
         }
 
         write_multipart_closing_boundary(&mut context.joiner, boundary);
@@ -942,15 +888,13 @@ impl BlobExt for Blob {
                 .unwrap_or_else(|_| bun_core::out_of_memory()),
         );
         let blob = Blob::init_with_store(store, global_this);
-        const CONTENT_TYPE_PREFIX: &[u8] = b"multipart/form-data; boundary=";
-        let mut ct = Vec::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
-        ct.extend_from_slice(CONTENT_TYPE_PREFIX);
-        ct.extend_from_slice(boundary);
         blob.content_type
-            .set(BlobContentType::Owned(std::sync::Arc::from(ct)));
+            .set(BlobContentType::Owned(std::sync::Arc::from(
+                multipart_content_type(boundary),
+            )));
         blob.content_type_was_set.set(true);
 
-        blob
+        Ok(webcore::body::Value::Blob(blob))
     }
 
     fn content_type(&self) -> &[u8] {
@@ -3507,15 +3451,14 @@ where
 // FormDataContext
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Stack-local helper for `Blob::from_dom_form_data`. `boundary` borrows the
-/// caller's `boundary_buf` and `global_this` borrows the incoming `&JSGlobalObject`;
-/// both strictly outlive this struct, so they are stored as plain references
-/// rather than raw pointers.
+/// Stack-local helper for `Blob::from_dom_form_data`: the serializer of a
+/// `FormData` whose parts are all in memory. `boundary` borrows the caller's
+/// `boundary_buf`.
 struct FormDataContext<'a> {
     joiner: StringJoiner<'a>,
     boundary: &'a [u8], // borrowed; outlives the joiner
-    failed: bool,
-    global_this: &'a JSGlobalObject,
+    /// A part is a file or an S3 object: `FormDataPartsBuilder` takes over.
+    has_lazy_part: bool,
 }
 
 /// Which piece of a `multipart/form-data` entry a string is, selecting the
@@ -3537,6 +3480,9 @@ enum FormDataComponent {
 /// so they cannot terminate the quoted-string or inject part headers. Returns
 /// `None` when no byte needs either transform so the caller can keep using the
 /// original bytes without a copy.
+// Two serializers call this. Inlined, the one for in-memory parts runs as many
+// instructions per string as it did alone.
+#[inline(always)]
 fn encode_form_data_component(bytes: &[u8], component: FormDataComponent) -> Option<Box<[u8]>> {
     let escape = component != FormDataComponent::StringValue;
     let normalize = component != FormDataComponent::Filename;
@@ -3674,75 +3620,249 @@ fn write_multipart_closing_boundary<'a, S: MultipartSink<'a>>(sink: &mut S, boun
     sink.push_borrowed(b"--\r\n");
 }
 
+fn multipart_content_type(boundary: &[u8]) -> Vec<u8> {
+    const PREFIX: &[u8] = b"multipart/form-data; boundary=";
+    let mut content_type = Vec::with_capacity(PREFIX.len() + boundary.len());
+    content_type.extend_from_slice(PREFIX);
+    content_type.extend_from_slice(boundary);
+    content_type
+}
+
 impl<'a> FormDataContext<'a> {
     fn on_entry(&mut self, name: EncodedSlice<'a>, entry: FormDataEntry<'a>) {
-        if self.failed {
+        if self.has_lazy_part {
             return;
         }
-        // Copy the borrowed refs out first (disjoint-field reads) so the
-        // long-lived `&mut self.joiner` below doesn't conflict.
-        let global_this = self.global_this;
-        let boundary = self.boundary;
+        if let FormDataEntry::File { blob, .. } = entry
+            && (blob.needs_to_read_file() || blob.is_s3())
+        {
+            self.has_lazy_part = true;
+            return;
+        }
         let joiner = &mut self.joiner;
+        if let Some(blob) = write_multipart_entry_head(joiner, self.boundary, name, entry) {
+            joiner.push(blob.shared_view());
+        }
+        write_multipart_entry_end(joiner);
+    }
+}
 
-        match write_multipart_entry_head(joiner, boundary, name, entry) {
-            None => {}
-            Some(blob) => {
-                if blob.store.get().is_some() {
-                    if blob.size.get() == MAX_SIZE {
-                        blob.resolve_size();
+/// The serializer of a `FormData` that holds a file or an S3 part. It keeps
+/// the parts and reads none of them: `FormDataParts` does that when the body
+/// is read.
+struct FormDataPartsBuilder {
+    segments: form_data_body::Segments,
+    reads_repeatably: bool,
+    error: Option<bun_sys::Error>,
+}
+
+impl<'a> MultipartSink<'a> for FormDataPartsBuilder {
+    fn push_borrowed(&mut self, bytes: &'a [u8]) {
+        self.segments.framing.extend_from_slice(bytes);
+    }
+
+    fn push_string(&mut self, string: Utf8Bytes<'a>, component: FormDataComponent) {
+        match encode_form_data_component(string.slice(), component) {
+            Some(encoded) => self.segments.framing.extend_from_slice(&encoded),
+            None => self.segments.framing.extend_from_slice(string.slice()),
+        }
+    }
+}
+
+impl FormDataPartsBuilder {
+    fn build(
+        global_this: &JSGlobalObject,
+        form_data: &mut jsc::DOMFormData,
+        boundary: &[u8],
+    ) -> JsResult<RefPtr<FormDataParts>> {
+        // A part with short names has about 160 bytes of framing.
+        let mut builder = FormDataPartsBuilder {
+            segments: form_data_body::Segments {
+                framing: Vec::with_capacity(form_data.count() * 192 + 64),
+                sources: Vec::new(),
+            },
+            reads_repeatably: true,
+            error: None,
+        };
+        for_each_form_data_entry(form_data, |name, entry| {
+            builder.on_entry(boundary, name, entry)
+        });
+        if let Some(err) = builder.error.take() {
+            return Err(global_this.throw_value(err.to_js(global_this)));
+        }
+        write_multipart_closing_boundary(&mut builder, boundary);
+        Ok(FormDataParts::new(
+            builder.segments,
+            multipart_content_type(boundary).into_boxed_slice(),
+            builder.reads_repeatably,
+        ))
+    }
+
+    fn push_source(&mut self, source: form_data_body::Source) {
+        self.segments.sources.push(form_data_body::Segment {
+            framing_end: self.segments.framing.len(),
+            source,
+        });
+    }
+
+    fn on_entry<'a>(
+        &mut self,
+        boundary: &'a [u8],
+        name: EncodedSlice<'a>,
+        entry: FormDataEntry<'a>,
+    ) {
+        if self.error.is_some() {
+            return;
+        }
+        if let Some(blob) = write_multipart_entry_head(self, boundary, name, entry)
+            && let Some(store) = blob.store.get().as_ref()
+        {
+            match &store.data {
+                store::Data::Bytes(_) => {
+                    let len = blob.shared_view().len();
+                    if len > 0 {
+                        self.push_source(form_data_body::Source::Memory {
+                            store: store.clone(),
+                            offset: blob.offset.get() as usize,
+                            len,
+                        });
                     }
-                    let store = blob
-                        .store
-                        .get()
-                        .as_deref()
-                        .expect("infallible: store present");
-                    match &store.data {
-                        store::Data::S3(_) => {
-                            // TODO: s3
-                            // we need to make this async and use download/downloadSlice
-                        }
-                        store::Data::File(file) => {
-                            // TODO: make this async + lazy
-                            // Use a fresh stack
-                            // `NodeFS` (it is stateless aside from a path scratch
-                            // buffer; a per-VM cache would be purely a perf reuse).
-                            let mut node_fs = crate::node::fs::NodeFS::default();
-                            // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
-                            let mut rf_args = crate::node::fs::args::ReadFile::default();
-                            rf_args.encoding = crate::node::types::Encoding::Buffer;
-                            rf_args.path = file.pathlike.clone();
-                            rf_args.offset = blob.offset.get();
-                            rf_args.max_size = Some(blob.size.get());
-                            let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
-                            match res {
-                                Err(err) => {
-                                    self.failed = true;
-                                    let js_err = err.to_js(global_this);
-                                    let _ = global_this.throw_value(js_err);
-                                }
-                                Ok(mut result) => {
-                                    joiner.push_cloned(result.slice());
-                                    // StringOrBuffer::Drop is a no-op for Buffer; release
-                                    // the readFile allocation explicitly.
-                                    if let crate::node::types::StringOrBuffer::Buffer(buf) =
-                                        &mut result
-                                    {
-                                        buf.destroy();
-                                    }
-                                }
-                            }
-                        }
-                        store::Data::Bytes(_) => {
-                            joiner.push(blob.shared_view());
-                        }
+                }
+                store::Data::File(file) => match Self::hold_file(file) {
+                    Err(err) => {
+                        self.error = Some(err);
+                        return;
                     }
+                    Ok((fd, reads_repeatably)) => {
+                        self.reads_repeatably &= reads_repeatably;
+                        self.push_source(form_data_body::Source::File {
+                            store: store.clone(),
+                            fd,
+                            offset: blob.offset.get(),
+                            size: blob.size.get(),
+                        });
+                    }
+                },
+                store::Data::S3(_) => {
+                    self.push_source(form_data_body::Source::S3 {
+                        store: store.clone(),
+                        offset: blob.offset.get(),
+                        size: blob.size.get(),
+                    });
                 }
             }
         }
-
-        write_multipart_entry_end(joiner);
+        write_multipart_entry_end(self);
     }
+
+    /// What body extraction does with a file part: it finds that the file is
+    /// there, and it keeps the open file of a descriptor. It does not open a
+    /// path and it reads nothing, so a pipe cannot block it. Returns the
+    /// descriptor to read from, and whether a second read gives the same bytes.
+    fn hold_file(file: &store::File) -> bun_sys::Result<(Option<bun_sys::File>, bool)> {
+        // The error of the `read` that this stands in for.
+        let directory = || bun_sys::Error::from_code(bun_sys::E::EISDIR, bun_sys::Tag::read);
+        match &file.pathlike {
+            PathOrFileDescriptor::Path(path) => {
+                let mut path_buf = bun_paths::path_buffer_pool::get();
+                let stat = match bun_sys::stat(path.slice_z(&mut path_buf)) {
+                    Ok(stat) => stat,
+                    // The error of the `open` that this stands in for.
+                    Err(err) => {
+                        return Err(bun_sys::Error {
+                            syscall: bun_sys::Tag::open,
+                            ..err
+                        }
+                        .with_path(path.slice()));
+                    }
+                };
+                if bun_sys::S::ISDIR(stat.st_mode as _) {
+                    return Err(directory());
+                }
+                Ok((None, bun_sys::S::ISREG(stat.st_mode as _)))
+            }
+            PathOrFileDescriptor::Fd(fd) => {
+                let stat = bun_sys::fstat(*fd).map_err(|err| err.with_fd(*fd))?;
+                if bun_sys::S::ISDIR(stat.st_mode as _) {
+                    return Err(directory());
+                }
+                // The part reads the file that is open now, whatever the
+                // caller does with the number afterwards. On Windows `dup`
+                // gives a HANDLE and the read goes through libuv, so libuv
+                // gets the HANDLE here: the close then releases both.
+                let duplicate = bun_sys::dup(*fd)
+                    .and_then(|duplicate| {
+                        bun_sys::FdExt::make_lib_uv_owned_for_syscall(
+                            duplicate,
+                            bun_sys::Tag::dup,
+                            bun_sys::ErrorCase::CloseOnFail,
+                        )
+                    })
+                    .map_err(|err| err.with_fd(*fd))?;
+                let fd = Some(bun_sys::File::from_fd(duplicate));
+                Ok((fd, false))
+            }
+        }
+    }
+}
+
+/// Calls `on_entry` for each entry of `form_data`, in order. The strings and
+/// the Blob of an entry are owned by the `DOMFormData`, so an entry lives as
+/// long as the borrow of it.
+fn for_each_form_data_entry<'a, F>(form_data: &'a mut jsc::DOMFormData, mut on_entry: F)
+where
+    F: FnMut(EncodedSlice<'a>, FormDataEntry<'a>),
+{
+    extern "C" fn thunk<'a, F: FnMut(EncodedSlice<'a>, FormDataEntry<'a>)>(
+        ctx_ptr: *mut c_void,
+        name_: *mut EncodedSlice,
+        value_ptr: *mut c_void,
+        filename: *mut EncodedSlice,
+        is_blob: u8,
+    ) {
+        // SAFETY: `ctx_ptr` is the `on_entry` of the caller's stack frame.
+        let on_entry = unsafe { bun_ptr::callback_ctx::<F>(ctx_ptr) };
+        let entry = if is_blob == 0 {
+            // SAFETY: when `is_blob == 0`, `value_ptr` points to an `EncodedSlice`
+            // of a string that the `DOMFormData` owns.
+            FormDataEntry::String(unsafe { *value_ptr.cast::<EncodedSlice<'a>>() })
+        } else {
+            FormDataEntry::File {
+                // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`),
+                // which the entry keeps alive.
+                blob: unsafe { &*value_ptr.cast::<Blob>() },
+                filename: if filename.is_null() {
+                    EncodedSlice::EMPTY
+                } else {
+                    // SAFETY: non-null `filename` is a valid `*EncodedSlice` of a
+                    // string that the Blob of the entry owns.
+                    unsafe { *filename.cast::<EncodedSlice<'a>>() }
+                },
+            }
+        };
+        // SAFETY: `name_` is always a valid non-null `*EncodedSlice` of a string
+        // that the `DOMFormData` owns.
+        on_entry(unsafe { *name_.cast::<EncodedSlice<'a>>() }, entry);
+    }
+    unsafe extern "C" {
+        // `this` is the `&mut DOMFormData` param (coerced); `ctx`/`cb` are
+        // stored opaquely and only used synchronously. Module-private with
+        // one call site below, so no caller-side precondition remains. Kept
+        // `*mut` (not `&mut`) to match the `bun_jsc` decl and avoid
+        // `clashing_extern_declarations`.
+        safe fn DOMFormData__forEach(
+            this: *mut jsc::DOMFormData,
+            ctx: *mut c_void,
+            // Safe fn-ptr: `thunk` is a safe `extern "C" fn` (its body
+            // localises every raw deref individually), so the callback type
+            // carries no caller-side precondition. ABI-identical to
+            // `bun_jsc`'s `ForEachFunction` alias.
+            cb: extern "C" fn(*mut c_void, *mut EncodedSlice, *mut c_void, *mut EncodedSlice, u8),
+        );
+    }
+    // C++ invokes the callback synchronously and does not retain `ctx`/`cb`
+    // past this call.
+    DOMFormData__forEach(form_data, (&raw mut on_entry).cast::<c_void>(), thunk::<F>);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

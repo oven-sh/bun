@@ -160,6 +160,7 @@ impl StaticRoute {
             // Let's let them do that.
             let body_value = response.get_body_value();
             let was_string = body_value.was_string();
+            body_value.buffer_now(global_this)?;
             body_value.to_blob_if_possible();
 
             let blob: AnyBlob = 'brk: {

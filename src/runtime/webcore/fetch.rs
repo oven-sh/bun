@@ -1089,6 +1089,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     .throw());
             }
 
+            body_value.buffer_now(global_this)?;
             body_value.to_blob_if_in_memory();
             if matches!(*body_value, BodyValue::Locked(_)) {
                 if let Some(readable) = req.get_body_readable_stream() {
@@ -1149,11 +1150,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_body None;
     }
     .unwrap_or_default();
-
-    // HTTPRequestBody::from_js() throws without returning Err; see Blob::from_dom_form_data
-    if global_this.has_exception() {
-        return Err(jsc::JsError::Thrown);
-    }
 
     // headers: Headers | undefined;
     headers = 'extract_headers: {

@@ -192,6 +192,7 @@ impl BlobOrStringOrBuffer {
                 if allow_request_response {
                     if let Some(request) = value.as_class_ref::<Request>() {
                         let body_value = request.get_body_value();
+                        body_value.buffer_now(global)?;
                         body_value.to_blob_if_possible();
 
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
@@ -207,6 +208,7 @@ impl BlobOrStringOrBuffer {
 
                     if let Some(response) = value.as_class_ref::<Response>() {
                         let body_value = response.get_body_value();
+                        body_value.buffer_now(global)?;
                         body_value.to_blob_if_possible();
 
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {

@@ -327,6 +327,9 @@ impl Stdio {
         body: &mut webcore::body::Value,
         is_sync: bool,
     ) -> JsResult<()> {
+        if is_sync {
+            body.buffer_now(cx.global())?;
+        }
         body.to_blob_if_possible();
 
         if let Some(blob) = body.try_use_as_any_blob() {

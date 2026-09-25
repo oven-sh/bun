@@ -1003,6 +1003,7 @@ pub enum SourceHandle {
     ServerRequestBody(crate::server::AnyRequestContext),
     S3DownloadBody(BackRef<crate::webcore::s3::client::S3DownloadStreamWrapper>),
     HTMLRewriter(BackRef<crate::api::html_rewriter::RewriterPipe>),
+    FormDataBody(BackRef<crate::webcore::form_data_body::FormDataParts>),
     /// `bun:internal-for-testing` only: `ready()` re-enters the stream's
     /// `on_cancel`, making consumed-during-`signal_drained` re-entrancy
     /// deterministic for tests.
@@ -1047,6 +1048,7 @@ impl SourceHandle {
             SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
             SourceHandle::ServerRequestBody(_) => {}
             SourceHandle::HTMLRewriter(p) => p.on_close(err),
+            SourceHandle::FormDataBody(p) => p.on_stream_cancelled(),
             SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
@@ -1107,7 +1109,9 @@ impl SourceHandle {
                 p.on_cancel();
             }
             // Remaining variants leave `on_ready` at the trait default (no-op).
-            SourceHandle::Subprocess(_) | SourceHandle::ShellWritable(_) => {}
+            SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::FormDataBody(_) => {}
         }
     }
 
@@ -1118,6 +1122,7 @@ impl SourceHandle {
         match self {
             SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
             SourceHandle::S3DownloadBody(p) => p.on_stream_collected(),
+            SourceHandle::FormDataBody(p) => p.on_stream_collected(),
             SourceHandle::None
             | SourceHandle::JSController(_)
             | SourceHandle::ServerRequestBody(_)
@@ -1143,6 +1148,7 @@ impl SourceHandle {
             | SourceHandle::Subprocess(_)
             | SourceHandle::ShellWritable(_)
             | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::FormDataBody(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }

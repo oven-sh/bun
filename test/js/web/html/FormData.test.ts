@@ -1,5 +1,7 @@
+import { S3Client } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, tempDir } from "harness";
+import { closeSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -599,6 +601,391 @@ describe("FormData", () => {
       const formData = new FormData();
       formData.append("foo", Bun.file("missing"));
       expect(() => new Response(formData)).toThrow();
+    });
+  });
+
+  describe("a file or S3 part is read when the body is read", () => {
+    // The parts of a multipart body, by name.
+    async function partsOf(body: Response | Request) {
+      const parts: Record<string, string> = {};
+      for (const [name, value] of await body.formData()) {
+        parts[name] = typeof value === "string" ? value : await value.text();
+      }
+      return parts;
+    }
+
+    function formOf(parts: Record<string, Blob>) {
+      const form = new FormData();
+      form.append("before", "a string");
+      for (const [name, part] of Object.entries(parts)) form.append(name, part, name);
+      form.append("after", new Blob(["in memory"]), "after");
+      return form;
+    }
+
+    test.skipIf(isWindows)("a FIFO part with no writer does not block the constructor", async () => {
+      using dir = tempDir("formdata-fifo", {});
+      const fifo = join(String(dir), "fifo");
+      expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+
+      await using reader = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const form = new FormData();
+            form.append("fifo", Bun.file(process.argv[1]), "fifo");
+            const response = new Response(form);
+            console.log("constructed");
+            const parsed = await response.formData();
+            console.log(await parsed.get("fifo").text());
+          `,
+          fifo,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+
+      // The writer starts only after the constructor returned.
+      const stdout = reader.stdout.getReader();
+      const decoder = new TextDecoder();
+      let output = "";
+      while (!output.includes("constructed\n")) {
+        const { value, done } = await stdout.read();
+        if (done) break;
+        output += decoder.decode(value, { stream: true });
+      }
+      expect(output).toBe("constructed\n");
+
+      await using writer = Bun.spawn({
+        cmd: [bunExe(), "-e", `require("fs").writeFileSync(process.argv[1], "from the writer")`, fifo],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      while (true) {
+        const { value, done } = await stdout.read();
+        if (done) break;
+        output += decoder.decode(value, { stream: true });
+      }
+
+      expect({
+        output,
+        reader: [await reader.exited, reader.signalCode],
+        writer: [await writer.exited, writer.signalCode],
+      }).toEqual({
+        output: "constructed\nfrom the writer\n",
+        reader: [0, null],
+        writer: [0, null],
+      });
+    });
+
+    test("a Bun.stdin part that is a pipe arrives whole", async () => {
+      const input = Buffer.alloc(300_000, "0123456789abcdef");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const form = new FormData();
+            form.append("stdin", Bun.stdin, "stdin");
+            const parsed = await new Response(form).formData();
+            const bytes = await parsed.get("stdin").bytes();
+            console.log(bytes.length, String(Bun.hash(bytes)));
+          `,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write(input);
+      await proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: `${input.length} ${Bun.hash(input)}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("an S3 part is downloaded", async () => {
+      const object = "0123456789";
+      const requests: [string, string, string | null][] = [];
+      using server = Bun.serve({
+        port: 0,
+        fetch(request) {
+          const range = request.headers.get("range");
+          requests.push([request.method, new URL(request.url).pathname, range]);
+          const match = /^bytes=(\d+)-(\d+)$/.exec(range ?? "");
+          if (!match) return new Response(object);
+          return new Response(object.slice(Number(match[1]), Number(match[2]) + 1), { status: 206 });
+        },
+      });
+      const s3 = new S3Client({
+        endpoint: server.url.href,
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        bucket: "bucket",
+      });
+
+      const response = new Response(formOf({ whole: s3.file("key"), slice: s3.file("key").slice(2, 5) }));
+      // Body extraction sends no request.
+      expect(requests).toEqual([]);
+
+      expect(await partsOf(response)).toEqual({
+        before: "a string",
+        whole: "0123456789",
+        slice: "234",
+        after: "in memory",
+      });
+      expect(requests).toEqual([
+        ["GET", "/bucket/key", null],
+        ["GET", "/bucket/key", "bytes=2-4"],
+      ]);
+    });
+
+    test("an S3 part that fails rejects the read of the body", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            `<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code><Message>The specified key does not exist.</Message></Error>`,
+            { status: 404, headers: { "content-type": "application/xml" } },
+          ),
+      });
+      const s3 = new S3Client({
+        endpoint: server.url.href,
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        bucket: "bucket",
+      });
+      const response = new Response(formOf({ missing: s3.file("key") }));
+      expect(
+        await response.text().then(
+          () => "resolved",
+          error => error.code,
+        ),
+      ).toBe("NoSuchKey");
+    });
+
+    test("a part has the bytes that the file has when the body is read", async () => {
+      using dir = tempDir("formdata-lazy", { "file.txt": "at construction" });
+      const path = join(String(dir), "file.txt");
+      const response = new Response(formOf({ file: Bun.file(path) }));
+      writeFileSync(path, "at the read");
+      expect(await partsOf(response)).toEqual({
+        before: "a string",
+        file: "at the read",
+        after: "in memory",
+      });
+    });
+
+    test.skipIf(!isLinux)("a procfs part is not empty", async () => {
+      const response = new Response(formOf({ cmdline: Bun.file("/proc/self/cmdline") }));
+      expect((await partsOf(response)).cmdline).toBe(readFileSync("/proc/self/cmdline", "utf8"));
+    });
+
+    test.skipIf(!isPosix)("a device part gives what a read of the device gives", async () => {
+      const response = new Response(formOf({ null: Bun.file("/dev/null"), zero: Bun.file("/dev/zero").slice(0, 4) }));
+      expect(await partsOf(response)).toEqual({
+        before: "a string",
+        null: "",
+        zero: "\0\0\0\0",
+        after: "in memory",
+      });
+    });
+
+    describe("a file descriptor part", () => {
+      function cursorAt7(path: string) {
+        const fd = openSync(path, "r");
+        readSync(fd, Buffer.alloc(7), 0, 7, null);
+        return fd;
+      }
+
+      test("reads from the cursor of the descriptor", async () => {
+        using dir = tempDir("formdata-fd", { "file.txt": "0123456789" });
+        const fd = cursorAt7(join(String(dir), "file.txt"));
+        try {
+          const parts = await partsOf(new Response(formOf({ first: Bun.file(fd), second: Bun.file(fd) })));
+          expect([parts.first, parts.second]).toEqual(["789", ""]);
+        } finally {
+          closeSync(fd);
+        }
+      });
+
+      // On Windows, blob.text() reads a descriptor from position 0.
+      test.skipIf(isWindows)("has the bytes that blob.text() gives", async () => {
+        using dir = tempDir("formdata-fd", { "file.txt": "0123456789" });
+        const path = join(String(dir), "file.txt");
+        let fd = cursorAt7(path);
+        const fromBlob = await Bun.file(fd).text();
+        closeSync(fd);
+        fd = cursorAt7(path);
+        try {
+          expect((await partsOf(new Response(formOf({ file: Bun.file(fd) })))).file).toBe(fromBlob);
+        } finally {
+          closeSync(fd);
+        }
+      });
+
+      test("reads the file that was open at construction", async () => {
+        using dir = tempDir("formdata-fd", { "file.txt": "the file", "other.txt": "another file" });
+        const fd = openSync(join(String(dir), "file.txt"), "r");
+        const response = new Response(formOf({ file: Bun.file(fd) }));
+        closeSync(fd);
+        // The number of the closed descriptor goes to the next open.
+        const other = openSync(join(String(dir), "other.txt"), "r");
+        try {
+          expect(other).toBe(fd);
+          expect((await partsOf(response)).file).toBe("the file");
+        } finally {
+          closeSync(other);
+        }
+      });
+    });
+
+    describe("a consumer gets the same body as before", () => {
+      const content = "0123456789";
+      function fixture() {
+        const dir = tempDir("formdata-consumers", { "file.txt": content });
+        const path = join(String(dir), "file.txt");
+        return {
+          path,
+          form: () => formOf({ file: Bun.file(path), slice: Bun.file(path).slice(2, 5) }),
+          [Symbol.dispose]: () => dir[Symbol.dispose](),
+        };
+      }
+      const expected = { before: "a string", file: content, slice: "234", after: "in memory" };
+      // A body is what a multipart parser makes of the text and its Content-Type.
+      const parse = (text: string | Uint8Array, contentType: string | null) =>
+        partsOf(new Response(text, { headers: { "content-type": contentType! } }));
+
+      test.each(["text", "bytes", "arrayBuffer", "blob", "body"] as const)("%s", async method => {
+        using files = fixture();
+        for (const body of [
+          new Response(files.form()),
+          new Request("http://example.com", { method: "POST", body: files.form() }),
+        ]) {
+          const contentType = body.headers.get("content-type");
+          expect(contentType).toStartWith("multipart/form-data; boundary=");
+          let bytes: Uint8Array;
+          if (method === "body") {
+            bytes = await new Response(body.body).bytes();
+          } else if (method === "blob") {
+            const blob = await body.blob();
+            expect(blob.type).toBe(contentType!);
+            bytes = await blob.bytes();
+          } else {
+            bytes = new Uint8Array(await new Response(await body[method]()).arrayBuffer());
+          }
+          expect(await parse(bytes, contentType)).toEqual(expected);
+          expect(body.bodyUsed).toBe(true);
+        }
+      });
+
+      test("clone() of a body that nothing has read", async () => {
+        using files = fixture();
+        const response = new Response(files.form());
+        const clone = response.clone();
+        expect(clone.headers.get("content-type")).toBe(response.headers.get("content-type"));
+        expect([await partsOf(response), await partsOf(clone)]).toEqual([expected, expected]);
+      });
+
+      test("Bun.serve sends a Content-Length", async () => {
+        using files = fixture();
+        using server = Bun.serve({
+          port: 0,
+          routes: { "/static": new Response(files.form()) },
+          fetch: () => new Response(files.form()),
+        });
+        for (const path of ["/", "/static"]) {
+          const response = await fetch(new URL(path, server.url));
+          const text = await response.text();
+          expect({
+            status: response.status,
+            transferEncoding: response.headers.get("transfer-encoding"),
+            length: Number(response.headers.get("content-length")) === text.length,
+            parts: await parse(text, response.headers.get("content-type")),
+          }).toEqual({ status: 200, transferEncoding: null, length: true, parts: expected });
+
+          // HEAD has the framing of GET.
+          const head = await fetch(new URL(path, server.url), { method: "HEAD" });
+          expect({
+            status: head.status,
+            transferEncoding: head.headers.get("transfer-encoding"),
+            length: head.headers.get("content-length"),
+            text: await head.text(),
+          }).toEqual({
+            status: 200,
+            transferEncoding: null,
+            length: response.headers.get("content-length"),
+            text: "",
+          });
+        }
+      });
+
+      test("fetch sends a Content-Length, also after a 307", async () => {
+        using files = fixture();
+        const received: unknown[] = [];
+        using server = Bun.serve({
+          port: 0,
+          async fetch(request) {
+            const { pathname } = new URL(request.url);
+            const text = await request.text();
+            received.push({
+              pathname,
+              length: Number(request.headers.get("content-length")) === text.length,
+              transferEncoding: request.headers.get("transfer-encoding"),
+              parts: await parse(text, request.headers.get("content-type")),
+            });
+            if (pathname.startsWith("/redirect")) {
+              return new Response(null, {
+                status: 307,
+                headers: { location: pathname.replace("/redirect", "/final") },
+              });
+            }
+            return new Response("ok");
+          },
+        });
+        const hop = (pathname: string) => ({ pathname, length: true, transferEncoding: null, parts: expected });
+
+        const fromInit = await fetch(new URL("/redirect/init", server.url), { method: "POST", body: files.form() });
+        const fromRequest = await fetch(
+          new Request(new URL("/redirect/request", server.url), { method: "POST", body: files.form() }),
+        );
+        expect([await fromInit.text(), await fromRequest.text()]).toEqual(["ok", "ok"]);
+        expect(received).toEqual([
+          hop("/redirect/init"),
+          hop("/final/init"),
+          hop("/redirect/request"),
+          hop("/final/request"),
+        ]);
+      });
+
+      test.skipIf(isWindows)("Bun.spawnSync stdin and a shell redirect", async () => {
+        using files = fixture();
+
+        const toSpawn = new Response(files.form());
+        const spawnType = toSpawn.headers.get("content-type");
+        const spawned = Bun.spawnSync({ cmd: ["cat"], stdin: toSpawn });
+        expect(await parse(spawned.stdout, spawnType)).toEqual(expected);
+
+        const toShell = new Response(files.form());
+        const shellType = toShell.headers.get("content-type");
+        expect(await parse(await Bun.$`cat < ${toShell}`.text(), shellType)).toEqual(expected);
+      });
+
+      test("Bun.write", async () => {
+        using files = fixture();
+        using dir = tempDir("formdata-write", {});
+        const destination = join(String(dir), "body");
+        const response = new Response(files.form());
+        const contentType = response.headers.get("content-type");
+        const written = await Bun.write(destination, response);
+        const bytes = readFileSync(destination);
+        expect(written).toBe(bytes.length);
+        expect(await parse(bytes, contentType)).toEqual(expected);
+      });
     });
   });
 

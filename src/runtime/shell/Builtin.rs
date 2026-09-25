@@ -727,6 +727,9 @@ impl Builtin {
                     // SAFETY: returned a live JSC-owned `*mut Value` borrowed
                     // from a Response/Request wrapper.
                     let body = unsafe { &mut *body };
+                    if body.buffer_now(global).is_err() {
+                        return Some(Yield::Failed(cmd));
+                    }
                     let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
                         if !b.needs_to_read_file());
                     if (redirect.stdout() || redirect.stderr()) && !is_file_blob {

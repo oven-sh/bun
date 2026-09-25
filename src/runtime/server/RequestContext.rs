@@ -2475,6 +2475,32 @@ where
         // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
     }
 
+    /// `FormDataParts::read_into` callback shape: the body of a HEAD response was read.
+    fn on_form_data_size_resolved(this: NonNull<c_void>, value: &mut Body::Value) {
+        let read_ref = RequestContextRef::adopt(this.cast::<Self>().as_ptr());
+        let this = read_ref.ctx();
+        if this.is_aborted_or_ended() {
+            return;
+        }
+        if let Body::Value::Error(err) = value {
+            let js_err = err.to_js(this.server().global_this());
+            this.run_error_handler(js_err);
+            return;
+        }
+        if let Some(resp) = this.resp.get() {
+            // The Content-Type comes from the blob, as for GET.
+            this.blob.set(value.use_as_any_blob());
+            let mut pair = HeaderResponseSizePair {
+                this,
+                size: this.blob.get().size() as _,
+            };
+            resp.run_corked_with_type(
+                |p| Self::do_render_head_response_after_s3_size_resolved(p),
+                &raw mut pair,
+            );
+        }
+    }
+
     /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsResult<()>`.
     fn on_s3_size_resolved_thunk(
         result: S3::simple_request::S3StatResult<'_>,
@@ -2644,7 +2670,20 @@ where
                 }
                 this.end_without_body(this.should_close_connection());
             }
-            Body::Value::Locked(_) => {
+            Body::Value::Locked(lock) => {
+                if let Some(parts) = lock.form_data.clone().filter(|parts| parts.is_unread()) {
+                    // A `FormData` with a file part: GET sends a Content-Length
+                    // that only the read gives. Ref for the read; adopted and
+                    // released by `on_form_data_size_resolved`.
+                    this.ref_();
+                    *response.get_body_value() = Body::Value::Used;
+                    parts.read_into(
+                        &global_this.js_thread(this.script_context()),
+                        Self::on_form_data_size_resolved,
+                        NonNull::new(this.as_ctx_ptr().cast::<c_void>()).unwrap(),
+                    );
+                    return;
+                }
                 this.render_metadata();
                 if !MUX {
                     // SAFETY: FFI handle
@@ -3244,6 +3283,21 @@ where
                             return;
                         }
                     }
+                }
+
+                if let Some(parts) = lock.form_data.clone().filter(|parts| parts.is_unread()) {
+                    // A `FormData` with a file part: take the whole body, so
+                    // that the response has a Content-Length. The callback
+                    // owns a +1 on `this`, released by `do_render_with_body_locked`.
+                    this.ref_();
+                    this.flags.set_has_marked_pending(true);
+                    *value = Body::Value::Used;
+                    parts.read_into(
+                        &global_this.js_thread(this.script_context()),
+                        Self::do_render_with_body_locked,
+                        NonNull::new(this.as_ctx_ptr().cast::<c_void>()).unwrap(),
+                    );
+                    return;
                 }
 
                 if lock.on_receive_value.is_some() || lock.task.is_some() {

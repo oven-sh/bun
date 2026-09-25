@@ -256,6 +256,7 @@ impl HTTPRequestBody {
                 )
                 .throw());
         }
+        body_value.buffer_now(cx.global())?;
         body_value.to_blob_if_in_memory();
         if let BodyValue::Locked(locked) = &mut body_value {
             if locked.readable.has() {

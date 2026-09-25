@@ -262,6 +262,9 @@ impl Request {
                 BodyValue::Blob(blob) => {
                     Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice()))
                 }
+                BodyValue::Locked(locked) if locked.form_data.is_some() => Some(
+                    std::ptr::from_ref::<[u8]>(self.body_value().implied_content_type()),
+                ),
                 BodyValue::Locked(locked) => match locked.readable.get() {
                     Some(readable) => match readable.ptr {
                         crate::webcore::readable_stream::Source::Blob(blob) => {
@@ -356,11 +359,9 @@ impl Request {
             }
         }
 
-        if let BodyValue::Blob(blob) = self.body_value() {
-            let ct = blob.content_type_slice();
-            if !ct.is_empty() {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(ct)));
-            }
+        let ct = self.body_value().implied_content_type();
+        if !ct.is_empty() {
+            return Ok(Some(bun_core::Utf8Bytes::Borrowed(ct)));
         }
 
         Ok(None)
@@ -1226,11 +1227,6 @@ impl Request {
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),
                 }
-
-                // BodyValue::from_js() throws without returning Err; see Blob::from_dom_form_data
-                if cx.global().has_exception() {
-                    bail!(Err(JsError::Thrown));
-                }
             }
 
             if !fields.contains(Fields::Url) {
@@ -1400,27 +1396,25 @@ impl Request {
 
         req.url.set(href);
 
-        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
-            if let BodyValue::Blob(blob) = req.body_value() {
-                let ct: &[u8] = blob.content_type_slice();
-                if !ct.is_empty()
-                    && !req
-                        .headers_mut()
-                        .as_mut()
-                        .unwrap()
-                        .fast_has(HTTPHeaderName::ContentType)
-                {
-                    // Reshaped for borrowck — split borrow of req.body and req.headers
-                    let ct_ptr: *const [u8] = ct;
-                    match req.headers_mut().as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        &BunString::ascii(unsafe { &*ct_ptr }),
-                        cx.global(),
-                    ) {
-                        Ok(()) => {}
-                        Err(e) => bail!(Err(e)),
-                    }
+        if req.headers.get().is_some() {
+            let ct: &[u8] = req.body_value().implied_content_type();
+            if !ct.is_empty()
+                && !req
+                    .headers_mut()
+                    .as_mut()
+                    .unwrap()
+                    .fast_has(HTTPHeaderName::ContentType)
+            {
+                // Reshaped for borrowck: split borrow of req.body and req.headers
+                let ct_ptr: *const [u8] = ct;
+                match req.headers_mut().as_mut().unwrap().put(
+                    HTTPHeaderName::ContentType,
+                    // SAFETY: ct_ptr borrows req.body which is not mutated here.
+                    &BunString::ascii(unsafe { &*ct_ptr }),
+                    cx.global(),
+                ) {
+                    Ok(()) => {}
+                    Err(e) => bail!(Err(e)),
                 }
             }
         }

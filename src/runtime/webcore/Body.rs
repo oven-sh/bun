@@ -17,6 +17,7 @@ use bun_http_types::MimeType::MimeType;
 use crate::jsc::HTTPHeaderName;
 pub(crate) use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
+use crate::webcore::form_data_body::FormDataParts;
 use bun_core::String as BunString;
 use bun_core::{Utf8Bytes, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::JsCell;
@@ -240,6 +241,10 @@ pub struct PendingValue {
     /// Upstream producer to notify on cancel/drain/consumer-attach; forwarded
     /// to the `NewSource` when the locked body is realised as a native stream.
     pub producer: streams::SourceHandle,
+    /// The parts of the `FormData` that this body was extracted from, when a
+    /// part is a file or an S3 object. They give the bytes when the body is
+    /// read, and the Content-Type at any time.
+    pub(crate) form_data: Option<bun_ptr::RefPtr<FormDataParts>>,
     pub(crate) size_hint: blob::SizeType,
 
     pub(crate) deinit: bool,
@@ -269,6 +274,7 @@ impl Default for PendingValue {
             on_start_streaming: None,
             on_readable_stream_available: None,
             producer: streams::SourceHandle::None,
+            form_data: None,
             size_hint: 0,
             deinit: false,
             action: Action::None,
@@ -446,6 +452,13 @@ impl PendingValue {
             }
         }
 
+        if let Some(parts) = self.form_data.clone().filter(|parts| parts.is_unread()) {
+            // The parts take the consumer with them and settle it with no way
+            // back to this body, which stays locked by `action`.
+            self.detach_producer();
+            return parts.read_into_promise(global_this, self.action.take_for_consumer());
+        }
+
         {
             let promise = JSPromise::create(global_this);
             let promise_value = promise.to_js();
@@ -476,6 +489,20 @@ pub(crate) enum Action {
 impl Action {
     pub(crate) fn is_none(&self) -> bool {
         matches!(self, Action::None)
+    }
+
+    /// The action for a consumer that settles away from this body. The tag
+    /// stays behind, so the body still counts as read.
+    fn take_for_consumer(&mut self) -> Action {
+        match self {
+            Action::None => Action::None,
+            Action::GetText => Action::GetText,
+            Action::GetJSON => Action::GetJSON,
+            Action::GetArrayBuffer => Action::GetArrayBuffer,
+            Action::GetBytes => Action::GetBytes,
+            Action::GetBlob => Action::GetBlob,
+            Action::GetFormData(form_data) => Action::GetFormData(form_data.take()),
+        }
     }
 }
 
@@ -719,6 +746,39 @@ impl Value {
 }
 
 impl Value {
+    /// The Content-Type that the body gives to headers that have none.
+    pub(crate) fn implied_content_type(&self) -> &[u8] {
+        match self {
+            Value::Blob(blob) => blob.content_type_slice(),
+            Value::Locked(locked) => locked
+                .form_data
+                .as_deref()
+                .map_or(b"", FormDataParts::content_type),
+            _ => b"",
+        }
+    }
+
+    /// For a consumer that must have the bytes before it returns: reads the
+    /// file parts of a `FormData` body on this thread. Every other consumer
+    /// reads them off this thread.
+    pub(crate) fn buffer_now(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        let Value::Locked(locked) = self else {
+            return Ok(());
+        };
+        if locked.readable.has()
+            || locked.promise.is_some()
+            || !locked.action.is_none()
+            || locked.on_receive_value.is_some()
+        {
+            return Ok(());
+        }
+        let Some(parts) = locked.form_data.clone().filter(|parts| parts.is_unread()) else {
+            return Ok(());
+        };
+        *self = Value::Blob(parts.read_now(global)?);
+        Ok(())
+    }
+
     pub(crate) fn to_blob_if_possible(&mut self) {
         if let Value::WTFStringImpl(str) = *self {
             if let Utf8Bytes::Owned(bytes) = wtf_impl(&str).to_utf8() {
@@ -986,9 +1046,7 @@ impl Value {
 
         if let Some(form_data) = as_dom_form_data(value) {
             // SAFETY: shim returns a live JSC heap cell.
-            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, unsafe {
-                &mut *form_data
-            })));
+            return Blob::from_dom_form_data(global_this, unsafe { &mut *form_data });
         }
 
         if let Some(search_params) = as_url_search_params(value) {
@@ -1398,6 +1456,8 @@ impl Value {
     // (idempotent — no double-free).
     pub fn reset(&mut self) {
         if let Value::Locked(locked) = self {
+            // `Response::destroy` frees the body with no drop glue after this.
+            locked.form_data = None;
             // Locked stays Locked (callers may still inspect the variant after
             // reset()); flip the `deinit` latch so Drop is a no-op afterwards.
             if !locked.deinit {
@@ -1461,6 +1521,7 @@ impl Value {
                 locked.readable = webcore::readable_stream::Strong::init(rs0, cx.global());
                 return Ok(Value::Locked(PendingValue {
                     readable: webcore::readable_stream::Strong::init(rs1, cx.global()),
+                    form_data: locked.form_data.clone(),
                     ..PendingValue::new(cx.global())
                 }));
             }
@@ -1472,6 +1533,7 @@ impl Value {
         if let Some(readable) = locked.readable.tee(cx.global())? {
             return Ok(Value::Locked(PendingValue {
                 readable: webcore::readable_stream::Strong::init(readable, cx.global()),
+                form_data: locked.form_data.clone(),
                 ..PendingValue::new(cx.global())
             }));
         }
@@ -1543,6 +1605,7 @@ impl Value {
 
         Ok(Value::Locked(PendingValue {
             readable: webcore::readable_stream::Strong::init(teed, cx.global()),
+            form_data: locked.form_data.clone(),
             ..PendingValue::new(cx.global())
         }))
     }
@@ -1562,6 +1625,18 @@ impl Value {
         // must then drop its cached `.body` (`sync_body_stream_caches`).
         // Anything else is teed.
         if let Value::Locked(locked) = self {
+            // The parts of a `FormData` that nothing has read give a second
+            // body with no read.
+            if !locked.readable.has()
+                && readable.is_none()
+                && locked.action.is_none()
+                && let Some(parts) = locked.form_data.as_deref().and_then(FormDataParts::dupe)
+            {
+                return Ok(Value::Locked(FormDataParts::to_pending_value(
+                    parts,
+                    cx.global(),
+                )));
+            }
             match locked.take_blob_from_unread_stream(cx.global(), readable.as_deref().copied()) {
                 Some(blob) => *self = Value::from(blob),
                 None => return self.tee(cx, readable),

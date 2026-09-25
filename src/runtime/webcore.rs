@@ -277,6 +277,9 @@ pub(crate) mod prompt;
 #[path = "webcore/FormData.rs"]
 pub(crate) mod form_data;
 
+#[path = "webcore/FormDataBody.rs"]
+pub(crate) mod form_data_body;
+
 #[path = "webcore/ScriptExecutionContext.rs"]
 pub(crate) mod script_execution_context;
 

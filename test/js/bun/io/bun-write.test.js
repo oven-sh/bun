@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -1484,6 +1485,285 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     Bun.gc(true);
 
     expect(f.name).toBe(filePath);
+  });
+
+  // A Bun.file() handle remembers the file type after its first stat. A small write is made on
+  // the calling thread whatever the handle remembers, so the bytes are in the file when write()
+  // returns. On Windows every write goes through the libuv pool.
+  describe.skipIf(isWindows)("Bun.write to a Bun.file() handle that was used before", () => {
+    const old = "0123456789";
+    // All but the last three stat the file.
+    const firstUses = [
+      ["f.size", f => f.size],
+      ["await f.exists()", f => f.exists()],
+      ["f.lastModified", f => f.lastModified],
+      ["structuredClone(f)", f => structuredClone(f)],
+      ["new Blob([f]).size", f => new Blob([f]).size],
+      ["new Response(f).clone()", f => new Response(f).clone()],
+      ["(await new Response(f).blob()).size", async f => (await new Response(f).blob()).size],
+      [
+        "one read of new Response(f).body",
+        async f => {
+          const reader = new Response(f).body.getReader();
+          await reader.read();
+          await reader.cancel();
+        },
+      ],
+      [
+        "a FormData body that holds f",
+        async f => {
+          const form = new FormData();
+          form.append("file", f);
+          await new Response(form).arrayBuffer();
+        },
+      ],
+      ["await f.text()", f => f.text()],
+      ["await f.stat()", f => f.stat()],
+      ["no other use", f => {}],
+    ];
+
+    it.each(firstUses)("a small write is complete when write() returns, after %s", async (_, use) => {
+      using dir = tempDir("bun-write-first-use", {});
+      const cells = [];
+      const expected = [];
+      for (const destination of ["Bun.file(path)", "Bun.file(path).slice(0, 2)", "Bun.file(fd)"]) {
+        for (const method of ["Bun.write(f, data)", "f.write(data)"]) {
+          for (const data of ["string", "Uint8Array"]) {
+            const file = join(String(dir), `${cells.length}.txt`);
+            fs.writeFileSync(file, old);
+            // "a+" appends, so a first use that reads through the descriptor does not move the write.
+            const fd = destination === "Bun.file(fd)" ? fs.openSync(file, "a+") : undefined;
+            try {
+              let f = Bun.file(fd ?? file);
+              await use(f);
+              if (destination === "Bun.file(path).slice(0, 2)") f = f.slice(0, 2);
+              const payload = data === "string" ? "NEW" : new TextEncoder().encode("NEW");
+              const promise = method === "f.write(data)" ? f.write(payload) : Bun.write(f, payload);
+              const status = Bun.peek.status(promise);
+              const written = await promise;
+              cells.push({ destination, method, data, status, written, content: fs.readFileSync(file, "utf8") });
+            } finally {
+              if (fd !== undefined) fs.closeSync(fd);
+            }
+            const content = fd === undefined ? "NEW" : old + "NEW";
+            expected.push({ destination, method, data, status: "fulfilled", written: 3, content });
+          }
+        }
+      }
+      expect(cells).toEqual(expected);
+    });
+
+    it.each(["string", "Uint8Array"])("a %s of 256 KiB or more still goes to the thread pool", async data => {
+      using dir = tempDir("bun-write-size-limit", {});
+      const results = [];
+      for (const length of [256 * 1024 - 1, 256 * 1024]) {
+        const file = join(String(dir), `${length}.txt`);
+        fs.writeFileSync(file, old);
+        const f = Bun.file(file);
+        f.size;
+        const payload = data === "string" ? Buffer.alloc(length, "a").toString() : new Uint8Array(length);
+        const promise = Bun.write(f, payload);
+        const status = Bun.peek.status(promise);
+        results.push({ length, status, written: await promise, size: fs.statSync(file).size });
+      }
+      expect(results).toEqual([
+        { length: 262143, status: "fulfilled", written: 262143, size: 262143 },
+        { length: 262144, status: "pending", written: 262144, size: 262144 },
+      ]);
+    });
+
+    // The thread pool preallocates the file for a payload over 1024 bytes. On a descriptor opened
+    // for append that grows the file first, and the payload then lands after the NUL bytes.
+    it("a 2000-byte string to a descriptor opened for append is complete when write() returns", async () => {
+      using dir = tempDir("bun-write-append-fd", { "log.txt": old });
+      const file = join(String(dir), "log.txt");
+      const payload = Buffer.alloc(2000, "a").toString();
+      const fd = fs.openSync(file, "a");
+      let status, written;
+      try {
+        const f = Bun.file(fd);
+        f.size;
+        const promise = Bun.write(f, payload);
+        status = Bun.peek.status(promise);
+        written = await promise;
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect({ status, written, content: fs.readFileSync(file, "utf8") }).toEqual({
+        status: "fulfilled",
+        written: 2000,
+        content: old + payload,
+      });
+    });
+
+    it("five strings to one file descriptor are complete when write() returns, in call order", async () => {
+      using dir = tempDir("bun-write-fd-order", { "out.txt": "" });
+      const file = join(String(dir), "out.txt");
+      const fd = fs.openSync(file, "r+");
+      let statuses;
+      try {
+        const f = Bun.file(fd);
+        f.size;
+        const promises = [0, 1, 2, 3, 4].map(i => Bun.write(f, `C${i}\n`));
+        statuses = promises.map(promise => Bun.peek.status(promise));
+        await Promise.all(promises);
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect({ statuses, content: fs.readFileSync(file, "utf8") }).toEqual({
+        statuses: ["fulfilled", "fulfilled", "fulfilled", "fulfilled", "fulfilled"],
+        content: "C0\nC1\nC2\nC3\nC4\n",
+      });
+    });
+
+    // Bun.stdout and Bun.stderr know the type of their descriptor from the start.
+    it("strings to Bun.stdout and Bun.stderr on a regular file are in it at process.exit(), in call order", async () => {
+      using dir = tempDir("bun-write-stdio-file", {});
+      const out = join(String(dir), "out.txt");
+      const err = join(String(dir), "err.txt");
+      const script = `
+        const promises = [];
+        for (let i = 0; i < 5; i++) {
+          promises.push(Bun.write(Bun.stdout, "out " + i + "\\n"), Bun.write(Bun.stderr, "err " + i + "\\n"));
+        }
+        process.exit(promises.filter(promise => Bun.peek.status(promise) !== "fulfilled").length);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: Bun.file(out),
+        stderr: Bun.file(err),
+      });
+      const exitCode = await proc.exited;
+
+      expect({ out: fs.readFileSync(out, "utf8"), err: fs.readFileSync(err, "utf8") }).toEqual({
+        out: "out 0\nout 1\nout 2\nout 3\nout 4\n",
+        err: "err 0\nerr 1\nerr 2\nerr 3\nerr 4\n",
+      });
+      // The exit code is the number of writes that were still pending at the exit.
+      expect(exitCode).toBe(0);
+    });
+
+    // Under `ulimit -f 1` a file can hold 512 bytes, so the write of 2000 bytes fails with EFBIG.
+    // Linux writes the first 512 bytes before it fails. BSD kernels refuse the whole write.
+    it.skipIf(!isLinux)("a small write that fails does the same as on a handle with no stat", async () => {
+      const cells = ["no stat, string", "no stat, Uint8Array", "f.size, string", "f.size, Uint8Array"];
+      using dir = tempDir(
+        "bun-write-file-size-limit",
+        Object.fromEntries(cells.map((_, i) => [`${i}.bin`, Buffer.alloc(3000, "O").toString()])),
+      );
+      const script = `
+        const fs = require("fs");
+        // The default action of SIGXFSZ ends the process before write() returns the error.
+        process.on("SIGXFSZ", () => {});
+        const results = [];
+        for (const [i, cell] of ${JSON.stringify(cells)}.entries()) {
+          const file = ${JSON.stringify(String(dir))} + "/" + i + ".bin";
+          const f = Bun.file(file);
+          if (cell.startsWith("f.size")) f.size;
+          const payload = cell.endsWith("string") ? Buffer.alloc(2000, "N").toString() : new Uint8Array(2000).fill(78);
+          const promise = Bun.write(f, payload);
+          const status = Bun.peek.status(promise);
+          const code = await promise.then(() => "none", error => error.code);
+          const bytes = fs.readFileSync(file);
+          results.push({ status, code, size: bytes.length, written: bytes.filter(byte => byte === 78).length });
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -f 1; exec "$0" -e "$1"`, bunExe(), script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const [noStatString, noStatBytes, statString, statBytes] = JSON.parse(stdout);
+      expect({
+        codes: [noStatString.code, noStatBytes.code],
+        "f.size, string": statString,
+        "f.size, Uint8Array": statBytes,
+      }).toEqual({
+        codes: ["EFBIG", "EFBIG"],
+        "f.size, string": noStatString,
+        "f.size, Uint8Array": noStatBytes,
+      });
+    });
+
+    it("a small write is in the file when the process exits right after the call", async () => {
+      using dir = tempDir("bun-write-then-exit", Object.fromEntries(firstUses.map((_, i) => [`${i}.txt`, old])));
+      const files = firstUses.map((_, i) => join(String(dir), `${i}.txt`));
+      // The write after `f.size` is the last one before the exit. From the first write to the
+      // exit the script does no other I/O: one write to stdout there lets the thread pool catch up.
+      const script = `
+        const handles = [];
+        ${firstUses
+          .map(
+            ([, use], i) =>
+              `{ const f = Bun.file(${JSON.stringify(files[i])}); await (${use})(f); handles.unshift(f); }`,
+          )
+          .join("\n        ")}
+        let pending = 0;
+        for (const f of handles) {
+          if (Bun.peek.status(Bun.write(f, "NEW")) !== "fulfilled") pending++;
+        }
+        process.exit(pending);
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({
+        stdout,
+        stderr,
+        content: Object.fromEntries(firstUses.map(([title], i) => [title, fs.readFileSync(files[i], "utf8")])),
+      }).toEqual({
+        stdout: "",
+        stderr: "",
+        content: Object.fromEntries(firstUses.map(([title]) => [title, "NEW"])),
+      });
+      // The exit code is the number of writes that were still pending at the exit.
+      expect(exitCode).toBe(0);
+    });
+
+    // Bun.spawn gives a child a socket for stdout, so the pipe comes from sh.
+    it("a write to a pipe is complete when write() returns", async () => {
+      const script = `process.stderr.write(Bun.peek.status(Bun.write(Bun.stdout, "on stdout")))`;
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `"$BUN" -e ${JSON.stringify(script)} | cat`],
+        env: { ...bunEnv, BUN: bunExe() },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr }).toEqual({ stdout: "on stdout", stderr: "fulfilled" });
+      expect(exitCode).toBe(0);
+    });
+
+    it("a write to a terminal is complete when write() returns", async () => {
+      let output = "";
+      const { promise: sawOutput, resolve } = Promise.withResolvers();
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.exitCode = Bun.peek.status(Bun.write(Bun.stdout, "on stdout")) === "fulfilled" ? 0 : 1`,
+        ],
+        env: bunEnv,
+        terminal: {
+          data(_, chunk) {
+            output += new TextDecoder().decode(chunk);
+            if (output.includes("on stdout")) resolve();
+          },
+        },
+      });
+      const [exitCode] = await Promise.all([proc.exited, sawOutput]);
+      proc.terminal.close();
+
+      expect(output).toContain("on stdout");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

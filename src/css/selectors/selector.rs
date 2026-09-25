@@ -1107,11 +1107,12 @@ pub(crate) mod serialize {
             // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
             PseudoClass::Autofill(prefix) => write_prefixed(dest, *prefix, b"autofill")?,
 
-            PseudoClass::Local { selector } => serialize_selector(selector, dest, context, false)?,
-            PseudoClass::Global { selector } => {
-                let css_module = dest.css_module.take();
-                serialize_selector(selector, dest, context, false)?;
-                dest.css_module = css_module;
+            // The parser already scoped the classes and ids inside these: a
+            // local one is a `Ref` (printed under its generated name), a
+            // global one is a plain `Ident` (printed as written). That also
+            // covers `:local(...)` nested inside `:global(...)`.
+            PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
+                serialize_selector(selector, dest, context, false)?
             }
 
             // https://webkit.org/blog/363/styling-scrollbars/

@@ -13,6 +13,39 @@ const _adapter = Symbol("adapter");
 
 const PublicPromise = Promise;
 
+const Dequeue = require("internal/fifo");
+// Not `globalThis.queueMicrotask`, which a program can replace.
+const queueMicrotask: (callback: () => void) => void = $newCppFunction(
+  "ZigGlobalObject.cpp",
+  "Zig::functionQueueMicrotask",
+  1,
+);
+
+/// The queries that then(), catch(), finally() or run() started and that did not reach their pool yet, in start order.
+/// Every push comes with one microtask that takes one query out, so the first query is always the one whose turn it is.
+let startQueue = new Dequeue<Query<any, any>>();
+let parkedStarts = 0;
+/// The queue keeps the storage of its largest burst, so a queue that a burst made large is replaced when it is empty.
+let startQueueIsLarge = false;
+
+function handOff(query: Query<any, any>, handle: BaseQueryHandle<any>) {
+  try {
+    query[_handler](query, handle);
+  } catch (err) {
+    query[_queryStatus] |= SQLQueryStatus.error;
+    query.reject(err as Error);
+  }
+}
+
+function handOffNextStart() {
+  const query = startQueue.shift()!;
+  if (--parkedStarts === 0 && startQueueIsLarge) {
+    startQueue = new Dequeue();
+    startQueueIsLarge = false;
+  }
+  handOff(query, query[_handle]!);
+}
+
 export interface BaseQueryHandle<Connection> {
   done?(): void;
   cancel?(): void;
@@ -98,11 +131,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_results] = null;
   }
 
-  #run() {
-    const { [_handler]: handler, [_queryStatus]: status } = this;
-
+  /// Returns the handle when this call starts the query. Returns nothing when the query started before or cannot start.
+  #start() {
     if (
-      status &
+      this[_queryStatus] &
       (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
     ) {
       return;
@@ -114,49 +146,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
 
     this[_queryStatus] |= SQLQueryStatus.executed;
-    const handle = this.#getQueryHandle();
-
-    if (!handle) {
-      return this;
-    }
-
-    try {
-      return handler(this, handle);
-    } catch (err) {
-      this[_queryStatus] |= SQLQueryStatus.error;
-      this.reject(err as Error);
-    }
+    return this.#getQueryHandle();
   }
 
-  async #runAsync() {
-    const { [_handler]: handler, [_queryStatus]: status } = this;
-
-    if (
-      status &
-      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
-    ) {
-      return;
-    }
-
-    if (this[_flags] & SQLQueryFlags.notTagged) {
-      this.reject(this[_adapter].notTaggedCallError());
-      return;
-    }
-
-    this[_queryStatus] |= SQLQueryStatus.executed;
-    const handle = this.#getQueryHandle();
-
-    if (!handle) {
-      return this;
-    }
-
-    await Promise.$resolve();
-
-    try {
-      return handler(this, handle);
-    } catch (err) {
-      this[_queryStatus] |= SQLQueryStatus.error;
-      this.reject(err as Error);
+  /// The pool gets the query one promise job from now.
+  #startInNextJob() {
+    if (this.#start()) {
+      startQueue.push(this);
+      if (++parkedStarts > 1024) {
+        startQueueIsLarge = true;
+      }
+      queueMicrotask(handOffNextStart);
     }
   }
 
@@ -231,7 +231,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   execute() {
-    this.#run();
+    const handle = this.#start();
+    if (handle) {
+      handOff(this, handle);
+    }
     return this;
   }
 
@@ -240,7 +243,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       throw this[_adapter].notTaggedCallError();
     }
 
-    await this.#runAsync();
+    this.#startInNextJob();
+    // Keeps the job in which run() settles: two promise jobs after the pool gets the query.
+    await Promise.$resolve();
+    await Promise.$resolve();
     return this;
   }
 
@@ -271,23 +277,12 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return this;
   }
 
-  #runAsyncAndCatch() {
-    const runPromise = this.#runAsync();
-
-    if ($isPromise(runPromise) && runPromise !== this) {
-      runPromise.catch(() => {
-        // Error is already handled via this.reject() in #runAsync
-        // This catch is just to prevent unhandled rejection warnings
-      });
-    }
-  }
-
   then<TResult1 = T, TResult2 = never>(
     onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null,
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null,
   ): Promise<TResult1 | TResult2>;
   then() {
-    this.#runAsyncAndCatch();
+    this.#startInNextJob();
 
     const result = super.$then.$apply(this, arguments);
 
@@ -305,7 +300,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       throw this[_adapter].notTaggedCallError();
     }
 
-    this.#runAsyncAndCatch();
+    this.#startInNextJob();
 
     const result = super.catch.$apply(this, arguments);
     $pokePromiseAsHandled(result);
@@ -318,7 +313,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       throw this[_adapter].notTaggedCallError();
     }
 
-    this.#runAsyncAndCatch();
+    this.#startInNextJob();
 
     return super.finally.$apply(this, arguments);
   }

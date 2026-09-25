@@ -101,6 +101,8 @@ namespace Zig {
 
 class JSCStackTrace;
 
+JSC_DECLARE_HOST_FUNCTION(functionQueueMicrotask);
+
 using DOMGuardedObjectSet = UncheckedKeyHashSet<WebCore::DOMGuardedObject*>;
 
 class GlobalObject : public Bun::GlobalScope {

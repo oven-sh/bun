@@ -12,9 +12,29 @@ export function asyncIterator(this: Console) {
   var value: Uint8Array[];
   var value_len: number;
   var pendingChunk: Uint8Array | undefined;
+  // The reader of the iterator that owns stdin.
+  var activeReader: ReadableStreamDefaultReader | undefined;
 
   async function* ConsoleAsyncIterator() {
+    // After a `--hot` reload, the iterator that holds stdin can belong to a generation that was replaced. It is
+    // suspended and never reaches its `finally`, so the newest iterator takes the lock, as the newest `Bun.serve()`
+    // takes the port. The iterator that lost the lock then stops on a promise that never settles: `done` would run
+    // the code after a loop that did not end, and an error would be reported on each save.
+    const replaced = typeof $hotReloadGeneration !== "undefined" ? activeReader : undefined;
+    if (replaced !== undefined) {
+      activeReader = undefined;
+      replaced.releaseLock();
+    }
     var reader = stream.getReader();
+    activeReader = reader;
+    if (replaced !== undefined) {
+      // releaseLock() took the source's hold on the event loop away, and a paused `process.stdin` stops the source.
+      const source = stream.$bunNativePtr;
+      if ($isObject(source)) {
+        source.updateRef(true);
+        source.setFlowing?.(true);
+      }
+    }
     var deferredError: Error | undefined;
     try {
       if (i !== -1) {
@@ -23,6 +43,7 @@ export function asyncIterator(this: Console) {
 
         while (i !== -1) {
           yield decoder.decode(actualChunk.subarray(last, i));
+          if (reader !== activeReader) await $newPromise();
           last = i + 1;
           i = indexOf(actualChunk, last);
         }
@@ -44,6 +65,7 @@ export function asyncIterator(this: Console) {
                 process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
               ),
             );
+            if (reader !== activeReader) await $newPromise();
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -89,6 +111,7 @@ export function asyncIterator(this: Console) {
                 process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
               ),
             );
+            if (reader !== activeReader) await $newPromise();
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -99,9 +122,14 @@ export function asyncIterator(this: Console) {
         actualChunk = undefined!;
       }
     } catch (e) {
+      // The takeover released this reader, which rejected the read it waited on.
+      if (reader !== activeReader) await $newPromise();
       deferredError = e as Error;
     } finally {
-      reader.releaseLock();
+      if (reader === activeReader) {
+        activeReader = undefined;
+        reader.releaseLock();
+      }
     }
 
     if (deferredError) {

@@ -3467,6 +3467,9 @@ void GlobalObject::reload()
     if ((this->reloadCount++ + 1) % 2 == 0) {
         this->vm().heap.collectSync();
     }
+
+    // Once this is set, the reader on stdin can belong to a generation that was replaced, and the console iterator (ConsoleObject.ts) takes over from it.
+    this->putDirect(vm, WebCore::builtinNames(vm).hotReloadGenerationPrivateName(), jsNumber(static_cast<double>(this->reloadCount)));
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)

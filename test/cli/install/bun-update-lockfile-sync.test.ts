@@ -826,6 +826,39 @@ describe.concurrent("$ref overrides", () => {
     await expectInSync(dir, [""], { reinstall: true });
   });
 
+  // The overridden row belongs to the package version the update adds in this run.
+  test("bun update <name> re-resolves the overridden row of the package version it adds", async () => {
+    const overrides = { "no-deps": "$normal-dep-and-dev-dep" };
+    const deps = (range: string) => root({ dependencies: { "normal-dep-and-dev-dep": range }, overrides });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await run(dir, "update", "normal-dep-and-dev-dep");
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "normal-dep-and-dev-dep": "^1.0.2" });
+    expect((await lock(dir)).overrides).toStrictEqual({ "no-deps": "^1.0.2" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.1.0" });
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
+  test("bun update <name> re-resolves an optional row whose $name override value changed", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const deps = (tags: string) =>
+      root({ dependencies: { "duplicate-optional": "1.0.1", "dep-with-tags": tags }, overrides });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    await run(dir, "update", "dep-with-tags");
+    expect((await lock(dir)).overrides).toStrictEqual({ "no-deps": "^1.0.1" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.1.0" });
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
   test("bun update <name> --latest keeps the rows of a $name override in sync", async () => {
     const overrides = { "no-deps": "$@types/no-deps" };
     const dir = await setup({

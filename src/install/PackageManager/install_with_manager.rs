@@ -1500,16 +1500,13 @@ fn write_back_package_jsons(
         }
     }
 
-    let changed = super::package_json_write_back::edit_after_resolve(manager)?;
-    if changed.is_empty() {
+    if !super::package_json_write_back::edit_after_resolve(manager)? {
         return Ok(());
     }
-    let rows = rows_outside_synced_maps(&manager.lockfile, &changed.overridden, changed.catalogs);
+    let rows = rows_outside_synced_maps(&manager.lockfile);
     bun_output::scoped_log!(
         PackageManager,
-        "package.json write-back changed {} override names (catalogs: {}); {} rows resolve again",
-        changed.overridden.len(),
-        changed.catalogs,
+        "package.json write-back copied the root overrides and catalogs; {} rows resolve again",
         rows.len()
     );
     if rows.is_empty() {
@@ -1531,67 +1528,41 @@ fn write_back_package_jsons(
     Ok(())
 }
 
-/// Resolved rows whose package does not satisfy the value bun.lock now declares for them: rows named in `overridden` (sorted), and, when `catalogs_changed`, rows resolved through a catalog entry. Rows an override never applies to (workspace edges, `npm:` aliases) are left alone, like in the resolver.
-fn rows_outside_synced_maps(
-    lockfile: &Lockfile,
-    overridden: &[PackageNameHash],
-    catalogs_changed: bool,
-) -> Vec<usize> {
+/// Resolved rows that an override or a catalog entry governs and whose package does not satisfy the value bun.lock now declares. Workspace, peer and bundled rows are left alone: an override never applies to a workspace edge, and peer and bundled rows follow their provider, like in `enqueue_named_updates`.
+fn rows_outside_synced_maps(lockfile: &Lockfile) -> Vec<usize> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let package_resolutions = lockfile.packages.items_resolution();
     let package_name_hashes = lockfile.packages.items_name_hash();
 
-    let mut catalog_overridden: Vec<PackageNameHash> = Vec::new();
-    if catalogs_changed {
-        lockfile
-            .overrides
-            .append_catalog_valued_name_hashes(&mut catalog_overridden);
-        index_sort::sort_slice_unstable_by(&mut catalog_overridden, |a, b| a.cmp(b));
-        catalog_overridden.dedup();
-    }
-
     let mut rows = Vec::new();
     for (dependency_i, dependency) in dependencies.iter().enumerate() {
         let package_id = resolutions[dependency_i];
-        if package_id == invalid_package_id || package_id as usize >= package_resolutions.len() {
-            continue;
-        }
-        if dependency.behavior.is_workspace()
-            || (dependency.version.tag == DependencyVersionTag::Npm
-                && dependency.version.npm().is_alias)
+        if package_id == invalid_package_id
+            || package_id as usize >= package_resolutions.len()
+            || dependency.behavior.is_workspace()
+            || dependency.behavior.is_peer()
+            || dependency.behavior.is_bundled()
         {
             continue;
         }
-        let through_catalog = catalogs_changed
-            && (dependency.version.tag == DependencyVersionTag::Catalog
-                || catalog_overridden
-                    .binary_search(&dependency.name_hash)
-                    .is_ok());
-        if !through_catalog && overridden.binary_search(&dependency.name_hash).is_err() {
+        if dependency.version.tag != DependencyVersionTag::Catalog
+            && !lockfile.overrides.has_rule_for_name(dependency.name_hash)
+        {
             continue;
         }
-
-        let mut version = lockfile
-            .overrides
-            .get(lockfile, dependency_i as DependencyID, dependency.name_hash)
-            .unwrap_or_else(|| dependency.version.clone());
-        let (name, mut name_hash) = update_name_and_name_hash_from_version_replacement(
+        let Some(version) =
+            crate::dedupe::effective_version(lockfile, dependency_i as DependencyID, dependency)
+        else {
+            continue;
+        };
+        let (_, name_hash) = update_name_and_name_hash_from_version_replacement(
             lockfile,
             dependency.name,
             dependency.name_hash,
             &version,
         );
-        if version.tag == DependencyVersionTag::Catalog {
-            if let Some(catalog_dep) = lockfile.catalogs.get(lockfile, *version.catalog(), name) {
-                version = catalog_dep.version;
-                (_, name_hash) = update_name_and_name_hash_from_version_replacement(
-                    lockfile, name, name_hash, &version,
-                );
-            }
-        }
-
         let resolution = &package_resolutions[package_id as usize];
         let satisfied = resolution.satisfies_dependency_version(&version, buf, buf)
             && (version.tag != DependencyVersionTag::Npm

@@ -418,48 +418,6 @@ impl CatalogMap {
             });
     }
 
-    /// Whether any catalog entry differs between the two maps. Sorts both.
-    pub(crate) fn changed(
-        from: &mut CatalogMap,
-        from_buffers: &Buffers,
-        to: &mut CatalogMap,
-        to_buffers: &Buffers,
-    ) -> bool {
-        if from.default.count() != to.default.count() || from.groups.count() != to.groups.count() {
-            return true;
-        }
-        if !from.has_any() {
-            return false;
-        }
-        from.sort(from_buffers);
-        to.sort(to_buffers);
-        let from_buf = from_buffers.string_bytes.as_slice();
-        let to_buf = to_buffers.string_bytes.as_slice();
-        let entries_differ = |from_map: &Map, to_map: &Map| {
-            from_map.count() != to_map.count()
-                || from_map
-                    .keys()
-                    .iter()
-                    .zip(from_map.values())
-                    .zip(to_map.keys().iter().zip(to_map.values()))
-                    .any(|((from_name, from_dep), (to_name, to_dep))| {
-                        !String::eql(*from_name, *to_name, from_buf, to_buf)
-                            || !from_dep.eql(to_dep, from_buf, to_buf)
-                    })
-        };
-        entries_differ(&from.default, &to.default)
-            || from
-                .groups
-                .keys()
-                .iter()
-                .zip(from.groups.values())
-                .zip(to.groups.keys().iter().zip(to.groups.values()))
-                .any(|((from_name, from_deps), (to_name, to_deps))| {
-                    !String::eql(*from_name, *to_name, from_buf, to_buf)
-                        || entries_differ(from_deps, to_deps)
-                })
-    }
-
     // No explicit `deinit`: `Map` and `ArrayHashMap<String, Map>` are owned
     // collections whose `Drop` recursively frees the nested maps.
 

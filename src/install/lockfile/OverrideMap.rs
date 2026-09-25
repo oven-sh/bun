@@ -335,56 +335,6 @@ impl OverrideMap {
         }
     }
 
-    /// Appends the name of every rule that `to` adds, drops, or gives another value than `from`.
-    pub(crate) fn append_changed_name_hashes(
-        from: &OverrideMap,
-        from_string_bytes: &[u8],
-        to: &OverrideMap,
-        to_string_bytes: &[u8],
-        out: &mut Vec<PackageNameHash>,
-    ) {
-        for (name_hash, to_dep) in to.map.iter() {
-            match from.map.get(name_hash) {
-                Some(from_dep) if from_dep.eql(to_dep, from_string_bytes, to_string_bytes) => {}
-                _ => out.push(*name_hash),
-            }
-        }
-        for name_hash in from.map.keys() {
-            if !to.map.contains(name_hash) {
-                out.push(*name_hash);
-            }
-        }
-
-        let same_rule = |a: &ScopedOverride, a_buf: &[u8], b: &ScopedOverride, b_buf: &[u8]| {
-            let same_parent = match (&a.parent, &b.parent) {
-                (None, None) => true,
-                (Some(a_parent), Some(b_parent)) => a_parent.eql(b_parent, a_buf, b_buf),
-                _ => false,
-            };
-            same_parent
-                && a.target_range.eql(&b.target_range, a_buf, b_buf)
-                && a.dep.eql(&b.dep, a_buf, b_buf)
-        };
-        for rule in &to.scoped {
-            if !from
-                .scoped
-                .iter()
-                .any(|from_rule| same_rule(from_rule, from_string_bytes, rule, to_string_bytes))
-            {
-                out.push(rule.dep.name_hash);
-            }
-        }
-        for rule in &from.scoped {
-            if !to
-                .scoped
-                .iter()
-                .any(|to_rule| same_rule(rule, from_string_bytes, to_rule, to_string_bytes))
-            {
-                out.push(rule.dep.name_hash);
-            }
-        }
-    }
-
     pub(crate) fn changed(
         from: &mut OverrideMap,
         from_string_bytes: &[u8],

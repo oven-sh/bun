@@ -863,7 +863,8 @@ describe.concurrent("$ref overrides", () => {
   // no-deps is reached through the peer row only: nothing provides it, so the row resolves again on its own.
   test("a peer row without a provider resolves again", async () => {
     const overrides = { "no-deps": "$dep-with-tags" };
-    const deps = (tags: string) => root({ dependencies: { "1-peer-dep-a": "1.0.0", "dep-with-tags": tags }, overrides });
+    const deps = (tags: string) =>
+      root({ dependencies: { "1-peer-dep-a": "1.0.0", "dep-with-tags": tags }, overrides });
     const dir = await setup({ "package.json": deps("1.0.0") });
     expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
 

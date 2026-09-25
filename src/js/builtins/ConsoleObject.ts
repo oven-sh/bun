@@ -17,7 +17,7 @@ export function asyncIterator(this: Console) {
 
   async function* ConsoleAsyncIterator() {
     // Code that `--hot` replaced never releases its reader, so the newest iterator takes the lock.
-    const replaced = typeof $hotReloadGeneration !== "undefined" ? activeReader : undefined;
+    const replaced = typeof $hotReloaded !== "undefined" ? activeReader : undefined;
     if (replaced !== undefined) {
       activeReader = undefined;
       replaced.releaseLock();
@@ -39,12 +39,19 @@ export function asyncIterator(this: Console) {
         i = indexOf(actualChunk, last);
 
         while (i !== -1) {
-          yield decoder.decode(actualChunk.subarray(last, i));
+          yield decoder.decode(
+            actualChunk.subarray(
+              last,
+              process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
+            ),
+          );
           // An iterator that lost the lock never settles: `done` would run the code after its loop.
           if (reader !== activeReader) await $newPromise();
           last = i + 1;
           i = indexOf(actualChunk, last);
         }
+        // What follows the last newline of the chunk is the start of the next line.
+        if (last < actualChunk.length) pendingChunk = actualChunk.subarray(last);
 
         for (idx++; idx < value_len; idx++) {
           actualChunk = value[idx];

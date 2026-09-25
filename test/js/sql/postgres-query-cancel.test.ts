@@ -10,7 +10,7 @@
 // cancelled before it was dispatched never settled at all.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import { expiredTls, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, expiredTls, isIPv6, isMusl, isWindows, tempDir, tls as tlsCert } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
@@ -418,6 +418,61 @@ test("the cancel connection closes when the server answers it", async () => {
     pgReadyForQuery(),
   );
   expect((await settled).errno).toBe("57014");
+});
+
+// A dial to an IP literal is a socket before it is open, and uSockets reports
+// nothing when the timeout of the cancel connection closes it. The connection
+// has to release the event loop itself, or the process never exits.
+test.skipIf(isWindows || isMusl)(
+  "the process exits when the dial of the cancel connection never completes",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "postgres-pending-dial-fixture.ts"), "cancel"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("ERR_POSTGRES_CONNECTION_CLOSED\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// The first run of a statement sends its Parse together with the Bind and the
+// Execute. A backend that waits for a lock waits inside that Parse, so the error
+// of a cancel arrives with no ParseComplete before it. That error belongs to the
+// cancelled query. A query with the same text that waits behind it shares the
+// statement and has to parse it again.
+test("cancel() during the Parse of a statement does not fail the queries that share it", async () => {
+  await using server = await backend();
+  server.autoReply = false;
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
+
+  const cancelled = sql`select 'shared'`.execute();
+  const cancelledSettled = cancelled.then(
+    rows => rows,
+    err => err,
+  );
+  await server.untilQueryUnits(1);
+  const waiting = sql`select 'shared'`.execute();
+  const waitingSettled = waiting.then(
+    rows => rows,
+    err => err,
+  );
+
+  cancelled.cancel();
+  expect(await server.cancelPacket).toEqual(pgCancelRequest(PROCESS_ID, SECRET_KEY));
+  server.autoReply = true;
+  server.reply(
+    pgErrorResponse({ S: "ERROR", C: "57014", M: "canceling statement due to user request" }),
+    pgReadyForQuery(),
+  );
+
+  expect((await cancelledSettled).errno).toBe("57014");
+  expect(await waitingSettled).toEqual([{ v: "ok" }]);
+  // The second unit is the Parse, Bind and Execute of the waiting query.
+  expect(server.queryUnits).toBe(2);
 });
 
 test("cancel() before the query is dispatched rejects it instead of hanging", async () => {

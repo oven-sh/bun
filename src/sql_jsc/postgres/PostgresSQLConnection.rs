@@ -52,7 +52,7 @@ pub use bun_sql::postgres::TLSStatus as TlsStatus;
 
 type Socket = uws::AnySocket;
 
-/// From dial to hang-up, for the connection that delivers a CancelRequest.
+/// The longest that the connection that delivers a CancelRequest lives, from dial to hang-up.
 const CANCEL_REQUEST_TIMEOUT_MS: i32 = 5_000;
 
 bun_core::define_scoped_log!(debug, Postgres, visible);
@@ -1600,16 +1600,24 @@ impl PostgresSQLConnection {
     fn ref_and_close(&self, js_reason: Option<JSValue>) {
         // refAndClose is always called when we wanna to disconnect or when we are closed
 
-        if !self.socket.get().is_closed() {
+        let socket = self.socket.get();
+        if !socket.is_closed() {
+            let opened = socket.is_established();
             // event loop need to be alive to close the socket
             self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
             // will unref on socket close
-            self.socket.get().close(if self.is_cancel_request() {
+            socket.close(if self.is_cancel_request() {
                 // Not `Normal`: on TLS that waits for the peer's close_notify.
                 uws::CloseKind::Failure
             } else {
                 uws::CloseKind::Normal
             });
+            if !opened {
+                // uSockets closes a socket that never opened with no event, so this is its `on_close`.
+                self.socket
+                    .set(Socket::SocketTcp(uws::SocketTCP::detached()));
+                self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+            }
         }
 
         // cleanup requests
@@ -1693,6 +1701,11 @@ impl PostgresSQLConnection {
             bun_jsc::rare_data::SocketGroups::of((*raw).group())
                 .postgres_group::<false>(self.vm_mut().uws_loop())
         };
+        // The connection timeout of this session when that is the shorter one.
+        let connection_timeout = match i32::try_from(self.connection_timeout_ms) {
+            Ok(session @ 1..) => session.min(CANCEL_REQUEST_TIMEOUT_MS),
+            _ => CANCEL_REQUEST_TIMEOUT_MS,
+        };
         let dialed = Self::open(
             self.global(),
             group,
@@ -1709,7 +1722,7 @@ impl PostgresSQLConnection {
                     _ => SSLMode::Disable,
                 },
                 idle_timeout: 0,
-                connection_timeout: CANCEL_REQUEST_TIMEOUT_MS,
+                connection_timeout,
                 max_lifetime: 0,
                 use_unnamed_prepared_statements: false,
                 on_connect: JSValue::ZERO,
@@ -3205,7 +3218,10 @@ impl PostgresSQLConnection {
                 let js_err =
                     crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
                 if let Some(stmt) = request.statement_mut() {
-                    if stmt.status == StatementStatus::Parsing {
+                    if stmt.status == StatementStatus::Parsing && err.is_query_canceled() {
+                        // A canceled Parse says nothing about the statement: the next request parses it again.
+                        stmt.status = StatementStatus::Pending;
+                    } else if stmt.status == StatementStatus::Parsing {
                         stmt.status = StatementStatus::Failed;
                         stmt.error_response = Some(
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),

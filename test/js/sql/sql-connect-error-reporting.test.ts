@@ -24,7 +24,9 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
+import { bunEnv, bunExe, isMusl, isWindows } from "harness";
 import type net from "node:net";
+import { join } from "node:path";
 import {
   closedPort,
   listeningServer,
@@ -283,6 +285,25 @@ test("postgres: connectionTimeout: 0 disables connect retries", async () => {
     server.close();
   }
 });
+
+// A dial to an IP literal is a socket before it is open, and uSockets reports
+// nothing when the connection timeout closes it. The connection has to release
+// the event loop itself, or the process never exits.
+test.skipIf(isWindows || isMusl)(
+  "postgres: the process exits after a connection timeout on a dial that never completes",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "postgres-pending-dial-fixture.ts"), "connect"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("ERR_POSTGRES_CONNECTION_TIMEOUT\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 test("mysql: graceful close() resolves while a connect retry is pending", async () => {
   const firstConnection = Promise.withResolvers<void>();

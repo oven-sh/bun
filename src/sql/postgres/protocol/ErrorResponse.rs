@@ -30,6 +30,13 @@ impl ErrorResponse {
         }
         Ok(Self::default())
     }
+
+    /// SQLSTATE 57014: a cancel request or a timeout stopped the query.
+    pub fn is_query_canceled(&self) -> bool {
+        self.messages
+            .iter()
+            .any(|message| matches!(message, FieldMessage::Code(code) if code.eq_ascii(b"57014")))
+    }
 }
 
 // `to_js` lives on an extension trait in the `bun_sql_jsc` crate.

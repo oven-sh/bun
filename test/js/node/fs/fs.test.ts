@@ -5716,6 +5716,125 @@ it("test syscall errno, issue#4198", () => {
   rmdirSync(path);
 });
 
+describe("rename onto a path that has open handles", () => {
+  const variants = [
+    ["renameSync", async (from: string, to: string) => renameSync(from, to)],
+    ["promises.rename", (from: string, to: string) => promises.rename(from, to)],
+    ["rename", (from: string, to: string) => promisify(fs.rename)(from, to)],
+  ] as const;
+
+  describe.each(variants)("%s", (_, rename) => {
+    it.each(["r", "r+"])("replaces a file held open with flag %s", async flag => {
+      using dir = tempDir("fs-rename-open-dest", { "dest.txt": "old", "src.txt": "new" });
+      const dest = join(String(dir), "dest.txt");
+      const src = join(String(dir), "src.txt");
+      const fd = openSync(dest, flag);
+      try {
+        await rename(src, dest);
+        const held = Buffer.alloc(8);
+        expect({
+          dest: readFileSync(dest, "utf8"),
+          srcExists: existsSync(src),
+          held: held.toString("utf8", 0, readSync(fd, held, 0, held.length, 0)),
+        }).toEqual({ dest: "new", srcExists: false, held: "old" });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    it("replaces a file that another process holds open", async () => {
+      using dir = tempDir("fs-rename-open-dest-proc", { "dest.txt": "old", "src.txt": "new" });
+      const dest = join(String(dir), "dest.txt");
+      await using holder = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fd = require("fs").openSync(process.argv[1], "r");
+           process.stdout.write("open\\n");
+           for await (const _ of process.stdin) {}
+           const held = Buffer.alloc(8);
+           process.stdout.write(held.toString("utf8", 0, require("fs").readSync(fd, held, 0, 8, 0)));`,
+          dest,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = holder.stdout.getReader();
+      const decoder = new TextDecoder();
+      let output = "";
+      while (!output.includes("open\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        output += decoder.decode(value, { stream: true });
+      }
+      expect(output).toBe("open\n");
+
+      await rename(join(String(dir), "src.txt"), dest);
+      expect(readFileSync(dest, "utf8")).toBe("new");
+
+      holder.stdin.end();
+      output = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        output += decoder.decode(value, { stream: true });
+      }
+      expect(output).toBe("old");
+      expect(await holder.exited).toBe(0);
+    });
+  });
+
+  it("replaces an open file through paths relative to the cwd", async () => {
+    using dir = tempDir("fs-rename-open-dest-relative", { "dest.txt": "old", "sub/src.txt": "new" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         const fd = fs.openSync("dest.txt", "r");
+         fs.renameSync("sub/src.txt", "./dest.txt");
+         console.log(fs.readFileSync("dest.txt", "utf8"), fs.existsSync("sub/src.txt"));
+         fs.closeSync(fd);`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "new false\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!isWindows)("still refuses a read-only destination on Windows", () => {
+    using dir = tempDir("fs-rename-readonly-dest", { "dest.txt": "old", "src.txt": "new" });
+    const dest = join(String(dir), "dest.txt");
+    const src = join(String(dir), "src.txt");
+    fs.chmodSync(dest, 0o444);
+    try {
+      expect(() => renameSync(src, dest)).toThrow(expect.objectContaining({ code: "EPERM", syscall: "rename" }));
+      expect({ dest: readFileSync(dest, "utf8"), src: readFileSync(src, "utf8") }).toEqual({ dest: "old", src: "new" });
+    } finally {
+      fs.chmodSync(dest, 0o666);
+    }
+  });
+
+  it.skipIf(!isWindows)("still refuses to replace a directory on Windows", () => {
+    using dir = tempDir("fs-rename-dir-dest", { "src-dir/a.txt": "a", "src.txt": "new" });
+    const destDir = join(String(dir), "dest-dir");
+    mkdirSync(destDir);
+    expect(() => renameSync(join(String(dir), "src-dir"), destDir)).toThrow(
+      expect.objectContaining({ code: "EPERM", syscall: "rename" }),
+    );
+    expect(() => renameSync(join(String(dir), "src.txt"), destDir)).toThrow(
+      expect.objectContaining({ code: "EPERM", syscall: "rename" }),
+    );
+    expect(readdirSync(String(dir)).sort()).toEqual(["dest-dir", "src-dir", "src.txt"]);
+  });
+});
+
 describe("error.syscall is node's operation name, not the raw kernel syscall", () => {
   // Node documents err.syscall as a stable, platform-independent operation
   // name ("stat", "lstat", "utime", ...). On Linux, Bun implements stat via

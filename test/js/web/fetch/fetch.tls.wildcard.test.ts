@@ -899,8 +899,8 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     // tls.checkServerIdentity takes any object as the certificate. A real
     // certificate prints an IP SAN from its octets, in full. In another text,
     // canonicalizeIP() read "127.1" as 127.1.0.0, as ares_inet_pton does. Every
-    // expected value was taken from Node.js v26.3.0, except the text with a NUL:
-    // Node.js reads it up to the NUL.
+    // expected value was taken from Node.js v26.3.0, which reads the text as a
+    // C string, up to a NUL.
     it.each([
       ["::1.2.3.0%lo", "IP Address:::1.2.3", false],
       ["::1.2.3.0", "IP Address:::1.2.3", false],
@@ -909,7 +909,8 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       ["127.0.0.1", "IP Address:0x7f000001", false],
       ["1.2.3.4", "IP Address:01.2.3.4", false],
       ["1.2.3.4", "IP Address:1.2.3.4/32", false],
-      ["::1", "IP Address:::1\0junk", false],
+      ["127.1.0.0", "IP Address:127.1\0", false],
+      ["::1", "IP Address:::1\0junk", true],
       ["fe80::1", "IP Address:fe80::1%eth0", true],
       ["fe80::1%eth0", "IP Address:fe80::1%eth1", true],
       ["::1%x.example.com", "IP Address:::1", true],
@@ -918,9 +919,11 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       expect(tls.checkServerIdentity(host, cert) === undefined).toBe(match);
     });
 
-    // RFC 6066 takes no IP address as the server name in SNI. fetch sent the
-    // zoned host there, because ares_inet_pton does not read it as an address.
-    it("fetch sends no SNI for a zoned host", async () => {
+    // RFC 6066 takes no IP address as the server name in SNI. fetch asked
+    // ares_inet_pton, which does not read a zoned host as an address and reads
+    // "127.1" as one. A host is sent as SNI when the matcher takes it as a DNS
+    // name, as in Node.js.
+    it("fetch sends SNI for a DNS name only", async () => {
       const names: string[] = [];
       const server = tls.createServer(
         {
@@ -942,14 +945,15 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       try {
         const url = `https://127.0.0.1:${(server.address() as AddressInfo).port}/`;
         const results: string[] = [];
-        for (const serverName of ["fe80::1%eth0", "5.6.7.8", "name.test"]) {
+        for (const serverName of ["fe80::1%eth0", "5.6.7.8", "::1", "name.test", "127.1", "fe80::1%br_lan"]) {
           // @ts-expect-error Bun extension
           const response = fetch(url, { tls: { ca: zoneCert.cert, serverName }, keepalive: false });
           results.push(await response.then(r => r.text()).catch(e => e.code));
         }
+        const rejected = "ERR_TLS_CERT_ALTNAME_INVALID";
         expect({ results, names }).toEqual({
-          results: ["ok", "ok", "ERR_TLS_CERT_ALTNAME_INVALID"],
-          names: ["name.test"],
+          results: ["ok", "ok", "ok", rejected, rejected, rejected],
+          names: ["name.test", "127.1", "fe80::1%br_lan"],
         });
       } finally {
         server.close();

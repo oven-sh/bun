@@ -168,18 +168,14 @@ pub use bun_sys::posix::INET6_ADDRSTRLEN;
 // Canonical cross-platform AF_* surface — handles the Windows ws2def.h split.
 use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
 
-/// Node.js's `canonicalizeIP`, which parses as libuv's `uv_inet_pton`: the canonical text of a dotted quad, or of an IPv6 address up to its zone id. `None` for any other text. Not as libuv: a NUL does not end the text.
+/// Node.js's `canonicalizeIP`: the canonical text of the address that libuv's `uv_inet_pton` reads in `addr_str`, without the zone id of an IPv6 address. `None` for any other text.
 pub fn canonicalize_ip<'a>(
     addr_str: &[u8],
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
-    match bun_core::ip_address::parse_strict(addr_str) {
-        Some(IpAddr::V4(ip)) => canonical_ip_octets(&ip.octets(), out_ip),
-        Some(IpAddr::V6(ip)) => canonical_ip_octets(&ip.octets(), out_ip),
-        None => {
-            let (ip, _zone) = bun_core::ip_address::parse_zoned_ipv6(addr_str)?;
-            canonical_ip_octets(&ip.octets(), out_ip)
-        }
+    match bun_core::ip_address::parse_uv_inet_pton(addr_str)? {
+        IpAddr::V4(ip) => canonical_ip_octets(&ip.octets(), out_ip),
+        IpAddr::V6(ip) => canonical_ip_octets(&ip.octets(), out_ip),
     }
 }
 
@@ -753,8 +749,7 @@ pub fn write_server_identity_mismatch_reason(
     const NO_DNS: &str = "Cert does not contain a DNS name";
     let hostname = unfqdn(hostname);
     let host = HostName(hostname);
-    let host_is_ip = bun_core::ip_address::parse_strict(hostname).is_some()
-        || bun_core::ip_address::parse_zoned_ipv6_host(hostname).is_some();
+    let host_is_ip = bun_core::ip_address::is_ip_host(hostname);
 
     let Some(x509) = ssl_ptr.peer_leaf_certificate() else {
         return out.write_str(NO_DNS);

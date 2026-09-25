@@ -28,8 +28,8 @@ describe("NodeTLS.cpp", () => {
 
   // Node.js parses with libuv's uv_inet_pton: a dotted quad, or an IPv6 address
   // up to the first "%". The zone id is not in the result and is not checked.
-  // Every expected value was taken from Node.js v26.3.0, except "::1\0" and
-  // "::1\0%lo": Node.js reads a text up to a NUL and gives "::1".
+  // The text is a C string there, so it ends at a NUL. Every expected value
+  // was taken from Node.js v26.3.0.
   test("canonicalizeIP reads an address in the strict form and drops a zone id", () => {
     const long = `fe80::1%${Buffer.alloc(64, "z").toString()}`;
     const expected: Record<string, string | null> = {
@@ -44,6 +44,9 @@ describe("NodeTLS.cpp", () => {
       "fe80::1%br_lan": "fe80::1",
       "fe80::1%eth0/64": "fe80::1",
       "fe80::1%et\0h0": "fe80::1",
+      "::1\0": "::1",
+      "::1\0%lo": "::1",
+      "1.2.3.4\0/8": "1.2.3.4",
       [long]: "fe80::1",
       // An IPv4 address takes no zone, and the address before the zone is in the strict form.
       "1.2.3.4%lo": null,
@@ -65,8 +68,7 @@ describe("NodeTLS.cpp", () => {
       "::01.2.3.4": null,
       "1.2.3.4/8": null,
       "::1/64": null,
-      "::1\0": null,
-      "::1\0%lo": null,
+      "127.1\0": null,
     };
     const actual = Object.keys(expected).map(text => [text, canonicalizeIP(text) ?? null]);
     expect(Object.fromEntries(actual)).toEqual(expected);

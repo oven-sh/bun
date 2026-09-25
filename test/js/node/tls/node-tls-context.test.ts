@@ -502,6 +502,75 @@ describe("Bun.serve SNI", () => {
   });
 });
 
+describe("SNI matching is case-insensitive", () => {
+  // DNS names are case-insensitive (RFC 4343); Node compiles addContext names
+  // into /.../i regexes, so ADMIN.EXAMPLE.COM selects the admin.example.com
+  // context instead of falling through to the default one.
+  function servedCN(port: number, servername: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+    const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false }, () => {
+      resolve(socket.getPeerCertificate()?.subject?.CN);
+      socket.end();
+    });
+    socket.on("error", reject);
+    return promise;
+  }
+
+  it("tls.Server addContext", async () => {
+    const server = tls.createServer({ key: agent2Key, cert: agent2Cert }, s => s.end());
+    server.addContext("a.example.com", SNIContexts["a.example.com"]); // agent1
+    server.addContext("UPPER.EXAMPLE.COM", SNIContexts["asterisk.test.com"]); // agent3
+    server.addContext("*.test.com", SNIContexts["asterisk.test.com"]); // agent3
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, listening.resolve);
+      await listening.promise;
+      const port = (server.address() as AddressInfo).port;
+      expect({
+        exact: await servedCN(port, "a.example.com"),
+        upper: await servedCN(port, "A.EXAMPLE.COM"),
+        mixed: await servedCN(port, "A.Example.Com"),
+        registeredUpper: await servedCN(port, "upper.example.com"),
+        wildcardUpper: await servedCN(port, "B.TEST.COM"),
+        noMatch: await servedCN(port, "other.example.org"),
+      }).toEqual({
+        exact: "agent1",
+        upper: "agent1",
+        mixed: "agent1",
+        registeredUpper: "agent3",
+        wildcardUpper: "agent3",
+        noMatch: "agent2",
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("Bun.serve tls array", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { key: agent2Key, cert: agent2Cert },
+        { serverName: "a.example.com", ...SNIContexts["a.example.com"] },
+        { serverName: "*.test.com", ...SNIContexts["asterisk.test.com"] },
+      ],
+      fetch: () => new Response("OK"),
+    });
+    expect({
+      upper: await servedCN(server.port, "A.EXAMPLE.COM"),
+      mixed: await servedCN(server.port, "a.Example.com"),
+      wildcardUpper: await servedCN(server.port, "B.TEST.COM"),
+      noMatch: await servedCN(server.port, "other.example.org"),
+    }).toEqual({
+      upper: "agent1",
+      mixed: "agent1",
+      wildcardUpper: "agent3",
+      noMatch: "agent2",
+    });
+  });
+});
+
 describe("server certificate chain built from `ca`", () => {
   it("presents an intermediate known only to the default store (NODE_EXTRA_CA_CERTS)", async () => {
     // With no `ca`, Node seeds the context's store with the default roots

@@ -16,6 +16,7 @@ use super::Signature;
 use super::command_tag_jsc::CommandTagJsc;
 use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
+use super::postgres_request::EncodeRequest;
 use super::postgres_sql_connection;
 use super::postgres_sql_statement::Status as StatementStatus;
 use bun_sql::postgres::CommandTag;
@@ -639,12 +640,13 @@ impl PostgresSQLQuery {
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
                                 // bindAndExecute will bind + execute, it will change to running after binding is complete
-                                if let Err(err) = PostgresRequest::bind_and_execute(
+                                if let Err(err) = connection.encode_request(
                                     global_object,
-                                    stmt,
-                                    binding_value,
-                                    columns_value,
-                                    writer,
+                                    EncodeRequest::BindAndExecute {
+                                        statement: stmt,
+                                        binding_value,
+                                        columns_value,
+                                    },
                                 ) {
                                     this.release_statement();
                                     return Err(throw_write_error(
@@ -697,12 +699,13 @@ impl PostgresSQLQuery {
                 if !has_params {
                     bun_core::scoped_log!(Postgres, "prepareAndQueryWithSignature");
                     // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
-                    if let Err(err) = PostgresRequest::prepare_and_query_with_signature(
+                    if let Err(err) = connection.encode_request(
                         global_object,
-                        query_str.slice(),
-                        binding_value,
-                        writer,
-                        &mut signature,
+                        EncodeRequest::PrepareAndQuery {
+                            query: query_str.slice(),
+                            signature: &mut signature,
+                            binding_value,
+                        },
                     ) {
                         if connection_entry_value.is_some() {
                             let _ = connection

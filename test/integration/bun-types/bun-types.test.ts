@@ -501,6 +501,52 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("Bun.color", () => {
+    test("accepts the output formats the runtime supports", async () => {
+      const checkDir = join(TEMP_DIR, "bun-color-format-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["bun-color-formats.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "bun-color-formats.ts": `Bun.color("red", "ansi-24bit") satisfies string | null;
+           Bun.color("red", "ansi-truecolor") satisfies string | null;
+           Bun.color("red", "ansi256") satisfies string | null;
+           Bun.color("red", "[r,g,b,a]") satisfies [number, number, number, number] | null;
+           Bun.color("red", "{r,g,b}") satisfies { r: number; g: number; b: number } | null;
+           // @ts-expect-error - not a format the runtime accepts
+           Bun.color("red", "ansi-128");`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // tsc cannot read the runtime's format table, so this ties the alias
+    // literals added to the .d.ts back to the running binary.
+    test("the alias formats match the runtime", () => {
+      for (const format of ["ansi-24bit", "ansi-truecolor", "ansi256"] as const) {
+        expect(typeof Bun.color("red", format)).toBe("string");
+      }
+      expect(Bun.color("red", "[r,g,b,a]")).toEqual(Bun.color("red", "[rgba]"));
+      expect(Bun.color("red", "{r,g,b}")).toEqual(Bun.color("red", "{rgb}"));
+      expect(Bun.color("red", "ansi-24bit")).toBe(Bun.color("red", "ansi-16m"));
+      expect(Bun.color("red", "ansi256")).toBe(Bun.color("red", "ansi-256"));
+    });
+  });
+
   // Runs on debug builds too, same as the Bun.mmap block above.
   describe("Event and EventTarget", () => {
     async function checkEventFixture(name: string, lib: string[], source: string) {

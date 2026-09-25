@@ -7208,7 +7208,11 @@ impl NodeFS {
         // For certain files, the size might be 0 but the file might still have contents.
         // https://github.com/oven-sh/bun/issues/1220
         let max_size: u64 = args.max_size.map(|v| v as u64).unwrap_or(BLOB_SIZE_MAX);
-        let has_max_size = args.max_size.is_some();
+        // A regular file with `st_size` 0 (procfs) is read to EOF inside the caller's window, up to the JS size limit.
+        let size_unknown = sys::S::ISREG(stat_.st_mode as u32) && stat_.st_size == 0;
+        let has_max_size = args.max_size.is_some() && !size_unknown;
+        let limit_size_for_javascript =
+            args.limit_size_for_javascript || (args.max_size.is_some() && size_unknown);
 
         let size: u64 = (stat_.st_size as i64)
             .min(max_size as i64) // Only used in DOMFormData
@@ -7268,7 +7272,7 @@ impl NodeFS {
             let amt = Syscall::read(fd, &mut buf[total..upper])?;
             total += amt;
 
-            if args.limit_size_for_javascript {
+            if limit_size_for_javascript {
                 if let Some(err) = Self::should_throw_out_of_memory_early_for_javascript(
                     args.encoding,
                     total,

@@ -10,8 +10,9 @@
 // to a minimal mock that upgrades to TLS and accepts the login. All
 // wire-protocol bytes come from test/js/sql/wire-frames.ts.
 
+import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isIPv6, tls as localhostTls } from "harness";
+import { isIPv6, tls as localhostTls } from "harness";
 import type net from "node:net";
 import tls from "node:tls";
 import {
@@ -99,38 +100,18 @@ async function mysqlServer(host: string): Promise<MockServer> {
   return { port, servernames, close: () => server.close() };
 }
 
-const client = /* js */ `
-  import { SQL } from "bun";
-  const sql = new SQL({
-    url: process.env.SQL_URL + "?sslmode=verify-full",
-    tls: JSON.parse(process.env.SQL_TLS),
-    max: 1,
-    idleTimeout: 1,
-  });
+/** "CONNECTED", or the error that `connect()` rejected with. */
+async function connect(url: string, tlsOptions: Bun.TLSOptions): Promise<unknown> {
+  const sql = new SQL({ url: `${url}?sslmode=verify-full`, tls: tlsOptions, max: 1, idleTimeout: 1 });
   try {
     await sql.connect();
-    console.log("CONNECTED");
+    return "CONNECTED";
   } catch (e) {
-    console.log("ERROR: " + Bun.inspect(e));
+    return e;
   } finally {
     await sql.close({ timeout: 0 }).catch(() => {});
   }
-`;
-
-// The client runs in a child process: a verify-full hostname mismatch aborts an
-// assertion-enabled build while it creates the error, and that must fail one
-// test here, not take down the test runner.
-async function connect(url: string, tlsOptions: Bun.TLSOptions) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", client],
-    env: { ...bunEnv, SQL_URL: url, SQL_TLS: JSON.stringify(tlsOptions) },
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
 }
-
-const connected = { stdout: "CONNECTED\n", stderr: "", exitCode: 0 };
 
 describe.concurrent.each([
   ["PostgreSQL", "postgres", postgresServer],
@@ -150,7 +131,7 @@ describe.concurrent.each([
     "a bracketed IPv6 URL host is verified against the IP SAN and is not sent as SNI",
     async () => {
       await withServer("::1", async server => {
-        expect(await connect(`${scheme}://u@[::1]:${server.port}/db`, { ca: localhostTls.cert })).toEqual(connected);
+        expect(await connect(`${scheme}://u@[::1]:${server.port}/db`, { ca: localhostTls.cert })).toBe("CONNECTED");
         expect(server.servernames).toEqual([false]);
       });
     },
@@ -158,7 +139,7 @@ describe.concurrent.each([
 
   test("an IPv4 literal host is verified against the IP SAN and is not sent as SNI", async () => {
     await withServer("127.0.0.1", async server => {
-      expect(await connect(`${scheme}://u@127.0.0.1:${server.port}/db`, { ca: localhostTls.cert })).toEqual(connected);
+      expect(await connect(`${scheme}://u@127.0.0.1:${server.port}/db`, { ca: localhostTls.cert })).toBe("CONNECTED");
       expect(server.servernames).toEqual([false]);
     });
   });
@@ -167,7 +148,7 @@ describe.concurrent.each([
   test("a bracketed IPv6 literal in tls.serverName is verified against the IP SAN and is not sent as SNI", async () => {
     await withServer("127.0.0.1", async server => {
       const url = `${scheme}://u@127.0.0.1:${server.port}/db`;
-      expect(await connect(url, { ca: localhostTls.cert, serverName: "[::1]" })).toEqual(connected);
+      expect(await connect(url, { ca: localhostTls.cert, serverName: "[::1]" })).toBe("CONNECTED");
       expect(server.servernames).toEqual([false]);
     });
   });
@@ -175,7 +156,7 @@ describe.concurrent.each([
   test("a DNS name in tls.serverName is still sent as SNI", async () => {
     await withServer("127.0.0.1", async server => {
       const url = `${scheme}://u@127.0.0.1:${server.port}/db`;
-      expect(await connect(url, { ca: localhostTls.cert, serverName: "localhost" })).toEqual(connected);
+      expect(await connect(url, { ca: localhostTls.cert, serverName: "localhost" })).toBe("CONNECTED");
       expect(server.servernames).toEqual(["localhost"]);
     });
   });

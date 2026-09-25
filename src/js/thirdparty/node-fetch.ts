@@ -154,12 +154,11 @@ class Response extends WebResponse {
     return Object.setPrototypeOf(super.json(...args), ResponsePrototype);
   }
 
+  // node-fetch starts every Response as "default", whatever its status, and only Response.error() sets "error":
+  // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/response.js#L38-L39
+  // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/response.js#L121-L125
   get type() {
-    if (!super.ok) {
-      return "error";
-    }
-
-    return "default";
+    return super.type === "error" ? "error" : "default";
   }
 }
 var ResponsePrototype = Response.prototype;

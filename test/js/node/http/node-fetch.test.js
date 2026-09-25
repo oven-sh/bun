@@ -426,6 +426,7 @@ test("node-fetch Response.json(), Response.redirect() and Response.error() retur
   const redirect = Response.redirect("http://example.test/next", 301);
   expect(redirect).toBeInstanceOf(Response);
   expect(redirect.status).toBe(301);
+  expect(redirect.type).toBe("default");
   expect(redirect.headers.raw()).toEqual({ location: ["http://example.test/next"] });
 
   const error = Response.error();

@@ -343,6 +343,17 @@ impl PostgresSQLConnection {
         keep_flusher_registered
     }
 
+    /// Run `drain_internal` on the next tick, with or without bytes to send.
+    fn dispatch_later(&self) {
+        if !self.auto_flusher.get().registered && self.status.get() == Status::Connected {
+            AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(
+                self.as_ctx_ptr(),
+                self.vm(),
+            );
+            self.auto_flusher.with_mut(|a| a.registered = true);
+        }
+    }
+
     fn register_auto_flusher(&self) {
         let data_to_send = self.write_buffer.get().len();
         debug!(
@@ -976,6 +987,8 @@ impl PostgresSQLConnection {
 
     fn drain_internal(&self) {
         debug!("drainInternal");
+        // advance() runs user JS, which can close the connection.
+        let _guard = self.ref_guard();
         let event_loop = self.event_loop();
         event_loop.enter();
 
@@ -1856,7 +1869,7 @@ impl PostgresSQLConnection {
     pub(crate) fn advance_and_flush(&self) {
         if self.is_encoding.get() {
             // The encoder's caller dispatches. The flusher does if a termination stops it.
-            self.register_auto_flusher();
+            self.dispatch_later();
             return;
         }
         let flags = self.flags.get();
@@ -1932,6 +1945,17 @@ impl PostgresSQLConnection {
             ($self:ident) => {
                 $self.discard_finished_requests()
             };
+        }
+        // A pending termination fails every conversion. The flusher dispatches the rest later.
+        macro_rules! next_after_failed_encode {
+            ($self:ident) => {{
+                if $self.global().has_exception() {
+                    $self.dispatch_later();
+                    defer_cleanup!($self);
+                    return;
+                }
+                continue;
+            }};
         }
 
         while self.requests.get().len() > offset
@@ -2075,7 +2099,7 @@ impl PostgresSQLConnection {
                                                 "parse, bind and execute failed: {}",
                                                 <&'static str>::from(err)
                                             );
-                                            continue;
+                                            next_after_failed_encode!(self);
                                         }
                                     } else {
                                         debug!("binding and executing stmt");
@@ -2097,7 +2121,7 @@ impl PostgresSQLConnection {
                                                 offset += 1;
                                             }
                                             debug!("bind and execute failed: {}", err);
-                                            continue;
+                                            next_after_failed_encode!(self);
                                         }
                                     }
 
@@ -2181,7 +2205,7 @@ impl PostgresSQLConnection {
                                                 "prepareAndQueryWithSignature failed: {}",
                                                 <&'static str>::from(err)
                                             );
-                                            continue;
+                                            next_after_failed_encode!(self);
                                         }
                                         self.update_flags(|f| {
                                             f.remove(ConnectionFlags::IS_READY_FOR_QUERY);
@@ -2242,7 +2266,7 @@ impl PostgresSQLConnection {
                                                 "parseAndBindAndExecute failed: {}",
                                                 <&'static str>::from(err)
                                             );
-                                            continue;
+                                            next_after_failed_encode!(self);
                                         }
                                         self.update_flags(|f| {
                                             f.remove(ConnectionFlags::IS_READY_FOR_QUERY);

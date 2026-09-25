@@ -55,6 +55,8 @@ const groups: Record<string, Record<string, object>> = {
       conversions: 1,
       sameBackend: true,
     },
+  },
+  "a query started by drainMicrotasks() or notify()": {
     "prepared statement, nested query started by drainMicrotasks()": {
       outer: ok({ x: "1" }),
       dispatched: [ok({ y: 2 })],
@@ -109,6 +111,8 @@ const groups: Record<string, Record<string, object>> = {
       conversions: 1,
       sameBackend: true,
     },
+  },
+  "the conversion throws, other cases": {
     "prepared statement behind an in-flight query, conversion throws after dispatching": {
       ahead: ok({ x: "7" }),
       outer: { err: "boom" },
@@ -124,27 +128,32 @@ const groups: Record<string, Record<string, object>> = {
   // The conversion runs the event loop, and the reply of a request in flight is handled in it.
   "a reply comes in during the conversion": {
     "prepared statement, a reply comes in during the conversion": {
-      ahead: [ok({ pg_sleep: "", x: "ahead 0" })],
+      ahead: [ok({ pg_advisory_xact_lock: "", x: "ahead 0" })],
       later: ok({ x: "later" }),
+      repliesDuringConversion: true,
       outer: ok({ x: "1" }),
       dispatched: [],
       conversions: 1,
       sameBackend: true,
     },
     "prepared statement, two replies come in during the conversion": {
-      ahead: [ok({ pg_sleep: "", x: "ahead 0" }), ok({ pg_sleep: "", x: "ahead 1" })],
+      ahead: [ok({ pg_advisory_xact_lock: "", x: "ahead 0" }), ok({ x: "ahead 1" })],
       later: ok({ x: "later" }),
+      repliesDuringConversion: true,
       outer: ok({ x: "1" }),
       dispatched: [],
       conversions: 1,
       sameBackend: true,
     },
+  },
+  "replies come in while advance() encodes": {
     "a request that advance() encodes, two replies come in during the conversion": {
       first: ok({ x: "first" }),
       blocked: ok({ pg_advisory_xact_lock: "", x: "blocked" }),
       outer: ok({ x: "outer" }),
       nested: ok({ x: "nested" }),
       later: ok({ x: "later" }),
+      repliesDuringConversion: true,
       conversions: 2,
       sameBackend: true,
     },
@@ -153,7 +162,13 @@ const groups: Record<string, Record<string, object>> = {
   "a termination stops the conversion": {
     "prepared statement, node:vm timeout stops the conversion after it dispatched": {
       thrown: "ERR_SCRIPT_EXECUTION_TIMEOUT",
-      dispatched: [ok({ y: 2 })],
+      dispatched: [ok({ y: "2" })],
+      conversions: 1,
+      sameBackend: true,
+    },
+    "prepare: false, node:vm timeout stops the conversion after it dispatched": {
+      thrown: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+      dispatched: [ok({ y: "2" })],
       conversions: 1,
       sameBackend: true,
     },
@@ -161,20 +176,22 @@ const groups: Record<string, Record<string, object>> = {
   // close() rejects every request of the connection. The pool then opens a new connection.
   "close() from a conversion": {
     "close() from a conversion, first execution": { outer: closed, afterwards },
+    "close() from a conversion, prepared statement": { outer: closed, afterwards },
+    "close() from a conversion, prepare: false": { outer: closed, afterwards },
+  },
+  "close() from a conversion, a request ahead": {
     "close() from a conversion, request queued ahead": {
       ahead: closed,
       outer: closed,
       aheadConverted: true,
       afterwards,
     },
-    "close() from a conversion, prepared statement": { outer: closed, afterwards },
     "close() from a conversion, request buffered ahead": {
       ahead: closed,
       outer: closed,
       aheadConverted: true,
       afterwards,
     },
-    "close() from a conversion, prepare: false": { outer: closed, afterwards },
   },
   "close() from a getter of the values": {
     "close() from a getter of the values, first execution": { outer: closed, afterwards },
@@ -255,7 +272,7 @@ const wire = (nested: string, ...frames: string[]) => ({
 });
 const nestedBind = ["B(nested)", "E", "H", "S"];
 
-test.concurrent("wire order equals queue order", async () => {
+test.concurrent("wire order equals queue order: prepared statement", async () => {
   await run(wireFixture, {
     "prepared statement": wire("nested", "B(outer)", "E", "H", "S", ...nestedBind),
     "prepared statement, nested query without parameters": wire(
@@ -263,6 +280,11 @@ test.concurrent("wire order equals queue order", async () => {
       ...["B(outer)", "E", "H", "S", "P", "D", "B()", "E", "H", "S"],
     ),
     "prepared statement, nested simple query": wire("simple", "B(outer)", "E", "H", "S", "Q", "H"),
+  });
+});
+
+test.concurrent("wire order equals queue order: advance() encodes", async () => {
+  await run(wireFixture, {
     "first execution": wire("nested", "P", "D", "S", "B(outer)", "E", "H", "S", ...nestedBind),
     "prepare: false": wire("nested", "P", "D", "B(outer)", "E", "H", "S", "P", "D", ...nestedBind),
   });

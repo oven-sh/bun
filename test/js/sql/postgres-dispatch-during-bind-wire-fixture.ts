@@ -14,6 +14,9 @@ import {
   pgRowDescription,
 } from "./wire-frames";
 
+// A broken build hangs in these scenarios. The process must not outlive the test that started it.
+setTimeout(() => process.exit(124), 30_000).unref();
+
 // A Bind is recorded with the parameter it carries, and its Execute answers with that parameter.
 // So a query that resolves with its own parameter got its own reply.
 let frames: string[] = [];

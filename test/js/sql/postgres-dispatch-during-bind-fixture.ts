@@ -5,6 +5,9 @@ import { SQL, type ReservedSQL } from "bun";
 import { drainMicrotasks } from "bun:jsc";
 import vm from "node:vm";
 
+// A broken build hangs in these scenarios. The process must not outlive the test that started it.
+setTimeout(() => process.exit(124), 30_000).unref();
+
 const url = process.env.DATABASE_URL!;
 let sql!: SQL;
 
@@ -261,14 +264,18 @@ const scenarios: Record<string, () => Promise<unknown>> = {
     const first = settle(sql`select ${text("first")}::text as x`.execute());
     const blocked = settle(
       sql`select pg_advisory_xact_lock(${text(String(key))}::text::bigint), ${text("blocked")}::text as x`.execute(),
-    );
+    ).then(result => (settled++, result));
     let nested!: Promise<unknown>;
-    const waits = dispatching("nested", () =>
-      waitInsideConversion(other`select pg_advisory_unlock(${key})`.then(() => Promise.all([blocked, outer]))),
-    );
+    let settled = 0;
+    let repliesDuringConversion = false;
+    const waits = dispatching("nested", () => {
+      const before = settled;
+      waitInsideConversion(other`select pg_advisory_unlock(${key})`.then(() => Promise.all([blocked, outer])));
+      repliesDuringConversion = before === 0 && settled === 2;
+    });
     const outer = settle(
       sql`select ${dispatching("outer", () => (nested = settle(sql`select ${waits}::text as x`.execute())))}::text as x`.execute(),
-    );
+    ).then(result => (settled++, result));
     const later = settle(sql`select ${text("later")}::text as x`.execute());
     const result = {
       first: await first,
@@ -276,6 +283,7 @@ const scenarios: Record<string, () => Promise<unknown>> = {
       outer: await outer,
       nested: await nested,
       later: await later,
+      repliesDuringConversion,
       conversions,
     };
     return { ...result, sameBackend: (await backendPid(sql)) === pid };
@@ -283,29 +291,14 @@ const scenarios: Record<string, () => Promise<unknown>> = {
 
   // The timeout of node:vm stops the conversion with a termination, after it dispatched a query.
   async "prepared statement, node:vm timeout stops the conversion after it dispatched"() {
-    const pid = await backendPid(sql);
     await sql`select ${text("0")}::text as x`;
-    const param = {
-      toString() {
-        conversions++;
-        dispatched.push(sql`select 2 as y`.execute());
-        for (;;) {}
-      },
-    };
-    let thrown: unknown;
     closeAtEnd = false;
-    (globalThis as any).run = () => sql`select ${param}::text as x`.execute();
-    try {
-      vm.runInThisContext("run()", { timeout: 50 });
-    } catch (e: any) {
-      thrown = e?.code;
-    }
-    return {
-      thrown,
-      dispatched: await Promise.all(dispatched.map(settle)),
-      conversions,
-      sameBackend: (await backendPid(sql)) === pid,
-    };
+    return stoppedByTimeout(sql);
+  },
+
+  // advance() encodes the request, not run().
+  async "prepare: false, node:vm timeout stops the conversion after it dispatched"() {
+    return stoppedByTimeout(new SQL({ url, max: 1, prepare: false }));
   },
 
   // advance() rejects the request through the reject callback.
@@ -330,20 +323,62 @@ const scenarios: Record<string, () => Promise<unknown>> = {
   },
 };
 
+/** close() waits for every query, and the stopped query never settles: `db` stays open. */
+async function stoppedByTimeout(db: SQL) {
+  const pid = await backendPid(db);
+  const param = {
+    toString() {
+      conversions++;
+      // Its parameter needs JS, which cannot run while the termination is pending.
+      dispatched.push(db`select ${text("2")}::text as y`.execute());
+      for (;;) {}
+    },
+  };
+  let thrown: unknown;
+  (globalThis as any).run = () => db`select ${param}::text as x`.execute();
+  try {
+    vm.runInThisContext("run()", { timeout: 50 });
+  } catch (e: any) {
+    thrown = e?.code;
+  }
+  return {
+    thrown,
+    dispatched: await Promise.all(dispatched.map(settle)),
+    conversions,
+    sameBackend: (await backendPid(db)) === pid,
+  };
+}
+
 async function replyDuringConversion(inFlight: number) {
   const pid = await backendPid(sql);
+  const key = process.pid;
+  await using other = new SQL({ url, max: 1 });
+  const locked = (value: string) =>
+    sql`select pg_advisory_xact_lock(${text(String(key))}::text::bigint), ${text(value)}::text as x`;
   await sql`select ${text("0")}::text as x`;
-  await sql`select pg_sleep(${text("0")}::text::float8), ${text("0")}::text as x`;
-  // The server answers the first one after 0.2 s, so the replies are not here before the conversion.
+  await locked("0");
+  // The first request waits on the server until the conversion releases the lock.
+  await other`select pg_advisory_lock(${key})`;
+  let settled = 0;
   const ahead = Array.from({ length: inFlight }, (_, i) =>
-    settle(
-      sql`select pg_sleep(${text(i === 0 ? "0.2" : "0")}::text::float8), ${text(`ahead ${i}`)}::text as x`.execute(),
+    settle((i === 0 ? locked("ahead 0") : sql`select ${text(`ahead ${i}`)}::text as x`).execute()).then(
+      result => (settled++, result),
     ),
   );
   await onTheWire();
-  const outer = sql`select ${dispatching("1", () => waitInsideConversion(Promise.all(ahead)))}::text as x`.execute();
+  let repliesDuringConversion = false;
+  const outer = sql`select ${dispatching("1", () => {
+    const before = settled;
+    waitInsideConversion(other`select pg_advisory_unlock(${key})`.then(() => Promise.all(ahead)));
+    repliesDuringConversion = before === 0 && settled === inFlight;
+  })}::text as x`.execute();
   const later = settle(sql`select ${text("later")}::text as x`.execute());
-  return { ahead: await Promise.all(ahead), later: await later, ...(await report(sql, pid, outer)) };
+  return {
+    ahead: await Promise.all(ahead),
+    later: await later,
+    repliesDuringConversion,
+    ...(await report(sql, pid, outer)),
+  };
 }
 
 /** A text parameter whose conversion closes the connection that its query is written to. */

@@ -683,9 +683,9 @@ declare module "bun" {
      * Closes the database connection. With `timeout: 0` it closes
      * immediately; with no timeout it waits for all queries to finish first.
      *
-     * A pool can be closed again while it is still closing. Every call
-     * resolves when the first `close()` resolves, and a later
-     * `close({ timeout: 0 })` closes immediately.
+     * A pool can be closed again while it is still closing. A later call
+     * waits for that close, for at most its `timeout`. When the timeout
+     * ends, the pool rejects the queries that are still in flight.
      *
      * @param options Optional `timeout` in seconds
      *

@@ -298,8 +298,8 @@ for (const [name, scheme, closedCode] of drivers) {
   }
 }
 
-// close() on a pool that an earlier close() call is still closing. Every call settles with the first one, and a
-// later close({ timeout: 0 }) stops the wait for the queries in flight.
+// close() on a pool that an earlier close() call is still closing. A later call waits for that close, for at
+// most its timeout. When the timeout ends, the pool stops waiting for the queries in flight.
 type CloseOptions = { timeout?: number } | undefined;
 const show = (options: CloseOptions) => `close(${options ? `{ timeout: ${options.timeout} }` : ""})`;
 
@@ -313,15 +313,21 @@ function heldQuery(sql: SQL) {
 for (const [name, scheme, closedCode] of drivers) {
   const rows = { rows: [{ x: "1" }] };
 
-  for (const first of [undefined, { timeout: 30 }]) {
-    test(`${name}: close({ timeout: 0 }) closes a pool that waits in ${show(first)}`, async () => {
+  const forcing: [first: CloseOptions, later: CloseOptions][] = [
+    [undefined, { timeout: 0 }],
+    [{ timeout: 30 }, { timeout: 0 }],
+    [undefined, { timeout: 0.01 }],
+    [{ timeout: 30 }, { timeout: 0.01 }],
+  ];
+  for (const [first, later] of forcing) {
+    test(`${name}: ${show(later)} closes a pool that waits in ${show(first)}`, async () => {
       const { port, server, commandReceived, respond } = await heldQueryMocks[name]();
       try {
         const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1 });
         const query = heldQuery(sql);
         await commandReceived;
         const firstClosed = sql.close(first);
-        await sql.close({ timeout: 0 });
+        await sql.close(later);
         // a later call that closed nothing leaves the query in flight, and this answer resolves it
         respond();
         expect(await query).toEqual({ code: closedCode });
@@ -400,17 +406,16 @@ for (const [name, scheme, closedCode] of drivers) {
       const disposed = sql[Symbol.asyncDispose]().then(() => order.push("asyncDispose"));
       const joined = sql.end().then(() => order.push("end"));
       await sql.end({ timeout: 0 });
-      order.push("forced end");
       respond();
       expect(await query).toEqual({ code: closedCode });
       await Promise.all([disposed, joined]);
-      expect(order).toEqual(["query", "asyncDispose", "end", "forced end"]);
+      expect(order).toEqual(["query", "asyncDispose", "end"]);
     } finally {
       server.close();
     }
   });
 
-  test(`${name}: a later close() settles with a forced close that still closes a slot`, async () => {
+  test(`${name}: only a later close() without a timeout waits for a forced close that still closes a slot`, async () => {
     const { port, server, commandReceived } = await heldQueryMocks[name]();
     const password = Promise.withResolvers<string>();
     try {
@@ -426,13 +431,14 @@ for (const [name, scheme, closedCode] of drivers) {
       await commandReceived;
       const forced = sql.close({ timeout: 0 }).then(() => order.push("forced"));
       const later = sql.close().then(() => order.push("later"));
+      const laterForced = sql.close({ timeout: 0 }).then(() => order.push("later forced"));
       expect(await query).toEqual({ code: closedCode });
       // one turn of the event loop: a later close() that did not wait with the first one has settled by now
       await new Promise(resolve => setImmediate(resolve));
       order.push("password");
       password.resolve("");
-      await Promise.all([forced, later]);
-      expect(order).toEqual(["password", "forced", "later"]);
+      await Promise.all([forced, later, laterForced]);
+      expect(order).toEqual(["later forced", "password", "forced", "later"]);
     } finally {
       password.resolve("");
       server.close();

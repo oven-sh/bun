@@ -1335,6 +1335,35 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /** Runs from close() after `closed` is set; overridden by Postgres for its LISTEN connection. */
   protected closeDedicatedConnections(): void {}
 
+  /// Does now what the pool does when its last query ends, unless its connections already close.
+  #stopWaitingForQueries() {
+    if (this.poolStarted) {
+      this.onAllQueriesFinished?.();
+    }
+  }
+
+  /// close({ timeout }) on a pool that an earlier call is closing. The call waits for that close,
+  /// for at most `seconds`. When they end, the pool stops waiting for its queries.
+  #closeWithin(closing: Promise<any>, seconds: number): Promise<void> | undefined {
+    if (seconds === 0) {
+      this.#stopWaitingForQueries();
+      return;
+    }
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const timer = setTimeout(() => {
+      // timeout is reached, lets close and probably fail some queries
+      this.#stopWaitingForQueries();
+      resolve();
+    }, seconds * 1000);
+    timer.unref(); // dont block the event loop
+    const settle = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    closing.then(settle, settle);
+    return promise;
+  }
+
   async close(options?: { timeout?: number }): Promise<void> {
     let timeout = options?.timeout;
     // Presence, not truthiness: `timeout: 0` means close now, undefined/null mean drain with no timer.
@@ -1347,11 +1376,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     }
 
     if (this.closed) {
-      if (timeout === 0) {
-        // stop waiting for the queries: do now what the pool does when the last of them ends
-        this.onAllQueriesFinished?.();
-      }
-      return this.#closing;
+      const closing = this.#closing;
+      return hasTimeout && closing !== null ? this.#closeWithin(closing, timeout!) : closing;
     }
 
     this.closed = true;

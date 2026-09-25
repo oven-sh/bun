@@ -3469,7 +3469,7 @@ void GlobalObject::reload()
     }
 
     // The console iterator (ConsoleObject.ts) takes stdin over from replaced code once this is set.
-    this->putDirect(vm, WebCore::builtinNames(vm).hotReloadGenerationPrivateName(), jsNumber(static_cast<double>(this->reloadCount)));
+    this->putDirect(vm, WebCore::builtinNames(vm).hotReloadedPrivateName(), jsBoolean(true));
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)

@@ -1562,13 +1562,11 @@ impl<'a> PackageInstaller<'a> {
         // A refreshed tarball always reinstalls, also when a deferred context is
         // replayed. Only the initial pass enqueues the fetch; once it completed
         // this run the fresh cache is installed from below.
-        let refresh_tarball = self
-            .manager_mut()
-            .should_refresh_tarball(dependency_id, package_id, resolution.tag);
-        let force_refresh_tarball = refresh_tarball
-            && needs_verify
-            && !is_pending_package_install
-            && {
+        let refresh_tarball =
+            self.manager_mut()
+                .should_refresh_tarball(dependency_id, package_id, resolution.tag);
+        let force_refresh_tarball =
+            refresh_tarball && needs_verify && !is_pending_package_install && {
                 let url = match resolution.tag {
                     resolution::Tag::RemoteTarball => {
                         resolution.remote_tarball().slice(string_buf!())

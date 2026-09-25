@@ -713,6 +713,86 @@ describe.concurrent("bun install config precedence", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A username written into the URL without a password is Basic auth with an empty password, which is
+  // what npm sends for `http://user@host/`; bun used to leave the userinfo in the URL and send nothing.
+  // The URL is spelled `user:@host:port` because `user@host:port` does not get through bun's URL parser
+  // yet (#16181); both spellings reach the registry config as a username with an empty password. The
+  // verdaccio behind the capturing registry accepts any credentials for packages readable by everyone.
+  const emptyPasswordAuth = `Basic ${Buffer.from("config-precedence:").toString("base64")}`;
+  const userOnlyRegistrySources: [
+    source: string,
+    configure: (url: string) => {
+      files?: Record<string, string>;
+      args?: string[];
+      env?: Record<string, string>;
+      dependency?: string;
+    },
+  ][] = [
+    ["bunfig registry string", url => ({ files: { "project/bunfig.toml": bunfig({ registry: url }) } })],
+    ["bunfig registry object", url => ({ files: { "project/bunfig.toml": bunfig({ registry: { url } }) } })],
+    [
+      "bunfig scoped registry",
+      url => ({ files: { "project/bunfig.toml": bunfig({ scopes: { types: url } }) }, dependency: "@types/no-deps" }),
+    ],
+    [".npmrc registry=", url => ({ files: { "project/.npmrc": `registry=${url}\n` } })],
+    [
+      ".npmrc @scope:registry=",
+      url => ({ files: { "project/.npmrc": `@types:registry=${url}\n` }, dependency: "@types/no-deps" }),
+    ],
+    ["--registry", url => ({ args: ["--registry", url] })],
+    ["BUN_CONFIG_REGISTRY", url => ({ env: { BUN_CONFIG_REGISTRY: url } })],
+  ];
+
+  test.each(userOnlyRegistrySources)(
+    "%s with user:@ in the URL sends Basic auth with an empty password",
+    async (_, configure) => {
+      using capture = capturingRegistry();
+      const {
+        files = {},
+        args = [],
+        env = {},
+        dependency = "no-deps",
+      } = configure(withUserinfo(capture, "config-precedence:"));
+      using dir = tempDir("config-precedence", {
+        ...files,
+        "project/package.json": packageJson({ [dependency]: "1.0.0" }),
+      });
+      const { stderr, exitCode } = await install(String(dir), args, env);
+      expect(stderr).not.toContain("error:");
+      expect(new Set(capture.authorizations)).toStrictEqual(new Set([emptyPasswordAuth]));
+      expect(installed(String(dir), ...dependency.split("/"))).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Unlike a username written into the URL, a username configured on its own is not a credential: npm
+  // only uses the `username` / `_password` pair when both are set.
+  test("bunfig registry object with a username key but no password sends no credentials", async () => {
+    using capture = capturingRegistry();
+    using dir = tempDir("config-precedence", {
+      "project/bunfig.toml": bunfig({ registry: { url: capture.url, username: "config-precedence" } }),
+      "project/package.json": packageJson({ "no-deps": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(new Set(capture.authorizations)).toStrictEqual(new Set([null]));
+    expect(installed(String(dir), "no-deps")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test(".npmrc :username= without :_password= sends no credentials", async () => {
+    using capture = capturingRegistry();
+    using dir = tempDir("config-precedence", {
+      "project/.npmrc": `registry=${capture.url}\n//localhost:${capture.port}/:username=config-precedence\n`,
+      "project/package.json": packageJson({ "no-deps": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(new Set(capture.authorizations)).toStrictEqual(new Set([null]));
+    expect(installed(String(dir), "no-deps")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
   test("user:pass@ in --registry replaces the .npmrc _authToken for the same host", async () => {
     using capture = capturingRegistry();
     using dir = tempDir("config-precedence", {

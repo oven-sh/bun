@@ -603,6 +603,38 @@ registry=https://somehost.com/org1/npm/registry/
     });
   });
 
+  describe("credentials written into the registry= URL", () => {
+    // `http://user@host/` is `user` with an empty password (what `new URL()` reports and what npm
+    // authenticates with); it used to be left inside the URL like a URL without credentials.
+    test.each([
+      ["user:pass@ is split into a username and a password", "http://carol:s3cret@example.com/npm/", "carol", "s3cret"],
+      ["user@ is a username with an empty password", "http://carol@example.com/npm/", "carol", ""],
+      ["user:@ is a username with an empty password", "http://carol:@example.com/npm/", "carol", ""],
+    ])("%s", (_, registryUrl, username, password) => {
+      expect(loadNpmrc(`registry=${registryUrl}\n`)).toEqual({
+        default_registry_url: "http://example.com/npm/",
+        default_registry_token: "",
+        default_registry_username: username,
+        default_registry_password: password,
+        default_registry_email: "",
+      });
+    });
+
+    test("a password without a username is a token", () => {
+      expect(loadNpmrc(`registry=http://:s3cret@example.com/npm/\n`)).toEqual({
+        default_registry_url: "http://example.com/npm/",
+        default_registry_token: "s3cret",
+        default_registry_username: "",
+        default_registry_password: "",
+        default_registry_email: "",
+      });
+    });
+
+    test("a URL without credentials is kept as written", () => {
+      expect(loadNpmrc(`registry=http://example.com/npm\n`).default_registry_url).toBe("http://example.com/npm");
+    });
+  });
+
   it("does not print an undecodable _password value", async () => {
     const secret = "s!ecret!pass";
     using dir = tempDir("npmrc-password-decode", {

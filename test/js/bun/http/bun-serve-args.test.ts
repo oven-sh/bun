@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "../../../harness";
+import { expectRssDeltaBelow, isWindows, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -661,6 +661,33 @@ describe("Bun.serve unix socket validation", () => {
         },
       }),
     ).toThrow();
+  });
+
+  test("unix option does not leak the string", async () => {
+    // Both calls throw before any socket is bound, so this drives the option
+    // parsing alone. The first throws as soon as it sees hostname + unix. The
+    // second accepts the unix path and throws later for the missing handler.
+    const code = /* js */ `
+      const base = Buffer.alloc(512 * 1024, "x").toString();
+      function expectThrow(fn, fragment) {
+        try { fn(); } catch (e) { if (e.message.includes(fragment)) return; throw e; }
+        throw new Error("expected Bun.serve() to throw: " + fragment);
+      }
+      function once(i) {
+        expectThrow(() => Bun.serve({ hostname: "127.0.0.1", unix: "/tmp/a" + i + base, fetch() {} }), "both hostname and unix");
+        expectThrow(() => Bun.serve({ unix: "/tmp/b" + i + base }), "fetch");
+      }
+      for (let i = 0; i < 20; i++) once(i);
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 200; i++) once(i);
+      Bun.gc(true);
+      console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    `;
+
+    // Unfixed: at least 100 MiB per leaking call site (200 resident copies of
+    // the 512 KiB path). Fixed: allocator slack only.
+    await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
   });
 
   describe("invalid unix socket paths should throw", () => {

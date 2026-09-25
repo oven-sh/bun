@@ -620,6 +620,104 @@ describe("fs.watch", () => {
     ]);
   });
 
+  // The events of each step, for a watch on `root`. A sentinel file is created
+  // after each step and events arrive in order, so its event marks the point
+  // where every earlier event was delivered.
+  async function eventsOfEachStep(root: string, options: fs.WatchOptions, steps: (() => void | Promise<void>)[]) {
+    const events: string[] = [];
+    let sentinel: { name: string; resolve: () => void; reject: (err: unknown) => void } | undefined;
+    const watcher = fs.watch(root, options, (eventType, filename) => {
+      events.push(`${eventType}:${filename}`);
+      if (filename === sentinel?.name) sentinel.resolve();
+    });
+    watcher.on("error", err => sentinel?.reject(err));
+    try {
+      const seen: string[][] = [];
+      for (const [i, step] of steps.entries()) {
+        await step();
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        sentinel = { name: `sentinel-${i}`, resolve, reject };
+        fs.closeSync(fs.openSync(path.join(root, sentinel.name), "w"));
+        await promise;
+        seen.push(events.splice(0).filter(event => !event.includes("sentinel-")));
+      }
+      return seen;
+    } finally {
+      watcher.close();
+    }
+  }
+
+  // Under a recursive watch a subdirectory has an inotify watch of its own, and
+  // the watch of its parent reports the subdirectory by name. A change to the
+  // subdirectory itself reaches both. It is reported once, under its name.
+  describe.skipIf(!isLinux)("recursive watch reports a change to a subdirectory once", () => {
+    const recursive = { recursive: true };
+    // busybox before 1.36 has no `touch -m`.
+    const canTouchModificationTime =
+      isLinux && Bun.which("touch") !== null && Bun.spawnSync({ cmd: ["touch", "-m", testDir] }).exitCode === 0;
+
+    test("removed", async () => {
+      using dir = tempDir("fs-watch-rec-rmdir", { "views": {} });
+      const views = path.join(String(dir), "views");
+      expect(await eventsOfEachStep(String(dir), recursive, [() => fs.rmdirSync(views)])).toEqual([["rename:views"]]);
+    });
+
+    test("renamed, empty", async () => {
+      using dir = tempDir("fs-watch-rec-mv-empty", { "a": {} });
+      const rename = () => fs.renameSync(path.join(String(dir), "a"), path.join(String(dir), "b"));
+      expect(await eventsOfEachStep(String(dir), recursive, [rename])).toEqual([["rename:a", "rename:b"]]);
+    });
+
+    test("renamed, with content", async () => {
+      using dir = tempDir("fs-watch-rec-mv-content", { "a": { "nested": {} } });
+      const rename = () => fs.renameSync(path.join(String(dir), "a"), path.join(String(dir), "b"));
+      expect(await eventsOfEachStep(String(dir), recursive, [rename])).toEqual([
+        ["rename:a", "rename:b", "rename:b/nested"],
+      ]);
+    });
+
+    test("renamed over an empty directory", async () => {
+      using dir = tempDir("fs-watch-rec-mv-over", { "a": { "nested": {} }, "b": {} });
+      const rename = () => fs.renameSync(path.join(String(dir), "a"), path.join(String(dir), "b"));
+      expect(await eventsOfEachStep(String(dir), recursive, [rename])).toEqual([
+        ["rename:a", "rename:b", "rename:b/nested"],
+      ]);
+    });
+
+    // A change of only the modification time is IN_MODIFY, where utimes() gives
+    // IN_ATTRIB.
+    test.skipIf(!canTouchModificationTime)("modification time changed", async () => {
+      using dir = tempDir("fs-watch-rec-mtime", { "views": {} });
+      const touch = async () => {
+        await using proc = Bun.spawn({ cmd: ["touch", "-m", path.join(String(dir), "views")], stderr: "pipe" });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      };
+      expect(await eventsOfEachStep(String(dir), recursive, [touch])).toEqual([["change:views"]]);
+    });
+
+    // The kernel reports the removal to the subdirectory's own watch only when
+    // the last reference to the directory goes away.
+    test("removed while a file descriptor holds it open", async () => {
+      using dir = tempDir("fs-watch-rec-rmdir-held", { "views": {} });
+      const views = path.join(String(dir), "views");
+      const fd = fs.openSync(views, "r");
+      let closed = false;
+      const close = () => {
+        if (!closed) fs.closeSync(fd);
+        closed = true;
+      };
+      try {
+        expect(await eventsOfEachStep(String(dir), recursive, [() => fs.rmdirSync(views), close])).toEqual([
+          ["rename:views"],
+          [],
+        ]);
+      } finally {
+        close();
+      }
+    });
+  });
+
   // Past fs.inotify.max_queued_events the kernel drops events and queues one
   // IN_Q_OVERFLOW; Bun reports it as ('change', null) on every watcher sharing
   // the inotify fd, the same shape node uses for overflow on Windows.

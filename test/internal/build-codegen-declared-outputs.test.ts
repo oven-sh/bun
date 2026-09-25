@@ -171,7 +171,13 @@ function writeProbe(dir: string, cfg: Config): string {
   return probe;
 }
 
-const probeFiles = ["GeneratedProbeEnum.cpp", "GeneratedProbeEnum.h", "GeneratedProbeUnion.h"];
+const probeFiles = [
+  "GeneratedBindgenLayout.cpp",
+  "GeneratedProbeEnum.cpp",
+  "GeneratedProbeEnum.h",
+  "GeneratedProbeUnion.h",
+  "bindgen_generated.rs",
+];
 
 // The tests below that run a generator script run it under the build being
 // tested; a debug build takes a few seconds to load one, more than the 5s
@@ -180,7 +186,7 @@ const generatorTimeout = 60_000;
 
 describe("emitBindgenV2", () => {
   test(
-    "declares the header of every type and the .cpp of the types that have one, on one edge",
+    "declares the header of every type, the .cpp files and the Rust file, on one edge",
     () => {
       using dir = tempDir("build-codegen-bindgenv2", {});
       const c = configure(String(dir));
@@ -189,17 +195,20 @@ describe("emitBindgenV2", () => {
 
       emitBindgenV2({ n, cfg, sources: sourceLists({ bindgenV2: [probe], bindgenV2Internal: [] }), o, dirStamp });
 
+      const layout = resolve(cfg.codegenDir, "GeneratedBindgenLayout.cpp");
       const cpp = resolve(cfg.codegenDir, "GeneratedProbeEnum.cpp");
       const headers = [
         resolve(cfg.codegenDir, "GeneratedProbeEnum.h"),
         resolve(cfg.codegenDir, "GeneratedProbeUnion.h"),
       ];
+      const rust = resolve(cfg.codegenDir, "bindgen_generated.rs");
       expect(edgeOutputs(n, cpp)).toEqual(inCodegenDir(c, probeFiles));
       // Headers go in the group the PCH and every cxx edge order-depend on; the
-      // .cpp is compiled like the other bindgenv2 sources.
+      // .cpp files are compiled like the other bindgenv2 sources.
       expect(normalized(o.cppHeaders)).toEqual(headers);
-      expect(normalized(o.bindgenV2Cpp)).toEqual([cpp]);
-      expect(normalized(o.all)).toEqual([cpp, ...headers]);
+      expect(normalized(o.bindgenV2Cpp)).toEqual([layout, cpp]);
+      expect(normalized(o.rustInputs)).toEqual([rust]);
+      expect(normalized(o.all)).toEqual([layout, cpp, ...headers, rust]);
     },
     generatorTimeout,
   );

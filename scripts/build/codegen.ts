@@ -922,7 +922,8 @@ export function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   const cppOutputs = allOutputs.filter(p => p.endsWith(".cpp"));
   const headerOutputs = allOutputs.filter(p => p.endsWith(".h"));
-  const other = allOutputs.filter(p => !p.endsWith(".cpp") && !p.endsWith(".h"));
+  const rustOutputs = allOutputs.filter(p => p.endsWith(".rs"));
+  const other = allOutputs.filter(p => !p.endsWith(".cpp") && !p.endsWith(".h") && !p.endsWith(".rs"));
   assert(other.length === 0, `bindgenv2 emitted unexpected output type: ${other.join(", ")}`);
 
   n.build({
@@ -940,6 +941,7 @@ export function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.all.push(...allOutputs);
   o.bindgenV2Cpp.push(...cppOutputs);
   o.cppHeaders.push(...headerOutputs);
+  o.rustInputs.push(...rustOutputs);
 }
 
 export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {

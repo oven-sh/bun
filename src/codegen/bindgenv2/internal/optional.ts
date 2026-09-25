@@ -1,8 +1,19 @@
 import { isAny } from "./any.ts";
-import { type CodeStyle, Type } from "./base.ts";
+import { type RustType, trivialRust, Type, unsupportedInRust, variantLayout } from "./base.ts";
 
-function bindgenOptional(payload: Type): string {
-  return `bindgen.BindgenOptional(${payload.bindgenType})`;
+const none: RustType = { ...trivialRust("u8", 1), member: "()", fromExtern: () => "()", arm: null };
+
+function optionalRust(payload: Type): RustType {
+  if (isAny(payload)) return unsupportedInRust("a nullable `RawAny` or `StrongAny`");
+  const inner = payload.rust;
+  if (inner.optional) return inner.optional;
+  const some = inner.fromExtern("v");
+  return {
+    extern: `ExternOptional<${inner.extern}>`,
+    ...variantLayout([none, inner]),
+    member: `Option<${inner.member}>`,
+    fromExtern: e => (some === "v" ? `${e}.get()` : `${e}.get().map(|v| ${some})`),
+  };
 }
 
 export abstract class OptionalType extends Type {}
@@ -16,11 +27,8 @@ export function optional(payload: Type): OptionalType {
     get idlType() {
       return `::WebCore::IDLOptional<${payload.idlType}>`;
     }
-    get bindgenType() {
-      return bindgenOptional(payload);
-    }
-    zigType(style?: CodeStyle) {
-      return payload.optionalZigType(style);
+    get rust() {
+      return optionalRust(payload);
     }
     toCpp(value: any): string {
       if (value === undefined) {
@@ -46,11 +54,8 @@ export function nullable(payload: Type): NullableType {
     get idlType() {
       return `::WebCore::IDLNullable<${payload.idlType}>`;
     }
-    get bindgenType() {
-      return bindgenOptional(payload);
-    }
-    zigType(style?: CodeStyle) {
-      return payload.optionalZigType(style);
+    get rust() {
+      return optionalRust(payload);
     }
     toCpp(value: any): string {
       if (value == null) {
@@ -69,11 +74,8 @@ export function looseNullable(payload: Type): LooseNullableType {
     get idlType() {
       return `::Bun::IDLLooseNullable<${payload.idlType}>`;
     }
-    get bindgenType() {
-      return bindgenOptional(payload);
-    }
-    zigType(style?: CodeStyle) {
-      return payload.optionalZigType(style);
+    get rust() {
+      return optionalRust(payload);
     }
     toCpp(value: any): string {
       if (!value) {
@@ -89,11 +91,8 @@ const Undefined = new (class extends Type {
   get idlType() {
     return `::Bun::IDLStrictUndefined`;
   }
-  get bindgenType() {
-    return `bindgen.BindgenNull`;
-  }
-  zigType(style?: CodeStyle) {
-    return "void";
+  get rust() {
+    return none;
   }
   toCpp(value: undefined): string {
     return `{}`;
@@ -105,11 +104,8 @@ const Null = new (class extends Type {
   get idlType() {
     return `::Bun::IDLStrictNull`;
   }
-  get bindgenType() {
-    return `bindgen.BindgenNull`;
-  }
-  zigType(style?: CodeStyle) {
-    return "void";
+  get rust() {
+    return none;
   }
   toCpp(value: null): string {
     return `nullptr`;

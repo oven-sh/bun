@@ -3521,10 +3521,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     /// Returns true when the comment ended at a newline (not EOF); the caller emits the `Newline` token it consumed.
     fn eat_comment(&mut self) -> bool {
+        // A backslash does not continue a comment (bash, dash): stop at any newline.
         while let Some(peeked) = self.eat() {
-            if peeked.escaped {
-                continue;
-            }
             if peeked.char == u32::from(b'\n') {
                 return true;
             }

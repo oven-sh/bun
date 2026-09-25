@@ -936,6 +936,22 @@ describe("lex shell", () => {
       "echo a # c",
       [{ Text: "echo" }, { Delimit: {} }, { Text: "a" }, { Delimit: {} }, { Eof: {} }],
     ],
+    [
+      "a backslash does not continue a comment",
+      "echo a # c \\\necho b",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "a" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "b" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
   ])("line endings: %s", (_name, source, expected) => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
   });

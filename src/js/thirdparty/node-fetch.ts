@@ -12,10 +12,17 @@ interface WebResponseMembers {
   json(): Promise<any>;
   arrayBuffer(): Promise<ArrayBuffer>;
 }
-type WebResponseConstructor = new (
+type WebResponseConstructor = (new (
   body?: ConstructorParameters<typeof globalThis.Response>[0],
   init?: ConstructorParameters<typeof globalThis.Response>[1],
-) => Omit<globalThis.Response, keyof WebResponseMembers> & WebResponseMembers;
+) => Omit<globalThis.Response, keyof WebResponseMembers> & WebResponseMembers) &
+  WebResponseStatics;
+// The native static constructors, which the node-fetch Response below wraps.
+interface WebResponseStatics {
+  error(): globalThis.Response;
+  redirect(...args: Parameters<typeof globalThis.Response.redirect>): globalThis.Response;
+  json(...args: Parameters<typeof globalThis.Response.json>): globalThis.Response;
+}
 interface WebRequestMembers {
   readonly url: string;
 }
@@ -131,6 +138,20 @@ class Response extends WebResponse {
   // but is still used by some libraries and frameworks (like Astro)
   async buffer() {
     return new $Buffer(await super.arrayBuffer());
+  }
+
+  // The static constructors of node-fetch return its own Response, with a node stream body and buffer():
+  // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/response.js#L108-L145
+  static error() {
+    return Object.setPrototypeOf(super.error(), ResponsePrototype);
+  }
+
+  static redirect(...args: Parameters<typeof globalThis.Response.redirect>) {
+    return Object.setPrototypeOf(super.redirect(...args), ResponsePrototype);
+  }
+
+  static json(...args: Parameters<typeof globalThis.Response.json>) {
+    return Object.setPrototypeOf(super.json(...args), ResponsePrototype);
   }
 
   get type() {

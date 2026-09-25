@@ -619,7 +619,7 @@ impl ShellSubprocess {
 
         #[cfg(unix)]
         let no_sigpipe = if let Some(iowriter) = &shellio.stdout {
-            !iowriter.is_socket()
+            !iowriter.is_pipeline_pipe()
         } else {
             true
         };

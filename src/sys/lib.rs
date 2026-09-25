@@ -1593,6 +1593,8 @@ mod safe_libc {
         // `c_int` writes); kernel only writes the slot and reports failure via
         // the return value — no other preconditions.
         pub(crate) safe fn pipe(fds: &mut [c_int; 2]) -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub(crate) safe fn pipe2(fds: &mut [c_int; 2], flags: c_int) -> c_int;
         pub(crate) safe fn socketpair(
             domain: c_int,
             ty: c_int,
@@ -3021,6 +3023,27 @@ mod posix_impl {
     pub fn pipe() -> Maybe<[Fd; 2]> {
         let mut fds = [0i32; 2];
         check!(safe_libc::pipe(&mut fds), Tag::pipe);
+        Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
+    }
+    /// [`pipe`] with `FD_CLOEXEC` on both ends: `pipe2(O_CLOEXEC)` on Linux,
+    /// `pipe()` then `fcntl` elsewhere (closing both ends if that fails).
+    pub fn pipe_cloexec() -> Maybe<[Fd; 2]> {
+        let mut fds = [0i32; 2];
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            check!(safe_libc::pipe2(&mut fds, libc::O_CLOEXEC), Tag::pipe);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            check!(safe_libc::pipe(&mut fds), Tag::pipe);
+            for &fd in &fds {
+                if let Err(e) = set_close_on_exec(Fd::from_native(fd)) {
+                    safe_libc::close(fds[0]);
+                    safe_libc::close(fds[1]);
+                    return Err(e);
+                }
+            }
+        }
         Ok([Fd::from_native(fds[0]), Fd::from_native(fds[1])])
     }
     pub fn isatty(fd: Fd) -> bool {

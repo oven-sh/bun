@@ -18,6 +18,7 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import type { Server, Socket } from "node:net";
 import {
   listeningServer,
@@ -296,3 +297,194 @@ for (const [name, scheme, closedCode] of drivers) {
     });
   }
 }
+
+// close() on a pool that an earlier close() call is still closing. A later call waits for that close, for at
+// most its timeout. When the timeout ends, the pool stops waiting for the queries in flight.
+type CloseOptions = { timeout?: number } | undefined;
+const show = (options: CloseOptions) => `close(${options ? `{ timeout: ${options.timeout} }` : ""})`;
+
+function heldQuery(sql: SQL) {
+  return sql`select 1 as x`.simple().then(
+    rows => ({ rows: [...rows] }),
+    e => ({ code: e.code }),
+  );
+}
+
+for (const [name, scheme, closedCode] of drivers) {
+  const rows = { rows: [{ x: "1" }] };
+
+  const forcing: [first: CloseOptions, later: CloseOptions][] = [
+    [undefined, { timeout: 0 }],
+    [{ timeout: 30 }, { timeout: 0 }],
+    [undefined, { timeout: 0.01 }],
+    [{ timeout: 30 }, { timeout: 0.01 }],
+  ];
+  for (const [first, later] of forcing) {
+    test(`${name}: ${show(later)} closes a pool that waits in ${show(first)}`, async () => {
+      const { port, server, commandReceived, respond } = await heldQueryMocks[name]();
+      try {
+        const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1 });
+        const query = heldQuery(sql);
+        await commandReceived;
+        const firstClosed = sql.close(first);
+        await sql.close(later);
+        // a later call that closed nothing leaves the query in flight, and this answer resolves it
+        respond();
+        expect(await query).toEqual({ code: closedCode });
+        await firstClosed;
+      } finally {
+        server.close();
+      }
+    });
+  }
+
+  const joining: [first: CloseOptions, later: CloseOptions][] = [
+    [undefined, undefined],
+    [{ timeout: 30 }, undefined],
+    [undefined, { timeout: 30 }],
+    // more milliseconds than a timer can hold
+    [undefined, { timeout: 3_000_000 }],
+  ];
+  for (const [first, later] of joining) {
+    test(`${name}: ${show(later)} settles with a pool that waits in ${show(first)}`, async () => {
+      const { port, server, commandReceived, respond } = await heldQueryMocks[name]();
+      try {
+        const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1 });
+        const order: string[] = [];
+        const query = heldQuery(sql).finally(() => order.push("query"));
+        await commandReceived;
+        const firstClosed = sql.close(first).then(() => order.push("first"));
+        const laterClosed = sql.close(later).then(() => order.push("later"));
+        respond();
+        expect(await query).toEqual(rows);
+        await Promise.all([firstClosed, laterClosed]);
+        expect(order).toEqual(["query", "first", "later"]);
+      } finally {
+        server.close();
+      }
+    });
+  }
+
+  test(`${name}: close({ timeout }) closes the pool when the timeout expires, also after a later close()`, async () => {
+    const { port, server, commandReceived } = await heldQueryMocks[name]();
+    try {
+      const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1 });
+      const query = heldQuery(sql);
+      await commandReceived;
+      // the server never answers, so only the timeout can settle these
+      await Promise.all([sql.close({ timeout: 0.01 }), sql.close(), sql.end({ timeout: 30 })]);
+      expect(await query).toEqual({ code: closedCode });
+      expect(await Promise.all([sql.close(), sql.end({ timeout: 0 })])).toEqual([undefined, undefined]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test(`${name}: a later close() with an invalid timeout rejects and changes nothing`, async () => {
+    const { port, server, commandReceived, respond } = await heldQueryMocks[name]();
+    try {
+      const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1 });
+      const query = heldQuery(sql);
+      await commandReceived;
+      const firstClosed = sql.close();
+      const codes = [-1, 2 ** 32, NaN].map(timeout => sql.close({ timeout }).catch(e => e.code));
+      expect(await Promise.all(codes)).toEqual(Array(3).fill("ERR_INVALID_ARG_VALUE"));
+      respond();
+      expect(await query).toEqual(rows);
+      await firstClosed;
+      expect(await sql.close({ timeout: -1 }).catch(e => e.code)).toBe("ERR_INVALID_ARG_VALUE");
+    } finally {
+      server.close();
+    }
+  });
+
+  test(`${name}: end() and asyncDispose reach the same close as close()`, async () => {
+    const { port, server, commandReceived, respond } = await heldQueryMocks[name]();
+    try {
+      const sql = new SQL({ url: `${scheme}127.0.0.1:${port}/db`, max: 1 });
+      const order: string[] = [];
+      const query = heldQuery(sql).finally(() => order.push("query"));
+      await commandReceived;
+      const disposed = sql[Symbol.asyncDispose]().then(() => order.push("asyncDispose"));
+      const joined = sql.end().then(() => order.push("end"));
+      await sql.end({ timeout: 0 });
+      respond();
+      expect(await query).toEqual({ code: closedCode });
+      await Promise.all([disposed, joined]);
+      expect(order).toEqual(["query", "asyncDispose", "end"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test(`${name}: only a later close() without a timeout waits for a forced close that still closes a slot`, async () => {
+    const { port, server, commandReceived } = await heldQueryMocks[name]();
+    const password = Promise.withResolvers<string>();
+    try {
+      let slots = 0;
+      const order: string[] = [];
+      const sql = new SQL({
+        url: `${scheme}127.0.0.1:${port}/db`,
+        max: 2,
+        // the second slot has no native connection until the test resolves its password
+        password: () => (++slots === 1 ? "" : password.promise),
+      });
+      const query = heldQuery(sql);
+      await commandReceived;
+      const forced = sql.close({ timeout: 0 }).then(() => order.push("forced"));
+      const later = sql.close().then(() => order.push("later"));
+      const laterForced = sql.close({ timeout: 0 }).then(() => order.push("later forced"));
+      expect(await query).toEqual({ code: closedCode });
+      // one turn of the event loop: a later close() that did not wait with the first one has settled by now
+      await new Promise(resolve => setImmediate(resolve));
+      order.push("password");
+      password.resolve("");
+      await Promise.all([forced, later, laterForced]);
+      expect(order).toEqual(["later forced", "password", "forced", "later"]);
+    } finally {
+      password.resolve("");
+      server.close();
+    }
+  });
+}
+
+test("Bun.sql.close() and Bun.sql.end() reach the same close", async () => {
+  const { port, server, commandReceived, respond } = await heldQueryMocks.postgres();
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { sql } = Bun;
+          const query = sql\`select 1 as x\`.simple().then(() => "rows", e => e.code);
+          process.stdin.once("data", async () => {
+            const first = sql.close();
+            await sql.end({ timeout: 0 });
+            console.log("forced");
+            console.log("query: " + (await query));
+            await first;
+            console.log("closed");
+          });
+        `,
+      ],
+      env: { ...bunEnv, DATABASE_URL: `postgres://postgres@127.0.0.1:${port}/db` },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    await commandReceived;
+    proc.stdin.write("close\n");
+    proc.stdin.end();
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      // an end() that closed nothing leaves the query in flight, and this answer resolves it
+      if (stdout.includes("forced\n")) respond();
+    }
+    expect(stdout).toBe("forced\nquery: ERR_POSTGRES_CONNECTION_CLOSED\nclosed\n");
+    expect(await proc.exited).toBe(0);
+  } finally {
+    server.close();
+  }
+});

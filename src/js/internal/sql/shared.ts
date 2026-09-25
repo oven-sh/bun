@@ -943,6 +943,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   public closed: boolean = false;
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
+  /// Settles when the close() in progress does.
+  #closing: Promise<any> | null = null;
   /// AsyncLocalStorage context the SQL instance was created in. onconnect/onclose run
   /// inside it rather than in whatever context the native callback happens to fire in
   /// (none for a socket event, the close() caller's when the socket closes synchronously).
@@ -1333,11 +1335,37 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /** Runs from close() after `closed` is set; overridden by Postgres for its LISTEN connection. */
   protected closeDedicatedConnections(): void {}
 
-  async close(options?: { timeout?: number }): Promise<void> {
-    if (this.closed) {
+  #stopWaitingForQueries() {
+    // #close() clears poolStarted
+    if (this.poolStarted) {
+      this.onAllQueriesFinished?.();
+    }
+  }
+
+  /// close({ timeout }) on a pool that is already closing.
+  #closeWithin(closing: Promise<any>, seconds: number): Promise<void> | undefined {
+    if (seconds === 0) {
+      this.#stopWaitingForQueries();
       return;
     }
+    const { promise, resolve } = Promise.withResolvers<void>();
+    // setTimeout turns a longer delay into 1 ms
+    const delay = Math.min(seconds * 1000, 2 ** 31 - 1);
+    const timer = setTimeout(() => {
+      // timeout is reached, lets close and probably fail some queries
+      this.#stopWaitingForQueries();
+      resolve();
+    }, delay);
+    timer.unref(); // dont block the event loop
+    const settle = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    closing.$then(settle, settle);
+    return promise;
+  }
 
+  async close(options?: { timeout?: number }): Promise<void> {
     let timeout = options?.timeout;
     // Presence, not truthiness: `timeout: 0` means close now, undefined/null mean drain with no timer.
     const hasTimeout = timeout != null;
@@ -1348,17 +1376,23 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       }
     }
 
+    if (this.closed) {
+      const closing = this.#closing;
+      return hasTimeout && closing !== null ? this.#closeWithin(closing, timeout!) : closing;
+    }
+
     this.closed = true;
     this.closeDedicatedConnections();
 
     if (hasTimeout) {
       if (timeout === 0 || !this.hasPendingQueries()) {
         // close immediately
-        await this.#close();
+        await (this.#closing = this.#close());
         return;
       }
 
       const { promise, resolve } = Promise.withResolvers<void>();
+      this.#closing = promise;
       const timer = setTimeout(() => {
         // timeout is reached, lets close and probably fail some queries
         this.#close().finally(resolve);
@@ -1375,12 +1409,13 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     } else {
       if (!this.hasPendingQueries()) {
         // close immediately
-        await this.#close();
+        await (this.#closing = this.#close());
         return;
       }
 
       // gracefully close the pool
       const { promise, resolve } = Promise.withResolvers<void>();
+      this.#closing = promise;
 
       this.onAllQueriesFinished = () => {
         // everything is closed, lets close the pool

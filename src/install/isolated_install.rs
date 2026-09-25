@@ -1664,6 +1664,23 @@ pub(crate) fn install_isolated_packages(
             );
             let mut owned = joined.to_vec();
             owned.push(0);
+
+            // The keys above fold in each package's current integrity, so a
+            // URL/local tarball a global-store entry holds must keep that hash
+            // for the rest of the run.
+            for (idx, &entry_hash) in entry_hashes.iter().enumerate() {
+                if entry_hash == 0 {
+                    continue;
+                }
+                let pkg_id = node_pkg_ids[entry_node_ids[idx].get() as usize];
+                if pkg_resolutions[pkg_id as usize]
+                    .tag
+                    .is_tarball_cache_keyed_by_url()
+                {
+                    manager.integrity_pinned_packages.put(pkg_id, ())?;
+                }
+            }
+
             break 'global_store_path Some(owned);
         }
     } else {
@@ -2217,14 +2234,10 @@ pub(crate) fn install_isolated_packages(
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
-                    // A global-store entry is keyed by the integrity the lockfile
-                    // held before this run, so a refreshed tarball would be
-                    // published under the old key that other projects link to;
-                    // those entries keep the cached extraction.
-                    let refresh_tarball = !uses_global_store
-                        && installer
-                            .manager()
-                            .should_refresh_tarball(dep_id, pkg_res_tag);
+                    // Global-store packages are pinned, so this is false for them.
+                    let refresh_tarball = installer
+                        .manager()
+                        .should_refresh_tarball(dep_id, pkg_id, pkg_res_tag);
 
                     let needs_install = installer.manager().options.enable.force_install()
                         || refresh_tarball

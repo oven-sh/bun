@@ -239,7 +239,7 @@ pub fn enqueue_tarball_for_reading(
 
     // A refreshed tarball may have new bytes; drop the pinned integrity so
     // `ExtractTarball::run` recomputes it instead of rejecting them.
-    let integrity = if this.should_refresh_tarball(dependency_id, resolution.tag) {
+    let integrity = if this.should_refresh_tarball(dependency_id, package_id, resolution.tag) {
         Integrity::default()
     } else {
         this.lockfile.packages.items_meta()[package_id as usize].integrity

@@ -1565,7 +1565,7 @@ impl<'a> PackageInstaller<'a> {
             && !is_pending_package_install
             && self
                 .manager_mut()
-                .should_refresh_tarball(dependency_id, resolution.tag)
+                .should_refresh_tarball(dependency_id, package_id, resolution.tag)
             && {
                 let url = match resolution.tag {
                     resolution::Tag::RemoteTarball => {

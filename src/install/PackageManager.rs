@@ -388,6 +388,10 @@ pub struct PackageManager {
 
     pub options: Options,
     pub(crate) preinstall_state: Vec<PreinstallState>,
+    /// Packages whose lockfile integrity is folded into a global-store entry
+    /// key this run. `should_refresh_tarball` keeps their pin: a refreshed
+    /// tarball would be published under the key computed from the old hash.
+    pub(crate) integrity_pinned_packages: ArrayHashMap<PackageID, ()>,
     pub(crate) postinstall_optimizer: crate::postinstall_optimizer::List,
 
     pub(crate) global_link_dir: Option<bun_sys::Dir>,
@@ -2119,6 +2123,7 @@ pub fn init(
         wr!(root_lifecycle_scripts, None);
         wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());
+        wr!(integrity_pinned_packages, ArrayHashMap::default());
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);
@@ -2581,6 +2586,7 @@ fn init_with_runtime_once(
         wr!(root_lifecycle_scripts, None);
         wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());
+        wr!(integrity_pinned_packages, ArrayHashMap::default());
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);

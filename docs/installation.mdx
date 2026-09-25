@@ -180,6 +180,16 @@ To avoid conflicts with Scoop, use `scoop update bun` instead.
 
 </Tip>
 
+<Accordion title="Seeing `HTTPError`?">
+
+`bun upgrade` looks up the latest release through the GitHub API. If `GITHUB_TOKEN` or `GITHUB_ACCESS_TOKEN` is set in your environment, it is sent with that request, and an expired or invalid token makes the upgrade fail with `Bun upgrade failed with error: HTTPError`. Fix the token, or run the upgrade without it:
+
+```bash terminal icon="terminal"
+GITHUB_TOKEN= bun upgrade
+```
+
+</Accordion>
+
 ---
 
 ## Canary Builds

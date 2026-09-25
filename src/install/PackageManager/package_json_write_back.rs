@@ -1,6 +1,6 @@
-use bun_collections::DynamicBitSet;
 use bun_collections::bit_set::Range as BitRange;
-use bun_core::{Global, strings};
+use bun_collections::{DynamicBitSet, index_sort};
+use bun_core::{Global, Output, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_sys::{Fd, File};
@@ -58,9 +58,14 @@ fn root_target() -> WorkspaceTarget {
     }
 }
 
-/// Phase 1 (before bun.lock is saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them.
+/// Override names the re-derived root map no longer has a rule for: a `$name` whose referent the members now declare differently.
+pub(crate) type DroppedOverrides = Vec<PackageNameHash>;
+
+/// Phase 1 (before bun.lock is cleaned and saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them. `Some` when the root's `overrides` and `catalogs` were copied: rows resolved under the previous values may not satisfy the new ones.
 #[inline]
-pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<()> {
+pub(crate) fn edit_after_resolve(
+    manager: &mut PackageManager,
+) -> crate::Result<Option<DroppedOverrides>> {
     if manager.pending_filtered_write.is_none()
         && manager.update_target_workspaces.is_none()
         && !manager
@@ -68,17 +73,28 @@ pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<
             .iter()
             .any(|e| e.received_requests)
     {
-        return Ok(());
+        return Ok(None);
     }
     edit_after_resolve_slow(manager)
 }
 
 #[inline(never)]
-fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<()> {
+fn edit_after_resolve_slow(
+    manager: &mut PackageManager,
+) -> crate::Result<Option<DroppedOverrides>> {
     let mut edited: Vec<EditedPackageJson> = core::mem::take(&mut manager.edited_package_jsons);
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
     let exact = manager.options.enable.exact_versions();
     let cwd = edited.iter().position(|e| e.received_requests);
+
+    // The editors read each request's resolved package through `request.package_id`.
+    if !updates.is_empty() {
+        manager.lockfile.bind_update_requests(
+            manager.pending_filtered_write.as_deref(),
+            manager.workspace_name_hash,
+            &mut updates,
+        );
+    }
 
     let result = if let Some(mut pending) = manager.pending_filtered_write.take() {
         let result = pending.edit_entries(manager, &mut updates);
@@ -95,6 +111,7 @@ fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<()> {
     }
     .and_then(|()| sync_lockfile(manager, &edited));
 
+    // `sync_lockfile` may have grown the string buffer the requests point into.
     if result.is_ok() && !updates.is_empty() {
         manager.lockfile.bind_update_requests(
             manager.pending_filtered_write.as_deref(),
@@ -264,21 +281,21 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
     ids
 }
 
-/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change.
-fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> crate::Result<()> {
+/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change. `Some` when the root maps were copied.
+fn sync_lockfile(
+    manager: &mut PackageManager,
+    edited: &[EditedPackageJson],
+) -> crate::Result<Option<DroppedOverrides>> {
     let mut scratch = super::workspace_manifests::ScratchManifests::new();
-    scratch.parse_root(manager)?;
-    let mut root_pkg = Some(core::mem::take(&mut scratch.root));
-    let mut parsed: Vec<(usize, Package)> = Vec::with_capacity(edited.len());
-    for (i, e) in edited.iter().enumerate() {
-        if e.target.name_hash.is_none() {
-            parsed.extend(root_pkg.take().map(|pkg| (i, pkg)));
-            continue;
-        }
-        parsed.push((i, scratch.parse_member(manager, &e.target)?));
-    }
+    // The parse registers every `npm:` alias it meets with strings in the scratch buffer; the aliases of `manager.lockfile` stay as they are.
+    let known_npm_aliases = core::mem::take(&mut manager.known_npm_aliases);
+    let parsed = parse_scratch(manager, &mut scratch, edited);
+    manager.known_npm_aliases = known_npm_aliases;
+    let parsed = parsed?;
     let super::workspace_manifests::ScratchManifests {
-        lockfile: scratch, ..
+        lockfile: scratch,
+        log: scratch_log,
+        ..
     } = scratch;
 
     let target_ids = target_package_ids(&manager.lockfile, edited);
@@ -288,7 +305,6 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         if target_id == invalid_package_id {
             continue;
         }
-        let is_root = edited[*i].target.name_hash.is_none();
         let row = manager.lockfile.packages.items_dependencies()[target_id as usize];
         let scratch_deps = pkg
             .dependencies
@@ -335,12 +351,7 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
             changed
         };
 
-        let sync_maps = is_root
-            && (!scratch.overrides.is_empty()
-                || scratch.catalogs.has_any()
-                || !manager.lockfile.overrides.is_empty()
-                || manager.lockfile.catalogs.has_any());
-        if changed.is_empty() && !sync_maps {
+        if changed.is_empty() {
             continue;
         }
 
@@ -349,22 +360,63 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         for &(_, si) in &changed {
             scratch_deps[si].count(sbuf, &mut builder);
         }
-        if sync_maps {
-            scratch.overrides.count(sbuf, &mut builder);
-            scratch.catalogs.count(sbuf, &mut builder);
-        }
         builder.allocate()?;
         let rows = row.mut_(lf.dependencies.as_mut_slice());
         for &(ti, si) in &changed {
             rows[ti] = scratch_deps[si].clone_in(known, sbuf, &mut builder)?;
         }
-        if sync_maps {
-            *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
-            *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
-        }
         builder.clamp();
     }
-    Ok(())
+
+    // A `$name` override or a catalog entry takes its value from a root or member literal that may have been rewritten, so the root maps are re-derived whatever file was edited.
+    let sync_maps = !scratch.overrides.is_empty()
+        || scratch.catalogs.has_any()
+        || !manager.lockfile.overrides.is_empty()
+        || manager.lockfile.catalogs.has_any();
+    if !sync_maps {
+        return Ok(None);
+    }
+    let mut dropped: DroppedOverrides = Vec::new();
+    manager
+        .lockfile
+        .overrides
+        .append_overridden_name_hashes(&mut dropped);
+    dropped.retain(|name_hash| !scratch.overrides.has_rule_for_name(*name_hash));
+    index_sort::sort_slice_unstable_by(&mut dropped, |a, b| a.cmp(b));
+    dropped.dedup();
+    if !dropped.is_empty() {
+        // The re-parse says why the rule went away.
+        scratch_log.print(core::ptr::from_mut(Output::error_writer()))?;
+    }
+
+    let known = &mut manager.known_npm_aliases;
+    let (mut builder, lf) = manager.lockfile.string_builder_split();
+    scratch.overrides.count(sbuf, &mut builder);
+    scratch.catalogs.count(sbuf, &mut builder);
+    builder.allocate()?;
+    *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
+    *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
+    builder.clamp();
+    Ok(Some(dropped))
+}
+
+/// The root, then each edited member, into `scratch`; the root's parse fills the workspace paths the members resolve through.
+fn parse_scratch(
+    manager: &mut PackageManager,
+    scratch: &mut super::workspace_manifests::ScratchManifests,
+    edited: &[EditedPackageJson],
+) -> crate::Result<Vec<(usize, Package)>> {
+    scratch.parse_root(manager)?;
+    let mut root_pkg = Some(core::mem::take(&mut scratch.root));
+    let mut parsed: Vec<(usize, Package)> = Vec::with_capacity(edited.len());
+    for (i, e) in edited.iter().enumerate() {
+        if e.target.name_hash.is_none() {
+            parsed.extend(root_pkg.take().map(|pkg| (i, pkg)));
+            continue;
+        }
+        parsed.push((i, scratch.parse_member(manager, &e.target)?));
+    }
+    Ok(parsed)
 }
 
 fn same_row(scratch: &Dependency, row: &Dependency) -> bool {

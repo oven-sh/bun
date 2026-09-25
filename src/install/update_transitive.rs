@@ -962,10 +962,11 @@ fn set_rows_of(edges: &mut DynamicBitSet, lockfile: &Lockfile, owner: usize) {
     );
 }
 
-/// Peer rows of non-workspace packages whose target nothing depends on outright: the peer is the package's only reason to exist, so an update re-resolves it instead of following a provider.
+/// Peer rows of non-workspace packages whose target nothing depends on outright: the peer is the package's only reason to exist, so an update re-resolves it instead of following a provider. With `reached`, only the rows of those packages count as providers.
 pub(crate) fn plannable_peer_rows(
     lockfile: &Lockfile,
     direct: &DirectDependencies,
+    reached: Option<&DynamicBitSet>,
 ) -> DynamicBitSet {
     let packages_len = lockfile.packages.len();
     let pkg_res = lockfile.packages.items_resolution();
@@ -981,6 +982,9 @@ pub(crate) fn plannable_peer_rows(
         }
     }
     for owner in 0..packages_len {
+        if reached.is_some_and(|reached| !reached.is_set_allow_out_of_bound(owner, false)) {
+            continue;
+        }
         let owned = dep_slices[owner]
             .get(deps)
             .iter()
@@ -1053,7 +1057,7 @@ fn plan_edges(
             }
             if dep.behavior.is_peer()
                 && !plannable_peers
-                    .get_or_insert_with(|| plannable_peer_rows(lockfile, direct))
+                    .get_or_insert_with(|| plannable_peer_rows(lockfile, direct, None))
                     .is_set(dep_id)
             {
                 continue;

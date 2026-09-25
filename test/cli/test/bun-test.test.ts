@@ -953,6 +953,27 @@ describe("bun test", () => {
         expect(stderr).toContain(`with a string: ${s}`);
       });
     });
+    test("check formatting for %s with non-string values", () => {
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test, expect } from "bun:test";
+
+          test.each([1])("integer via %s", (v) => {
+            expect(v).toBeDefined();
+          });
+          test.each([0.8])("float via %s", (v) => {
+            expect(v).toBeDefined();
+          });
+          test.each([["x", 1]])("mixed tuple via %s: %s", (a, b) => {
+            expect([a, b]).toBeDefined();
+          });
+        `,
+      });
+      expect(stderr).toContain("integer via 1");
+      expect(stderr).toContain("float via 0.8");
+      expect(stderr).toContain("mixed tuple via x: 1");
+    });
     test("check formatting for %j", () => {
       const input = [
         {

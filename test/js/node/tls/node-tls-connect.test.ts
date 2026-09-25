@@ -2739,9 +2739,16 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toStartWith("Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0'");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const warning =
+      "Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections " +
+      "and HTTPS requests insecure by disabling certificate verification.";
+    expect({
+      stdout,
+      // Without the process id, and without the hint about --trace-warnings that names the executable.
+      stderr: stderr.replace(/^\(node:\d+\) /, "").replace(/\(Use `.*` to show where the warning was created\)\n/, ""),
+      exitCode,
+    }).toEqual({ stdout: `${warning}\n`, stderr: `Warning: ${warning}\n`, exitCode: 0 });
   });
 
   it("verifies the chain but, unlike tls.connect({ socket }), not the hostname", async () => {

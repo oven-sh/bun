@@ -621,8 +621,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
 }
 
 int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
-    if (us_socket_is_closed(s) ||
-        us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN) {
+    if (!us_internal_socket_can_raw_write(s)) {
         return 0;
     }
 
@@ -643,8 +642,7 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
      * SSL_shutdown() has marked the SSL layer shut down, so checking
      * us_socket_is_shut_down() here would deadlock the alert in userspace.
      * Gate only on fd close and TCP-level FIN. */
-    if (us_socket_is_closed(s) ||
-        us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN) {
+    if (!us_internal_socket_can_raw_write(s)) {
         return 0;
     }
 
@@ -727,7 +725,7 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
     /* Todo: should we emit on_close if calling shutdown on an already half-closed socket?
      * We need more states in that case, we need to track RECEIVED_FIN
      * so far, the app has to track this and call close as needed */
-    if (!us_socket_is_closed(s) && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN) {
+    if (us_internal_socket_can_raw_write(s)) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));

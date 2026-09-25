@@ -519,15 +519,6 @@ void us_internal_ssl_loop_state_restore(void **saved) {
   d->ssl_write_batching = (int)(uintptr_t)saved[5];
 }
 
-/* us_socket_raw_write sends nothing once the FIN went out or the fd closed. A
- * record that is sealed after that can never leave: it is dropped, because a
- * spill or a write retry for it would wait for a writable event that never
- * comes. */
-static int ssl_can_still_write(struct us_socket_t *s) {
-  return !us_socket_is_closed(s) &&
-         us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN;
-}
-
 static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)BIO_get_data(bio);
 
@@ -595,9 +586,9 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
 
   BIO_clear_retry_flags(bio);
   if (!written) {
-    if (!ssl_can_still_write(loop_ssl_data->ssl_socket)) {
-      /* Not batched (another socket holds the spill slot). A retry would stall
-       * the handshake that the batched path completes. */
+    if (!us_internal_socket_can_raw_write(loop_ssl_data->ssl_socket)) {
+      /* Sealed after our FIN, so it can never leave. A retry would wait for a
+       * writable event that never comes. */
       return length;
     }
     BIO_set_retry_write(bio);
@@ -627,9 +618,9 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
   if (written < 0) written = 0;
   if ((unsigned int)written < len) {
     unsigned int remainder = len - (unsigned int)written;
-    if (!ssl_can_still_write(s)) {
-      /* A spill for these records would hold the loop's one spill slot until
-       * the socket closes, and us_internal_ssl_close would wait for it. */
+    if (!us_internal_socket_can_raw_write(s)) {
+      /* Sealed after our FIN, so it can never leave. A spill would hold the
+       * loop's one spill slot, and us_internal_ssl_close would wait for it. */
       return 0;
     }
     if (loop_ssl_data->ssl_spill_owner) {

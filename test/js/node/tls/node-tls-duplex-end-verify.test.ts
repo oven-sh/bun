@@ -353,6 +353,70 @@ test("TLSv1.3 on a TCP socket: a second client that end()s finishes its handshak
   }
 });
 
+// The same for records that a socket seals before its handshake completes. A TLS 1.2 client seals its second flight
+// after its FIN, and then waits for a server that never got it.
+test("a TLSv1.3 client that end()s finishes its handshake while a TLSv1.2 client that did the same stays open", async () => {
+  const server = tls.createServer({ key, cert }, socket => socket.on("error", () => {}));
+  server.on("tlsClientError", () => {});
+  const clients = [];
+  const forwarded = [];
+  const { port, close } = await behindProxy(
+    server,
+    (downstream, upstream) => {
+      const client = clients.at(-1);
+      const flightForwarded = forwarded.at(-1);
+      let sawClientHello = false;
+      let clientEnded = false;
+      const held = [];
+      eachRecord(downstream, record => {
+        upstream.write(record);
+        if (sawClientHello) return;
+        sawClientHello = true;
+        client.end();
+      });
+      downstream.on("end", () => {
+        clientEnded = true;
+        for (const chunk of held.splice(0)) downstream.write(chunk, flightForwarded.resolve);
+      });
+      upstream.on("data", chunk => {
+        if (clientEnded) downstream.write(chunk, flightForwarded.resolve);
+        else held.push(chunk);
+      });
+    },
+    { allowHalfOpen: true },
+  );
+  const connectAndEnd = maxVersion => {
+    const events = [];
+    const client = tls.connect({
+      port,
+      host: "127.0.0.1",
+      servername: "agent1",
+      rejectUnauthorized: false,
+      maxVersion,
+    });
+    clients.push(client);
+    forwarded.push(Promise.withResolvers());
+    const secureConnect = new Promise(resolve => client.on("secureConnect", resolve));
+    client.on("secureConnect", () => events.push(`secureConnect authorized=${client.authorized}`));
+    client.on("error", () => {});
+    return { events, secureConnect };
+  };
+  try {
+    const first = connectAndEnd("TLSv1.2");
+    await forwarded[0].promise;
+    await pendingReadsDone();
+    const second = connectAndEnd("TLSv1.3");
+    await second.secureConnect;
+    assert.deepStrictEqual(
+      { first: first.events, second: second.events },
+      { first: [], second: ["secureConnect authorized=false"] },
+    );
+  } finally {
+    for (const client of clients) client.destroy();
+    close();
+  }
+});
+
 // The server side of the same shape. A server that asks for a client certificate calls end() on its socket while the
 // handshake runs. The proxy holds the client's Certificate..Finished flight until the server's FIN arrived, so the
 // handshake completes on a socket that is already shut down. The client's certificate is not trusted, unless
@@ -493,7 +557,8 @@ for (const overDuplex of [false, true]) {
 }
 
 // Under TLS 1.2 the server still owes the client a flight when its handshake completes. After end() that flight can
-// no longer leave. The refused connection closes all the same, on both sides.
+// no longer leave. The refused connection closes all the same, on both sides. A control: node:tls destroys the socket
+// that it refuses, and that close does not wait for the flight.
 test("TLSv1.2: a server that end()s refuses an untrusted client certificate and both sockets close", async () => {
   const events = [];
   const serverClosed = Promise.withResolvers();

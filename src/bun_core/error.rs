@@ -23,6 +23,10 @@ pub enum Error {
     FileNotFound,
     #[error("AccessDenied")]
     AccessDenied,
+    #[error("SystemFdQuotaExceeded")]
+    SystemFdQuotaExceeded,
+    #[error("ProcessFdQuotaExceeded")]
+    ProcessFdQuotaExceeded,
     #[error("WriteFailed")]
     WriteFailed,
     #[error("CurrentWorkingDirectoryUnlinked")]
@@ -46,6 +50,8 @@ impl Error {
             Self::NameTooLong => "NameTooLong",
             Self::FileNotFound => "FileNotFound",
             Self::AccessDenied => "AccessDenied",
+            Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
+            Self::ProcessFdQuotaExceeded => "ProcessFdQuotaExceeded",
             Self::WriteFailed => "WriteFailed",
             Self::CurrentWorkingDirectoryUnlinked => "CurrentWorkingDirectoryUnlinked",
             Self::Alloc(_) => "OutOfMemory",

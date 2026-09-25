@@ -1363,51 +1363,10 @@ mod draft {
                 );
             }
         } else if matches!(name, b"NotOpenForReading" | b"Unexpected") {
-            // The file descriptor problem may show up as other errors
-            #[cfg(unix)]
-            {
-                // SAFETY: zeroed rlimit is valid POD (integers).
-                let limit = getrlimit_nofile().unwrap_or(bun_core::ffi::zeroed());
-
-                if limit.rlim_cur > 0 && limit.rlim_cur < (8192 * 2) {
-                    pretty_error!(
-                        "\n<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>ulimit -n 2147483646<r>\n",
-                        limit.rlim_cur,
-                    );
-
-                    #[cfg(any(target_os = "linux", target_os = "android"))]
-                    {
-                        if let Some(user) = env_var::USER::get() {
-                            if !user.is_empty() {
-                                let user = bstr::BStr::new(user);
-                                pretty_error!(
-                                    "\nIf that still doesn't work, you may need to add these lines to /etc/security/limits.conf:\n\n <cyan>{} soft nofile 2147483646<r>\n <cyan>{} hard nofile 2147483646<r>\n",
-                                    user,
-                                    user,
-                                );
-                            }
-                        }
-                    }
-                    #[cfg(target_os = "macos")]
-                    {
-                        pretty_error!(
-                            "\nIf that still doesn't work, you may need to run:\n\n  <cyan>sudo launchctl limit maxfiles 2147483646<r>\n",
-                        );
-                    }
-                } else {
-                    err_generic!(
-                        "An unknown error occurred <d>(<red>{}<r><d>)<r>",
-                        bstr::BStr::new(name),
-                    );
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                err_generic!(
-                    "An unknown error occurred <d>(<red>{}<r><d>)<r>",
-                    bstr::BStr::new(name),
-                );
-            }
+            err_generic!(
+                "An unknown error occurred <d>(<red>{}<r><d>)<r>",
+                bstr::BStr::new(name),
+            );
         } else if matches!(name, b"ENOENT" | b"FileNotFound") {
             Output::err(
                 "ENOENT",

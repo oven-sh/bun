@@ -1869,11 +1869,6 @@ where
             offset: blob_offset,
             total: 0,
         };
-        if is_regular && auto_close {
-            self.flags.set_needs_content_range(
-                sendfile.remain.saturating_sub(sendfile.offset) != stat_size,
-            );
-        }
         if is_regular {
             sendfile.offset = sendfile.offset.min(stat_size);
             sendfile.remain = sendfile
@@ -1881,6 +1876,10 @@ where
                 .max(sendfile.offset)
                 .min(stat_size)
                 .saturating_sub(sendfile.offset);
+            if auto_close {
+                self.flags
+                    .set_needs_content_range(sendfile.remain != stat_size);
+            }
         }
         self.sendfile.set(sendfile);
 
@@ -1889,9 +1888,9 @@ where
         // Content-Range arithmetic gets ambiguous; the slice path keeps
         // its existing slice-as-range behavior. `offset == 0` alone is
         // insufficient — `Bun.file(p).slice(0, n)` has offset 0 — so we
-        // also check the size: an unsliced blob has either the unset-size
-        // sentinel or, if JS already read `.size`, the stat'd size; a
-        // `.slice(0, n)` blob has `n < stat_size`. Skip if the user
+        // also check the size: an unsliced blob has the unset-size
+        // sentinel, and a slice over the whole file has the stat'd size. A
+        // shorter `.slice(0, n)` blob has `n < stat_size`. Skip if the user
         // already set Content-Range or a non-200 status — they're
         // managing partial responses themselves.
         let user_handles_range = if let Some(r) = self.response_mut() {
@@ -2633,8 +2632,7 @@ where
                 // Response from `response_weakref`, so no borrow of the Response
                 // (here, `blob`) may still be live across it. Nothing is written
                 // to the socket in between, so the wire output is unchanged.
-                blob.resolve_size();
-                let blob_size = blob.size.get();
+                let (_, blob_size) = blob.resolved_size();
                 this.render_metadata();
 
                 if blob_size == crate::webcore::blob::MAX_SIZE {

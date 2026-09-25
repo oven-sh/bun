@@ -820,6 +820,12 @@ pub mod store {
                 ..Default::default()
             }
         }
+
+        /// A `stat` of this store ran and succeeded: only `resolve_file_stat` sets `seekable`.
+        #[inline]
+        pub fn is_statted(&self) -> bool {
+            self.seekable.is_some()
+        }
     }
 
     // ────────────────────────────────────────────────────────────────────

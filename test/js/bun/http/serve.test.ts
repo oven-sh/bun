@@ -2530,6 +2530,106 @@ describe("should support Content-Range with Bun.file()", () => {
       });
     });
   }
+
+  describe("a slice() that ends after the end of the file", () => {
+    const content = "0123456789";
+    const size = content.length;
+
+    // fetch() waits for the bytes that a wrong Content-Length declares, so read the wire
+    function wire(port: number, method: string, pathname: string) {
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        status: number;
+        contentLength: string | undefined;
+        contentRange: string | undefined;
+        body: string;
+      }>();
+      const chunks: Buffer[] = [];
+      const socket = net.connect(port, "127.0.0.1", () => {
+        socket.write(`${method} ${pathname} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+      });
+      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("error", reject);
+      socket.on("close", () => {
+        const raw = Buffer.concat(chunks).toString("latin1");
+        const headEnd = raw.indexOf("\r\n\r\n");
+        const [statusLine, ...lines] = raw.slice(0, headEnd).split("\r\n");
+        const headers: Record<string, string> = {};
+        for (const line of lines) {
+          const colon = line.indexOf(":");
+          headers[line.slice(0, colon).toLowerCase()] = line.slice(colon + 1).trim();
+        }
+        resolve({
+          status: Number(statusLine.split(" ")[1]),
+          contentLength: headers["content-length"],
+          contentRange: headers["content-range"],
+          body: raw.slice(headEnd + 4),
+        });
+      });
+      return promise;
+    }
+
+    describe.each([
+      ["a fresh Bun.file()", (path: string) => Bun.file(path)],
+      [
+        "a Bun.file() after .size",
+        (path: string) => {
+          const handle = Bun.file(path);
+          void handle.size;
+          return handle;
+        },
+      ],
+    ] as const)("%s", (_label, open) => {
+      it("fetch handler: slice(5, size + 5) is a 206 of the 5 bytes that exist", async () => {
+        using dir = tempDir("serve-slice-after-eof", { "ten.txt": content });
+        const path = join(String(dir), "ten.txt");
+        await using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch: () => new Response(open(path).slice(5, size + 5)),
+        });
+        const get = await wire(server.port, "GET", "/");
+        const head = await wire(server.port, "HEAD", "/");
+        expect({ get, head: { contentLength: head.contentLength, body: head.body } }).toEqual({
+          get: { status: 206, contentLength: "5", contentRange: "bytes 5-9/*", body: "56789" },
+          head: { contentLength: "5", body: "" },
+        });
+      });
+
+      it("fetch handler: slice(size, 2 * size) is an empty body with Content-Length: 0", async () => {
+        using dir = tempDir("serve-slice-after-eof", { "ten.txt": content });
+        const path = join(String(dir), "ten.txt");
+        await using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch: () => new Response(open(path).slice(size, 2 * size)),
+        });
+        const { contentLength, body } = await wire(server.port, "GET", "/");
+        expect({ contentLength, body }).toEqual({ contentLength: "0", body: "" });
+      });
+
+      it("static route: both slices declare the bytes they send", async () => {
+        using dir = tempDir("serve-slice-after-eof", { "ten.txt": content });
+        const path = join(String(dir), "ten.txt");
+        await using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          routes: {
+            "/tail": new Response(open(path).slice(5, size + 5)),
+            "/empty": new Response(open(path).slice(size, 2 * size)),
+          },
+          fetch: () => new Response("fallback", { status: 404 }),
+        });
+        const framing = async (pathname: string) => {
+          const { contentLength, body } = await wire(server.port, "GET", pathname);
+          return { contentLength, body };
+        };
+        expect({ tail: await framing("/tail"), empty: await framing("/empty") }).toEqual({
+          tail: { contentLength: "5", body: "56789" },
+          empty: { contentLength: "0", body: "" },
+        });
+      });
+    });
+  });
 });
 
 it("formats error responses correctly", async () => {

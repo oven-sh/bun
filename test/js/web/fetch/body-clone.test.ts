@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDirWithFiles } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -1105,6 +1105,21 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     const response = new Response(typed());
     expect(response.body).toBeInstanceOf(ReadableStream);
     expect(await typesAndText(response)).toEqual(expected);
+  });
+
+  // clone() stats the file to learn whether it can be read twice. A procfs file is a regular
+  // file whose st_size is 0, and that cached stat must not turn a read into "".
+  test.skipIf(!isLinux)("Response over a procfs Bun.file(): both copies and the Bun.file() read it", async () => {
+    const content = await Bun.file("/proc/version").text();
+    expect(content).not.toBe("");
+    const procfs = Bun.file("/proc/version");
+    const original = new Response(procfs);
+    const clone = original.clone();
+    expect({
+      clone: await clone.text(),
+      original: await original.text(),
+      file: await procfs.text(),
+    }).toEqual({ clone: content, original: content, file: content });
   });
 
   test("the stream given to the constructor is locked after clone() and .body is a fresh stream", async () => {

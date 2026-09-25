@@ -696,6 +696,10 @@ impl Parser<'_> {
         let mut i: usize = 0;
         while i < content.len() {
             let c = content[i];
+            if !self.mark_char_map.is_set(c as usize) {
+                i += 1;
+                continue;
+            }
             // Skip backslash escapes
             if c == b'\\' && i + 1 < content.len() && helpers::is_ascii_punctuation(content[i + 1])
             {

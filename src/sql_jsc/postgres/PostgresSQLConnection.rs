@@ -326,13 +326,14 @@ impl HasAutoFlush for PostgresSQLConnection {
 
 impl PostgresSQLConnection {
     fn on_auto_flush_impl(&self) -> bool {
+        let _guard = self.ref_guard();
+        self.reject_stopped_requests();
         if self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
             debug!("onAutoFlush: has backpressure");
             self.auto_flusher.with_mut(|a| a.registered = false);
             // if we have backpressure, wait for onWritable
             return false;
         }
-        let _guard = self.ref_guard();
         debug!("onAutoFlush: draining");
         // drain as much as we can
         self.drain_internal();

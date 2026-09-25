@@ -3460,12 +3460,22 @@ impl BlobExt for Blob {
 
 /// The null device has no bytes, and a read of it cannot block.
 fn is_null_device(stat: &bun_sys::Stat) -> bool {
-    #[cfg(windows)]
-    let null_device = bun_core::zstr!("\\\\.\\NUL");
-    #[cfg(not(windows))]
-    let null_device = bun_core::zstr!("/dev/null");
-    bun_sys::S::ISCHR(stat.st_mode as _)
-        && bun_sys::stat(null_device).is_ok_and(|null| null.st_rdev == stat.st_rdev)
+    if !bun_sys::S::ISCHR(stat.st_mode as _) {
+        return false;
+    }
+    // Linux fixes the null device at major 1, minor 3, so a sandbox with no /dev still finds it.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        stat.st_rdev == libc::makedev(1, 3)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        #[cfg(windows)]
+        let null_device = bun_core::zstr!("\\\\.\\NUL");
+        #[cfg(not(windows))]
+        let null_device = bun_core::zstr!("/dev/null");
+        bun_sys::stat(null_device).is_ok_and(|null| null.st_rdev == stat.st_rdev)
+    }
 }
 
 /// Reads a file-backed part of a multi-part `new Blob([...])`: `shared_view()` is empty for it.

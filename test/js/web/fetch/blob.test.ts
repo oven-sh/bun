@@ -1037,23 +1037,26 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
 
   // The null device has no bytes and a read of it cannot block. Node gives an empty part for it too.
   test("a null device part is an empty part", async () => {
+    using dir = tempDir("blob-null-device-part", { "f.bin": "ABC" });
+    const file = Bun.file(path.join(String(dir), "f.bin"));
     const fd = fs.openSync(devNull, "r");
     try {
+      // The file part shows that the parts are read: a build that drops each file part gives "x" too.
+      await check(new Blob([Bun.file(devNull), file, "x"]), "ABCx");
+      await check(new Blob(["x", file, Bun.file(fd)]), "xABC");
+      await check(new File([file, Bun.file(devNull), "x"], "n"), "ABCx");
       await check(new Blob([Bun.file(devNull), "x"]), "x");
-      await check(new Blob(["x", Bun.file(devNull)]), "x");
       await check(new Blob(["", Bun.file(devNull)]), "");
-      await check(new Blob(["x", Bun.file(fd), "y"]), "xy");
-      await check(new File([Bun.file(devNull), "x"], "n"), "x");
     } finally {
       fs.closeSync(fd);
     }
   });
 
   test.skipIf(isWindows)("only the null device is an empty part", async () => {
-    using dir = tempDir("blob-null-device-part", {});
+    using dir = tempDir("blob-null-device-link", { "f.bin": "ABC" });
     const link = path.join(String(dir), "null");
     fs.symlinkSync("/dev/null", link);
-    await check(new Blob(["x", Bun.file(link)]), "x");
+    await check(new Blob([Bun.file(path.join(String(dir), "f.bin")), Bun.file(link), "x"]), "ABCx");
     // /dev/zero never ends, so a child process constructs the Blob.
     expect(await constructInChild("Bun.file('/dev/zero')")).toEqual(refused);
   });

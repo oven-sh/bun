@@ -1532,6 +1532,67 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       }
     });
 
+    it("S3File destinations: Bun.s3.file(key).write(image) and Bun.write(Bun.s3.file(key), image)", async () => {
+      const puts = [];
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          puts.push({ url: req.url, body: await req.bytes() });
+          return new Response(null, { status: 200, headers: { ETag: '"x"' } });
+        },
+      });
+      const options = {
+        accessKeyId: "key",
+        secretAccessKey: "secret",
+        endpoint: server.url.href,
+        bucket: "bucket",
+        region: "us-east-1",
+      };
+      const expected = await new Bun.Image(png).png().bytes();
+      const n = await Bun.s3.file("a.png", options).write(new Bun.Image(png).png());
+      const n2 = await Bun.write(Bun.s3.file("b.png", options), new Bun.Image(png).png());
+      expect({ n, n2, urls: puts.map(p => p.url), bodies: puts.map(p => sha256(p.body)) }).toEqual({
+        n: expected.length,
+        n2: expected.length,
+        urls: [`${server.url.href}bucket/a.png`, `${server.url.href}bucket/b.png`],
+        bodies: [sha256(expected), sha256(expected)],
+      });
+    });
+
+    it("fd destinations: Bun.write(fd, image), also with createPath, and Bun.stdout.write(image)", async () => {
+      using dir = tempDir("bun-write-image-fd", {});
+      const expected = await new Bun.Image(png).png().bytes();
+      for (const options of [undefined, { createPath: true }]) {
+        const out = join(String(dir), options ? "fd-create-path.png" : "fd.png");
+        const fd = fs.openSync(out, "w");
+        try {
+          expect(await Bun.write(fd, new Bun.Image(png).png(), options)).toBe(expected.length);
+        } finally {
+          fs.closeSync(fd);
+        }
+        expect(sha256(fs.readFileSync(out))).toBe(sha256(expected));
+      }
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const png = Buffer.from(${JSON.stringify(png.toString("base64"))}, "base64");
+           const n = await Bun.stdout.write(new Bun.Image(png).png());
+           process.stderr.write(String(n));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      expect({ n: stderr, sha: sha256(stdout), exitCode }).toEqual({
+        n: String(expected.length),
+        sha: sha256(expected),
+        exitCode: 0,
+      });
+    });
+
     it("passes the write options through: createPath", async () => {
       using dir = tempDir("bun-write-image-options", {});
       const nested = join(String(dir), "missing", "nested.png");

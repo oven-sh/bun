@@ -1751,6 +1751,16 @@ pub(crate) enum PathOrBlob {
     Blob(Box<Blob>),
 }
 
+impl Clone for PathOrBlob {
+    /// A `Path` copies its bytes (a pinned buffer becomes owned bytes), a `Blob` shares its store.
+    fn clone(&self) -> Self {
+        match self {
+            Self::Path(path) => Self::Path(path.clone()),
+            Self::Blob(blob) => Self::Blob(Box::new(blob.dupe())),
+        }
+    }
+}
+
 impl PathOrBlob {
     pub(crate) fn from_js_no_copy(
         ctx: &JSGlobalObject,

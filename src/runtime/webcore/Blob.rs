@@ -4757,6 +4757,12 @@ pub(crate) fn write_file_internal(
         }
     }
 
+    // The encode job re-enters here with a copy of `path_or_blob` and the
+    // encoded bytes, so an image writes exactly like `Bun.write(dest, bytes)`.
+    if let Some(image) = data.as_class_ref::<Image>() {
+        return image.write_to(cx, data, path_or_blob.clone(), &options);
+    }
+
     // if path_or_blob is a path, convert it into a file blob
     let mut destination_blob: Blob = match path_or_blob {
         PathOrBlob::Path(path) => {
@@ -5006,10 +5012,6 @@ pub(crate) fn write_file_internal(
                 return Ok(body_used_rejection(cx.global()));
             }
             return destination_blob.pipe_readable_stream_to_blob(cx, readable, &options);
-        }
-
-        if let Some(image) = data.as_class_ref::<Image>() {
-            return image.write_to_blob(cx, data, destination_blob, &options);
         }
 
         // Reject what the `new Blob()` parser would coerce with `String()`.

@@ -582,8 +582,8 @@ impl FileResponseStream {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             let resp = self.resp.get();
-            // Reader EOF with no trailing data: empty-body `end` completes the
-            // framing (0-chunk when chunked, `Content-Length: 0` otherwise)
+            // Reader EOF with no trailing data. `end` completes the framing
+            // (0-chunk when chunked, `Content-Length: 0` when none was declared)
             // and, unlike `end_without_body`, runs uWS's own close check.
             resp.end(b"", resp.should_close_connection());
             self.deliver(resp, StreamEnd::Complete);

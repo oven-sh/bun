@@ -1341,8 +1341,10 @@ describe.skipIf(isWindows || isMacOS)("Response(Bun.file(FIFO)) ends the respons
       if (!/^[0-9a-f]+$/i.test(sizeText)) return null;
       const size = parseInt(sizeText, 16);
       i = sizeEnd + 2;
-      if (size === 0) return { status, body: out };
-      if (i + size + 2 > body.length) return null;
+      // The last-chunk is complete only with its final CRLF, and nothing may
+      // follow it: a second terminator would be parsed as the next response.
+      if (size === 0) return body.slice(i) === "\r\n" ? { status, body: out } : null;
+      if (body.slice(i + size, i + size + 2) !== "\r\n") return null;
       out += body.slice(i, i + size);
       i += size + 2;
     }

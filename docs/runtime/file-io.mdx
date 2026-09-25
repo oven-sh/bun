@@ -285,7 +285,18 @@ interface Bun {
 
   write(
     destination: string | number | BunFile | URL,
-    input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
+    input:
+      | string
+      | Blob
+      | ArrayBuffer
+      | SharedArrayBuffer
+      | TypedArray
+      | BlobPart[]
+      | Response
+      | Request
+      | ReadableStream
+      | Archive
+      | Image,
   ): Promise<number>;
 }
 

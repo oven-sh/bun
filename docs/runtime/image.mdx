@@ -131,7 +131,7 @@ await img.write(Bun.s3.file("bucket/out.webp"));
 
 `.write()` accepts the same destinations as `Bun.write` — a path string, `Bun.file()`, `Bun.s3.file()`, or an fd. If you didn't chain a format method and the destination is a path string, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
 
-`Bun.write(dest, img)` and `Bun.file(dest).write(img)` also accept a pipeline. They encode in the chained format (or the source format when none was chained) and do not infer a format from the destination path.
+`Bun.write(dest, img)` and `Bun.file(dest).write(img)` also accept a pipeline. They encode in the chained format and do not infer a format from the destination path. When no format was chained, they use the source format, except that BMP, TIFF and GIF sources (decode only) are written as PNG.
 
 ## Placeholders
 

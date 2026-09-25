@@ -2024,9 +2024,11 @@ describe("socket torn down with a write still in flight", () => {
       });
       // A plain TCP write that the kernel takes whole is done when write() returns, so
       // writableLength stays 0 until one write, or one corked batch, is left in flight: the last one.
-      const chunk = Buffer.alloc(BATCH ? 512 * 1024 : 1024 * 1024, "a");
+      // It is 64 MB so that the kernel cannot finish it: libuv sends two times inside one write(),
+      // and on macOS the second send can take the rest of a 1 MB chunk before the teardown runs.
+      const chunk = Buffer.alloc((BATCH ? 32 : 64) * 1024 * 1024);
       let writes = 0;
-      while (writes < 256 && holder.writableLength === 0) {
+      while (writes < 8 && holder.writableLength === 0) {
         const nth = ++writes;
         const callback = err => {
           if (nth === writes) events.push("write " + shape(err));

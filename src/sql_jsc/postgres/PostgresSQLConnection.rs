@@ -1656,9 +1656,7 @@ impl PostgresSQLConnection {
             .is_some_and(|f| core::ptr::eq(f.as_ptr(), request))
     }
 
-    /// Asks the server, from a second connection, to cancel what the backend of this
-    /// session runs. That connection goes where this one went, to the same peer address
-    /// or unix socket, and is encrypted when this one is.
+    /// Asks the server, on a second connection like this one, to cancel what this backend runs.
     pub(crate) fn send_cancel_request(&self) {
         let key = self.backend_key_data.get();
         // No BackendKeyData was ever received, so the server cannot be asked.
@@ -1670,6 +1668,7 @@ impl PostgresSQLConnection {
             return;
         };
 
+        // The peer address, not the host name: the name can resolve to another server.
         let mut hostname = [0u8; 46];
         let mut hostname_len = 0;
         let mut port = 0;

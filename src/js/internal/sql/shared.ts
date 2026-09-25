@@ -943,7 +943,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   public closed: boolean = false;
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
-  /// Settles when the close() in progress does. Every later close() call returns it.
+  /// Settles when the close() in progress does.
   #closing: Promise<any> | null = null;
   /// AsyncLocalStorage context the SQL instance was created in. onconnect/onclose run
   /// inside it rather than in whatever context the native callback happens to fire in
@@ -1335,15 +1335,14 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /** Runs from close() after `closed` is set; overridden by Postgres for its LISTEN connection. */
   protected closeDedicatedConnections(): void {}
 
-  /// Does now what the pool does when its last query ends, unless its connections already close.
   #stopWaitingForQueries() {
+    // #close() clears poolStarted
     if (this.poolStarted) {
       this.onAllQueriesFinished?.();
     }
   }
 
-  /// close({ timeout }) on a pool that an earlier call is closing. The call waits for that close,
-  /// for at most `seconds`. When they end, the pool stops waiting for its queries.
+  /// close({ timeout }) on a pool that is already closing.
   #closeWithin(closing: Promise<any>, seconds: number): Promise<void> | undefined {
     if (seconds === 0) {
       this.#stopWaitingForQueries();

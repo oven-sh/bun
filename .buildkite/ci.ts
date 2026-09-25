@@ -573,19 +573,16 @@ function getTestAgent(platform: Platform): Agent {
  * Steps
  */
 
-/** The `ci-<mode>` profile of scripts/build.ts a build command runs. */
-type BuildMode = "build";
-
 /**
  * Build the scripts/build.ts argument list from a target's properties.
  * Replaces the old getBuildEnv (cmake -D env vars) + getBuildCommand
  * (--target passthrough) with direct build.ts flags.
  */
-function getBuildArgs(target: Target, options: PipelineOptions, mode: BuildMode): string {
+function getBuildArgs(target: Target, options: PipelineOptions): string {
   const { os, arch, abi, baseline, profile } = target;
   const { canary } = options;
 
-  const args = [`--profile=ci-${mode}`];
+  const args = ["--profile=ci-build"];
 
   // All build lanes share a debian-13 arm64 host, so host detection cannot
   // infer the target triple — always pass os/arch (and abi on linux).
@@ -604,7 +601,7 @@ function getBuildArgs(target: Target, options: PipelineOptions, mode: BuildMode)
   return args.join(" ");
 }
 
-function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMode): string {
+function getBuildCommand(target: Target, options: PipelineOptions): string {
   // Windows code signing is handled by a dedicated 'windows-sign' step after
   // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
   // so signing on the build agent wouldn't work for ARM64 anyway.
@@ -612,11 +609,11 @@ function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMo
   // Literal `node` — ci.ts generates a pipeline that runs on a
   // different agent later, so process.execPath (the generator's path)
   // is wrong. PATH on the agent has node: the image's bake installs it.
-  return `node scripts/build.ts ${getBuildArgs(target, options, mode)}`;
+  return `node scripts/build.ts ${getBuildArgs(target, options)}`;
 }
 
 /**
- * deps + C++ + Rust + link on one agent; also uploads libbun-*.a and the dep libs.
+ * deps + C++ + Rust + link on one agent.
  */
 function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandStep {
   const { arch } = platform;
@@ -639,7 +636,7 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
       // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
-    command: [...nasmSetup, getBuildCommand(platform, options, "build")],
+    command: [...nasmSetup, getBuildCommand(platform, options)],
   };
 }
 

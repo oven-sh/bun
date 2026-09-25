@@ -240,6 +240,47 @@ it("evaluate() with statement sequence throws SyntaxError (use an IIFE)", async 
   expect(await view.evaluate("(() => { let x = 1; return x + 1 })()")).toBe(2);
 });
 
+it("evaluate() accepts a script that ends in a line comment", async () => {
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  // The wrap closes its parenthesis on a new line, so a trailing `//`
+  // comment does not swallow it.
+  expect(await view.evaluate("1 + 1 // the answer")).toBe(2);
+  expect(await view.evaluate("// leading comment\n6 * 7")).toBe(42);
+});
+
+it("evaluate() rejections keep a standard error class and its message", async () => {
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  const caught = (script: string) =>
+    view.evaluate(script).then(
+      () => {
+        throw new Error("should have rejected");
+      },
+      e => e,
+    );
+  // WebKit reports the exception's string form ("TypeError: ..."); the class
+  // is rebuilt from it and the message is what follows the name.
+  const typeError = await caught("null.x");
+  expect(typeError).toBeInstanceOf(TypeError);
+  expect(typeError.message).not.toStartWith("TypeError:");
+  const rangeError = await caught("Promise.reject(new RangeError('out of range'))");
+  expect(rangeError).toBeInstanceOf(RangeError);
+  expect(rangeError.message).toBe("out of range");
+  // An empty message stringifies to the bare name.
+  const emptyMessage = await caught("(() => { throw new TypeError(); })()");
+  expect(emptyMessage).toBeInstanceOf(TypeError);
+  expect(emptyMessage.message).toBe("");
+  // AggregateError needs its errors array, so it stays a plain Error with the text.
+  const aggregate = await caught("Promise.any([])");
+  expect(Object.getPrototypeOf(aggregate)).toBe(Error.prototype);
+  expect(aggregate.message).toStartWith("AggregateError");
+  // A thrown string is not an Error: plain Error, the string as the message.
+  const thrownString = await caught("(() => { throw 'reason: plain string'; })()");
+  expect(Object.getPrototypeOf(thrownString)).toBe(Error.prototype);
+  expect(thrownString.message).toBe("reason: plain string");
+});
+
 it("scroll(NaN/Infinity) throws before sending", () => {
   // NaN would permanently poison m_pendingScrollDx/Dy (NaN + anything = NaN)
   // and hit UB at the static_cast<int32_t> in CGEventCreateScrollWheelEvent.

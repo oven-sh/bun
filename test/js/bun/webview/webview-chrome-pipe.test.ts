@@ -136,6 +136,37 @@ test.concurrent("an expression that throws rejects", async () => {
   expect(result).toEqual({ rejected: expect.stringContaining("inside the fake") });
 });
 
+test.concurrent("a rejection keeps the page error's class, its whole message, and a custom name", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    const describe = promise =>
+      promise.then(
+        () => "resolved",
+        e => ({ class: Object.getPrototypeOf(e).constructor.name, name: e.name, message: e.message, string: String(e) }),
+      );
+    print({
+      typeError: await describe(view.evaluate("(() => { throw new TypeError('first line\\\\nsecond line'); })()")),
+      custom: await describe(view.evaluate("(() => { const e = new Error('over quota'); e.name = 'QuotaError'; throw e; })()")),
+      string: await describe(view.evaluate("(() => { throw 'reason: plain string'; })()")),
+      // The wrapper closes its parenthesis on its own line.
+      comment: await view.evaluate("6 * 7 // trailing comment"),
+    });
+    view.close();
+  `);
+  expect(result).toEqual({
+    typeError: {
+      class: "TypeError",
+      name: "TypeError",
+      message: "first line\nsecond line",
+      string: "TypeError: first line\nsecond line",
+    },
+    custom: { class: "Error", name: "QuotaError", message: "over quota", string: "QuotaError: over quota" },
+    string: { class: "Error", name: "Error", message: "reason: plain string", string: "Error: reason: plain string" },
+    comment: 42,
+  });
+});
+
 test.concurrent("the browser exiting rejects what it owed, and the next WebView respawns it", async () => {
   const result = await runScenario(`
     const first = newView();

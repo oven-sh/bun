@@ -46,13 +46,13 @@ Here's how to open a helpful issue for a bug, a performance problem, or a featur
     	Provide as much detail as possible, including:
     	- A clear and concise title
     	- A code example or steps to reproduce the issue
-    	- The version of Bun you are using (run `bun --version`)
+    	- The version of Bun you are using (run `bun -p "Bun.version_with_sha + ' ' + process.arch"`, or `bun --revision` if Bun does not start)
     	- A description of the issue (what you expected to happen and what actually happened)
     	- The operating system and version you are using
     		<Note>
     			- For macOS and Linux: copy the output of `uname -mprs`
     		  - For Windows: copy the output of this command in the PowerShell console:
-    				`"$([Environment]::OSVersion | ForEach-Object VersionString) $(if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" })"`
+    				`"$([Environment]::OSVersion | ForEach-Object VersionString) $((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE)"`
     		</Note>
     </Step>
 

@@ -1280,7 +1280,7 @@ impl BlobExt for Blob {
             // `mode` is 0 until a stat succeeds.
             PathOrFileDescriptor::Path(_) => file.mode != 0 && !bun_sys::S::ISDIR(file.mode),
             // Programs read stdin only if `Bun.stdin.exists()` is true, so a
-            // terminal, /dev/null and a socket stay false.
+            // terminal and /dev/null must answer false.
             PathOrFileDescriptor::Fd(_) => {
                 bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode)
             }

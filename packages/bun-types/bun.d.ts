@@ -2733,7 +2733,8 @@ declare module "bun" {
      * For a path, this returns true for every type of file except a
      * directory: regular files, FIFOs, sockets, and devices such as
      * `/dev/null`. It returns false for directories. A true answer does not
-     * mean that the file can be read.
+     * mean that the file can be read, or that a read ends. To accept only
+     * regular files, check `(await file.stat()).isFile()`.
      *
      * For a file descriptor, such as `Bun.stdin`, this returns true only for
      * regular files and FIFOs. To find out what stdin is, use

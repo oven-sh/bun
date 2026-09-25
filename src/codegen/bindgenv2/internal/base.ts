@@ -5,8 +5,37 @@ import type { NullableType, OptionalType } from "./optional.ts";
 // optional.ts imports this module, so the getters below load it when they run.
 const require = createRequire(import.meta.url);
 
-/** Default is "compact". */
-export type CodeStyle = "compact" | "pretty";
+/** How a type appears in the generated Rust. `size` and `align` are those of `extern`, in bytes. */
+export interface RustType {
+  /** The `#[repr(C)]` type that C++ writes. */
+  readonly extern: string;
+  readonly size: number;
+  readonly align: number;
+  /** The type of a dictionary member. */
+  readonly member: string;
+  /** Converts the extern expression `e` to `member`. */
+  fromExtern(e: string): string;
+  /** The payload of a union arm when it is not `member`. `null` is an arm with no payload. */
+  readonly arm?: RustArm | null;
+  /** The form of `optional` and `nullable` when C++ has its own: a pointer that can be null. */
+  readonly optional?: RustType;
+}
+
+export interface RustArm {
+  readonly type: string;
+  fromExtern(e: string): string;
+  /** The function that gives up the reference the payload holds. */
+  readonly release?: string;
+}
+
+/** An extern struct as both sides see it. The layout checks of C++ and Rust come from it. */
+export interface RustLayout {
+  readonly cpp: string;
+  readonly rust: string;
+  readonly size: number;
+  readonly align: number;
+  readonly fields: readonly { readonly cpp: string; readonly rust: string; readonly offset: number }[];
+}
 
 export abstract class Type {
   /** Treats `undefined` as a not-provided value. */
@@ -20,21 +49,7 @@ export abstract class Type {
   }
 
   abstract readonly idlType: string;
-  abstract readonly bindgenType: string;
-
-  /**
-   * This can be overridden to make the generated code clearer. If overridden, it must return an
-   * expression that evaluates to the same type as `${this.bindgenType}.ZigType`; it should not
-   * actually change the type.
-   */
-  zigType(style?: CodeStyle): string {
-    return this.bindgenType + ".ZigType";
-  }
-
-  /** This must be overridden if a custom `OptionalZigType` is defined. */
-  optionalZigType(style?: CodeStyle): string {
-    return `?${this.zigType(style)}`;
-  }
+  abstract readonly rust: RustType;
 
   /** Converts a JS value into a C++ expression. Used for default values. */
   abstract toCpp(value: any): string;
@@ -67,9 +82,61 @@ export abstract class NamedType extends Type {
   get hasCppSource(): boolean {
     return false;
   }
+  get rustSource(): string | null {
+    return null;
+  }
+  get rustLayout(): RustLayout | null {
+    return null;
+  }
   getHeaders(result: Set<string>): void {
     result.add(`Generated${this.name}.h`);
   }
+}
+
+/** A type whose extern form is the value itself. */
+export function trivialRust(name: string, size: number): RustType {
+  return { extern: name, size, align: size, member: name, fromExtern: e => e };
+}
+
+export function unsupportedInRust(what: string): never {
+  throw RangeError(`${what} has no Rust output`);
+}
+
+export function alignUp(offset: number, align: number): number {
+  return Math.ceil(offset / align) * align;
+}
+
+/** The layout of C++ `ExternVariant`: a union of the arms, then a `u8` tag. */
+export function variantLayout(arms: readonly RustType[]): { size: number; align: number; tag: number } {
+  const align = Math.max(...arms.map(arm => arm.align));
+  const tag = alignUp(Math.max(...arms.map(arm => arm.size)), align);
+  return { size: alignUp(tag + 1, align), align, tag };
+}
+
+export function structLayout(members: readonly RustType[]): { size: number; align: number; offsets: number[] } {
+  const align = Math.max(1, ...members.map(member => member.align));
+  let end = 0;
+  const offsets = members.map(member => {
+    const offset = alignUp(end, member.align);
+    end = offset + member.size;
+    return offset;
+  });
+  return { size: alignUp(end, align), align, offsets };
+}
+
+export function pascalCase(name: string): string {
+  return name
+    .split(/[^A-Za-z0-9]+/)
+    .filter(piece => piece)
+    .map(piece => piece[0].toUpperCase() + piece.slice(1))
+    .join("");
+}
+
+export function snakeCase(name: string): string {
+  return name
+    .replace(/([^A-Z_])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z])([A-Z][a-z])/g, "$1_$2")
+    .toLowerCase();
 }
 
 export function validateName(name: string): void {

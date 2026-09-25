@@ -144,8 +144,6 @@ export interface BunOutput {
   deps: ResolvedDep[];
   /** All codegen outputs. */
   codegen: CodegenOutputs;
-  /** The Rust crates' rlibs, as the link takes them. Empty until the Rust plan exists (rust.ts emitRust). */
-  rustObjects: string[];
   /** All compiled .o files. */
   objects: string[];
   /** Stamps of the buildkite artifact-upload edges; archive-link adds them to the default targets. */
@@ -474,7 +472,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
 
-  return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects, uploadStamps };
+  return { exe, strippedExe, dsym, deps, codegen, objects: allObjects, uploadStamps };
 }
 
 function registerBkUploadRules(n: Ninja, cfg: Config): void {

@@ -819,6 +819,8 @@ impl PostgresSQLQuery {
                 bun_io::AllocatorType::Js,
             ))
         });
+        // advance() below can reject this request with nothing sent, so no reply releases the ref.
+        scopeguard::defer! { connection.update_poll_ref(); }
 
         this.this_value.with_mut(|r| r.upgrade(global_object));
 

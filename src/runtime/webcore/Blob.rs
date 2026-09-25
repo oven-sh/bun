@@ -5789,12 +5789,7 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
     }
 }
 
-/// The size that a negative `slice()` index counts back from. Until something
-/// stats a `Bun.file()`, its end is unknown: `offset + size` reaches
-/// `MAX_SIZE`, and counting back from that sentinel gives an offset near 2^52.
-/// So count back from the current size of a regular file. The stat is not
-/// cached in the store, so what `.size` and reads of the parent see does not
-/// change. A pipe or a device has no end and keeps the unknown size.
+/// Stats the file but does not cache the stat: the parent `Bun.file()` shares the store.
 fn size_for_relative_index(blob: &Blob) -> SizeType {
     let (offset, size) = (blob.offset.get(), blob.size.get());
     if offset.saturating_add(size) < MAX_SIZE {
@@ -5811,8 +5806,7 @@ fn size_for_relative_index(blob: &Blob) -> SizeType {
             (((stat.st_size.max(0)) as u64) as SizeType).saturating_sub(offset)
         }
         bun_sys::Result::Ok(_) => size,
-        // `.size` reports 0 for a missing file. A read still rejects with the
-        // open error.
+        // `.size` of a missing file is 0 too.
         bun_sys::Result::Err(_) => 0,
     }
 }

@@ -360,7 +360,9 @@ it("native os functions are rejected as a construct target", async () => {
               }
             };
             // Array.of and Array.from construct |this| only when it is a
-            // constructor, so they fall back to a plain array like Node does.
+            // constructor, so they fall back to a plain array. Node differs for
+            // the os functions it writes in JS: those are ordinary functions,
+            // and Array.of constructs them.
             run("of", () => Array.of.call(f, 1, 2, 3));
             run("from", () => Array.from.call(f, [1]));
             // ArraySpeciesCreate needs a constructor, so it throws instead.

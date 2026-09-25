@@ -1019,6 +1019,47 @@ describe("mock()", () => {
       expect(spy.mock.instances[0]).toBe(instance);
     });
 
+    // A native construct handler must return an object. A string, symbol or
+    // bigint is a cell that is not an object, and the rest are not cells, so
+    // the two groups reach different checks in the engine.
+    test.each([
+      ["a string", "s"],
+      ["a symbol", Symbol("s")],
+      ["a bigint", 10n],
+      ["a number", 42],
+      ["a boolean", true],
+      ["null", null],
+      ["undefined", undefined],
+    ])("%s returned from the implementation falls back to the instance", (_, value) => {
+      const fn = jest.fn(function () {
+        return value;
+      });
+      const instances = [new fn(), Reflect.construct(fn, [])];
+      expect(instances.map(instance => typeof instance)).toEqual(["object", "object"]);
+      expect(instances).not.toContain(null);
+      expect(fn.mock.instances).toEqual(instances);
+      expect(fn.mock.results).toEqual([
+        { type: "return", value },
+        { type: "return", value },
+      ]);
+    });
+
+    test("constructing a spy on a function that returns a symbol returns a new object", () => {
+      const obj = { sym: Symbol };
+      const spy = spyOn(obj, "sym");
+      const instance = Reflect.construct(spy, []);
+      expect(typeof instance).toBe("object");
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    if (isBun) {
+      test("constructing a spy on a property that is not a function returns a new object", () => {
+        const obj = { text: "not a function", count: 123 };
+        const instances = [Reflect.construct(spyOn(obj, "text"), []), Reflect.construct(spyOn(obj, "count"), [])];
+        expect(instances.map(instance => typeof instance)).toEqual(["object", "object"]);
+      });
+    }
+
     test("instances is pushed on every invocation", () => {
       const fn = jest.fn();
       fn();

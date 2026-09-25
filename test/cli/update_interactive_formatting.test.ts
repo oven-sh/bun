@@ -660,15 +660,79 @@ describe.concurrent("bun update --interactive", () => {
     await install(dir);
     const { stdout, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
 
+    // Each catalog gets its own selectable row.
+    expect(stdout).toContain("Selected 2 packages to update");
     expect(stdout).toContain("Installing updates...");
     expect(exitCode).toBe(0);
 
     const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.workspaces.catalogs.dev).toEqual({ "no-deps": "^2.0.0" });
-    // group_catalog_dependencies currently keys the interactive list by package
-    // name alone, so the catalog:prod reference is deduped with catalog:dev and
-    // only dev's entry is rewritten. When that is addressed this becomes "~2.0.0".
-    expect(packageJson.workspaces.catalogs.prod).toEqual({ "no-deps": expect.stringMatching(/^~[12]\.0\.0$/) });
+    expect(packageJson.workspaces.catalogs).toEqual({
+      dev: { "no-deps": "^2.0.0" },
+      prod: { "no-deps": "~2.0.0" },
+    });
+
+    const appJson = await Bun.file(join(dir, "packages", "app", "package.json")).json();
+    expect(appJson.dependencies).toEqual({ "no-deps": "catalog:prod" });
+    expect(appJson.devDependencies).toEqual({ "no-deps": "catalog:dev" });
+  });
+
+  it("should update default and named catalogs independently for the same package", async () => {
+    await using dir = tempDir("update-interactive-default-and-named-catalog", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: {
+          packages: ["packages/*"],
+          catalog: {
+            "no-deps": "^1.0.0",
+          },
+          catalogs: {
+            pinned: {
+              "no-deps": "~1.0.0",
+            },
+          },
+        },
+      }),
+      "packages/app/package.json": JSON.stringify({
+        name: "@test/app",
+        dependencies: {
+          "no-deps": "catalog:",
+        },
+      }),
+      "packages/lib/package.json": JSON.stringify({
+        name: "@test/lib",
+        dependencies: {
+          "no-deps": "catalog:pinned",
+        },
+      }),
+      "packages/other/package.json": JSON.stringify({
+        name: "@test/other",
+        dependencies: {
+          "no-deps": "catalog:pinned",
+        },
+      }),
+    });
+
+    await install(dir);
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
+
+    // Two rows: one for the default catalog, one for the named catalog
+    // (lib and other share `catalog:pinned`, so they collapse into one row).
+    expect(stdout).toContain("Selected 2 packages to update");
+    expect(stdout).toContain("Installing updates...");
+    expect(exitCode).toBe(0);
+
+    const packageJson = await Bun.file(join(dir, "package.json")).json();
+    expect(packageJson.workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
+    expect(packageJson.workspaces.catalogs).toEqual({ pinned: { "no-deps": "~2.0.0" } });
+
+    const appJson = await Bun.file(join(dir, "packages", "app", "package.json")).json();
+    const libJson = await Bun.file(join(dir, "packages", "lib", "package.json")).json();
+    const otherJson = await Bun.file(join(dir, "packages", "other", "package.json")).json();
+    expect(appJson.dependencies).toEqual({ "no-deps": "catalog:" });
+    expect(libJson.dependencies).toEqual({ "no-deps": "catalog:pinned" });
+    expect(otherJson.dependencies).toEqual({ "no-deps": "catalog:pinned" });
   });
 
   it("should handle version ranges with multiple conditions", async () => {

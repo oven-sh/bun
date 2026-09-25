@@ -414,10 +414,11 @@ static void jsValueToSqliteResult(JSGlobalObject* globalObject, sqlite3_context*
             return;
         }
         auto utf8 = str.utf8();
+        auto bytes = byteCast<char>(utf8.span());
         // The *64 variants reject an over-INT_MAX length with SQLITE_TOOBIG
         // instead of narrowing it into `int` (a negative length is undefined
         // for the 32-bit bind/result API). Same in bindValue() below.
-        sqlite3_result_text64(ctx, utf8.legacyCStringPointer(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8);
+        sqlite3_result_text64(ctx, bytes.data(), bytes.size(), SQLITE_TRANSIENT, SQLITE_UTF8);
     } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         auto span = view->span();
         // sqlite3_result_blob64(nullptr, 0) sets NULL, not an empty BLOB —
@@ -2619,8 +2620,9 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         auto str = value.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         auto utf8 = str.utf8();
+        auto bytes = byteCast<char>(utf8.span());
         // *64: see jsValueToSqliteResult().
-        r = sqlite3_bind_text64(m_stmt, index, utf8.legacyCStringPointer(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8);
+        r = sqlite3_bind_text64(m_stmt, index, bytes.data(), bytes.size(), SQLITE_TRANSIENT, SQLITE_UTF8);
     } else if (value.isNull()) {
         r = sqlite3_bind_null(m_stmt, index);
     } else if (value.isBigInt()) {

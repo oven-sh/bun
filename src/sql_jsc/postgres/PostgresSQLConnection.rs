@@ -139,7 +139,7 @@ pub struct PostgresSQLConnection {
     pub(crate) backend_parameters: JsCell<StringMap>,
 
     // Self-referential — `database`/`user`/`password`/`path`/`options` are slices
-    // into `options_buf` (built via StringBuilder in `call`). Struct is Box-allocated
+    // into `options_buf` (built by `ConnectionStrings::new`). Struct is Box-allocated
     // and never moves (intrusive refcount), so the `RawSlice` backing-outlives-holder
     // invariant holds. Private — reassigning `options_buf` is UAF.
     // Reach via `database()`/`user()`/`password()`/`path()`/`options()`.
@@ -267,9 +267,7 @@ impl PostgresSQLConnection {
 
     // ---- self-referential connection-string slices ----------------------------
     // `database`/`user`/`password`/`path`/`options` are raw `*const [u8]` fat
-    // pointers into `self.options_buf`. They are populated once in `call()` (each
-    // initialised to `b""` then re-pointed at the StringBuilder allocation that
-    // becomes `options_buf`) and never reassigned. The struct is Box-allocated
+    // pointers into `self.options_buf`. `open` sets them once. The struct is Box-allocated
     // via `heap::alloc` and freed only when the intrusive refcount hits zero,
     // so `options_buf` — and thus every slice — remains valid for any `&self`.
     //

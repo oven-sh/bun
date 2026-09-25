@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tls as cert1, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, tls as cert1, isDebug, isWindows, tempDir } from "harness";
 import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
@@ -1435,6 +1435,156 @@ it("an asynchronous SNICallback resolving cb(null, null) still honors addContext
   await once(client, "close");
   server.close();
   await once(server, "close");
+});
+
+describe("addContext() entries apply to every listen()", () => {
+  // A native listener only knows the SNI entries it was given. tls.Server keeps
+  // every addContext() entry, like node's server._contexts, and loads them into
+  // each listener it creates. node v26.3.0 serves the same certificates.
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const agent1 = { key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") };
+  const agent2 = { key: fixture("agent2-key.pem"), cert: fixture("agent2-cert.pem") };
+  const agent3 = { key: fixture("agent3-key.pem"), cert: fixture("agent3-cert.pem") };
+
+  async function listen(server: Server) {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return server.address() as AddressInfo;
+  }
+
+  async function relisten(server: Server) {
+    server.close();
+    await once(server, "close");
+    return listen(server);
+  }
+
+  // The CN of the certificate the server presents for `servername`.
+  async function servedCN({ address, port }: AddressInfo, servername: string) {
+    const client = connect({ host: address, port, servername, rejectUnauthorized: false });
+    try {
+      await once(client, "secureConnect");
+      return client.getPeerCertificate().subject.CN;
+    } finally {
+      client.destroy();
+    }
+  }
+
+  it("an entry added while listening is still there after close() and listen()", async () => {
+    const server: Server = createServer(agent1, socket => socket.end());
+    try {
+      const first = await listen(server);
+      server.addContext("added.example", agent2);
+      const whileListening = await servedCN(first, "added.example");
+      const second = await relisten(server);
+      expect({
+        whileListening,
+        afterRelisten: await servedCN(second, "added.example"),
+        otherName: await servedCN(second, "other.example"),
+      }).toEqual({
+        whileListening: "agent2",
+        afterRelisten: "agent2",
+        otherName: "agent1",
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("an entry replaced while listening stays replaced after close() and listen()", async () => {
+    const server: Server = createServer(agent1, socket => socket.end());
+    server.addContext("rotated.example", agent2);
+    try {
+      const first = await listen(server);
+      const beforeReplace = await servedCN(first, "rotated.example");
+      server.addContext("rotated.example", agent3);
+      const afterReplace = await servedCN(first, "rotated.example");
+      const second = await relisten(server);
+      expect({
+        beforeReplace,
+        afterReplace,
+        afterRelisten: await servedCN(second, "rotated.example"),
+      }).toEqual({
+        beforeReplace: "agent2",
+        afterReplace: "agent3",
+        afterRelisten: "agent3",
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("addContext() without a servername throws ERR_TLS_REQUIRED_SERVER_NAME and keeps no entry", async () => {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1574
+    const required = expect.objectContaining({
+      name: "Error",
+      code: "ERR_TLS_REQUIRED_SERVER_NAME",
+      message: '"servername" is required parameter for Server.addContext',
+    });
+    const server: Server = createServer(agent1, socket => socket.end());
+    try {
+      // A kept empty name would make every listen() fail.
+      for (const servername of ["", undefined, null]) {
+        expect(() => server.addContext(servername as any, agent2)).toThrow(required);
+      }
+      await listen(server);
+      expect(() => server.addContext("", agent2)).toThrow(required);
+      expect(await servedCN(await relisten(server), "added.example")).toBe("agent1");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("listen() loads the entries in addContext() call order", async () => {
+    // "ordered.example." and "ordered.example" land on the same native SNI
+    // entry, so the order a listener receives them in decides what it serves.
+    const server: Server = createServer(agent1, socket => socket.end());
+    server.addContext("ordered.example", agent2);
+    server.addContext("ordered.example.", agent2);
+    server.addContext("ordered.example", agent3);
+    try {
+      expect(await servedCN(await listen(server), "ordered.example")).toBe("agent3");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("an entry added right after listen() in a cluster worker applies to that listen()", async () => {
+    // A worker's listen() asks the primary for the socket first, so the
+    // listener does not exist yet when addContext() runs.
+    using dir = tempDir("tls-addcontext-cluster", {
+      "main.cjs": `
+        const cluster = require("node:cluster");
+        const tls = require("node:tls");
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          worker.on("listening", ({ port }) => {
+            const client = tls.connect(
+              { host: "127.0.0.1", port, servername: "added.example", rejectUnauthorized: false },
+              () => {
+                console.log(client.getPeerCertificate().subject.CN);
+                client.destroy();
+                worker.kill();
+              },
+            );
+          });
+        } else {
+          const server = tls.createServer(${JSON.stringify(agent1)}, socket => socket.end());
+          server.listen(0, "127.0.0.1");
+          server.addContext("added.example", ${JSON.stringify(agent2)});
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "agent2\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("tls.Server socket destroySoon", () => {

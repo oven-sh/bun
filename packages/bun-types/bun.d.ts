@@ -2730,9 +2730,17 @@ declare module "bun" {
     /**
      * Does the file exist?
      *
-     * This returns true for regular files and FIFOs. It returns false for
-     * directories. A race condition can occur where the file is deleted or
-     * renamed after this is called but before you open it.
+     * For a path, this returns true for every type of file except a
+     * directory: regular files, FIFOs, sockets, and devices such as
+     * `/dev/null`. It returns false for directories. A true answer does not
+     * mean that the file can be read.
+     *
+     * For a file descriptor, such as `Bun.stdin`, this returns true only for
+     * regular files and FIFOs. To find out what stdin is, use
+     * `process.stdin.isTTY` or `fs.fstatSync(0)`.
+     *
+     * A race condition can occur where the file is deleted or renamed after
+     * this is called but before you open it.
      *
      * This does a system call to check if the file exists, which can be
      * slow.

@@ -1450,7 +1450,12 @@ pub trait AutoInstaller {
         resolution: &Resolution,
         buf: &'b mut [u8],
     ) -> core::result::Result<&'b [u8], bun_core::Error>;
-    fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState;
+    /// Whether the package is in the cache, or what it takes to put it there.
+    /// A package read from the lockfile has no state until the first call.
+    fn get_preinstall_state(&mut self, package_id: PackageID) -> PreinstallState;
+    /// Runs the package manager's tasks until none is pending (downloads,
+    /// extractions), then returns the first task error.
+    fn wait_for_pending_tasks(&mut self) -> core::result::Result<(), bun_core::Error>;
     fn enqueue_package_for_download(
         &mut self,
         name: &[u8],

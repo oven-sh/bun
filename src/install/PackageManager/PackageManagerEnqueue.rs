@@ -588,80 +588,11 @@ pub fn enqueue_dependency_to_root(
     }
 
     let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {
-        id if id == invalid_package_id => 'brk: {
-            this.drain_dependency_list();
-
-            struct Closure {
-                err: Option<crate::Error>,
-                // raw `*mut` — `sleep_until`
-                // also receives this pointer, so `&mut` here would alias.
-                manager: *mut PackageManager,
-                // `sleep_until` ticks the JS event loop, and JS run there can
-                // swap `manager.log` and leave it pointing at a dead stack
-                // `Log`. `is_done` re-asserts this snapshot before each poll.
-                log: *mut bun_ast::Log,
-            }
-            impl Closure {
-                fn is_done(&mut self) -> bool {
-                    // SAFETY: `self.manager` is the raw provenance root set
-                    // below; `sleep_until`/`tick_raw` hold no `&mut` across
-                    // this callback, so this is the unique live borrow.
-                    let manager = unsafe { &mut *self.manager };
-                    manager.log = self.log;
-                    if manager.pending_task_count() > 0 {
-                        // All callbacks void: `VoidRunTasksCallbacks` (below)
-                        // has `Ctx = ()` and every `HAS_* = false`.
-                        let log_level = manager.options.log_level;
-                        if let Err(err) = run_tasks::run_tasks::<VoidRunTasksCallbacks>(
-                            manager,
-                            &mut (),
-                            false,
-                            log_level,
-                        ) {
-                            self.err = Some(err);
-                            return true;
-                        }
-
-                        if verbose_install() && manager.pending_task_count() > 0 {
-                            if PackageManager::has_enough_time_passed_between_waiting_messages() {
-                                bun_core::pretty_errorln!(
-                                    "<d>[PackageManager]<r> waiting for {} tasks\n",
-                                    manager.pending_task_count()
-                                );
-                            }
-                        }
-                    }
-
-                    manager.pending_task_count() == 0
-                }
-            }
-
-            if this.options.log_level.show_progress() {
-                this.start_progress_bar_if_none();
-            }
-
-            let mgr: *mut PackageManager = this;
-            let mut closure = Closure {
-                err: None,
-                manager: mgr,
-                log: this.log,
-            };
-            // SAFETY: `mgr` derived from the live exclusive `this` borrow;
-            // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
-            // `Closure::is_done`, so the callback's `&mut *closure.manager`
-            // is the unique live borrow.
-            unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
-
-            if this.options.log_level.show_progress() {
-                this.end_progress_bar();
-                Output::flush();
-            }
-
-            if let Some(err) = closure.err {
+        id if id == invalid_package_id => {
+            if let Err(err) = wait_for_pending_tasks(this) {
                 return DependencyToEnqueue::Failure(err);
             }
-
-            break 'brk this.lockfile.buffers.resolutions[dep_id as usize];
+            this.lockfile.buffers.resolutions[dep_id as usize]
         }
         // we managed to synchronously resolve the dependency
         pkg_id => pkg_id,
@@ -674,6 +605,86 @@ pub fn enqueue_dependency_to_root(
     DependencyToEnqueue::Resolution {
         resolution: this.lockfile.packages.items_resolution()[resolution_id as usize],
         package_id: resolution_id,
+    }
+}
+
+/// Runs the package manager's tasks on the JS event loop until none is
+/// pending: manifest fetches, tarball downloads, extractions. Returns the
+/// first task error.
+pub fn wait_for_pending_tasks(this: &mut PackageManager) -> crate::Result<()> {
+    // A task can be queued without being scheduled (a tarball from a
+    // manifest that was already on disk); the drain schedules it.
+    this.drain_dependency_list();
+
+    struct Closure {
+        err: Option<crate::Error>,
+        // raw `*mut` — `sleep_until`
+        // also receives this pointer, so `&mut` here would alias.
+        manager: *mut PackageManager,
+        // `sleep_until` ticks the JS event loop, and JS run there can
+        // swap `manager.log` and leave it pointing at a dead stack
+        // `Log`. `is_done` re-asserts this snapshot before each poll.
+        log: *mut bun_ast::Log,
+    }
+    impl Closure {
+        fn is_done(&mut self) -> bool {
+            // SAFETY: `self.manager` is the raw provenance root set
+            // below; `sleep_until`/`tick_raw` hold no `&mut` across
+            // this callback, so this is the unique live borrow.
+            let manager = unsafe { &mut *self.manager };
+            manager.log = self.log;
+            if manager.pending_task_count() > 0 {
+                // All callbacks void: `VoidRunTasksCallbacks` (below)
+                // has `Ctx = ()` and every `HAS_* = false`.
+                let log_level = manager.options.log_level;
+                if let Err(err) = run_tasks::run_tasks::<VoidRunTasksCallbacks>(
+                    manager,
+                    &mut (),
+                    false,
+                    log_level,
+                ) {
+                    self.err = Some(err);
+                    return true;
+                }
+
+                if verbose_install() && manager.pending_task_count() > 0 {
+                    if PackageManager::has_enough_time_passed_between_waiting_messages() {
+                        bun_core::pretty_errorln!(
+                            "<d>[PackageManager]<r> waiting for {} tasks\n",
+                            manager.pending_task_count()
+                        );
+                    }
+                }
+            }
+
+            manager.pending_task_count() == 0
+        }
+    }
+
+    if this.options.log_level.show_progress() {
+        this.start_progress_bar_if_none();
+    }
+
+    let mgr: *mut PackageManager = this;
+    let mut closure = Closure {
+        err: None,
+        manager: mgr,
+        log: this.log,
+    };
+    // SAFETY: `mgr` derived from the live exclusive `this` borrow;
+    // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
+    // `Closure::is_done`, so the callback's `&mut *closure.manager`
+    // is the unique live borrow.
+    unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
+
+    if this.options.log_level.show_progress() {
+        this.end_progress_bar();
+        Output::flush();
+    }
+
+    match closure.err {
+        Some(err) => Err(err),
+        None => Ok(()),
     }
 }
 

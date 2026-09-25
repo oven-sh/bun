@@ -4757,6 +4757,12 @@ pub(crate) fn write_file_internal(
         }
     }
 
+    // The encode job re-enters here with a copy of `path_or_blob` and the
+    // encoded bytes, so an image writes exactly like `Bun.write(dest, bytes)`.
+    if let Some(image) = data.as_class_ref::<Image>() {
+        return image.write_to(cx, data, path_or_blob.clone(), &options);
+    }
+
     // if path_or_blob is a path, convert it into a file blob
     let mut destination_blob: Blob = match path_or_blob {
         PathOrBlob::Path(path) => {
@@ -5006,6 +5012,23 @@ pub(crate) fn write_file_internal(
                 return Ok(body_used_rejection(cx.global()));
             }
             return destination_blob.pipe_readable_stream_to_blob(cx, readable, &options);
+        }
+
+        // Reject what the `new Blob()` parser would coerce with `String()`.
+        // The array form keeps the Blob spec's per-part `String()` semantics.
+        let data_type = data.js_type();
+        let is_blob_part = data.is_string()
+            || data_type.is_array_buffer_like()
+            || matches!(data_type, jsc::JSType::Array | jsc::JSType::DerivedArray)
+            || data.as_class_ref::<Blob>().is_some()
+            || data.as_class_ref::<crate::api::BuildArtifact>().is_some();
+        if !is_blob_part {
+            return Err(cx.global().throw_invalid_argument_type_value2(
+                "data",
+                "of type string or an instance of Blob, ArrayBuffer, TypedArray, DataView, \
+                 Response, Request, ReadableStream, Bun.Archive, or Bun.Image",
+                data,
+            ));
         }
 
         break 'brk Blob::get::<false, false>(cx.global(), data)?;

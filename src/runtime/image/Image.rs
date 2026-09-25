@@ -15,8 +15,8 @@ use crate::generated_classes::PropertyName;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::store as blob_store;
-use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
-use crate::webcore::node_types::PathOrFileDescriptor;
+use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult, WriteFileOptions};
+use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
 use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
@@ -1097,12 +1097,35 @@ impl Image {
             &cx,
             cf.this(),
             Kind::Encode(output),
-            Deliver::WriteDest(Strong::create(args[0], global)),
+            Deliver::WriteDest {
+                dest: WriteDestination::Js(Strong::create(args[0], global)),
+                options: WriteOptions::default(),
+            },
         )
     }
 }
 
 impl Image {
+    /// `Bun.write(dest, image)`: encode in the pipeline's output format and
+    /// write to the parsed destination. Resolves with bytes written.
+    pub(crate) fn write_to(
+        &self,
+        cx: &bun_jsc::JsThread<'_>,
+        this_value: JSValue,
+        destination: PathOrBlob,
+        options: &WriteFileOptions,
+    ) -> JsResult<JSValue> {
+        self.schedule(
+            cx,
+            this_value,
+            Kind::Encode(self.pipeline.get().output),
+            Deliver::WriteDest {
+                dest: WriteDestination::Parsed(destination),
+                options: WriteOptions::root(cx.global(), options),
+            },
+        )
+    }
+
     fn schedule(
         &self,
         cx: &bun_jsc::JsThread<'_>,
@@ -1502,13 +1525,51 @@ pub(crate) enum Deliver {
     /// Like `.base64` plus a `data:{mime};base64,` prefix — same encode
     /// path, the prefix is the only difference.
     DataUrl,
-    /// `.write(dest)` — `then()` hands the encoded bytes to `Bun.write`'s
-    /// implementation with this as the destination. Anything `Bun.write`
-    /// accepts (path string / BunFile / S3 / fd) works here unchanged.
-    WriteDest(Strong),
+    /// `.write(dest)` and `Bun.write(dest, image)`: `then()` hands the encoded
+    /// bytes to `write_file_internal` with this destination and these options.
+    WriteDest {
+        dest: WriteDestination,
+        options: WriteOptions,
+    },
 }
-// `Deliver::deinit` is just `Strong::Drop` on the `WriteDest` arm — handled
-// automatically.
+
+/// `Image.write(dest)` parses the JS value after the encode. `Bun.write(dest,
+/// image)` has already parsed it.
+pub(crate) enum WriteDestination {
+    Js(Strong),
+    Parsed(PathOrBlob),
+}
+// SAFETY: a `Strong`, or an owned path / a `Blob` view whose `Drop` only
+// releases atomic refcounts.
+unsafe impl bun_jsc::job::JsAffine for WriteDestination {}
+
+/// `WriteFileOptions` rooted across the encode job.
+#[derive(Default)]
+pub(crate) struct WriteOptions {
+    mkdirp_if_not_exists: Option<bool>,
+    extra_options: Option<Strong>,
+    mode: Option<sys::Mode>,
+}
+// SAFETY: plain data plus a `Strong`, used and dropped on the JS thread only.
+unsafe impl bun_jsc::job::JsAffine for WriteOptions {}
+
+impl WriteOptions {
+    pub(crate) fn root(global: &JSGlobalObject, options: &WriteFileOptions) -> Self {
+        Self {
+            mkdirp_if_not_exists: options.mkdirp_if_not_exists,
+            extra_options: options.extra_options.map(|v| Strong::create(v, global)),
+            mode: options.mode,
+        }
+    }
+
+    fn to_write_file_options(&self) -> WriteFileOptions {
+        WriteFileOptions {
+            mkdirp_if_not_exists: self.mkdirp_if_not_exists,
+            extra_options: self.extra_options.as_ref().map(Strong::get),
+            mode: self.mode,
+        }
+    }
+}
 
 pub(crate) enum Kind {
     /// `None` ⇒ re-encode in the source format (resolved after decode).
@@ -1782,7 +1843,7 @@ impl PipelineTask {
                 // SAFETY: `out.bytes` is a non-null fat pointer into a live
                 // codec allocation; valid until `out.free` runs.
                 let out_slice: &[u8] = unsafe { out.bytes.as_ref() };
-                match &mut js.deliver {
+                match mem::replace(&mut js.deliver, Deliver::Uint8Array) {
                     // The codec's own allocation is handed straight to JS with the
                     // codec's free as the finalizer — no dupe of the output.
                     Deliver::Uint8Array => {
@@ -1877,8 +1938,7 @@ impl PipelineTask {
                     // with that Promise<number>. So `dest` may be a path string,
                     // `Bun.file()`, `Bun.s3()`, or an fd — anything `Bun.write`
                     // accepts — and we don't reimplement any of it.
-                    Deliver::WriteDest(dest) => {
-                        let dest_js = dest.get();
+                    Deliver::WriteDest { dest, options } => {
                         // SAFETY: `out.bytes` is the codec-owned allocation whose
                         // ownership transfers to JSC; `ctx` is null and `out.free`
                         // ignores it.
@@ -1893,16 +1953,22 @@ impl PipelineTask {
                             Ok(d) => d,
                             Err(e) => return promise.reject(global, Err(e)),
                         };
-                        // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
-                        // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
-                        let args = [dest_js];
-                        let mut arg_slice = jsc::ArgumentsSlice::init(global.bun_vm(), &args);
-                        let mut path_or_blob = match crate::webcore::blob::write_destination_from_js(
-                            global,
-                            &mut arg_slice,
-                        ) {
-                            Ok(p) => p,
-                            Err(e) => return promise.reject(global, Err(e)),
+                        let mut path_or_blob = match dest {
+                            WriteDestination::Parsed(path_or_blob) => path_or_blob,
+                            WriteDestination::Js(dest_js) => {
+                                // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
+                                // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
+                                let args = [dest_js.get()];
+                                let mut arg_slice =
+                                    jsc::ArgumentsSlice::init(global.bun_vm(), &args);
+                                match crate::webcore::blob::write_destination_from_js(
+                                    global,
+                                    &mut arg_slice,
+                                ) {
+                                    Ok(p) => p,
+                                    Err(e) => return promise.reject(global, Err(e)),
+                                }
+                            }
                         };
                         // `PathOrBlob::Path` owns its `PathOrFileDescriptor`
                         // and frees on Drop — no explicit `path.deinit()` needed.
@@ -1910,7 +1976,7 @@ impl PipelineTask {
                             cx,
                             &mut path_or_blob,
                             data,
-                            Default::default(),
+                            options.to_write_file_options(),
                         ) {
                             Ok(p) => p,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),

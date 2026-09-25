@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, tls as cert1, isDebug, isWindows } from "harness";
+import http from "http";
 import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
@@ -1187,6 +1188,73 @@ it("ALPNCallback returning an offered protocol completes the handshake with it",
   client.end();
   server.close();
   await once(server, "close");
+});
+
+// Node keeps ALPNCallback per socket. http.Server's 'connection' hook sets socket.server to the
+// http.Server, which has no ALPNCallback: the wrap's own callback must still decide.
+describe("a server-side TLSSocket wrap that an http.Server adopts through emit('connection')", () => {
+  async function handshake(select: (protocols: string[]) => string | undefined) {
+    const calls: string[] = [];
+    const httpServer = http.createServer((req, res) => {
+      const body = `alpn=${(req.socket as TLSSocket).alpnProtocol}`;
+      res.writeHead(200, { "Connection": "close", "Content-Length": body.length });
+      res.end(body);
+    });
+    const front = net.createServer(raw => {
+      const wrapped = new TLSSocket(raw, {
+        isServer: true,
+        ...COMMON_CERT,
+        ALPNCallback: ({ protocols }) => {
+          calls.push(protocols.join(","));
+          return select(protocols);
+        },
+      });
+      wrapped.on("error", () => {});
+      httpServer.emit("connection", wrapped);
+    });
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const client = connect({
+      port: (front.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      ALPNProtocols: ["h2", "http/1.1"],
+      rejectUnauthorized: false,
+    });
+    try {
+      const outcome = await new Promise<string>(resolve => {
+        client.once("secureConnect", () => resolve(`secureConnect ${client.alpnProtocol}`));
+        client.once("error", () => resolve("error"));
+      });
+      let response: string | undefined;
+      if (outcome !== "error") {
+        client.setEncoding("latin1");
+        let received = "";
+        client.on("data", chunk => (received += chunk));
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await once(client, "close");
+        response = received.slice(received.indexOf("\r\n\r\n") + 4);
+      }
+      return { outcome, calls, response };
+    } finally {
+      client.destroy();
+      front.close();
+    }
+  }
+
+  it("negotiates the protocol the wrap's ALPNCallback selects", async () => {
+    expect(await handshake(() => "http/1.1")).toEqual({
+      outcome: "secureConnect http/1.1",
+      calls: ["h2,http/1.1"],
+      response: "alpn=http/1.1",
+    });
+  });
+
+  it("refuses the connection when the wrap's ALPNCallback returns undefined", async () => {
+    expect(await handshake(() => undefined)).toEqual({
+      outcome: "error",
+      calls: ["h2,http/1.1"],
+      response: undefined,
+    });
+  });
 });
 
 it("an asynchronous SNICallback suspends the handshake and resumes with the selected context", async () => {

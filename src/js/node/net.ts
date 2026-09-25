@@ -989,8 +989,8 @@ const ServerHandlers = {
     // falls through to the static ALPNProtocols list), the selected protocol
     // string, or undefined to refuse the connection - Node's contract.
     const self = socket.data;
-    const server = self?.server ?? self;
-    const cb = server?._ALPNCallback;
+    // Per socket first, like node's kALPNCallback: an http.Server that adopted the wrap is `server` and has none.
+    const cb = self?._ALPNCallback ?? self?.server?._ALPNCallback;
     if (typeof cb !== "function") return false;
     const wire = Buffer.isBuffer(protocolsWire) ? protocolsWire : Buffer.from(protocolsWire);
     const protocols: string[] = [];

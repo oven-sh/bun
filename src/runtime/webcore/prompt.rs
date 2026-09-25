@@ -233,15 +233,12 @@ pub(crate) mod prompt {
         let arguments = frame.arguments();
         let output = Output::writer();
         let has_message = !arguments.is_empty();
-        // Arguments convert in order: message, then default.
         let message = if has_message {
             Some(arguments[0].to_utf8(global)?)
         } else {
             None
         };
-        // `prompt(optional DOMString message = "", optional DOMString default = "")`:
-        // an omitted or `undefined` default is the empty string, and an empty
-        // line returns it. `null` is only for EOF or a read error.
+        // `optional DOMString default = ""`: an omitted or `undefined` default is "".
         let default: Option<&JSString> = match arguments.get(1) {
             Some(value) if !value.is_undefined() => Some(value.to_js_string(global)?),
             _ => None,

@@ -92,6 +92,25 @@ describe.concurrent("run-shell", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Tab-indented CRLF script (the common Windows-editor shape). An unquoted
+  // tab must break words like a space does, so `\techo` is not one command.
+  test("tab-indented CRLF script runs", async () => {
+    using dir = tempDir("bun-shell-tab-crlf", {
+      "t.sh": "if true; then\r\n\techo hi\r\nfi\r\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "t.sh")],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stripAsanWarning(stderr)).toBe("");
+    expect(stdout).toBe("hi\n");
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/29669
   test("CRLF with backslash line continuation", async () => {
     using dir = tempDir("bun-shell-crlf-cont", {

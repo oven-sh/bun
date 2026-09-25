@@ -2874,8 +2874,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             fell_through = true;
                         }
                         // 3. Word breakers
-                        c if c == u32::from(b' ') => {
+                        c if c == u32::from(b' ') || c == u32::from(b'\t') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b' ' as usize));
+                            const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'\t' as usize));
                             if self.chars.state == CharState::Normal {
                                 self.break_word(AddDelimiter::AfterWord)?;
                                 fell_through = true;

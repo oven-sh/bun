@@ -1907,8 +1907,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         local.decls.slice(),
                         RelocateVarsMode::Normal,
                     );
-                    if let Some(relocated) = relocate.stmt {
-                        data.init = Some(relocated);
+                    if relocate.ok {
+                        data.init = relocate.stmt;
                     }
                 }
             }

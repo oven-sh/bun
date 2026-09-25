@@ -56,7 +56,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> RelocateVars {
         let p = self;
         // Only do this when the scope is not already top-level and when we're not inside a function.
-        if p.current_scope == p.module_scope {
+        // The exception is a top-level "var" with the name of a top-level function.
+        if p.current_scope == p.module_scope
+            && !(p.lowers_var_merged_with_function && p.decls_bind_function_merged_with_var(decls))
+        {
             return RelocateVars {
                 ok: false,
                 ..Default::default()
@@ -100,11 +103,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
+        // Tree shaking removes an unused top-level "var", so it also removes the
+        // assignment that stands for one.
+        let does_not_affect_tree_shaking =
+            p.current_scope == p.module_scope && p.decls_can_be_removed_if_unused(decls);
         RelocateVars {
             stmt: Some(p.s(
                 S::SExpr {
                     value,
-                    does_not_affect_tree_shaking: false,
+                    does_not_affect_tree_shaking,
                 },
                 value.loc,
             )),

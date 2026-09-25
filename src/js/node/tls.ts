@@ -916,8 +916,9 @@ TLSSocket.prototype._start = function _start() {
   this.connect();
 };
 
-function finalAfterFirstFlight(socket, callback) {
-  NetSocket.prototype._final.$call(socket, callback);
+function shutdownAfterFirstFlight(handle, callback) {
+  handle.shutdown();
+  callback();
 }
 
 TLSSocket.prototype._final = function _final(callback) {
@@ -928,8 +929,8 @@ TLSSocket.prototype._final = function _final(callback) {
   }
   // The ClientHello leaves when the native open callback returns. A nextTick still runs inside that callback.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1110-L1129
-  if (this.secureConnecting && !this.isServer) {
-    return void setImmediate(finalAfterFirstFlight, this, callback);
+  if (this.secureConnecting && !this.isServer && !this.connecting) {
+    return void setImmediate(shutdownAfterFirstFlight, this._handle, callback);
   }
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
   return NetSocket.prototype._final.$call(this, callback);

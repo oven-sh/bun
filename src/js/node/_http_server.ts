@@ -3357,7 +3357,7 @@ function emitResponseFinished(res, callback) {
   }
 }
 
-function flushPendingFinish(this: ServerResponse) {
+function flushPendingFinish(this: any) {
   const callback = this[kPendingFinish];
   if (callback === undefined) return;
   this[kPendingFinish] = undefined;

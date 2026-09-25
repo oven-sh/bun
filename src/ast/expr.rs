@@ -1260,11 +1260,6 @@ impl Expr {
         })
     }
 
-    #[inline]
-    pub fn has_value_for_this_in_call(&self) -> bool {
-        matches!(self.data, Data::EDot(_) | Data::EIndex(_))
-    }
-
     /// The given "expr" argument should be the operand of a "!" prefix operator
     /// (i.e. the "x" in "!x"). This returns a simplified expression for the
     /// whole operator (i.e. the "!x") if it can be simplified, or false if not.

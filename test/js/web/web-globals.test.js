@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { expect, it, test } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
 
 test("exists", () => {
@@ -417,6 +417,36 @@ test("confirm (no) windows newline", async () => {
   await proc.exited;
 
   expect(await proc.stderr.text()).toBe("No\n");
+});
+
+// prompt() prints the message to stdout and the fixture writes the JSON result to stderr.
+describe.concurrent("prompt", () => {
+  async function runPrompt(call, stdin) {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `console.error(JSON.stringify(${call}))`],
+      stdin: new Blob([stdin]),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return { stdout, result: JSON.parse(stderr) };
+  }
+
+  test.each([
+    ["no default, unix newline", `prompt("Q?")`, "\n", { stdout: "Q? ", result: "" }],
+    ["no default, windows newline", `prompt("Q?")`, "\r\n", { stdout: "Q? ", result: "" }],
+    ["undefined default is no default", `prompt("Q?", undefined)`, "\n", { stdout: "Q? ", result: "" }],
+    ["no default, EOF", `prompt("Q?")`, "", { stdout: "Q? ", result: null }],
+    ["no default, answer", `prompt("Q?")`, "hi\n", { stdout: "Q? ", result: "hi" }],
+    ["default, empty line", `prompt("Q?", "dflt")`, "\n", { stdout: "Q? [dflt] ", result: "dflt" }],
+    ["default, answer", `prompt("Q?", "dflt")`, "hi\n", { stdout: "Q? [dflt] ", result: "hi" }],
+    ["default is converted to a string", `prompt("Q?", 5)`, "\n", { stdout: "Q? [5] ", result: "5" }],
+    ["null default is the string null", `prompt("Q?", null)`, "\n", { stdout: "Q? [null] ", result: "null" }],
+  ])("%s", async (_, call, stdin, expected) => {
+    expect(await runPrompt(call, stdin)).toEqual(expected);
+  });
 });
 
 test("globalThis.self = 123 works", () => {

@@ -1,6 +1,6 @@
 //! Implements prompt, alert, and confirm Web API
 
-use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSString, JSValue, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::EncodedSlice;
 use bun_core::Output;
@@ -233,13 +233,12 @@ pub(crate) mod prompt {
         let arguments = frame.arguments();
         let output = Output::writer();
         let has_message = !arguments.is_empty();
-        let has_default = arguments.len() >= 2;
-        // 4. Set default to the result of optionally truncating default.
-        // *  We don't really need to do this.
-        let default = if has_default {
-            arguments[1]
-        } else {
-            JSValue::NULL
+        // `prompt(optional DOMString message = "", optional DOMString default = "")`:
+        // an omitted or `undefined` default is the empty string, and an empty
+        // line returns it. `null` is only for EOF or a read error.
+        let default: Option<&JSString> = match arguments.get(1) {
+            Some(value) if !value.is_undefined() => Some(value.to_js_string(global)?),
+            _ => None,
         };
 
         if has_message {
@@ -274,16 +273,10 @@ pub(crate) mod prompt {
             return Ok(JSValue::FALSE);
         }
 
-        if has_default {
-            let default_string = arguments[1].to_utf8(global)?;
+        if let Some(default) = default {
+            let default_string = default.view(global)?;
 
-            if output
-                .print(format_args!(
-                    "[{}] ",
-                    bstr::BStr::new(default_string.slice())
-                ))
-                .is_err()
-            {
+            if output.print(format_args!("[{}] ", default_string)).is_err() {
                 // 1. If we cannot show simple dialogs for this, then return false.
                 return Ok(JSValue::FALSE);
             }
@@ -315,17 +308,19 @@ pub(crate) mod prompt {
             return Ok(JSValue::NULL);
         };
 
+        // 5. The response must be defaulted to the value given by default.
+        let default_response =
+            || default.map_or_else(|| JSValue::js_empty_string(global), JSString::to_js);
+
         if first_byte == b'\n' {
-            // 8. Let result be null if the user aborts, or otherwise the string
-            //    that the user responded with.
-            return Ok(default);
+            return Ok(default_response());
         } else if first_byte == b'\r' {
             let Ok(second) = reader.read_byte() else {
                 return Ok(JSValue::NULL);
             };
             second_byte = Some(second);
             if second == b'\n' {
-                return Ok(default);
+                return Ok(default_response());
             }
         }
 

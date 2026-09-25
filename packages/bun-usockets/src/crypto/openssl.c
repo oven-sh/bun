@@ -1819,11 +1819,9 @@ struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s)
   return us_ssl_socket_verify_error_from_ssl(s_ssl(s));
 }
 
-/* What a failed handshake reports. After our own FIN the SSL's verdict stands
- * only for a chain that this handshake checked. With none the SSL answers
- * UNABLE_TO_GET_ISSUER_CERT, or the verdict of the session that a client
- * offered. node:tls reads a failure with an X509 code as an established
- * session, and one with no error after end() as its own close. */
+/* After our own FIN a failed handshake reports the SSL's verdict only for a
+ * chain that it checked: node:tls reads a failure with an X509 code as an
+ * established session. */
 static struct us_bun_verify_error_t ssl_failed_handshake_verify_error(struct us_socket_t *s) {
   if (us_internal_ssl_is_shut_down(s) && !s->ssl_peer_chain_checked) {
     return (struct us_bun_verify_error_t){.error = 0, .code = NULL, .reason = NULL};

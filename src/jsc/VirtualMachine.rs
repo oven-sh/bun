@@ -2752,8 +2752,12 @@ pub struct RuntimeHooks {
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
     /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
-    /// `judge_rejections`: the turn ends with the unhandled-rejection pass.
-    pub auto_tick: unsafe fn(vm: *mut VirtualMachine, judge_rejections: bool),
+    /// `waiting_on`, `judge_rejections`: see [`crate::event_loop::EventLoop::auto_tick_waiting_on`].
+    pub auto_tick: unsafe fn(
+        vm: *mut VirtualMachine,
+        waiting_on: Option<jsc::AnyPromise>,
+        judge_rejections: bool,
+    ),
     /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
     /// the uSockets loop while it has active handles.
     /// Separate slot because the body skips `runImminentGCTimer` /
@@ -3370,19 +3374,52 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise)
     }
 
+    /// [`wait_for_promise`](Self::wait_for_promise) on `pending_internal_promise`,
+    /// read again on every turn because a hot reload swaps it. `Ok` once it is
+    /// settled or cleared. `Err` as for `wait_for_promise`.
+    pub fn wait_for_pending_internal_promise(&mut self) -> Result<(), jsc::Stopped> {
+        loop {
+            let Some(p) = self.pending_internal_promise else {
+                return Ok(());
+            };
+            // SAFETY: `p` is a live JSC heap cell tracked by the VM.
+            if crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending {
+                return Ok(());
+            }
+            if self.jsc_vm().execution_forbidden()
+                || !self.script_allowed()
+                || self.global().has_pending_termination_exception()
+            {
+                return Err(jsc::Stopped);
+            }
+            self.event_loop_mut().tick();
+            let Some(p) = self.pending_internal_promise else {
+                return Ok(());
+            };
+            // SAFETY: see above.
+            if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
+                self.auto_tick_waiting_on(Some(jsc::AnyPromise::Internal(p)), true);
+            }
+        }
+    }
+
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
     pub fn auto_tick(&mut self) {
-        self.auto_tick_judging(true);
+        self.auto_tick_waiting_on(None, true);
     }
 
-    /// [`auto_tick`](Self::auto_tick). `judge_rejections`: the turn ends with the unhandled-rejection pass.
+    /// See [`crate::event_loop::EventLoop::auto_tick_waiting_on`].
     #[inline]
-    pub(crate) fn auto_tick_judging(&mut self, judge_rejections: bool) {
+    pub fn auto_tick_waiting_on(
+        &mut self,
+        waiting_on: Option<jsc::AnyPromise>,
+        judge_rejections: bool,
+    ) {
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `self` is the live per-thread VM.
-            unsafe { (hooks.auto_tick)(self, judge_rejections) };
+            unsafe { (hooks.auto_tick)(self, waiting_on, judge_rejections) };
         } else if judge_rejections {
             // No high tier (unit tests) — fall back to a non-blocking tick.
             self.event_loop_mut().tick();
@@ -3563,23 +3600,7 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            loop {
-                let Some(p) = self.pending_internal_promise else {
-                    break;
-                };
-                // SAFETY: `p` is a live JSC heap cell tracked by the VM.
-                if crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending {
-                    break;
-                }
-                self.event_loop_mut().tick();
-                let Some(p) = self.pending_internal_promise else {
-                    break;
-                };
-                // SAFETY: see above.
-                if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
-                    self.auto_tick();
-                }
-            }
+            let _ = self.wait_for_pending_internal_promise();
         } else {
             // SAFETY: `promise` is a live JSC heap cell.
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
@@ -5594,23 +5615,7 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            loop {
-                let Some(p) = self.pending_internal_promise else {
-                    break;
-                };
-                // SAFETY: `p` is a live JSC heap cell tracked by the VM.
-                if crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending {
-                    break;
-                }
-                self.event_loop_mut().tick();
-                let Some(p) = self.pending_internal_promise else {
-                    break;
-                };
-                // SAFETY: see above.
-                if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
-                    self.auto_tick();
-                }
-            }
+            let _ = self.wait_for_pending_internal_promise();
         } else {
             // SAFETY: `promise` is a live JSC heap cell.
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {

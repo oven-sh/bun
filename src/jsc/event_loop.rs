@@ -153,6 +153,7 @@ mod drain_result {
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
+    safe fn JSC__JSGlobalObject__hasMicrotaskCheckpointWork(global: &JSGlobalObject) -> bool;
 }
 
 impl JSGlobalObject {
@@ -456,6 +457,13 @@ impl EventLoop {
         let global = self.global_ref();
         let jsc_vm = self.vm_ref().jsc_vm();
         self.drain_microtasks_with_global(global, jsc_vm)
+    }
+
+    /// Whether [`drain_microtasks`](Self::drain_microtasks) would do anything.
+    #[inline]
+    pub fn has_checkpoint_work(&self) -> bool {
+        !self.deferred_tasks.is_empty()
+            || JSC__JSGlobalObject__hasMicrotaskCheckpointWork(self.global_ref())
     }
 
     // should be called after exit()
@@ -1137,10 +1145,14 @@ impl EventLoop {
         self.vm_ref().as_mut().auto_tick();
     }
 
-    /// [`auto_tick`](Self::auto_tick) without the unhandled-rejection pass at its end: the caller runs it.
+    /// [`auto_tick`](Self::auto_tick) for a caller blocked until `promise`
+    /// settles. See "Nested waits" in `src/event_loop/README.md`.
+    /// `judge_rejections`: the turn ends with the unhandled-rejection pass.
     #[inline]
-    fn auto_tick_leaving_rejections(&mut self) {
-        self.vm_ref().as_mut().auto_tick_judging(false);
+    pub fn auto_tick_waiting_on(&mut self, promise: jsc::AnyPromise, judge_rejections: bool) {
+        self.vm_ref()
+            .as_mut()
+            .auto_tick_waiting_on(Some(promise), judge_rejections);
     }
 
     /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick) but
@@ -1178,7 +1190,7 @@ impl EventLoop {
             if !beneath_script {
                 self.tick();
                 if promise.status() == PromiseStatus::Pending {
-                    self.auto_tick();
+                    self.auto_tick_waiting_on(promise, true);
                 }
                 continue;
             }
@@ -1190,7 +1202,7 @@ impl EventLoop {
                 .handle_rejected_promises()
                 .map_err(|_| jsc::Stopped)?;
             if promise.status() == PromiseStatus::Pending {
-                self.auto_tick_leaving_rejections();
+                self.auto_tick_waiting_on(promise, false);
             }
         }
         Ok(())
@@ -1400,7 +1412,7 @@ impl EventLoop {
                 // Nothing in flight can settle the load; let spin() decide.
                 break;
             }
-            self.auto_tick();
+            self.auto_tick_waiting_on(promise, true);
         }
     }
 }

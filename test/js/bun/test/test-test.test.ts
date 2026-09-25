@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -1004,4 +1004,310 @@ test("my-test", () => {
       expect(output).toContain("Ran 1 test across 1 file");
     });
   }
+});
+
+// expect's promise matchers and Bun.build's async plugin setup() block the
+// calling frame and run the event loop until their promise settles. Here a
+// setImmediate callback settles it (directly, or through an await
+// continuation), so it settles at the start of a loop turn, before that turn
+// polls for I/O. Each check arms a ref'd timer: it keeps the loop active, so
+// the turn is allowed to park in the poll, and it is the only thing that could
+// end such a park. The wait returning with the timer unfired shows the turn did
+// not park; a turn that parks returns only once the timer has fired. (Bun's
+// idle GC timer is disabled because it would otherwise end the park itself,
+// which is what the bug looks like in practice: every such wait taking up to
+// that timer's period, a second, or 30 seconds once the heap has been quiet
+// for a while.)
+test("a synchronous wait on a promise returns as soon as an immediate settles it", async () => {
+  using dir = tempDir("wait-settled-by-immediate", {
+    "entry.ts": "export default 1;\n",
+    "wait.fixture.ts": /* ts */ `
+      import { expect } from "bun:test";
+      import vm from "node:vm";
+
+      const inImmediate = body =>
+        new Promise((resolve, reject) =>
+          setImmediate(() => {
+            try {
+              resolve(body());
+            } catch (e) {
+              reject(e);
+            }
+          }),
+        );
+      const afterImmediate = async body => {
+        await inImmediate(() => {});
+        return body();
+      };
+      const boom = () => {
+        throw new Error("boom");
+      };
+
+      // Repeating, so that a wait nested in another wait's park is woken too,
+      // and a parked build of any shape fails here instead of hanging.
+      function check(name, wait) {
+        let parked = false;
+        const started = performance.now();
+        const timer = setInterval(() => (parked = true), 2_000);
+        const rest = wait();
+        clearInterval(timer);
+        // A wait that a stop ends returns on the timer's wake-up, before the
+        // timer's callback has run.
+        if (parked || performance.now() - started >= 2_000) throw new Error("the wait parked: " + name);
+        console.log("returned: " + name);
+        return rest;
+      }
+
+      check("expect().resolves, resolved by the immediate", () => expect(inImmediate(() => "done")).resolves.toBe("done"));
+      check("expect().resolves, resolved by an await continuation", () =>
+        expect(afterImmediate(() => "done")).resolves.toBe("done"),
+      );
+      check("expect().rejects, rejected by the immediate", () => expect(inImmediate(boom)).rejects.toThrow("boom"));
+      check("expect().toThrow() on an async function, rejected by an await continuation", () =>
+        expect(() => afterImmediate(boom)).toThrow("boom"),
+      );
+      check("a wait whose immediate itself waits", () =>
+        expect(
+          inImmediate(() => {
+            expect(afterImmediate(() => "inner")).resolves.toBe("inner");
+            return "outer";
+          }),
+        ).resolves.toBe("outer"),
+      );
+      await inImmediate(() =>
+        check("a wait started from a setImmediate callback", () =>
+          expect(afterImmediate(() => "done")).resolves.toBe("done"),
+        ),
+      );
+      // The handler runs at the tail of the wait's own tick(), after its last
+      // microtask checkpoint, and no immediate is queued.
+      const released = Promise.withResolvers();
+      const release = () => released.resolve("done");
+      process.on("unhandledRejection", release);
+      Promise.reject(new Error("nothing handles this"));
+      check("expect().resolves, resolved through an unhandledRejection handler", () =>
+        expect(released.promise.then(value => value)).resolves.toBe("done"),
+      );
+      process.off("unhandledRejection", release);
+      // A stop met in the wait's own tick(): the deadline of the node:vm run
+      // fires while a microtask that the wait runs is spinning.
+      const context = vm.createContext({
+        queueMicrotask,
+        wait: () => expect(new Promise(() => {})).resolves.toBe(1),
+      });
+      check("a wait under a node:vm run whose timeout fires", () => {
+        try {
+          vm.runInContext("queueMicrotask(() => { for (;;); }); wait()", context, { timeout: 50 });
+        } catch (e) {
+          console.log("the run threw: " + e.code);
+        }
+      });
+      // Bun.build() waits for setup() before it returns the build's promise.
+      const build = check("Bun.build() with a plugin whose setup() awaits an immediate", () =>
+        Bun.build({
+          entrypoints: [import.meta.dir + "/entry.ts"],
+          plugins: [{ name: "async setup", setup: () => afterImmediate(() => {}) }],
+        }),
+      );
+      console.log("build succeeded: " + (await build).success);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "wait.fixture.ts"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchInlineSnapshot(`
+    {
+      "exitCode": 0,
+      "stderr": "",
+      "stdout": 
+    "returned: expect().resolves, resolved by the immediate
+    returned: expect().resolves, resolved by an await continuation
+    returned: expect().rejects, rejected by the immediate
+    returned: expect().toThrow() on an async function, rejected by an await continuation
+    returned: a wait whose immediate itself waits
+    returned: a wait started from a setImmediate callback
+    returned: expect().resolves, resolved through an unhandledRejection handler
+    the run threw: ERR_SCRIPT_EXECUTION_TIMEOUT
+    returned: a wait under a node:vm run whose timeout fires
+    returned: Bun.build() with a plugin whose setup() awaits an immediate
+    build succeeded: true
+    "
+    ,
+    }
+  `);
+});
+
+// The flush of a buffered write is a deferred task of the microtask checkpoint.
+// The immediate queues no microtask, so the flush is all that the wait has to
+// run before the poll. Linux only: the watcher is the observer here, and how
+// soon fs.watch reports a write differs by platform.
+test.skipIf(!isLinux)("a synchronous wait flushes the write that an immediate buffered", async () => {
+  using dir = tempDir("wait-buffered-write", {
+    "out.txt": "",
+    "buffered.fixture.ts": /* ts */ `
+      import { expect } from "bun:test";
+      import fs from "node:fs";
+
+      const writer = Bun.file("out.txt").writer();
+      const written = Promise.withResolvers();
+      const watcher = fs.watch("out.txt", () => {
+        if (fs.readFileSync("out.txt", "utf8") === "written") written.resolve("done");
+      });
+      let parked = false;
+      const started = performance.now();
+      const timer = setInterval(() => (parked = true), 2_000);
+      setImmediate(() => void writer.write("written"));
+      expect(written.promise).resolves.toBe("done");
+      clearInterval(timer);
+      watcher.close();
+      console.log(parked || performance.now() - started >= 2_000 ? "parked" : "returned");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "buffered.fixture.ts"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "returned\n", stderr: "", exitCode: 0 });
+});
+
+// The same wait, made by the runtime itself: loading the entry point, a
+// --preload and a test file each block until the module's promise settles, and
+// with --hot / --watch through a separate loop that tracks reloads. Each
+// fixture's top-level await is settled by an immediate; what is observed is the
+// thing gated on the load returning (the rejection report, the entry point, the
+// tests), against the same kind of ref'd timer as above.
+describe("a module load returns as soon as an immediate settles the module's promise", () => {
+  const files = {
+    "detector.ts": /* ts */ `
+      let parked = false;
+      const timer = setInterval(() => (parked = true), 2_000);
+      export function report(what) {
+        clearInterval(timer);
+        console.log(what + ": " + (parked ? "parked" : "returned"));
+      }
+    `,
+    "preload.ts": /* ts */ `
+      import "./detector.ts";
+      await new Promise(resolve => setImmediate(resolve));
+    `,
+    "entry.ts": /* ts */ `
+      import { report } from "./detector.ts";
+      report("the entry point ran");
+      process.exit(0);
+    `,
+    "immediates.test.ts": /* ts */ `
+      import { test } from "bun:test";
+      import { report } from "./detector.ts";
+      // The runner pre-arms one wake-up before loading a file, which covers the
+      // first immediate's turn; the second one has to be covered by the load itself.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+      test("first", () => {
+        report("the tests ran");
+        process.exit(0);
+      });
+    `,
+    "rejects.ts": /* ts */ `
+      // If the load parks after this module's promise rejects, this is what ends
+      // the park, and it exits before the rejection has been reported.
+      setInterval(() => process.exit(3), 2_000);
+      await new Promise(resolve => setImmediate(resolve));
+      throw new Error("rejected after an immediate");
+    `,
+    "throws.ts": /* ts */ `
+      import { report } from "./detector.ts";
+      // An immediate that throws runs no microtask checkpoint on its way out,
+      // and the cleared one after it runs nothing. The checkpoint after the
+      // batch is what resumes this module before the poll.
+      process.on("uncaughtException", () => {});
+      await new Promise(resolve => {
+        setImmediate(() => {
+          queueMicrotask(resolve);
+          throw new Error("thrown by the immediate");
+        });
+        clearImmediate(setImmediate(() => {}));
+      });
+      report("the module resumed");
+      process.exit(0);
+    `,
+    "released.ts": /* ts */ `
+      // No immediate here. The handler runs at the tail of the load's tick(),
+      // after its last microtask checkpoint, and the continuation of the await
+      // is then queued when the load reaches the poll. This file imports
+      // nothing: after an import the module body runs from another place.
+      let parked = false;
+      const timer = setInterval(() => (parked = true), 2_000);
+      const released = Promise.withResolvers();
+      process.on("unhandledRejection", () => released.resolve());
+      Promise.reject(new Error("nothing handles this"));
+      await released.promise;
+      clearInterval(timer);
+      console.log("the module resumed: " + (parked ? "parked" : "returned"));
+      process.exit(0);
+    `,
+  };
+  const env = { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" };
+
+  test.concurrent.each([
+    ["a module whose immediate throws before a cleared one", ["throws.ts"], "the module resumed"],
+    ["a module that an unhandledRejection handler releases", ["released.ts"], "the module resumed"],
+    ["a --preload", ["--preload", "./preload.ts", "entry.ts"], "the entry point ran"],
+    ["a --preload under --hot", ["--hot", "--preload", "./preload.ts", "entry.ts"], "the entry point ran"],
+    ["a test file", ["test", "./immediates.test.ts"], "the tests ran"],
+    ["a test file under --watch", ["test", "--watch", "./immediates.test.ts"], "the tests ran"],
+  ])("%s", async (_, args, what) => {
+    using dir = tempDir("module-load-settled-by-immediate", files);
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // `bun test` prints its version first.
+    expect({ stdout: stdout.replace(/^bun test [^\n]*\n/, ""), exitCode }).toEqual({
+      stdout: `${what}: returned\n`,
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a rejecting entry point is reported as soon as it rejects", async () => {
+    using dir = tempDir("module-load-settled-by-immediate", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "rejects.ts"],
+      cwd: String(dir),
+      env,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: rejected after an immediate");
+    expect(exitCode).toBe(1);
+  });
+
+  // The process stays up after the report, so read until the report arrives
+  // (or, when the load parked, until the fixture's timer has exited the process
+  // without one) and let the disposer kill it.
+  test.concurrent("a rejecting entry point under --hot is reported as soon as it rejects", async () => {
+    using dir = tempDir("module-load-settled-by-immediate", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "rejects.ts"],
+      cwd: String(dir),
+      env,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const chunks: Uint8Array[] = [];
+    let stderr = "";
+    for await (const chunk of proc.stderr) {
+      chunks.push(chunk);
+      stderr = Buffer.concat(chunks).toString();
+      if (stderr.includes("error: rejected after an immediate")) break;
+    }
+    expect(stderr).toContain("error: rejected after an immediate");
+  });
 });

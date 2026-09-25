@@ -112,9 +112,12 @@ This is called when the event loop is active and needs to wait for I/O:
 
 ### Nested waits (`EventLoop::wait_for_promise`)
 
-Some native code blocks its caller until a promise settles (`expect(p).resolves` in `bun:test`, an async plugin `setup()` in `Bun.build()`, macros, the entry point load). It runs `tick()` and `autoTick()` from inside the JavaScript that called it.
+Some native code blocks its caller until a promise settles (`expect(p).resolves` in `bun:test`, an async plugin `setup()` in `Bun.build()`, macros, the entry point load) by running `tick()` + `autoTick()` from inside whatever JavaScript called it. Such a wait uses `auto_tick_waiting_on(promise)`, which differs from a plain `autoTick()` in two ways:
 
-A wait that script made (`VM::is_entered()`) decides when rejected promises are handled. Its turns skip that step. The wait runs it after `tick()`, and only while the promise is still pending. So the turn that settles the promise returns to the script with nothing reported, and the script can attach its handlers first, as the code after an `await` can. A wait at loop level (the entry point load) keeps the step in every turn.
+- The blocked frame usually has the loop entered (it is itself a timer, immediate or task callback, or runs inside a microtask drain), so the `exit()` of each immediate run in step 1 is not the outermost one and does not drain microtasks. The waiting tick runs the microtask checkpoint itself right after step 1, since the promise is normally settled by one of them (an await continuation). It does so only when the checkpoint has work (a tick, a microtask or a deferred task is queued, or there is a stop to report): a program with a pending top-level await is in such a wait on every turn of its loop, and an empty checkpoint is not free.
+- If the promise has settled or the VM has stopped by then (nothing else before step 4 runs user script), step 4 polls without blocking, as it does when an immediate is queued. A settled promise wakes nothing, so a blocking poll there would sleep until the next unrelated timer or I/O event even though the waiter is done.
+
+A wait that script made (`VM::is_entered()`) also decides when rejected promises are handled. Its turns skip that step. The wait runs it after `tick()`, and only while the promise is still pending. So the turn that settles the promise returns to the script with nothing reported, and the script can attach its handlers first, as the code after an `await` can. A wait at loop level (the entry point load) keeps the step in every turn.
 
 ## Task Draining Algorithm
 

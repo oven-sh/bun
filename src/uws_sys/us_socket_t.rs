@@ -310,7 +310,6 @@ impl us_socket_t {
     }
 
     /// Drop the handshake flight that is held across the handshake callback.
-    /// No-op when the socket holds none.
     pub fn release_held_flight(&mut self) {
         c::us_socket_release_held_flight(self);
     }

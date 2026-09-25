@@ -582,8 +582,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    /// Drop the handshake flight that usockets holds across the handshake
-    /// callback. An SSLWrapper-backed socket holds none.
+    /// Drop the handshake flight that usockets holds across the handshake callback.
     pub fn release_held_flight(&self) {
         if let InternalSocket::Connected(s) = self.socket {
             sock(s).release_held_flight();

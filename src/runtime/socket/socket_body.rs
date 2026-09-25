@@ -4652,9 +4652,7 @@ pub(crate) fn js_upgrade_tls_deferred(
     Err(global.throw(format_args!("Expected a socket instance")))
 }
 
-/// node:net's `destroy()`: a socket that is destroyed inside its handshake
-/// callback turns the peer down, so the flight held for that callback is
-/// dropped. The raw half of an `upgradeTLS` pair shares the TLS socket.
+/// node:net's `destroy()`: drops the handshake flight held for the handshake callback.
 #[bun_jsc::host_fn]
 pub(crate) fn js_release_held_flight(
     _global: &JSGlobalObject,
@@ -4665,6 +4663,7 @@ pub(crate) fn js_release_held_flight(
     if let Some(this) = socket.as_class_ref::<TLSSocket>() {
         this.socket.get().release_held_flight();
     } else if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+        // The raw half of an `upgradeTLS` pair shares the socket of its TLS half.
         this.socket.get().release_held_flight();
     }
     Ok(JSValue::UNDEFINED)

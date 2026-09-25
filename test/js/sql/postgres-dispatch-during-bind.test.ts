@@ -146,6 +146,16 @@ const groups: Record<string, Record<string, object>> = {
       sameBackend: true,
     },
   },
+  "the conversion waits for a request in the write buffer": {
+    "prepared statement, the conversion waits for a request that is not sent yet": {
+      ahead: ok({ x: "ahead" }),
+      later: ok({ x: "later" }),
+      outer: ok({ x: "1" }),
+      dispatched: [],
+      conversions: 1,
+      sameBackend: true,
+    },
+  },
   "replies come in while advance() encodes": {
     "a request that advance() encodes, two replies come in during the conversion": {
       first: ok({ x: "first" }),

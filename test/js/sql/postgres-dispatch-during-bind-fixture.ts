@@ -242,6 +242,16 @@ const scenarios: Record<string, () => Promise<unknown>> = {
     };
   },
 
+  // Both start in one tick, so `ahead` is still in the write buffer when the conversion waits for it.
+  async "prepared statement, the conversion waits for a request that is not sent yet"() {
+    const pid = await backendPid(sql);
+    await sql`select ${text("0")}::text as x`;
+    const ahead = settle(sql`select ${text("ahead")}::text as x`.execute());
+    const outer = sql`select ${dispatching("1", () => waitInsideConversion(ahead))}::text as x`.execute();
+    const later = settle(sql`select ${text("later")}::text as x`.execute());
+    return { ahead: await ahead, later: await later, ...(await report(sql, pid, outer)) };
+  },
+
   // The reply of the request in flight is handled while the outer Bind is half written.
   async "prepared statement, a reply comes in during the conversion"() {
     return replyDuringConversion(1);

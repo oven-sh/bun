@@ -107,6 +107,10 @@ pub struct PostgresSQLConnection {
     write_epoch: Cell<u32>,
     /// Set while `encode_request` runs: parameter conversion can call back into this connection.
     pub(crate) is_encoding: Cell<bool>,
+    /// Where the batch that is being encoded starts in `write_buffer`.
+    pub(crate) encode_start: Cell<u32>,
+    /// How much of the buffer ahead of that batch went to the socket during the encode.
+    pub(crate) sent_while_encoding: Cell<u32>,
     // Private — `JsCell` aliasing invariant; only `Reader` and `on_data`
     // touch these (both in this module).
     read_buffer: JsCell<OffsetByteList>,
@@ -722,13 +726,15 @@ impl PostgresSQLConnection {
             debug!("flushData: has backpressure");
             return;
         }
-        // The buffer ends in a partial message. The encoder's caller flushes.
-        if self.is_encoding.get() {
-            debug!("flushData: encoding");
-            return;
+        let encoding = self.is_encoding.get();
+        let buffer = self.write_buffer.get();
+        let mut chunk = buffer.remaining();
+        let mut sent = 0;
+        if encoding {
+            // The buffer ends in a partial message. Only the messages ahead of it can go out.
+            sent = self.sent_while_encoding.get();
+            chunk = &chunk[sent as usize..self.encode_start.get() as usize];
         }
-
-        let chunk = self.write_buffer.get().remaining();
         if chunk.is_empty() {
             debug!("flushData: no data to flush");
             return;
@@ -744,9 +750,13 @@ impl PostgresSQLConnection {
         debug!("flushData: wrote {}/{} bytes", wrote, chunk.len());
         if wrote > 0 {
             SocketMonitor::write(&chunk[..usize::try_from(wrote).expect("int cast")]);
-            self.write_buffer
-                .with_mut(|b| b.consume(u32::try_from(wrote).expect("int cast")));
-            self.bump_write_epoch();
+            let wrote = u32::try_from(wrote).expect("int cast");
+            if encoding {
+                // The encoder holds offsets into the buffer. `encode_request` consumes afterwards.
+                self.sent_while_encoding.set(sent + wrote);
+                return;
+            }
+            self.consume_write_buffer(wrote);
         }
     }
 
@@ -1213,6 +1223,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             write_buffer: JsCell::new(OffsetByteList::default()),
             write_epoch: Cell::new(0),
             is_encoding: Cell::new(false),
+            encode_start: Cell::new(0),
+            sent_while_encoding: Cell::new(0),
             read_buffer: JsCell::new(OffsetByteList::default()),
             last_message_start: Cell::new(0),
             requests: JsCell::new(PostgresRequest::Queue::new()),
@@ -1691,6 +1703,11 @@ impl protocol::WriterContext for Writer {
 impl PostgresSQLConnection {
     fn bump_write_epoch(&self) {
         self.write_epoch.set(self.write_epoch.get().wrapping_add(1));
+    }
+
+    pub(crate) fn consume_write_buffer(&self, bytes: u32) {
+        self.write_buffer.with_mut(|b| b.consume(bytes));
+        self.bump_write_epoch();
     }
 
     pub(crate) fn free_write_buffer(&self) {

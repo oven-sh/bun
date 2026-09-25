@@ -1,73 +1,77 @@
-// Regression test: MySQLConnection.handlePreparedStatement stored an ErrorPacket whose
-// error_message was a Data{ .temporary = ... } slice pointing into the socket read buffer.
-// The statement is cached in the connection's statements map with status = .failed, so
-// re-running the same failing query would read the stale slice after subsequent packets
-// overwrote the buffer.
+// Regression test: MySQLConnection cached a prepared statement whose
+// COM_STMT_PREPARE failed (status = .failed) in the per-connection statement map
+// and never evicted it, so every later execution of the same query text on that
+// connection rethrew the stale ErrorPacket without ever re-preparing. A
+// transient prepare-time error (a table created by a concurrent migration, a
+// deadlock, ER_TOO_MANY_CONCURRENT_STMTS) therefore poisoned the connection for
+// the process lifetime. handlePreparedStatement now evicts the failed statement
+// from the map (as the Postgres driver already did) so the prepare is retried on
+// the next use of that text.
+//
+// This file previously asserted the opposite (Com_stmt_prepare must NOT
+// increment across an identical re-run) to pin a dangling-slice read in the
+// cached ErrorPacket's error_message; that cache-hit path no longer exists.
+// test/js/sql/sql-mysql-failed-prepare-retry.test.ts is the wire-level
+// counterpart that runs without a container.
 
-import { SQL } from "bun";
+import { SQL, randomUUIDv7 } from "bun";
 import { expect, test } from "bun:test";
 import { describeWithContainer, isDockerEnabled } from "harness";
 
 if (isDockerEnabled()) {
   describeWithContainer("mysql", { image: "mysql_plain" }, container => {
-    test("MySQL: cached failed prepared statement error_message is not a dangling slice", async () => {
+    test("MySQL: a failed prepare is re-prepared instead of served from the statement cache", async () => {
       await container.ready;
+      // max: 1 so every query runs on the same connection / same statement map,
+      // and Com_stmt_prepare (a SESSION counter) observes exactly that session.
       await using sql = new SQL({
         url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
         max: 1,
       });
 
-      // Long bogus identifiers so the server's echoed error_message exceeds the 15-byte
-      // inline-string threshold and is heap-backed, and so the two messages differ at
-      // bytes the second packet would overwrite in the read buffer. MySQL truncates the
-      // "near '...'" clause to ~80 chars, so keep these short enough to appear in full.
-      const longA = Buffer.alloc(50, "A").toString();
-      const longZ = Buffer.alloc(50, "Z").toString();
+      const table = "t_retry_" + randomUUIDv7("hex").replaceAll("-", "");
+      // .simple() = COM_QUERY (text protocol), so the counter read itself never
+      // sends a COM_STMT_PREPARE.
+      const prepares = async () =>
+        Number((await sql.unsafe("SHOW SESSION STATUS LIKE 'Com_stmt_prepare'").simple())[0].Value);
 
-      // First failing query → statement cached as .failed with error_message.
-      const err1 = await sql`wat ${1} ${sql.unsafe(longA)}`.catch((x: any) => x);
-      expect(err1).toBeInstanceOf(Error);
-      expect(err1.code).toBe("ERR_MYSQL_SYNTAX_ERROR");
-      expect(err1.errno).toBe(1064);
-      expect(err1.message).toContain(longA);
+      try {
+        // 1. The table does not exist yet: the prepare fails (ER_NO_SUCH_TABLE).
+        const err1 = await sql`SELECT n FROM ${sql(table)}`.catch((x: any) => x);
+        expect(err1).toBeInstanceOf(Error);
+        expect(err1.errno).toBe(1146);
+        const afterFirst = await prepares();
+        expect(afterFirst).toBeGreaterThan(0);
 
-      // Different failing query → server sends a different ERROR packet that overwrites
-      // the connection read buffer where err1's message slice used to point.
-      const errOverwrite = await sql`other ${1} ${sql.unsafe(longZ)}`.catch((x: any) => x);
-      expect(errOverwrite).toBeInstanceOf(Error);
-      expect(errOverwrite.message).toContain(longZ);
-      expect(errOverwrite.message).not.toBe(err1.message);
+        // 2. Same text, table still missing. Before the fix the stale cached
+        //    ErrorPacket was replayed and the server never saw a second
+        //    COM_STMT_PREPARE; now Bun re-prepares and the server answers the
+        //    same (still true) error.
+        const err2 = await sql`SELECT n FROM ${sql(table)}`.catch((x: any) => x);
+        expect({ errno: err2.errno, message: err2.message, prepares: await prepares() }).toEqual({
+          errno: 1146,
+          message: err1.message,
+          prepares: afterFirst + 1,
+        });
 
-      // Same as the first failing query → hits the cached .failed statement and calls
-      // stmt.error_response.toJS(). Before the fix this read the overwritten buffer and
-      // returned bytes from errOverwrite's packet; after the fix it returns the original.
-      // Com_stmt_prepare (read via .simple() so the status query itself does not prepare)
-      // must not increment across this call — proving the third query was served from
-      // Bun's failed-statement cache, not re-prepared on the server. A fresh prepare
-      // would return an identical error for identical SQL and silently satisfy every
-      // assertion below without exercising the cached-slice path.
-      const [{ Value: preparesBefore }] = await sql.unsafe("SHOW SESSION STATUS LIKE 'Com_stmt_prepare'").simple();
-      // err1 and errOverwrite each reached COM_STMT_PREPARE, so the counter is
-      // already non-zero here; if it were 0 the "no increment" check below would
-      // be vacuous because the prepared path was never taken.
-      expect(Number(preparesBefore)).toBeGreaterThan(0);
-      const err2 = await sql`wat ${1} ${sql.unsafe(longA)}`.catch((x: any) => x);
-      const [{ Value: preparesAfter }] = await sql.unsafe("SHOW SESSION STATUS LIKE 'Com_stmt_prepare'").simple();
-      expect({
-        code: err2.code,
-        errno: err2.errno,
-        sqlState: err2.sqlState,
-        message: err2.message,
-        preparesAfter: Number(preparesAfter),
-      }).toEqual({
-        code: err1.code,
-        errno: err1.errno,
-        sqlState: err1.sqlState,
-        message: err1.message,
-        preparesAfter: Number(preparesBefore),
-      });
-      expect(err2.message).toContain(longA);
-      expect(err2.message).not.toContain(longZ);
+        // 3. The migration lands. The same text on the same connection must now
+        //    prepare successfully and return rows.
+        await sql.unsafe(`CREATE TABLE \`${table}\` (n INT)`).simple();
+        await sql.unsafe(`INSERT INTO \`${table}\` VALUES (42)`).simple();
+        const beforeThird = await prepares();
+        expect(await sql`SELECT n FROM ${sql(table)}`).toEqual([{ n: 42 }]);
+        expect(await prepares()).toBe(beforeThird + 1);
+
+        // 4. Only Failed entries are evicted: the now-Prepared statement is
+        //    served from the cache, so the counter does not move.
+        expect(await sql`SELECT n FROM ${sql(table)}`).toEqual([{ n: 42 }]);
+        expect(await prepares()).toBe(beforeThird + 1);
+      } finally {
+        await sql
+          .unsafe(`DROP TABLE IF EXISTS \`${table}\``)
+          .simple()
+          .catch(() => {});
+      }
     });
   });
 }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { existsSync } from "node:fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -242,3 +243,103 @@ test("missing file throws the expected error", async () => {
   await Bun.sleep(0);
   Bun.gc(true);
 });
+
+async function runChild(script: string, env: Record<string, string | undefined> = bunEnv) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// A procfs file is a regular file with st_size 0 and content. The upload reads
+// it on the JS thread. The read must go to EOF, or to the end of a slice, and
+// not stop at the 256 KiB scratch buffer. The child reads its own
+// /proc/self/environ, which three 100 KB variables make larger than that.
+test.skipIf(!isLinux)("uploads a procfs file and its slices, not the stat size", async () => {
+  const big = Buffer.alloc(100_000, "x").toString();
+  const { stdout, stderr, exitCode } = await runChild(
+    `const { readFileSync, statSync } = require("node:fs");
+     const path = "/proc/self/environ";
+     const all = readFileSync(path);
+     await using server = Bun.serve({
+       port: 0,
+       fetch: async req => {
+         const bytes = await req.bytes();
+         return Response.json({
+           contentLength: Number(req.headers.get("content-length")),
+           received: bytes.length,
+           hash: String(Bun.hash(bytes)),
+         });
+       },
+     });
+     const file = Bun.file(path);
+     const cases = {
+       whole: [file, all],
+       from1: [file.slice(1), all.subarray(1)],
+       first270000: [file.slice(0, 270_000), all.subarray(0, 270_000)],
+       window: [file.slice(5, 270_005), all.subarray(5, 270_005)],
+     };
+     const out = { stat: statSync(path).size, total: all.length };
+     for (const [name, [body, expected]] of Object.entries(cases)) {
+       const { hash, ...got } = await (await fetch(server.url, { method: "POST", body })).json();
+       out[name] = { ...got, same: hash === String(Bun.hash(expected)) };
+     }
+     console.log(JSON.stringify(out));`,
+    { ...bunEnv, BIG_ENV_A: big, BIG_ENV_B: big, BIG_ENV_C: big },
+  );
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout);
+  const total: number = result.total;
+  expect(total).toBeGreaterThan(270_005);
+  expect(result).toEqual({
+    stat: 0,
+    total,
+    whole: { contentLength: total, received: total, same: true },
+    from1: { contentLength: total - 1, received: total - 1, same: true },
+    first270000: { contentLength: 270_000, received: 270_000, same: true },
+    window: { contentLength: 270_000, received: 270_000, same: true },
+  });
+  expect(exitCode).toBe(0);
+});
+
+// /dev/zero has no EOF, so only a regular file is read past the bound. The
+// body is read on the JS thread: a read with no bound never returns, so the
+// upload runs in a child that this process can outlive.
+test.skipIf(isWindows)("upload of a device with no EOF sends a bounded body", async () => {
+  const { stdout, stderr, exitCode } = await runChild(
+    `await using server = Bun.serve({
+       port: 0,
+       fetch: async req => new Response(String((await req.bytes()).length)),
+     });
+     const res = await fetch(server.url, { method: "POST", body: Bun.file("/dev/zero") });
+     console.log(await res.text());`,
+  );
+  expect(stderr).toBe("");
+  const received = Number(stdout);
+  expect(received).toBeGreaterThan(0);
+  expect(received).toBeLessThanOrEqual(1024 * 1024);
+  expect(exitCode).toBe(0);
+});
+
+// /proc/self/pagemap is a regular file with st_size 0 that yields hundreds of
+// GB. The read stops at the size limit of a JS buffer, which the child lowers.
+test.skipIf(!isLinux || !existsSync("/proc/self/pagemap"))(
+  "upload of a procfs file with no practical end fails at the size limit",
+  async () => {
+    const { stdout, stderr, exitCode } = await runChild(
+      `require("bun:internal-for-testing").setSyntheticAllocationLimitForTesting(1024 * 1024);
+       await using server = Bun.serve({
+         port: 0,
+         fetch: async req => new Response(String((await req.bytes()).length)),
+       });
+       try {
+         const res = await fetch(server.url, { method: "POST", body: Bun.file("/proc/self/pagemap") });
+         console.log(JSON.stringify({ received: Number(await res.text()) }));
+       } catch (e) {
+         console.log(JSON.stringify({ code: e.code, syscall: e.syscall }));
+       }`,
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ code: "ENOMEM", syscall: "read" });
+    expect(exitCode).toBe(0);
+  },
+);

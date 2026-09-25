@@ -292,7 +292,10 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kOnUpgradedClose = Symbol("kOnUpgradedClose");
 const kupgraded = Symbol("kupgraded");
+// On the raw handle of an adopted fd: the TLS socket that adopted it.
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
+// On that TLS socket: the fd closed, and the socket it wraps waits to be closed with it.
+const kOwesRawClose = Symbol("kOwesRawClose");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -335,15 +338,7 @@ const kSocketClass = Symbol("kSocketClass");
 // callback as errnoException(status, 'write') and destroys the stream when no
 // callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
 function failWrite(self, negErrno, callback) {
-  let er = new ErrnoException(negErrno, "write") as Error & { code?: string; errno?: number; syscall?: string };
-  if (typeof er.code !== "string" || !/^E[A-Z0-9]+$/.test(er.code)) {
-    // A raw WSA value the errno table cannot name (Windows delivers fatal
-    // send errors this way): shape it like SocketEmitEndNT shapes reads,
-    // keeping the original errno.
-    er = new ConnResetException("write ECONNRESET") as Error & { code: string; errno?: number; syscall?: string };
-    er.errno = negErrno;
-    er.syscall = "write";
-  }
+  const er = writeErrnoException(negErrno);
   self._pendingData = null;
   self[kwriteCallback] = null;
   if (callback) {
@@ -377,6 +372,19 @@ function failWrite(self, negErrno, callback) {
     }
   }
 }
+// Node's errnoException(status, 'write') for the negative errno $write returns.
+function writeErrnoException(negErrno) {
+  let er = new ErrnoException(negErrno, "write") as Error & { code?: string; errno?: number; syscall?: string };
+  if (typeof er.code !== "string" || !/^E[A-Z0-9]+$/.test(er.code)) {
+    // A raw WSA value the errno table cannot name (Windows delivers fatal
+    // send errors this way): shape it like SocketEmitEndNT shapes reads,
+    // keeping the original errno.
+    er = new ConnResetException("write ECONNRESET") as Error & { code: string; errno?: number; syscall?: string };
+    er.errno = negErrno;
+    er.syscall = "write";
+  }
+  return er;
+}
 function endNT(socket, callback, err) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
@@ -406,10 +414,32 @@ function destroyNT(self, err) {
 }
 // Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function onUpgradedClose(self, connection) {
-  if (self[kupgraded] === connection) self.destroy();
+  if (self[kupgraded] !== connection) return;
+  // The stream-level engine reads its transport with no backpressure, so the
+  // transport can close after the peer's EOF with plaintext still unread.
+  if ((self[kended] || self[kOnreadPendingEnd]) && !self.readableEnded) self.once("end", self[kOnUpgradedClose]);
+  else self.destroy();
 }
+// Armed ahead of the stream-level engine's own 'close' thunk: that thunk aborts
+// a pending handshake, which a socket destroyed first does not report.
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
+}
+// The wrapped socket reports nothing and closes with the TLS socket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
+function closeWithTLSSocket(self, raw) {
+  const tlsSocket = raw[kAdoptedTLSRaw];
+  if (!tlsSocket || tlsSocket[kupgraded] !== self) return false;
+  if (self.destroyed) return true;
+  tlsSocket[kOwesRawClose] = true;
+  // A _destroy that deferred the close of its handle has returned by now.
+  if (tlsSocket.destroyed) process.nextTick(closeOwedRaw, tlsSocket, self);
+  return true;
+}
+// _destroy calls this after it queued 'error': node's order is 'error', wrapped socket 'close', 'close'.
+function closeOwedRaw(self, upgraded) {
+  if (!self[kOwesRawClose]) return;
+  self[kOwesRawClose] = false;
+  if (!upgraded.destroyed) self[kCloseRawConnection]();
 }
 let addAbortListener;
 function destroyWhenAborted(err) {
@@ -614,7 +644,7 @@ const SocketHandlers = {
     self[kclosed] = true;
     //socket cannot be used after close
     detachSocket(self);
-    SocketEmitEndNT(self, err);
+    if (!closeWithTLSSocket(self, socket)) SocketEmitEndNT(self, err);
     self.data = null;
   },
   data(socket, buffer) {
@@ -874,8 +904,10 @@ function SocketEmitEndNT(self, _err?) {
   }
   // A write that was waiting on the native drain can never complete once the
   // socket is gone - fail it so 'finish'/destroy are not stuck behind it.
+  // kclosed, not _err: a native close can carry no error. A half-open 'end'
+  // also lands here, and its write stays parked because it can still drain.
   const pendingWrite = self[kwriteCallback];
-  if (pendingWrite && (self.destroyed || _err)) {
+  if (pendingWrite && (self[kclosed] || self.destroyed)) {
     self[kwriteCallback] = null;
     pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
   }
@@ -1046,7 +1078,7 @@ const ServerHandlers = {
         data[kclosed] = true;
         //socket cannot be used after close
         detachSocket(data);
-        SocketEmitEndNT(data, err);
+        if (!closeWithTLSSocket(data, socket)) SocketEmitEndNT(data, err);
         data.data = null;
         socket[owner_symbol] = null;
       }
@@ -1510,6 +1542,7 @@ const SocketHandlers2 = {
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
+    const leftToTLSSocket = closeWithTLSSocket(self, socket);
     // A received RST surfacing as ECONNRESET with the close is not a clean
     // EOF - Node destroys the socket with "read ECONNRESET" instead of a
     // graceful 'end'. Only surface it when the closing handle is still the
@@ -1517,7 +1550,7 @@ const SocketHandlers2 = {
     // family-autoselection race and raw sockets handed off during a TLS
     // upgrade also report errors on close, and those must keep ending
     // cleanly.
-    if (err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
+    if (!leftToTLSSocket && err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
       // close-time can be gone by the deferred 'error' emission.
       self.once("error", () => {});
@@ -1538,7 +1571,7 @@ const SocketHandlers2 = {
       }
       return;
     }
-    if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
+    if (!leftToTLSSocket && !deferEndForOnreadTail(self)) finishSocketEnd(self);
     // A write that was waiting on the native drain can never complete once the
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it
     // (mirrors SocketEmitEndNT).
@@ -1742,6 +1775,7 @@ function Socket(options?): void {
   this._parentWrap = null;
   this[kupgraded] = null;
   this[kOnUpgradedClose] = undefined;
+  this[kOwesRawClose] = false;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
@@ -2174,11 +2208,11 @@ Socket.prototype.connect = function connect(...args) {
             tls,
             socket: this[khandlers],
           });
+          destroyWhenUpgradedCloses(this, connection);
           connection.on("data", events[0]);
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
-          destroyWhenUpgradedCloses(this, connection);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2196,7 +2230,7 @@ Socket.prototype.connect = function connect(...args) {
               const [raw, tls] = result;
               // replace socket
               connection._handle = raw;
-              raw[kAdoptedTLSRaw] = true;
+              raw[kAdoptedTLSRaw] = this;
               destroyWhenUpgradedCloses(this, connection);
               this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
@@ -2227,11 +2261,11 @@ Socket.prototype.connect = function connect(...args) {
                   tls,
                   socket: this[khandlers],
                 });
+                destroyWhenUpgradedCloses(this, connection);
                 connection.on("data", events[0]);
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
-                destroyWhenUpgradedCloses(this, connection);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2245,7 +2279,7 @@ Socket.prototype.connect = function connect(...args) {
                   const [raw, tls] = result;
                   // replace socket
                   connection._handle = raw;
-                  raw[kAdoptedTLSRaw] = true;
+                  raw[kAdoptedTLSRaw] = this;
                   destroyWhenUpgradedCloses(this, connection);
                   this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
@@ -2396,8 +2430,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       this._sockname = null;
     }
     callback(err);
+    closeOwedRaw(this, upgraded);
   } else {
     callback(err);
+    closeOwedRaw(this, upgraded);
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
@@ -2534,11 +2570,11 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       socket: serverHandlersFor(this),
       isServer: true,
     });
+    destroyWhenUpgradedCloses(this, connection);
     connection.on("data", events[0]);
     connection.on("end", events[1]);
     connection.on("drain", events[2]);
     connection.on("close", events[3]);
-    destroyWhenUpgradedCloses(this, connection);
     this[kupgraded] = connection;
     this._handle = result;
     return;
@@ -2564,11 +2600,11 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
         socket: serverHandlersFor(this),
         isServer: true,
       });
+      destroyWhenUpgradedCloses(this, connection);
       connection.on("data", events[0]);
       connection.on("end", events[1]);
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
-      destroyWhenUpgradedCloses(this, connection);
       this._handle = result;
       this.emit(kUpgradeAttached);
       return;
@@ -2591,7 +2627,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     }
     const [raw, tlsHandle] = result;
     connection._handle = raw;
-    raw[kAdoptedTLSRaw] = true;
+    raw[kAdoptedTLSRaw] = this;
     destroyWhenUpgradedCloses(this, connection);
     this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
@@ -2963,7 +2999,11 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     // Node reports this as errnoException(UV_EBADF/UV_EPIPE, 'write'), with
     // message, code, errno and syscall all populated.
     const er = new ErrnoException(process.platform === "win32" ? -4047 /* UV_EPIPE */ : -9 /* UV_EBADF */, "write");
-    process.nextTick(callback, er);
+    // Node fails a write that the handle rejects at once inside the same call,
+    // so write() returns false. The stream runs the write callback and destroys
+    // the socket on the next tick.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
+    callback(er);
     return false;
   }
   const res = socket.$write(chunk, encoding);
@@ -2971,7 +3011,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   if (res < 0) {
     // The kernel rejected the send outright (peer reset): $write returned the
     // negative errno; deliver it like the EBADF/EPIPE branch above.
-    process.nextTick(failWrite, this, res, callback);
+    callback(writeErrnoException(res));
     return false;
   }
   if (res) {

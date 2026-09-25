@@ -34,9 +34,13 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
 // `url` must be caller-resolved: `new Script` falls back to evalmachine.<anonymous>
 // when no filename was provided; compileFunction has no such default.
 void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset);
+inline NodeVMOptionNames& optionNames(JSC::VM& vm) { return WebCore::clientData(vm)->nodeVMOptionNames(); }
+// The file: URL that code compiled under `filename` has as its origin.
+const WTF::URL& sourceOriginURL(JSC::VM&, const String& filename);
 // Lowers offset if needed so that offset + 1 + sourceLength fits in an int, JSC's position type.
 OrdinalNumber clampOffsetForSource(OrdinalNumber offset, unsigned sourceLength);
-void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey, JSValue* importer);
+// `codeGenerationKey`: optionNames(vm).codeGeneration(vm) or optionNames(vm).contextCodeGeneration(vm).
+void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, const JSC::Identifier& codeGenerationKey, JSValue* importer);
 NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow);
 JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value);
 // For vm.compileFunction we need to return an anonymous function expression. This code is adapted from/inspired by JSC::constructFunction, which is used for function declarations.

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tmpdirSync } from "harness";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
@@ -205,6 +205,72 @@ describe.concurrent("fetch-tls", () => {
     } finally {
       server.close();
     }
+  });
+
+  // Only an IP address in the strict form of net.isIP gets no SNI. The native
+  // client asked ares_inet_pton, which also reads "127.1" (as 127.1.0.0), "10",
+  // hex, zero-padded octets and a trailing "/bits". tls.connect() and Node.js
+  // send each of these names.
+  describe("tls.serverName in IP shorthand", () => {
+    // The path of the request names the row, so the rows run at the same time.
+    const seen = new Map<string, string | null>();
+    let server: tls.Server;
+    let port: number;
+    beforeAll(async () => {
+      server = tls.createServer(CERT_LOCALHOST_IP, socket => {
+        socket.on("error", () => {});
+        socket.once("data", data => {
+          seen.set(/^GET (\S+)/.exec(data.toString())![1], socket.servername || null);
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      port = (server.address() as net.AddressInfo).port;
+    });
+    afterAll(() => {
+      server.close();
+    });
+
+    async function sniOf(serverName: string) {
+      const path = `/${encodeURIComponent(serverName)}`;
+      const res = await fetch(`https://127.0.0.1:${port}${path}`, {
+        keepalive: false,
+        tls: { serverName, rejectUnauthorized: false },
+      });
+      await res.text();
+      return seen.get(path);
+    }
+
+    it.each([
+      "127.1",
+      "10",
+      "0x7f000001",
+      "127.000.000.001",
+      "1.2.3",
+      "08.1.1.1",
+      "1.2.3.4/8",
+      "127.0.0.1/32",
+      "::ffff:127.1",
+      "::1/64",
+      // Brackets come off an IPv6 address only.
+      "[::1/64]",
+    ])("fetch sends %j as SNI", async name => {
+      expect(await sniOf(name)).toBe(name);
+    });
+
+    it.each(["127.0.0.1", "::1", "[::1]"])("fetch sends no SNI for the address %j", async address => {
+      expect(await sniOf(address)).toBeNull();
+    });
+
+    it("tls.connect sends the name as well", async () => {
+      const socket = tls.connect({ host: "127.0.0.1", port, servername: "127.1", rejectUnauthorized: false });
+      await once(socket, "secureConnect");
+      socket.end("GET /tls.connect HTTP/1.1\r\n\r\n");
+      socket.resume();
+      await once(socket, "close");
+      expect(seen.get("/tls.connect")).toBe("127.1");
+    });
   });
 
   it.skipIf(!isIPv6())("verifies an IPv6-literal URL against the bare address and sends no SNI", async () => {

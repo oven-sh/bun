@@ -490,6 +490,16 @@ pub mod api {
                 }
             }
 
+            /// [`server_name`](Self::server_name) as bytes; empty when unset.
+            pub(crate) fn server_name_bytes(&self) -> &[u8] {
+                let server_name = self.server_name();
+                if server_name.is_null() {
+                    return b"";
+                }
+                // SAFETY: NUL-terminated C string that the boxed SSLConfig owns.
+                unsafe { core::ffi::CStr::from_ptr(server_name) }.to_bytes()
+            }
+
             /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.
             #[inline]
             pub(crate) fn reject_unauthorized(&self) -> i32 {

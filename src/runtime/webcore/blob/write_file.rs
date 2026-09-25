@@ -544,7 +544,9 @@ impl WriteFile {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-pub(crate) use self::windows_impl::{WriteFileWindows, WriteFileWindowsError};
+pub(crate) use self::windows_impl::{
+    WriteFileWindows, WriteFileWindowsError, WriteFileWindowsMkdirp,
+};
 
 #[cfg(windows)]
 mod windows_impl {
@@ -552,9 +554,9 @@ mod windows_impl {
     use core::ptr::null_mut;
 
     use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
-    // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (namespace
-    // re-exports); the structs live one level deeper.
-    use bun_jsc::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
+    // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
+    // lives one level deeper.
+    use bun_jsc::{ConcurrentTask, event_loop::EventLoop};
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
 
@@ -592,6 +594,31 @@ mod windows_impl {
     impl From<jsc::JsError> for WriteFileWindowsError {
         fn from(err: jsc::JsError) -> Self {
             WriteFileWindowsError::Js(err)
+        }
+    }
+
+    /// `mkdirp` finished on the work pool: the hop back to the JS thread. Same pointer as the
+    /// write, its own tag.
+    #[repr(transparent)]
+    pub(crate) struct WriteFileWindowsMkdirp(WriteFileWindows);
+
+    impl bun_event_loop::Taskable for WriteFileWindowsMkdirp {
+        const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileWindowsMkdirp;
+        /// Frees nothing: the write is not this task's.
+        unsafe fn release_unrun(_: *mut Self) {}
+        /// Enters no context.
+        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+            bun_event_loop::ContextId::NONE
+        }
+    }
+
+    impl WriteFileWindowsMkdirp {
+        /// # Safety
+        /// `this` is the live `WriteFileWindows` `on_mkdirp_complete_concurrent` posted;
+        /// `on_mkdirp_complete` may free it.
+        pub(crate) unsafe fn run(this: *mut Self) {
+            // SAFETY: fn contract.
+            unsafe { WriteFileWindows::on_mkdirp_complete(this.cast::<WriteFileWindows>()) };
         }
     }
 
@@ -925,18 +952,6 @@ mod windows_impl {
             }
         }
 
-        /// `ManagedTask`-shaped trampoline for [`on_mkdirp_complete`]: takes
-        /// `*mut Self` and returns the event-loop `jsc::JsResult<()>` (always `Ok`: the inner body
-        /// reports a delivery exception itself).
-        fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_event_loop::JsResult<()> {
-            // SAFETY: `this` is the live Box-allocated `WriteFileWindows` whose
-            // pointer was stashed in `on_mkdirp_complete_concurrent` below;
-            // the JS thread is the sole accessor at this point. `*this` may be
-            // freed inside; not accessed afterward.
-            unsafe { Self::on_mkdirp_complete(this) };
-            Ok(())
-        }
-
         fn on_mkdirp_complete_concurrent(
             ctx: *mut (),
             err_: bun_sys::Result<()>,
@@ -951,8 +966,8 @@ mod windows_impl {
                 bun_sys::Result::Err(e) => Some(e),
                 bun_sys::Result::Ok(()) => None,
             };
-            ticket.post(ConcurrentTask::create(
-                ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
+            ticket.post(ConcurrentTask::create_from(
+                std::ptr::from_mut(this).cast::<WriteFileWindowsMkdirp>(),
             ));
         }
 

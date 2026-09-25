@@ -158,6 +158,10 @@ impl HmrSocket {
             }
             x if x == IncomingMessageId::SetUrl as u8 => {
                 let pattern = &msg[1..];
+                // `match_slow` requires an absolute path; these are peer bytes.
+                if pattern.first() != Some(&b'/') {
+                    return ws.close();
+                }
                 // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
@@ -204,36 +208,29 @@ impl HmrSocket {
                             );
                         }
                     }
-                    super::TestingBatchEvents::EnableAfterBundle => {
-                        // do not expose a websocket event that panics a release build
-                        debug_assert!(false);
+                    super::TestingBatchEvents::EnableAfterBundle
+                    | super::TestingBatchEvents::ReleaseAfterBundle(_) => {
+                        // A duplicate `H` is a protocol violation, not an invariant.
                         ws.close();
                     }
                     super::TestingBatchEvents::Enabled(_event_const) => {
                         // Replace-and-extract to satisfy borrowck.
-                        let super::TestingBatchEvents::Enabled(mut event) = core::mem::replace(
+                        let super::TestingBatchEvents::Enabled(batch) = core::mem::replace(
                             &mut dev.testing_batch_events,
                             super::TestingBatchEvents::Disabled,
                         ) else {
                             unreachable!()
                         };
-                        let _ = &mut event;
 
-                        if event.entry_points.set.count() == 0 {
-                            dev.publish(
-                                HmrTopic::TestingWatchSynchronization,
-                                &[MessageId::TestingWatchSynchronization.char(), 2],
-                                bun_uws::Opcode::BINARY,
-                            );
+                        // An unbundled route's request can start a bundle;
+                        // `start_async_bundle` requires none in flight.
+                        if dev.current_bundle.is_some() {
+                            dev.testing_batch_events =
+                                super::TestingBatchEvents::ReleaseAfterBundle(batch);
                             return;
                         }
 
-                        let timer = std::time::Instant::now();
-                        dev.start_async_bundle(event.entry_points, true, timer)
-                            // bun.handleOom(err) — Rust aborts on OOM by default
-                            .expect("OOM");
-
-                        // `event.entry_points.deinit(allocator)` → Drop handles this
+                        dev.release_testing_batch(batch);
                     }
                 }
             }
@@ -307,7 +304,7 @@ impl HmrSocket {
             }
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
-                if dev.emit_incremental_visualizer_events == 0
+                if dev.emit_memory_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
                     // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier

@@ -137,8 +137,6 @@ export interface BunOutput {
   deps: ResolvedDep[];
   /** All codegen outputs. */
   codegen: CodegenOutputs;
-  /** The Rust crates' rlibs, as the link takes them. Empty until the Rust plan exists (rust.ts emitRust). */
-  rustObjects: string[];
   /** All compiled .o files. */
   objects: string[];
 }
@@ -451,7 +449,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     ...depLibs,
   ]);
 
-  return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects };
+  return { exe, strippedExe, dsym, deps, codegen, objects: allObjects };
 }
 
 /**

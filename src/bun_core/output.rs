@@ -256,17 +256,9 @@ pub struct Source {
     pub(crate) stderr_buffer: [u8; 4096],
     pub(crate) buffered_stream_backing: QuietWriterAdapter,
     pub(crate) buffered_error_stream_backing: QuietWriterAdapter,
-    // Self-referential: point into `*_backing.new_interface`. Use the accessor
-    // methods instead of these raw fields.
-    // (LIFETIMES.tsv: BORROW_FIELD — self-ref into buffered_*_backing)
-    buffered_stream: *mut io::Writer,
-    buffered_error_stream: *mut io::Writer,
 
     pub(crate) stream_backing: QuietWriterAdapter,
     pub(crate) error_stream_backing: QuietWriterAdapter,
-    // Self-referential (BORROW_FIELD)
-    stream: *mut io::Writer,
-    error_stream: *mut io::Writer,
 
     pub(crate) raw_stream: StreamType,
     pub(crate) raw_error_stream: StreamType,
@@ -295,12 +287,8 @@ impl Source {
         stderr_buffer: [0u8; 4096],
         buffered_stream_backing: QuietWriterAdapter::uninit(),
         buffered_error_stream_backing: QuietWriterAdapter::uninit(),
-        buffered_stream: core::ptr::null_mut(),
-        buffered_error_stream: core::ptr::null_mut(),
         stream_backing: QuietWriterAdapter::uninit(),
         error_stream_backing: QuietWriterAdapter::uninit(),
-        stream: core::ptr::null_mut(),
-        error_stream: core::ptr::null_mut(),
         raw_stream: Self::ZEROED_STREAM,
         raw_error_stream: Self::ZEROED_STREAM,
     };
@@ -347,17 +335,12 @@ impl Source {
             .raw_error_stream
             .quiet_writer()
             .adapt_to_new_api(&mut out.stderr_buffer);
-        out.buffered_stream = std::ptr::from_mut(out.buffered_stream_backing.new_interface());
-        out.buffered_error_stream =
-            std::ptr::from_mut(out.buffered_error_stream_backing.new_interface());
 
         out.stream_backing = out.raw_stream.quiet_writer().adapt_to_new_api(&mut []);
         out.error_stream_backing = out
             .raw_error_stream
             .quiet_writer()
             .adapt_to_new_api(&mut []);
-        out.stream = std::ptr::from_mut(out.stream_backing.new_interface());
-        out.error_stream = std::ptr::from_mut(out.error_stream_backing.new_interface());
     }
 
     pub fn configure_thread() {
@@ -1242,9 +1225,8 @@ fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(*mut io::Writer) -> R) 
     // SAFETY: `w` points into a `QuietWriterAdapter` field of the thread-local
     // `Source`, whose address is stable for the thread's lifetime once
     // `Source::init` has run (asserted via SOURCE_SET above). These same raw
-    // pointers are already cached on `Source.{stream,error_stream,...}` and
-    // handed out by `writer()`/`error_writer()` — this is the established
-    // self-referential pattern, not a lifetime extension of borrowed data.
+    // pointers are handed out by `writer()`/`error_writer()`. This is the
+    // established pattern, not a lifetime extension of borrowed data.
     // We pass the raw pointer through unchanged; `f` is responsible for not
     // forming a `&mut` that outlives a single non-reentrant vtable call.
     f(w)

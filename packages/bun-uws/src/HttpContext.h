@@ -238,7 +238,7 @@ private:
     }
 
     template <bool IsNodeHttp>
-    static us_socket_t *onClose(us_socket_t *s, int /*code*/, void * /*reason*/) {
+    static us_socket_t *onClose(us_socket_t *s, int code, void * /*reason*/) {
         ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
         /* Get socket ext */
@@ -273,7 +273,15 @@ private:
         }
 
         if (httpResponseData->socketData && httpContextData->onSocketClosed) {
-            httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
+            int readError = 0;
+            bool peerEnded = false;
+            /* A tunnel reports its EOF through onSocketData above. */
+            if (!httpResponseData->isConnectRequest && !nodeHttpTunnelAfterBody) {
+                /* Above FAST_SHUTDOWN the code is the error of the failed read (a peer RST). */
+                readError = code > LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN ? code : 0;
+                peerEnded = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED) != 0;
+            }
+            httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s, readError, peerEnded);
         }
         /* Signal broken HTTP request only if we have a pending request */
         if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
@@ -927,6 +935,12 @@ private:
                     httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
                 }
                 return s;
+            }
+
+            /* Before onClientError, whose listener can destroy the socket. Not once this side
+             * shut down: TLS delivers the peer's answer to our close_notify here as an EOF. */
+            if (!us_socket_is_shut_down(s)) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED;
             }
 
             if (httpContextData->onClientError && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED)

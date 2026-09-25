@@ -31,9 +31,6 @@ use bun_spawn_sys::posix_spawn::posix_spawn;
 /// is `u32` there; `Status::from` casts before matching.
 #[cfg(unix)]
 pub use posix_spawn::WaitPidResult;
-#[cfg(windows)]
-#[derive(Clone, Copy)]
-pub struct WaitPidResult {}
 
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
 /// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
@@ -1370,21 +1367,10 @@ pub mod waiter_thread_posix {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // All by-value `c_uint`/`c_int` args; the kernel validates flags
-            // and returns -1/errno on failure — no memory-safety preconditions,
-            // so `safe fn` (Rust 2024) discharges the link-time proof.
-            unsafe extern "C" {
-                safe fn eventfd(
-                    initval: core::ffi::c_uint,
-                    flags: core::ffi::c_int,
-                ) -> core::ffi::c_int;
-            }
-            let fd = eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC);
-            if fd < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
+            let fd = bun_sys::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC)
+                .map_err(|e| std::io::Error::from_raw_os_error(e.errno as i32))?;
             // SAFETY: single-writer init path (guarded by fetch_max above).
-            unsafe { (*instance()).eventfd = Fd::from_native(fd) };
+            unsafe { (*instance()).eventfd = fd };
         }
 
         let thread = std::thread::Builder::new()

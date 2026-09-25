@@ -252,9 +252,6 @@ void rejectStreamClosedPromise(JSC::VM&, JSWritableStream*, JSC::JSValue error);
 void webStreamControllerError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — ReadableStreamOperations.cpp
 void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WritableStreamOperations.cpp
 
-// error.code === code, for an own or inherited data property `code` (no getters or proxies run). userJS: no — WebStreamsMisc.cpp
-bool errorCodeIs(JSC::VM&, JSC::JSValue error, WTF::ASCIILiteral code);
-
 // Joins any pending bytes, strips a single leading BOM per stream (ignoreBOM=false), holds
 // back a trailing incomplete sequence (unless `flush`), and decodes the remaining span via
 // Bun's simdutf-backed UTF-8 path (invalid sequences replaced by U+FFFD). Returns nullptr

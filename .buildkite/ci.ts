@@ -32,7 +32,6 @@ import {
   getSecret,
   isBuildkite,
   isFork,
-  isGithubAction,
   isMainBranch,
   isMergeQueue,
   isPullRequest,
@@ -57,18 +56,6 @@ function parseGitRepository(url: string | URL): string | undefined {
 function getRepository(): string | undefined {
   const url = getRepositoryUrl();
   return url ? parseGitRepository(url) : undefined;
-}
-
-function getBuildNumber(): number | undefined {
-  if (isBuildkite) {
-    return parseInt(getEnv("BUILDKITE_BUILD_NUMBER"));
-  }
-
-  if (isGithubAction) {
-    return parseInt(getEnv("GITHUB_RUN_ID"));
-  }
-
-  return undefined;
 }
 
 function isBuildManual(): boolean | undefined {

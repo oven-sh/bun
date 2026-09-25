@@ -33,6 +33,79 @@ it("a tick that throws goes to uncaughtException and the ticks queued after it s
   });
 });
 
+// The tick queue has run and is empty when each case starts. The two immediates are one batch, so one checkpoint runs between them.
+it.concurrent.each([
+  [
+    "a tick that a microtask schedules runs in the same checkpoint, after the microtasks",
+    `Promise.resolve().then(() => {
+       order.push("microtask");
+       process.nextTick(() => order.push("tick"));
+       Promise.resolve().then(() => order.push("microtask 2"));
+     });`,
+    "microtask microtask 2 tick next immediate",
+  ],
+  [
+    "a tick that the callback schedules runs before the microtasks of the callback",
+    `process.nextTick(() => order.push("tick"));
+     Promise.resolve().then(() => order.push("microtask"));`,
+    "tick microtask next immediate",
+  ],
+])("after the tick queue went idle, %s", async (_name, body, expected) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const order = [];
+        process.nextTick(() => {
+          setImmediate(() => {
+            setImmediate(() => {
+              ${body}
+            });
+            setImmediate(() => {
+              order.push("next immediate");
+              console.log(order.join(" "));
+            });
+          });
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+});
+
+// The tick pass is a JS function. When no tick is scheduled, a checkpoint must not enter it.
+it("after the tick queue went idle, a promise reaction does not run inside processTicksAndRejections", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.nextTick(() => {
+          const tick = new Error().stack.includes("processTicksAndRejections");
+          setImmediate(() => {
+            Promise.resolve().then(() => {
+              const reaction = new Error().stack.includes("processTicksAndRejections");
+              console.log(JSON.stringify({ tick, reaction }));
+            });
+          });
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ tick: true, reaction: false });
+  expect(exitCode).toBe(0);
+});
+
 it("process.nextTick", async () => {
   // You can verify this test is correct by copy pasting this into a browser's console and checking it doesn't throw an error.
   var run = 0;

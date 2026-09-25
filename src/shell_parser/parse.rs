@@ -3451,6 +3451,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 self.backtrack(&snap);
                 return Ok(TextRange { start, end: self.j });
             }
+            // Any other escaped char ends the name: `$HOME\foo` is `${HOME}foo`.
+            if escaped {
+                return Ok(TextRange { start, end: self.j });
+            }
 
             if i == 0 {
                 match char {

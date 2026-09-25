@@ -952,6 +952,21 @@ describe("lex shell", () => {
         { Eof: {} },
       ],
     ],
+    [
+      "an escaped identifier char ends a variable name",
+      "echo $HOME\\foo $\\x",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Var: "HOME" },
+        { Text: "foo" },
+        { Delimit: {} },
+        { Text: "$" },
+        { Text: "x" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
   ])("line endings: %s", (_name, source, expected) => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
   });

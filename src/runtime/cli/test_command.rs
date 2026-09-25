@@ -2034,38 +2034,28 @@ impl TestCommand {
             }
             false
         };
+        // A path argument that selects no test file. The other arguments still
+        // run. The exit code is 1 unless --pass-with-no-tests is set.
+        let mut had_unmatched_path_arg = false;
         if has_relative_path {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
-            let file_or_dirnames = &ctx.positionals[1..];
-            for arg in file_or_dirnames {
-                match scanner.scan(arg) {
-                    Ok(()) => {}
+            for arg in &ctx.positionals[1..] {
+                let matched = match scanner.scan(arg) {
+                    Ok(matched) => matched,
                     Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
-                    // don't error if multiple are passed; one might fail
-                    // but the others may not
-                    Err(scanner::ScanError::DoesNotExist) => {
-                        if file_or_dirnames.len() == 1 {
-                            if Output::is_ai_agent() {
-                                pretty_errorln!(
-                                    "Test filter <b>{}<r> had no matches in --cwd={}",
-                                    bun_fmt::quote(arg),
-                                    bun_fmt::quote(FileSystem::instance().top_level_dir)
-                                );
-                            } else {
-                                pretty_errorln!(
-                                    "Test filter <b>{}<r> had no matches",
-                                    bun_fmt::quote(arg)
-                                );
-                            }
-                            vm.exit_handler.exit_code = 1;
-                            vm.is_shutting_down = true;
-                            let vm_ptr: *mut VirtualMachine = vm;
-                            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                            // `run_with_api_lock` takes `&self` only and `global_exit()`
-                            // diverges, so the closure is the sole mutator.
-                            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
-                        }
+                    Err(scanner::ScanError::DoesNotExist) => 0,
+                };
+                if matched == 0 {
+                    had_unmatched_path_arg = true;
+                    if Output::is_ai_agent() {
+                        pretty_errorln!(
+                            "Test filter <b>{}<r> had no matches in --cwd={}",
+                            bun_fmt::quote(arg),
+                            bun_fmt::quote(FileSystem::instance().top_level_dir)
+                        );
+                    } else {
+                        pretty_errorln!("Test filter <b>{}<r> had no matches", bun_fmt::quote(arg));
                     }
                 }
             }
@@ -2140,7 +2130,7 @@ impl TestCommand {
             };
 
             match scanner.scan(dir_to_scan) {
-                Ok(()) => {}
+                Ok(_) => {}
                 Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
                 Err(scanner::ScanError::DoesNotExist) => {
                     if Output::is_ai_agent() {
@@ -2449,6 +2439,11 @@ impl TestCommand {
                         "<yellow>No tests found!<r>\n\nTests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>\n"
                     );
                 }
+            } else if had_unmatched_path_arg {
+                // Each path argument already has its own "had no matches" line.
+                pretty_errorln!(
+                    "\n<blue>note<r><d>:<r> Tests need \".test\", \"_test_\", \".spec\" or \"_spec_\" in the filename <d>(ex: \"MyApp.test.ts\")<r>"
+                );
             } else {
                 if Output::is_ai_agent() {
                     pretty_errorln!(
@@ -2664,7 +2659,9 @@ impl TestCommand {
         let summary = reporter.summary();
 
         let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests
-            && (failed_to_find_any_tests || summary.did_label_filter_out_all_tests());
+            && (failed_to_find_any_tests
+                || had_unmatched_path_arg
+                || summary.did_label_filter_out_all_tests());
         if should_fail_on_no_tests
             || summary.fail > 0
             || (coverage_options.enabled

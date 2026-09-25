@@ -863,8 +863,7 @@ pub mod ssl_wrapper {
                 self.handle_traffic();
                 return Ok(0);
             }
-            // SSL_write would run the pending handshake itself: unreported if it completes it, and
-            // re-entrant when ALPNCallback writes. Owners retry the write after on_handshake.
+            // SSL_write would drive the pending handshake itself, bypassing on_handshake.
             if self.flags.handshake_state() == HandshakeState::HandshakePending {
                 self.handle_traffic();
                 return Err(WriteDataError::WantRead);

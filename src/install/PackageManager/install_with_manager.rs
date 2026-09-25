@@ -42,7 +42,8 @@ use bun_install_types::NodeLinker::NodeLinker;
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
     UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
-    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    save_lockfile, setup_global_dir, update_lockfile_if_needed,
+    update_name_and_name_hash_from_version_replacement, write_yarn_lock,
 };
 
 use super::security_scanner;
@@ -493,73 +494,12 @@ pub fn install_with_manager(
                         pinned_rows = enqueue_transitive(manager, &transitive, invalidates_rows)?;
                     }
 
-                    // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
-                    // which grows `buffers.dependencies` and may reallocate it.
-                    // Iterate by index against a snapshot of the original length and
-                    // copy each entry to the stack so neither the loop nor the callee
-                    // ever reads through a pointer into the old backing storage.
-                    if manager.summary.overrides_changed && !all_name_hashes.is_empty() {
-                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
-                        for dependency_i in 0..dependencies_len {
-                            if pinned_rows.is_set_allow_out_of_bound(dependency_i, false) {
-                                continue;
-                            }
-                            let dependency =
-                                manager.lockfile.buffers.dependencies[dependency_i].clone();
-                            if all_name_hashes.binary_search(&dependency.name_hash).is_ok() {
-                                manager.lockfile.buffers.resolutions[dependency_i] =
-                                    invalid_package_id;
-                                if let Err(err) = enqueue_dependency_with_main(
-                                    manager,
-                                    dependency_i as u32,
-                                    &dependency,
-                                    invalid_package_id,
-                                    false,
-                                ) {
-                                    add_dependency_error(manager, &dependency, err);
-                                }
-                            }
-                        }
-                    }
-
-                    if manager.summary.catalogs_changed {
-                        let mut catalog_overridden: Vec<PackageNameHash> = Vec::new();
-                        manager
-                            .lockfile
-                            .overrides
-                            .append_catalog_valued_name_hashes(&mut catalog_overridden);
-                        index_sort::sort_slice_unstable_by(&mut catalog_overridden, |a, b| {
-                            a.cmp(b)
-                        });
-                        catalog_overridden.dedup();
-                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
-                        for _dep_id in 0..dependencies_len {
-                            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
-                            if pinned_rows.is_set_allow_out_of_bound(_dep_id, false) {
-                                continue;
-                            }
-                            let dep =
-                                manager.lockfile.buffers.dependencies[dep_id as usize].clone();
-                            if dep.version.tag != DependencyVersionTag::Catalog
-                                && (catalog_overridden.is_empty()
-                                    || catalog_overridden.binary_search(&dep.name_hash).is_err())
-                            {
-                                continue;
-                            }
-
-                            manager.lockfile.buffers.resolutions[dep_id as usize] =
-                                invalid_package_id;
-                            if let Err(err) = enqueue_dependency_with_main(
-                                manager,
-                                dep_id,
-                                &dep,
-                                invalid_package_id,
-                                false,
-                            ) {
-                                add_dependency_error(manager, &dep, err);
-                            }
-                        }
-                    }
+                    enqueue_overridden_rows(
+                        manager,
+                        &all_name_hashes,
+                        manager.summary.catalogs_changed,
+                        &pinned_rows,
+                    );
 
                     // Split this into two passes because the below may allocate memory or invalidate pointers
                     if manager.summary.add > 0 || manager.summary.update > 0 {
@@ -662,6 +602,8 @@ pub fn install_with_manager(
     manager.log_mut().reset();
     super::add_catalog::refuse_declared_positionals(manager);
 
+    write_back_package_jsons(manager, log_level)?;
+
     // This operation doesn't perform any I/O, so it should be relatively cheap.
     // Both old and new lockfiles must stay live for the later
     // `eql(lockfile_before_clean, ...)` checks, but `manager.lockfile: Box<Lockfile>`
@@ -700,16 +642,7 @@ pub fn install_with_manager(
     }
 
     if manager.lockfile.packages.len() > 0 {
-        for request in &manager.update_requests {
-            // prevent redundant errors
-            if request.failed {
-                return Err(crate::Error::InstallFailed);
-            }
-        }
-
         manager.verify_resolutions(log_level);
-
-        super::package_json_write_back::edit_after_resolve(manager)?;
 
         if manager.options.security_scanner.is_some() {
             run_security_scanner(
@@ -1553,6 +1486,176 @@ fn enqueue_transitive(
         return Ok(DynamicBitSet::default());
     }
     transitive.enqueue_tracked(manager)
+}
+
+/// Writes the resolved versions into the edited package.json entries and bun.lock's declared columns. A `$name` override or a catalog entry re-derived from a rewritten literal can differ from the value the rows resolved under, so the rows that value no longer covers resolve once more before the clean.
+fn write_back_package_jsons(
+    manager: &mut PackageManager,
+    log_level: Options::LogLevel,
+) -> crate::Result<()> {
+    for request in &manager.update_requests {
+        // prevent redundant errors
+        if request.failed {
+            return Err(crate::Error::InstallFailed);
+        }
+    }
+
+    let changed = super::package_json_write_back::edit_after_resolve(manager)?;
+    if changed.is_empty() {
+        return Ok(());
+    }
+    let rows = rows_outside_synced_maps(&manager.lockfile, &changed.overridden, changed.catalogs);
+    if rows.is_empty() {
+        return Ok(());
+    }
+    for dependency_i in rows {
+        reenqueue_row(manager, dependency_i);
+    }
+    manager.drain_dependency_list();
+    if manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0 {
+        if log_level.show_progress() {
+            manager.start_progress_bar();
+        }
+        wait_for_resolution(manager)?;
+        if log_level.show_progress() {
+            manager.end_progress_bar();
+        }
+    }
+    Ok(())
+}
+
+/// Resolved rows whose package does not satisfy the value bun.lock now declares for them: rows named in `overridden` (sorted), and, when `catalogs_changed`, rows resolved through a catalog entry. Rows an override never applies to (workspace edges, `npm:` aliases) are left alone, like in the resolver.
+fn rows_outside_synced_maps(
+    lockfile: &Lockfile,
+    overridden: &[PackageNameHash],
+    catalogs_changed: bool,
+) -> Vec<usize> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let package_resolutions = lockfile.packages.items_resolution();
+    let package_name_hashes = lockfile.packages.items_name_hash();
+
+    let mut catalog_overridden: Vec<PackageNameHash> = Vec::new();
+    if catalogs_changed {
+        lockfile
+            .overrides
+            .append_catalog_valued_name_hashes(&mut catalog_overridden);
+        index_sort::sort_slice_unstable_by(&mut catalog_overridden, |a, b| a.cmp(b));
+        catalog_overridden.dedup();
+    }
+
+    let mut rows = Vec::new();
+    for (dependency_i, dependency) in dependencies.iter().enumerate() {
+        let package_id = resolutions[dependency_i];
+        if package_id == invalid_package_id || package_id as usize >= package_resolutions.len() {
+            continue;
+        }
+        if dependency.behavior.is_workspace()
+            || (dependency.version.tag == DependencyVersionTag::Npm
+                && dependency.version.npm().is_alias)
+        {
+            continue;
+        }
+        let through_catalog = catalogs_changed
+            && (dependency.version.tag == DependencyVersionTag::Catalog
+                || catalog_overridden
+                    .binary_search(&dependency.name_hash)
+                    .is_ok());
+        if !through_catalog && overridden.binary_search(&dependency.name_hash).is_err() {
+            continue;
+        }
+
+        let mut version = lockfile
+            .overrides
+            .get(lockfile, dependency_i as DependencyID, dependency.name_hash)
+            .unwrap_or_else(|| dependency.version.clone());
+        let (name, mut name_hash) = update_name_and_name_hash_from_version_replacement(
+            lockfile,
+            dependency.name,
+            dependency.name_hash,
+            &version,
+        );
+        if version.tag == DependencyVersionTag::Catalog {
+            if let Some(catalog_dep) = lockfile.catalogs.get(lockfile, *version.catalog(), name) {
+                version = catalog_dep.version;
+                (_, name_hash) = update_name_and_name_hash_from_version_replacement(
+                    lockfile, name, name_hash, &version,
+                );
+            }
+        }
+
+        let resolution = &package_resolutions[package_id as usize];
+        let satisfied = resolution.satisfies_dependency_version(&version, buf, buf)
+            && (version.tag != DependencyVersionTag::Npm
+                || package_name_hashes[package_id as usize] == name_hash);
+        if !satisfied {
+            rows.push(dependency_i);
+        }
+    }
+    rows
+}
+
+/// Drops the row's resolution and queues it to resolve again. `enqueue_dependency_with_main` can grow `buffers.dependencies`, so the row is copied out first.
+fn reenqueue_row(manager: &mut PackageManager, dependency_i: usize) {
+    let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
+    manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
+    if let Err(err) = enqueue_dependency_with_main(
+        manager,
+        dependency_i as DependencyID,
+        &dependency,
+        invalid_package_id,
+        false,
+    ) {
+        add_dependency_error(manager, &dependency, err);
+    }
+}
+
+/// The differ's invalidation: every row (outside `pinned_rows`) named in `name_hashes` (sorted, deduped) and, when `catalogs_changed`, every `catalog:` row plus the rows whose override value is a catalog reference.
+fn enqueue_overridden_rows(
+    manager: &mut PackageManager,
+    name_hashes: &[PackageNameHash],
+    catalogs_changed: bool,
+    pinned_rows: &DynamicBitSet,
+) {
+    // Iterate by index against a snapshot of the original length: `reenqueue_row` may reallocate `buffers.dependencies`.
+    if !name_hashes.is_empty() {
+        let dependencies_len = manager.lockfile.buffers.dependencies.len();
+        for dependency_i in 0..dependencies_len {
+            if pinned_rows.is_set_allow_out_of_bound(dependency_i, false) {
+                continue;
+            }
+            let name_hash = manager.lockfile.buffers.dependencies[dependency_i].name_hash;
+            if name_hashes.binary_search(&name_hash).is_ok() {
+                reenqueue_row(manager, dependency_i);
+            }
+        }
+    }
+
+    if catalogs_changed {
+        let mut catalog_overridden: Vec<PackageNameHash> = Vec::new();
+        manager
+            .lockfile
+            .overrides
+            .append_catalog_valued_name_hashes(&mut catalog_overridden);
+        index_sort::sort_slice_unstable_by(&mut catalog_overridden, |a, b| a.cmp(b));
+        catalog_overridden.dedup();
+        let dependencies_len = manager.lockfile.buffers.dependencies.len();
+        for dependency_i in 0..dependencies_len {
+            if pinned_rows.is_set_allow_out_of_bound(dependency_i, false) {
+                continue;
+            }
+            let dependency = &manager.lockfile.buffers.dependencies[dependency_i];
+            if dependency.version.tag != DependencyVersionTag::Catalog
+                && catalog_overridden
+                    .binary_search(&dependency.name_hash)
+                    .is_err()
+            {
+                continue;
+            }
+            reenqueue_row(manager, dependency_i);
+        }
+    }
 }
 
 #[derive(Default)]

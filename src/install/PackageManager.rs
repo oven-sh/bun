@@ -216,6 +216,7 @@ pub use directories::{
 };
 
 pub use self::package_manager_enqueue as enqueue;
+pub(crate) use enqueue::update_name_and_name_hash_from_version_replacement;
 pub use enqueue::{
     GitEnqueueResult, create_extract_task_for_streaming, enqueue_dependency_list,
     enqueue_dependency_to_root, enqueue_dependency_with_main,

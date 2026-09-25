@@ -804,6 +804,42 @@ describe.concurrent("$ref overrides", () => {
     expect((await lock(dir)).overrides).toStrictEqual({ a1: "npm:no-deps@^1.1.0" });
     await expectInSync(dir);
   });
+
+  // The override key (no-deps, a transitive dependency of one-range-dep) is not the updated direct dependency.
+  test("bun update <name> re-resolves a package whose $name override value changed", async () => {
+    const overrides = { "no-deps": "$dep-with-tags" };
+    const deps = (tags: string) => root({ dependencies: { "one-range-dep": "1.0.0", "dep-with-tags": tags }, overrides });
+    const dir = await setup({ "package.json": deps("1.0.0") });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await reinstall(dir, deps("^1.0.0"));
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await run(dir, "update", "dep-with-tags");
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "one-range-dep": "1.0.0", "dep-with-tags": "^1.0.1" });
+    const lockfile = await lock(dir);
+    expect(lockfile.overrides).toStrictEqual({ "no-deps": "^1.0.1" });
+    expect(lockfile.packages["one-range-dep/no-deps"]).toBeUndefined();
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.1.0"]);
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.1.0" });
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+
+  test("bun update <name> --latest re-resolves a package whose $name override value changed", async () => {
+    const overrides = { "no-deps": "$@types/no-deps" };
+    const dir = await setup({
+      "package.json": root({ dependencies: { "one-range-dep": "1.0.0", "@types/no-deps": "1.0.0" }, overrides }),
+    });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+
+    await run(dir, "update", "@types/no-deps", "--latest");
+    expect((await pkg(dir)).dependencies).toStrictEqual({ "one-range-dep": "1.0.0", "@types/no-deps": "2.0.0" });
+    const lockfile = await lock(dir);
+    expect(lockfile.overrides).toStrictEqual({ "no-deps": "2.0.0" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+    expect(await installed(dir, "no-deps")).toMatchObject({ version: "2.0.0" });
+    await expectInSync(dir, [""], { reinstall: true });
+  });
 });
 
 describe.concurrent("bumping a direct dependency re-points its dependents", () => {

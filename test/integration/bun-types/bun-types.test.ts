@@ -769,6 +769,31 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("URLSearchParams.toJSON", () => {
+    typeTest("values are string for single keys and string[] for repeated keys", {
+      files: {
+        "urlsearchparams-tojson.ts": `
+          // Bun's URLSearchParams.toJSON() yields a string for single keys and a
+          // string[] for repeated keys — the same Record<string, string | string[]>
+          // query object Bun builds in src/js/node/url.ts.
+          type Equals<A, B> =
+            (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+          type Assert<T extends true> = T;
+
+          const params = new URLSearchParams("a=1&a=2&b=3");
+          type _toJSON = Assert<Equals<ReturnType<typeof params.toJSON>, Record<string, string | string[]>>>;
+
+          export {};
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("urlsearchparams-tojson.ts"));
+        expect(relevantDiagnostics).toEqual([]);
+      },
+    });
+  });
+
   describe("Bunland reaching for JSX", () => {
     typeTest("Bun.markdown.react() returns type compatible with React.ReactElement", {
       packages: ["@types/react", "@types/react-dom"],

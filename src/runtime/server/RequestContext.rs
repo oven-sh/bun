@@ -384,11 +384,10 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
     }
 }
 
-// The functions below read no `RequestContext` type parameter. They are free
-// and out of line so that the eight monomorphizations share one copy of each.
+// The functions below read no `RequestContext` type parameter, so they are
+// free functions and not methods.
 
 /// Cancel the body stream of a Response the server will not transmit.
-#[inline(never)]
 fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
     if let Some(stream) = response.get_body_readable_stream() {
         let _keep = jsc::EnsureStillAlive(stream.value);
@@ -400,7 +399,6 @@ fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
 }
 
 /// [`cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.
-#[inline(never)]
 fn discard_response_body(global_this: &JSGlobalObject, value: JSValue) {
     let value = match value.as_any_promise() {
         Some(promise) => {
@@ -419,8 +417,6 @@ fn discard_response_body(global_this: &JSGlobalObject, value: JSValue) {
 
 /// Print why a handler's result cannot be sent: what it is instead of a
 /// `Response`, then a stack trace.
-#[cold]
-#[inline(never)]
 fn print_invalid_response_error(global_this: &JSGlobalObject, value: JSValue) {
     let class_name = value.get_class_info_name().unwrap_or(b"");
 
@@ -452,7 +448,6 @@ fn print_invalid_response_error(global_this: &JSGlobalObject, value: JSValue) {
 
 /// Write the status line: the registered reason phrase, or `HM` for a code
 /// that has none.
-#[inline(never)]
 fn write_status_line(resp: uws::AnyResponse, status: u16) {
     if let Some(text) = HTTPStatusText::get(status) {
         resp.write_status(text);
@@ -466,7 +461,6 @@ fn write_status_line(resp: uws::AnyResponse, status: u16) {
 }
 
 /// `content-disposition: filename="..."` from the name of the file behind `blob`, if it has one.
-#[inline(never)]
 fn write_filename_disposition(resp: uws::AnyResponse, blob: &AnyBlob) {
     if let Some(filename) = blob.get_file_name() {
         let basename = bun_paths::basename(&filename);
@@ -493,7 +487,6 @@ fn write_filename_disposition(resp: uws::AnyResponse, blob: &AnyBlob) {
 
 /// `content-range` for the window `sendfile` covers, and `accept-ranges` when
 /// an incoming `Range` header chose that window.
-#[inline(never)]
 fn write_content_range(resp: uws::AnyResponse, sendfile: SendfileContext) {
     let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
     let end = sendfile.offset + sendfile.remain.saturating_sub(1);

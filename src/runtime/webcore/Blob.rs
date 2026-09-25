@@ -3458,6 +3458,16 @@ impl BlobExt for Blob {
     }
 }
 
+/// The null device has no bytes, and a read of it cannot block.
+fn is_null_device(stat: &bun_sys::Stat) -> bool {
+    #[cfg(windows)]
+    let null_device = bun_core::zstr!("\\\\.\\NUL");
+    #[cfg(not(windows))]
+    let null_device = bun_core::zstr!("/dev/null");
+    bun_sys::S::ISCHR(stat.st_mode as _)
+        && bun_sys::stat(null_device).is_ok_and(|null| null.st_rdev == stat.st_rdev)
+}
+
 /// Reads a file-backed part of a multi-part `new Blob([...])`: `shared_view()` is empty for it.
 #[cold]
 #[inline(never)]
@@ -3486,10 +3496,13 @@ fn push_file_part(
         global.throw_value(err.to_js(global))
     };
 
-    let not_a_file = || {
-        global.throw_invalid_arguments(format_args!(
+    let no_bytes_or_refused = |stat: &bun_sys::Stat| -> JsResult<()> {
+        if is_null_device(stat) {
+            return Ok(());
+        }
+        Err(global.throw_invalid_arguments(format_args!(
             "Blob parts backed by a pipe, socket or device cannot be read synchronously; await .bytes() or .arrayBuffer() first"
-        ))
+        )))
     };
     let is_file_or_dir = |mode| bun_sys::S::ISREG(mode) || bun_sys::S::ISDIR(mode);
 
@@ -3499,8 +3512,11 @@ fn push_file_part(
             let mut path_buf = bun_paths::path_buffer_pool::get();
             let path = path.slice_z(&mut path_buf);
             // open(2) of a FIFO wakes the writer that waits for a reader, so refuse it unopened.
-            if bun_sys::stat(path).is_ok_and(|stat| !is_file_or_dir(stat.st_mode as _)) {
-                return Err(not_a_file());
+            match bun_sys::stat(path) {
+                Ok(stat) if !is_file_or_dir(stat.st_mode as _) => {
+                    return no_bytes_or_refused(&stat);
+                }
+                _ => {}
             }
             // O_NONBLOCK: if the path is a FIFO by now, open(2) must not block the JS thread.
             let flags = bun_sys::O::RDONLY
@@ -3524,7 +3540,7 @@ fn push_file_part(
         )));
     }
     if !bun_sys::S::ISREG(stat.st_mode as _) {
-        return Err(not_a_file());
+        return no_bytes_or_refused(&stat);
     }
 
     let offset = blob.offset.get();

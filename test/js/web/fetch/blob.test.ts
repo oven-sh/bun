@@ -4,6 +4,7 @@ import { mkfifo } from "mkfifo";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import fs from "node:fs";
+import { devNull } from "node:os";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -1032,6 +1033,29 @@ describe("new Blob([...]) with a file-backed Blob part", () => {
 
   test("a pipe part throws instead of blocking", async () => {
     expect(await constructInChild("Bun.stdin")).toEqual(refused);
+  });
+
+  // The null device has no bytes and a read of it cannot block. Node gives an empty part for it too.
+  test("a null device part is an empty part", async () => {
+    const fd = fs.openSync(devNull, "r");
+    try {
+      await check(new Blob([Bun.file(devNull), "x"]), "x");
+      await check(new Blob(["x", Bun.file(devNull)]), "x");
+      await check(new Blob(["", Bun.file(devNull)]), "");
+      await check(new Blob(["x", Bun.file(fd), "y"]), "xy");
+      await check(new File([Bun.file(devNull), "x"], "n"), "x");
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  test.skipIf(isWindows)("only the null device is an empty part", async () => {
+    using dir = tempDir("blob-null-device-part", {});
+    const link = path.join(String(dir), "null");
+    fs.symlinkSync("/dev/null", link);
+    await check(new Blob(["x", Bun.file(link)]), "x");
+    // /dev/zero never ends, so a child process constructs the Blob.
+    expect(await constructInChild("Bun.file('/dev/zero')")).toEqual(refused);
   });
 
   test.skipIf(isWindows)("a FIFO part throws and leaves its writer waiting", async () => {

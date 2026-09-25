@@ -1182,19 +1182,22 @@ impl Image {
             // unreachable, but this path should throw, not abort, when it isn't.)
             if let Some(store) = blob.store.get() {
                 if let blob_store::Data::File(file) = &store.data {
-                    // `run()` reads the path inline, so a pinned file is compared here.
-                    if let Some(pinned) = file.pinned()
-                        && pinned.recheck_path().is_err()
-                    {
-                        let err = crate::webcore::blob::not_readable_error(global);
-                        return Err(global.throw_value(err));
-                    }
-                    if let PathOrFileDescriptor::Path(path) = file.pathlike_ignoring_pin() {
-                        let p = ZBox::from_bytes(path.slice());
-                        // `Source::Blob`'s `Strong` Drop releases the JS ref.
-                        self.source.set(Source::Path(p));
-                    } else {
-                        return Err(global.throw(format_args!("{REFUSE}")));
+                    match file.source() {
+                        blob_store::FileSource::Pinned(pinned) => {
+                            let Some(bytes) = read_pinned(pinned) else {
+                                let err = crate::webcore::blob::not_readable_error(global);
+                                return Err(global.throw_value(err));
+                            };
+                            self.source.set(Source::Owned(bytes));
+                        }
+                        blob_store::FileSource::Lazy(PathOrFileDescriptor::Path(path)) => {
+                            let p = ZBox::from_bytes(path.slice());
+                            // `Source::Blob`'s `Strong` Drop releases the JS ref.
+                            self.source.set(Source::Path(p));
+                        }
+                        blob_store::FileSource::Lazy(PathOrFileDescriptor::Fd(_)) => {
+                            return Err(global.throw(format_args!("{REFUSE}")));
+                        }
                     }
                 } else {
                     return Err(global.throw(format_args!("{REFUSE}")));
@@ -1238,6 +1241,18 @@ impl Image {
             TaskResult::Meta { .. } => unreachable!(),
         }
     }
+}
+
+/// The bytes of a pinned file, read on this thread. `None`: it changed, or it cannot be read.
+fn read_pinned(pinned: &blob_store::PinnedFile) -> Option<Vec<u8>> {
+    let (fd, stat) = pinned.open_verified(sys::O::RDONLY | sys::O::NOCTTY).ok()?;
+    let file = sys::File::from_fd(fd);
+    if u64::try_from(stat.st_size).ok()? > MAX_INPUT_FILE_BYTES {
+        return None;
+    }
+    let bytes = file.read_to_end().ok()?;
+    pinned.recheck(fd).ok()?;
+    Some(bytes)
 }
 
 // ───────────────────────────── worker task ──────────────────────────────────

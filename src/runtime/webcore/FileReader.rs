@@ -332,6 +332,7 @@ impl FileReader {
         let mut pollable = false;
         #[cfg(unix)]
         let mut file_type = FileType::File;
+        let mut pinned_check_fd: Option<Fd> = None;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
         // on every path through the original `if let` body) so the `RefPtr<Store>`
         // is owned locally and the cell borrow is released immediately.
@@ -343,9 +344,19 @@ impl FileReader {
                 }
                 blob::store::Data::File(file) => {
                     let is_pinned = file.pinned().is_some();
-                    let open_result = Lazy::open_file_blob(file);
+                    let mut open_result = Lazy::open_file_blob(file);
                     if is_pinned {
                         self.lazy.set(Lazy::Blob(store));
+                        // `check_pinned` compares after the reader has closed its descriptor.
+                        if let Ok(opened) = &mut open_result {
+                            match sys::dup(opened.fd) {
+                                Ok(fd) => pinned_check_fd = Some(fd),
+                                Err(err) => {
+                                    opened.fd.close();
+                                    open_result = Err(err);
+                                }
+                            }
+                        }
                     } else {
                         // drop the RefPtr<Store>; `lazy` was already cleared above
                         drop(store);
@@ -393,7 +404,7 @@ impl FileReader {
             }
         }
 
-        {
+        if self.pinned().is_none() {
             let reader_fd = self.reader().get_fd();
             if reader_fd != Fd::INVALID && self.fd.get() == Fd::INVALID {
                 self.fd.set(reader_fd);
@@ -436,7 +447,12 @@ impl FileReader {
             } else {
                 self.reader().start(self.fd.get(), pollable)
             };
+            // From here the `fd` of a pinned file is the one that `check_pinned` compares.
+            if let Some(fd) = pinned_check_fd {
+                self.fd.set(fd);
+            }
             if let Err(e) = start_result {
+                self.close_pinned();
                 if need_io_ref {
                     self.waiting_for_on_reader_done.set(false);
                     let parent = self.parent();
@@ -553,16 +569,23 @@ impl FileReader {
     }
 
     /// node compares a pinned file before and after each read (`FdEntry::ReaderImpl`, queue.cc).
+    #[inline(never)]
     fn check_pinned(&self) -> sys::Result<()> {
-        let Some(pinned) = self.pinned() else {
-            return Ok(());
-        };
-        let fd = self.reader().get_fd();
-        if fd == Fd::INVALID {
-            // The reader closes the file when it reaches the end.
-            return pinned.recheck_path();
+        match self.pinned() {
+            Some(pinned) if self.fd.get() != Fd::INVALID => pinned.recheck(self.fd.get()),
+            _ => Ok(()),
         }
-        pinned.recheck(fd)
+    }
+
+    /// The `fd` of a started pinned file is not the reader's. The reader closes its own.
+    #[inline(never)]
+    fn close_pinned(&self) {
+        if self.pinned().is_some() {
+            let fd = self.fd.replace(Fd::INVALID);
+            if fd != Fd::INVALID {
+                fd.close();
+            }
+        }
     }
 
     /// A pinned file ends on a pull of its own, so one more `check_pinned` runs first, as in node.
@@ -694,6 +717,7 @@ impl FileReader {
                 jsc::CommonAbortReason::UserAbort,
             )));
         }
+        self.close_pinned();
         if self.done.get() {
             return;
         }
@@ -715,6 +739,7 @@ impl FileReader {
     // deallocate the storage backing `&self` while the borrow is still live
     // — a dangling-reference UAF — so ownership release stays with the caller.
     fn deinit(&self) {
+        self.close_pinned();
         self.reader().update_ref(false);
     }
 
@@ -1114,6 +1139,7 @@ impl FileReader {
 
     /// An errored stream is never cancelled, so release the poll and the fd here.
     fn close_after_error(&self) {
+        self.close_pinned();
         if self.done.get() {
             return;
         }
@@ -1129,6 +1155,7 @@ impl FileReader {
 
     /// The stored read error, or a clean end.
     fn end_of_reader(&self) -> streams::Result {
+        self.close_pinned();
         match self.read_error.replace(None) {
             Some(err) => streams::Result::Err(self.stream_error(err)),
             None => streams::Result::Done,

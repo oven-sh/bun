@@ -1340,7 +1340,15 @@ impl BlobExt for Blob {
         let store::Data::File(file) = &store.data else {
             return JSValue::FALSE;
         };
-        JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
+        // The `mode` of a pinned file is the one of its creation. Its path can be gone.
+        let mode = match file.pinned() {
+            Some(_) => match stat_file(file.pathlike_ignoring_pin()) {
+                Ok(stat) => stat.st_mode as bun_sys::Mode,
+                Err(_) => return JSValue::FALSE,
+            },
+            None => file.mode,
+        };
+        JSValue::from(bun_sys::S::ISREG(mode) || bun_sys::S::ISFIFO(mode))
     }
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let cx = global_this.js_thread_of_caller(callframe);
@@ -5612,81 +5620,58 @@ pub(crate) fn construct_bun_file(
     Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
 }
 
-/// `fs.openAsBlob(path, type)`, validated in `src/js/node/fs.ts`. Unlike `Bun.file()`, it pins.
-pub(crate) fn construct_open_as_blob(
+/// `fs.openAsBlob`: pins the `Bun.file(path)` that `src/js/node/fs.ts` made, and sets its `type`.
+pub(crate) fn pin_open_as_blob(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_slice = callframe.arguments();
-    let mut args = jsc::ArgumentsSlice::init(global_object.bun_vm(), arguments_slice);
-    let Some(path) = PathLike::from_js(global_object, &mut args)? else {
-        return Err(global_object.throw_invalid_argument_type_value(
-            b"path",
-            b"string or an instance of Buffer or URL",
-            callframe.argument(0),
-        ));
+    let [value, file_type] = callframe.arguments_as_array::<2>();
+    let Some(blob) = value.as_class_ref::<Blob>() else {
+        return Ok(value);
+    };
+    let Some(store) = blob.store.get() else {
+        return Ok(value);
     };
 
-    let mime_type = match arguments_slice.get(1) {
-        Some(file_type) if file_type.is_string() => {
-            let file_type = file_type.to_utf8(global_object)?;
-            let slice = file_type.slice();
-            if slice.is_empty() || !is_valid_blob_type(slice) {
-                bun_http_types::MimeType::NONE
-            } else {
-                // `MimeType::init` would intern `text/plain` as `text/plain;charset=utf-8`.
-                bun_http_types::MimeType::MimeType {
-                    value: std::borrow::Cow::Owned(slice.to_vec()),
-                    category: bun_http_types::MimeType::MimeType::init(slice, false, None).category,
-                }
-            }
+    let file_type = file_type.to_utf8(global_object)?;
+    let slice = file_type.slice();
+    let mime_type = if slice.is_empty() || !is_valid_blob_type(slice) {
+        bun_http_types::MimeType::NONE
+    } else {
+        // `MimeType::init` would intern `text/plain` as `text/plain;charset=utf-8`.
+        bun_http_types::MimeType::MimeType {
+            value: std::borrow::Cow::Owned(slice.to_vec()),
+            category: bun_http_types::MimeType::MimeType::init(slice, false, None).category,
         }
-        _ => bun_http_types::MimeType::NONE,
     };
 
-    // A file embedded in a compiled executable is bytes in memory. It cannot change.
-    if let Some(file) =
-        bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.find_ref(path.slice()))
-    {
-        let blob = crate::api::standalone_graph_jsc::file_blob(file, global_object);
-        blob.content_type_was_set.set(!mime_type.value.is_empty());
-        blob.content_type
-            .set(BlobContentType::from_mime(&mime_type));
-        let ptr = Blob::new(blob);
-        // SAFETY: ptr was just produced by heap::alloc in Blob::new.
-        return Ok(unsafe { BlobExt::to_js(&*ptr, global_object) });
-    }
-
-    let stat = {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        match bun_sys::stat(path.slice_z(&mut buf)) {
-            Ok(stat) => stat,
+    match Store::data_mut(store) {
+        store::Data::File(file) => match stat_file(file.pathlike_ignoring_pin()) {
+            Ok(stat) => {
+                file.pin(&stat);
+                apply_file_stat(file, &stat);
+                blob.content_type
+                    .set(BlobContentType::from_mime(&mime_type));
+                file.mime_type = mime_type;
+                blob.resolve_size();
+                blob.not_cloneable.set(true);
+            }
             // node throws the `stat` error: https://github.com/nodejs/node/pull/65517
             Err(err) => {
-                let err = err.with_path(path.slice());
+                let err = err.with_path(file.display_path().unwrap_or_default());
                 return Err(global_object.throw_value(err.to_js(global_object)));
             }
+        },
+        // A file embedded in a compiled executable is bytes in memory. It cannot change.
+        store::Data::Bytes(_) => {
+            blob.content_type_was_set.set(!mime_type.value.is_empty());
+            blob.content_type
+                .set(BlobContentType::from_mime(&mime_type));
         }
-    };
-    let mut file = store::File::init_pinned(path.slice(), &stat, mime_type);
-    apply_file_stat(&mut file, &stat);
-    let blob = Blob::init_with_store(
-        RefPtr::new(Store {
-            data: store::Data::File(file),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: store::IsAllAscii::default(),
-        }),
-        global_object,
-    );
-    blob.resolve_size();
-    blob.not_cloneable.set(true);
-
-    let ptr = Blob::new(blob);
-    // SAFETY: ptr was just produced by heap::alloc in Blob::new. Spelled
-    // `BlobExt::to_js(&*ptr, ..)` to pick the `&self` impl over the by-value
-    // `JsClass::to_js`.
-    Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
+        // `Bun.file("s3://...")` is not a file of this machine. It stays as it was.
+        store::Data::S3(_) => {}
+    }
+    Ok(value)
 }
 
 // `find_or_create_file_from_path`: canonical impl lives later in this file
@@ -6013,14 +5998,16 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     // `RefPtr<Store>` liveness invariant; the caller holds the only ref across
     // this call, so an exclusive borrow is sound.
     let file = Store::data_mut(store).as_file_mut();
-    // A pinned file keeps the `stat` it was pinned with.
-    let Some(pathlike) = file.lazy_pathlike() else {
+    // the file may not exist yet. That's okay.
+    let Ok(stat) = stat_file(file.pathlike_ignoring_pin()) else {
         return;
     };
-    // the file may not exist yet. That's okay.
-    if let Ok(stat) = stat_file(pathlike) {
-        apply_file_stat(file, &stat);
+    if file.pinned().is_some() {
+        // The size stays the one of the pin. A write through the Blob asks for the time again.
+        file.last_modified = stat_to_js_mtime(&stat);
+        return;
     }
+    apply_file_stat(file, &stat);
 }
 
 fn stat_file(pathlike: &PathOrFileDescriptor) -> bun_sys::Result<bun_sys::Stat> {

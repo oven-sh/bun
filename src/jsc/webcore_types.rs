@@ -838,8 +838,8 @@ pub mod store {
         mtime_nsec: i64,
     }
 
-    // SAFETY: `File::init_pinned_to` is the one constructor, and `path` is the copy of the
-    // bytes that it makes: never a JS string or a JS buffer.
+    // SAFETY: `path` is the path of a Blob store, which is made to be read on any thread, or a
+    // copy of the bytes of one.
     unsafe impl Send for PinnedFile {}
     // SAFETY: as above, and no field has interior mutability.
     unsafe impl Sync for PinnedFile {}
@@ -855,10 +855,10 @@ pub mod store {
             if self.matches(stat) {
                 return Ok(());
             }
-            Err(
-                bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::fstat)
-                    .with_path(self.path.path().slice()),
-            )
+            Err(bun_sys::Error::from_code(
+                bun_sys::E::EINVAL,
+                bun_sys::Tag::fstat,
+            ))
         }
 
         /// [`Self::verify`] of an open descriptor. A failed `fstat` counts as a change, as in node.
@@ -911,13 +911,22 @@ pub mod store {
             }
         }
 
-        /// A file at `path` that must still have the size and mtime of `stat` when it is read.
-        pub fn init_pinned(path: &[u8], stat: &bun_sys::Stat, mime_type: MimeType) -> File {
-            let mtime_nsec = bun_sys::stat_mtime(stat).nsec;
-            Self::init_pinned_to(path, stat.st_size as u64, mtime_nsec, mime_type)
+        /// Pins a path to the size and mtime of `stat`, for its reads. A descriptor stays lazy.
+        pub fn pin(&mut self, stat: &bun_sys::Stat) {
+            let lazy = FilePath::Lazy(PathOrFileDescriptor::Fd(bun_sys::Fd::INVALID));
+            self.path = match core::mem::replace(&mut self.path, lazy) {
+                FilePath::Lazy(path @ PathOrFileDescriptor::Path(_)) => {
+                    FilePath::Pinned(std::sync::Arc::new(PinnedFile {
+                        path,
+                        size: stat.st_size as u64,
+                        mtime_nsec: bun_sys::stat_mtime(stat).nsec,
+                    }))
+                }
+                path => path,
+            };
         }
 
-        /// [`Self::init_pinned`] with the fields of [`PinnedFile::size_and_mtime_nsec`].
+        /// A pinned file from the fields of [`PinnedFile::size_and_mtime_nsec`].
         pub fn init_pinned_to(
             path: &[u8],
             size: u64,

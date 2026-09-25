@@ -137,16 +137,26 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 // from here to `reject` it is a JS-thread stack local, kept
                 // alive by JSC's conservative stack scan.
                 let promise = unsafe { &mut *promise };
-                let val = if blob.pinned_file().is_some() {
-                    crate::webcore::blob::not_readable_error(global_this)
-                } else {
-                    err.to_error_instance_with_async_stack(global_this, promise)
-                };
+                let val = read_error_to_js(&blob, err, global_this, promise);
                 promise.reject(global_this, Ok(val))?;
             }
         }
         Ok(())
     }
+}
+
+/// What a failed read rejects with. Not generic, so that every handler shares one copy.
+#[inline(never)]
+fn read_error_to_js(
+    blob: &Blob,
+    err: SystemError,
+    global_this: &jsc::JSGlobalObject,
+    promise: &jsc::JSPromise,
+) -> jsc::JSValue {
+    if blob.pinned_file().is_some() {
+        return crate::webcore::blob::not_readable_error(global_this);
+    }
+    err.to_error_instance_with_async_stack(global_this, promise)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

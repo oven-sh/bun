@@ -47,6 +47,8 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     const { dir, file, blob } = await pinned();
     using _ = dir;
     expect(blob.type).toBe("");
+    // A type goes into a `Content-Type` header as it is, so one that a `Blob` cannot have is dropped.
+    expect((await openAsBlob(file, { type: "a\r\nb: c" })).type).toBe("");
     expect((await openAsBlob(file, {})).type).toBe("");
     expect((await openAsBlob(file, { type: "" })).type).toBe("");
     expect((await openAsBlob(file, { type: "text/plain" })).type).toBe("text/plain");
@@ -87,9 +89,9 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     [
       "touched",
       (file: string) => {
-        // Only the nanoseconds of the mtime count, so move them.
-        const ms = Number((statSync(file, { bigint: true }).mtimeNs / 1_000_000n) % 1000n);
-        fs.utimesSync(file, new Date(), new Date(1_700_000_000_000 + ((ms + 500) % 1000)));
+        // Only the nanoseconds of the mtime count, so move them and keep the second.
+        const ms = Number(statSync(file, { bigint: true }).mtimeNs / 1_000_000n);
+        fs.utimesSync(file, new Date(), new Date(ms - (ms % 1000) + ((ms + 500) % 1000)));
       },
     ],
   ])("rejects a read of a %s file", async (_name, change) => {
@@ -126,6 +128,31 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     await expect(read()).rejects.toEqual(notReadable);
     expect(chunks).toBeGreaterThan(0);
   });
+
+  // node compares the file that it opened. A new file at the path is not that file.
+  const afterTheLastBytes: [string, (file: string) => void][] = [["deleted", file => unlinkSync(file)]];
+  // Windows does not rename over a file that is open.
+  if (!isWindows) {
+    afterTheLastBytes.push([
+      "replaced",
+      file => {
+        writeFileSync(file + ".new", "swapped!");
+        fs.renameSync(file + ".new", file);
+      },
+    ]);
+  }
+  it.each(afterTheLastBytes)(
+    "ends a stream of a file that is %s after its last bytes were read",
+    async (_name, change) => {
+      const { dir, file, blob } = await pinned();
+      using _ = dir;
+      const reader = blob.stream().getReader();
+      expect(await reader.read()).toEqual({ done: false, value: new TextEncoder().encode("hello") });
+      change(file);
+      expect(await reader.read()).toEqual({ done: true, value: undefined });
+      await expect(blob.text()).rejects.toEqual(notReadable);
+    },
+  );
 
   it("rejects a read of an empty file that is written later", async () => {
     const { dir, file, blob } = await pinned("");
@@ -274,12 +301,17 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     expect(statSync(destination).size).toBe(100_000);
   });
 
-  // libuv takes a copy of a file onto itself as done. POSIX truncates the file first, for a `Bun.file()` too.
-  it.skipIf(!isWindows)("Bun.write of the file onto itself keeps the file", async () => {
+  it("Bun.write of the file onto itself does not resolve with a wrong count", async () => {
     const { dir, file, blob } = await pinned();
     using _ = dir;
-    expect(await Bun.write(blob, blob)).toBe(5);
-    expect(readFileSync(file, "utf8")).toBe("hello");
+    if (isWindows) {
+      // libuv takes a copy of a file onto itself as done.
+      expect(await Bun.write(blob, blob)).toBe(5);
+      expect(readFileSync(file, "utf8")).toBe("hello");
+    } else {
+      // The destination is truncated before the copy, as for a `Bun.file()`. Then the pin fails.
+      await expect(Bun.write(blob, blob)).rejects.toEqual(notReadable);
+    }
   });
 
   // The FIFO is smaller than the file, so the copy cannot end before this test drains it.
@@ -381,9 +413,20 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     expect(await Bun.write(await openAsBlob(file), Bun.file(source))).toBe(23);
     expect(readFileSync(file, "utf8")).toBe("a source that is longer");
 
+    // The name, `exists()` and `lastModified` are of the path, as they are for a `Bun.file()`.
+    const written = await openAsBlob(file);
+    fs.utimesSync(file, new Date(), new Date(1_000_000_000_000));
+    expect(await Bun.write(written, "again")).toBe(5);
     // @ts-expect-error BunFile members are not on node's Blob
-    await (await openAsBlob(file)).unlink();
-    expect(existsSync(file)).toBe(false);
+    expect({ lastModified: written.lastModified, exists: await written.exists() }).toEqual({
+      lastModified: Math.floor(statSync(file).mtimeMs),
+      exists: true,
+    });
+
+    // @ts-expect-error BunFile members are not on node's Blob
+    await written.unlink();
+    // @ts-expect-error BunFile members are not on node's Blob
+    expect({ onDisk: existsSync(file), exists: await written.exists() }).toEqual({ onDisk: false, exists: false });
   });
 
   // The command opens the path. The Blob is the name of the file there, as a `Bun.file()` is.
@@ -415,11 +458,13 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     );
     const { dir, file, blob } = await pinned(png);
     using _ = dir;
-    const res = new Response(new Bun.Image(blob).png());
-    expect((await res.bytes()).subarray(1, 4)).toEqual(Buffer.from("PNG"));
+    const image = new Bun.Image(blob);
+    expect((await new Response(image.png()).bytes()).subarray(1, 4)).toEqual(Buffer.from("PNG"));
     expect(await new Bun.Image(blob).metadata()).toEqual({ width: 1, height: 1, format: "png" });
 
     fs.appendFileSync(file, "b");
+    // `image` has the bytes that it read through the pin.
+    expect(await image.metadata()).toEqual({ width: 1, height: 1, format: "png" });
     expect(() => new Response(new Bun.Image(blob).png())).toThrow(notReadable);
     await expect(new Bun.Image(blob).metadata()).rejects.toEqual(notReadable);
   });

@@ -60,16 +60,18 @@ function settleCallbackWithNull(promise, callback) {
   );
 }
 
-let openAsBlobNative;
+let pinOpenAsBlob;
 function openAsBlob(path, options = kEmptyObject) {
   // node takes no file descriptor. Bun did, so it still makes a `Bun.file()` of one.
   if (typeof path === "number") return Promise.$resolve(Bun.file(path, options));
   validateObject(options, "options");
   const type = options.type || "";
   validateString(type, "options.type");
+  pinOpenAsBlob ??= $newRustFunction("node_fs_binding.rs", "pin_open_as_blob", 2);
   path = getValidatedFsPath(path);
-  openAsBlobNative ??= $newRustFunction("node_fs_binding.rs", "open_as_blob", 2);
-  return Promise.$resolve(openAsBlobNative(path, type));
+  // `Bun.file()` gets the options only if there are any, as it got them before.
+  const file = options === kEmptyObject ? Bun.file(path) : Bun.file(path, options);
+  return Promise.$resolve(pinOpenAsBlob(file, type));
 }
 
 interface WriteSyncErrorContext {

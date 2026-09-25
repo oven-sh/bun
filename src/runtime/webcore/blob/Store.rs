@@ -93,17 +93,17 @@ pub(crate) trait FileExt {
 pub(crate) trait PinnedFileExt {
     /// The one way to read a pinned file: the descriptor comes back only if it still matches.
     fn open_verified(&self, flags: i32) -> bun_sys::Result<(bun_sys::Fd, bun_sys::Stat)>;
-    /// `PinnedFile::recheck` by path, for a reader that closed its descriptor at the end.
+    /// `PinnedFile::recheck` by path, for `uv_fs_copyfile`, which takes no descriptor.
+    #[cfg(windows)]
     fn recheck_path(&self) -> bun_sys::Result<()>;
 }
 
 impl PinnedFileExt for PinnedFile {
     fn open_verified(&self, flags: i32) -> bun_sys::Result<(bun_sys::Fd, bun_sys::Stat)> {
-        let path = self.pathlike_for_unverified_open().path();
         let fd = {
             let mut buf = bun_paths::path_buffer_pool::get();
-            bun_sys::open(path.slice_z(&mut buf), flags, 0)
-                .map_err(|err| err.with_path(path.slice()))?
+            let path = self.pathlike_for_unverified_open().path();
+            bun_sys::open(path.slice_z(&mut buf), flags, 0)?
         };
         match bun_sys::fstat(fd).and_then(|stat| self.verify(&stat).map(|()| stat)) {
             Ok(stat) => Ok((fd, stat)),
@@ -114,6 +114,7 @@ impl PinnedFileExt for PinnedFile {
         }
     }
 
+    #[cfg(windows)]
     fn recheck_path(&self) -> bun_sys::Result<()> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let path = self.pathlike_for_unverified_open().path();

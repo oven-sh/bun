@@ -1021,6 +1021,16 @@ describe("lex shell", () => {
       "echo $FOO#b",
       [{ Text: "echo" }, { Delimit: {} }, { Var: "FOO" }, { Text: "#b" }, { Delimit: {} }, { Eof: {} }],
     ],
+    [
+      "hash after a double asterisk is literal",
+      "echo **#b",
+      [{ Text: "echo" }, { Delimit: {} }, { DoubleAsterisk: {} }, { Text: "#b" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "hash after a double asterisk and a space is a comment",
+      "echo ** #b",
+      [{ Text: "echo" }, { Delimit: {} }, { DoubleAsterisk: {} }, { Eof: {} }],
+    ],
   ])("comments: %s", (_name, source, expected) => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
   });
@@ -1048,6 +1058,7 @@ describe("lex shell", () => {
     expect(stdout.toString()).toBe("a\nb\nd\n");
     expect(exitCode).toBe(0);
   });
+
 
   test("Bun.$ template with CRLF and a trailing comment", async () => {
     const { stdout, exitCode } = await $`${{ raw: "echo one # c\r\necho two\r\n" }}`.quiet();

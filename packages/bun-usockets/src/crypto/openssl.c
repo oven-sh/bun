@@ -519,6 +519,15 @@ void us_internal_ssl_loop_state_restore(void **saved) {
   d->ssl_write_batching = (int)(uintptr_t)saved[5];
 }
 
+/* us_socket_raw_write sends nothing once the FIN went out or the fd closed. A
+ * record that is sealed after that can never leave: it is dropped, because a
+ * spill or a write retry for it would wait for a writable event that never
+ * comes. */
+static int ssl_can_still_write(struct us_socket_t *s) {
+  return !us_socket_is_closed(s) &&
+         us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN;
+}
+
 static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)BIO_get_data(bio);
 
@@ -586,6 +595,11 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
 
   BIO_clear_retry_flags(bio);
   if (!written) {
+    if (!ssl_can_still_write(loop_ssl_data->ssl_socket)) {
+      /* Not batched (another socket holds the spill slot). A retry would stall
+       * the handshake that the batched path completes. */
+      return length;
+    }
     BIO_set_retry_write(bio);
     return -1;
   }
@@ -596,7 +610,8 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
  * spills the remainder into the loop's single spill slot - SSL already
  * counts those records as delivered, so they are drained (in order, to this
  * socket only) from its writable event. Returns 1 when the wire took
- * everything, 0 when a spill is now pending. */
+ * everything, 0 when it did not: the rest is spilled, or dropped when it can
+ * never be sent. */
 static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
   unsigned int len = loop_ssl_data->ssl_write_batch_len;
   if (!len) return 1;
@@ -612,6 +627,11 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
   if (written < 0) written = 0;
   if ((unsigned int)written < len) {
     unsigned int remainder = len - (unsigned int)written;
+    if (!ssl_can_still_write(s)) {
+      /* A spill for these records would hold the loop's one spill slot until
+       * the socket closes, and us_internal_ssl_close would wait for it. */
+      return 0;
+    }
     if (loop_ssl_data->ssl_spill_owner) {
       /* The spill slot is already another socket's (a re-entrant JS region
        * produced one between the entry-time gate and this flush).

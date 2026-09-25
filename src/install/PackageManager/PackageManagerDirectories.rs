@@ -775,7 +775,10 @@ pub fn write_tarball_integrity_tag(cache_dir: Fd, folder_path: &[u8], integrity:
     if File::openat(
         cache_dir,
         tag_path,
-        sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
+        sys::O::WRONLY
+            | sys::O::CREAT
+            | sys::O::TRUNC
+            | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
         0o664,
     )
     .and_then(|f| f.write_all(integrity.to_string().as_bytes()))
@@ -831,7 +834,12 @@ pub fn is_package_in_cache(
     tag: ResolutionTag,
     pinned_integrity: &Integrity,
 ) -> bool {
-    is_package_in_cache_at(get_cache_directory(this), folder_path, tag, pinned_integrity)
+    is_package_in_cache_at(
+        get_cache_directory(this),
+        folder_path,
+        tag,
+        pinned_integrity,
+    )
 }
 
 // ─────────────────────────── global directories ───────────────────────────────

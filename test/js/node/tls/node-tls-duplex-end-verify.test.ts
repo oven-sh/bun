@@ -429,6 +429,57 @@ for (const overDuplex of [false, true]) {
   }
 }
 
+// A client can offer the session of an earlier connection. Its certificate check is not the check of a handshake that
+// the peer never answered.
+for (const maxVersion of ["TLSv1.2", "TLSv1.3"]) {
+  test(`${maxVersion}: end() before the handshake does not report the check of an offered session`, async () => {
+    const server = tls.createServer({ key, cert, maxVersion }, socket => {
+      socket.on("error", () => {});
+      socket.end("x");
+    });
+    await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+    const first = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+    first.on("error", () => {});
+    let session;
+    first.on("session", ticket => (session = ticket));
+    await new Promise(connected => first.once("secureConnect", connected));
+    assert.strictEqual(first.authorizationError, "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    first.resume();
+    await new Promise(closed => first.once("close", closed));
+    session ??= first.getSession();
+    server.close();
+
+    // Accepts the connection and never answers.
+    const sawFin = Promise.withResolvers();
+    const accepted = [];
+    const silent = net.createServer({ allowHalfOpen: true }, socket => {
+      accepted.push(socket);
+      socket.on("data", () => {});
+      socket.on("error", () => {});
+      socket.on("end", sawFin.resolve);
+    });
+    await new Promise(listening => silent.listen(0, "127.0.0.1", listening));
+    const events = [];
+    const client = tls.connect({ port: silent.address().port, host: "127.0.0.1", rejectUnauthorized: false, session });
+    for (const event of ["secureConnect", "finish", "error", "close"]) {
+      client.on(event, arg => events.push(arg?.code ? `${event} ${arg.code}` : event));
+    }
+    client.on("connect", () => client.end());
+    try {
+      await Promise.all([new Promise(finished => client.once("finish", finished)), sawFin.promise]);
+      await pendingReadsDone();
+      assert.deepStrictEqual(
+        { events, authorized: client.authorized, authorizationError: client.authorizationError ?? null },
+        { events: ["finish"], authorized: false, authorizationError: null },
+      );
+    } finally {
+      client.destroy();
+      for (const socket of accepted) socket.destroy();
+      silent.close();
+    }
+  });
+}
+
 test("a server that end()s after a handshake timeout does not accept an untrusted client certificate", async () => {
   assert.deepStrictEqual(await serverEndMidHandshake(true, true), [
     "tlsClientError ERR_TLS_HANDSHAKE_TIMEOUT",

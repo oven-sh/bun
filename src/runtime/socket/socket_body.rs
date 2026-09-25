@@ -1841,9 +1841,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         // failure flavor).
         let reject_unauthorized = flags.contains(Flags::REJECT_UNAUTHORIZED)
             && (verify_failed
-                // A failed handshake verified nothing, whatever its error says. node:tls tears
-                // its own sockets down: after end() one stays open until the peer closes.
-                || (SSL && success == 0 && !flags.contains(Flags::DEFERS_SERVER_IDENTITY))
+                // A client's failed handshake verified nothing, whatever its error says. node:tls
+                // tears its own sockets down: after end() its client stays open until the peer
+                // closes. Nothing marks its server sockets, and their deferred close comes first.
+                || (SSL
+                    && success == 0
+                    && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)
+                    && !this.acts_as_tls_server())
                 || (hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)));
         // A handshake that failed outright (success == 0 with no policy
         // verdict: protocol error, peer alert, EOF mid-handshake) never has a
@@ -2418,11 +2422,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is very usefull to have this feature depending on the user workflow
         let ssl_error = socket.get_verify_error();
         // `on_handshake` stores the name verdict, with its full message, for the in-handshake check too.
-        // On a shut-down socket its report comes first as well: the reason a handshake failed
-        // (EPROTO) is not the verdict of a certificate that never came.
         if ssl_error.error_no == 0
             || ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH
-            || socket.is_shutdown()
         {
             if let Some(stored) = this.stored_verify_error_to_js(global) {
                 return Ok(stored);
@@ -2430,6 +2431,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             if ssl_error.error_no == 0 {
                 return Ok(JSValue::NULL);
             }
+        } else if this.flags.get().contains(Flags::HANDSHAKE_COMPLETE) && socket.is_shutdown() {
+            // What `on_handshake` reported stands: the SSL of a shut-down socket answers for a
+            // certificate that never came, or for one that a failed handshake did not report.
+            return Ok(this
+                .stored_verify_error_to_js(global)
+                .unwrap_or(JSValue::NULL));
         }
 
         let code: &[u8] = ssl_error.code_bytes();

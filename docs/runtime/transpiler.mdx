@@ -34,6 +34,7 @@ const result = transpiler.transformSync(code);
 ````
 
 ```ts output
+import { jsxDEV as jsxDEV_7x81h0kn } from "react/jsx-dev-runtime";
 import * as whatever from "./whatever.ts";
 export function Home(props) {
   return jsxDEV_7x81h0kn("p", {
@@ -215,6 +216,13 @@ interface TranspilerOptions {
   // Whether to remove unused imports from transpiled file
   // Default: false
   trimUnusedImports?: boolean,
+
+  // Whether to prepend the automatic JSX runtime import when JSX is used,
+  // e.g. `import { jsx } from "react/jsx-runtime"` in production or
+  // `import { jsxDEV } from "react/jsx-dev-runtime"` in development,
+  // resolved against the configured jsxImportSource
+  // Default: true
+  autoImportJSX?: boolean,
 
   // Whether to enable a set of JSX optimizations
   // jsxOptimizationInline ...,

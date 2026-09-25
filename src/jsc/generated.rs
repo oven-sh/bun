@@ -2,11 +2,7 @@
 //!
 //! Two distinct generators feed this file:
 //!
-//!   1. **bindgenv2 option-structs** (`src/codegen/bindgenv2`). It writes
-//!      `bindgen_generated.rs`, which this file includes: for each type the
-//!      `#[repr(C)]` extern struct that the C++ `bindgenConvertJSTo<Name>`
-//!      fills, the public Rust type, and `from_js`. The helpers that the
-//!      generated code calls are below.
+//!   1. **bindgenv2 option-structs** (`src/codegen/bindgenv2`): `bindgen_generated.rs`, included below.
 //!
 //!   2. **per-class accessor modules** (`src/codegen/generate-classes.ts`).
 //!      Each `JS${Type}` exposes
@@ -15,10 +11,7 @@
 //!      C++ exports, plus one `${name}_get_cached` / `${name}_set_cached` pair
 //!      per `cache: true` property.
 //!
-//! Until `generate-classes.ts` grows a `.rs` backend, this file ports its
-//! output by hand for the handful of shapes downstream crates name directly
-//! (`bun_jsc::generated::{JSTimeout, JSImmediate, JSBlob, JSResponse,
-//! JSRequest}`).
+//! `generate-classes.ts` has no `.rs` backend yet, so this file ports its output by hand.
 //!
 //! Symbol-naming contract (kept in sync with generate-classes.ts):
 //!   `${T}Prototype__${name}GetCachedValue(JSValue) -> JSValue`

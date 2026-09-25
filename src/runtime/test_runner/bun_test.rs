@@ -1517,6 +1517,10 @@ impl RunTestsTask {
         let this = self;
         // Box drops at end of scope; the Weak drops with it.
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
+        // A rejection that the settled test left is reported against it, not against the next test.
+        if !this.global_this.vm().is_entered() {
+            this.global_this.handle_rejected_promises()?;
+        }
         if let Err(e) = BunTest::run(&strong, &this.global_this) {
             // A termination is the tick's to fold, not a test failure.
             if this.global_this.has_pending_termination_exception() {

@@ -287,6 +287,61 @@ test("test async exceptions fail tests", () => {
   expect(exitCode).toBe(1);
 });
 
+// One line per test of a `bun test` run: its status, then the errors reported against it (the
+// runner prints them right before the status line). Errors reported against no test come last.
+function errorsPerTest(stderr: string): string[] {
+  const report: string[] = [];
+  let errors: string[] = [];
+  for (const line of stderr.split(/\r?\n/)) {
+    if (/^ \d+ pass$/.test(line)) break;
+    const error = /^error: (.*)$/.exec(line);
+    if (error) errors.push(error[1]);
+    const status = /^(\((?:pass|fail)\) .*?)(?: \[[\d.]+m?s\])?$/.exec(line);
+    if (status) {
+      report.push(errors.length ? `${status[1]}  <-  ${errors.join(", ")}` : status[1]);
+      errors = [];
+    }
+  }
+  if (errors.length) report.push(`(between tests)  <-  ${errors.join(", ")}`);
+  return report;
+}
+
+test("a rejection that a test leaves is reported against that test", async () => {
+  using dir = tempDir("rejection-left-by-a-test", {
+    "left.test.ts": /* ts */ `
+      import { test } from "bun:test";
+      import { readFile } from "node:fs/promises";
+
+      test("resumed by a timer", async () => {
+        await new Promise(resolve => setTimeout(resolve, 1));
+        Promise.reject(new Error("LEFT_AFTER_A_TIMER"));
+      });
+
+      test("resumed by an event loop task", async () => {
+        await readFile(import.meta.path);
+        Promise.reject(new Error("LEFT_AFTER_A_TASK"));
+      });
+
+      test("the test after those", () => {});
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "left.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(errorsPerTest(stderr)).toEqual([
+    "(fail) resumed by a timer  <-  LEFT_AFTER_A_TIMER",
+    "(fail) resumed by an event loop task  <-  LEFT_AFTER_A_TASK",
+    "(pass) the test after those",
+  ]);
+  expect(exitCode).toBe(1);
+});
+
 it("should return non-zero exit code for invalid syntax", async () => {
   const test_dir = tmpdirSync();
   try {

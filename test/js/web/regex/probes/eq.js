@@ -1,0 +1,14 @@
+const out = typeof print === "function" ? print : console.log;
+const s = v => JSON.stringify(v);
+const G = "\u{1F600}";
+const t = (label, re, str) => { const m = re.exec(str); out(label.padEnd(34) + s(m && [m.index, m[0]])); };
+t("😀|[-x]a     (2 vs 2)", new RegExp(G + "|[-x]a", "u"), "-" + G);
+t("😀|[-x]      (2 vs 1)", new RegExp(G + "|[-x]q", "u").compile ? new RegExp(G + "|[-x]", "u") : null, "-" + G);
+t("😀|[-x]aa    (2 vs 3)", new RegExp(G + "|[-x]aa", "u"), "-" + G);
+t("😀|[-x]q     (2 vs 2)", new RegExp(G + "|[-x]q", "u"), "-" + G);
+t("😀😀|[-x]a   (4 vs 2)", new RegExp(G + G + "|[-x]a", "u"), "-" + G + G);
+t("😀|[qz]a     (class nomatch)", new RegExp(G + "|[qz]a", "u"), "-" + G);
+t("😀|[^y]a     (negated class)", new RegExp(G + "|[^y]a", "u"), "-" + G);
+t("😀|\\wa      (\\w class)", new RegExp(G + "|\\wa", "u"), "-" + G);
+t("😀|[-x]a on x😀", new RegExp(G + "|[-x]a", "u"), "x" + G);
+t("😀|[-x]a on q😀", new RegExp(G + "|[-x]a", "u"), "q" + G);

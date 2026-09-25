@@ -1,0 +1,13 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const t = (label, src, str) => { const m = new RegExp(src).exec(str); out((label + " " + s(str)).padEnd(38) + s(m && [...m])); };
+t("a", "(y{1,3}\\w){2,}?\\w", "yyyy9");
+t("b", "(y{1,3}\\w){2,}?\\w", "yyyy9 ");
+t("c", "(y{1,3}\\w){2,}?\\w", "yyyy9s");
+t("d", "(y{1,3}\\w){2,}?\\w", "yyyy9 s");
+t("e", "(y{1,3}\\w){2,}?\\w", "yyyy9 suffix");
+t("f", "(y{1,3}\\w){2,}?\\w", "yyyy99");
+t("g", "(y{1,3}\\w){2,}?9", "yyyy9 s");
+t("h", "(y{1,3}\\w){2,}?", "yyyy9 s");
+t("i", "(y{1,2}\\w){2,}?\\w", "yyyy9 s");
+t("j", "(y{1,3}z){2,}?z", "yzyzz s");
+t("k", "(y{1,3}\\w){2,}?\\w x", "yyyy9 x");

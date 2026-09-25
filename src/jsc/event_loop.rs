@@ -1127,9 +1127,7 @@ impl EventLoop {
     }
 
     /// [`auto_tick`](Self::auto_tick) for a caller blocked until `promise`
-    /// settles: runs the microtask checkpoint after the immediates and does
-    /// not park once `promise` has settled or the VM has stopped. See
-    /// "Nested waits" in `src/event_loop/README.md`.
+    /// settles. See "Nested waits" in `src/event_loop/README.md`.
     #[inline]
     pub fn auto_tick_waiting_on(&mut self, promise: jsc::AnyPromise) {
         self.vm_ref().as_mut().auto_tick_waiting_on(Some(promise));

@@ -2158,26 +2158,24 @@ describe("Bun.ModuleGraph — nested graphs, stack traces, misc host integration
         const seen = [];
         const mk = t => new Bun.ModuleGraph({ globals: { T: t }, onError: (e, kind) => { seen.push(kind + ":" + e.message); if (seen.length === 2) parentPort.postMessage({ whos, seen: seen.sort() }); } });
         const graphA = mk("A"), graphB = mk("B");
-        const a = await graphA.import("./w-mod.mjs"), b = await graphB.import("./w-mod.mjs");
+        const moduleURL = new URL("./w-mod.mjs", import.meta.url).href;
+        const a = await graphA.import(moduleURL), b = await graphB.import(moduleURL);
         const whos = [a.who, b.who, a !== b];
         graphA.run(() => a.later()); graphB.run(() => b.later());`,
     });
     const { Worker } = await import("node:worker_threads");
-    const previous = process.cwd();
-    process.chdir(d); // the worker's graphs import "./w-mod.mjs" relative to cwd
+    const worker = new Worker(join(d, "worker.mjs"));
     try {
-      const worker = new Worker(join(d, "worker.mjs"));
       const message = await new Promise((resolve, reject) => {
         worker.once("message", resolve);
         worker.once("error", reject);
       });
-      await worker.terminate();
       expect(message).toEqual({
         whos: ["A", "B", true],
         seen: ["uncaughtException:in-worker:A", "uncaughtException:in-worker:B"],
       });
     } finally {
-      process.chdir(previous);
+      await worker.terminate();
     }
   });
   test("a graph can create and use a nested graph; each keeps its own env and globals", async () => {

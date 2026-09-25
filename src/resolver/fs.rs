@@ -755,7 +755,14 @@ pub fn read_file_contents_in_arena(
     debug!("stat({}) = {}", file.handle(), size);
 
     if size == 0 {
-        return Ok((core::ptr::NonNull::dangling(), 0));
+        if !bun_sys::S::ISREG(file.stat()?.st_mode as _) {
+            return Ok((core::ptr::NonNull::dangling(), 0));
+        }
+        // A regular file that filled the probe and reports `st_size` 0 (procfs) has an unknown length.
+        let contents = read_to_eof_after_probe(file, &initial_buf[..initial_len])?;
+        let buf = arena_alloc_uninit_bytes(arena, contents.len() + 1);
+        buf[..contents.len()].copy_from_slice(&contents);
+        return Ok(finish_arena_contents(arena, buf, contents.len()));
     }
 
     // Arena-owned `[u8; cap + 1]` instead of `vec![0u8; size + 1]` — this is
@@ -781,6 +788,26 @@ pub fn read_file_contents_in_arena(
     debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
     Ok(finish_arena_contents(arena, buf, total))
+}
+
+/// Reads from the cursor to EOF, after `probe`. Fails with `ENOMEM` past the max string length.
+fn read_to_eof_after_probe(file: &bun_sys::File, probe: &[u8]) -> crate::CrateResult<Vec<u8>> {
+    let oom = || crate::Error::Sys(bun_errno::SystemErrno::ENOMEM);
+    let mut buf: Vec<u8> = Vec::new();
+    buf.try_reserve(probe.len() * 2).map_err(|_| oom())?;
+    buf.extend_from_slice(probe);
+    let mut chunk = [0u8; 16384];
+    loop {
+        let n = file.read_all(&mut chunk)?;
+        if buf.len() + n > bun_core::String::max_length() {
+            return Err(oom());
+        }
+        buf.try_reserve(n).map_err(|_| oom())?;
+        buf.extend_from_slice(&chunk[..n]);
+        if n < chunk.len() {
+            return Ok(buf);
+        }
+    }
 }
 
 /// Allocate `len` bytes from `arena` left **uninitialized** (no zero-fill),

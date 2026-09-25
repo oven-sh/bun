@@ -199,6 +199,16 @@ pub fn replace_package_manager_run(
             b'n' => {
                 if delimiter > 0 {
                     if strings::has_prefix_comptime(&script[start..], b"npm run ") {
+                        let consumed = rewrite_npm_run_workspaces(
+                            copy_script,
+                            &script[start..],
+                            b"npm run ".len(),
+                        );
+                        if consumed > 0 {
+                            entry_i += consumed;
+                            delimiter = 0;
+                            continue;
+                        }
                         append_bun_run(copy_script);
                         copy_script.push(b' ');
                         entry_i += b"npm run ".len();
@@ -247,6 +257,144 @@ pub fn replace_package_manager_run(
     }
 
     Ok(())
+}
+
+/// Translate npm's workspace-selection flags into Bun's when rewriting an
+/// `npm run ...` invocation. `cmd` starts at `npm run ` and `prefix_len` is its
+/// length. When the remainder of this simple command (up to the next top-level
+/// shell separator) carries `-w`/`--workspace[=<pkg>]`, `--workspaces`/`--ws`, or
+/// `--if-present`, emit a `bun run` with the equivalent
+/// `--filter=<pkg>`/`--workspaces`/`--if-present` placed before the script name
+/// and return the number of input bytes consumed. Returns 0 (caller falls back
+/// to the plain `npm run` -> `bun run` prefix swap, keeping byte-for-byte output)
+/// when no workspace flag is present, or when the segment contains a quote or
+/// shell grouping/escaping/comment the whitespace tokenizer does not model (`'`,
+/// `"`, `(`, `)`, `$`, `` ` ``, `\`, `#`): reordering tokens is only safe for a
+/// quote-free, construct-free simple command.
+fn rewrite_npm_run_workspaces(out: &mut Vec<u8>, cmd: &[u8], prefix_len: usize) -> usize {
+    let args = &cmd[prefix_len..];
+
+    // Scan to the end of this simple command (first top-level shell separator).
+    // Bail (return 0, leaving the plain `npm run` -> `bun run` prefix swap) on
+    // any quote or shell construct the whitespace tokenizer below cannot model:
+    // reordering tokens across them would scramble the command, and the outer
+    // scanner's one-byte lookback cannot tell us whether we are inside a quote.
+    // Quoted workspace names do not occur in practice, so bailing on quotes is
+    // safe.
+    let mut seg_end = args.len();
+    let mut has_unsupported = false;
+    {
+        let mut i = 0;
+        while i < args.len() {
+            match args[i] {
+                b';' | b'&' | b'|' | b'\n' | b'\r' => {
+                    seg_end = i;
+                    break;
+                }
+                b'\'' | b'"' | b'(' | b')' | b'$' | b'`' | b'\\' | b'#' => {
+                    has_unsupported = true;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+    if has_unsupported {
+        return 0;
+    }
+    let segment = &args[..seg_end];
+
+    // Split into tokens on whitespace (no quotes remain after the bail above).
+    let mut tokens: Vec<&[u8]> = Vec::new();
+    {
+        let mut tok_start: Option<usize> = None;
+        let mut j = 0;
+        while j < segment.len() {
+            let c = segment[j];
+            if c == b' ' || c == b'\t' {
+                if let Some(s) = tok_start.take() {
+                    tokens.push(&segment[s..j]);
+                }
+            } else if tok_start.is_none() {
+                tok_start = Some(j);
+            }
+            j += 1;
+        }
+        if let Some(s) = tok_start {
+            tokens.push(&segment[s..]);
+        }
+    }
+
+    // A usable workspace value is not itself a flag and carries no redirect
+    // byte: `>`/`<` never appear in workspace names, but a glued compound
+    // redirect (`-w app>&2`) would otherwise be hoisted into the filter.
+    #[inline]
+    fn is_workspace_value(t: &[u8]) -> bool {
+        !t.is_empty() && !t.starts_with(b"-") && !t.iter().any(|&c| c == b'<' || c == b'>')
+    }
+
+    let mut filters: Vec<&[u8]> = Vec::new();
+    let mut all_workspaces = false;
+    let mut if_present = false;
+    let mut rest: Vec<&[u8]> = Vec::new();
+    let mut k = 0;
+    while k < tokens.len() {
+        let t = tokens[k];
+        // `--` ends option parsing: everything after it is passthrough.
+        if t == b"--" {
+            rest.extend_from_slice(&tokens[k..]);
+            break;
+        } else if t == b"--workspaces" || t == b"--ws" {
+            all_workspaces = true;
+        } else if t == b"-w" || t == b"--workspace" {
+            // The value must be the next token; bail to the plain prefix swap
+            // rather than swallow a flag (e.g. `--if-present`) or a redirect.
+            if k + 1 < tokens.len() && is_workspace_value(tokens[k + 1]) {
+                filters.push(tokens[k + 1]);
+                k += 1;
+            } else {
+                return 0;
+            }
+        } else if let Some(v) = t.strip_prefix(b"--workspace=") {
+            if !is_workspace_value(v) {
+                return 0;
+            }
+            filters.push(v);
+        } else if let Some(v) = t.strip_prefix(b"-w=") {
+            if !is_workspace_value(v) {
+                return 0;
+            }
+            filters.push(v);
+        } else if t == b"--if-present" {
+            if_present = true;
+        } else {
+            rest.push(t);
+        }
+        k += 1;
+    }
+
+    if filters.is_empty() && !all_workspaces {
+        return 0;
+    }
+
+    out.extend_from_slice(BUN_BIN_NAME);
+    out.extend_from_slice(b" run");
+    if all_workspaces {
+        out.extend_from_slice(b" --workspaces");
+    }
+    if if_present {
+        out.extend_from_slice(b" --if-present");
+    }
+    for f in &filters {
+        out.extend_from_slice(b" --filter=");
+        out.extend_from_slice(f);
+    }
+    for t in &rest {
+        out.push(b' ');
+        out.extend_from_slice(t);
+    }
+
+    prefix_len + seg_end
 }
 
 pub struct LifecycleScriptSubprocess<'a> {

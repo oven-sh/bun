@@ -384,6 +384,46 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
     }
 }
 
+/// Whether the server can send this stream body. GET and HEAD both ask here, before any header is written.
+#[inline]
+fn can_send_body_stream(stream: &ReadableStream, global_this: &JSGlobalObject) -> bool {
+    !stream.is_locked(global_this)
+}
+
+/// Refuses a stream body: detaches it for its reader, and returns the `error()` argument.
+#[cold]
+#[inline(never)]
+fn refuse_body_stream(response: Option<&Response>, global_this: &JSGlobalObject) -> JSValue {
+    bun_core::scoped_log!(ReadableStream, "was locked but it shouldn't be");
+    if let Some(response) = response {
+        response.detach_readable_stream(global_this);
+        *response.get_body_value() = Body::Value::Used;
+    }
+    jsc::SystemError {
+        code: BunString::static_(<&'static str>::from(jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE)),
+        message: BunString::static_("Stream already used, please create a new one"),
+        ..Default::default()
+    }
+    .to_error_instance(global_this)
+}
+
+/// Cancel the body stream of a Response the server will not transmit. `stream` is not locked.
+#[inline(never)]
+fn cancel_unlocked_body(
+    response: &Response,
+    stream: Option<ReadableStream>,
+    global_this: &JSGlobalObject,
+) {
+    if let Some(stream) = stream {
+        debug_assert!(!stream.is_locked(global_this));
+        let _keep = jsc::EnsureStillAlive(stream.value);
+        response.detach_readable_stream(global_this);
+        // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
+        crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
+    }
+    *response.get_body_value() = Body::Value::Used;
+}
+
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
 // These forward to methods that exist in webcore/ but are currently inside
 // impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal).
@@ -737,17 +777,16 @@ where
     }
 
     /// Cancel the body stream of a Response the server will not transmit, unless a reader holds it.
+    #[inline(never)]
     fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
-        if let Some(stream) = response.get_body_readable_stream() {
-            let _keep = jsc::EnsureStillAlive(stream.value);
-            response.detach_readable_stream(global_this);
+        match response.get_body_readable_stream() {
             // A locked stream belongs to its reader, which can be the sink of another Response.
-            if !stream.is_locked(global_this) {
-                // Not `cancel()`: it skips a stream with no reader, which an unattached body is.
-                crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
+            Some(stream) if stream.is_locked(global_this) => {
+                response.detach_readable_stream(global_this);
+                *response.get_body_value() = Body::Value::Used;
             }
+            stream => cancel_unlocked_body(response, stream, global_this),
         }
-        *response.get_body_value() = Body::Value::Used;
     }
 
     /// [`Self::cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.
@@ -2663,6 +2702,14 @@ where
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Locked(_) => {
+                let stream = response.get_body_readable_stream();
+                if let Some(stream) = &stream
+                    && !can_send_body_stream(stream, global_this)
+                {
+                    let js_err = refuse_body_stream(Some(&*response), global_this);
+                    this.run_error_handler(js_err);
+                    return;
+                }
                 this.render_metadata();
                 if !MUX {
                     // SAFETY: FFI handle
@@ -2670,7 +2717,7 @@ where
                 }
                 // HEAD never transmits the body.
                 if let Some(response) = this.response_mut() {
-                    Self::cancel_unread_body(response, global_this);
+                    cancel_unlocked_body(response, stream, global_this);
                 }
                 this.end_without_body(this.should_close_connection());
             }
@@ -3146,22 +3193,9 @@ where
                 if let Some(stream) = readable_stream {
                     *value = Body::Value::Used;
 
-                    if stream.is_locked(global_this) {
-                        stream_log!("was locked but it shouldn't be");
-                        let err = jsc::SystemError {
-                            code: BunString::static_(<&'static str>::from(
-                                jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
-                            )),
-                            message: BunString::static_(
-                                "Stream already used, please create a new one",
-                            ),
-                            ..Default::default()
-                        };
-                        // Teardown must not find the stream: it belongs to its reader.
-                        if let Some(response) = this.response_mut() {
-                            response.detach_readable_stream(global_this);
-                        }
-                        let js_err = err.to_error_instance(global_this);
+                    if !can_send_body_stream(&stream, global_this) {
+                        let js_err =
+                            refuse_body_stream(this.response_mut().map(|r| &*r), global_this);
                         this.run_error_handler(js_err);
                         return;
                     }

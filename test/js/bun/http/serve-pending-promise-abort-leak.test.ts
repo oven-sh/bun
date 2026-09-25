@@ -1100,10 +1100,15 @@ test.each(Object.keys(producing))(
   async kind => {
     await using held = await producing[kind]();
     const responses = { "/sent": new Response(held.stream), "/head": new Response(held.stream) };
+    const errors: unknown[] = [];
     using server = Bun.serve({
       port: 0,
       idleTimeout: 0,
       fetch: req => responses[new URL(req.url).pathname as keyof typeof responses],
+      error(err: any) {
+        errors.push(err.code);
+        return new Response("handled", { status: 500 });
+      },
     });
 
     const inFlight = await fetch(new URL("/sent", server.url));
@@ -1111,8 +1116,10 @@ test.each(Object.keys(producing))(
     const decoder = new TextDecoder();
     let read = decoder.decode((await body.read()).value, { stream: true });
 
+    // The server cannot send the stream for this Response, so HEAD reports that as GET does.
     const head = await fetch(new URL("/head", server.url), { method: "HEAD" });
     expect(await head.text()).toBe("");
+    expect({ status: head.status, errors }).toEqual({ status: 500, errors: ["ERR_STREAM_CANNOT_PIPE"] });
     expect(held.cancels()).toBe(0);
 
     held.finish();

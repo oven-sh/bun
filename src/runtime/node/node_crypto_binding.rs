@@ -80,7 +80,7 @@ impl JsCallbackArgs {
 
 macro_rules! extern_crypto_job {
     ($Name:ident, $name_str:literal) => {
-        pub mod $Name {
+        pub(crate) mod $Name {
             use super::*;
 
             // `Ctx` is `opaque {}` — Nomicon FFI opaque-handle pattern.
@@ -150,6 +150,7 @@ macro_rules! extern_crypto_job {
                     drop(this);
                     produced?;
                     global.bun_vm().event_loop_mut().run_callback(
+                        bun_event_loop::ContextId::NONE,
                         callback.get(),
                         global,
                         JSValue::UNDEFINED,
@@ -165,7 +166,7 @@ macro_rules! extern_crypto_job {
                 ctx: *mut Ctx,
                 callback: JSValue,
             ) {
-                let cx = global.js_thread();
+                let cx = global.js_thread_of_caller_no_frame();
                 let callback = callback.with_async_context_if_needed(global);
                 Job::<ExternJob>::schedule(
                     &cx,
@@ -198,7 +199,7 @@ extern_crypto_job!(SignJob, "SignJob");
 // CryptoJob<Ctx>
 // ───────────────────────────────────────────────────────────────────────────
 
-pub mod random {
+pub(crate) mod random {
     use super::*;
 
     // No `Clone`: `value` is JSC-protected in `init`/unprotected in `deinit`, and
@@ -286,6 +287,7 @@ pub mod random {
                 }
             }
             global.bun_vm().event_loop_mut().run_callback(
+                bun_event_loop::ContextId::NONE,
                 js.callback.get(),
                 global,
                 JSValue::UNDEFINED,
@@ -295,8 +297,14 @@ pub mod random {
         }
     }
 
-    fn schedule(global: &JSGlobalObject, callback: JSValue, job: RandomFillJob, value: JSValue) {
-        let cx = global.js_thread();
+    fn schedule(
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+        callback: JSValue,
+        job: RandomFillJob,
+        value: JSValue,
+    ) {
+        let cx = global.js_thread_of_caller(call_frame);
         Job::<RandomFillJob>::schedule(
             &cx,
             job,
@@ -617,6 +625,7 @@ pub mod random {
 
             schedule(
                 global,
+                call_frame,
                 callback,
                 RandomFillJob::InPlace {
                     // SAFETY: `bytes` is `result`'s backing store, kept alive by the job's
@@ -735,6 +744,7 @@ pub mod random {
 
             schedule(
                 global,
+                call_frame,
                 callback,
                 RandomFillJob::Scratch {
                     scratch,
@@ -748,7 +758,7 @@ pub mod random {
         }
     } // mod _hostfns
 
-    pub use _hostfns::*;
+    pub(crate) use _hostfns::*;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1124,11 +1134,18 @@ mod _impl {
                         )
                         .to_js()
                 };
-                event_loop.run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
+                event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
+                    callback,
+                    global,
+                    JSValue::UNDEFINED,
+                    &[exception],
+                );
                 return Ok(());
             }
 
             event_loop.run_callback(
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global,
                 JSValue::UNDEFINED,
@@ -1141,7 +1158,7 @@ mod _impl {
     #[bun_jsc::host_fn]
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (data, callback) = PBKDF2::from_js_async(global_this, call_frame)?;
-        pbkdf2::create_job(global_this, data, callback);
+        pbkdf2::create_job(&global_this.js_thread_of_caller(call_frame), data, callback);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1283,7 +1300,7 @@ mod _impl {
             return Err(global.throw_out_of_memory());
         }
         let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, params.keylen)?;
-        let cx = global.js_thread();
+        let cx = global.js_thread_of_caller(call_frame);
         Job::<ScryptJob>::schedule(
             &cx,
             ScryptJob {
@@ -1476,13 +1493,20 @@ mod _impl {
             if this.failed {
                 let exception =
                     global.create_error_instance(format_args!("Argon2 derivation failed"));
-                event_loop.run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
+                event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
+                    callback,
+                    global,
+                    JSValue::UNDEFINED,
+                    &[exception],
+                );
                 return Ok(());
             }
             let output = core::mem::take(&mut this.output);
             // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator).
             match JSValue::create_buffer(global, output.leak()) {
                 Ok(buf) => event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     JSValue::UNDEFINED,
@@ -1491,6 +1515,7 @@ mod _impl {
                 // The result could not be built (allocation failure): that is
                 // this derivation's error.
                 Err(err) => event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     JSValue::UNDEFINED,
@@ -1505,7 +1530,7 @@ mod _impl {
     fn argon2(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (ctx, callback) = Argon2::from_js(global, call_frame)?;
         let _ = validators::validate_function(global, "callback", callback)?;
-        let cx = global.js_thread();
+        let cx = global.js_thread_of_caller(call_frame);
         Job::<Argon2>::schedule(
             &cx,
             ctx,

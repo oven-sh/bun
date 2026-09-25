@@ -6,7 +6,7 @@
  *   generated .cargo/config.toml gets entries for, so a platform CI builds
  *   that is missing from it is one whose cfg-gated code nothing checks before
  *   the CI build itself. Its source of truth is the build matrix in
- *   .buildkite/ci.mjs, which can't be imported (it generates the pipeline on
+ *   .buildkite/ci.ts, which can't be imported (it generates the pipeline on
  *   import), so it is read as text.
  * - The rustflags put the Rust half of the binary on the CPU baseline the C++
  *   half is compiled for (`cpuTargetFlags` in scripts/build/flags.ts).
@@ -51,6 +51,8 @@ const mockToolchain: Toolchain = {
   ld64Lld: "/fake/llvm/bin/ld64.lld",
   rustLld: undefined,
   rustLlvmVersion: "22.1.4",
+  rustSysroot: undefined,
+  rustHostTriple: undefined,
   strip: "/fake/bin/strip",
   llvmStrip: "/fake/llvm/bin/llvm-strip",
   nm: "/fake/llvm/bin/llvm-nm",
@@ -87,10 +89,10 @@ function withAbi(cfg: Config, abi: Abi): Config {
 }
 
 describe("allRustTargets", () => {
-  test("is exactly the set of triples .buildkite/ci.mjs builds", () => {
-    const ciScript = readFileSync(join(repoRoot, ".buildkite", "ci.mjs"), "utf8");
-    const matrix = /^const buildPlatforms = \[\n([\s\S]*?)^\];/m.exec(ciScript);
-    if (matrix === null) throw new Error("buildPlatforms not found in .buildkite/ci.mjs");
+  test("is exactly the set of triples .buildkite/ci.ts builds", () => {
+    const ciScript = readFileSync(join(repoRoot, ".buildkite", "ci.ts"), "utf8");
+    const matrix = /^const buildPlatforms: Platform\[\] = \[\n([\s\S]*?)^\];/m.exec(ciScript);
+    if (matrix === null) throw new Error("buildPlatforms not found in .buildkite/ci.ts");
 
     const entries =
       matrix[1]!
@@ -106,7 +108,7 @@ describe("allRustTargets", () => {
       const field = (name: string) => new RegExp(`\\b${name}: "([^"]+)"`).exec(entry)?.[1];
       const os = field("os") as OS;
       const arch = field("arch") as Arch;
-      // ci.mjs passes `--abi=gnu` to the linux builds that don't name an abi.
+      // ci.ts passes `--abi=gnu` to the linux builds that don't name an abi.
       const abi = os === "linux" ? ((field("abi") as Abi | undefined) ?? "gnu") : undefined;
       return rustTriple(os, arch, abi);
     });
@@ -127,8 +129,7 @@ describe("allRustTargets", () => {
     expect(allRustTargets.filter(rustTargetIsTier3)).toEqual(["aarch64-unknown-freebsd"]);
   });
 
-  test("a Tier 3 target builds std from source with the flag rust:check-all shares", () => {
-    // Debug: the only reason left to build std is the missing prebuilt.
+  test("every target builds std from source with the flag rust:check-all uses for Tier 3", () => {
     const freebsdArm64 = cargoBuildInvocation(
       resolve({ os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake", buildType: "Debug" }),
     );
@@ -139,7 +140,7 @@ describe("allRustTargets", () => {
       resolve({ os: "freebsd", arch: "x64", freebsdSysroot: "/fake", buildType: "Debug" }),
     );
     expect(freebsdX64.triple).toBe("x86_64-unknown-freebsd");
-    expect(freebsdX64.args).not.toContain(cargoBuildStdArg);
+    expect(freebsdX64.args).toContain(cargoBuildStdArg);
   });
 });
 
@@ -161,23 +162,23 @@ describe("build-std feature set", () => {
     expect(buildStdArgs(linuxX64)).toEqual(release);
     expect(buildStdArgs(withAbi(linuxX64, "musl"))).toEqual(release);
     expect(buildStdArgs(withAbi(linuxX64, "android"))).toEqual(release);
-    expect(buildStdArgs(resolve({ os: "darwin", arch: "aarch64", mode: "rust-only" }))).toEqual(release);
+    expect(buildStdArgs(resolve({ os: "darwin", arch: "aarch64" }))).toEqual(release);
     expect(buildStdArgs(resolve({ os: "windows", arch: "x64", winsysroot: "/fake" }))).toEqual(release);
     expect(buildStdArgs(resolve({ os: "freebsd", arch: "x64", freebsdSysroot: "/fake" }))).toEqual(release);
     // Tier 3: builds std from source either way; release still trims it.
     expect(buildStdArgs(resolve({ os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake" }))).toEqual(release);
   });
 
-  test("builds that rebuild std for other reasons keep cargo's default feature set", () => {
+  test("every other build compiles std too, with cargo's default feature set", () => {
     const linuxX64: PartialConfig = { os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" };
-    // release-asan and debug-asan rebuild std for the instrumentation.
+    // release-asan and debug-asan: std gets the instrumentation.
     expect(buildStdArgs(resolve({ ...linuxX64, asan: true }))).toEqual([cargoBuildStdArg]);
     expect(buildStdArgs(resolve({ ...linuxX64, buildType: "Debug", asan: true }))).toEqual([cargoBuildStdArg]);
-    // A Tier 3 debug build rebuilds std only because there is no prebuilt one.
+    // A Tier 3 debug build: there is no prebuilt std.
     const freebsdArm64: PartialConfig = { os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake", buildType: "Debug" };
     expect(buildStdArgs(resolve(freebsdArm64))).toEqual([cargoBuildStdArg]);
-    // A plain debug build links the prebuilt std: no build-std args at all.
-    expect(buildStdArgs(resolve({ ...linuxX64, buildType: "Debug", asan: false }))).toEqual([]);
+    // A plain debug build: the link takes std's rlibs from the graph like every other crate's, so std is in it.
+    expect(buildStdArgs(resolve({ ...linuxX64, buildType: "Debug", asan: false }))).toEqual([cargoBuildStdArg]);
   });
 });
 
@@ -220,8 +221,8 @@ describe("CPU baseline", () => {
   test("darwin arm64 and x64 name the C++ side's CPU model directly", () => {
     // `-mcpu=apple-m1` and `-march=nehalem` (x86 -march values are CPU names)
     // are LLVM CPU names, which `-Ctarget-cpu` takes as-is.
-    expect(cpuFlags(resolve({ os: "darwin", arch: "aarch64", mode: "rust-only" }))).toEqual(["-Ctarget-cpu=apple-m1"]);
-    expect(cpuFlags(resolve({ os: "darwin", arch: "x64", mode: "rust-only" }))).toEqual(["-Ctarget-cpu=nehalem"]);
+    expect(cpuFlags(resolve({ os: "darwin", arch: "aarch64" }))).toEqual(["-Ctarget-cpu=apple-m1"]);
+    expect(cpuFlags(resolve({ os: "darwin", arch: "x64" }))).toEqual(["-Ctarget-cpu=nehalem"]);
     const linuxX64 = resolve({ os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" });
     expect(cpuFlags(linuxX64)).toEqual(["-Ctarget-cpu=nehalem"]);
     expect(cpuFlags(withAbi(linuxX64, "android"))).toEqual(["-Ctarget-cpu=nehalem"]);

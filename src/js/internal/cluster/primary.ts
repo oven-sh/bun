@@ -1,3 +1,6 @@
+import type { ClusterWorker } from "internal/cluster/Worker";
+import type { ClusterSettings } from "node:cluster";
+
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const { kHandle } = require("internal/shared");
@@ -14,7 +17,28 @@ const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
 const ObjectKeys = Object.keys;
 
-const cluster = new EventEmitter();
+interface PrimaryCluster extends InstanceType<typeof EventEmitter> {
+  isWorker: boolean;
+  isMaster: boolean;
+  isPrimary: boolean;
+  Worker: typeof Worker;
+  workers: Record<number, ClusterWorker>;
+  settings: ClusterSettings;
+  SCHED_NONE: number;
+  SCHED_RR: number;
+  schedulingPolicy: number;
+  setupPrimary(options?: ClusterSettings): void;
+  setupMaster(options?: ClusterSettings): void;
+  fork(env?: Record<string, string | undefined>): ClusterWorker;
+  disconnect(cb?: () => void): void;
+}
+
+interface DgramShareError extends Error {
+  code?: string;
+  syscall?: string;
+}
+
+const cluster = new EventEmitter() as PrimaryCluster;
 const intercom = new EventEmitter();
 const SCHED_NONE = 1;
 const SCHED_RR = 2;
@@ -73,7 +97,7 @@ function setupSettingsNT(settings) {
 
 function createWorkerProcess(id, env) {
   const workerEnv = { ...process.env, ...env, NODE_UNIQUE_ID: `${id}` };
-  const execArgv = [...cluster.settings.execArgv];
+  const execArgv = [...cluster.settings.execArgv!];
 
   child_process ??= require("node:child_process");
   return child_process.fork(cluster.settings.exec, cluster.settings.args, {
@@ -264,7 +288,7 @@ function queryServer(worker, message) {
     // be obvious reasons: it's connectionless. There is nothing to send to
     // the workers except raw datagrams and that's pointless.
     if (process.platform === "win32" && (message.addressType === "udp4" || message.addressType === "udp6")) {
-      const error = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
+      const error: DgramShareError = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
       error.code = "ENOTSUP";
       error.syscall = "write";
       worker.emit("error", error);

@@ -14,7 +14,7 @@ function assertReactComponent(Component: any) {
 }
 
 // This function converts the route information into a React component tree.
-function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: readonly string[]) {
+function getPage(meta: Bake.RouteMetadata, styles: readonly string[]) {
   let route = component(meta.pageModule, meta.params, meta.request);
   for (const layout of meta.layouts) {
     const Layout = layout.default;
@@ -37,9 +37,9 @@ function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: reado
   );
 }
 
-function component(mod: any, params: Record<string, string> | null, request?: Request) {
+function component(mod: any, params: Bake.RouteMetadata["params"], request?: Request) {
   const Page = mod.default;
-  let props = {};
+  let props: Record<string, unknown> = {};
   if (import.meta.env.DEV) assertReactComponent(Page);
 
   let method;
@@ -62,7 +62,7 @@ function component(mod: any, params: Record<string, string> | null, request?: Re
 // `server.tsx` exports a function to be used for handling user routes. It takes
 // in the Request object, the route's module, extra route metadata, and the AsyncLocalStorage instance.
 export async function render(
-  request: Request,
+  request: Bun.BunRequest,
   meta: Bake.RouteMetadata,
   als?: AsyncLocalStorage<RequestContext>,
 ): Promise<Response> {
@@ -104,7 +104,6 @@ export async function render(
 
       // Mark as aborted and call the abort function
       signal.aborted = err;
-      // @ts-expect-error
       signal.abort(err);
       rscPayload.destroy(err);
     },
@@ -141,17 +140,19 @@ export async function render(
     const result = await htmlStream.bytes();
 
     const opts = als?.getStore()?.responseOptions ?? { headers: {} };
-    const { headers, ...response_options } = opts;
+    // Only a plain object's headers survive the spread below; see the TODO.
+    const { headers, ...response_options } = opts as ResponseInit & { headers?: Record<string, string> };
 
     const cookies = meta.pageModule.mode === "ssr" ? { "Set-Cookie": request.cookies.toSetCookieHeaders() } : {};
 
     return new Response(result, {
+      // Bun's Headers takes an array of values for one name (`Bun.HeadersInit`); the DOM lib's type does not say so.
       headers: {
         "Content-Type": "text/html; charset=utf8",
         // TODO: merge cookies and cookies inside of headers
         ...cookies,
         ...headers,
-      },
+      } as Bun.HeadersInit as HeadersInit,
       ...response_options,
     });
   }
@@ -236,5 +237,5 @@ export const contentTypeToStaticFile = {
 export interface MiniAbortSignal {
   aborted: Error | undefined;
   /** Caller must set `aborted` to true before calling. */
-  abort: () => void;
+  abort: (reason?: unknown) => void;
 }

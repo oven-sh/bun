@@ -15,11 +15,13 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 // SPAWN_FAULT_RECV_AT=N  the Nth recv() on each AF_UNIX socket fails with EIO (1-based).
 // SPAWN_FAULT_SEND_AT=N  the Nth send() on each AF_UNIX socket fails with ENOBUFS.
+// SPAWN_FAULT_REPORT=path  the failing recv() writes how many bytes that socket received before it to this file.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -37,6 +39,7 @@ static int fail_recv_at = -1;
 static int fail_send_at = -1;
 static unsigned int recv_count[MAX_FD];
 static unsigned int send_count[MAX_FD];
+static unsigned long recv_bytes[MAX_FD];
 
 static void init_modes(void) {
   const char *s;
@@ -64,9 +67,20 @@ ssize_t recv(int fd, void *buf, size_t len, int flags) {
     real_recv = (ssize_t (*)(int, void *, size_t, int))dlsym(RTLD_NEXT, "recv");
     init_modes();
   }
-  if (fail_recv_at > 0 && is_unix_sock(fd) && ++recv_count[fd] == (unsigned)fail_recv_at) {
-    errno = EIO;
-    return -1;
+  if (fail_recv_at > 0 && is_unix_sock(fd)) {
+    if (++recv_count[fd] == (unsigned)fail_recv_at) {
+      const char *report = getenv("SPAWN_FAULT_REPORT");
+      FILE *f = report ? fopen(report, "w") : NULL;
+      if (f) {
+        fprintf(f, "%lu", recv_bytes[fd]);
+        fclose(f);
+      }
+      errno = EIO;
+      return -1;
+    }
+    ssize_t n = real_recv(fd, buf, len, flags);
+    if (n > 0) recv_bytes[fd] += (unsigned long)n;
+    return n;
   }
   return real_recv(fd, buf, len, flags);
 }
@@ -90,6 +104,7 @@ static void reset_fd(int fd) {
   if (fd >= 0 && fd < MAX_FD) {
     recv_count[fd] = 0;
     send_count[fd] = 0;
+    recv_bytes[fd] = 0;
   }
 }
 
@@ -204,6 +219,23 @@ child.on("close", () => {
 });
 `;
 
+// node:child_process: every byte the parent read before the error reaches 'data'.
+const CHILD_PROCESS_BYTES_FIXTURE = /* js */ `
+import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+const events = [];
+let got = 0;
+const child = spawn(${JSON.stringify(WRITER_CMD[0])}, ${JSON.stringify(WRITER_CMD.slice(1))}, { stdio: ["ignore", "pipe", "ignore"] });
+child.stdout.on("data", chunk => (got += chunk.length));
+child.stdout.on("error", e => events.push("stdout.error:" + e.code));
+child.stdout.on("close", () => events.push("stdout.close"));
+child.on("close", () => {
+  events.push("close");
+  const received = Number(readFileSync(process.env.SPAWN_FAULT_REPORT, "utf8"));
+  console.log(JSON.stringify({ receivedSome: received > 0, lost: received - got, events }));
+});
+`;
+
 // Bun.spawnSync / child_process.spawnSync / execFileSync: the lost output is an error, not a success.
 const SPAWN_SYNC_FIXTURE = /* js */ `
 import { spawnSync, execFileSync } from "node:child_process";
@@ -212,11 +244,13 @@ try {
   const r = Bun.spawnSync(${JSON.stringify(WRITER_CMD)}, { stderr: "inherit" });
   out.bun = { stdout: r.stdout?.constructor?.name, success: r.success };
 } catch (e) {
-  out.bun = "threw:" + e.code;
+  // The process ran, so the error says which one and how it exited. How it exited is not fixed: once the
+  // parent's read fails the pipe is closed, and the writer dies of SIGPIPE or exits on EPIPE.
+  out.bun = { threw: e.code, pid: typeof e.pid, exited: e.exitCode !== null || typeof e.signalCode === "string" };
 }
 {
   const r = spawnSync(${JSON.stringify(WRITER_CMD[0])}, ${JSON.stringify(WRITER_CMD.slice(1))}, { stdio: ["ignore", "pipe", "inherit"], maxBuffer: 64 << 20 });
-  out.spawnSync = { stdout: r.stdout, error: r.error?.code };
+  out.spawnSync = { stdout: r.stdout, error: r.error?.code, pid: r.pid > 0, output: r.output, exited: r.status !== null || typeof r.signal === "string" };
 }
 try {
   const r = execFileSync(${JSON.stringify(WRITER_CMD[0])}, ${JSON.stringify(WRITER_CMD.slice(1))}, { stdio: ["ignore", "pipe", "inherit"], maxBuffer: 64 << 20 });
@@ -239,6 +273,7 @@ beforeAll(async () => {
     "stdout-text.mjs": STDOUT_TEXT_FIXTURE,
     "stdout-write.mjs": STDOUT_WRITE_FIXTURE,
     "child-process.mjs": CHILD_PROCESS_FIXTURE,
+    "child-process-bytes.mjs": CHILD_PROCESS_BYTES_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
@@ -264,6 +299,7 @@ async function runWithFault(fixture: string, fault: Record<string, string>) {
     LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath,
     SPAWN_FAULT_RECV_AT: undefined,
     SPAWN_FAULT_SEND_AT: undefined,
+    SPAWN_FAULT_REPORT: undefined,
     ...fault,
   };
   await using proc = Bun.spawn({
@@ -333,13 +369,29 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
     test.concurrent("spawnSync: the lost output is reported as an error", async () => {
       expect(await runWithFault("spawn-sync.mjs", { SPAWN_FAULT_RECV_AT: at })).toEqual({
         parsed: {
-          bun: "threw:EIO",
-          spawnSync: { stdout: null, error: "EIO" },
+          bun: { threw: "EIO", pid: "number", exited: true },
+          // node's result for a process that ran: its pid and an output array, not the `pid: 0` and
+          // `output: null` of one that could not be spawned.
+          // It exited or was killed by a signal: `status` and `signal` are never both null.
+          spawnSync: { stdout: null, error: "EIO", pid: true, output: [null, null, null], exited: true },
           execFileSync: "threw:EIO",
         },
         stderr: "",
         exitCode: 0,
       });
+    });
+  });
+
+  // child.stdout reads one chunk ahead of its 'data' listener, so once the stream flows a chunk is still buffered
+  // when a later read fails. The stream is destroyed with the error, and that chunk has to reach 'data' first.
+  test.concurrent("node:child_process: stdout delivers every byte read before the error", async () => {
+    const report = join(String(dir), "recv-report.txt");
+    expect(
+      await runWithFault("child-process-bytes.mjs", { SPAWN_FAULT_RECV_AT: "6", SPAWN_FAULT_REPORT: report }),
+    ).toEqual({
+      parsed: { receivedSome: true, lost: 0, events: ["stdout.error:EIO", "stdout.close", "close"] },
+      stderr: "",
+      exitCode: 0,
     });
   });
 

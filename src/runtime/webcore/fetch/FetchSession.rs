@@ -17,7 +17,7 @@ use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs as _};
 use crate::webcore::FetchHeaders;
 use crate::webcore::response::HeadersRef;
 
-pub use crate::generated_classes::js_FetchSession as js;
+pub(crate) use crate::generated_classes::js_FetchSession as js;
 
 /// `proxy` as given to `fetch()` or to a session. Absent means "inherit".
 #[derive(Clone)]
@@ -158,7 +158,7 @@ pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResu
 static NEXT_POOL_ID: AtomicU64 = AtomicU64::new(1);
 
 #[bun_jsc::JsClass]
-pub struct FetchSession {
+pub(crate) struct FetchSession {
     pool: http::PoolOptions,
     keep_alive: bool,
     ssl_config: Option<http::ssl_config::SharedPtr>,
@@ -172,7 +172,15 @@ pub struct FetchSession {
     this_value: JsCell<JsRef>,
     /// Requests that hold a `SessionHold`.
     in_flight: Cell<u32>,
+    /// Armed in the context whose script made the session: the connections its pool keeps
+    /// alive are that context's, and close with it. (The session itself stays usable.)
+    abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(FetchSession, abort_handle, |this, _cause| {
+    // SAFETY: trait contract: `this` is live (the wrapper's `m_ctx`; `finalize` drops the handle).
+    unsafe { &*this }.close_idle_sockets()
+});
 
 /// One request's hold on its session, from the moment `fetch()` reads the
 /// `session` option: the option is a property of `init`, so nothing else keeps
@@ -247,7 +255,7 @@ impl Drop for SessionHold {
 }
 
 impl FetchSession {
-    pub fn constructor(
+    pub(crate) fn constructor(
         global: &JSGlobalObject,
         frame: &CallFrame,
         this_value: JSValue,
@@ -268,7 +276,13 @@ impl FetchSession {
             used: Cell::new(false),
             this_value: JsCell::new(JsRef::init_weak(this_value)),
             in_flight: Cell::new(0),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<FetchSession>(),
         });
+        // SAFETY: a heap allocation at its final address; its `Drop` (in `finalize`, or when
+        // this constructor fails) disarms the handle.
+        unsafe {
+            bun_jsc::AbortHandle::arm_owner(&raw mut *this, vm.context_of_caller(frame));
+        }
         if options.is_undefined_or_null() {
             return Ok(this);
         }
@@ -392,7 +406,7 @@ impl FetchSession {
     /// Close this session's idle keep-alive connections. Requests in flight
     /// finish, and the session stays usable.
     #[bun_jsc::host_fn(method)]
-    pub fn close(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         self.close_idle_sockets();
         Ok(JSValue::UNDEFINED)
     }
@@ -407,7 +421,7 @@ impl FetchSession {
         clippy::boxed_local,
         reason = "reclaim point for the generated finalizer"
     )]
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         self.this_value.with_mut(|this| this.finalize());
         self.close_idle_sockets();
         // Only when the VM is torn down under requests in flight: their holds

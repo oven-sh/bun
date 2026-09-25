@@ -528,6 +528,37 @@ describe("fetch protocol: http3", () => {
     expect(await res.text()).toBe("hello from a stream");
   });
 
+  test("ReadableStream request body that does not match its declared content-length rejects", async () => {
+    const outcomes: unknown[] = [];
+    for (const declared of ["19", "2", "50"]) {
+      // An origin of its own per case: resetting an upload that declared a
+      // content-length can take the whole pooled QUIC session down with it.
+      await using origin = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        fetch: async req => new Response(await req.bytes()),
+      });
+      outcomes.push(
+        await fetch(`https://127.0.0.1:${origin.port}/echo`, {
+          ...h3,
+          method: "POST",
+          headers: { "content-length": declared },
+          body: pullBody(["hello ", "from ", "a ", "stream"]),
+        }).then(
+          res => res.text(),
+          e => e.code,
+        ),
+      );
+    }
+    expect(outcomes).toEqual([
+      "hello from a stream",
+      "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+      "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+    ]);
+  });
+
   test("ReadableStream request body (pull, large)", async () => {
     const piece = Buffer.alloc(32 * 1024, "S");
     const res = await fetch(`${base}/echo`, {
@@ -838,6 +869,39 @@ describe("interim responses ahead of the final response", () => {
       await origin.destroy();
     }
   });
+});
+
+// QPACK carries a field value verbatim, so a server can send the optional
+// whitespace that the HTTP/1.1 parser strips (RFC 9110 section 5.5). The
+// client decodes through the same header-set callback as the server listener.
+test("strips leading and trailing whitespace from a response field value", async () => {
+  const origin = await listen(
+    async (session: any) => {
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 5 },
+      onheaders(this: any) {
+        this.sendHeaders(
+          { ":status": "204", "x-ws": " \tv\t ", "x-only-ws": " \t ", "x-inner": "a \t b" },
+          { terminal: true },
+        );
+      },
+    },
+  );
+  try {
+    const { headers } = await fetch(`https://127.0.0.1:${origin.address.port}/`, h3);
+    expect({
+      ws: headers.get("x-ws"),
+      onlyWs: headers.get("x-only-ws"),
+      inner: headers.get("x-inner"),
+    }).toEqual({ ws: "v", onlyWs: "", inner: "a \t b" });
+  } finally {
+    // Not close(): it waits for the session that fetch() keeps in its pool.
+    await origin.destroy();
+  }
 });
 
 // Stale-session retry: a request bound on session A when A's conn closes

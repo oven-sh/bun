@@ -956,6 +956,7 @@ unsafe extern "C" {
     pub fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
     pub fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
     pub fn BIO_ctrl_pending(bio: *const BIO) -> usize;
+    pub fn BIO_reset(bio: *mut BIO) -> c_int;
     pub safe fn BIO_s_mem() -> *const BIO_METHOD;
     pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
     pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;

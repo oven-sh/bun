@@ -2,7 +2,79 @@
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js
 const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
-const { methods, allMethods, HTTPParser } = process.binding("http_parser");
+interface HTTPParserError extends Error {
+  bytesParsed: number;
+  code: string;
+  reason: string;
+}
+
+interface HTTPParser {
+  _headers: string[];
+  _url: string;
+  socket: import("node:stream").Duplex | null;
+  incoming: import("node:http").IncomingMessage | null;
+  outgoing: import("node:http").ClientRequest | null;
+  maxHeaderPairs: number;
+  _consumed: boolean;
+  onIncoming: ((incoming: import("node:http").IncomingMessage, shouldKeepAlive: boolean) => number) | null;
+  joinDuplicateHeaders: boolean | null;
+  [callback: number]: Function | null;
+  close(): void;
+  free(): void;
+  remove(): void;
+  execute(data: ArrayBufferView): number | HTTPParserError | undefined;
+  finish(): HTTPParserError | undefined;
+  initialize(
+    type: number,
+    resource: object,
+    maxHeaderSize?: number,
+    lenientFlags?: number,
+    connections?: object | null,
+  ): void;
+  pause(): void;
+  resume(): void;
+  consume(handle: object): void;
+  unconsume(): void;
+  getCurrentBuffer(): Buffer | undefined;
+  duration(): number | undefined;
+  headersCompleted(): boolean | undefined;
+}
+
+interface HTTPParserConstructor {
+  new (): HTTPParser;
+  readonly prototype: HTTPParser;
+  readonly REQUEST: number;
+  readonly RESPONSE: number;
+  readonly kOnMessageBegin: number;
+  readonly kOnHeaders: number;
+  readonly kOnHeadersComplete: number;
+  readonly kOnBody: number;
+  readonly kOnMessageComplete: number;
+  readonly kOnExecute: number;
+  readonly kOnTimeout: number;
+  readonly kLenientNone: number;
+  readonly kLenientHeaders: number;
+  readonly kLenientChunkedLength: number;
+  readonly kLenientKeepAlive: number;
+  readonly kLenientTransferEncoding: number;
+  readonly kLenientVersion: number;
+  readonly kLenientDataAfterClose: number;
+  readonly kLenientOptionalLFAfterCR: number;
+  readonly kLenientOptionalCRLFAfterChunk: number;
+  readonly kLenientOptionalCRBeforeLF: number;
+  readonly kLenientSpacesAfterChunkSize: number;
+  readonly kLenientHeaderValueRelaxed: number;
+  readonly kLenientAll: number;
+}
+
+interface HTTPParserBinding {
+  methods: readonly string[];
+  allMethods: readonly string[];
+  HTTPParser: HTTPParserConstructor;
+  ConnectionsList: unknown;
+}
+
+const { methods, allMethods, HTTPParser } = process.binding("http_parser") as HTTPParserBinding;
 const incoming = require("node:_http_incoming");
 
 const { IncomingMessage, readStart, readStop } = incoming;

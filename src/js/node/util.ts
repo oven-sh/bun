@@ -174,9 +174,13 @@ var _extend = function (origin, add) {
   return origin;
 };
 
+interface FalsyValueRejectionError extends Error {
+  reason?: unknown;
+}
+
 function callbackifyOnRejected(reason, cb) {
   if (!reason) {
-    var newReason = new Error("Promise was rejected with a falsy value");
+    var newReason: FalsyValueRejectionError = new Error("Promise was rejected with a falsy value");
     newReason.reason = reason;
     newReason.code = "ERR_FALSY_VALUE_REJECTION";
     reason = newReason;
@@ -535,8 +539,17 @@ function _errnoException(err: any, syscall: string, original?: string) {
   return new ErrnoException(err, syscall, original);
 }
 
+interface CallSiteObject {
+  functionName: string;
+  scriptId: string;
+  scriptName: string;
+  lineNumber: number;
+  columnNumber: number;
+  column: number;
+}
+
 function prepareCallSites(_err, callSites) {
-  const result = [];
+  const result: CallSiteObject[] = [];
   for (let i = 0; i < callSites.length; i++) {
     const callSite = callSites[i];
     // CallSite#getColumnNumber() is 0-based here but 1-based in V8, and node
@@ -584,7 +597,7 @@ function getCallSites(frameCount = 10, options) {
   // Capture with our own prepareStackTrace so a user-installed
   // Error.prepareStackTrace is never invoked, and so Error.stackTraceLimit
   // does not influence the number of frames returned.
-  const target = {};
+  const target: { stack?: CallSiteObject[] } = {};
   const savedPrepareStackTrace = Error.prepareStackTrace;
   const savedStackTraceLimit = Error.stackTraceLimit;
   try {
@@ -647,7 +660,7 @@ function aborted(signal: AbortSignal, resource: object) {
     return Promise.$resolve();
   }
 
-  const promise = $newPromise();
+  const promise = $newPromise<void>();
   const listener = createAbortedListener(promise);
   signal.addEventListener("abort", listener, resistStopPropagation({ __proto__: null, once: true }));
 

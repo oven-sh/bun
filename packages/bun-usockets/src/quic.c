@@ -554,13 +554,26 @@ static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
         h->headers = nh;
         h->hcap = ncap;
     }
+    /* RFC 9110 §5.5: a field value has no leading or trailing OWS (SP / HTAB),
+     * and a parser excludes it. The HTTP/1 parser does; QPACK delivers the
+     * value length-prefixed, so the OWS arrives as part of it. :method, :path
+     * and :scheme are URI components, not field values, and stay as sent.
+     * :authority is trimmed because the request exposes it as the Host field. */
+    const char *name = lsxpack_header_get_name(hdr);
+    unsigned int val_offset = hdr->val_offset, val_len = hdr->val_len;
+    int is_pseudo = hdr->name_len > 0 && name[0] == ':';
+    if (!is_pseudo || (hdr->name_len == 10 && memcmp(name, ":authority", 10) == 0)) {
+        const char *val = lsxpack_header_get_value(hdr);
+        while (val_len > 0 && (val[0] == ' ' || val[0] == '\t')) { val++; val_offset++; val_len--; }
+        while (val_len > 0 && (val[val_len - 1] == ' ' || val[val_len - 1] == '\t')) val_len--;
+    }
     /* lsxpack wrote name+value into h->buf at h->len; record offsets, then
      * advance len so the next header lands after this one. We store offsets
      * (cast to pointer-sized) and resolve them after the buffer stops moving. */
     h->headers[h->count].name = (const char *)(uintptr_t) hdr->name_offset;
     h->headers[h->count].name_len = hdr->name_len;
-    h->headers[h->count].value = (const char *)(uintptr_t) hdr->val_offset;
-    h->headers[h->count].value_len = hdr->val_len;
+    h->headers[h->count].value = (const char *)(uintptr_t) val_offset;
+    h->headers[h->count].value_len = val_len;
     h->headers[h->count].qpack_index = -1;
     h->count++;
     h->len = (unsigned int) hdr->val_offset + hdr->val_len + hdr->dec_overhead;

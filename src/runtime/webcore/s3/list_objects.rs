@@ -5,7 +5,7 @@ use super::__s3_credentials_jsc::get_truthy_string_utf8;
 use super::s3::xml_response;
 use bun_core::Utf8Bytes;
 
-pub struct S3ListObjectsOptions {
+pub(crate) struct S3ListObjectsOptions {
     pub(crate) continuation_token: Option<Utf8Bytes<'static>>,
     pub(crate) delimiter: Option<Utf8Bytes<'static>>,
     pub(crate) encoding_type: Option<Utf8Bytes<'static>>,
@@ -20,7 +20,7 @@ struct ObjectOwner {
     display_name: Option<Box<[u8]>>,
 }
 
-pub struct S3ListObjectsContents {
+pub(crate) struct S3ListObjectsContents {
     key: Box<[u8]>,
     etag: Option<Box<[u8]>>,
     checksum_type: Option<Box<[u8]>>,
@@ -32,7 +32,7 @@ pub struct S3ListObjectsContents {
 }
 
 #[derive(Default)]
-pub struct S3ListObjectsV2Result {
+pub(crate) struct S3ListObjectsV2Result {
     pub name: Option<Box<[u8]>>,
     pub(crate) prefix: Option<Box<[u8]>>,
     pub(crate) key_count: Option<i64>,

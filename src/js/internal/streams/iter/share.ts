@@ -30,22 +30,63 @@ const { validateAbortSignal, validateInteger, validateObject } = require("intern
 // Async Share Implementation
 // =============================================================================
 
+interface ShareOptions {
+  __proto__?: null;
+  highWaterMark?: number;
+  backpressure?: string;
+  signal?: AbortSignal;
+}
+
+interface ResolvedShareOptions {
+  __proto__?: null;
+  highWaterMark: number;
+  backpressure: string;
+  signal?: AbortSignal;
+}
+
+interface ShareIteratorResult {
+  __proto__?: null;
+  done: boolean;
+  value: unknown;
+}
+
+interface ShareConsumerState {
+  __proto__?: null;
+  cursor: number;
+  resolve: ((result: ShareIteratorResult) => void) | null;
+  reject: ((reason: unknown) => void) | null;
+  detached: boolean;
+  pendingNext: Promise<unknown>;
+}
+
+interface ShareSourceIterator {
+  __proto__?: null;
+  next(): Promise<IteratorResult<unknown>>;
+  return?(): Promise<IteratorResult<unknown>>;
+}
+
+interface SyncShareConsumerState {
+  __proto__?: null;
+  cursor: number;
+  detached: boolean;
+}
+
 class ShareImpl {
-  #source;
-  #options;
+  #source: AsyncIterable<unknown> | Iterable<unknown>;
+  #options: ResolvedShareOptions;
   #buffer = new RingBuffer();
   #bufferStart = 0;
-  #consumers = new Set();
-  #sourceIterator = null;
+  #consumers = new Set<ShareConsumerState>();
+  #sourceIterator: ShareSourceIterator | null = null;
   #sourceExhausted = false;
-  #sourceError = null;
+  #sourceError: unknown = null;
   #cancelled = false;
   #pulling = false;
-  #pullWaiters = [];
+  #pullWaiters: (() => void)[] = [];
   #cachedMinCursor = 0;
   #cachedMinCursorConsumers = 0;
 
-  constructor(source, options) {
+  constructor(source, options: ResolvedShareOptions) {
     this.#source = source;
     this.#options = options;
   }
@@ -72,7 +113,7 @@ class ShareImpl {
   }
 
   #createRawConsumer() {
-    const state = {
+    const state: ShareConsumerState = {
       __proto__: null,
       cursor: this.#bufferStart,
       resolve: null,
@@ -182,7 +223,7 @@ class ShareImpl {
     };
   }
 
-  cancel(reason) {
+  cancel(reason?) {
     if (this.#cancelled) return;
     this.#cancelled = true;
 
@@ -349,14 +390,14 @@ class ShareImpl {
 // =============================================================================
 
 class SyncShareImpl {
-  #source;
-  #options;
+  #source: Iterable<unknown>;
+  #options: ResolvedShareOptions;
   #buffer = new RingBuffer();
   #bufferStart = 0;
-  #consumers = new Set();
-  #sourceIterator = null;
+  #consumers = new Set<SyncShareConsumerState>();
+  #sourceIterator: Iterator<unknown> | null = null;
   #sourceExhausted = false;
-  #sourceError = null;
+  #sourceError: unknown = null;
   #cancelled = false;
   #cachedMinCursor = 0;
   #cachedMinCursorConsumers = 0;
@@ -384,7 +425,7 @@ class SyncShareImpl {
   }
 
   #createRawConsumer() {
-    const state = {
+    const state: SyncShareConsumerState = {
       __proto__: null,
       cursor: this.#bufferStart,
       detached: false,
@@ -515,7 +556,7 @@ class SyncShareImpl {
     };
   }
 
-  cancel(reason) {
+  cancel(reason?) {
     if (this.#cancelled) return;
     this.#cancelled = true;
 
@@ -597,7 +638,7 @@ function onShareCancel(shareImpl, signal) {
 // Public API
 // =============================================================================
 
-function share(source, options = { __proto__: null }) {
+function share(source, options: ShareOptions = { __proto__: null }) {
   // Normalize source via from() - accepts strings, ArrayBuffers, protocols, etc.
   const normalized = from(source);
   validateObject(options, "options");
@@ -624,7 +665,7 @@ function share(source, options = { __proto__: null }) {
   return shareImpl;
 }
 
-function shareSync(source, options = { __proto__: null }) {
+function shareSync(source, options: ShareOptions = { __proto__: null }) {
   // Normalize source via fromSync() - accepts strings, ArrayBuffers, protocols, etc.
   const normalized = fromSync(source);
   validateObject(options, "options");

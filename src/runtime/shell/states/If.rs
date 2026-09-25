@@ -6,7 +6,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
-pub struct If {
+pub(crate) struct If {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::If>,
     pub(crate) io: IO,
@@ -47,7 +47,7 @@ impl Exec {
     }
 }
 
-pub enum ExecBranch {
+pub(crate) enum ExecBranch {
     Cond,
     Then,
     Elif { idx: u32 },

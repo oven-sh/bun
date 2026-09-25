@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
@@ -696,4 +696,29 @@ test("calls second", () => {
   const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(exitCode).toBe(0);
+});
+
+test("lcov reporter leaves no temp file behind when it replaces an existing report", async () => {
+  using dir = tempDir("cov-lcov-rerun", {
+    "lib.ts": `export const f = (x: number) => (x > 1 ? 1 : 2);`,
+    "c.test.ts": `import { expect, test } from "bun:test";
+import { f } from "./lib";
+test("c", () => {
+  expect(f(3)).toBe(1);
+});
+`,
+  });
+  for (let run = 0; run < 3; run++) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  }
+  expect(readdirSync(path.join(String(dir), "coverage"))).toEqual(["lcov.info"]);
 });

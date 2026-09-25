@@ -3,8 +3,8 @@ import util from "node:util";
 import {
   joinIndented,
   NamedType,
-  pascalCase,
   reindent,
+  rustVariants,
   toASCIILiteral,
   toQuotedLiteral,
   trivialRust,
@@ -72,7 +72,10 @@ export function enumeration(
         pub enum ${name} {
           ${joinIndented(
             10,
-            uniqueValues.map((value, i) => `${pascalCase(value)} = ${i},`),
+            rustVariants(
+              name,
+              cppMembers.map(member => member.slice(1)),
+            ).map((variant, i) => `${variant} = ${i},`),
           )}
         }
       `);

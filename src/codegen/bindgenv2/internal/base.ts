@@ -156,6 +156,33 @@ export function snakeCase(name: string): string {
     .toLowerCase();
 }
 
+const rustKeywords = new Set(
+  (
+    "abstract as async await become box break const continue crate do dyn else enum extern false final fn for gen " +
+    "if impl in let loop macro match mod move mut override priv pub ref return self static struct super trait true " +
+    "try type typeof unsafe unsized use virtual where while yield"
+  ).split(" "),
+);
+
+/** A keyword gets a trailing underscore, as `unix_` has in SocketConfig.bindv2.ts and as cppbind.ts does. */
+export function rustField(name: string): string {
+  return rustKeywords.has(name) ? name + "_" : name;
+}
+
+/** The variants of one enum, checked: each is an identifier and no two are equal. */
+export function rustVariants(owner: string, names: readonly string[]): string[] {
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (!/^[A-Z][A-Za-z0-9]*$/.test(name) || name === "Self") {
+      throw RangeError(`${owner}: \`${name}\` cannot be the name of a Rust variant`);
+    }
+    if (seen.size === seen.add(name).size) {
+      throw RangeError(`${owner}: two members have the Rust name \`${name}\``);
+    }
+  }
+  return [...names];
+}
+
 export function validateName(name: string): void {
   const reservedPrefixes = ["IDL", "Bindgen", "Extern", "Generated", "MemberType"];
   const reservedNames = ["Bun", "WTF", "JSC", "WebCore", "Self"];

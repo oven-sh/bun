@@ -9,6 +9,7 @@ import {
   type RustArm,
   type RustLayout,
   type RustType,
+  rustVariants,
   Type,
   unsupportedInRust,
   validateName,
@@ -127,6 +128,10 @@ export function union(
           rust.arm === undefined ? { type: rust.member, fromExtern: rust.fromExtern } : rust.arm;
         return { variant: pascalCase(key), extern: rust.extern, payload, tag };
       });
+      rustVariants(
+        name,
+        arms.map(arm => arm.variant),
+      );
       const released = arms.filter(arm => arm.payload?.release);
       return reindent(`
         pub enum ${name} {
@@ -183,8 +188,7 @@ export function union(
               ${joinIndented(
                 14,
                 released.map(arm => `Self::${arm.variant}(v) => ${arm.payload!.release}(v),`),
-              )}
-              _ => {}
+              )}${released.length < arms.length ? "\n              _ => {}" : ""}
             }
           }
         }`

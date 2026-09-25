@@ -7,6 +7,7 @@ import {
   joinIndented,
   NamedType,
   reindent,
+  rustField,
   type RustLayout,
   type RustType,
   snakeCase,
@@ -97,14 +98,14 @@ export function dictionary(
         align,
         fields: fullMembers.map((m, i) => ({
           cpp: m.internalName,
-          rust: snakeCase(m.internalName),
+          rust: rustField(snakeCase(m.internalName)),
           offset: offsets[i],
         })),
       };
     }
     get rustSource() {
       const members = fullMembers.map(m => ({
-        name: snakeCase(m.internalName),
+        name: rustField(snakeCase(m.internalName)),
         rust: m.type.rust,
       }));
       const by = borrowed(this.rust.size);

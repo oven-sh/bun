@@ -400,9 +400,18 @@ test.concurrent("a subscribe frame that drops a topic stops delivery of that top
   const dev = watchDevServer(proc);
   const port = await dev.port;
 
+  // A process exit and a socket close reject `failed` at once.
   const failed = Promise.withResolvers<never>();
   failed.promise.catch(() => {});
-  proc.exited.then(() => failed.reject(new Error(`dev server exited\n--- dev server stderr ---\n${dev.stderr()}`)));
+  proc.exited.then(() => failed.reject(new Error("dev server exited")));
+  /** Awaits `promise`. Its failure, a process exit, or a socket close rejects with the dev server's stderr. */
+  async function orFail<T>(promise: Promise<T>) {
+    try {
+      return await Promise.race([promise, failed.promise]);
+    } catch (e) {
+      throw new Error(`${(e as Error).message}\n--- dev server stderr ---\n${dev.stderr()}`, { cause: e });
+    }
+  }
 
   // The ids of the frames that the server published to the socket since its
   // last SetUrl reply.
@@ -416,13 +425,7 @@ test.concurrent("a subscribe frame that drops a topic stops delivery of that top
       replies.shift()?.(published);
       published = [];
     },
-    // An aborting dev server also closes the socket. Its exit rejects
-    // `failed` with its stderr, so report the close only if it is alive.
-    err =>
-      void fetch(`http://127.0.0.1:${port}/`).then(
-        () => failed.reject(err),
-        () => {},
-      ),
+    err => failed.reject(err),
   );
 
   // The server answers SetUrl (`n` plus a route) on the same socket, and only
@@ -434,7 +437,7 @@ test.concurrent("a subscribe frame that drops a topic stops delivery of that top
     route = route === "/" ? "/other" : "/";
     const reply = new Promise<string[]>(resolve => replies.push(resolve));
     hmr.ws.send("n" + route);
-    return Promise.race([reply, failed.promise]);
+    return orFail(reply);
   }
 
   const delivered: { topics: string; ids: string[] }[] = [];
@@ -442,9 +445,7 @@ test.concurrent("a subscribe frame that drops a topic stops delivery of that top
     hmr.ws.send("s" + topics);
     // Frames that arrive before this reply belong to the previous topic set.
     await roundTrip();
-    // A dev server that aborts fails the request. `failed` has the reason.
-    const response = await fetch(`http://127.0.0.1:${port}${page}`).catch(() => failed.promise);
-    await response.text();
+    await orFail(fetch(`http://127.0.0.1:${port}${page}`).then(response => response.text()));
     delivered.push({ topics, ids: [...new Set(await roundTrip())].sort() });
   }
   expect(delivered).toEqual([

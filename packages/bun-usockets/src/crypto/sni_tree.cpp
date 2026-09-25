@@ -30,9 +30,8 @@
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
-
-/* We only handle a maximum of 10 labels per hostname */
-#define MAX_LABELS 10
+#include <utility>
+#include <vector>
 
 /* This cannot be shared */
 thread_local void (*sni_free_cb)(void *);
@@ -43,6 +42,19 @@ struct sni_node {
     std::map<std::string_view, std::unique_ptr<sni_node>> children;
 
     ~sni_node() {
+        /* A name from JS can have any number of labels, so tear the subtree down
+         * with an explicit stack instead of one destructor frame per label */
+        std::vector<std::unique_ptr<sni_node>> pending;
+        releaseChildren(pending);
+        while (!pending.empty()) {
+            std::unique_ptr<sni_node> node = std::move(pending.back());
+            pending.pop_back();
+            node->releaseChildren(pending);
+        }
+    }
+
+    /* Frees what this node owns in its children and moves the child nodes out to `pending` */
+    void releaseChildren(std::vector<std::unique_ptr<sni_node>> &pending) {
         for (auto &p : children) {
             /* The data of our string_views are managed by us_malloc */
             us_free((void *) p.first.data());
@@ -52,57 +64,84 @@ struct sni_node {
             if (p.second.get()->user) {
                 sni_free_cb(p.second.get()->user);
             }
+
+            pending.push_back(std::move(p.second));
         }
+        children.clear();
     }
 };
 
+/* Splits the first label off a hostname. `rest` is left holding whatever follows the dot.
+ * All of sni_add, sni_remove and sni_find must split names the same way. */
+static std::string_view nextLabel(std::string_view &rest) {
+    std::string_view label = rest.substr(0, rest.find('.', 0));
+    rest.remove_prefix(std::min(rest.length(), label.length() + 1));
+    return label;
+}
+
 // this can only delete ONE single node, but may cull "empty nodes with null as data"
-void *removeUser(struct sni_node *root, unsigned int label, std::string_view *labels, unsigned int numLabels) {
+void *removeUser(struct sni_node *root, std::string_view rest) {
 
-    /* If we are in the bottom (past bottom by one), there is nothing to remove */
-    if (label == numLabels) {
-        void *user = root->user;
-        /* Mark us for culling on the way up */
-        root->user = nullptr;
-        return user;
+    /* The hostname comes from JS and can have any number of labels, so walk down
+     * with an explicit path instead of one stack frame per label */
+    std::vector<std::pair<struct sni_node *, decltype(root->children)::iterator>> path;
+
+    while (!rest.empty()) {
+        /* Is this label a child of root? */
+        auto it = root->children.find(nextLabel(rest));
+        if (it == root->children.end()) {
+            /* We cannot continue */
+            return nullptr;
+        }
+
+        path.emplace_back(root, it);
+        root = it->second.get();
     }
 
-    /* Is this label a child of root? */
-    auto it = root->children.find(labels[label]);
-    if (it == root->children.end()) {
-        /* We cannot continue */
-        return nullptr;
-    }
-
-    void *removedUser = removeUser(it->second.get(), label + 1, labels, numLabels);
+    /* We are in the bottom, take the user and mark us for culling on the way up */
+    void *removedUser = root->user;
+    root->user = nullptr;
 
     /* On the way back up, we may cull empty nodes with no children.
      * This ends up being where we remove all nodes */
-    if (it->second.get()->children.empty() && it->second.get()->user == nullptr) {
+    for (auto p = path.rbegin(); p != path.rend(); ++p) {
+        struct sni_node *parent = p->first;
+        auto it = p->second;
+
+        if (!it->second.get()->children.empty() || it->second.get()->user != nullptr) {
+            break;
+        }
 
         /* The data of our string_views are managed by us_malloc */
         us_free((void *) it->first.data());
 
         /* This can only happen with user set to null, otherwise we use sni_free_cb which is unset by sni_remove */
-        root->children.erase(it);
+        parent->children.erase(it);
     }
 
     return removedUser;
 }
 
-void *getUser(struct sni_node *root, unsigned int label, std::string_view *labels, unsigned int numLabels) {
+void *getUser(struct sni_node *root, std::string_view rest) {
 
     /* Do we have labels to match? Otherwise, return where we stand */
-    if (label == numLabels) {
+    if (rest.empty()) {
         return root->user;
     }
 
+    std::string_view label = nextLabel(rest);
+
     /* Try and match by our label */
-    auto it = root->children.find(labels[label]);
+    auto it = root->children.find(label);
     if (it != root->children.end()) {
-        void *user = getUser(it->second.get(), label + 1, labels, numLabels);
+        void *user = getUser(it->second.get(), rest);
         if (user) {
             return user;
+        }
+
+        /* A literal "*" label already searched the wildcard child above */
+        if (label == "*") {
+            return nullptr;
         }
     }
 
@@ -114,7 +153,7 @@ void *getUser(struct sni_node *root, unsigned int label, std::string_view *label
     }
 
     /* We matched by wildcard */
-    return getUser(it->second.get(), label + 1, labels, numLabels);
+    return getUser(it->second.get(), rest);
 }
 
 extern "C" {
@@ -135,10 +174,8 @@ extern "C" {
         struct sni_node *root = (struct sni_node *) sni;
 
         /* Traverse all labels in hostname */
-        for (std::string_view view(hostname, strlen(hostname)), label;
-            view.length(); view.remove_prefix(std::min(view.length(), label.length() + 1))) {
-            /* Label is the token separated by dot */
-            label = view.substr(0, view.find('.', 0));
+        for (std::string_view rest(hostname, strlen(hostname)); rest.length();) {
+            std::string_view label = nextLabel(rest);
 
             auto it = root->children.find(label);
             if (it == root->children.end()) {
@@ -165,51 +202,11 @@ extern "C" {
 
     /* Removes the exact match. Wildcards are treated as the verbatim asterisk char, not as an actual wildcard */
     void *sni_remove(void *sni, const char *hostname) {
-        struct sni_node *root = (struct sni_node *) sni;
-
-        /* I guess 10 labels is an okay limit */
-        std::string_view labels[10];
-        unsigned int numLabels = 0;
-
-        /* We traverse all labels first of all */
-        for (std::string_view view(hostname, strlen(hostname)), label;
-            view.length(); view.remove_prefix(std::min(view.length(), label.length() + 1))) {
-            /* Label is the token separated by dot */
-            label = view.substr(0, view.find('.', 0));
-
-            /* Anything longer than 10 labels is forbidden */
-            if (numLabels == 10) {
-                return nullptr;
-            }
-
-            labels[numLabels++] = label;
-        }
-
-        return removeUser(root, 0, labels, numLabels);
+        return removeUser((struct sni_node *) sni, std::string_view(hostname, strlen(hostname)));
     }
 
     void *sni_find(void *sni, const char *hostname) {
-        struct sni_node *root = (struct sni_node *) sni;
-
-        /* I guess 10 labels is an okay limit */
-        std::string_view labels[10];
-        unsigned int numLabels = 0;
-
-        /* We traverse all labels first of all */
-        for (std::string_view view(hostname, strlen(hostname)), label;
-            view.length(); view.remove_prefix(std::min(view.length(), label.length() + 1))) {
-            /* Label is the token separated by dot */
-            label = view.substr(0, view.find('.', 0));
-
-            /* Anything longer than 10 labels is forbidden */
-            if (numLabels == 10) {
-                return nullptr;
-            }
-
-            labels[numLabels++] = label;
-        }
-
-        return getUser(root, 0, labels, numLabels);
+        return getUser((struct sni_node *) sni, std::string_view(hostname, strlen(hostname)));
     }
 
 }

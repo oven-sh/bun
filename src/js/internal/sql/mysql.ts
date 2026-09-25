@@ -72,7 +72,8 @@ initMySQL(
     reject: Error | (MySQLErrorOptions & { message: string }),
     queries: Query<any, any>[],
   ) {
-    reject = wrapError(reject);
+    // A parameter can throw a non-object, and the query rejects with it.
+    if ($isObject(reject)) reject = wrapError(reject);
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {

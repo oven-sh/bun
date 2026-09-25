@@ -230,6 +230,7 @@ impl FileExt for File {
                     &binding,
                     node_fs::args::Unlink::owned(path_like.slice().to_vec()),
                     cx.vm().as_mut(),
+                    None,
                 ))
             }
             PathOrFileDescriptor::Fd(_) => Ok(JSPromise::resolved_promise_value(

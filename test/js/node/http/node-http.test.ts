@@ -29,6 +29,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
+import { inspect } from "node:util";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -4023,6 +4024,48 @@ it("a non-200 CONNECT through a proxy that holds the connection open is destroye
     agent.destroy();
   } finally {
     for (const s of proxySockets) s.destroy();
+    proxy.close();
+  }
+});
+
+// nodejs/node 3e9954a88b (CVE-2026-48615)
+it.each([
+  ["username and password", "user:s3cret", "user:s3cret"],
+  ["username only", "s3cret", "s3cret:"],
+  ["password only", ":s3cret", ":s3cret"],
+  ["percent-encoded", "us%40er:s3cret%3A", "us@er:s3cret:"],
+])("ERR_PROXY_TUNNEL does not expose the proxy credentials (%s)", async (_name, userinfo, credentials) => {
+  const { promise: proxyAuthorization, resolve: onProxyAuthorization } = Promise.withResolvers<string | undefined>();
+  const proxy = createServer();
+  proxy.on("connect", (req, socket) => {
+    onProxyAuthorization(req.headers["proxy-authorization"]);
+    socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nConnection: close\r\n\r\n");
+  });
+  try {
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    const proxyPort = (proxy.address() as AddressInfo).port;
+
+    const agent = new https.Agent({ proxyEnv: { HTTPS_PROXY: `http://${userinfo}@127.0.0.1:${proxyPort}` } });
+    try {
+      const { promise: errored, resolve: onError } = Promise.withResolvers<any>();
+      const req = https.request({ host: "example.com", port: 443, path: "/", agent }, () => {});
+      req.on("error", onError);
+      req.end();
+
+      const err = await errored;
+      expect({ code: err.code, statusCode: err.statusCode, message: err.message }).toEqual({
+        code: "ERR_PROXY_TUNNEL",
+        statusCode: 407,
+        message: `Failed to establish tunnel to example.com:443 via http://127.0.0.1:${proxyPort}/: HTTP/1.1 407 Proxy Authentication Required`,
+      });
+      expect(inspect(err)).not.toContain("s3cret");
+      // The proxy still receives the credentials.
+      expect(await proxyAuthorization).toBe(`Basic ${Buffer.from(credentials).toString("base64")}`);
+    } finally {
+      agent.destroy();
+    }
+  } finally {
     proxy.close();
   }
 });

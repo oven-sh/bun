@@ -112,6 +112,7 @@ pub mod task_tag {
         RuntimeTranspilerStore,
         S3HttpDownloadStreamingTask,
         S3HttpSimpleTask,
+        S3UploadWriterCollected,  // MultiPartUpload (its `writer()` was collected before `end()`)
         SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
         ServerAllConnectionsClosedTask,
         HTTPServerDeinit,

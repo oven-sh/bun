@@ -1040,9 +1040,7 @@ impl TranspilerJob {
 
         let source_code_printer = tls_get_or_leak(&SOURCE_CODE_PRINTER, || {
             let writer = BufferWriter::init();
-            let mut bp = Box::new(BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
-            bp
+            Box::new(BufferPrinter::init(writer))
         });
 
         // Swap the buffer out and write it back via the
@@ -1059,7 +1057,6 @@ impl TranspilerJob {
             // printer.ctx.buffer.deinit() → Drop
             let writer = BufferWriter::init();
             *source_code_printer = BufferPrinter::init(writer);
-            source_code_printer.ctx.append_null_byte = false;
             printer = core::mem::replace(
                 source_code_printer,
                 BufferPrinter::init(BufferWriter::init()),
@@ -1150,7 +1147,6 @@ impl TranspilerJob {
                 // printer.ctx.buffer.deinit() → Drop
                 let writer = BufferWriter::init();
                 *source_code_printer = BufferPrinter::init(writer);
-                source_code_printer.ctx.append_null_byte = false;
             }
             // else: writeback guard already restored `printer` into the thread-local.
 

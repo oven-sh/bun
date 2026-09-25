@@ -55,100 +55,12 @@ function constructorName(typeName) {
   return `JS${typeName}Constructor`;
 }
 
-function DOMJITName(fnName) {
-  return `${fnName}WithoutTypeChecks`;
-}
-
-function argTypeName(arg) {
-  return {
-    ["bool"]: "bool",
-    ["int"]: "int32_t",
-    ["JSUint8Array"]: "JSC::JSUint8Array*",
-    ["JSString"]: "JSC::JSString*",
-    ["JSValue"]: "JSC::JSValue",
-  }[arg];
-}
-
-function DOMJITType(type) {
-  return {
-    ["bool"]: "JSC::SpecBoolean",
-    ["int"]: "JSC::SpecInt32Only",
-    ["JSUint8Array"]: "JSC::SpecUint8Array",
-    ["JSString"]: "JSC::SpecString",
-    ["JSValue"]: "JSC::SpecHeapTop",
-  }[type];
-}
-
-function DOMJITFunctionDeclaration(jsClassName, fnName, symName, { args, returns, pure = false }) {
-  const argNames = args.map((arg, i) => `${argTypeName(arg)} arg${i}`);
-  const formattedArgs = argNames.length > 0 ? `, ${argNames.join(", ")}` : "";
-  const domJITArgs = args.length > 0 ? `, ${args.map(DOMJITType).join(", ")}` : "";
-  externs += `
-extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${DOMJITName(symName)}(void* ptr, JSC::JSGlobalObject * lexicalGlobalObject${formattedArgs});
-  `;
-
-  return (
-    `
-extern JSC_CALLCONV JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(${DOMJITName(
-      fnName,
-    )}Wrapper, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue${formattedArgs}));
-static const JSC::DOMJIT::Signature DOMJITSignatureFor${fnName}(${DOMJITName(fnName)}Wrapper,
-  ${jsClassName}::info(),
-  ${
-    pure
-      ? "JSC::DOMJIT::Effect::forPure()"
-      : "JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top())"
-  },
-  ${returns === "JSString" ? "JSC::SpecString" : DOMJITType("JSValue")}${domJITArgs});
-`.trim() + "\n"
-  );
-}
-
-function DOMJITFunctionDefinition(jsClassName, fnName, symName, { args }, fn) {
-  const argNames = args.map((arg, i) => `${argTypeName(arg)} arg${i}`);
-  const formattedArgs = argNames.length > 0 ? `, ${argNames.join(", ")}` : "";
-  const retArgs = argNames.length > 0 ? `, ${args.map((b, i) => "arg" + i).join(", ")}` : "";
-
-  return `
-JSC_DEFINE_JIT_OPERATION(${DOMJITName(
-    fnName,
-  )}Wrapper, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue${formattedArgs}))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-#if BUN_DEBUG
-    ${jsClassName}* wrapper = reinterpret_cast<${jsClassName}*>(thisValue);
-    JSC::EncodedJSValue result = ${DOMJITName(symName)}(wrapper->wrapped(), lexicalGlobalObject${retArgs});
-    JSValue decoded = JSValue::decode(result);
-    if (wrapper->m_${fn}_expectedResultType) {
-        if (decoded.isCell() && !decoded.isEmpty()) {
-          ASSERT_WITH_MESSAGE(wrapper->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
-          ASSERT_WITH_MESSAGE(wrapper->m_${fn}_expectedResultType.value().value() == decoded.asCell()->type(), "DOMJIT function return type changed!");
-        } else {
-          ASSERT_WITH_MESSAGE(!wrapper->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
-        }
-    } else if (!decoded.isEmpty()) {
-        wrapper->m_${fn}_expectedResultType = decoded.isCell()
-          ? std::optional<JSC::JSType>(decoded.asCell()->type())
-          : std::optional<JSC::JSType>(std::nullopt);
-    }
-    return { result };
-#endif
-    return {${DOMJITName(symName)}(reinterpret_cast<${jsClassName}*>(thisValue)->wrapped(), lexicalGlobalObject${retArgs})};
-}
-`.trim();
-}
-
 function zigExportName(to: Map<string, string>, symbolName: (name: string) => string, prop) {
-  var { getter, setter, fn, DOMJIT, cache } = prop;
+  var { getter, setter, fn } = prop;
   const exportNames = {
     getter: "",
     setter: "",
     fn: "",
-    DOMJIT: "",
   };
 
   if (getter && !to.get(getter)) {
@@ -160,9 +72,6 @@ function zigExportName(to: Map<string, string>, symbolName: (name: string) => st
   }
 
   if (fn && !to.get(fn)) {
-    if (DOMJIT) {
-      to.set(DOMJITName(fn), (exportNames.DOMJIT = symbolName(DOMJITName(fn))));
-    }
     to.set(fn, (exportNames.fn = symbolName(fn)));
   }
 
@@ -182,11 +91,8 @@ function propRow(
     setter,
     fn,
     length = 0,
-    cache,
-    DOMJIT,
     enumerable = true,
     configurable = false,
-    value,
     builtin,
     writable = false,
   } = (defaultPropertyAttributes ? Object.assign({}, defaultPropertyAttributes, prop) : prop) as any;
@@ -232,12 +138,6 @@ function propRow(
     } } }
 `.trim();
   } else if (fn !== undefined) {
-    if (DOMJIT) {
-      // { "getElementById"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTestDOMJITPrototypeFunction_getElementById, &DOMJITSignatureForTestDOMJITGetElementById } },
-      return `
-      { "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ${fn}, &DOMJITSignatureFor${symbol} } }
-      `.trim();
-    }
     return `
 { "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::NativeFunctionType, ${fn}, ${
       length || 0
@@ -726,24 +626,6 @@ function renderDecls(symbolName, typeName, proto) {
         `.trim(),
         "\n",
       );
-
-      if (proto[name].DOMJIT) {
-        rows.push(
-          DOMJITFunctionDeclaration(
-            className(typeName),
-            symbolName(typeName, name),
-            symbolName(typeName, proto[name].fn),
-            proto[name].DOMJIT,
-          ),
-          DOMJITFunctionDefinition(
-            className(typeName),
-            symbolName(typeName, name),
-            symbolName(typeName, proto[name].fn),
-            proto[name].DOMJIT,
-            proto[name].fn,
-          ),
-        );
-      }
     }
   }
 
@@ -980,25 +862,6 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 
     ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_TOP_EXCEPTION_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
 
-    ${
-      !proto[name].DOMJIT
-        ? ""
-        : `
-    JSValue decoded = JSValue::decode(result);
-    if (thisObject->m_${fn}_expectedResultType) {
-      if (decoded.isCell() && !decoded.isEmpty()) {
-        ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
-        ASSERT_WITH_MESSAGE(thisObject->m_${fn}_expectedResultType.value().value() == decoded.asCell()->type(), "DOMJIT function return type changed!");
-      } else {
-        ASSERT_WITH_MESSAGE(!thisObject->m_${fn}_expectedResultType.value().has_value(), "DOMJIT function return type changed!");
-      }
-    } else if (!decoded.isEmpty()) {
-      thisObject->m_${fn}_expectedResultType = decoded.isCell()
-        ? std::optional<JSC::JSType>(decoded.asCell()->type())
-        : std::optional<JSC::JSType>(std::nullopt);
-    }`
-    }
-
 #if ASSERT_ENABLED
     JSValue decodedValue = JSValue::decode(result);
     if (!decodedValue.isEmpty() && decodedValue.isCell()) {
@@ -1204,8 +1067,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
         
 
-        ${domJITTypeCheckFields(proto, klass)}
-
         ${weakOwner}
 
         ${DECLARE_VISIT_CHILDREN}
@@ -1215,23 +1076,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         ${obj.valuesArray ? "WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray;" : ""}
     };
   `.trim();
-}
-
-function domJITTypeCheckFields(proto, klass) {
-  var output = "#if BUN_DEBUG\n";
-  for (const name in proto) {
-    const { DOMJIT, fn } = proto[name];
-    if (!DOMJIT) continue;
-    output += `std::optional<std::optional<JSC::JSType>> m_${fn}_expectedResultType = std::nullopt;\n`;
-  }
-
-  for (const name in klass) {
-    const { DOMJIT, fn } = klass[name];
-    if (!DOMJIT) continue;
-    output += `std::optional<std::optional<JSC::JSType>> m_${fn}_expectedResultType = std::nullopt;\n`;
-  }
-  output += "#endif\n";
-  return output;
 }
 
 /** The (heap-analyzer property name, backing member) rows analyzeHeap reports. */
@@ -1649,16 +1493,6 @@ function generateImpl(typeName, obj: ClassDefinition) {
 // \`(ret == 0) == hasException()\` biconditional in debug builds.
 // ──────────────────────────────────────────────────────────────────────────
 
-function RustDOMJITArgType(type) {
-  return {
-    ["bool"]: "bool",
-    ["int"]: "i32",
-    ["JSUint8Array"]: "*mut bun_jsc::JSUint8Array",
-    ["JSString"]: "*mut bun_jsc::JSString",
-    ["JSValue"]: "JSValue",
-  }[type];
-}
-
 /** camelCase / PascalCase → snake_case, then escape Rust reserved words. */
 function rustSnakeIdent(name: string): string {
   // getURLSchemeV2 → get_url_scheme_v2; HTTPServer → http_server; crc32 → crc32
@@ -2013,7 +1847,7 @@ function generateRust(
     const seen = new Map<string, string>();
     const exportNames = name => zigExportName(seen, n => protoSymbolName(typeName, n), proto[name]);
     for (const name in proto) {
-      const { getter, setter, fn, this: thisValue = false, passThis, DOMJIT } = proto[name];
+      const { getter, setter, fn, this: thisValue = false, passThis } = proto[name];
       const names = exportNames(name);
 
       if (thisValue && !sharedThis && (names.getter || names.setter)) {
@@ -2044,17 +1878,6 @@ function generateRust(
 
       if (names.fn) {
         const id = rustSnakeIdent(fn);
-        if (names.DOMJIT) {
-          const { args } = DOMJIT;
-          const argDecl = args.map((t, i) => `arg${i}: ${RustDOMJITArgType(t)}`).join(", ");
-          const argFwd = args.map((_, i) => `arg${i}`).join(", ");
-          const fastId = rustSnakeIdent(DOMJITName(fn));
-          thunk(
-            names.DOMJIT,
-            `(this: ${recv}, global: &JSGlobalObject${args.length ? ", " + argDecl : ""}) -> JSValue`,
-            `    ${T}::${fastId}(this, global${args.length ? ", " + argFwd : ""})`,
-          );
-        }
         thunk(
           names.fn,
           `(this: ${recv}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
@@ -2071,7 +1894,7 @@ function generateRust(
     const seen = new Map<string, string>();
     const exportNames = name => zigExportName(seen, n => classSymbolName(typeName, n), klass[name]);
     for (const name in klass) {
-      const { getter, setter, fn, DOMJIT } = klass[name];
+      const { getter, setter, fn } = klass[name];
       const names = exportNames(name);
 
       if (names.getter) {
@@ -2094,17 +1917,6 @@ function generateRust(
 
       if (names.fn) {
         const id = rustSnakeIdent(fn);
-        if (names.DOMJIT) {
-          const { args } = DOMJIT;
-          const argDecl = args.map((t, i) => `arg${i}: ${RustDOMJITArgType(t)}`).join(", ");
-          const argFwd = args.map((_, i) => `arg${i}`).join(", ");
-          const fastId = rustSnakeIdent(DOMJITName(fn));
-          thunk(
-            names.DOMJIT,
-            `(global: &JSGlobalObject, this_value: JSValue${args.length ? ", " + argDecl : ""}) -> JSValue`,
-            `    ${T}::${fastId}(global, this_value${args.length ? ", " + argFwd : ""})`,
-          );
-        }
         thunk(
           names.fn,
           `(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue`,
@@ -2346,10 +2158,6 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
-
-#include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include <JavaScriptCore/FrameTracers.h>
-#include <JavaScriptCore/DFGAbstractHeap.h>
 
 #include "JSDOMConvertBufferSource.h"
 #include "ZigGeneratedClasses.h"

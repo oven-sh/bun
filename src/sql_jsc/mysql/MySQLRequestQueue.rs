@@ -173,13 +173,7 @@ impl MySQLRequestQueue {
                     debug!("run failed");
                     // R-2: `on_error` takes `&self`.
                     conn_ref.on_error(Some(req.get()), err);
-                    if offset == 0
-                        && (queue_ref.requests.get().front())
-                            .is_some_and(|f| core::ptr::eq(f.as_ptr(), req.get()))
-                    {
-                        queue_ref.requests.with_mut(|q| q.pop_front());
-                    }
-                    offset += 1;
+                    // `on_error` completed the request: the branch above retires it.
                     continue;
                 }
                 if req.is_being_prepared() {

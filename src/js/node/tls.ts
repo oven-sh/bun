@@ -5,7 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { domainToASCII } = require("internal/url");
+const { idnaToASCII } = require("internal/url");
 const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
@@ -454,8 +454,9 @@ function checkServerIdentity(hostname, cert) {
   const ips = [];
 
   hostname = "" + hostname;
-  // CVE-2026-48618, https://github.com/nodejs/node/commit/1efb4ff51a: IDNA maps "。" to ".".
-  const hostnameASCII = domainToASCII(hostname);
+  // CVE-2026-48618: UTS #46 maps "。" to ".". Not url.domainToASCII() as in Node.js: that URL host parse cuts the name at "/".
+  const hostnameASCII =
+    RegExpPrototypeExec.$call(/[^\u0000-\u007F]/, hostname) === null ? hostname : idnaToASCII(hostname);
 
   // Remove trailing dots for error messages and matching.
   hostname = unfqdn(hostname);
@@ -477,14 +478,18 @@ function checkServerIdentity(hostname, cert) {
   let valid = false;
   let reason = "Unknown reason";
 
-  // https://github.com/nodejs/node/commit/1d87a24050: domainToASCII("::1") is "", so IP hosts stay as typed.
+  // As in Node.js (https://github.com/nodejs/node/commit/1d87a24050), a host is an IP address only as typed.
   if (net.isIP(hostname)) {
-    valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
+    // canonicalizeIP() is undefined for "::1%lo" and for a malformed IP SAN, and undefined must not match undefined.
+    const ip = canonicalizeIP(hostname);
+    valid = ip !== undefined && ArrayPrototypeIncludes.$call(ips, ip);
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
   } else {
     const hasDnsNames = dnsNames.length > 0;
     if (hasDnsNames || subject?.CN) {
-      const hostParts = splitHost(hostnameASCIIWithoutFQDN);
+      // Not in Node.js: a host with a character that no hostname has matches nothing, as in rustls and mozilla::pkix. "*.evil.test" would cover "localhost/.evil.test".
+      const isHostname = RegExpPrototypeExec.$call(/[^A-Za-z0-9._-]/, hostnameASCIIWithoutFQDN) === null;
+      const hostParts = isHostname ? splitHost(hostnameASCIIWithoutFQDN) : [];
       const wildcard = pattern => check(hostParts, pattern, true);
 
       if (hasDnsNames) {
@@ -548,11 +553,20 @@ function normalizePemKeyOption(key, ctxPassphrase) {
 
 const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 
+// SNI is a C string, so as in Node.js it ends at a NUL. checkServerIdentity() still gets the whole servername.
+function sniName(servername) {
+  if (typeof servername !== "string") return servername;
+  const nul = StringPrototypeIndexOf.$call(servername, "\0");
+  return nul === -1 ? servername : StringPrototypeSlice.$call(servername, 0, nul);
+}
+
 function newNativeSecureContext(options, cached = false) {
   maybeWarnAboutExtraCACerts();
   // tls.createSecureContext() with no options still goes through the version
   // translation below so the module-level DEFAULT_MIN/MAX_VERSION apply.
   options = options == null ? {} : processPfxOptions(options);
+  const servername = options.servername;
+  if (sniName(servername) !== servername) options = { ...options, servername: sniName(servername) };
   // PKCS#12-embedded CAs extend the trust set after the context is built; a
   // mutated context must not be the shared cached one.
   const pfxExtraCAs = options._pfxExtraCACerts;
@@ -1148,6 +1162,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
     // of rebuilding from raw cert/key bytes.
     secureContext: ctx?.context,
     servername,
+    serverName: sniName(servername),
   };
 };
 
@@ -1456,7 +1471,7 @@ function Server(options, secureConnectionListener): void {
   this[buntls] = function (port, host, isClient) {
     return [
       {
-        serverName: this.servername || host || "localhost",
+        serverName: sniName(this.servername || host || "localhost"),
         key: normalizePemKeyOption(this.key, this.passphrase),
         cert: this.cert,
         ca: this.ca,

@@ -16,10 +16,7 @@ export function asyncIterator(this: Console) {
   var activeReader: ReturnType<typeof stream.getReader> | undefined;
 
   async function* ConsoleAsyncIterator() {
-    // After a `--hot` reload, the iterator that holds stdin can belong to a generation that was replaced. It is
-    // suspended and never reaches its `finally`, so the newest iterator takes the lock, as the newest `Bun.serve()`
-    // takes the port. The iterator that lost the lock then stops on a promise that never settles: `done` would run
-    // the code after a loop that did not end, and an error would be reported on each save.
+    // Code that `--hot` replaced never releases its reader, so the newest iterator takes the lock.
     const replaced = typeof $hotReloadGeneration !== "undefined" ? activeReader : undefined;
     if (replaced !== undefined) {
       activeReader = undefined;
@@ -28,7 +25,7 @@ export function asyncIterator(this: Console) {
     var reader = stream.getReader();
     activeReader = reader;
     if (replaced !== undefined) {
-      // releaseLock() took the source's hold on the event loop away, and a paused `process.stdin` stops the source.
+      // releaseLock() unrefs the source, and a paused `process.stdin` stops it.
       const source = stream.$bunNativePtr;
       if ($isObject(source)) {
         source.updateRef(true);
@@ -43,6 +40,7 @@ export function asyncIterator(this: Console) {
 
         while (i !== -1) {
           yield decoder.decode(actualChunk.subarray(last, i));
+          // An iterator that lost the lock never settles: `done` would run the code after its loop.
           if (reader !== activeReader) await $newPromise();
           last = i + 1;
           i = indexOf(actualChunk, last);

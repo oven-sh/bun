@@ -9,7 +9,7 @@ use crate::shell::states::r#if::If;
 use crate::shell::states::pipeline::Pipeline;
 use crate::shell::yield_::Yield;
 
-pub struct Async {
+pub(crate) struct Async {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Expr>,
     pub(crate) io: IO,

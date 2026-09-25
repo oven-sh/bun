@@ -1,7 +1,7 @@
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::node::types::FdJsc as _;
@@ -17,10 +17,11 @@ use super::{StdioResult, Subprocess};
 
 // `bun.ptr.CowString` — owned/borrowed byte slice (has
 // `init_owned` / `length` / `take_slice`).
-pub type CowString = CowSlice<u8>;
+pub(crate) type CowString = CowSlice<u8>;
 
-pub enum Readable {
+pub(crate) enum Readable {
     Fd(Fd),
+    #[cfg_attr(windows, allow(dead_code))]
     Memfd(Fd),
     Pipe(RefPtr<PipeReader>),
     Inherit,
@@ -66,7 +67,7 @@ impl Readable {
         }
     }
 
-    pub fn ref_(&mut self) {
+    pub(crate) fn ref_(&mut self) {
         match self {
             Readable::Pipe(pipe) => {
                 Self::pipe_reader_mut(pipe).update_ref(true);
@@ -152,7 +153,7 @@ impl Readable {
         }
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         match self {
             Readable::Memfd(fd) => {
                 let fd = *fd;
@@ -169,7 +170,7 @@ impl Readable {
         }
     }
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         match self {
             Readable::Memfd(fd) => {
                 let fd = *fd;
@@ -213,7 +214,7 @@ impl Readable {
         }
     }
 
-    pub fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>, _exited: bool) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>, _exited: bool) -> JsResult<JSValue> {
         match self {
             // should only be reachable when the entire output is buffered.
             Readable::Memfd(_) => self.to_buffered_value(cx.global()),
@@ -286,13 +287,19 @@ impl Readable {
 
                 JSValue::create_buffer_from_box(global, own)
             }
-            Readable::Errored(..) => {
-                let Readable::Errored(_, err) = mem::replace(self, Readable::Closed) else {
-                    unreachable!()
-                };
-                Err(err.throw(global))
-            }
             _ => Ok(JSValue::UNDEFINED),
+        }
+    }
+
+    /// The error reading this output ended with, taken out of it. `spawnSync` asks before
+    /// `to_buffered_value` and throws it: the output that was lost cannot be returned.
+    pub(crate) fn take_read_error(&mut self) -> Option<bun_sys::Error> {
+        match mem::replace(self, Readable::Closed) {
+            Readable::Errored(_, err) => Some(err),
+            other => {
+                *self = other;
+                None
+            }
         }
     }
 }

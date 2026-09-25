@@ -15,7 +15,7 @@ use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
 // Re-export so callers can write `body::InternalBlob`.
 use crate::jsc::HTTPHeaderName;
-pub use crate::webcore::InternalBlob;
+pub(crate) use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::String as BunString;
 use bun_core::{Utf8Bytes, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
@@ -94,7 +94,7 @@ bun_core::declare_scope!(BodyMixin, visible);
 // `UnsafeCell` inside suppresses LLVM `noalias` on `&Body` so a re-entrant
 // host call cannot stack two `&mut` to the same field.
 #[repr(C)]
-pub struct Body {
+pub(crate) struct Body {
     pub value: JsCell<Value>, // = Value::Empty,
 }
 
@@ -202,7 +202,7 @@ impl Body {
 // at specific protocol points (e.g. resolve()). PORTING.md forbids `pub fn deinit(&mut self)`;
 // renamed to `reset()` since it cannot take `self` by value (in-place state transition).
 impl Body {
-    pub fn reset(&self) {
+    pub(crate) fn reset(&self) {
         self.value_mut().reset();
     }
 }
@@ -463,7 +463,7 @@ impl PendingValue {
     }
 }
 
-pub enum Action {
+pub(crate) enum Action {
     None,
     GetText,
     GetJSON,

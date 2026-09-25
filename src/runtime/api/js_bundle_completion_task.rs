@@ -49,7 +49,7 @@ use crate::server::html_bundle;
 /// See module doc for the layering rationale.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "JSBundleCompletionTask")]
-pub struct JSBundleCompletionTask {
+pub(crate) struct JSBundleCompletionTask {
     // NOTE: this should arguably be a thread-safe refcount, but it is the plain
     // (non-atomic) `RefCount<Self>` — a pre-existing discrepancy. See the
     // `unsafe impl Send` below for the thread-affinity constraint this imposes.
@@ -1044,6 +1044,12 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.bytecode = config.bytecode;
         transpiler.options.bytecode_depth = config.bytecode_depth;
         transpiler.options.optimize_bytecode = config.optimize_bytecode;
+        if let Some(compile) = &config.compile {
+            transpiler
+                .options
+                .bytecode_order
+                .clone_from(&compile.bytecode_order);
+        }
         transpiler.options.compile_mode = if config.compile.is_some() {
             options::CompileMode::Executable
         } else {

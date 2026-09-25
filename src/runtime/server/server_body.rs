@@ -780,7 +780,7 @@ impl AnyRoute {
         Ok(None)
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global: &JSGlobalObject,
         path: &[u8],
         argument: JSValue,
@@ -877,11 +877,7 @@ impl AnyRoute {
                         limit
                     )));
                 }
-                return Ok(Some(AnyRoute::FrameworkRouter(
-                    FrameworkRouter::TypeIndex::init(
-                        u8::try_from(init_ctx.framework_router_list.len() - 1).expect("int cast"),
-                    ),
-                )));
+                return Ok(Some(AnyRoute::FrameworkRouter));
             }
         }
 
@@ -895,7 +891,7 @@ impl AnyRoute {
     }
 }
 
-pub struct ServerInitContext<'a> {
+pub(crate) struct ServerInitContext<'a> {
     pub(crate) dedupe_html_bundle_map:
         HashMap<*const HTMLBundle, bun_ptr::BackRef<html_bundle::Route, bun_ptr::Root>>,
     pub(crate) js_string_allocations: bake::StringRefList,
@@ -907,7 +903,7 @@ pub struct ServerInitContext<'a> {
 // ─── ServePlugins ────────────────────────────────────────────────────────────
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 #[derive(bun_ptr::CellRefCounted)]
-pub struct ServePlugins {
+pub(crate) struct ServePlugins {
     state: ServePluginsState,
     ref_count: core::cell::Cell<u32>,
 }
@@ -934,7 +930,7 @@ pub(crate) enum ServePluginsState {
     Err,
 }
 
-pub enum GetOrStartLoadResult<'a> {
+pub(crate) enum GetOrStartLoadResult<'a> {
     /// None = no plugins, used by server implementation
     Ready(Option<&'a JSBundler::Plugin>),
     Pending,
@@ -942,7 +938,7 @@ pub enum GetOrStartLoadResult<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub enum ServePluginsCallback<'a> {
+pub(crate) enum ServePluginsCallback<'a> {
     HtmlBundleRoute(bun_ptr::ThisPtr<html_bundle::Route>),
     DevServer(&'a DevServer),
 }
@@ -2603,7 +2599,7 @@ where
         JSValue::from(DEBUG)
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         httplog!("finalize");
         let this_ptr = bun_core::heap::into_raw(self);
         // SAFETY: just unboxed; uniquely owned here until either the inline

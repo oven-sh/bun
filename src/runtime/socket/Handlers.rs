@@ -34,7 +34,7 @@ bun_output::declare_scope!(Listener, visible);
 /// Held as `Rc<Handlers>` by each owner (the `Listener`, each `NewSocket`, and
 /// each in-flight callback [`Scope`]), so a socket that closes while a callback
 /// frame still holds it cannot free it out from under that frame.
-pub struct Handlers {
+pub(crate) struct Handlers {
     /// The cell holding every callback and the pending connect promise. Read
     /// via the named accessors ([`on_data`](Self::on_data), ...); `reload`
     /// rewrites it in place via [`apply_reload`](Self::apply_reload).
@@ -88,7 +88,7 @@ impl Handlers {
     /// `handlers` slot so the callbacks stay reachable from every object that
     /// can still invoke them.
     #[inline]
-    pub fn cell(&self) -> JSValue {
+    pub(crate) fn cell(&self) -> JSValue {
         self.cell.to_js()
     }
 
@@ -123,7 +123,7 @@ impl Handlers {
     pub(crate) fn on_open(&self) -> JSValue {
         self.cell.on_open()
     }
-    pub fn on_close(&self) -> JSValue {
+    pub(crate) fn on_close(&self) -> JSValue {
         self.cell.on_close()
     }
     pub(crate) fn on_data(&self) -> JSValue {
@@ -305,7 +305,7 @@ impl Handlers {
         Ok(())
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         opts: JSValue,
         mode: SocketMode,
@@ -452,7 +452,7 @@ impl Scope {
 
 use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
-pub struct SocketConfig {
+pub(crate) struct SocketConfig {
     pub(crate) hostname_or_unix: Utf8Bytes<'static>,
     pub(crate) port: Option<u16>,
     pub(crate) fd: Option<Fd>,
@@ -593,7 +593,7 @@ impl SocketConfig {
         Ok(result)
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         vm: &'static VirtualMachine,
         opts: JSValue,
         global_object: &JSGlobalObject,

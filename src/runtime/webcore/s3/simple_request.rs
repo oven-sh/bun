@@ -27,7 +27,7 @@ use crate::webcore::s3::{list_objects, xml_response};
 // callback payloads (never heap-stored) — the borrow lifetime accurately models ownership.
 
 #[derive(Default)]
-pub struct S3StatSuccess<'a> {
+pub(crate) struct S3StatSuccess<'a> {
     pub(crate) size: usize,
     /// etag is not owned and need to be copied if used after this callback
     pub(crate) etag: &'a [u8],
@@ -37,19 +37,19 @@ pub struct S3StatSuccess<'a> {
     pub(crate) content_type: &'a [u8],
 }
 
-pub enum S3StatResult<'a> {
+pub(crate) enum S3StatResult<'a> {
     Success(S3StatSuccess<'a>),
     NotFound(S3Error<'a>),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
 }
 
-pub struct S3DownloadSuccess {
+pub(crate) struct S3DownloadSuccess {
     /// body is owned and dont need to be copied, but dont forget to free it
     pub(crate) body: MutableString,
 }
 
-pub enum S3DownloadResult<'a> {
+pub(crate) enum S3DownloadResult<'a> {
     Success(S3DownloadSuccess),
     NotFound(S3Error<'a>),
     /// failure error is not owned and need to be copied if used after this callback
@@ -77,14 +77,14 @@ impl core::fmt::Debug for S3UploadResult<'_> {
     }
 }
 
-pub enum S3DeleteResult<'a> {
+pub(crate) enum S3DeleteResult<'a> {
     Success,
     NotFound(S3Error<'a>),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
 }
 
-pub enum S3ListObjectsResult<'a> {
+pub(crate) enum S3ListObjectsResult<'a> {
     Success(Box<list_objects::S3ListObjectsV2Result>),
     NotFound(S3Error<'a>),
     /// failure error is not owned and need to be copied if used after this callback
@@ -92,20 +92,20 @@ pub enum S3ListObjectsResult<'a> {
 }
 
 // commit result also fails if status 200 but with body containing an Error
-pub enum S3CommitResult<'a> {
+pub(crate) enum S3CommitResult<'a> {
     Success,
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
 }
 
 // commit result also fails if status 200 but with body containing an Error
-pub enum S3PartResult<'a> {
+pub(crate) enum S3PartResult<'a> {
     Etag(&'a [u8]),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
 }
 
-pub struct S3HttpSimpleTask {
+pub(crate) struct S3HttpSimpleTask {
     // `http` is `MaybeUninit` because (a) it is initialised late —
     // `AsyncHTTP` contains `&'static [u8]` and `fn(...)` fields, so a
     // zeroed/default value would be instant UB; and (b) `Drop` only calls
@@ -165,7 +165,7 @@ impl Taskable for S3HttpSimpleTask {
     }
 }
 
-pub enum Callback {
+pub(crate) enum Callback {
     Stat(fn(S3StatResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
     Download(fn(S3DownloadResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
     Upload(fn(S3UploadResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
@@ -520,7 +520,7 @@ pub(crate) type Options<'a> = S3SimpleRequestOptions<'a>;
 pub(crate) type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
 pub(crate) type S3Callback = Callback;
 
-pub struct S3SimpleRequestOptions<'a> {
+pub(crate) struct S3SimpleRequestOptions<'a> {
     // signing options
     pub path: &'a [u8],
     pub method: Method,

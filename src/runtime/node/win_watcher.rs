@@ -142,7 +142,7 @@ impl PathWatcherManager {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct PathWatcher {
+pub(crate) struct PathWatcher {
     handle: uv::uv_fs_event_t,
     // LIFETIMES.tsv: BACKREF → Option<*mut PathWatcherManager>
     manager: Cell<Option<*mut PathWatcherManager>>,

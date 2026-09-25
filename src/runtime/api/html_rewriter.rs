@@ -169,7 +169,7 @@ macro_rules! lol_content_ops {
 
         $(
             $(#[$attr])*
-            pub fn $name_(
+            pub(crate) fn $name_(
                 &self,
                 call_frame: &CallFrame,
                 global_object: &JSGlobalObject,
@@ -188,7 +188,7 @@ macro_rules! lol_content_ops {
             // Decode `(content: string, contentOptions: ?ContentOptions)`
             // then forward.
             $(#[$attr])*
-            pub fn $name(
+            pub(crate) fn $name(
                 &self,
                 global: &JSGlobalObject,
                 call_frame: &CallFrame,
@@ -262,7 +262,7 @@ impl HandlerList {
 /// [`build_settings`] re-derives fresh handler closures from it each time.
 /// Holds no JS values: the handlers name theirs by [`HandlerSlot`].
 #[derive(Default)]
-pub struct LOLHTMLContext {
+pub(crate) struct LOLHTMLContext {
     pub(crate) element_handlers: Vec<ElementHandlerEntry>,
     #[expect(clippy::vec_box)]
     pub(crate) document_handlers: Vec<Box<DocumentHandler>>,
@@ -270,7 +270,7 @@ pub struct LOLHTMLContext {
 
 /// What a JS content handler decided.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum HandlerOutcome {
+pub(crate) enum HandlerOutcome {
     /// The handler completed; keep rewriting.
     Continue,
     /// The handler threw / rejected / returned an Error: abort the rewrite.
@@ -389,7 +389,7 @@ fn build_settings(
 // ───────────────────────────── HTMLRewriter ──────────────────────────────
 
 #[bun_jsc::JsClass]
-pub struct HTMLRewriter {
+pub(crate) struct HTMLRewriter {
     pub(crate) context: Rc<RefCell<LOLHTMLContext>>,
 }
 
@@ -694,7 +694,28 @@ fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
 /// root the output Response, input/output ReadableStreams, the JS-pump
 /// `WritablePending` promise, a captured handler error, and the suspension
 /// promise.
-pub type HTMLRewriterTransform = RewriterPipe;
+pub(crate) type HTMLRewriterTransform = RewriterPipe;
+
+/// [`RewriterPipe::schedule_background_pull`]'s task: same pointer as the pipe, its own tag.
+#[repr(transparent)]
+pub(crate) struct RewriterPipeBackgroundPull(RewriterPipe);
+impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::HTMLRewriterBackgroundPull;
+    /// Give back what `schedule_background_pull` took: the cell's protect and the pipe's ref.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: the task's ref keeps the allocation live until the `deref_nn` below.
+        let pipe = BackRef::from(unsafe { NonNull::new_unchecked(this.cast::<RewriterPipe>()) });
+        let cell = pipe.cell.get();
+        if cell.is_cell() {
+            cell.unprotect();
+        }
+        RewriterPipe::deref_nn(pipe.into());
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
 
 /// Streaming pipe for one `HTMLRewriter::transform()`: receives input bytes
 /// via [`SinkHandle::HTMLRewriter`], feeds them through lol-html (suspending
@@ -922,7 +943,7 @@ impl RewriterPipe {
         if let (Some(reason), SourceHandle::JSController(_)) = (cancel, upstream) {
             upstream.cancel(reason);
         }
-        JSSink::<RewriterPipe>::detach(&mut src, &self.global);
+        src.detach(&self.global);
         if cancel.is_some() {
             match upstream {
                 SourceHandle::ByteStream(_) | SourceHandle::FileReader(_) => {
@@ -1349,14 +1370,14 @@ impl RewriterPipe {
             cell.protect();
         }
         self.ref_();
-        vm.as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
-                core::ptr::from_ref(self).cast_mut(),
-                Self::run_background_pull,
-            ));
+        vm.as_mut().enqueue_task(bun_event_loop::Task::init(
+            core::ptr::from_ref(self)
+                .cast_mut()
+                .cast::<RewriterPipeBackgroundPull>(),
+        ));
     }
 
-    fn run_background_pull(pipe: *mut RewriterPipe) -> bun_event_loop::JsResult<()> {
+    pub(crate) fn run_background_pull(pipe: *mut RewriterPipe) -> bun_event_loop::JsResult<()> {
         // SAFETY: the task's ref (taken in `schedule_background_pull`) keeps
         // the allocation live until the `deref_nn` below.
         let this = BackRef::from(unsafe { NonNull::new_unchecked(pipe) });
@@ -2067,7 +2088,7 @@ fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 
 // ──────────────────────── DocumentHandler ────────────────────────────────
 
-pub struct DocumentHandler {
+pub(crate) struct DocumentHandler {
     // Positions in the rewriter's [`HandlerList`]. `None`: the handler object had no such callback.
     pub(crate) on_doc_type_callback: Option<HandlerSlot>,
     pub(crate) on_comment_callback: Option<HandlerSlot>,
@@ -2426,7 +2447,7 @@ where
 
 // ───────────────────────── ElementHandler ────────────────────────────────
 
-pub struct ElementHandler {
+pub(crate) struct ElementHandler {
     // See `DocumentHandler`.
     pub(crate) on_element_callback: Option<HandlerSlot>,
     pub(crate) on_comment_callback: Option<HandlerSlot>,
@@ -2489,7 +2510,7 @@ impl ElementHandler {
 // ───────────────────────── ContentOptions ────────────────────────────────
 
 #[derive(Default, Clone, Copy)]
-pub struct ContentOptions {
+pub(crate) struct ContentOptions {
     pub(crate) html: bool,
 }
 
@@ -2553,7 +2574,7 @@ fn opt_string_to_js_or_null(s: Option<String>, global: &JSGlobalObject) -> JsRes
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-pub struct TextChunk {
+pub(crate) struct TextChunk {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
@@ -2620,7 +2641,7 @@ impl_wrapper_like!(TextChunk, RawTextChunk, text_chunk, suspended_text_chunk);
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-pub struct DocType {
+pub(crate) struct DocType {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
@@ -2639,7 +2660,7 @@ impl DocType {
 
     /// The doctype name.
     #[bun_jsc::host_fn(getter)]
-    pub fn name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn name(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let Some(dt) = self.doctype.get_mut() else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -2690,7 +2711,7 @@ impl_wrapper_like!(DocType, RawDoctype, doctype, suspended_doctype);
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-pub struct DocEnd {
+pub(crate) struct DocEnd {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
@@ -2718,7 +2739,7 @@ impl_wrapper_like!(DocEnd, RawDocumentEnd, doc_end, suspended_document_end);
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-pub struct Comment {
+pub(crate) struct Comment {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
@@ -2795,7 +2816,7 @@ impl_wrapper_like!(Comment, RawComment, comment, suspended_comment);
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-pub struct EndTag {
+pub(crate) struct EndTag {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
@@ -2876,7 +2897,7 @@ impl_wrapper_like!(EndTag, RawEndTag, end_tag, suspended_end_tag);
 /// The JS `AttributeIterator` heap-boxes one of these over `Element::attributes`
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-pub struct AttributeIterator {
+pub(crate) struct AttributeIterator {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     /// Non-owning backref to the `Element` wrapper that handed this iterator
@@ -2897,7 +2918,7 @@ impl AttributeIterator {
         self.element.set(None);
     }
 
-    pub fn finalize(&self) {
+    pub(crate) fn finalize(&self) {
         self.detach();
     }
 
@@ -2961,7 +2982,7 @@ impl AttributeIterator {
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-pub struct Element {
+pub(crate) struct Element {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).

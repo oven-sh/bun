@@ -3,10 +3,10 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::api::{TCPSocket, TLSSocket};
 use crate::socket::NewSocket;
 use crate::socket::SSLConfig;
 use crate::socket::windows_named_pipe::{Handlers as NamedPipeHandlers, WindowsNamedPipe};
+use crate::socket::{TCPSocket, TLSSocket};
 use bun_boringssl_sys as boringssl;
 use bun_core::ZStr;
 use bun_event_loop::Task;
@@ -26,7 +26,7 @@ pub(crate) static LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = schedule_deinit)]
-pub struct WindowsNamedPipeContext {
+pub(crate) struct WindowsNamedPipeContext {
     // Intrusive refcount; on zero → `schedule_deinit` (deferred free), not
     // immediate `Box::from_raw`.
     ref_count: Cell<u32>,
@@ -72,7 +72,7 @@ fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum EventState {
+pub(crate) enum EventState {
     Deinit,
     None,
 }
@@ -81,7 +81,7 @@ pub enum EventState {
 /// allocation from this context, so `ThisPtr`'s `Deref` is sound on them).
 /// `Copy` so matching by value avoids `&self.socket` aliasing `&mut self.named_pipe`.
 #[derive(Copy, Clone)]
-pub enum SocketType {
+pub(crate) enum SocketType {
     Tls(bun_ptr::ThisPtr<TLSSocket>),
     Tcp(bun_ptr::ThisPtr<TCPSocket>),
     None,
@@ -211,6 +211,17 @@ impl WindowsNamedPipeContext {
         // SAFETY: see `on_open`.
         if let SocketType::Tls(s) = unsafe { (*this).socket } {
             crate::dispatch::fold(TLSSocket::on_session(s, session));
+        }
+    }
+
+    fn server_identity(
+        this: *mut Self,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        // SAFETY: see `on_open`.
+        match unsafe { (*this).socket } {
+            SocketType::Tls(s) => s.server_identity(ssl),
+            _ => bun_boringssl::ServerIdentity::Unchecked,
         }
     }
 
@@ -384,6 +395,7 @@ impl WindowsNamedPipeContext {
             on_close: |p| Self::on_close(p.cast::<Self>()),
             on_session: |p, d| Self::on_session(p.cast::<Self>(), d),
             on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
+            server_identity: |p, ssl| Self::server_identity(p.cast::<Self>(), ssl),
         };
         #[cfg(not(windows))]
         {

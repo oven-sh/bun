@@ -646,10 +646,12 @@ static void notifyResponsesOnClose(JSNodeHTTPServerSocket* socket)
     }
 }
 
-void JSNodeHTTPServerSocket::onClose()
+void JSNodeHTTPServerSocket::onClose(int readError, bool peerEnded)
 {
     syncPeerCertificateVerification();
     this->socket = nullptr;
+    this->closeReadError = readError;
+    this->peer_ended = peerEnded;
     if (auto* res = this->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_setClosed(res->m_ctx);
     }

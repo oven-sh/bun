@@ -3161,7 +3161,6 @@ fn transpile_source_code_inner(
                 if written_len > 1024 * 1024 * 2 || unsafe { &*jsc_vm }.smol {
                     *printer =
                         bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
-                    printer.ctx.append_null_byte = false;
                 }
 
                 // (fd close handled by `_fd_guard` registered above; spec
@@ -3667,9 +3666,8 @@ export default db;
             });
         }
 
-        // SAFETY: `file.module_info`/`file.bytecode` are live subranges of
-        // the embedded section (set in `Graph::from_bytes`).
-        let (module_info, bytecode) = unsafe { (&*file.module_info, &*file.bytecode) };
+        // SAFETY: `file.module_info` is a live subrange of the embedded section (set in `Graph::from_bytes`).
+        let module_info = unsafe { &*file.module_info };
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
             .map_or(&[], |graph| graph.module_info_string_table);
         return Some(ResolvedSource {
@@ -3682,7 +3680,7 @@ export default db;
             } else {
                 bun_core::String::from_bytes(file.bytecode_origin_path)
             },
-            bytecode_cache: Bytecode::persistent(bytecode),
+            bytecode_cache: Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
             source_code_hash: file.source_hash,
             module_info: if !module_info.is_empty() {
                 let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
@@ -4047,7 +4045,7 @@ const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
 /// # Safety
 /// `jsc_vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__transpileFile(
+pub(crate) unsafe extern "C" fn Bun__transpileFile(
     jsc_vm: *mut VirtualMachine,
     global: &JSGlobalObject,
     specifier: &bun_core::String,
@@ -4301,8 +4299,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
         let mut p = cell.get();
         if p.is_null() {
             let writer = bun_js_printer::BufferWriter::init();
-            let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             p = bun_core::heap::into_raw(bp);
             cell.set(p);
         }
@@ -4390,7 +4387,7 @@ fn transpile_error_value(
 /// Transpiles plugin-provided source through the per-thread
 /// `TRANSPILE_PRINTER`, writing the result into `ret`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__transpileVirtualModule(
+pub(crate) extern "C" fn Bun__transpileVirtualModule(
     global: &JSGlobalObject,
     specifier_str: &bun_core::String,
     referrer_str: &bun_core::String,
@@ -4453,8 +4450,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
         let mut p = cell.get();
         if p.is_null() {
             let writer = bun_js_printer::BufferWriter::init();
-            let mut bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
             p = bun_core::heap::into_raw(bp);
             cell.set(p);
         }
@@ -4609,7 +4605,7 @@ fn extract_owner_uid() -> u32 {
 
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
+pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
     bun_jsc::mark_binding();
     if VirtualMachine::get().standalone_module_graph.is_none() {
         return bun_core::String::DEAD;
@@ -4625,7 +4621,7 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_c
 /// C++ entry point: if `specifier` names a builtin module, writes its resolved
 /// source into `ret` and returns `true`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
+pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
     specifier: &bun_core::String,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {

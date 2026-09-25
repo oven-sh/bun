@@ -14,11 +14,12 @@ on:
       - "scripts/build/**"
       - "scripts/build.ts"
       - "scripts/rust-miri.ts"
+      - "scripts/rust-mordant.ts"
       - "package.json"
       - "Cargo.toml"
       - "Cargo.lock"
       - "clippy.toml"
-      - "dylint.toml"
+      - "mordant.toml"
       - "mordant-baseline.toml"
       - "rust-toolchain.toml"
       - ".github/workflows/rust-lints.yml"
@@ -32,7 +33,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BUN_VERSION: "1.3.14"
+  BUN_VERSION: "1.4.2"
   LLVM_VERSION_MAJOR: "23"
   # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
   # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't need
@@ -62,6 +63,15 @@ jobs:
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: bun run rust:clippy
+
+      - name: cargo check --all-targets
+        # Clippy above covers the default targets only (lib and bin). This
+        # type-checks what it skips (`#[cfg(test)]` code, `tests/`, `benches/`)
+        # so that code keeps compiling: the miri job builds a few crates'
+        # tests, nothing builds the rest.
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: cargo check --workspace --all-targets --keep-going
 
   miri:
     name: cargo miri test
@@ -115,23 +125,19 @@ jobs:
   mordant:
     name: mordant
     runs-on: ubuntu-latest
-    # Off until dylint runs on a current nightly. mordant compiles the workspace with its own pinned
-    # nightly (2026-05-28), which predates the core::mem::type_info API multi_array_list.rs uses, and
-    # dylint-driver 6.0.x passes rustc `--env-set`, which rustc has since removed. Was:
-    # github.event_name != 'merge_group'
-    if: false
+    if: github.event_name != 'merge_group'
     # Advisory while the pack is new: shows up on the PR, does not block it.
     continue-on-error: true
     env:
-      DYLINT_VERSION: "6.0.3"
-      # Mordant (pinned in Cargo.toml's [workspace.metadata.dylint]) is built
-      # with, and lints us using, the nightly named in its own rust-toolchain
-      # file, which dylint selects itself; rustup fetches it on demand, so the
-      # pin is the only thing to bump. The outer cargo just needs to exist:
-      # point it at the runner's stable so rust-toolchain.toml's cross-target
-      # list is not installed.
-      RUSTUP_TOOLCHAIN: stable
-      RUSTUP_AUTO_INSTALL: "1"
+      # The pinned commit of https://github.com/scarletindustries/mordant.
+      # Bumping it is a PR of its own, where whatever the new revision finds
+      # gets fixed or added to mordant-baseline.toml.
+      MORDANT_REV: 193abdabb975d33e63607ef9da8f3c79dd33ae9f
+      # The nightly in mordant's rust-toolchain file at MORDANT_REV. mordant is
+      # built with it and links its rustc, so it is also the compiler that
+      # checks this workspace while the lints run, and it must still be able
+      # to compile it. Bump it with MORDANT_REV, not with rust-toolchain.toml.
+      MORDANT_TOOLCHAIN: nightly-2026-09-01
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -143,53 +149,42 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
           llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.MORDANT_TOOLCHAIN }}
+          # What building against rustc's own crates (`rustc_private`) needs.
+          components: rustc-dev llvm-tools-preview
           ninja-targets: codegen clone-lolhtml clone-rust-argon2
 
-      - name: Cache the dylint binaries
-        # Compiling cargo-dylint and dylint-link is ~100s; they only change on
-        # a DYLINT_VERSION bump.
-        id: dylint-bin
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Restore the mordant binaries
+        # cargo-mordant and mordant-driver are a pure function of the pinned
+        # revision and the nightly they link. What remains uncached is
+        # checking bun itself.
+        id: mordant-bin
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cargo/bin/cargo-dylint
-            ~/.cargo/bin/dylint-link
-          key: dylint-bin-${{ runner.os }}-${{ env.DYLINT_VERSION }}
+            ~/.cargo/bin/cargo-mordant
+            ~/.cargo/bin/mordant-driver
+          key: mordant-bin-${{ runner.os }}-${{ env.MORDANT_TOOLCHAIN }}-${{ env.MORDANT_REV }}
 
-      - name: Build the dylint binaries
-        if: steps.dylint-bin.outputs.cache-hit != 'true'
-        run: cargo install --locked cargo-dylint@"$DYLINT_VERSION" dylint-link@"$DYLINT_VERSION"
+      - name: Build the mordant binaries
+        if: steps.mordant-bin.outputs.cache-hit != 'true'
+        run: cargo +"$MORDANT_TOOLCHAIN" install --locked --git https://github.com/scarletindustries/mordant --rev "$MORDANT_REV"
 
-      - name: Read the mordant pin
-        # The driver and library dylint builds are tied to the pinned mordant
-        # revision, so it is their cache key.
-        id: pin
-        run: |
-          rev=$(sed -n 's/.*scarletindustries\/mordant", rev = "\([0-9a-f]*\)".*/\1/p' Cargo.toml)
-          test -n "$rev"
-          echo "rev=$rev" >> "$GITHUB_OUTPUT"
-
-      - name: Cache the dylint driver and the built mordant library
-        # Both are a pure function of the dylint version and the pinned
-        # revision (which names the nightly they are built for): ~50s and
-        # ~60s of the job. What remains uncached is checking bun itself.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Save the mordant binaries
+        # Here, and not in the post step of actions/cache, which a failed job
+        # skips: a pull request with a finding over the baseline would build
+        # mordant again on every push.
+        if: steps.mordant-bin.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.dylint_drivers
-            target/dylint/libraries
-          key: dylint-lib-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ steps.pin.outputs.rev }}
+            ~/.cargo/bin/cargo-mordant
+            ~/.cargo/bin/mordant-driver
+          key: ${{ steps.mordant-bin.outputs.cache-primary-key }}
 
       - name: mordant
-        env:
-          # Mordant's nightly is older than rust-toolchain.toml's, so `#[allow]`s
-          # of lints added since then are unknown to it.
-          DYLINT_RUSTFLAGS: "-A unknown_lints"
-        run: |
-          rm -f target/mordant/over-baseline.txt
-          cargo dylint --all --workspace -- --keep-going
-
-      - name: Fail on findings over the baseline
-        # In baseline mode mordant reports findings over mordant-baseline.toml
-        # as warnings and lists them in this file; absent or empty means clean.
-        run: test ! -s target/mordant/over-baseline.txt
+        # scripts/rust-mordant.ts names the targets (Linux, Windows and macOS
+        # in one run) and installs their std, so that the job and `bun run
+        # rust:mordant` cannot drift apart. `cargo mordant` exits with 101 when
+        # any crate has more findings than mordant-baseline.toml allows.
+        run: bun scripts/rust-mordant.ts

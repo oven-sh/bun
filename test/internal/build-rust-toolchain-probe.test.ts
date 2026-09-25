@@ -52,5 +52,7 @@ test.skipIf(isWindows)("the configure-time rustc probe pins the rustup proxy to 
   expect(findRustLld("linux")).toEqual({
     rustLld: join(String(dir), ldLld),
     rustLlvmVersion: "22.1.4",
+    rustSysroot: join(String(dir), `sysroot-for-${channel}`),
+    rustHostTriple: `host-for-${channel}`,
   });
 });

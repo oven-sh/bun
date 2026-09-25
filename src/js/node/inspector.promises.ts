@@ -5,7 +5,7 @@ const { Session: BaseSession, console, open, close, url, waitForDebugger } = ins
 
 // Promise-based Session that wraps the callback-based Session
 class Session extends BaseSession {
-  post(method: string, params?: object): Promise<any> {
+  post(method: string, params?: Record<string, unknown>): Promise<any> {
     return new Promise((resolve, reject) => {
       super.post(method, params, (err: Error | null, result: any) => {
         if (err) {

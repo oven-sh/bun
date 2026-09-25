@@ -17,7 +17,7 @@ use bun_sys::{self as sys, Fd};
 // `bun_sys::EntryKind` (and as `crate::node::types::DirentKind`).
 use bun_sys::EntryKind;
 
-pub struct IteratorResult {
+pub(crate) struct IteratorResult {
     /// `RawSlice` invariant: borrows the iterator's `getdents` buffer
     /// (streaming-iterator contract — invalidated on next `next()` call).
     /// The kernel writes `d_name` NUL-terminated, so the backing has a NUL at
@@ -37,13 +37,13 @@ impl IteratorResult {
         unsafe { bun_core::ZStr::from_raw(s.as_ptr(), s.len()) }
     }
 }
-pub type Result = sys::Result<Option<IteratorResult>>;
+pub(crate) type Result = sys::Result<Option<IteratorResult>>;
 
 /// The `u16` twin of `IteratorResult.name` (`RawSlice<u16>` + `slice_assume_z()`),
 /// kept separate so callers avoid an `if (Environment.isWindows) ...` split.
 // Lifetime: borrows the iterator's internal `name_data` buffer; invalidated on next().
 #[cfg(windows)]
-pub struct IteratorResultWName {
+pub(crate) struct IteratorResultWName {
     // `RawSlice` invariant: the iterator's `name_data` outlives this result
     // (streaming-iterator contract — invalidated on next `next()` call).
     // len excludes trailing NUL; storage has NUL at [len].
@@ -57,7 +57,7 @@ impl IteratorResultWName {
 }
 
 #[cfg(windows)]
-pub struct IteratorResultW {
+pub(crate) struct IteratorResultW {
     pub name: IteratorResultWName,
     pub(crate) kind: EntryKind,
 }
@@ -74,7 +74,7 @@ pub(crate) type ResultW = sys::Result<Option<IteratorResultW>>;
 #[cfg(windows)]
 pub(crate) use platform::SelectImpl as WrappedSelect;
 #[cfg(not(windows))]
-pub trait WrappedSelect<const B: bool> {}
+pub(crate) trait WrappedSelect<const B: bool> {}
 #[cfg(not(windows))]
 impl<const B: bool> WrappedSelect<B> for () {}
 
@@ -429,10 +429,9 @@ mod platform {
 
     /// Helper to select `name_data` element type (`[u16; 257]` or `[u8; 513]`)
     /// and result type from the const-bool generic.
-    pub trait WindowsOsPath {
+    pub(crate) trait WindowsOsPath {
         type NameData: Sized;
         type Entry;
-        const IS_U16: bool;
         /// Max u16 codeunits that fit in `name_data` (reserving one for the
         /// trailing NUL on the u16 path, or accounting for UTF-16→UTF-8
         /// expansion on the u8 path).
@@ -446,12 +445,11 @@ mod platform {
             kind: EntryKind,
         ) -> Self::Entry;
     }
-    pub struct OsPathFalse;
-    pub struct OsPathTrue;
+    pub(crate) struct OsPathFalse;
+    pub(crate) struct OsPathTrue;
     impl WindowsOsPath for OsPathFalse {
         type NameData = [u8; 513];
         type Entry = IteratorResult;
-        const IS_U16: bool = false;
         #[inline]
         fn max_name_u16() -> usize {
             (513 - 1) / 2
@@ -472,7 +470,6 @@ mod platform {
     impl WindowsOsPath for OsPathTrue {
         type NameData = [u16; 257];
         type Entry = IteratorResultW;
-        const IS_U16: bool = true;
         #[inline]
         fn max_name_u16() -> usize {
             257 - 1
@@ -495,7 +492,7 @@ mod platform {
     }
     // Map the const bool to the marker type.
     pub(super) type Select<const B: bool> = <() as SelectImpl<B>>::T;
-    pub trait SelectImpl<const B: bool> {
+    pub(crate) trait SelectImpl<const B: bool> {
         type T: WindowsOsPath;
     }
     impl SelectImpl<false> for () {
@@ -728,7 +725,7 @@ pub(crate) use platform::NewIterator;
 // per-value to avoid inherent associated types.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct NewWrappedIterator<const IS_U16: bool>
+pub(crate) struct NewWrappedIterator<const IS_U16: bool>
 where
     (): WrappedSelect<IS_U16>,
 {
@@ -812,7 +809,7 @@ where
     }
 }
 
-pub type WrappedIterator = NewWrappedIterator<false>;
+pub(crate) type WrappedIterator = NewWrappedIterator<false>;
 #[cfg(windows)]
 pub(crate) type WrappedIteratorW = NewWrappedIterator<true>;
 

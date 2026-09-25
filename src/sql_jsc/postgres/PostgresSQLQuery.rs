@@ -77,6 +77,8 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
+    /// Rejected for an undecodable row: in flight, its response skipped, until `ReadyForQuery`.
+    pub(crate) discard_response: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
     /// decrement is idempotent across its call sites.
@@ -100,6 +102,7 @@ impl Default for Flags {
             binary: false,
             bigint: false,
             simple: false,
+            discard_response: false,
             counter: RequestCounter::None,
             result_mode: PostgresSQLQueryResultMode::Objects,
         }
@@ -216,9 +219,23 @@ impl PostgresSQLQuery {
     }
 
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
+        self.status.set(Status::Fail);
+        self.reject(err, global_object);
+    }
+
+    /// Rejects now, but `status` stays in flight: the server is still answering this query.
+    pub(crate) fn on_undecodable_row(&self, err: JSValue, global_object: &JSGlobalObject) {
+        self.update_flags(|f| f.discard_response = true);
+        self.reject(err, global_object);
+    }
+
+    pub(crate) fn is_rejected(&self) -> bool {
+        self.status.get() == Status::Fail || self.flags.get().discard_response
+    }
+
+    fn reject(&self, err: JSValue, global_object: &JSGlobalObject) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
         let _guard = self.ref_guard();
-        self.status.set(Status::Fail);
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
@@ -802,6 +819,8 @@ impl PostgresSQLQuery {
                 bun_io::AllocatorType::Js,
             ))
         });
+        // advance() below can reject this request with nothing sent, so no reply releases the ref.
+        scopeguard::defer! { connection.update_poll_ref(); }
 
         this.this_value.with_mut(|r| r.upgrade(global_object));
 

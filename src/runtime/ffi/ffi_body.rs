@@ -20,7 +20,6 @@ use bun_jsc::{
 #[cfg(target_os = "macos")]
 use bun_paths as path;
 use bun_resolver::fs as Fs;
-use bun_sys;
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
 
@@ -209,7 +208,7 @@ impl Offsets {
 // `UnsafeCell`-backed fields suppresses `noalias` on the `&Self` the codegen
 // shim materialises from `m_ctx`, which is the systemic R-2 guarantee.
 #[bun_jsc::JsClass(no_constructor)]
-pub struct FFI {
+pub(crate) struct FFI {
     pub dylib: JsCell<Option<bun_sys::DynLib>>,
     pub functions: JsCell<StringArrayHashMap<Function>>,
     pub closed: Cell<bool>,
@@ -229,7 +228,7 @@ impl Default for FFI {
 
 impl FFI {
     // Intentional leak when not close()d: dlclose on GC is unsound because .ptr addresses escape the collector's view.
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         if self.closed.get() {
             drop(self);
         } else {
@@ -983,7 +982,10 @@ impl FFI {
     // No `#[bun_jsc::host_fn]` here — the `Free` shim it emits is a bare
     // `bun_ffi_cc(__g, __f)` call, which doesn't resolve inside `impl FFI`.
     // The C-ABI shim (`Bun__FFI__cc`) is supplied by the `.classes.ts` codegen.
-    pub fn bun_ffi_cc(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn bun_ffi_cc(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         if !global_this.bun_vm().allow_ffi_cc() {
             return Err(global_this
                 .err(
@@ -1238,7 +1240,7 @@ impl FFI {
         Ok(js_object)
     }
 
-    pub fn close_jsc_callback(
+    pub(crate) fn close_jsc_callback(
         _global_this: &JSGlobalObject,
         callback: JSValue,
     ) -> JsResult<JSValue> {
@@ -1250,7 +1252,7 @@ impl FFI {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn callback(
+    pub(crate) fn callback(
         global_this: &JSGlobalObject,
         interface: JSValue,
         js_callback: JSValue,
@@ -1307,7 +1309,7 @@ impl FFI {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close(&self, _global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(&self, _global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding();
         self.do_close();
         Ok(JSValue::UNDEFINED)
@@ -1328,7 +1330,7 @@ impl FFI {
         self.functions.with_mut(|f| f.clear_retaining_capacity());
     }
 
-    pub fn print_callback(global: &JSGlobalObject, object: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn print_callback(global: &JSGlobalObject, object: JSValue) -> JsResult<JSValue> {
         jsc::mark_binding();
 
         if object.is_empty_or_undefined_or_null() || !object.is_object() {
@@ -1346,7 +1348,7 @@ impl FFI {
         bun_string_jsc::create_utf8_for_js(global, text)
     }
 
-    pub fn print(
+    pub(crate) fn print(
         global: &JSGlobalObject,
         object: JSValue,
         is_callback_val: Option<JSValue>,
@@ -1571,7 +1573,7 @@ impl FFI {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_symbols(_this: &FFI, _: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_symbols(_this: &FFI, _: &JSGlobalObject) -> JSValue {
         // This shouldn't be called. The cachedValue is what should be called.
         JSValue::UNDEFINED
     }
@@ -1653,7 +1655,7 @@ impl FFI {
         Ok(js_object)
     }
 
-    pub fn create_cfunction(
+    pub(crate) fn create_cfunction(
         global: &JSGlobalObject,
         options: JSValue,
         name_value: Option<JSValue>,
@@ -1871,7 +1873,7 @@ pub(super) fn generate_symbols(
 
 // ─── Function ───────────────────────────────────────────────────────────────
 
-pub struct Function {
+pub(crate) struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
     pub base_name: ZBox,
     pub state: Option<NonNull<TCC::State>>,
@@ -2229,13 +2231,13 @@ impl Function {
 
 // ─── Step ───────────────────────────────────────────────────────────────────
 
-pub enum Step {
+pub(crate) enum Step {
     Pending,
     Compiled(Compiled),
     Failed { msg: Box<[u8]> },
 }
 
-pub struct Compiled {
+pub(crate) struct Compiled {
     pub ptr: *mut c_void,
 }
 

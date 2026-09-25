@@ -48,6 +48,9 @@ using namespace Bun::WebStreams;
 // A JSReadableStream's tag and native source. Pure: no scope, no traps, no script.
 static int32_t tagOfStream(JSReadableStream* stream, void** ptr)
 {
+    // An errored stream reads as a JS stream: its readers get the stored error, which the native source does not have.
+    if (stream->m_state == ReadableStreamState::Errored)
+        return 0;
     // The RAW handle slot, not nativePtrForJS(): a transferred stream still tags.
     JSValue handle = stream->m_nativePtr.get();
     if (handle.isEmpty() || !handle.isCell())

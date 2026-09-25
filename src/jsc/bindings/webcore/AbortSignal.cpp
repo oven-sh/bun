@@ -282,7 +282,7 @@ void AbortSignal::cleanNativeBindings(void* ref)
         return ctx == ref;
     });
 
-    std::exchange(m_native_callbacks, WTF::move(callbacks));
+    m_native_callbacks = WTF::move(callbacks);
     this->eventListenersDidChange();
 }
 

@@ -15,22 +15,16 @@
 //! the virtual memory. So we should only really use this for large blobs of
 //! data that we expect to be cloned multiple times. Such as Blob in FormData.
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::c_void;
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_alloc::StdAllocator;
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_alloc::{Alignment, AllocatorVTable};
 use bun_core::Fd;
 // bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/Result/Error/E/Tag/can_use_memfd.
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys as sys;
 use bun_sys::FdExt;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 
 /// Intrusive thread-safe ref-counted memfd allocator.
@@ -41,10 +35,9 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 // through `StdAllocator.ptr`) cross threads, so the single-threaded `RefCount`
 // flavor would data-race on ref/deref.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-pub struct LinuxMemFdAllocator {
+pub(crate) struct LinuxMemFdAllocator {
     ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
     pub(crate) fd: Fd,
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) size: usize,
 }
 
@@ -54,11 +47,9 @@ impl Drop for LinuxMemFdAllocator {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl LinuxMemFdAllocator {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn new(fd: Fd, size: usize) -> bun_ptr::RefPtr<Self> {
         bun_ptr::RefPtr::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
@@ -77,7 +68,7 @@ impl LinuxMemFdAllocator {
     // allocation via `heap::take(self as *const _ as *mut _)` is UB —
     // it materializes `&mut Self` (via `Drop`) while a shared `&self`
     // borrow is still live.
-    pub unsafe fn deref(this: *mut Self) {
+    pub(crate) unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and Box-allocated; forwards
         // to the intrusive refcount which runs `destructor` on zero.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
@@ -89,7 +80,6 @@ impl LinuxMemFdAllocator {
     /// `free` will call [`Self::deref`] on it, which on the final ref drops
     /// the `Box`. A `*mut Self` derived from `&self` (SharedReadOnly
     /// provenance) would make that `heap::take` UB.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) unsafe fn allocator(this: *mut Self) -> StdAllocator {
         StdAllocator {
             ptr: this.cast::<c_void>(),
@@ -97,7 +87,6 @@ impl LinuxMemFdAllocator {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn from(alloc: StdAllocator) -> Option<*mut Self> {
         if core::ptr::eq(alloc.vtable, allocator_interface::VTABLE) {
             Some(alloc.ptr.cast::<Self>())
@@ -110,7 +99,6 @@ impl LinuxMemFdAllocator {
     /// `this` must be a live Box-allocated `*mut Self` (see [`Self::allocator`]).
     /// On `Ok`, the returned `Bytes` borrows one ref on `*this` (via the
     /// embedded allocator); the caller must NOT consume that ref separately.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) unsafe fn alloc(
         this: *mut Self,
         len: usize,
@@ -159,7 +147,6 @@ impl LinuxMemFdAllocator {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn should_use(bytes: &[u8]) -> bool {
         if !sys::can_use_memfd() {
             return false;
@@ -174,7 +161,6 @@ impl LinuxMemFdAllocator {
         bytes.len() >= 1024 * 1024 * 8
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn create(bytes: &[u8]) -> sys::Result<BlobStoreBytes> {
         let mut label_buf = [0u8; 128];
         let label: &core::ffi::CStr = {
@@ -247,7 +233,6 @@ impl LinuxMemFdAllocator {
 // The vtable functions are kept as raw-ptr free functions so that `free`
 // retains the `heap::alloc` *mut provenance it needs to drop `self`.
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 mod allocator_interface {
     use super::*;
 

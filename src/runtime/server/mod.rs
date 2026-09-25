@@ -46,68 +46,70 @@ macro_rules! httplog {
 // ─── server-local jsc re-export ──────────────────────────────────────────────
 // `bun_jsc` is now a dep; forward to it. `AsyncTaskTracker` lives under
 // `bun_jsc::debugger`, surfaced flat here for the server drafts that import it.
-pub mod jsc {
-    pub use crate::jsc::*;
-    pub use bun_jsc::debugger::{AsyncTaskTracker, DebuggerId};
-    pub use bun_jsc::virtual_machine::{ExceptionList, VirtualMachine};
+pub(crate) mod jsc {
+    pub(crate) use crate::jsc::*;
+    pub(crate) use bun_jsc::debugger::{AsyncTaskTracker, DebuggerId};
+    pub(crate) use bun_jsc::virtual_machine::{ExceptionList, VirtualMachine};
 }
 
 // ─── compiling submodules ────────────────────────────────────────────────────
 #[path = "HTTPStatusText.rs"]
-pub mod http_status_text;
-pub use http_status_text as HTTPStatusText;
+pub(crate) mod http_status_text;
+pub(crate) use http_status_text as HTTPStatusText;
 
 #[path = "RangeRequest.rs"]
-pub mod range_request;
-pub use range_request as RangeRequest;
+pub(crate) mod range_request;
+pub(crate) use range_request as RangeRequest;
 
 #[path = "WebSocketServerContext.rs"]
-pub mod web_socket_server_context;
-pub use web_socket_server_context::{Handler as WebSocketServerHandler, WebSocketServerContext};
+pub(crate) mod web_socket_server_context;
+pub(crate) use web_socket_server_context::{
+    Handler as WebSocketServerHandler, WebSocketServerContext,
+};
 
 #[path = "ServerConfig.rs"]
-pub mod server_config;
-pub use server_config::ServerConfig;
+pub(crate) mod server_config;
+pub(crate) use server_config::ServerConfig;
 
 #[path = "StaticRoute.rs"]
-pub mod static_route;
-pub use static_route::StaticRoute;
+pub(crate) mod static_route;
+pub(crate) use static_route::StaticRoute;
 
 #[path = "FileRoute.rs"]
-pub mod file_route;
-pub use file_route::FileRoute;
+pub(crate) mod file_route;
+pub(crate) use file_route::FileRoute;
 
 #[path = "DirectoryRoute.rs"]
-pub mod directory_route;
-pub use directory_route::DirectoryRoute;
+pub(crate) mod directory_route;
+pub(crate) use directory_route::DirectoryRoute;
 
 #[path = "DevErrorPage.rs"]
-pub mod dev_error_page;
-pub use dev_error_page::DevErrorPage;
+pub(crate) mod dev_error_page;
+pub(crate) use dev_error_page::DevErrorPage;
 
 #[path = "FileResponseStream.rs"]
-pub mod file_response_stream;
-pub use file_response_stream::FileResponseStream;
+pub(crate) mod file_response_stream;
+pub(crate) use file_response_stream::FileResponseStream;
 
 #[path = "HTMLBundle.rs"]
-pub mod html_bundle;
-pub use html_bundle::HTMLBundle;
+pub(crate) mod html_bundle;
+pub(crate) use html_bundle::HTMLBundle;
 
 #[path = "ServerWebSocket.rs"]
-pub mod server_web_socket;
-pub use server_web_socket::ServerWebSocket;
+pub(crate) mod server_web_socket;
+pub(crate) use server_web_socket::ServerWebSocket;
 
 #[path = "NodeHTTPResponse.rs"]
-pub mod node_http_response;
-pub use node_http_response::NodeHTTPResponse;
+pub(crate) mod node_http_response;
+pub(crate) use node_http_response::NodeHTTPResponse;
 
 #[path = "RequestContext.rs"]
-pub mod request_context;
-pub use request_context::RequestContext as NewRequestContext;
+pub(crate) mod request_context;
+pub(crate) use request_context::RequestContext as NewRequestContext;
 
 #[path = "AnyRequestContext.rs"]
-pub mod any_request_context;
-pub use any_request_context::AnyRequestContext;
+pub(crate) mod any_request_context;
+pub(crate) use any_request_context::AnyRequestContext;
 
 /// Run `$body` once for each attached multiplexed app (`h3_app`, then
 /// `h2_app`) with `$mux: &mut impl server_config::MuxApp`. A macro rather than
@@ -136,7 +138,7 @@ macro_rules! for_each_mux_app {
 
 #[path = "server_body.rs"]
 mod server_body;
-pub use server_body::{GetOrStartLoadResult, ServePluginsCallback};
+pub(crate) use server_body::{GetOrStartLoadResult, ServePluginsCallback};
 
 // ─── write_status ────────────────────────────────────────────────────────────
 pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {
@@ -162,7 +164,7 @@ pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<S
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
 /// The route table's ref on each route.
-pub enum AnyRoute {
+pub(crate) enum AnyRoute {
     /// Serve a static file — `"/robots.txt": new Response(...)`
     Static(bun_ptr::RefPtr<StaticRoute>),
     /// Serve a file from disk
@@ -172,7 +174,7 @@ pub enum AnyRoute {
     /// Bundle an HTML import — `import html from "./index.html"; "/": html`
     Html(bun_ptr::RefPtr<html_bundle::Route>),
     /// Use file-system routing — `"/*": { dir: …, style: "nextjs-pages" }`
-    FrameworkRouter(crate::bake::framework_router::TypeIndex),
+    FrameworkRouter,
 }
 
 impl AnyRoute {
@@ -182,9 +184,7 @@ impl AnyRoute {
             AnyRoute::File(r) => r.memory_cost(),
             AnyRoute::Directory(r) => r.memory_cost(),
             AnyRoute::Html(r) => r.memory_cost(),
-            AnyRoute::FrameworkRouter(_) => {
-                core::mem::size_of::<crate::bake::FileSystemRouterType>()
-            }
+            AnyRoute::FrameworkRouter => core::mem::size_of::<crate::bake::FileSystemRouterType>(),
         }
     }
 
@@ -196,7 +196,7 @@ impl AnyRoute {
 // Full state machine + intrusive refcount lives in `server_body.rs` (the
 // `*mut ServePlugins` is smuggled through `JSValue::then` as a promise context,
 // so `Rc` is unsuitable). Re-exported here for `AnyServer` callers.
-pub use server_body::ServePlugins;
+pub(crate) use server_body::ServePlugins;
 
 // ─── ServerFlags ─────────────────────────────────────────────────────────────
 bitflags::bitflags! {
@@ -225,7 +225,7 @@ bun_jsc::impl_abort_handle_owner!(
     }
 );
 
-pub struct NewServer<const SSL: bool, const DEBUG: bool> {
+pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) app: Option<*mut uws_sys::NewApp<SSL>>,
     pub(crate) listener: Option<*mut uws_sys::app::ListenSocket<SSL>>,
     // Never set when !SSL.
@@ -322,7 +322,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) inspector_server_id: jsc::DebuggerId,
 }
 
-pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
+pub(crate) struct UserRoute<const SSL: bool, const DEBUG: bool> {
     pub(crate) id: u32,
     pub(crate) server: *mut NewServer<SSL, DEBUG>,
     pub(crate) route: server_config::RouteDeclaration,
@@ -355,11 +355,11 @@ fn any_response_from<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>) -
 }
 
 /// HTTP/1 `RequestContext` for a given server monomorphization.
-pub type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
+pub(crate) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     request_context::RequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CreateJsRequest {
+pub(crate) enum CreateJsRequest {
     Yes,
     No,
     Bake,
@@ -370,7 +370,7 @@ pub enum CreateJsRequest {
 /// instantiation is materialized; H3
 /// callers never `save()` and the H3 dispatch
 /// path is private to `set_routes`.
-pub struct PreparedRequest<const SSL: bool, const DEBUG: bool> {
+pub(crate) struct PreparedRequest<const SSL: bool, const DEBUG: bool> {
     pub(crate) js_request: JSValue,
     pub(crate) request_object: *mut crate::webcore::Request,
     pub ctx: *mut ServerRequestContext<SSL, DEBUG>,
@@ -443,7 +443,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `opaque_ffi!` ZST, so the `*const → &` deref is safe via
     /// `bun_opaque::opaque_deref` (const-asserted ZST/align-1).
     #[inline(always)]
-    pub fn global_this(&self) -> &jsc::JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &jsc::JSGlobalObject {
         bun_opaque::opaque_deref(self.global_this)
     }
 
@@ -1665,7 +1665,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    pub fn ref_(&mut self) {
+    pub(crate) fn ref_(&mut self) {
         // Once `is_closed()`, nothing is left that would ever `unref()` again
         // (`deinit_if_we_can` already dropped the loop ref), so a ref taken
         // here would pin the process forever.
@@ -1968,27 +1968,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // (non-null for the server's lifetime); single-threaded JS
             // context, `&mut` scoped to this call.
             unsafe {
-                (*self.vm_mut()).enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-                    app,
-                    |app| {
-                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                        bun_opaque::opaque_deref_mut(app).close();
-                        Ok(())
-                    },
-                ));
+                (*self.vm_mut())
+                    .enqueue_task(bun_event_loop::Task::init(app.cast::<AppCloseTask<SSL>>()));
             }
         }
 
         // SAFETY: as above — `&mut` scoped to this call.
         unsafe {
-            (*self.vm_mut()).enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-                std::ptr::from_mut::<Self>(self),
-                |this| {
-                    // SAFETY: `this` is the unique owning server pointer enqueued
-                    // above; the task runs once on the JS thread.
-                    Self::deinit(this);
-                    Ok(())
-                },
+            (*self.vm_mut()).enqueue_task(bun_event_loop::Task::init(
+                std::ptr::from_mut::<Self>(self).cast::<ServerDeinitTask<SSL, DEBUG>>(),
             ));
         }
     }
@@ -2584,7 +2572,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                     needs_plugins = true;
                 }
-                AnyRoute::FrameworkRouter(_) => {}
+                AnyRoute::FrameworkRouter => {}
             }
         }
 
@@ -3325,7 +3313,7 @@ pub(crate) use server_js_cached;
 // shadow is the hot-path read.
 macro_rules! slot_setter {
     ($set_fn:ident, $set_cached:ident) => {
-        pub fn $set_fn(server_js: JSValue, global: &JSGlobalObject, v: JSValue) {
+        pub(crate) fn $set_fn(server_js: JSValue, global: &JSGlobalObject, v: JSValue) {
             server_js_cached!(SSL, DEBUG, $set_cached(server_js, global, v))
         }
     };
@@ -3513,7 +3501,7 @@ mod trampoline {
 // Fallback::{get,put,claim}` take `&mut self` with no internal synchronization;
 // a process-static would race when two `Bun.serve` instances run on distinct
 // Worker threads (each Worker has its own event loop and may host a server).
-pub trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
+pub(crate) trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
     fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
     fn mux_request_pool()
     -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>;
@@ -3628,7 +3616,7 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
 // `RequestContext` reaches back into its server via this; mirrors the
 // field/method surface the per-request state machine needs without naming
 // `NewServer` (avoids a generic-parameter cycle).
-pub trait ServerLike {
+pub(crate) trait ServerLike {
     fn global_this(&self) -> &jsc::JSGlobalObject;
     fn vm(&self) -> &jsc::VirtualMachine;
     /// The context of the script that made the server: what a request starts continues it.
@@ -3712,10 +3700,10 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
 }
 
 // ─── Type aliases ────────────────────────────────────────────────────────────
-pub type HTTPServer = NewServer<false, false>;
-pub type HTTPSServer = NewServer<true, false>;
-pub type DebugHTTPServer = NewServer<false, true>;
-pub type DebugHTTPSServer = NewServer<true, true>;
+pub(crate) type HTTPServer = NewServer<false, false>;
+pub(crate) type HTTPSServer = NewServer<true, false>;
+pub(crate) type DebugHTTPServer = NewServer<false, true>;
+pub(crate) type DebugHTTPSServer = NewServer<true, true>;
 
 // ─── AnyServer ───────────────────────────────────────────────────────────────
 // §Dispatch: the
@@ -3726,7 +3714,7 @@ pub type DebugHTTPSServer = NewServer<true, true>;
 // Two fields cost 16 bytes vs 8 for a packed tagged pointer; ~handful of instances.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AnyServerTag {
+pub(crate) enum AnyServerTag {
     HTTPServer = 0,
     HTTPSServer = 1,
     DebugHTTPServer = 2,
@@ -3734,7 +3722,7 @@ pub enum AnyServerTag {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AnyServer {
+pub(crate) struct AnyServer {
     pub(crate) tag: AnyServerTag,
     pub ptr: *mut (),
 }
@@ -3943,7 +3931,7 @@ impl AnyServer {
     /// [`NewServer::global_this`] (same SAFETY contract: never-null backref,
     /// never moved or freed while any `NewServer` exists).
     #[inline]
-    pub fn global_this(&self) -> &jsc::JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &jsc::JSGlobalObject {
         any_server_dispatch!(self, |s| s.global_this())
     }
 
@@ -4251,7 +4239,7 @@ pub(crate) mod http_server_agent {
 }
 
 // ─── SavedRequest ────────────────────────────────────────────────────────────
-pub struct SavedRequest {
+pub(crate) struct SavedRequest {
     /// May be `.empty` until
     /// `prepare_js_request_context` populates it; `deinit` must tolerate the
     /// empty state.
@@ -4277,8 +4265,62 @@ pub(crate) enum SavedRequestUnion<'a> {
     Saved(SavedRequest),
 }
 
+// ─── schedule_deinit's tasks ─────────────────────────────────────────────────
+/// `schedule_deinit`'s first task, `app.close()`: same pointer as the app, one tag per `SSL`.
+#[repr(transparent)]
+pub(crate) struct AppCloseTask<const SSL: bool>(uws_sys::NewApp<SSL>);
+
+impl<const SSL: bool> bun_event_loop::Taskable for AppCloseTask<SSL> {
+    const TAG: bun_event_loop::TaskTag = if SSL {
+        bun_event_loop::task_tag::HTTPSAppClose
+    } else {
+        bun_event_loop::task_tag::HTTPAppClose
+    };
+    /// The app goes with its server.
+    unsafe fn release_unrun(_: *mut Self) {}
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl<const SSL: bool> AppCloseTask<SSL> {
+    pub(crate) fn run(this: *mut Self) {
+        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        bun_opaque::opaque_deref_mut(this.cast::<uws_sys::NewApp<SSL>>()).close();
+    }
+}
+
+/// `schedule_deinit`'s second task, `deinit()`: same pointer as the server, one tag per
+/// monomorphization.
+#[repr(transparent)]
+pub(crate) struct ServerDeinitTask<const SSL: bool, const DEBUG: bool>(NewServer<SSL, DEBUG>);
+
+impl<const SSL: bool, const DEBUG: bool> bun_event_loop::Taskable for ServerDeinitTask<SSL, DEBUG> {
+    const TAG: bun_event_loop::TaskTag = match (SSL, DEBUG) {
+        (false, false) => bun_event_loop::task_tag::HTTPServerDeinit,
+        (true, false) => bun_event_loop::task_tag::HTTPSServerDeinit,
+        (false, true) => bun_event_loop::task_tag::DebugHTTPServerDeinit,
+        (true, true) => bun_event_loop::task_tag::DebugHTTPSServerDeinit,
+    };
+    /// Frees nothing: a server whose deinit is still queued when its VM stops stays allocated.
+    unsafe fn release_unrun(_: *mut Self) {}
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl<const SSL: bool, const DEBUG: bool> ServerDeinitTask<SSL, DEBUG> {
+    /// # Safety
+    /// `this` is the unique owning server pointer `schedule_deinit` queued.
+    pub(crate) unsafe fn run(this: *mut Self) {
+        NewServer::<SSL, DEBUG>::deinit(this.cast());
+    }
+}
+
 // ─── ServerAllConnectionsClosedTask ──────────────────────────────────────────
-pub struct ServerAllConnectionsClosedTask {
+pub(crate) struct ServerAllConnectionsClosedTask {
     pub(crate) global_object: *const jsc::JSGlobalObject,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) tracker: jsc::AsyncTaskTracker,

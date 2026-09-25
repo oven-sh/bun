@@ -1,5 +1,10 @@
 // This file contains functions used for the CommonJS module loader
 
+interface RequiredESMNamespace {
+  __esModule?: unknown;
+  "module.exports"?: unknown;
+}
+
 $getter;
 export function main() {
   return $requireMap.$get(Bun.main);
@@ -79,7 +84,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   const mod = $createCommonJSModule(id, {}, false, this);
   requireMap.$set(id, mod);
 
-  var out: LoaderModule | -1;
+  var out: JSCommonJSModule | RequiredESMNamespace | -1;
 
   // This is where we load the module. We will see if Module._load and
   // Module._compile are actually important for compatibility.
@@ -110,7 +115,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
     try {
-      out = $requireESM(id, this);
+      out = $requireESM(id, this) as RequiredESMNamespace;
     } catch (exception) {
       // Since the ESM code is mostly JS, we need to handle exceptions here.
       requireMap.$delete(id);

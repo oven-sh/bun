@@ -31,12 +31,12 @@ mod pseudo {
 /// inbound ACK is attributed to the submission it actually acknowledges (RFC 9113 §6.5.3) rather
 /// than to the latest submission.
 #[derive(Clone, Copy)]
-pub struct PendingLocalSettings {
+pub(crate) struct PendingLocalSettings {
     pub settings: Settings,
 }
 
 /// Per-stream protocol state tracked by the engine.
-pub struct Stream {
+pub(crate) struct Stream {
     pub state: State,
     pub send_window: SendWindow,
     pub recv_window: RecvWindow,
@@ -63,7 +63,7 @@ impl Stream {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum WriteResult {
+pub(crate) enum WriteResult {
     Dropped = -1,
     Queued = 0,
     Sent = 1,
@@ -126,7 +126,7 @@ enum BlockDisposition {
     Refused,
 }
 
-pub struct Feed {
+pub(crate) struct Feed {
     pub consumed: usize,
     pub fatal: bool,
 }
@@ -139,7 +139,7 @@ const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
 /// ownership cycle.
-pub trait Sink {
+pub(crate) trait Sink {
     fn write(&self, bytes: &[u8]) -> WriteResult;
     /// A locally-detected connection error: the GOAWAY (when one applies) is already on the wire.
     /// `lib_error_code` is the negative nghttp2-style library error code (`wire::lib_error`) the
@@ -224,7 +224,7 @@ pub trait Sink {
     }
 }
 
-pub struct Connection {
+pub(crate) struct Connection {
     pub is_server: bool,
     /// Wire frames fully accepted from the peer (perf_hooks http2 session stats).
     pub frames_received: u64,
@@ -300,7 +300,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(is_server: bool, local: Settings) -> Self {
+    pub(crate) fn new(is_server: bool, local: Settings) -> Self {
         Connection {
             is_server,
             local_settings: local,
@@ -391,7 +391,7 @@ impl Connection {
     /// Connection error with the generic NGHTTP2_ERR_PROTO library code — the same thing node
     /// reports ("Protocol error") whenever nghttp2 terminates a session internally without a more
     /// specific callback (node's `internal_goaway_sent_` path in OnFrameSent/SendPendingData).
-    pub fn send_go_away(&mut self, sink: &impl Sink, code: ErrorCode, debug: &[u8]) {
+    pub(crate) fn send_go_away(&mut self, sink: &impl Sink, code: ErrorCode, debug: &[u8]) {
         self.local_connection_error(sink, code, wire::lib_error::PROTO, debug);
     }
 
@@ -420,7 +420,7 @@ impl Connection {
     /// Feed received bytes. Processes every complete frame and returns `consumed` = the offset of
     /// the first incomplete frame (the caller keeps `bytes[consumed..]` and re-presents it prepended
     /// to the next chunk — the engine holds no reassembly buffer).
-    pub fn receive(&mut self, sink: &impl Sink, bytes: &[u8]) -> Feed {
+    pub(crate) fn receive(&mut self, sink: &impl Sink, bytes: &[u8]) -> Feed {
         let mut offset = 0usize;
 
         // A locally-detected connection error already tore the session down (GOAWAY sent, error
@@ -759,7 +759,7 @@ impl Connection {
     /// transport: reset the outbound-ACK-queue counter (mirrors nghttp2's
     /// per-send decrement, coarsened to whole-buffer drains). Never called
     /// from receive() itself so a peer that never reads cannot reset it.
-    pub fn note_outbound_drained(&mut self) {
+    pub(crate) fn note_outbound_drained(&mut self) {
         self.obq_ack_pending = 0;
     }
 
@@ -1778,7 +1778,7 @@ impl Connection {
     // ---- Outbound stream API (called by the embedder) ------------------
 
     /// Begin a new outbound header block. Emits any pending §6.3 dynamic-table size update first.
-    pub fn begin_header_block(&mut self) {
+    pub(crate) fn begin_header_block(&mut self) {
         self.enc_buf.clear();
         let mut tmp = [0u8; hpack::MAX_SIZE_UPDATE_BYTES];
         let n = self.hpack.take_pending_size_update(&mut tmp, 0);
@@ -1786,7 +1786,7 @@ impl Connection {
     }
 
     /// HPACK-encode one header field into the current block. Returns false on encode failure.
-    pub fn encode_header(&mut self, name: &[u8], value: &[u8], never_index: bool) -> bool {
+    pub(crate) fn encode_header(&mut self, name: &[u8], value: &[u8], never_index: bool) -> bool {
         let old = self.enc_buf.len();
         self.enc_buf.resize(old + name.len() + value.len() + 16, 0);
         match self
@@ -1806,7 +1806,7 @@ impl Connection {
 
     /// Emit the accumulated header block as a HEADERS frame, splitting into CONTINUATION frames when
     /// it exceeds the peer's max frame size (§4.3/§6.10), and advance the send-side stream state.
-    pub fn send_header_block(&mut self, sink: &impl Sink, stream_id: u32, end_stream: bool) {
+    pub(crate) fn send_header_block(&mut self, sink: &impl Sink, stream_id: u32, end_stream: bool) {
         let block = std::mem::take(&mut self.enc_buf);
         let max = (self.remote_settings.max_frame_size as usize).max(1);
         let total = block.len();
@@ -1868,7 +1868,7 @@ impl Connection {
     /// Send DATA honoring connection + stream send windows and the max frame size. Returns the
     /// number of bytes actually written; the caller queues and retries the remainder on
     /// WINDOW_UPDATE. END_STREAM is only set when the whole buffer is flushed in this call.
-    pub fn send_data(
+    pub(crate) fn send_data(
         &mut self,
         sink: &impl Sink,
         stream_id: u32,
@@ -1916,14 +1916,14 @@ impl Connection {
     /// has the same observable behavior as scan-eviction of a Closed stream: late frames
     /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
     /// answer) and a late HEADERS re-opens a fresh entry.
-    pub fn close_stream(&mut self, stream_id: u32) {
+    pub(crate) fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }
 
     /// Replenish a single stream's receive window now (the embedder's reader resumed after a
     /// pause). Without this, a peer stalled on a zero stream window would only be released by the
     /// next inbound batch — which may never come, since the peer is the one waiting.
-    pub fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
+    pub(crate) fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
         let inc = match self.streams.get_mut(&stream_id) {
             Some(s) if s.state != State::Closed && s.recv_window.needs_update() => {
                 s.recv_window.take_update()
@@ -1937,7 +1937,7 @@ impl Connection {
 
     /// Server-side: emit a PUSH_PROMISE on `parent_id` reserving `promised_id`, carrying the
     /// promised request headers staged via begin_header_block/encode_header (RFC 9113 §6.6).
-    pub fn send_push_promise(&mut self, sink: &impl Sink, parent_id: u32, promised_id: u32) {
+    pub(crate) fn send_push_promise(&mut self, sink: &impl Sink, parent_id: u32, promised_id: u32) {
         let block = std::mem::take(&mut self.enc_buf);
         let max = (self.remote_settings.max_frame_size as usize).max(5);
 

@@ -31,7 +31,7 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::RefCounted)]
-pub struct NodeHTTPResponse {
+pub(crate) struct NodeHTTPResponse {
     ref_count: bun_ptr::RefCount<Self>,
 
     pub(crate) raw_response: Cell<Option<uws::AnyResponse>>,
@@ -118,7 +118,7 @@ impl Flags {
     }
 }
 
-pub struct UpgradeCTX {
+pub(crate) struct UpgradeCTX {
     pub(crate) context: *mut uws_sys::WebSocketUpgradeContext,
     // request will be detached when go async
     pub(crate) request: *mut uws_sys::Request,
@@ -178,7 +178,7 @@ impl UpgradeCTX {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum BodyReadState {
+pub(crate) enum BodyReadState {
     #[default]
     None = 0,
     Pending = 1,
@@ -287,6 +287,24 @@ fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> 
     Err(err_throw_cold(global, code, msg))
 }
 
+/// Same text as the `ERR_HTTP_CONTENT_LENGTH_MISMATCH` row of `simpleErrorMessages` in ErrorCode.cpp.
+#[cold]
+#[inline(never)]
+fn err_throw_content_length_mismatch(
+    global: &JSGlobalObject,
+    actual: usize,
+    expected: u64,
+) -> jsc::JsError {
+    global
+        .err(
+            ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+            format_args!(
+                "Response body's content-length of {actual} byte(s) does not match the content-length of {expected} byte(s) set in header"
+            ),
+        )
+        .throw()
+}
+
 /// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
 #[inline]
 fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
@@ -352,7 +370,7 @@ fn any_server_from_packed(packed: u64) -> AnyServer {
 /// `codegen_cached_accessors!` emits `on_{data,aborted,writable}_{get,set}_cached`
 /// thin wrappers over the C++ `NodeHTTPResponsePrototype__on*{Get,Set}CachedValue`
 /// `WriteBarrier<Unknown>` slots.
-pub mod js {
+pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!("NodeHTTPResponse"; onData, onAborted, onWritable, pendingWriteBuffer);
 }
 
@@ -1213,7 +1231,7 @@ impl NodeHTTPResponse {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum AbortEvent {
+pub(crate) enum AbortEvent {
     None = 0,
     Abort = 1,
     Timeout = 2,
@@ -1995,20 +2013,17 @@ impl NodeHTTPResponse {
         if let Some(content_length) = strict_content_length {
             let bytes_written = self.bytes_written.get() + bytes.len();
 
-            if IS_END {
-                if bytes_written as u64 != content_length {
-                    return err_throw(
-                        global_object,
-                        ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                        "Content-Length mismatch",
-                    );
-                }
-            } else if bytes_written as u64 > content_length {
-                return err_throw(
+            let mismatch = if IS_END {
+                bytes_written as u64 != content_length
+            } else {
+                bytes_written as u64 > content_length
+            };
+            if mismatch {
+                return Err(err_throw_content_length_mismatch(
                     global_object,
-                    ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                    "Content-Length mismatch",
-                );
+                    bytes_written,
+                    content_length,
+                ));
             }
             self.bytes_written.set(bytes_written);
         } else {

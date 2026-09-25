@@ -1,10 +1,9 @@
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
-use bun_jsc::{AbortSignal, AbortSignalRef, GlobalRef};
+use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
@@ -21,7 +20,7 @@ use super::{FetchHeaders, ReadableStream, Request};
 // Codegen (`generated_classes.rs`) re-exports `Blob` from
 // `crate::webcore::response` because the `.classes.ts` source path is
 // `bun.jsc.WebCore.response.Blob`. Keep this `pub use` so that resolves.
-pub use super::blob::Blob;
+pub(crate) use super::blob::Blob;
 use bun_ptr::weak_ptr::WeakPtrData;
 
 /// RAII handle to a C++-owned `WebCore::FetchHeaders`.
@@ -34,7 +33,7 @@ use bun_ptr::weak_ptr::WeakPtrData;
 /// exposes is `clone_this()`, which deep-copies a fresh `FetchHeaders` on the
 /// C++ side. Transferring ownership is by-move.
 #[repr(transparent)]
-pub struct HeadersRef(NonNull<FetchHeaders>);
+pub(crate) struct HeadersRef(NonNull<FetchHeaders>);
 
 impl HeadersRef {
     /// Adopt a freshly-created `FetchHeaders*` (refcount already 1).
@@ -117,7 +116,7 @@ impl Drop for HeadersRef {
 
 /// Errors the owning fetch `Response`'s body on abort (Fetch spec "abort a fetch" step 4).
 pub(crate) struct BodyAbortListener {
-    signal: AbortSignalRef,
+    abort_handle: bun_jsc::AbortHandle,
     /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
     response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,
     global: GlobalRef,
@@ -125,30 +124,31 @@ pub(crate) struct BodyAbortListener {
     context: bun_jsc::ContextId,
 }
 
+bun_jsc::impl_abort_handle_owner!(
+    BodyAbortListener,
+    abort_handle,
+    keep_alive = |this| -> RefPtr<Response> {
+        // SAFETY: the `Response` drops this box, and with it the handle, before it goes.
+        unsafe { RefPtr::init_ref((*this).response.as_mut_ptr()) }
+    },
+    |this, cause| {
+        if let bun_jsc::AbortCause::Signal(reason) = cause {
+            // SAFETY: the `Response` that owns the box is kept alive.
+            unsafe { (*this).on_abort(reason) }
+        }
+    }
+);
+
 impl BodyAbortListener {
-    unsafe extern "C" fn on_abort(ctx: *mut c_void, reason: JSValue) {
+    fn on_abort(&self, reason: JSValue) {
         reason.ensure_still_alive();
-        // SAFETY: `ctx` is the `Box<BodyAbortListener>` registered in
-        // `attach_abort_signal`; `clean_native_bindings` removes it before the
-        // box is dropped, so it is live here. Copy out up front: erroring a
-        // still-streaming body can re-enter `Response::unref` via
-        // `FetchTasklet::abandon_response_body` and destroy this box.
-        let (response, global, context) = unsafe {
-            let this = &*ctx.cast::<Self>();
-            (this.response, this.global, this.context)
-        };
-        let _context = global.bun_vm().enter_context(context);
-        // SAFETY: `response` is live (see above).
-        let _keepalive = unsafe { RefPtr::init_ref(response.as_mut_ptr()) };
+        let (response, global) = (self.response, self.global);
+        let _context = global.bun_vm().enter_context(self.context);
         if !matches!(
             response.get_body_value(),
             BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
         ) {
-            // Not `get_body_readable_stream`: its `js_ref()` path reads a raw
-            // JSValue to a wrapper that may be unmarked but not yet swept,
-            // reaching a `NewSource` box the source cell's (PreciseAllocation)
-            // destructor already freed. `Locked.readable` is a real `JSC::Weak`
-            // on the stream and reads `None` exactly when the box is gone.
+            // `Locked.readable` is a real `JSC::Weak`: `None` exactly when the stream's source is gone.
             if let BodyValue::Locked(locked) = response.get_body_value() {
                 if let Some(readable) = locked.readable.get() {
                     readable.value.ensure_still_alive();
@@ -162,30 +162,23 @@ impl BodyAbortListener {
     }
 }
 
-impl Drop for BodyAbortListener {
-    fn drop(&mut self) {
-        let ctx = core::ptr::from_mut(self).cast::<c_void>();
-        self.signal.clean_native_bindings(ctx);
-    }
-}
-
 // `jsc.Codegen.JSResponse` — the real bindings, emitted by
 // `js_class_module!` in `bun_jsc::generated`.
-pub mod js {
-    pub use bun_jsc::generated::JSResponse::*;
+pub(crate) mod js {
+    pub(crate) use bun_jsc::generated::JSResponse::*;
 }
 // NOTE: toJS is overridden below.
 // Typed re-exports. The `js::` module erases the payload to `*mut ()`
 // (Response is defined above the `bun_jsc` crate, so `js_class_module!`
 // can't name it); cast at this boundary.
 #[inline]
-pub fn from_js(value: JSValue) -> Option<*mut Response> {
+pub(crate) fn from_js(value: JSValue) -> Option<*mut Response> {
     js::from_js(value).map(<*mut ()>::cast::<Response>)
 }
 
 /// [`from_js`] as a shared borrow; `value` must stay rooted while it is used.
 #[inline]
-pub fn from_js_ref(value: JSValue) -> Option<bun_ptr::ParentRef<Response>> {
+pub(crate) fn from_js_ref(value: JSValue) -> Option<bun_ptr::ParentRef<Response>> {
     from_js(value)
         .and_then(core::ptr::NonNull::new)
         .map(bun_ptr::ParentRef::from)
@@ -212,7 +205,7 @@ bun_jsc::impl_js_class_via_generated!(Response => bun_jsc::generated::JSResponse
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Response::destroy)]
-pub struct Response {
+pub(crate) struct Response {
     body: JsCell<Body>,
     init: JsCell<Init>,
     url: JsCell<BunString>,
@@ -467,7 +460,7 @@ impl Response {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
         // `bun_jsc::generated::JSResponse::to_js` ⇒ `Response__create` (C++
         // shim). Payload type is erased (`*mut ()`) at the bun_jsc tier.
@@ -503,18 +496,18 @@ impl Response {
         signal: &AbortSignal,
         context: bun_jsc::ContextId,
     ) {
-        let signal_ref = signal.ref_();
-        let mut listener = Box::new(BodyAbortListener {
-            signal: signal_ref,
+        let listener = bun_core::heap::into_raw(Box::new(BodyAbortListener {
+            abort_handle: bun_jsc::AbortHandle::for_owner::<BodyAbortListener>(),
             // SAFETY: caller contract; `this` is live and owns the box.
             response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
             global: GlobalRef::new(global),
             context,
-        });
-        signal.add_listener(
-            core::ptr::from_mut(&mut *listener).cast::<c_void>(),
-            BodyAbortListener::on_abort,
-        );
+        }));
+        // SAFETY: `listener` is a live heap allocation; both calls keep its provenance.
+        let listener = unsafe {
+            bun_jsc::AbortHandle::follow_owner(listener, signal.ref_());
+            bun_core::heap::take(listener)
+        };
         // SAFETY: caller contract; `this` is live.
         unsafe { (*this).abort_listener.set(Some(listener)) };
     }
@@ -853,7 +846,7 @@ impl Response {
         }
     }
 
-    pub fn finalize(&self) {
+    pub(crate) fn finalize(&self) {
         self.js_ref.with_mut(JsRef::finalize);
     }
 
@@ -1195,7 +1188,7 @@ impl Response {
 // syntax (`Init { status_code: x, ..Default::default() }`) and partial moves
 // (e.g. Request::construct_into reading `response_init.headers`) keep working;
 // the fields' own drop glue releases `headers` and `status_text`.
-pub struct Init {
+pub(crate) struct Init {
     pub(crate) headers: Option<HeadersRef>,
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,

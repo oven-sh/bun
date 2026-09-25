@@ -57,7 +57,7 @@ impl ShellCondExprStatTask {
 }
 
 /// Error result of a glob-expansion task.
-pub enum ShellGlobErr {
+pub(crate) enum ShellGlobErr {
     Syscall(bun_sys::Error),
     Unknown(crate::Error),
 }

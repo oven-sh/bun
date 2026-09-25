@@ -349,7 +349,7 @@ fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Each c-ares reply struct implements this with its record-type tag.
-pub trait CAresRecordType: Sized {
+pub(crate) trait CAresRecordType: Sized {
     const TYPE_NAME: &'static str;
     /// `"query" + ucfirst(TYPE_NAME)` — each impl carries the precomputed
     /// literal so error paths report the right syscall.
@@ -416,10 +416,10 @@ pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
     pub tail: *mut CAresLookup<T>, // INTRUSIVE — points at `head` or last appended node
 }
 
-pub mod resolve_info_request {
+pub(crate) mod resolve_info_request {
     use super::*;
 
-    pub struct PendingCacheKey<T: CAresRecordType> {
+    pub(crate) struct PendingCacheKey<T: CAresRecordType> {
         pub(crate) hash: u64,
         pub(crate) len: u16,
         pub name: Box<[u8]>,
@@ -551,10 +551,10 @@ pub(crate) struct GetHostByAddrInfoRequest {
     pub tail: *mut CAresReverse, // INTRUSIVE
 }
 
-pub mod get_host_by_addr_info_request {
+pub(crate) mod get_host_by_addr_info_request {
     use super::*;
 
-    pub struct PendingCacheKey {
+    pub(crate) struct PendingCacheKey {
         pub(crate) hash: u64,
         pub(crate) len: u16,
         pub name: Box<[u8]>,
@@ -806,10 +806,10 @@ pub(crate) struct GetNameInfoRequest {
     pub tail: *mut CAresNameInfo, // INTRUSIVE
 }
 
-pub mod get_name_info_request {
+pub(crate) mod get_name_info_request {
     use super::*;
 
-    pub struct PendingCacheKey {
+    pub(crate) struct PendingCacheKey {
         pub(crate) hash: u64,
         pub(crate) len: u16,
         pub name: Box<[u8]>,
@@ -932,7 +932,7 @@ impl c_ares::NameinfoHandler for GetNameInfoRequest {
 // GetAddrInfoRequest
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct GetAddrInfoRequest {
+pub(crate) struct GetAddrInfoRequest {
     pub(crate) backend: get_addr_info_request::Backend,
     // TODO: should be Option<&'a Resolver>; raw ptr for now
     pub(crate) resolver_for_caching: Option<*mut Resolver>,
@@ -942,12 +942,12 @@ pub struct GetAddrInfoRequest {
     pub(crate) tail: *mut DNSLookup, // INTRUSIVE
 }
 
-pub mod get_addr_info_request {
+pub(crate) mod get_addr_info_request {
     use super::*;
 
     /// The blocking `getaddrinfo` of one libc-backend lookup, run on the pool.
     #[cfg(not(windows))]
-    pub struct LibcLookup {
+    pub(crate) struct LibcLookup {
         pub(crate) backend: LibcBackend,
     }
 
@@ -957,7 +957,7 @@ pub mod get_addr_info_request {
     /// when the VM tears down first, in which case everything is freed and
     /// nothing is settled.
     #[cfg(not(windows))]
-    pub struct LibcRequest(pub(crate) NonNull<super::GetAddrInfoRequest>);
+    pub(crate) struct LibcRequest(pub(crate) NonNull<super::GetAddrInfoRequest>);
     // SAFETY: only the JS thread touches the request (see type doc).
     #[cfg(not(windows))]
     unsafe impl bun_jsc::job::JsAffine for LibcRequest {}
@@ -1012,7 +1012,7 @@ pub mod get_addr_info_request {
         }
     }
 
-    pub struct PendingCacheKey {
+    pub(crate) struct PendingCacheKey {
         pub(crate) hash: u64,
         pub(crate) len: u16,
         pub name: Box<[u8]>,
@@ -1040,7 +1040,7 @@ pub mod get_addr_info_request {
     }
 
     #[cfg(target_os = "macos")]
-    pub struct BackendDnsSd {
+    pub(crate) struct BackendDnsSd {
         pub(crate) query: dns_sd::QueryState,
     }
 
@@ -1055,7 +1055,7 @@ pub mod get_addr_info_request {
 
     /// Non-Windows libc backend (worker-thread blocking getaddrinfo).
     #[cfg(not(windows))]
-    pub enum LibcBackend {
+    pub(crate) enum LibcBackend {
         Success(GetAddrInfoResultList),
         Err(i32),
         Query(GetAddrInfo),
@@ -1128,7 +1128,7 @@ pub mod get_addr_info_request {
 
     /// Windows libc backend wraps a uv_getaddrinfo_t.
     #[cfg(windows)]
-    pub struct LibcBackend {
+    pub(crate) struct LibcBackend {
         pub(crate) uv: libuv::uv_getaddrinfo_t,
     }
     #[cfg(windows)]
@@ -1139,7 +1139,7 @@ pub mod get_addr_info_request {
             }
         }
     }
-    pub enum Backend {
+    pub(crate) enum Backend {
         CAres,
         #[cfg(target_os = "macos")]
         DnsSd(BackendDnsSd),
@@ -1967,7 +1967,7 @@ impl Drop for DNSLookup {
 // GlobalData
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct GlobalData {
+pub(crate) struct GlobalData {
     pub(crate) resolver: Resolver,
 }
 
@@ -2049,7 +2049,7 @@ impl Resolver {
 // internal — process-wide DNS cache used by usockets connect path
 // ──────────────────────────────────────────────────────────────────────────
 
-pub mod internal {
+pub(crate) mod internal {
     use super::*;
 
     // PORTING.md §Global mutable state: lazy env-var memo — an `OnceLock<u32>`
@@ -2076,7 +2076,7 @@ pub mod internal {
     }
 
     /// Heap-stored key on `Request` — owns its host buffer.
-    pub struct RequestKeyOwned {
+    pub(crate) struct RequestKeyOwned {
         pub(crate) host: Option<bun::ZBox>,
         pub(crate) port: u16,
         pub(crate) hash: u64,
@@ -2137,7 +2137,7 @@ pub mod internal {
     // Crosses FFI to usockets via `Bun__addrinfo_getRequestResult` — layout MUST
     // stay `{ info: ?*ResultEntry, err: c_int }` (8-byte thin ptr).
     #[repr(C)]
-    pub struct RequestResult {
+    pub(crate) struct RequestResult {
         pub(crate) info: Option<NonNull<ResultEntry>>, // thin ptr; head of intrusive `ai_next` chain
         pub(crate) err: c_int,
     }
@@ -2146,7 +2146,7 @@ pub mod internal {
     // this field.
 
     #[cfg(target_os = "macos")]
-    pub struct MacAsyncDNS {
+    pub(crate) struct MacAsyncDNS {
         pub(crate) query: dns_sd::QueryState,
     }
 
@@ -2159,7 +2159,7 @@ pub mod internal {
         }
     }
 
-    pub struct Request {
+    pub(crate) struct Request {
         pub(crate) key: RequestKeyOwned,
         pub(crate) result: Option<RequestResult>,
         /// Owns the `[ResultEntry; N]` packed by `process_results`; `result.info`
@@ -2471,9 +2471,8 @@ pub mod internal {
         fn us_internal_dns_callback_threadsafe(socket: *mut ConnectingSocket, req: *mut Request);
     }
 
-    pub enum DNSRequestOwner {
+    pub(crate) enum DNSRequestOwner {
         Socket(*mut ConnectingSocket),           // FFI
-        Prefetch(*mut Loop),                     // FFI
         Quic(*mut bun_http::H3::PendingConnect), // BORROW_PARAM
     }
 
@@ -2490,7 +2489,6 @@ pub mod internal {
                 DNSRequestOwner::Socket(socket) => unsafe {
                     us_internal_dns_callback_threadsafe(*socket, req)
                 },
-                DNSRequestOwner::Prefetch(_) => freeaddrinfo(req, 0),
                 // SAFETY: `pc` is the live PendingConnect borrowed for the lifetime of the request.
                 DNSRequestOwner::Quic(pc) => unsafe {
                     bun_http::H3::PendingConnect::on_dns_resolved_threadsafe(*pc)
@@ -2506,7 +2504,6 @@ pub mod internal {
         #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub(crate) fn notify(&self, req: *mut Request) {
             match self {
-                DNSRequestOwner::Prefetch(_) => freeaddrinfo(req, 0),
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
                 DNSRequestOwner::Socket(socket) => unsafe {
                     us_internal_dns_callback(*socket, req)
@@ -2549,7 +2546,7 @@ pub mod internal {
     }
 
     #[repr(C)]
-    pub struct ResultEntry {
+    pub(crate) struct ResultEntry {
         pub(crate) info: AddrInfo,
         pub(crate) addr: SockaddrStorage,
     }
@@ -3395,8 +3392,6 @@ pub mod internal {
     }
 }
 
-pub use internal::Request as InternalDNSRequest;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver — JSC-exposed `dns.Resolver` (m_ctx payload of JSDNSResolver)
 // ──────────────────────────────────────────────────────────────────────────
@@ -3404,7 +3399,7 @@ pub use internal::Request as InternalDNSRequest;
 /// Field selector for the `pending_*` cache fields on `Resolver` — Rust
 /// cannot index struct fields by name string.
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum PendingCacheField {
+pub(crate) enum PendingCacheField {
     PendingHostCacheCares,
     PendingHostCacheNative,
     PendingSrvCacheCares,
@@ -3696,7 +3691,7 @@ hostent_ttls_newtype!(
     parse_aaaa
 );
 
-pub type PendingCache = HiveArray<get_addr_info_request::PendingCacheKey, 32>;
+pub(crate) type PendingCache = HiveArray<get_addr_info_request::PendingCacheKey, 32>;
 type SrvPendingCache =
     HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_srv_reply>, 32>;
 type SoaPendingCache =
@@ -3735,7 +3730,7 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 // PROVEN_CACHED ref_count miscompile previously laundered with `black_box`).
 #[bun_jsc::JsClass(name = "DNSResolver", no_constructor)]
 #[derive(bun_ptr::RefCounted)]
-pub struct Resolver {
+pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
     pub(crate) channel: Cell<Option<*mut c_ares::Channel>>, // FFI
     /// The context whose script made the resolver: its channel is that context's, whoever is first
@@ -3815,7 +3810,7 @@ impl UvDnsPoll {
 }
 
 #[derive(Clone, Copy)]
-pub enum CacheHit {
+pub(crate) enum CacheHit {
     Inflight(*mut get_addr_info_request::PendingCacheKey), // BORROW_FIELD into resolver buffer
     New(*mut get_addr_info_request::PendingCacheKey),      // BORROW_FIELD into resolver buffer
     Disabled,
@@ -3980,7 +3975,7 @@ pub(crate) enum ChannelResult<'a> {
 // `--dns-result-order` without depending on the runtime). Re-export for
 // existing `crate::dns_jsc::Order` callers; `to_js` stays here as a tier-6
 // extension since it needs JSC.
-pub use bun_dns::Order;
+pub(crate) use bun_dns::Order;
 
 trait OrderJscExt {
     fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
@@ -3995,7 +3990,7 @@ impl OrderJscExt for Order {
 
 #[repr(C)] // c_int
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum RecordType {
+pub(crate) enum RecordType {
     A = 1,
     AAAA = 28,
     CAA = 257,
@@ -4040,7 +4035,7 @@ impl Resolver {
     }
 
     // Intrusive refcount forwarders (RefCount.ref / RefCount.deref).
-    pub fn ref_(&self) {
+    pub(crate) fn ref_(&self) {
         // SAFETY: `self` is live; ref_count uses interior mutability.
         unsafe { bun_ptr::RefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
@@ -4055,7 +4050,7 @@ impl Resolver {
     /// `this` must point to a live heap-allocated `Resolver` originating from
     /// `heap::alloc` (see `init`). If this call may drop the last reference,
     /// the caller must not hold any live `&`/`&mut` borrow of `*this`.
-    pub unsafe fn deref(this: *mut Self) {
+    pub(crate) unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; the 1→0 transition drops the Box.
         unsafe { bun_ptr::RefCount::<Self>::deref(this) };
     }
@@ -5366,12 +5361,15 @@ impl Resolver {
 macro_rules! resolve_record_fn {
     ($global:ident, $method:ident, $jsname:literal, $ty:ty, $allow_empty:expr) => {
         // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
-        pub fn $global(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn $global(
+            global_this: &JSGlobalObject,
+            callframe: &CallFrame,
+        ) -> JsResult<JSValue> {
             global_resolver(global_this).$method(global_this, callframe)
         }
 
         #[host_fn(method)]
-        pub fn $method(
+        pub(crate) fn $method(
             &self,
             global_this: &JSGlobalObject,
             callframe: &CallFrame,

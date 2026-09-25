@@ -31,9 +31,6 @@ use bun_spawn_sys::posix_spawn::posix_spawn;
 /// is `u32` there; `Status::from` casts before matching.
 #[cfg(unix)]
 pub use posix_spawn::WaitPidResult;
-#[cfg(windows)]
-#[derive(Clone, Copy)]
-pub struct WaitPidResult {}
 
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
 /// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
@@ -232,10 +229,6 @@ impl Process {
         matches!(self.status, Status::Exited(_) | Status::Signaled(_))
     }
 
-    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
-        self.status.signal_code()
-    }
-
     /// Intrusive ref-count helpers. Kept on
     /// `&mut self` to match call-site shape; the actual op is atomic on the
     /// embedded `ThreadSafeRefCount` so the mutable borrow is conservative.
@@ -301,7 +294,7 @@ impl Process {
         }))
     }
 
-    // has_exited / has_killed / signal_code live in the always-on impl above.
+    // has_exited / has_killed live in the always-on impl above.
 
     pub fn on_exit(&mut self, status: Status, rusage: &Rusage) {
         // ProcessExitHandler is Copy (owner ptr + &'static vtable), so mirror
@@ -564,12 +557,7 @@ impl Process {
         } else {
             0
         };
-        let signal_code: Option<u8> =
-            if term_signal > 0 && term_signal < bun_core::SignalCode::SIGSYS as c_int {
-                Some(term_signal as u8)
-            } else {
-                None
-            };
+        let signal_code: Option<u8> = u8::try_from(term_signal).ok().filter(|&signal| signal != 0);
 
         bun_sys::windows::libuv::log!(
             "Process.onExit({}) code: {}, signal: {:?}",
@@ -752,11 +740,7 @@ pub enum Status {
     #[default]
     Running,
     Exited(Exited),
-    /// Raw signal byte — any `u8` (incl. Linux RT signals 32..=64) is a valid
-    /// payload. `bun_core::SignalCode` is exhaustive 1..=31,
-    /// so storing it here would force lossy `Signaled→Exited` rewrites for RT
-    /// signals — observable as `{exitCode:0, signal:null}` in JS. Carry the raw
-    /// byte and range-check in `signal_code()` instead.
+    /// The platform's number (`WTERMSIG`), any `u8`; see `Status::signal` / `Status::signal_code`.
     Signaled(u8),
     Err(bun_sys::Error),
 }
@@ -764,9 +748,7 @@ pub enum Status {
 #[derive(Clone, Copy, Default)]
 pub struct Exited {
     pub code: u8,
-    /// Raw signal number. `0` means "no signal".
-    /// `SignalCode` discriminants are 1..=31; storing it as the
-    /// enum and transmuting `0` would be UB. Convert via `Status::signal_code`.
+    /// The platform's signal number, or `0` for none; see `Status::signal`.
     pub signal: u8,
     /// Untruncated `GetExitCodeProcess` DWORD; `code` is its low byte.
     /// NTSTATUS crash codes only survive here (0xC0000409 → `code` 9).
@@ -821,46 +803,32 @@ impl Status {
                 signal: signal.unwrap_or(0),
             }));
         } else if let Some(sig) = signal {
-            // Any byte is valid. Carry the raw byte; `signal_code()` range-checks.
             return Some(Status::Signaled(sig));
         }
 
         None
     }
 
-    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
+    /// The terminating (or stopping) signal as the platform numbers it: re-raise it or add 128.
+    pub fn signal(&self) -> Option<bun_sys::SignalCode> {
         let raw = match self {
             Status::Signaled(sig) => *sig,
-            Status::Exited(exit) => exit.signal,
+            Status::Exited(exit) if exit.signal != 0 => exit.signal,
             _ => return None,
         };
-        bun_core::SignalCode::from_raw(raw)
+        Some(bun_sys::SignalCode(raw))
     }
-}
 
-/// Local shim — `bun_core::SignalCode` does not yet expose this.
-/// Shell-convention: 128 + signal number for signals 1..=31, else `None`.
-pub trait SignalCodeExt {
-    fn to_exit_code(self) -> Option<u8>;
-}
-impl SignalCodeExt for bun_core::SignalCode {
-    #[inline]
-    fn to_exit_code(self) -> Option<u8> {
-        let n = self as u8;
-        if (1..=31).contains(&n) {
-            Some(128u8.wrapping_add(n))
-        } else {
-            None
-        }
+    /// `signal()` as a named signal, to name or classify it; `None` also when the platform names none.
+    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
+        self.signal()?.named()
     }
 }
 
 impl core::fmt::Display for Status {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(signal_code) = self.signal_code() {
-            if let Some(code) = signal_code.to_exit_code() {
-                return write!(writer, "code: {}", code);
-            }
+        if let Some(code) = self.signal().map(bun_sys::SignalCode::to_exit_code) {
+            return write!(writer, "code: {}", code);
         }
 
         match self {
@@ -1399,21 +1367,10 @@ pub mod waiter_thread_posix {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // All by-value `c_uint`/`c_int` args; the kernel validates flags
-            // and returns -1/errno on failure — no memory-safety preconditions,
-            // so `safe fn` (Rust 2024) discharges the link-time proof.
-            unsafe extern "C" {
-                safe fn eventfd(
-                    initval: core::ffi::c_uint,
-                    flags: core::ffi::c_int,
-                ) -> core::ffi::c_int;
-            }
-            let fd = eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC);
-            if fd < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
+            let fd = bun_sys::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC)
+                .map_err(|e| std::io::Error::from_raw_os_error(e.errno as i32))?;
             // SAFETY: single-writer init path (guarded by fetch_max above).
-            unsafe { (*instance()).eventfd = Fd::from_native(fd) };
+            unsafe { (*instance()).eventfd = fd };
         }
 
         let thread = std::thread::Builder::new()

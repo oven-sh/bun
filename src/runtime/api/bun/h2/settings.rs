@@ -8,7 +8,7 @@ use super::wire::{self, ErrorCode, SettingId};
 /// Logical SETTINGS values. Defaults match Node v27 `getDefaultSettings()` exactly
 /// (note `max_concurrent_streams` = 2^32-1).
 #[derive(Clone, Copy, Debug)]
-pub struct Settings {
+pub(crate) struct Settings {
     pub header_table_size: u32,
     pub enable_push: u32, // 0/1
     pub max_concurrent_streams: u32,
@@ -33,7 +33,7 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn apply(&mut self, id: SettingId, value: u32) {
+    pub(crate) fn apply(&mut self, id: SettingId, value: u32) {
         match id {
             SettingId::HeaderTableSize => self.header_table_size = value,
             SettingId::EnablePush => self.enable_push = value,
@@ -72,7 +72,7 @@ fn validate_unit(id: u16, value: u32) -> Option<ErrorCode> {
 }
 
 /// Validate every 6-byte unit in a received SETTINGS payload; returns the first violation.
-pub fn validate_payload(payload: &[u8]) -> Option<ErrorCode> {
+pub(crate) fn validate_payload(payload: &[u8]) -> Option<ErrorCode> {
     let mut i = 0;
     while i + 6 <= payload.len() {
         let id = u16::from_be_bytes([payload[i], payload[i + 1]]);

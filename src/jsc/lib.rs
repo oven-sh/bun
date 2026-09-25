@@ -429,6 +429,8 @@ pub mod virtual_machine_exports;
 #[path = "host_fn.rs"] pub mod host_fn;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
+#[path = "BytecodeOrderRecorder.rs"]
+pub mod bytecode_order_recorder;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
 #[path = "DOMFormData.rs"]
@@ -1093,17 +1095,17 @@ impl FromJsEnum for bun_sys::SignalCode {
             );
         }
         let s = bun_core::String::from_js(v, global)?;
-        let hit = bun_sys::signal_code::from_name(s.to_utf8().slice());
+        let hit = bun_core::SignalCode::from_name(s.to_utf8().slice());
         match hit {
-            Some(code) => Ok(code),
+            Some(code) => Ok(bun_sys::SignalCode::of(code)),
             None => {
                 // Expected-names list
                 // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
                 // canonical signal X-macro so names are never re-spelled.
-                let names = &bun_core::SIGNAL_NAMES[1..];
+                let names = bun_core::SignalCode::ALL;
                 let mut one_of = std::string::String::from("'");
                 for (i, entry) in names.iter().enumerate() {
-                    one_of.push_str(entry);
+                    one_of.push_str(entry.name());
                     one_of.push('\'');
                     if i < names.len() - 2 {
                         one_of.push_str(", '");
@@ -1240,8 +1242,8 @@ pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
     AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, ManagedTask,
-    MiniEventLoop, PosixSignalHandle, PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
+    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
+    PosixSignalHandle, PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
 #[cfg(unix)]

@@ -1,4 +1,4 @@
-import type { Query as QueryType } from "./query";
+import type { QueryStrings, Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
 const {
@@ -390,7 +390,7 @@ function pushBindParam(
 // - All other types are handled natively
 function normalizeQuery(
   adapter: QueryNormalizationAdapter,
-  strings: string | TemplateStringsArray,
+  strings: QueryStrings,
   values: unknown[],
   binding_idx = 1,
 ): [string, unknown[]] {
@@ -595,7 +595,7 @@ const enum PooledConnectionFlags {
   /// onConnectFired is used to indicate that handleConnected ran for this slot, so the user's onconnect callback already fired (with null or an error)
   onConnectFired = 1 << 3,
 }
-export type { PooledConnectionState };
+export type { BasePooledConnection, PooledConnectionState };
 
 function onQueryFinish(this: BasePooledConnection, onClose: (err: Error) => void) {
   this.queries.delete(onClose);
@@ -1017,7 +1017,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     }
   }
 
-  normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
+  normalizeQuery(strings: QueryStrings, values: unknown[], binding_idx = 1): [string, unknown[]] {
     return normalizeQuery(this, strings, values, binding_idx);
   }
 
@@ -1087,13 +1087,13 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     return pooledConnection.connection;
   }
 
-  attachConnectionCloseHandler(connection: PooledConnection, handler: () => void): void {
+  attachConnectionCloseHandler(connection: PooledConnection, handler: (err: Error) => void): void {
     if (connection.onClose) {
       connection.onClose(handler);
     }
   }
 
-  detachConnectionCloseHandler(connection: PooledConnection, handler: () => void): void {
+  detachConnectionCloseHandler(connection: PooledConnection, handler: (err: Error) => void): void {
     const queries = connection.queries;
     if (queries) {
       queries.delete(handler);
@@ -1361,7 +1361,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       const timer = setTimeout(() => {
         // timeout is reached, lets close and probably fail some queries
         this.#close().finally(resolve);
-      }, timeout * 1000);
+      }, timeout! * 1000);
       timer.unref(); // dont block the event loop
 
       this.onAllQueriesFinished = () => {
@@ -1874,13 +1874,13 @@ function parseOptions(
   let username: string | null | undefined;
   let password: string | (() => Bun.MaybePromise<string>) | undefined | null;
   let database: string | undefined;
-  let tls: Bun.TLSOptions | boolean | undefined;
+  let tls: Bun.TLSOptions | (Bun.BunFile & Bun.TLSOptions) | boolean | undefined;
   let query: string = "";
   let idleTimeout: number | null | undefined;
   let connectionTimeout: number | null | undefined;
   let maxLifetime: number | null | undefined;
-  let onconnect: ((error?: Error | undefined) => void) | undefined;
-  let onclose: ((error?: Error | undefined) => void) | undefined;
+  let onconnect: ((err: Error | null) => void) | undefined;
+  let onclose: ((err: Error | null) => void) | undefined;
   let max: number | null | undefined;
   let bigint: boolean | undefined;
   let path: string;
@@ -2154,9 +2154,9 @@ function parseOptions(
     }
   }
 
-  if (sslMode !== SSLMode.disable && !tls?.serverName) {
+  if (sslMode !== SSLMode.disable && !(tls as Exclude<typeof tls, boolean>)?.serverName) {
     if (hostname) {
-      tls = { ...tls, serverName: hostname };
+      tls = { ...(tls as Exclude<typeof tls, boolean>), serverName: hostname };
     } else if (tls) {
       tls = true;
     }
@@ -2236,7 +2236,7 @@ export interface TransactionCommands {
 }
 
 export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
-  normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [sql: string, values: unknown[]];
+  normalizeQuery(strings: QueryStrings, values: unknown[]): [sql: string, values: unknown[]];
   createQueryHandle(sql: string, values: unknown[], flags: number): QueryHandle;
   connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
   release(connection: Connection, connectingEvent?: boolean): void;
@@ -2249,8 +2249,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   supportsReservedConnections?(): boolean;
   cancelReserve?(onConnected: OnConnected<Connection>): boolean;
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
-  attachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
-  detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
+  attachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
+  detachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
 
   getTransactionCommands(options?: string): TransactionCommands;
   array(values: any[], typeNameOrID?: number | string): SQLArrayParameter;

@@ -11,7 +11,7 @@ use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
 
 #[derive(Default)]
-pub struct Cp {
+pub(crate) struct Cp {
     pub(crate) opts: Opts,
     pub(crate) state: State,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
@@ -23,7 +23,7 @@ pub struct Cp {
 }
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     Exec(Box<ExecState>),
@@ -34,7 +34,7 @@ pub enum State {
     Done,
 }
 
-pub struct ExecState {
+pub(crate) struct ExecState {
     /// Index into argv where source paths start.
     pub(crate) sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is the
@@ -54,7 +54,7 @@ pub struct ExecState {
 /// ignores the EBUSY if at least one task succeeded for that dest.
 #[cfg(windows)]
 #[derive(Default)]
-pub struct EbusyState {
+pub(crate) struct EbusyState {
     pub(crate) tasks: Vec<*mut ShellCpTask>,
     pub(crate) idx: usize,
     pub(crate) main_exit_code: ExitCode,
@@ -392,7 +392,7 @@ impl OutputTaskVTable for Cp {
 /// Resolves src/tgt to absolute paths, decides
 /// which POSIX `cp` synopsis applies, then hands off to the node:fs async cp
 /// implementation.
-pub struct ShellCpTask {
+pub(crate) struct ShellCpTask {
     pub(crate) cmd: NodeId,
     pub(crate) opts: Opts,
     pub(crate) operands: usize,
@@ -785,7 +785,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct Opts {
+pub(crate) struct Opts {
     /// `-R` — copy file hierarchies
     pub(crate) recursive: bool,
     /// `-v` — verbose

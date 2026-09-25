@@ -4,7 +4,6 @@ pub mod AnyTaskWithExtraContext;
 pub mod ConcurrentTask;
 pub mod DeferredTaskQueue;
 pub mod EventLoopTimer;
-pub mod ManagedTask;
 
 // ────────────────────────────────────────────────────────────────────────────
 // AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.

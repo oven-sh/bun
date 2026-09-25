@@ -441,9 +441,13 @@ impl napi_typedarray_type {
     }
 }
 
+/// `napi_status` (js_native_api_types.h), every value of it: C++ returns this type by value
+/// (`NapiEnv__checkCanCallIntoJS` returns `cannot_run_js` for an addon built against N-API 10), and a value the
+/// enum does not declare is undefined behaviour to receive. Rust itself produces only some of them.
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum NapiStatus {
+#[allow(dead_code)]
+pub(crate) enum NapiStatus {
     ok = 0,
     invalid_arg = 1,
     object_expected = 2,
@@ -5457,18 +5461,8 @@ impl NapiFinalizerTask {
     }
 
     pub(crate) fn schedule(self: Box<Self>) {
-        // SAFETY: env is valid (held by NapiEnvRef).
-        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
-
-        // Inline of `JSGlobalObject::try_bun_vm` (the full impl lives in the
-        // gated `JSGlobalObject.rs`): the VM pointer is fetched unconditionally
-        // from C++; "main thread" is determined by whether the thread-local VM
-        // holder is populated.
-        // SAFETY: `bun_vm()` returns a valid `*mut VirtualMachine` for this global.
-        let vm: &VirtualMachine = global_this.bun_vm();
-        let is_main_thread = VirtualMachine::get_or_null().is_some();
-
-        if !is_main_thread {
+        // `bun_vm()` reads a thread-local that is null on a GC thread, so check the thread first.
+        if VirtualMachine::get_or_null().is_none() {
             // Off the JS thread (e.g. an external buffer finalized from a GC
             // helper thread): post through the env's VM handle. If the VM is
             // already torn down the finalizer can never run; free the task but
@@ -5490,6 +5484,10 @@ impl NapiFinalizerTask {
             }
             return;
         }
+
+        // SAFETY: env is valid (held by NapiEnvRef).
+        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
+        let vm: &VirtualMachine = global_this.bun_vm();
 
         if vm.is_shutting_down() {
             if vm.has_run_cleanup_hooks() {

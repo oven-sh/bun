@@ -1,6 +1,10 @@
 import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLCommand, SQLResultArray, SSLMode } from "./shared";
+import type { ArrayType, DatabaseAdapter, SQLCommand, SSLMode } from "./shared";
+
+type SQLArrayParameter = import("./shared").SQLArrayParameter;
+type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
+
 const {
   SQLResultArray,
   SQLArrayParameter,
@@ -240,7 +244,7 @@ function serializeArray(values: any[], type: ArrayType) {
   return `{${values.map(arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type))).join(delimiter)}}`;
 }
 
-function wrapPostgresError(error: Error | PostgresErrorOptions) {
+function wrapPostgresError(error: Error | (PostgresErrorOptions & { message: string })) {
   if (Error.isError(error)) {
     return error;
   }
@@ -291,7 +295,7 @@ initPostgres(
 
   function onRejectPostgresQuery(
     query: Query<any, any>,
-    reject: Error | PostgresErrorOptions,
+    reject: Error | (PostgresErrorOptions & { message: string }),
     queries: Query<any, any>[],
   ) {
     reject = wrapPostgresError(reject);
@@ -312,7 +316,7 @@ export interface PostgresDotZig {
   init: (
     onResolveQuery: (
       query: Query<any, any>,
-      result: SQLResultArray,
+      result: SQLResultArray<unknown>,
       commandTag: string,
       count: number,
       queries: any,
@@ -340,7 +344,7 @@ export interface PostgresDotZig {
   createQuery: (
     sql: string,
     values: unknown[],
-    pendingValue: SQLResultArray,
+    pendingValue: SQLResultArray<unknown>,
     columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
@@ -614,6 +618,8 @@ class Channel {
 
 // A throwing callback is reported as uncaught; it must not skip the callbacks
 // after it, reject listen(), or look like a failed LISTEN to #sweep.
+function invoke(callback: () => void): void;
+function invoke<T>(callback: (arg: T) => void, arg: T): void;
 function invoke<T>(callback: (arg?: T) => void, arg?: T) {
   try {
     callback(arg);

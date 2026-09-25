@@ -38,17 +38,16 @@ pub(crate) const CLIENT_PREFIX: &str = "/_bun/client";
 // blocks and `container_of` submodules name a single type. Re-export so
 // `crate::bake::dev_server::DevServer` (the public path used by `server/`,
 // `dispatch.rs`, …) resolves to that one struct.
-pub use super::dev_server_body::{
-    CacheEntry, CurrentBundle, DeferredPromise, DeferredRequest, DevServer, EntryPointList,
-    HTMLRouter, Magic, NextBundle, Options, PluginState, RouteIndexAndRecurseFlag, TestingBatch,
-    TestingBatchEvents, deferred_request, entry_point_list,
+pub(crate) use super::dev_server_body::{
+    DevServer, EntryPointList, Magic, Options, RouteIndexAndRecurseFlag, TestingBatchEvents,
+    deferred_request,
 };
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
 /// (the vtable boundary maps between them via an exhaustive match).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum FileKind {
+pub(crate) enum FileKind {
     Unknown = 0,
     Js = 1,
     Asset = 2,
@@ -57,13 +56,13 @@ pub enum FileKind {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum ChunkKind {
+pub(crate) enum ChunkKind {
     InitialResponse = 0,
     HmrChunk = 1,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum TraceImportGoal {
+pub(crate) enum TraceImportGoal {
     FindCss,
     FindClientModules,
     FindErrors,
@@ -74,7 +73,7 @@ pub enum TraceImportGoal {
 /// `InspectorBunFrontendDevServerAgent__notifyConsoleLog`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum ConsoleLogKind {
+pub(crate) enum ConsoleLogKind {
     Log = b'l',
     Err = b'e',
 }
@@ -84,11 +83,10 @@ pub enum ConsoleLogKind {
 /// (`generated.ts`).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum MessageId {
+pub(crate) enum MessageId {
     Version = b'V',
     HotUpdate = b'u',
     Errors = b'e',
-    Visualizer = b'v',
     MemoryVisualizer = b'M',
     SetUrlResponse = b'n',
     TestingWatchSynchronization = b'r',
@@ -105,7 +103,7 @@ impl MessageId {
 /// (`generated.ts`).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum IncomingMessageId {
+pub(crate) enum IncomingMessageId {
     Init = b'i',
     Subscribe = b's',
     SetUrl = b'n',
@@ -118,7 +116,7 @@ pub enum IncomingMessageId {
 /// match the client.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum HmrTopic {
+pub(crate) enum HmrTopic {
     HotUpdate = b'h',
     Errors = b'e',
     BrowserError = b'E',
@@ -182,12 +180,12 @@ impl HmrTopic {
 // ──────────────────────────────────────────────────────────────────────────
 // EventLoopTimer
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
+pub(crate) use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
 
 // ──────────────────────────────────────────────────────────────────────────
 // IncrementalResult / GraphTraceState
 // ──────────────────────────────────────────────────────────────────────────
-pub struct IncrementalResult {
+pub(crate) struct IncrementalResult {
     pub(crate) framework_routes_affected: Vec<RouteIndexAndRecurseFlag>,
     pub(crate) html_routes_soft_affected: Vec<route_bundle::Index>,
     pub(crate) html_routes_hard_affected: Vec<route_bundle::Index>,
@@ -214,7 +212,7 @@ impl IncrementalResult {
     /// Clears each list retaining capacity, asserts `failures_removed` was
     /// already drained, and intentionally leaves `had_adjusted_edges`
     /// untouched.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.framework_routes_affected.clear();
         self.html_routes_soft_affected.clear();
         self.html_routes_hard_affected.clear();
@@ -228,7 +226,7 @@ impl IncrementalResult {
     }
 }
 
-pub struct GraphTraceState {
+pub(crate) struct GraphTraceState {
     pub(crate) client_bits: DynamicBitSet,
     pub(crate) server_bits: DynamicBitSet,
 }
@@ -266,22 +264,22 @@ impl GraphTraceState {
 
 pub(crate) use super::dev_server_body::init;
 
-pub mod assets;
-pub mod incremental_graph;
-pub mod inspector_agent;
+pub(crate) mod assets;
+pub(crate) mod incremental_graph;
+pub(crate) mod inspector_agent;
 mod lifecycle;
-pub mod packed_map;
-pub mod route_bundle;
-pub mod serialized_failure;
-pub mod source_map_store;
+pub(crate) mod packed_map;
+pub(crate) mod route_bundle;
+pub(crate) mod serialized_failure;
+pub(crate) mod source_map_store;
 
-pub use serialized_failure::SerializedFailure;
+pub(crate) use serialized_failure::SerializedFailure;
 
 /// Local response trait — the response type is a generic bound.
 /// Method shapes mirror `bun_uws_sys::Response<SSL>` so the `R`-generic
 /// bodies type-check. `bun_uws` exposes no equivalent trait; if it ever
 /// grows one, this can be replaced by it.
-pub trait ResponseLike {
+pub(crate) trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
     fn end(&mut self, data: &[u8], close_connection: bool);
     fn as_any_response(&mut self) -> bun_uws::AnyResponse;
@@ -305,7 +303,7 @@ impl ResponseLike for bun_uws::AnyResponse {
 
 /// `DevServer.HmrSocket` — per-WebSocket state. Method bodies (open/close/
 /// message handlers) live in [`hmr_socket`].
-pub struct HmrSocket {
+pub(crate) struct HmrSocket {
     /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
     /// `remove` + `heap::take` in `on_close`.
     pub(crate) dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
@@ -336,7 +334,7 @@ impl HmrSocket {
 // the cache line on x86_64/aarch64 (Bun's tier-1 targets) and absorbs Intel
 // adjacent-line prefetch.
 #[repr(align(128))]
-pub struct HotReloadEvent {
+pub(crate) struct HotReloadEvent {
     /// BACKREF (LIFETIMES.tsv): element of `WatcherAtomics.events: [3]`.
     /// Nulled by `Drop for DevServer` when an event is still queued; `run`
     /// checks for null before dereferencing.
@@ -544,7 +542,7 @@ impl HotReloadEvent {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         #[cfg(debug_assertions)]
         self.debug_mutex.unlock();
         self.files.clear_retaining_capacity();
@@ -680,7 +678,7 @@ impl HotReloadEvent {
 
         match &mut dev_ref.testing_batch_events {
             TestingBatchEvents::Disabled => {}
-            TestingBatchEvents::Enabled(ev) => {
+            TestingBatchEvents::Enabled(ev) | TestingBatchEvents::ReleaseAfterBundle(ev) => {
                 bun_core::handle_oom(ev.append(&entry_points));
                 dev_ref.publish(
                     HmrTopic::TestingWatchSynchronization,
@@ -700,7 +698,7 @@ impl HotReloadEvent {
 
 /// `DevServer.WatcherAtomics` — three pre-allocated `HotReloadEvent`s
 /// rotated between the watcher thread and the main thread.
-pub struct WatcherAtomics {
+pub(crate) struct WatcherAtomics {
     pub(crate) events: [HotReloadEvent; 3],
     /// Atomically encodes a `NextEvent`: values 0..3 are an index into
     /// `events`, plus the `WAITING`/`DONE` sentinels.
@@ -725,7 +723,7 @@ pub struct WatcherAtomics {
 /// Rust enums cannot hold unlisted discriminants.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct NextEvent(pub(crate) u8);
+pub(crate) struct NextEvent(pub(crate) u8);
 
 impl NextEvent {
     /// An event is running, and no next event is pending.
@@ -995,7 +993,7 @@ impl WatcherAtomics {
 /// now-unneeded watcher; it stays until the directory changes or the file
 /// is evicted from the incremental graph.
 #[derive(Default)]
-pub struct DirectoryWatchStore {
+pub(crate) struct DirectoryWatchStore {
     pub(crate) watches: StringArrayHashMap<directory_watch_store::Entry>,
     pub(crate) dependencies: Vec<directory_watch_store::Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
@@ -1065,10 +1063,10 @@ impl DirectoryWatchStore {
         }
     }
 }
-pub mod directory_watch_store {
+pub(crate) mod directory_watch_store {
     /// `DirectoryWatchStore.Entry` — per-watched-directory state.
     #[derive(Copy, Clone)]
-    pub struct Entry {
+    pub(crate) struct Entry {
         /// The directory handle the watch is placed on.
         pub(crate) dir: bun_sys::Fd,
         pub(crate) dir_fd_owned: bool,
@@ -1088,7 +1086,7 @@ pub mod directory_watch_store {
         }
     }
     /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
-    pub struct Dep {
+    pub(crate) struct Dep {
         pub(crate) next: Option<u32>,
         /// The file used. BORROWED slice into `IncrementalGraph.bundled_files`
         /// key storage; compared by *pointer identity*. The graph calls

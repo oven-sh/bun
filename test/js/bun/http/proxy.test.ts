@@ -874,6 +874,35 @@ test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and cert
   }
 });
 
+// As on a direct connection, only an IP address in the strict form of net.isIP
+// gets no SNI inside the tunnel. ares_inet_pton also reads "127.1" (as
+// 127.1.0.0), "10" and a trailing "/bits" as an address.
+test("HTTPS proxy tunnel sends a tls.serverName that is IP shorthand as SNI", async () => {
+  const seen: (string | null)[] = [];
+  const target = tls.createServer(tlsCert, socket => {
+    socket.on("error", () => {});
+    seen.push(socket.servername || null);
+    socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"));
+  });
+  target.listen(0);
+  await once(target, "listening");
+  try {
+    const port = (target.address() as net.AddressInfo).port;
+    const serverNames = ["127.1", "10", "0x7f000001", "1.2.3.4/8", "127.0.0.1", "::1"];
+    for (const serverName of serverNames) {
+      const res = await fetch(`https://localhost:${port}/`, {
+        proxy: httpProxyServer.url,
+        keepalive: false,
+        tls: { serverName, rejectUnauthorized: false },
+      });
+      expect(`${res.status} ${await res.text()}`).toBe("200 ok");
+    }
+    expect(seen).toEqual(["127.1", "10", "0x7f000001", "1.2.3.4/8", null, null]);
+  } finally {
+    target.close();
+  }
+});
+
 test("HTTPS proxy tunnel keep-alive does not share tunnel across different credentials", async () => {
   using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
 
@@ -2555,6 +2584,62 @@ describe.concurrent("proxy environment", () => {
     expect(exitCode).toBe(0);
     return parsed;
   }
+
+  // The host of an https:// proxy from the environment reaches TLS as typed,
+  // not through a URL parser. In IP shorthand it is a name: it goes out as
+  // SNI, and it is not the address in the certificate of the proxy.
+  test.each([
+    ["127.0.0.1", "proxy", null],
+    ["0x7f000001", "ERR_TLS_CERT_ALTNAME_INVALID", "0x7f000001"],
+    ["127.000.000.001", "ERR_TLS_CERT_ALTNAME_INVALID", "127.000.000.001"],
+  ])("an https:// proxy at %j", async (host, result, sni) => {
+    let name: string | null = null;
+    const proxy = tls.createServer(
+      {
+        ...tlsCert,
+        SNICallback(servername, cb) {
+          name = servername;
+          cb(null, tls.createSecureContext(tlsCert));
+        },
+      },
+      socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nproxy"));
+      },
+    );
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const tls = { ca: process.env.PROXY_CA };
+          const result = await fetch("http://example.invalid/", { keepalive: false, tls }).then(
+            r => r.text(),
+            e => e.code,
+          );
+          console.log(JSON.stringify(result));
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          ...proxyFreeEnv,
+          HTTP_PROXY: `https://${host}:${(proxy.address() as net.AddressInfo).port}`,
+          PROXY_CA: tlsCert.cert,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect({ result: JSON.parse(stdout), sni: name }).toEqual({ result, sni });
+      expect(exitCode).toBe(0);
+    } finally {
+      proxy.close();
+    }
+  });
 
   test("NO_PROXY grammar", async () => {
     // The full grammar is in "proxy resolution" above; this is the path from

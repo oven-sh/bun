@@ -565,3 +565,55 @@ devTest("html routes reject requests whose host header does not match the dev se
     expect(normal.status).toBe(200);
   },
 });
+
+// An IP address passes the check, because a rebound DNS name is never one.
+// ares_inet_pton also reads the shorthand below as an address. A URL parser
+// reads another address in it, or none, so no browser sends it.
+devTest("html routes reject a host header that is IP shorthand", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("loaded");
+    `,
+  },
+  async test(dev) {
+    const statuses = async (hosts: string[]) =>
+      Object.fromEntries(
+        await Promise.all(
+          hosts.map(async host => {
+            const res = await dev.fetch("/", { headers: { Host: host } });
+            await res.text();
+            return [host, res.status];
+          }),
+        ),
+      );
+
+    const literals = [
+      "127.0.0.1",
+      "127.0.0.1:3000",
+      "10.0.0.1",
+      "[::1]",
+      "[::1]:3000",
+      "[::ffff:127.0.0.1]",
+      // The longest text of an address, 45 bytes.
+      "[ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255]:3000",
+    ];
+    expect(await statuses(literals)).toEqual(Object.fromEntries(literals.map(host => [host, 200])));
+
+    const shorthand = [
+      "127.1",
+      "127.1:3000",
+      "10",
+      "0x7f000001",
+      "127.000.000.001",
+      "1.2.3",
+      "08.1.1.1",
+      "1.2.3.4/8",
+      "[::ffff:127.1]",
+      "[::1/64]",
+    ];
+    expect(await statuses(shorthand)).toEqual(Object.fromEntries(shorthand.map(host => [host, 403])));
+  },
+});

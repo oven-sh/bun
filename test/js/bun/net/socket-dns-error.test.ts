@@ -51,6 +51,44 @@ test("Bun.connect reports a failed hostname lookup as the resolver error, not EC
   expect(connectErrorCalls).toBe(1);
 });
 
+// An IPv6 address with a prefix length, or with a shortened IPv4 part, is not
+// an address. ares_inet_pton read "::1/64" as the first 64 bits of ::1, so
+// Bun.connect dialed "::" and reached a listener on ::1. Brackets come off an
+// IPv6 address only.
+test.skipIf(!isIPv6()).each(["::1/64", "::1/0", "2001:db8::1/0", "::ffff:127.1", "[::1/64]"])(
+  "Bun.connect does not dial %j",
+  async hostname => {
+    let accepted = 0;
+    using listener = Bun.listen({
+      hostname: "::1",
+      port: 0,
+      socket: {
+        open(socket) {
+          accepted++;
+          socket.end();
+        },
+        data() {},
+      },
+    });
+    const error: Error = await Bun.connect({
+      hostname,
+      port: listener.port,
+      socket: { open: socket => void socket.end(), data() {} },
+    }).then(
+      () => new Error("connected"),
+      (e: Error) => e,
+    );
+    expect({ ...pick(error), accepted }).toEqual({
+      name: "Error",
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname,
+      message: `getaddrinfo ENOTFOUND ${hostname}`,
+      accepted: 0,
+    });
+  },
+);
+
 test("Bun.connect rejects the promise with the resolver error when connectError is not set", async () => {
   const error: Error = await Bun.connect({
     hostname: UNRESOLVABLE_HOST,

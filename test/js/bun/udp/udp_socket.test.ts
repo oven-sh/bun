@@ -1,7 +1,16 @@
 import { udpSocket } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, disableAggressiveGCScope, expectRssDeltaBelow, isWindows, randomPort, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  disableAggressiveGCScope,
+  expectRssDeltaBelow,
+  isIPv6,
+  isWindows,
+  randomPort,
+  tempDir,
+} from "harness";
 import { closeSync, openSync } from "node:fs";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
@@ -120,6 +129,38 @@ describe("udpSocket()", () => {
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
   });
+
+  // An IPv6 address with a prefix length, or with a shortened IPv4 part, is
+  // not an address. ares_inet_pton read "::1/64" as the first 64 bits of ::1,
+  // so the datagram went to "::", which is this host.
+  test.skipIf(!isIPv6()).each(["::1/64", "::1/0", "2001:db8::1/0", "::ffff:127.1"])(
+    "send() does not take %j for an address",
+    async address => {
+      const received: string[] = [];
+      const { promise: control, resolve: onControl } = Promise.withResolvers<void>();
+      const server = await udpSocket({
+        hostname: "::1",
+        socket: {
+          data(_socket, data) {
+            received.push(data.toString());
+            if (received.includes("control")) onControl();
+          },
+        },
+      });
+      const client = await udpSocket({ hostname: "::1" });
+      try {
+        expect(() => client.send("send", server.port, address)).toThrow("Invalid address");
+        expect(() => client.sendMany(["sendMany", server.port, address])).toThrow("Invalid address");
+        // The loopback keeps the order, so nothing else is on its way.
+        client.send("control", server.port, "::1");
+        await control;
+        expect(received).toEqual(["control"]);
+      } finally {
+        client.close();
+        server.close();
+      }
+    },
+  );
 
   test("connect with invalid hostname rejects", async () => {
     expect(async () =>

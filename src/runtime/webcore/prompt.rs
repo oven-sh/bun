@@ -233,6 +233,12 @@ pub(crate) mod prompt {
         let arguments = frame.arguments();
         let output = Output::writer();
         let has_message = !arguments.is_empty();
+        // Arguments convert in order: message, then default.
+        let message = if has_message {
+            Some(arguments[0].to_utf8(global)?)
+        } else {
+            None
+        };
         // `prompt(optional DOMString message = "", optional DOMString default = "")`:
         // an omitted or `undefined` default is the empty string, and an empty
         // line returns it. `null` is only for EOF or a read error.
@@ -241,13 +247,12 @@ pub(crate) mod prompt {
             _ => None,
         };
 
-        if has_message {
+        if let Some(message) = message {
             // 2. Set message to the result of normalizing newlines given message.
             // *  Not pertinent to a server runtime so we will just let the terminal handle this.
 
             // 3. Set message to the result of optionally truncating message.
             // *  Not necessary so we won't do it.
-            let message = arguments[0].to_utf8(global)?;
 
             if output.write_all(message.slice()).is_err() {
                 // 1. If we cannot show simple dialogs for this, then return null.

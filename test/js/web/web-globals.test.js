@@ -444,6 +444,12 @@ describe.concurrent("prompt", () => {
     ["default, answer", `prompt("Q?", "dflt")`, "hi\n", { stdout: "Q? [dflt] ", result: "hi" }],
     ["default is converted to a string", `prompt("Q?", 5)`, "\n", { stdout: "Q? [5] ", result: "5" }],
     ["null default is the string null", `prompt("Q?", null)`, "\n", { stdout: "Q? [null] ", result: "null" }],
+    [
+      "arguments convert in order, before the message prints",
+      `prompt({ toString: () => (console.log("m"), "Q?") }, { toString: () => (console.log("d"), "D") })`,
+      "\n",
+      { stdout: "m\nd\nQ? [D] ", result: "D" },
+    ],
   ])("%s", async (_, call, stdin, expected) => {
     expect(await runPrompt(call, stdin)).toEqual(expected);
   });

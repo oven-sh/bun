@@ -2097,11 +2097,12 @@ pub fn generate_network_task_for_tarball<'a>(
     let temp_dir = directories::get_temporary_directory(this).handle.fd();
     // A refreshed tarball may have new bytes; drop the pinned integrity so
     // `ExtractTarball::run` recomputes it instead of rejecting them.
-    let integrity = if this.should_refresh_tarball(dependency_id, package.meta.id, package.resolution.tag) {
-        Integrity::default()
-    } else {
-        package.meta.integrity
-    };
+    let integrity =
+        if this.should_refresh_tarball(dependency_id, package.meta.id, package.resolution.tag) {
+            Integrity::default()
+        } else {
+            package.meta.integrity
+        };
     // Backref address only — stored, not dereffed in this function. The tag is
     // immediately popped by the next `this` use; that's fine for a stored
     // back-pointer.

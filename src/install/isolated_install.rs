@@ -2235,9 +2235,10 @@ pub(crate) fn install_isolated_packages(
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
                     // Global-store packages are pinned, so this is false for them.
-                    let refresh_tarball = installer
-                        .manager()
-                        .should_refresh_tarball(dep_id, pkg_id, pkg_res_tag);
+                    let refresh_tarball =
+                        installer
+                            .manager()
+                            .should_refresh_tarball(dep_id, pkg_id, pkg_res_tag);
 
                     let needs_install = installer.manager().options.enable.force_install()
                         || refresh_tarball

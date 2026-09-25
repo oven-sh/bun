@@ -1383,74 +1383,77 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
     expect(requests).toEqual(["a"]);
   });
 
-  it.skipIf(linker !== "isolated")("keeps the lockfile pin for a global-store entry whose tarball left the cache", async () => {
-    // A global-store entry is keyed by the integrity the lockfile held when the
-    // install started. If the extracted tarball is gone from the cache but the
-    // store entry is not, `--force` must re-download against the pinned hash
-    // and fail on changed bytes, instead of publishing the new bytes under the
-    // key other projects still link to.
-    const v1 = buildTarball("VERSION_ONE");
-    const v2 = buildTarball("VERSION_TWO");
+  it.skipIf(linker !== "isolated")(
+    "keeps the lockfile pin for a global-store entry whose tarball left the cache",
+    async () => {
+      // A global-store entry is keyed by the integrity the lockfile held when the
+      // install started. If the extracted tarball is gone from the cache but the
+      // store entry is not, `--force` must re-download against the pinned hash
+      // and fail on changed bytes, instead of publishing the new bytes under the
+      // key other projects still link to.
+      const v1 = buildTarball("VERSION_ONE");
+      const v2 = buildTarball("VERSION_TWO");
 
-    let serveV2 = false;
-    await using server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        if (new URL(req.url).pathname.endsWith("/my-url-pkg.tgz")) {
-          const { tgz } = serveV2 ? v2 : v1;
-          return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
-        }
-        return new Response("Not found", { status: 404 });
-      },
-    });
-    const tarballUrl = `http://127.0.0.1:${server.port}/my-url-pkg.tgz`;
+      let serveV2 = false;
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          if (new URL(req.url).pathname.endsWith("/my-url-pkg.tgz")) {
+            const { tgz } = serveV2 ? v2 : v1;
+            return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
+          }
+          return new Response("Not found", { status: 404 });
+        },
+      });
+      const tarballUrl = `http://127.0.0.1:${server.port}/my-url-pkg.tgz`;
 
-    using dir = tempDir("issue-31864-gvs-", {
-      "package.json": JSON.stringify({
-        name: "app",
-        version: "1.0.0",
-        dependencies: { "my-url-pkg": tarballUrl },
-      }),
-      "bunfig.toml": `[install]\nlinker = "isolated"\nglobalStore = true\n`,
-    });
-    const cacheDir = join(String(dir), ".cache");
-    const spawnOpts = {
-      cwd: String(dir),
-      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
-      stdout: "pipe" as const,
-      stderr: "pipe" as const,
-    };
+      using dir = tempDir("issue-31864-gvs-", {
+        "package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: { "my-url-pkg": tarballUrl },
+        }),
+        "bunfig.toml": `[install]\nlinker = "isolated"\nglobalStore = true\n`,
+      });
+      const cacheDir = join(String(dir), ".cache");
+      const spawnOpts = {
+        cwd: String(dir),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+        stdout: "pipe" as const,
+        stderr: "pipe" as const,
+      };
 
-    {
-      await using proc = spawn({ cmd: [bunExe(), "install"], ...spawnOpts });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("error:");
-      expect(stdout + stderr).not.toContain("Integrity check failed");
-      expect(exitCode).toBe(0);
-    }
-    const storeIndex = Array.from(
-      new Bun.Glob("*/node_modules/my-url-pkg/index.js").scanSync({ cwd: join(cacheDir, "links"), absolute: true }),
-    );
-    expect(storeIndex).toHaveLength(1);
-    expect(await file(storeIndex[0]).text()).toBe('module.exports = "VERSION_ONE";\n');
+      {
+        await using proc = spawn({ cmd: [bunExe(), "install"], ...spawnOpts });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(stdout + stderr).not.toContain("Integrity check failed");
+        expect(exitCode).toBe(0);
+      }
+      const storeIndex = Array.from(
+        new Bun.Glob("*/node_modules/my-url-pkg/index.js").scanSync({ cwd: join(cacheDir, "links"), absolute: true }),
+      );
+      expect(storeIndex).toHaveLength(1);
+      expect(await file(storeIndex[0]).text()).toBe('module.exports = "VERSION_ONE";\n');
 
-    // Drop the extracted tarball from the cache, keep the global store.
-    for (const name of await readdirSorted(cacheDir)) {
-      if (name !== "links") await rm(join(cacheDir, name), { recursive: true, force: true });
-    }
+      // Drop the extracted tarball from the cache, keep the global store.
+      for (const name of await readdirSorted(cacheDir)) {
+        if (name !== "links") await rm(join(cacheDir, name), { recursive: true, force: true });
+      }
 
-    serveV2 = true;
-    {
-      await using proc = spawn({ cmd: [bunExe(), "install", "--force"], ...spawnOpts });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout + stderr).toContain("Integrity check failed");
-      expect(exitCode).not.toBe(0);
-    }
+      serveV2 = true;
+      {
+        await using proc = spawn({ cmd: [bunExe(), "install", "--force"], ...spawnOpts });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout + stderr).toContain("Integrity check failed");
+        expect(exitCode).not.toBe(0);
+      }
 
-    expect(await file(storeIndex[0]).text()).toBe('module.exports = "VERSION_ONE";\n');
-    const lockContent = await file(join(String(dir), "bun.lock")).text();
-    expect(lockContent).toContain(v1.integrity);
-    expect(lockContent).not.toContain(v2.integrity);
-  });
+      expect(await file(storeIndex[0]).text()).toBe('module.exports = "VERSION_ONE";\n');
+      const lockContent = await file(join(String(dir), "bun.lock")).text();
+      expect(lockContent).toContain(v1.integrity);
+      expect(lockContent).not.toContain(v2.integrity);
+    },
+  );
 });

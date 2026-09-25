@@ -357,21 +357,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         Format::Jpeg => {
             // turbojpeg's header decode is already cheap (no scan data read).
             let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
-            // SAFETY: handle is live; (ptr,len) come from a valid live slice.
-            if unsafe { jpeg::tj3DecompressHeader(handle.as_ptr(), bytes.as_ptr(), bytes.len()) }
-                != 0
-            {
-                return Err(Error::DecodeFailed);
-            }
-            // SAFETY: handle is live and has had a header decoded into it above.
-            let rw = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGWIDTH) };
-            // SAFETY: same handle invariant as above.
-            let rh = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGHEIGHT) };
-            if rw <= 0 || rh <= 0 {
-                return Err(Error::DecodeFailed);
-            }
-            w = u32::try_from(rw).expect("int cast");
-            h = u32::try_from(rh).expect("int cast");
+            (w, h) = handle.read_header(bytes)?;
         }
         Format::Webp => {
             let mut cw: c_int = 0;

@@ -870,7 +870,6 @@ impl WindowsWrite {
 #[cfg(windows)]
 #[derive(Default)]
 pub(crate) struct WindowsState {
-    pub(crate) is_server: bool,
     /// Non-owning raw pointer. The allocation
     /// is `heap::alloc`'d in `write` and freed exactly once by
     /// `windows_on_write_complete` via `WindowsWrite::destroy`. Nulling this
@@ -1848,7 +1847,6 @@ impl SendQueue {
             this.cast(),
             Some(Self::stop_for_vm_teardown),
         );
-        self_.windows.with_mut(|w| w.is_server = true);
         // SAFETY: pipe is the live uv handle just stored in the socket cell.
         unsafe { (*ipc_pipe).data = this.cast() };
 
@@ -1906,7 +1904,6 @@ impl SendQueue {
             this.cast(),
             Some(Self::stop_for_vm_teardown),
         );
-        self_.windows.with_mut(|w| w.is_server = false);
 
         // SAFETY: ipc_pipe is the live uv handle just stored in the socket cell.
         let stream = unsafe { (*ipc_pipe).as_stream() };

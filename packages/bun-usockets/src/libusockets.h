@@ -413,6 +413,11 @@ void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
 /* Returns an owned reference; the caller must release it. */
 struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
+/* tls.Server#setSecureContext(): swap the default SSL_CTX used for NEWLY
+ * accepted sockets (SNI-selected contexts are untouched). Up_refs ctx; live
+ * connections keep the previous context alive through their own SSL refs. */
+void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
+    struct ssl_ctx_st *ctx) __attribute__((nonnull(1, 2)));
 /* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees);
  * returns 0 with a static *err_reason tag on failure. */
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
@@ -437,11 +442,8 @@ void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
 int us_socket_server_name_reject_unauthorized(us_socket_r s);
 int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
- * listen socket behind it. Same contract as the listener resolver: an owned
- * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
-typedef struct ssl_ctx_st *(*us_socket_server_name_cb)(struct us_socket_t *socket,
-    const char *hostname, int *abort_handshake);
-void us_socket_on_server_name(us_socket_r s, us_socket_server_name_cb cb);
+ * listen socket behind it: us_dispatch_socket_server_name then resolves. */
+void us_socket_on_server_name(us_socket_r s);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
  * Returns either us_socket_t* (fast path, *is_connecting=1) or
@@ -561,24 +563,15 @@ long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
-/* TLS-over-duplex / named-pipe SSL owners (no us_socket_t): opt an SSL into
- * the parked new-session/keylog queues, then drain them with the pop calls
- * after each SSL_read/SSL_do_handshake stack unwinds. Pop returns the entry
- * length (0 = queue empty); entries are capped at 64 KB (sessions) and
- * 4 KB+1 (keylog lines). */
-void us_ssl_enable_pending_events(struct ssl_st *ssl);
-int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
-int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
-/* The resumable session most recently delivered via the new-session callback,
- * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
-struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);
-/* Per-SSL session sink: each resumable session reaching the new-session
- * callback is SSL_SESSION_up_ref'd and handed to on_new_session (which takes
- * ownership of that reference). on_free(owner) runs once on SSL_free. */
-void us_ssl_set_session_sink(struct ssl_st *ssl, void *owner,
-                             void (*on_new_session)(void *, struct ssl_session_st *),
-                             void (*on_free)(void *));
-void *us_ssl_get_session_sink_owner(struct ssl_st *ssl);
+/* 1 when the verify step of this handshake asked the owner for the server's name. */
+int us_ssl_identity_checked(struct ssl_st *ssl);
+/* For an SSL that no us_socket_t drives: its callbacks go to `wrapper`, which must outlive `ssl`. */
+void us_ssl_set_wrapper(struct ssl_st *ssl, void *wrapper);
+/* `ctx` is the X509_STORE_CTX of a verify callback. */
+void *us_ssl_wrapper_from_verify(void *ctx);
+/* Owner data for us_dispatch_new_session. `on_free(sink)` runs once, on SSL_free. */
+void us_socket_set_session_sink(us_socket_r s, void *sink, void (*on_free)(void *));
+void *us_socket_session_sink(us_socket_r s);
 
 /* Public interfaces for loops */
 

@@ -145,6 +145,8 @@ pub(crate) struct Handlers {
     pub(crate) on_session: fn(*mut c_void, &[u8]),
     /// An NSS key-log line - node's `'keylog'` event.
     pub(crate) on_keylog: fn(*mut c_void, &[u8]),
+    pub(crate) server_identity:
+        fn(*mut c_void, &mut boringssl::SSL) -> bun_boringssl::ServerIdentity,
 }
 
 impl WindowsNamedPipe {
@@ -380,6 +382,14 @@ impl WindowsNamedPipe {
         // SAFETY: see block note above.
         unsafe { &*this }.on_session(d)
     }
+    fn ssl_server_identity(
+        this: *mut Self,
+        ssl: &mut boringssl::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        // SAFETY: see block note above.
+        let this = unsafe { &*this };
+        (this.handlers.server_identity)(this.handlers.ctx, ssl)
+    }
     fn ssl_on_keylog(this: *mut Self, d: &[u8]) {
         // SAFETY: see block note above.
         unsafe { &*this }.on_keylog(d)
@@ -404,6 +414,7 @@ impl WindowsNamedPipe {
             write: Self::ssl_write,
             on_session: Some(Self::ssl_on_session),
             on_keylog: Some(Self::ssl_on_keylog),
+            server_identity: Some(Self::ssl_server_identity),
         }
     }
 
@@ -1143,6 +1154,23 @@ impl Drop for WindowsNamedPipe {
 // method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
 // raw pointer. All other `WindowsNamedPipe__*` symbols are emitted by
 // `#[uws_callback(export = …)]` on the inherent methods above.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn WindowsNamedPipe__set_inline_reject(this: *const c_void) {
+    // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
+    if let Some(wrapper) = unsafe { (*this.cast::<WindowsNamedPipe>()).wrapper_ref() } {
+        wrapper.set_inline_reject();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn WindowsNamedPipe__latest_session(
+    this: *const c_void,
+) -> *mut bun_boringssl_sys::SSL_SESSION {
+    // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.
+    unsafe { (*this.cast::<WindowsNamedPipe>()).wrapper_ref() }
+        .map_or(core::ptr::null_mut(), |wrapper| wrapper.latest_session())
+}
+
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut boringssl::SSL {
     // SAFETY: `this` is a live `*const WindowsNamedPipe` from the bun_uws opaque handle.

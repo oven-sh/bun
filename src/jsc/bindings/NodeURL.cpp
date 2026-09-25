@@ -157,13 +157,13 @@ static String parseDomainAsHost(const String& domain)
     return parsedHost;
 }
 
-// url.domainToASCII for src/boringssl/lib.rs, on any thread. Dead when the host does not parse.
-extern "C" BunString Bun__domainToASCII(const BunString* domain)
+// idnaToASCII for the certificate check in src/boringssl/lib.rs, on any thread. Not parseDomainAsHost, which cuts the name at '/'. Dead when the name does not convert.
+extern "C" BunString Bun__idnaToASCII(const BunString* domain)
 {
-    auto host = parseDomainAsHost(domain->toWTFString());
-    if (host.isNull())
+    auto ascii = icuToASCII(domain->toWTFString(), IDNAMode::Default);
+    if (ascii.isNull())
         return { BunStringTag::Dead };
-    return Bun::toStringRef(host);
+    return Bun::toStringRef(ascii);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

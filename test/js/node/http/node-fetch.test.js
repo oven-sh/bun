@@ -417,6 +417,19 @@ test("node-fetch json() resolves null for a body that is the JSON text null", as
   expect(await (await fetch2(server.url)).json()).toBeNull();
 });
 
+test("node-fetch Response.type is default for an HTTP error status", async () => {
+  expect(new Response("x", { status: 404 }).type).toBe("default");
+  expect(new Response("x", { status: 500 }).type).toBe("default");
+  expect(new Response("x").type).toBe("default");
+  // fetch() gives a native response the node-fetch prototype the same way.
+  expect(Object.setPrototypeOf(globalThis.Response.error(), Response.prototype).type).toBe("error");
+
+  using server = Bun.serve({ port: 0, fetch: () => new Response("missing", { status: 404 }) });
+  const response = await fetch2(server.url);
+  expect(response.status).toBe(404);
+  expect(response.type).toBe("default");
+});
+
 test("node-fetch request body streams properly", async () => {
   let responseResolve;
   const responsePromise = new Promise(resolve => {

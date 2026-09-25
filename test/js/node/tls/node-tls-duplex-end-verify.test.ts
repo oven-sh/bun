@@ -446,7 +446,9 @@ for (const maxVersion of ["TLSv1.2", "TLSv1.3"]) {
     assert.strictEqual(first.authorizationError, "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
     first.resume();
     await new Promise(closed => first.once("close", closed));
-    session ??= first.getSession();
+    // TLS 1.3 gives the session with the 'session' event only.
+    if (maxVersion === "TLSv1.2") session ??= first.getSession();
+    assert.ok(session?.length > 0, "the first connection gave no session to offer");
     server.close();
 
     // Accepts the connection and never answers.

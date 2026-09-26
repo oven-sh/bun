@@ -1046,6 +1046,91 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
   });
 });
 
+// The transpiler reads the source text until it has printed the module. The
+// bytes of a typed array can change in that time, so it reads a copy of them.
+describe.concurrent("onLoad contents in a typed array", () => {
+  it("transpiles a SharedArrayBuffer that a worker writes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), resolve(import.meta.dir, "plugin-shared-contents-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A macro runs JS in the middle of the transpile. The printer reads the names
+  // and the strings of the module back from the source after that.
+  it("transpiles the bytes it was given when a macro overwrites and detaches them", async () => {
+    using dir = tempDir("plugin-contents-macro", {
+      "macro.ts": `
+        export function clobber() {
+          globalThis.contents.fill(0x20);
+          globalThis.contents.buffer.transfer();
+          return "clobbered";
+        }
+      `,
+      "index.ts": `
+        import { plugin } from "bun";
+        import { join } from "node:path";
+
+        const source = new TextEncoder().encode(
+          "import { clobber } from " + JSON.stringify(join(import.meta.dir, "macro.ts")) + ' with { type: "macro" };\\n' +
+          "export const fromTheMacro = clobber();\\n" +
+          "export const afterTheMacro = 'after the macro';\\n",
+        );
+
+        // A view on an ArrayBuffer of its own, so that transfer() detaches exactly these bytes.
+        function contents() {
+          globalThis.contents = new Uint8Array(new ArrayBuffer(source.length));
+          globalThis.contents.set(source);
+          return globalThis.contents;
+        }
+
+        plugin({
+          name: "typed array contents",
+          setup(build) {
+            build.onResolve({ filter: /.*/, namespace: "bytes" }, ({ path }) => ({ path, namespace: "bytes" }));
+            build.onLoad({ filter: /plain/, namespace: "bytes" }, () => ({ contents: contents(), loader: "ts" }));
+            build.onLoad({ filter: /promise/, namespace: "bytes" }, async () => ({ contents: contents(), loader: "ts" }));
+            build.module("bytes-module", () => ({ contents: contents(), loader: "ts" }));
+          },
+        });
+
+        const results = {};
+        for (const specifier of ["bytes:plain", "bytes:promise", "bytes-module"]) {
+          const { fromTheMacro, afterTheMacro } = await import(specifier);
+          results[specifier] = { fromTheMacro, afterTheMacro, byteLength: globalThis.contents.byteLength };
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const transpiled = { fromTheMacro: "clobbered", afterTheMacro: "after the macro", byteLength: 0 };
+    // A debug build logs each macro call to stdout first.
+    expect({ result: stdout.trim().split("\n").at(-1), stderr: stderr.trim(), exitCode }).toEqual({
+      result: JSON.stringify({ "bytes:plain": transpiled, "bytes:promise": transpiled, "bytes-module": transpiled }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 it("object loader: an error thrown by a getter on the exports object rejects the require()", () => {
   const boom = new Error("boom");
   plugin({

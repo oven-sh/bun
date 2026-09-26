@@ -4188,6 +4188,68 @@ it("standalone ServerResponse end() honors rejectNonStandardBodyWrites for no-bo
   ws.destroy();
 });
 
+it.each([
+  ["HEAD", 200],
+  ["GET", 204],
+  ["GET", 304],
+])("%s response with status %i rejects an empty write when body writes are forbidden", async (method, status) => {
+  let errorCode: string | undefined;
+  const server = createServer({ rejectNonStandardBodyWrites: true }, (req, res) => {
+    res.statusCode = status;
+    try {
+      res.write("");
+    } catch (error) {
+      errorCode = (error as NodeJS.ErrnoException).code;
+    }
+    res.end();
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}`, { method });
+    await response.arrayBuffer();
+    expect(errorCode).toBe("ERR_HTTP_BODY_NOT_ALLOWED");
+  } finally {
+    server.close();
+  }
+});
+
+it("a queued response rejects an empty write when body writes are forbidden", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+  let firstResponse: ServerResponse;
+  const server = createServer({ rejectNonStandardBodyWrites: true }, (req, res) => {
+    if (req.url === "/first") {
+      firstResponse = res;
+      return;
+    }
+    res.statusCode = 204;
+    let errorCode: string | undefined;
+    try {
+      res.write("");
+    } catch (error) {
+      errorCode = (error as NodeJS.ErrnoException).code;
+    }
+    res.end();
+    resolve(errorCode);
+  });
+  let socket: ReturnType<typeof connect> | undefined;
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    socket = connect(port, "127.0.0.1");
+    socket.on("error", reject);
+    socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(await promise).toBe("ERR_HTTP_BODY_NOT_ALLOWED");
+    firstResponse!.end();
+  } finally {
+    socket?.destroy();
+    server.closeAllConnections?.();
+    server.close();
+  }
+});
+
 it("HEAD response with explicit writeHead(200) carries no body bytes", async () => {
   // writeHead() must not reset _hasBody for a HEAD request (Node only ever
   // clears it); pre-fix the body bytes leaked onto the wire.

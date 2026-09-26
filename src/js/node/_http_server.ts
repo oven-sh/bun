@@ -3030,7 +3030,7 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
   }
   accountQueuedHeaderBytes(res, queued);
   if (!res._hasBody) {
-    if (chunk && res[kRejectNonStandardBodyWrites]) {
+    if ((chunk || chunk === "") && res[kRejectNonStandardBodyWrites]) {
       throw $ERR_HTTP_BODY_NOT_ALLOWED();
     }
     // Node's write_(): a response that cannot have a body discards the write, calls back and returns true.
@@ -3668,7 +3668,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     // updateHasBody only ever clears _hasBody, so this is idempotent.
     updateHasBody(this, this.statusCode);
   }
-  if (chunk && !this._hasBody) {
+  if ((chunk || chunk === "") && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
       throw $ERR_HTTP_BODY_NOT_ALLOWED();
     } else {

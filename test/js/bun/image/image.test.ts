@@ -1,6 +1,7 @@
 import { S3Client } from "bun";
+import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
+import { isASAN, isDebug, isMacOS, isWindows, tempDir } from "harness";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -1763,5 +1764,315 @@ describe("Bun.Image.backend", () => {
       const out = await new Bun.Image(cornersPng).heic().bytes();
       expect(out.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("Bun.Image pixels()", () => {
+  // The expected plane is what makePng was fed, so the assertion is exact:
+  // decode followed by pixels() is the identity on a lossless source.
+  const expectedCorners = (() => {
+    const out = new Uint8Array(4 * 3 * 4);
+    for (let y = 0; y < 3; y++) for (let x = 0; x < 4; x++) out.set(cornerPattern(x, y), (y * 4 + x) * 4);
+    return out;
+  })();
+
+  test("resolves { data, width, height, channels: 4 }; data is the RGBA8 plane, rows top to bottom", async () => {
+    const px = await new Bun.Image(cornersPng).pixels();
+    expect(Object.keys(px)).toEqual(["data", "width", "height", "channels"]);
+    expect(px.data).toBeInstanceOf(Uint8Array);
+    expect(Buffer.isBuffer(px.data)).toBe(false);
+    expect(px.data.length).toBe(4 * 3 * 4);
+    expect(px.data).toEqual(expectedCorners);
+    expect([px.width, px.height, px.channels]).toEqual([4, 3, 4]);
+    // The Uint8Array is the whole plane, not a view into something larger.
+    expect(px.data.byteOffset).toBe(0);
+    expect(px.data.buffer.byteLength).toBe(px.data.length);
+  });
+
+  test("the plane is the pipeline's output, not the source's", async () => {
+    const { data } = await new Bun.Image(cornersPng).rotate(180).pixels();
+    // rotate(180) puts (0,0)=red at the last pixel and (3,2)=white at the first.
+    expect(Array.from(data.subarray(0, 4))).toEqual([255, 255, 255, 255]);
+    expect(Array.from(data.subarray(data.length - 4))).toEqual([255, 0, 0, 255]);
+    const small = await new Bun.Image(gradientPng).resize(2, 2, { fit: "fill" }).pixels();
+    expect(small.data.length).toBe(2 * 2 * 4);
+    expect([small.width, small.height]).toEqual([2, 2]);
+  });
+
+  test("the shape travels with the bytes: later terminals on the same image cannot change it", async () => {
+    const img = new Bun.Image(gradientPng).resize(8, 8, { fit: "fill" });
+    const px = await img.pixels();
+    expect([px.width, px.height]).toEqual([8, 8]);
+    // Each of these overwrites `img.width`/`img.height`; `px` is untouched.
+    expect(await img.metadata()).toEqual({ width: 16, height: 16, format: "png" });
+    expect(await img.placeholder()).toStartWith("data:image/png;base64,");
+    const other = await img.resize(3, 5, { fit: "fill" }).pixels();
+    expect([other.width, other.height, other.data.length]).toEqual([3, 5, 3 * 5 * 4]);
+    expect([px.width, px.height, px.data.length]).toEqual([8, 8, 8 * 8 * 4]);
+    expect(img.width).toBe(3);
+
+    // Two terminals in flight on one image, settling in either order: each
+    // result describes its own plane.
+    const race = new Bun.Image(gradientPng);
+    const [a, b] = await Promise.all([race.resize(8, 8).pixels(), race.resize(16, 16).pixels()]);
+    // Both snapshot the pipeline at call time, so the second resize does not
+    // reach the first task.
+    expect([a.width, a.height, a.data.length]).toEqual([8, 8, 8 * 8 * 4]);
+    expect([b.width, b.height, b.data.length]).toEqual([16, 16, 16 * 16 * 4]);
+  });
+
+  test("a format setter does not affect pixels(), and pixels() does not affect the encoder", async () => {
+    const img = new Bun.Image(cornersPng).png({ palette: true, compressionLevel: 9 });
+    expect((await img.pixels()).data).toEqual(expectedCorners);
+    const png = await img.bytes();
+    expect(png[0]).toBe(0x89);
+    // Colour type 3 = indexed: the palette option survived the pixels() call.
+    expect(png[25]).toBe(3);
+  });
+
+  test("agrees with the encoder: pixels() equals a decoded png() of the same pipeline", async () => {
+    const pipeline = () => new Bun.Image(gradientPng).resize(7, 5, { fit: "fill", filter: "mitchell" });
+    const px = await pipeline().pixels();
+    const png = decodePngRaw(await pipeline().png().bytes());
+    expect([png.w, png.h]).toEqual([px.width, px.height]);
+    expect(png.data).toEqual(px.data);
+  });
+
+  test("alpha is straight: a translucent pixel averages by channel, not premultiplied", async () => {
+    // Two opaque red pixels and two fully transparent WHITE ones, box-averaged
+    // to one pixel. The transparent colour is white, not black, so the three
+    // candidate kernels give three different answers: straight channels
+    // R = 255, G ≈ 128, A ≈ 128; premultiply without unpremultiply R ≈ 128,
+    // G = 0 (the transparent white contributes nothing and the red is
+    // halved); premultiply then unpremultiply R = 255, G = 0. Transparent
+    // black would make the first and second agree on R.
+    const src = makePng(2, 2, (x, y) => ((x + y) % 2 === 0 ? [255, 0, 0, 255] : [255, 255, 255, 0]));
+    const { data } = await new Bun.Image(src).resize(1, 1, { fit: "fill", filter: "box" }).pixels();
+    expect(data.length).toBe(4);
+    const near128 = (v: number) => v >= 127 && v <= 128;
+    expect([data[0], near128(data[1]), near128(data[2]), near128(data[3])]).toEqual([255, true, true, true]);
+  });
+
+  test("metadata() and placeholder() are unaffected; the maxPixels guard still applies", async () => {
+    const img = new Bun.Image(cornersPng);
+    expect(await img.metadata()).toEqual({ width: 4, height: 3, format: "png" });
+    expect(await img.placeholder()).toStartWith("data:image/png;base64,");
+    await expect(new Bun.Image(cornersPng, { maxPixels: 4 }).pixels()).rejects.toMatchObject({
+      code: "ERR_IMAGE_TOO_MANY_PIXELS",
+      message: expect.stringMatching(/maxPixels/),
+    });
+  });
+
+  test("a source that does not decode rejects with the decode error, never an empty plane", async () => {
+    await expect(new Bun.Image(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])).pixels()).rejects.toMatchObject({
+      code: "ERR_IMAGE_UNKNOWN_FORMAT",
+    });
+    // A PNG whose IHDR declares a zero dimension. spng rejects this on its
+    // own; the assertion pins that the rejection reaches pixels() as the
+    // decode error rather than as a zero-length plane.
+    const zero = makePng(0, 1, () => [0, 0, 0, 0]);
+    await expect(new Bun.Image(zero).pixels()).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
+    // Valid header, truncated data.
+    await expect(new Bun.Image(cornersPng.subarray(0, 40)).pixels()).rejects.toMatchObject({
+      code: "ERR_IMAGE_DECODE_FAILED",
+    });
+  });
+
+  test("the plane comes from every input kind", async () => {
+    using dir = tempDir("image-pixels-input", { "corners.png": cornersPng });
+    const p = join(String(dir), "corners.png");
+    expect((await new Bun.Image(p).pixels()).data).toEqual(expectedCorners);
+    expect((await Bun.file(p).image().pixels()).data).toEqual(expectedCorners);
+    expect((await new Bun.Image(new Blob([cornersPng])).pixels()).data).toEqual(expectedCorners);
+  });
+
+  test("a JPEG source through shrink-on-load, a rotate(90) shape swap, and a 1×1 plane", async () => {
+    const big = makePng(64, 64, (x, y) => [(x * 4) & 255, (y * 4) & 255, ((x * y) >> 2) & 255, 255]);
+    const jpeg = await new Bun.Image(big).jpeg({ quality: 90 }).bytes();
+    // 64 → 8 is under half, so the JPEG decoder scales in the DCT domain
+    // and the plane comes from that reduced buffer after resize.
+    const small = await new Bun.Image(jpeg).resize(8, 8, { fit: "fill" }).pixels();
+    expect([small.width, small.height, small.data.length]).toEqual([8, 8, 8 * 8 * 4]);
+    for (let i = 3; i < small.data.length; i += 4) expect(small.data[i]).toBe(255);
+
+    const turned = await new Bun.Image(cornersPng).rotate(90).pixels();
+    expect([turned.width, turned.height, turned.data.length]).toEqual([3, 4, 3 * 4 * 4]);
+    // (0,0)=red ends up top-right after a clockwise quarter turn.
+    expect(Array.from(turned.data.subarray(2 * 4, 3 * 4))).toEqual([255, 0, 0, 255]);
+
+    const one = await new Bun.Image(makePng(1, 1, () => [1, 2, 3, 4])).pixels();
+    expect([one.width, one.height, Array.from(one.data)]).toEqual([1, 1, [1, 2, 3, 4]]);
+  });
+
+  test("EXIF orientation is applied to the plane, so a 90° tag swaps the shape", async () => {
+    // A 4×2 JPEG with Orientation=6 (90° CW), the same splice as the
+    // metadata() test above: the plane is the upright 2×4 image unless the
+    // caller opts out.
+    const src = makePng(4, 2, x => (x < 2 ? [255, 0, 0, 255] : [0, 0, 255, 255]));
+    const jpg = await new Bun.Image(src).jpeg({ quality: 100 }).bytes();
+    // prettier-ignore
+    const tiff = new Uint8Array([
+      0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08,
+      0x00, 0x01,
+      0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+    ]);
+    const exif = Buffer.concat([Buffer.from("Exif\0\0"), tiff]);
+    const seglen = exif.length + 2;
+    const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, seglen >> 8, seglen & 255]), exif]);
+    const withExif = Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]);
+
+    const upright = await new Bun.Image(withExif).pixels();
+    expect([upright.width, upright.height, upright.data.length]).toEqual([2, 4, 2 * 4 * 4]);
+    // A clockwise quarter turn sends source column x to row y = x, so the
+    // red left half of the source is the top two rows of the plane and the
+    // blue right half the bottom two.
+    const hue = (x: number, y: number) => {
+      const [r, , b] = rgbaAt(upright.data, 2, x, y);
+      return r > 150 && b < 100 ? "red" : b > 150 && r < 100 ? "blue" : `[${r},${b}]`;
+    };
+    expect([0, 1, 2, 3].map(y => [hue(0, y), hue(1, y)])).toEqual([
+      ["red", "red"],
+      ["red", "red"],
+      ["blue", "blue"],
+      ["blue", "blue"],
+    ]);
+
+    const asStored = await new Bun.Image(withExif, { autoOrient: false }).pixels();
+    expect([asStored.width, asStored.height]).toEqual([4, 2]);
+  });
+
+  test("a CMYK JPEG and a modulate() stage arrive as the same RGBA the encoders see", async () => {
+    // The ink→RGB conversion is the decoder's; pixels() exposes it directly
+    // instead of through a PNG round trip. Quadrant centres as in the CMYK
+    // suite: cyan, magenta, mixed ink, black.
+    const { data, width } = await new Bun.Image(cmykJpeg).pixels();
+    const near = (px: number[], rgb: number[]) => Math.max(...rgb.map((c, i) => Math.abs(px[i] - c))) <= 8;
+    expect([
+      near(rgbaAt(data, width, 16, 16), [0, 255, 255]),
+      near(rgbaAt(data, width, 48, 16), [255, 0, 255]),
+      near(rgbaAt(data, width, 16, 48), [95, 143, 191]),
+      near(rgbaAt(data, width, 48, 48), [0, 0, 0]),
+      data[3],
+    ]).toEqual([true, true, true, true, 255]);
+
+    // modulate is the one in-place stage: the plane keeps its shape and
+    // saturation 0 leaves R = G = B on every pixel.
+    const grey = await new Bun.Image(cornersPng).modulate({ saturation: 0 }).pixels();
+    expect([grey.width, grey.height, grey.data.length]).toEqual([4, 3, 4 * 3 * 4]);
+    for (let i = 0; i < grey.data.length; i += 4) {
+      expect([grey.data[i], grey.data[i + 1]]).toEqual([grey.data[i + 2], grey.data[i + 2]]);
+    }
+  });
+
+  test("the result object's own data properties are plain, and a prototype setter cannot intercept them", async () => {
+    // The four fields are defined directly on the object (writable,
+    // enumerable, configurable), never assigned through the prototype chain.
+    const desc = Object.getOwnPropertyDescriptors(await new Bun.Image(cornersPng).pixels());
+    expect(Object.keys(desc)).toEqual(["data", "width", "height", "channels"]);
+    for (const k of ["data", "width", "height", "channels"] as const) {
+      expect([k, desc[k].writable, desc[k].enumerable, desc[k].configurable]).toEqual([k, true, true, true]);
+    }
+    const hits: string[] = [];
+    Object.defineProperty(Object.prototype, "channels", {
+      configurable: true,
+      set(v) {
+        hits.push(`channels=${v}`);
+      },
+    });
+    try {
+      const px = await new Bun.Image(cornersPng).pixels();
+      expect([hits, px.channels]).toEqual([[], 4]);
+    } finally {
+      delete (Object.prototype as unknown as Record<string, unknown>).channels;
+    }
+  });
+
+  test("an input ArrayBuffer transferred before the call rejects with ERR_INVALID_STATE", async () => {
+    // A copy into a fresh ArrayBuffer, large enough that the Image borrows it
+    // rather than duplicating a small view, so the transfer detaches the
+    // bytes the task would have read.
+    const big = makePng(64, 64, (x, y) => [x * 4, y * 4, (x ^ y) * 4, 255]);
+    const ab = new ArrayBuffer(big.length);
+    new Uint8Array(ab).set(big);
+    const img = new Bun.Image(new Uint8Array(ab));
+    structuredClone(ab, { transfer: [ab] });
+    expect(ab.byteLength).toBe(0);
+    await expect(img.pixels()).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
+  });
+
+  test("a plane above JSC's ArrayBuffer limit is refused before it is allocated, naming the engine's limit", async () => {
+    // maxPixels raised past 2^30 pixels: the resize target is 2^31 pixels,
+    // an 8 GiB plane JSC would refuse to adopt. The cap runs with the
+    // maxPixels guard, before the resize allocates. Without it the pipeline
+    // would not merely be slow: it would settle with a different code
+    // (ERR_OUT_OF_MEMORY) or resolve, so the code assertion is the whole
+    // test. The message names the limit that fired, which is not the
+    // caller's maxPixels.
+    await expect(
+      new Bun.Image(cornersPng, { maxPixels: 2 ** 32 }).resize(65536, 32768, { fit: "fill" }).pixels(),
+    ).rejects.toMatchObject({
+      code: "ERR_IMAGE_TOO_MANY_PIXELS",
+      message: expect.stringMatching(/ArrayBuffer limit/),
+    });
+  });
+
+  test("a plane's buffer transfers to another realm with its finalizer", async () => {
+    // The plane is an externally backed ArrayBuffer with the allocator's
+    // free as its destructor; a transfer moves the contents, destructor
+    // included, and detaches the source. Both halves must then be collectable
+    // without a double free (ASAN) or a leak.
+    const px = await new Bun.Image(cornersPng).pixels();
+    const moved = structuredClone(px.data.buffer, { transfer: [px.data.buffer] });
+    expect(px.data.buffer.byteLength).toBe(0);
+    expect(moved.byteLength).toBe(4 * 3 * 4);
+    expect(Array.from(new Uint8Array(moved, 0, 4))).toEqual([255, 0, 0, 255]);
+    Bun.gc(true);
+    expect(new Uint8Array(moved)[moved.byteLength - 1]).toBe(255);
+  });
+
+  test("the plane's finalizer frees it: every wrapper is collected and RSS stays flat", async () => {
+    // The plane is the decode buffer handed to JS with the allocator's free
+    // as its finalizer. A wrong free or a double free shows up under ASAN.
+    // A retained wrapper shows up in the heap census: the Uint8Array count
+    // must return to its baseline once the planes are unreachable, whatever
+    // the allocator does with the pages. A missing free shows up in RSS:
+    // 8 rounds × 50 planes × 1 MiB is 400 MiB; a build whose finalizer is
+    // a no-op measures ~437 MiB against a correct build's ~15, and the
+    // bound of 64 MiB (200 under ASAN/debug, where the baseline is not
+    // measured) is breached once one plane in eight goes unfreed. The
+    // first round is outside the measurement so the allocator's arena
+    // growth is not counted.
+    //
+    // Between rounds the collection is requested, not forced: a synchronous
+    // full collection right after a `Promise.all` batch of large buffers
+    // leaves that batch's wrappers in the census through every later
+    // collection (the same holds for `bytes()` on a stock build), and the
+    // census would then read one batch high with nothing leaked.
+    const plane = () => new Bun.Image(gradientPng).resize(512, 512, { fit: "fill" }).pixels();
+    const round = async () => {
+      const planes = await Promise.all(Array.from({ length: 50 }, plane));
+      for (const p of planes) expect(p.data.length).toBe(512 * 512 * 4);
+    };
+    const settle = async () => {
+      Bun.gc(true);
+      await Bun.sleep(10);
+      Bun.gc(true);
+    };
+    await round();
+    await settle();
+    const before = process.memoryUsage.rss();
+    // The census key must be live, or a renamed key would read 0 - 0.
+    const wrappersBefore = heapStats().objectTypeCounts.Uint8Array;
+    expect(wrappersBefore).toBeGreaterThan(0);
+    for (let i = 0; i < 8; i++) {
+      await round();
+      Bun.gc(false);
+    }
+    await settle();
+    const wrappersAfter = heapStats().objectTypeCounts.Uint8Array;
+    expect(wrappersAfter - wrappersBefore).toBeLessThan(10);
+    const grown = process.memoryUsage.rss() - before;
+    expect(grown).toBeLessThan((isASAN || isDebug ? 200 : 64) * 1024 * 1024);
   });
 });

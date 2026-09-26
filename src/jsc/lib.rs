@@ -189,6 +189,7 @@ pub use self::js_value::{
 // hook is re-exported from the crate root.
 pub use self::array_buffer::{
     ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, PinnedArrayBuffer, TypedArrayType,
+    max_array_buffer_size,
 };
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;

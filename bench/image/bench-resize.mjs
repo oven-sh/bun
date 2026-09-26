@@ -145,6 +145,29 @@ const ops = {
     bun: buf => new Bun.Image(buf).resize(1024, 768, { fit: "inside" }).webp({ quality: 80 }).bytes(),
     sharp: buf => sharp(buf).resize(1024, 768, { fit: "inside" }).webp({ quality: 80 }).toBuffer(),
   },
+  // Model-input shape: decode + resize, pixels out, no encoder; both sides
+  // resolve the plane with its shape. Isolates the
+  // decode/resize cost from the codec rows above. `ensureAlpha()` makes sharp
+  // emit the same 4-channel plane Bun.Image always does.
+  "JPEG resize 224×224 → raw RGBA": {
+    fixture: jpegFixture,
+    bun: buf => new Bun.Image(buf).resize(224, 224, { fit: "fill" }).pixels(),
+    sharp: buf =>
+      sharp(buf).resize(224, 224, { fit: "fill" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+  },
+  "12MP JPEG → 1024×768 → raw RGBA": {
+    fixture: jpegPhone,
+    bun: buf => new Bun.Image(buf).resize(1024, 768, { fit: "inside" }).pixels(),
+    sharp: buf =>
+      sharp(buf).resize(1024, 768, { fit: "inside" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+  },
+  // The hand-off alone: decode, no resize, the decoder's buffer becomes the
+  // Uint8Array. The number that shows what pixels() saves over an encode.
+  "JPEG decode → raw RGBA (no resize)": {
+    fixture: jpegFixture,
+    bun: buf => new Bun.Image(buf).pixels(),
+    sharp: buf => sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+  },
 };
 
 const ITER = 50;

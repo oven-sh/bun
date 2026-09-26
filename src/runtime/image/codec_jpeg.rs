@@ -327,12 +327,7 @@ pub(crate) fn decode(
         let src = unsafe { core::slice::from_raw_parts(icc_ptr, icc_size) };
         break 'blk Some(src.to_vec());
     };
-    Ok(codecs::Decoded {
-        rgba: out,
-        width: w,
-        height: ht,
-        icc_profile: icc,
-    })
+    codecs::Decoded::new(out, w, ht, icc)
 }
 
 pub(crate) fn encode(

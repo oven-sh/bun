@@ -8,11 +8,16 @@
 
 // ─── codec dispatch surface ──────────────────────────────────────────────────
 //
-// `codecs.rs` owns the shared `Decoded`/`Encoded`/`Error`/`DecodeHint`/
-// `EncodeOptions` shapes plus the format-agnostic dispatch (`decode`, `encode`,
-// `resize`, `Filter`, `Format`). Per-format files (`codec_*.rs`), the platform
-// backends, and `Image.rs` all import via `super::codecs` so there is exactly
-// one `codecs::Error` type at every boundary.
+// `codecs.rs` owns the shared `Encoded`/`Error`/`DecodeHint`/`EncodeOptions`
+// shapes plus the format-agnostic dispatch (`decode`, `encode`, `resize`,
+// `Filter`, `Format`), and re-exports `Decoded` from `plane.rs`, whose own
+// module keeps the plane's fields private to the dispatch too. Per-format
+// files (`codec_*.rs`), the platform backends, and `Image.rs` all import via
+// `super::codecs` so there is exactly one `codecs::Error` type at every
+// boundary.
+
+#[path = "plane.rs"]
+pub(crate) mod plane;
 
 #[path = "codecs.rs"]
 pub(crate) mod codecs;

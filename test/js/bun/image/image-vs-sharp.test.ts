@@ -6,10 +6,11 @@
 // about: does Bun.Image produce the same pixels as Sharp for the same kernel?
 //
 // Method: a small set of deterministic 32×24 source patterns, each resized
-// through every (filter × target-size) pair, decoded back to RGBA, and diffed
-// against a pre-baked Sharp/libvips reference. Edge mode intentionally differs
-// (we clamp+renormalise; libvips embeds with VIPS_EXTEND_COPY — see
-// image_resize.cpp header), so the outer 2-pixel border is excluded.
+// through every (filter × target-size) pair, read out as RGBA via `.pixels()`,
+// and diffed against a pre-baked Sharp/libvips reference. Edge mode
+// intentionally differs (we clamp+renormalise; libvips embeds with
+// VIPS_EXTEND_COPY — see image_resize.cpp header), so the outer 2-pixel
+// border is excluded.
 //
 // Thresholds:
 //   interior MAE   < 1.0   — i16 fixed-point on both sides; sub-1 noise is
@@ -114,53 +115,6 @@ function makePng(w: number, h: number, px: Px): Buffer {
     chunk("IEND", new Uint8Array(0)),
   ]);
 }
-function decodePng(png: Uint8Array): { w: number; h: number; data: Uint8Array } {
-  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
-  let off = 8,
-    w = 0,
-    h = 0;
-  const idats: Uint8Array[] = [];
-  while (off < png.length) {
-    const len = dv.getUint32(off);
-    const type = String.fromCharCode(png[off + 4], png[off + 5], png[off + 6], png[off + 7]);
-    const data = png.subarray(off + 8, off + 8 + len);
-    if (type === "IHDR") {
-      w = dv.getUint32(off + 8);
-      h = dv.getUint32(off + 12);
-    } else if (type === "IDAT") idats.push(data);
-    else if (type === "IEND") break;
-    off += 12 + len;
-  }
-  const raw = zlib.inflateSync(Buffer.concat(idats));
-  const stride = w * 4;
-  const out = new Uint8Array(w * h * 4);
-  let p = 0;
-  for (let y = 0; y < h; y++) {
-    const f = raw[p++];
-    const ro = y * stride,
-      po = (y - 1) * stride;
-    for (let i = 0; i < stride; i++) {
-      const x = raw[p++];
-      const a = i >= 4 ? out[ro + i - 4] : 0;
-      const b = y > 0 ? out[po + i] : 0;
-      const c = y > 0 && i >= 4 ? out[po + i - 4] : 0;
-      let v = x;
-      if (f === 1) v = (x + a) & 255;
-      else if (f === 2) v = (x + b) & 255;
-      else if (f === 3) v = (x + ((a + b) >> 1)) & 255;
-      else if (f === 4) {
-        const pp = a + b - c,
-          pa = Math.abs(pp - a),
-          pb = Math.abs(pp - b),
-          pc = Math.abs(pp - c);
-        v = (x + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 255;
-      }
-      out[ro + i] = v;
-    }
-  }
-  return { w, h, data: out };
-}
-
 // ─── reference fixture: one zlib'd blob of all Sharp RGBA outputs back to
 //     back, in the same iteration order the test uses. ─────────────────────────
 function caseList() {
@@ -227,12 +181,14 @@ describe("Bun.Image kernel output ≈ Sharp/libvips reference", () => {
     const slice = ref.subarray(off, off + c.bytes);
     off += c.bytes;
     test(`${c.src} ${c.w}×${c.h} ${c.filter}: MAE<${c.mae} max≤${c.max}`, async () => {
-      const out = decodePng(
-        await new Bun.Image(makePng(W, H, sources[c.src]))
-          .resize(c.w, c.h, { filter: c.filter as never, fit: "fill" })
-          .png()
-          .bytes(),
-      ).data;
+      const {
+        data: out,
+        width,
+        height,
+      } = await new Bun.Image(makePng(W, H, sources[c.src]))
+        .resize(c.w, c.h, { filter: c.filter as never, fit: "fill" })
+        .pixels();
+      expect([width, height]).toEqual([c.w, c.h]);
       const { mae, max } = diffInterior(out, slice, c.w, c.h);
       // One assertion so the failure message shows both numbers.
       expect({ mae: Number(mae.toFixed(3)), max, ok: mae < c.mae && max <= c.max }).toEqual({

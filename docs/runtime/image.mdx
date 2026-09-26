@@ -127,9 +127,27 @@ await img.toBase64(); // string
 await img.dataurl(); // "data:image/png;base64,…"
 await img.write("out.webp"); // number (bytes written)
 await img.write(Bun.s3.file("bucket/out.webp"));
+await img.pixels(); // { data: Uint8Array, width, height, channels: 4 }
 ```
 
 `.write()` accepts the same destinations as `Bun.write` — a path string, `Bun.file()`, `Bun.s3.file()`, or an fd. If you didn't chain a format method and the destination is a path string, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
+
+### Raw pixels
+
+`.pixels()` skips the encoder and resolves with the pixels the pipeline ends on. This is the input a model, a pixel statistic or a third-party encoder wants, without a PNG round-trip:
+
+```ts
+const { data, width, height, channels } = await new Bun.Image("photo.jpg").resize(224, 224, { fit: "fill" }).pixels();
+console.log(data.length, width, height, channels); // 200704 224 224 4
+```
+
+`data` is RGBA, 8 bits per channel, `width * height * 4` bytes, rows top to bottom, no row padding. The shape comes with the bytes rather than from `img.width`, so it stays correct however the image is used afterwards. This is the equivalent of Sharp's `.raw().toBuffer({ resolveWithObject: true })`.
+
+Bun applies no color transform and does not deliver the ICC profile. Bun's own decoders (JPEG, PNG and WebP everywhere; BMP and GIF on Linux or with `Bun.Image.backend = "bun"`) return their output in the space the source profile describes. The system backend (HEIC, AVIF and TIFF, plus BMP and GIF under the default `"system"` backend on macOS and Windows) returns the OS decoder's output, which Bun does not convert and whose profile it does not read. Sharp converts to sRGB by default, so it differs for a source with a non-sRGB profile. Alpha is straight, not premultiplied.
+
+EXIF orientation is applied before the plane is produced (unless the image was constructed with `autoOrient: false`), so a 90° or 270° tag swaps `width` and `height`. Nothing else from the source travels with the plane: no EXIF, no GPS, no profile. What consumes `data` sees pixels and nothing about where they came from.
+
+A plane is at most 2^30 pixels (4 GiB, the JavaScript engine's `ArrayBuffer` limit) whatever `maxPixels` allows; a pipeline whose output plane would exceed it rejects with `ERR_IMAGE_TOO_MANY_PIXELS` before the resize runs, with a message naming the engine's limit rather than `maxPixels`. `data` is a `Uint8Array` over its own buffer; for an API that wants a `Buffer`, `Buffer.from(data.buffer)` views the same bytes without a copy.
 
 ## Placeholders
 

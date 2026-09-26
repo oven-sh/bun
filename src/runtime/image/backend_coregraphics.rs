@@ -13,7 +13,7 @@ use super::codecs;
 pub enum BackendError {
     #[error("BackendUnavailable")]
     BackendUnavailable,
-    // ── from codecs::Error ────────────────────────────────────────────────
+    // ── the codecs::Error variants a backend can raise ─────────────────────
     #[error("DecodeFailed")]
     DecodeFailed,
     #[error("EncodeFailed")]
@@ -26,19 +26,6 @@ pub enum BackendError {
     UnknownFormat,
     #[error("UnsupportedOnPlatform")]
     UnsupportedOnPlatform,
-}
-
-impl From<codecs::Error> for BackendError {
-    fn from(e: codecs::Error) -> Self {
-        match e {
-            codecs::Error::DecodeFailed => Self::DecodeFailed,
-            codecs::Error::EncodeFailed => Self::EncodeFailed,
-            codecs::Error::TooManyPixels => Self::TooManyPixels,
-            codecs::Error::OutOfMemory => Self::OutOfMemory,
-            codecs::Error::UnknownFormat => Self::UnknownFormat,
-            codecs::Error::UnsupportedOnPlatform => Self::UnsupportedOnPlatform,
-        }
-    }
 }
 
 impl BackendError {
@@ -160,12 +147,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
     }
     // SAFETY: the shim returned CG_OK only after writing all n bytes.
     unsafe { out.set_len(n) };
-    Ok(codecs::Decoded {
-        rgba: out,
-        width: w,
-        height: h,
-        icc_profile: None,
-    })
+    codecs::Decoded::new(out, w, h, None).map_err(|_| BackendError::DecodeFailed)
 }
 
 #[allow(dead_code)]

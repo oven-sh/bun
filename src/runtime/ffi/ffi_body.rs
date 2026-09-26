@@ -1178,6 +1178,7 @@ impl FFI {
                 }
             },
         };
+        bun_analytics::features::ffi_cc.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let _tcc_guard = scopeguard::guard(&mut tcc_state, |s| {
             if let Some(state) = s {
                 // SAFETY: state is a valid TCC::State pointer from compile()
@@ -1499,6 +1500,7 @@ impl FFI {
                 }
             }
         };
+        bun_analytics::features::ffi_dlopen.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         let mut size = symbols.values().len();
         if size >= 63 {

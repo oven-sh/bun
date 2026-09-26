@@ -9569,6 +9569,52 @@ describe("outdated", () => {
     expect(out).toContain("prereleases-1");
   });
 
+  test("several dependency pattern args", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.1",
+          "no-deps": "1.0.0",
+          "prereleases-1": "1.0.0-future.1",
+        },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+
+    // The "Package" column of every row in the table.
+    async function outdatedPackages(patterns: string[]): Promise<string[]> {
+      const out = await runBunOutdated(env, packageDir, ...patterns);
+      return out
+        .split(/\r?\n/)
+        .filter(line => line.startsWith("| ") && !line.startsWith("| Package "))
+        .map(line => line.split("|")[1].trim());
+    }
+
+    // `listed` is what `bun outdated <patterns>` prints.
+    const cases: { patterns: string[]; listed: string[] }[] = [
+      { patterns: [], listed: ["a-dep", "no-deps", "prereleases-1"] },
+      // A dependency is listed when at least one pattern matches it.
+      { patterns: ["no-deps", "a-dep"], listed: ["a-dep", "no-deps"] },
+      { patterns: ["not-a-dependency", "a-dep"], listed: ["a-dep"] },
+      { patterns: ["no-deps", "pre*"], listed: ["no-deps", "prereleases-1"] },
+      { patterns: ["*", "a-dep"], listed: ["a-dep", "no-deps", "prereleases-1"] },
+      // A negated pattern removes its matches, wherever it is in the list.
+      { patterns: ["prereleases-1", "*-dep*", "!no-deps"], listed: ["a-dep", "prereleases-1"] },
+      { patterns: ["!no-deps", "*", "a-dep"], listed: ["a-dep", "prereleases-1"] },
+      { patterns: ["no-deps", "a-dep", "!a-*"], listed: ["no-deps"] },
+      // With only negated patterns, every other dependency is listed.
+      { patterns: ["!a-dep"], listed: ["no-deps", "prereleases-1"] },
+      { patterns: ["!a-dep", "!no-deps"], listed: ["prereleases-1"] },
+      // `!!` is a double negation, so the pattern is not negated.
+      { patterns: ["!!a-dep", "no-deps"], listed: ["a-dep", "no-deps"] },
+    ];
+    // `bun outdated` reads the lockfile and the manifest cache and writes nothing.
+    const listed = await Promise.all(cases.map(({ patterns }) => outdatedPackages(patterns)));
+    expect(cases.map(({ patterns }, i) => ({ patterns, listed: listed[i] }))).toEqual(cases);
+  });
+
   test("scoped workspace names", async () => {
     await Promise.all([
       write(

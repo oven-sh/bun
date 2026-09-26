@@ -28,6 +28,7 @@
 #include "JSEventEmitter.h"
 
 #include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/MicrotaskQueueInlines.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -1246,6 +1247,57 @@ JSValue fetchESMSourceCodeAsync(
 }
 
 using namespace Bun;
+
+void Bun::requeueSynchronousModuleQueueAsMicrotasks(JSC::JSGlobalObject* globalObject, JSC::VM::SynchronousModuleQueue& queue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    for (auto& task : queue.tasks)
+        globalObject->queueMicrotask(vm, task.task, task.payload, task.arg0, task.arg1, task.arg2, task.arg3);
+    queue.tasks.shrink(0);
+}
+
+namespace Bun {
+// A queue on the vm.m_synchronousModuleQueue chain for an asynchronous module load that has to finish inside a require() of an ES module (a macro's own module), not for that require().
+struct NestedModuleQueue {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NestedModuleQueue);
+
+public:
+    JSC::VM::SynchronousModuleQueue queue;
+    JSC::VM::SynchronousModuleQueue* outer { nullptr };
+};
+}
+
+extern "C" NestedModuleQueue* Bun__NestedModuleQueue__push(JSC::VM* vm)
+{
+    auto* current = vm->m_synchronousModuleQueue;
+    auto* clientData = WebCore::clientData(*vm);
+    if (!current || current == clientData->nestedModuleQueue)
+        return nullptr;
+    auto* nested = new NestedModuleQueue;
+    nested->queue.prev = current; // VM::visitAggregateImpl marks what the require() parked through this link.
+    nested->outer = std::exchange(clientData->nestedModuleQueue, &nested->queue);
+    vm->m_synchronousModuleQueue = &nested->queue;
+    return nested;
+}
+
+extern "C" bool Bun__NestedModuleQueue__flush(Zig::GlobalObject* globalObject)
+{
+    auto* queue = WebCore::clientData(JSC::getVM(globalObject))->nestedModuleQueue;
+    if (!queue || queue->tasks.isEmpty())
+        return false;
+    Bun::requeueSynchronousModuleQueueAsMicrotasks(globalObject, *queue);
+    return true;
+}
+
+// What is still parked goes to the require()'s queue, where it would have gone without the nested one.
+extern "C" void Bun__NestedModuleQueue__pop(JSC::VM* vm, NestedModuleQueue* nested)
+{
+    ASSERT(vm->m_synchronousModuleQueue == &nested->queue);
+    nested->queue.prev->tasks.appendVector(nested->queue.tasks);
+    vm->m_synchronousModuleQueue = nested->queue.prev;
+    WebCore::clientData(*vm)->nestedModuleQueue = nested->outer;
+    delete nested;
+}
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

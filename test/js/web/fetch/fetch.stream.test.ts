@@ -1,10 +1,11 @@
-import { Socket } from "bun";
+import type { Socket } from "bun";
 import { describe, expect, it, test } from "bun:test";
+import { randomFillSync } from "crypto";
 import { createReadStream, readFileSync } from "fs";
 import { bunEnv, bunExe, gcTick, isWindows, tempDirWithFilesAnon } from "harness";
 import http from "http";
 import type { AddressInfo } from "net";
-import path, { join } from "path";
+import path, { basename, join } from "path";
 import { pipeline } from "stream";
 import zlib from "zlib";
 
@@ -26,125 +27,225 @@ const bigText = Buffer.alloc(1 * 1024 * 1024, "a");
 const smallText = Buffer.alloc(16 * "Hello".length, "Hello");
 const empty = Buffer.alloc(0);
 
+/** Splits `data` into `count` pieces of the same size. The last piece takes the remainder. */
+function split(data: Uint8Array, count: number): Uint8Array[] {
+  const size = Math.floor(data.byteLength / count);
+  return Array.from({ length: count }, (_, i) =>
+    data.subarray(size * i, i === count - 1 ? data.byteLength : size * (i + 1)),
+  );
+}
+
+/** Reads `reader` to the end and returns its chunks. `afterChunk` runs after each chunk. */
+async function readChunks<T>(
+  reader: ReadableStreamDefaultReader<T>,
+  afterChunk?: (chunk: T) => void | Promise<void>,
+): Promise<T[]> {
+  const chunks: T[] = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) return chunks;
+    chunks.push(value);
+    await afterChunk?.(value);
+  }
+}
+
+/** Awaits `promise`, which has to reject, and returns the reason. */
+function rejection(promise: Promise<unknown>): Promise<any> {
+  return promise.then(
+    () => expect.unreachable("the promise resolved"),
+    error => error,
+  );
+}
+
+/**
+ * One response body streamed as separate chunks, with no fixed sleeps between them.
+ *
+ * By default the reader paces the server: the handler writes piece i, flushes it, and
+ * waits until the reader has acknowledged every byte through the end of piece i before
+ * it writes piece i+1. Each piece therefore crosses the wire on its own, and a small
+ * piece arrives as exactly one read.
+ *
+ * `readerPaced: false` is for bodies the reader cannot acknowledge piece by piece: a
+ * compressed body (the reader only sees decoded bytes) or one consumed with `text()`.
+ * The handler then yields 1 ms between pieces. In practice that lets the idle HTTP
+ * thread pick each piece up on its own, but no assertion depends on that split.
+ *
+ * Use one instance per response.
+ */
+class StreamedBody {
+  readonly pieces: Uint8Array[];
+  readonly readerPaced: boolean;
+  #received = 0;
+  #waiting: { bytes: number; resolve: () => void }[] = [];
+
+  constructor(pieces: Uint8Array[], { readerPaced = true }: { readerPaced?: boolean } = {}) {
+    this.pieces = pieces;
+    this.readerPaced = readerPaced;
+  }
+
+  /** Every byte of the body, in order. */
+  get content(): Buffer {
+    return Buffer.concat(this.pieces);
+  }
+
+  /** A 200 response that streams the pieces. */
+  response(headers: Record<string, string> = {}): Response {
+    const stream = new ReadableStream({
+      type: "direct",
+      pull: async controller => {
+        let sent = 0;
+        for (const [i, piece] of this.pieces.entries()) {
+          controller.write(piece);
+          await controller.flush();
+          sent += piece.byteLength;
+          // No wait after the last piece, so it and the terminating chunk go out together.
+          if (i < this.pieces.length - 1) await (this.readerPaced ? this.#acknowledged(sent) : Bun.sleep(1));
+        }
+        controller.close();
+      },
+    });
+    return new Response(stream, { status: 200, headers: { "Content-Type": "text/plain", ...headers } });
+  }
+
+  /** The reader reports that `count` more bytes arrived. */
+  ack(count: number): void {
+    this.#received += count;
+    this.#waiting = this.#waiting.filter(({ bytes, resolve }) => {
+      if (bytes > this.#received) return true;
+      resolve();
+      return false;
+    });
+  }
+
+  /**
+   * Reads `reader` to the end and acknowledges each chunk. With `gc`, a full collection
+   * runs after the first chunk, while the rest of the body is still in flight.
+   */
+  read(reader: ReadableStreamDefaultReader<Uint8Array>, { gc = false } = {}): Promise<Uint8Array[]> {
+    let first = true;
+    return readChunks(reader, async chunk => {
+      if (gc && first) await gcTick();
+      first = false;
+      this.ack(chunk.byteLength);
+    });
+  }
+
+  #acknowledged(bytes: number): Promise<void> {
+    if (this.#received >= bytes) return Promise.resolve();
+    return new Promise(resolve => this.#waiting.push({ bytes, resolve }));
+  }
+}
+
+/** The head of a 200 text/plain response with `headers`, ready to be written before the body. */
+function responseHead(headers: Record<string, string | number>): string {
+  const lines = ["HTTP/1.1 200 OK", "Content-Type: text/plain"];
+  for (const [name, value] of Object.entries(headers)) lines.push(`${name}: ${value}`);
+  return lines.join("\r\n") + "\r\n\r\n";
+}
+
+/**
+ * A raw TCP server that answers every connection with `head` and then `pieces`, each in
+ * its own write, without reading the request. `onHead` runs once the head is written.
+ */
+function rawServer(head: string, pieces: (string | Uint8Array)[], onHead?: (socket: Socket) => void) {
+  return Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.write(head);
+        onHead?.(socket);
+        for (const piece of pieces) socket.write(piece);
+        socket.flush();
+      },
+      data() {},
+    },
+  });
+}
+
 describe.concurrent("fetch() with streaming", () => {
-  [-1, 0, 20, 50, 100].forEach(timeout => {
+  for (const timeout of [-1, 0, 20, 50, 100]) {
     it(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
+      // The handler sends one chunk and then holds the stream open until the test ends,
+      // so only the signal can settle the read.
+      const { promise: hold, resolve: release } = Promise.withResolvers<void>();
       using server = Bun.serve({
         port: 0,
-        async fetch(req) {
+        fetch() {
           return new Response(
             new ReadableStream({
               async start(controller) {
                 controller.enqueue("Hello, World!");
-                await Bun.sleep(1000);
-                controller.enqueue("Hello, World!");
+                await hold;
                 controller.close();
               },
             }),
-            {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-              },
-            },
+            { status: 200, headers: { "Content-Type": "text/plain" } },
           );
         },
       });
-
-      const server_url = `http://${server.hostname}:${server.port}`;
       try {
-        const res = await fetch(server_url, {
-          signal: timeout < 0 ? AbortSignal.abort() : AbortSignal.timeout(timeout),
-        });
-
-        const reader = res.body?.getReader();
-        let results = [];
-        while (true) {
-          const { done, data } = await reader?.read();
-          if (data) results.push(data);
-          if (done) break;
-        }
-        expect.unreachable();
-      } catch (err: any) {
-        if (timeout < 0) {
-          if (err.name !== "AbortError") throw err;
-          expect(err.message).toBe("The operation was aborted.");
-        } else {
-          if (err.name !== "TimeoutError") throw err;
-          expect(err.message).toBe("The operation timed out.");
-        }
+        const signal = timeout < 0 ? AbortSignal.abort() : AbortSignal.timeout(timeout);
+        const error = await rejection(
+          (async () => {
+            const res = await fetch(server.url, { signal });
+            return readChunks(res.body!.getReader());
+          })(),
+        );
+        expect(error).toBeInstanceOf(DOMException);
+        expect({ name: error.name, message: error.message, code: error.code }).toEqual(
+          timeout < 0
+            ? { name: "AbortError", message: "The operation was aborted.", code: 20 }
+            : { name: "TimeoutError", message: "The operation timed out.", code: 23 },
+        );
+      } finally {
+        release();
       }
     });
+  }
+
+  // The handler sends one chunk, then waits for `gate` before it sends the rest, so the
+  // body is still streaming while the test checks the lock.
+  function gatedResponse(gate: Promise<void>): Response {
+    return new Response(
+      new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          controller.write("Hello, World!");
+          await controller.flush();
+          await gate;
+          for (let i = 0; i < 3; i++) {
+            controller.write("Hello, World!");
+            await controller.flush();
+          }
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "text/plain" } },
+    );
+  }
+
+  it("should be locked after start buffering", async () => {
+    const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
+    using server = Bun.serve({ port: 0, fetch: () => gatedResponse(gate) });
+    const res = await fetch(server.url);
+    const text = res.text();
+    expect(() => res.body!.getReader()).toThrow("ReadableStream is locked");
+    expect(res.bodyUsed).toBe(true);
+    openGate();
+    expect(await text).toBe("Hello, World!".repeat(4));
   });
 
-  it(`should be locked after start buffering`, async () => {
-    using server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        return new Response(
-          new ReadableStream({
-            async start(controller) {
-              controller.enqueue("Hello, World!");
-              await Bun.sleep(10);
-              controller.enqueue("Hello, World!");
-              await Bun.sleep(10);
-              controller.enqueue("Hello, World!");
-              await Bun.sleep(10);
-              controller.enqueue("Hello, World!");
-              await Bun.sleep(10);
-              controller.close();
-            },
-          }),
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "text/plain",
-            },
-          },
-        );
-      },
-    });
-    const server_url = `http://${server.hostname}:${server.port}`;
-    const res = await fetch(server_url, {});
-    const promise = res.text();
-    expect(async () => res.body?.getReader()).toThrow("ReadableStream is locked");
-    await promise;
-  });
-
-  it(`should be locked after start buffering when calling getReader`, async () => {
-    using server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        return new Response(
-          new ReadableStream({
-            async start(controller) {
-              controller.enqueue("Hello, World!");
-              await Bun.sleep(10);
-              controller.enqueue("Hello, World!");
-              await Bun.sleep(10);
-              controller.enqueue("Hello, World!");
-              await Bun.sleep(10);
-              controller.enqueue("Hello, World!");
-              await Bun.sleep(10);
-              controller.close();
-            },
-          }),
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "text/plain",
-            },
-          },
-        );
-      },
-    });
-
-    const server_url = `http://${server.hostname}:${server.port}`;
-    const res = await fetch(server_url);
-    var body = res.body as ReadableStream<Uint8Array>;
-    const promise = res.text();
+  it("should be locked after start buffering when calling getReader", async () => {
+    const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
+    using server = Bun.serve({ port: 0, fetch: () => gatedResponse(gate) });
+    const res = await fetch(server.url);
+    const body = res.body!;
+    const text = res.text();
+    expect(body.locked).toBe(true);
     expect(() => body.getReader()).toThrow("ReadableStream is locked");
-    await promise;
+    openGate();
+    expect(await text).toBe("Hello, World!".repeat(4));
   });
 
   it("throws a TypeError when the request body stream is already locked", async () => {
@@ -171,444 +272,191 @@ describe.concurrent("fetch() with streaming", () => {
   });
 
   it("can deflate with and without headers #4478", async () => {
-    {
-      using server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          if (req.url.endsWith("/with_headers")) {
-            const content = zlib.deflateSync(Buffer.from("Hello, World"));
-            return new Response(content, {
-              headers: {
-                "Content-Type": "text/plain",
-                "Content-Encoding": "deflate",
-                "Access-Control-Allow-Origin": "*",
-              },
-            });
-          }
-          const content = zlib.deflateRawSync(Buffer.from("Hello, World"));
-          return new Response(content, {
-            headers: {
-              "Content-Type": "text/plain",
-              "Content-Encoding": "deflate",
-              "Access-Control-Allow-Origin": "*",
-            },
-          });
-        },
-      });
-      const url = `http://${server.hostname}:${server.port}/`;
-      expect(await fetch(`${url}with_headers`).then(res => res.text())).toBe("Hello, World");
-      expect(await fetch(url).then(res => res.text())).toBe("Hello, World");
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const content = req.url.endsWith("/with_headers")
+          ? zlib.deflateSync(Buffer.from("Hello, World"))
+          : zlib.deflateRawSync(Buffer.from("Hello, World"));
+        return new Response(content, {
+          headers: {
+            "Content-Type": "text/plain",
+            "Content-Encoding": "deflate",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
+      },
+    });
+    for (const pathname of ["/with_headers", "/"]) {
+      const res = await fetch(new URL(pathname, server.url));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-encoding")).toBe("deflate");
+      expect(await res.text()).toBe("Hello, World");
     }
   });
 
-  for (let file of files) {
-    it("stream can handle response.body + await response.something() #4500", async () => {
-      let server: ReturnType<typeof http.createServer> | null = null;
+  for (const file of files) {
+    it(`stream can handle response.body + await response.something() #4500 (${basename(file)})`, async () => {
+      const expected = readFileSync(file);
+      const errors: unknown[] = [];
+      const server = http.createServer((req, res) => {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        pipeline(createReadStream(file), res, error => {
+          if (error) errors.push(error);
+        });
+      });
       try {
-        const errorHandler = (err: any) => expect(err).toBeUndefined();
-
-        server = http
-          .createServer(function (req, res) {
-            res.writeHead(200, { "Content-Type": "text/plain" });
-
-            pipeline(createReadStream(file), res, errorHandler);
-          })
-          .listen(0);
-
-        const address = server.address() as AddressInfo;
-        let url;
-        if (address.family == "IPv4") {
-          url = `http://${address.address}:${address.port}`;
-        } else {
-          url = `http://[${address.address}]:${address.port}`;
-        }
-        async function getRequestLen(url: string) {
-          const response = await fetch(url);
-          const hasBody = response.body;
-          if (hasBody) {
-            const res = await response.blob();
-            return res.size;
-          }
-          return 0;
-        }
-
+        const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+        server.listen(0, "127.0.0.1", onListening);
+        await listening;
+        const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
         for (let i = 0; i < 10; i++) {
-          let len = await getRequestLen(url);
-          if (len <= 0) {
-            throw new Error("Request length is 0");
-          }
-          await Bun.sleep(50);
+          const response = await fetch(url);
+          expect(response.status).toBe(200);
+          expect(response.headers.get("content-type")).toBe("text/plain");
+          expect(response.body).toBeInstanceOf(ReadableStream);
+          const blob = await response.blob();
+          expect(blob.size).toBe(expected.byteLength);
+          expect(Buffer.from(await blob.arrayBuffer())).toEqual(expected);
         }
-
-        expect(true).toBe(true);
+        expect(errors).toEqual([]);
       } finally {
-        server?.closeAllConnections();
+        server.closeAllConnections();
+        server.close();
       }
     });
   }
 
   it("stream still works after response get out of scope", async () => {
-    {
-      const content = "Hello, world!\n".repeat(5);
-      using server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                const data = Buffer.from(content, "utf8");
-                const size = data.byteLength / 5;
-                controller.write(data.slice(0, size));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size, size * 2));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 2, size * 3));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 3, size * 5));
-                await controller.flush();
+    const body = new StreamedBody(split(Buffer.from("Hello, world!\n".repeat(5)), 4));
+    using server = Bun.serve({ port: 0, fetch: () => body.response() });
 
-                controller.close();
-              },
-            }),
-            { status: 200, headers: { "Content-Type": "text/plain" } },
-          );
-        },
-      });
-
-      async function getReader() {
-        return (await fetch(`http://${server.hostname}:${server.port}`, {})).body?.getReader();
-      }
-      gcTick(false);
-      const reader = await getReader();
-      gcTick(false);
-      var chunks = [];
-      while (true) {
-        gcTick(false);
-
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-        if (value) {
-          chunks.push(value);
-        }
-        if (done) {
-          break;
-        }
-      }
-
-      gcTick(false);
-      expect(chunks.length).toBeGreaterThan(1);
-      expect(Buffer.concat(chunks).toString("utf8")).toBe(content);
+    // Only the reader survives this call. The Response it came from is unreachable.
+    async function getReader() {
+      return (await fetch(server.url)).body!.getReader();
     }
+    await gcTick();
+    const reader = await getReader();
+    await gcTick();
+    // A collection before every read: the reader alone has to keep the stream alive.
+    const chunks = await readChunks(reader, async chunk => {
+      await gcTick();
+      body.ack(chunk.byteLength);
+    });
+    await gcTick();
+    expect(chunks.map(chunk => Buffer.from(chunk).toString())).toEqual(
+      body.pieces.map(piece => Buffer.from(piece).toString()),
+    );
+    expect(Buffer.concat(chunks)).toEqual(body.content);
   });
 
   it("response inspected size should reflect stream state", async () => {
-    {
-      const content = "Bun!\n".repeat(4);
-      using server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                const data = Buffer.from(content, "utf8");
-                const size = data.byteLength / 5;
-                controller.write(data.slice(0, size));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size, size * 2));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 2, size * 3));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 3, size * 4));
-                await controller.flush();
+    const body = new StreamedBody(split(Buffer.from("Bun!\n".repeat(4)), 4));
+    using server = Bun.serve({ port: 0, fetch: () => body.response() });
 
-                controller.close();
-              },
-            }),
-            { status: 200, headers: { "Content-Type": "text/plain" } },
-          );
-        },
-      });
-
-      function inspectBytes(response: Response) {
-        const match = /Response \(([0-9]+ )bytes\)/g.exec(
-          Bun.inspect(response, {
-            depth: 0,
-          }),
-        );
-        if (!match) return 0;
-        return parseInt(match[1]?.trim(), 10);
-      }
-
-      const res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      gcTick(false);
-      const reader = res.body?.getReader();
-      gcTick(false);
-      let size = 0;
-      while (true) {
-        gcTick(false);
-
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-        if (value) {
-          size += value.length;
-        }
-        expect(inspectBytes(res)).toBe(size);
-        if (done) {
-          break;
-        }
-      }
-
-      gcTick(false);
+    function inspectBytes(response: Response) {
+      const match = /Response \(([0-9]+) bytes\)/.exec(Bun.inspect(response, { depth: 0 }));
+      return match ? parseInt(match[1], 10) : null;
     }
+
+    const res = await fetch(server.url);
+    await gcTick();
+    const reader = res.body!.getReader();
+    const sizes: (number | null)[] = [];
+    const chunks = await readChunks(reader, async chunk => {
+      sizes.push(inspectBytes(res));
+      if (sizes.length === 1) await gcTick();
+      body.ack(chunk.byteLength);
+    });
+    expect(chunks.map(chunk => chunk.byteLength)).toEqual([5, 5, 5, 5]);
+    expect(sizes).toEqual([5, 10, 15, 20]);
+    expect(inspectBytes(res)).toBe(20);
   });
 
-  it("can handle multiple simultaneos requests", async () => {
-    {
-      const content = "Hello, world!\n".repeat(5);
-      using server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                const data = Buffer.from(content, "utf8");
-                const size = data.byteLength / 5;
-                controller.write(data.slice(0, size));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size, size * 2));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 2, size * 3));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 3, size * 5));
-                await controller.flush();
+  it("can handle multiple simultaneous requests", async () => {
+    const content = Buffer.from("Hello, world!\n".repeat(5));
+    // One paced body per request, picked by the request path.
+    const bodies = Array.from({ length: 6 }, () => new StreamedBody(split(content, 4)));
+    using server = Bun.serve({
+      port: 0,
+      fetch: req => bodies[Number(new URL(req.url).pathname.slice(1))].response(),
+    });
 
-                controller.close();
-              },
-            }),
-            {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-              },
-            },
-          );
-        },
-      });
-
-      const server_url = `http://${server.hostname}:${server.port}`;
-      async function doRequest() {
-        await Bun.sleep(10);
-        const res = await fetch(server_url);
-        const reader = res.body?.getReader();
-        let buffer = Buffer.alloc(0);
-        let parts = 0;
-        while (true) {
-          const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-          if (value) {
-            buffer = Buffer.concat([buffer, value]);
-            parts++;
-          }
-          if (done) {
-            break;
-          }
-        }
-
-        gcTick(false);
-        expect(buffer.toString("utf8")).toBe(content);
-        expect(parts).toBeGreaterThan(1);
-      }
-
-      await Promise.all([doRequest(), doRequest(), doRequest(), doRequest(), doRequest(), doRequest()]);
+    async function doRequest(i: number) {
+      const res = await fetch(new URL(String(i), server.url));
+      const chunks = await bodies[i].read(res.body!.getReader());
+      expect(chunks.length).toBe(4);
+      expect(Buffer.concat(chunks)).toEqual(content);
     }
+
+    await Promise.all(bodies.map((_, i) => doRequest(i)));
   });
 
-  it(`can handle transforms`, async () => {
-    {
-      const content = "Hello, world!\n".repeat(5);
-      using server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                const data = Buffer.from(content, "utf8");
-                const size = data.byteLength / 5;
-                controller.write(data.slice(0, size));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size, size * 2));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 2, size * 3));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 3, size * 5));
-                await controller.flush();
+  it("can handle transforms", async () => {
+    const content = "Hello, world!\n".repeat(5);
+    const body = new StreamedBody(split(Buffer.from(content), 4));
+    using server = Bun.serve({ port: 0, fetch: () => body.response() });
 
-                controller.close();
-              },
-            }),
-            {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-              },
-            },
-          );
-        },
-      });
-
-      const server_url = `http://${server.hostname}:${server.port}`;
-      const res = await fetch(server_url);
-
-      const transform = new TransformStream({
-        transform(chunk, controller) {
-          controller.enqueue(Buffer.from(chunk).toString("utf8").toUpperCase());
-        },
-      });
-
-      const reader = res.body?.pipeThrough(transform).getReader();
-
-      let result = "";
-      while (true) {
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-        if (value) {
-          result += value;
-        }
-        if (done) {
-          break;
-        }
-      }
-
-      gcTick(false);
-      expect(result).toBe(content.toUpperCase());
-    }
+    const res = await fetch(server.url);
+    const transform = new TransformStream<Uint8Array, string>({
+      transform(chunk, controller) {
+        controller.enqueue(Buffer.from(chunk).toString("utf8").toUpperCase());
+      },
+    });
+    const reader = res.body!.pipeThrough(transform).getReader();
+    // Every byte maps to one character, so the length of a string chunk is its byte count.
+    const chunks = await readChunks(reader, chunk => body.ack(chunk.length));
+    expect(chunks).toEqual(body.pieces.map(piece => Buffer.from(piece).toString().toUpperCase()));
+    expect(chunks.join("")).toBe(content.toUpperCase());
   });
 
-  it(`can handle gz images`, async () => {
-    {
-      using server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          const data = fixtures["fixture.png.gz"];
-          return new Response(data, {
-            status: 200,
-            headers: {
-              "Content-Type": "text/plain",
-              "Content-Encoding": "gzip",
-            },
-          });
-        },
-      });
+  it("can handle gz images", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(fixtures["fixture.png.gz"], {
+          status: 200,
+          headers: {
+            "Content-Type": "text/plain",
+            "Content-Encoding": "gzip",
+          },
+        });
+      },
+    });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
-      const res = await fetch(server_url);
-
-      const reader = res.body?.getReader();
-
-      let buffer = Buffer.alloc(0);
-      while (true) {
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-        if (value) {
-          buffer = Buffer.concat([buffer, value]);
-        }
-        if (done) {
-          break;
-        }
-      }
-
-      gcTick(false);
-      expect(buffer).toEqual(fixtures["fixture.png"]);
-    }
+    const res = await fetch(server.url);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-encoding")).toBe("gzip");
+    const chunks = await readChunks(res.body!.getReader());
+    expect(Buffer.concat(chunks)).toEqual(fixtures["fixture.png"]);
   });
 
-  it(`can proxy fetch with Bun.serve`, async () => {
-    {
-      const content = "a".repeat(64 * 1024);
+  it("can proxy fetch with Bun.serve", async () => {
+    const content = Buffer.alloc(64 * 1024, "a");
+    const body = new StreamedBody(split(content, 5));
+    using origin = Bun.serve({ port: 0, fetch: () => body.response() });
+    using proxy = Bun.serve({
+      port: 0,
+      async fetch() {
+        const response = await fetch(origin.url);
+        return new Response(response.body, {
+          status: 200,
+          headers: { "Content-Type": "text/plain" },
+        });
+      },
+    });
 
-      using server_original = Bun.serve({
-        port: 0,
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                const data = Buffer.from(content, "utf8");
-                const size = data.byteLength / 5;
-                controller.write(data.slice(0, size));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size, size * 2));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 2, size * 3));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 3, size * 5));
-                await controller.flush();
-
-                controller.close();
-              },
-            }),
-            {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-              },
-            },
-          );
-        },
-      });
-
-      using server = Bun.serve({
-        port: 0,
-        async fetch(req) {
-          const response = await fetch(`http://${server_original.hostname}:${server_original.port}`, {});
-          await Bun.sleep(10);
-          return new Response(response.body, {
-            status: 200,
-            headers: {
-              "Content-Type": "text/plain",
-            },
-          });
-        },
-      });
-
-      let res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      gcTick(false);
-      const reader = res.body?.getReader();
-
-      let buffer = Buffer.alloc(0);
-      let parts = 0;
-      while (true) {
-        gcTick(false);
-
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-        if (value) {
-          buffer = Buffer.concat([buffer, value]);
-          parts++;
-        }
-        if (done) {
-          break;
-        }
-      }
-
-      gcTick(false);
-      expect(buffer.toString("utf8")).toBe(content);
-      expect(parts).toBeGreaterThanOrEqual(1);
-    }
+    const res = await fetch(proxy.url);
+    await gcTick();
+    const reader = res.body!.getReader();
+    // The acks travel through the proxy: the origin writes piece i+1 only after this
+    // reader has all of piece i, so the body arrives in at least one read per piece.
+    const chunks = await body.read(reader, { gc: true });
+    expect(res.status).toBe(200);
+    expect(chunks.length).toBeGreaterThanOrEqual(body.pieces.length);
+    expect(Buffer.concat(chunks)).toEqual(content);
   });
+
   const matrix = [
     { name: "small", data: fixtures["fixture"] },
     { name: "small text", data: smallText },
@@ -616,74 +464,35 @@ describe.concurrent("fetch() with streaming", () => {
     { name: "img", data: fixtures["fixture.png"] },
     { name: "empty", data: empty },
   ];
-  for (let i = 0; i < matrix.length; i++) {
-    const fixture = matrix[i];
-    for (let j = 0; j < matrix.length; j++) {
-      const fixtureb = matrix[j];
+  for (const fixture of matrix) {
+    for (const fixtureb of matrix) {
       it(`can handle fixture ${fixture.name} x ${fixtureb.name}`, async () => {
-        {
-          //@ts-ignore
-          const data = fixture.data;
-          //@ts-ignore
-          const data_b = fixtureb.data;
-          const content = Buffer.concat([data, data_b]);
-          using server = Bun.serve({
-            port: 0,
-            fetch(req) {
-              return new Response(
-                new ReadableStream({
-                  type: "direct",
-                  async pull(controller) {
-                    controller.write(data);
-                    await controller.flush();
-                    await Bun.sleep(100);
-                    controller.write(data_b);
-                    await controller.flush();
-                    controller.close();
-                  },
-                }),
-                {
-                  status: 200,
-                  headers: {
-                    "Content-Type": "text/plain",
-                  },
-                },
-              );
-            },
-          });
+        const body = new StreamedBody([fixture.data, fixtureb.data]);
+        using server = Bun.serve({ port: 0, fetch: () => body.response() });
 
-          const server_url = `http://${server.hostname}:${server.port}`;
-          const res = await fetch(server_url);
-          const reader = res.body?.getReader();
-          let buffer = Buffer.alloc(0);
-          while (true) {
-            const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-            if (value) {
-              buffer = Buffer.concat([buffer, value]);
-            }
-            if (done) {
-              break;
-            }
-          }
-          gcTick(false);
-          expect(buffer).toEqual(content);
-        }
+        const res = await fetch(server.url);
+        await gcTick();
+        expect(res.status).toBe(200);
+        expect(res.headers.get("transfer-encoding")).toBe("chunked");
+        const chunks = await body.read(res.body!.getReader());
+        expect(Buffer.concat(chunks)).toEqual(body.content);
       });
     }
   }
 
-  const types = [
-    { headers: {}, compression: "no" },
-    { headers: { "Content-Encoding": "gzip" }, compression: "gzip" },
-    { headers: { "Content-Encoding": "gzip" }, compression: "gzip-libdeflate" },
-    { headers: { "Content-Encoding": "deflate" }, compression: "deflate" },
-    { headers: { "Content-Encoding": "deflate" }, compression: "deflate-libdeflate" },
-    { headers: { "Content-Encoding": "deflate" }, compression: "deflate_with_headers" },
-    { headers: { "Content-Encoding": "br" }, compression: "br" },
-    { headers: { "Content-Encoding": "zstd" }, compression: "zstd" },
-  ] as const;
+  // `corruptError` is the error code a corrupted body of that encoding rejects with.
+  const types: { headers: Record<string, string>; compression: string; corruptError: string | null }[] = [
+    { headers: {}, compression: "no", corruptError: null },
+    { headers: { "Content-Encoding": "gzip" }, compression: "gzip", corruptError: "ZlibError" },
+    { headers: { "Content-Encoding": "gzip" }, compression: "gzip-libdeflate", corruptError: "ZlibError" },
+    { headers: { "Content-Encoding": "deflate" }, compression: "deflate", corruptError: "ZlibError" },
+    { headers: { "Content-Encoding": "deflate" }, compression: "deflate-libdeflate", corruptError: "ZlibError" },
+    { headers: { "Content-Encoding": "deflate" }, compression: "deflate_with_headers", corruptError: "ZlibError" },
+    { headers: { "Content-Encoding": "br" }, compression: "br", corruptError: "BrotliDecompressionError" },
+    { headers: { "Content-Encoding": "zstd" }, compression: "zstd", corruptError: "ZstdDecompressionError" },
+  ];
 
-  function compress(compression, data: Uint8Array) {
+  function compress(compression: string, data: Uint8Array): Uint8Array {
     switch (compression) {
       case "gzip-libdeflate":
       case "gzip":
@@ -716,312 +525,149 @@ describe.concurrent("fetch() with streaming", () => {
     }
   }
 
-  for (const { headers, compression, skip } of types) {
-    const test = skip ? it.skip : it;
+  for (const { headers, compression, corruptError } of types) {
+    // Only an identity body can be acknowledged piece by piece (see StreamedBody).
+    const readerPaced = compression === "no";
 
-    test(`with invalid utf8 with ${compression} compression`, async () => {
+    it(`with invalid utf8 with ${compression} compression`, async () => {
       const content = Buffer.concat([invalid, Buffer.from("Hello, world!\n".repeat(5), "utf8"), invalid]);
-      using server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                const data = compress(compression, content);
-                const size = data.byteLength / 4;
-                controller.write(data.slice(0, size));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size, size * 2));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 2, size * 3));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 3, size * 4));
-                await controller.flush();
+      const body = new StreamedBody(split(compress(compression, content), 4), { readerPaced });
+      using server = Bun.serve({ port: 0, fetch: () => body.response(headers) });
 
-                controller.close();
-              },
-            }),
-            {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-                ...headers,
-              },
-            },
-          );
-        },
-      });
-
-      let res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      gcTick(false);
-      const reader = res.body?.getReader();
-
-      let buffer = Buffer.alloc(0);
-      while (true) {
-        gcTick(false);
-
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-        if (value) {
-          buffer = Buffer.concat([buffer, value]);
-        }
-        if (done) {
-          break;
-        }
-      }
-
-      gcTick(false);
-      expect(buffer).toEqual(content);
+      const res = await fetch(server.url);
+      await gcTick();
+      const chunks = await body.read(res.body!.getReader(), { gc: true });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-encoding")).toBe(headers["Content-Encoding"] ?? null);
+      expect(Buffer.concat(chunks)).toEqual(content);
     });
 
-    test(`chunked response works (single chunk) with ${compression} compression`, async () => {
+    it(`chunked response works (single chunk) with ${compression} compression`, async () => {
       const content = "Hello, world!\n".repeat(5);
-      using server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                const data = compress(compression, Buffer.from(content, "utf8"));
-                controller.write(data);
-                await controller.flush();
-                controller.close();
-              },
-            }),
-            {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-                ...headers,
-              },
-            },
-          );
-        },
-      });
-      let res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      gcTick(false);
-      const result = await res.text();
-      gcTick(false);
-      expect(result).toBe(content);
+      const data = compress(compression, Buffer.from(content, "utf8"));
+      // text() cannot acknowledge chunks, so its body is not reader paced.
+      const textBody = new StreamedBody([data], { readerPaced: false });
+      const readerBody = new StreamedBody([data], { readerPaced });
+      const bodies = [textBody, readerBody];
+      using server = Bun.serve({ port: 0, fetch: () => bodies.shift()!.response(headers) });
 
-      res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      gcTick(false);
-      const reader = res.body?.getReader();
+      let res = await fetch(server.url);
+      await gcTick();
+      expect(await res.text()).toBe(content);
 
-      let buffer = Buffer.alloc(0);
-      let parts = 0;
-      while (true) {
-        gcTick(false);
-
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-        if (value) {
-          buffer = Buffer.concat([buffer, value]);
-          parts++;
-        }
-        if (done) {
-          break;
-        }
-      }
-
-      gcTick(false);
-      expect(buffer.toString("utf8")).toBe(content);
-      expect(parts).toBe(1);
+      res = await fetch(server.url);
+      await gcTick();
+      const chunks = await readerBody.read(res.body!.getReader());
+      expect(chunks.length).toBe(1);
+      expect(Buffer.concat(chunks).toString("utf8")).toBe(content);
     });
 
-    test(`chunked response works (multiple chunks) with ${compression} compression`, async () => {
+    it(`chunked response works (multiple chunks) with ${compression} compression`, async () => {
       const content = "Hello, world!\n".repeat(5);
-      using server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                const data = compress(compression, Buffer.from(content, "utf8"));
-                const size = data.byteLength / 5;
-                controller.write(data.slice(0, size));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size, size * 2));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 2, size * 3));
-                await controller.flush();
-                await Bun.sleep(100);
-                controller.write(data.slice(size * 3, size * 5));
-                await controller.flush();
+      const pieces = split(compress(compression, Buffer.from(content, "utf8")), 4);
+      // text() cannot acknowledge chunks, so its body is not reader paced.
+      const textBody = new StreamedBody(pieces, { readerPaced: false });
+      const readerBody = new StreamedBody(pieces, { readerPaced });
+      const bodies = [textBody, readerBody];
+      using server = Bun.serve({ port: 0, fetch: () => bodies.shift()!.response(headers) });
 
-                controller.close();
-              },
-            }),
-            {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-                ...headers,
-              },
-            },
-          );
-        },
-      });
-      let res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      gcTick(false);
-      const result = await res.text();
-      gcTick(false);
-      expect(result).toBe(content);
+      let res = await fetch(server.url);
+      await gcTick();
+      expect(await res.text()).toBe(content);
 
-      res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      gcTick(false);
-      const reader = res.body?.getReader();
-
-      let buffer = Buffer.alloc(0);
-      let parts = 0;
-      while (true) {
-        gcTick(false);
-
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-        if (value) {
-          buffer = Buffer.concat([buffer, value]);
-        }
-        parts++;
-        if (done) {
-          break;
-        }
+      res = await fetch(server.url);
+      await gcTick();
+      const chunks = await readerBody.read(res.body!.getReader(), { gc: true });
+      expect(res.headers.get("transfer-encoding")).toBe("chunked");
+      if (readerPaced) {
+        // Identity pieces arrive one read each. A decoder may merge or split them.
+        expect(chunks.map(chunk => Buffer.from(chunk).toString())).toEqual(
+          pieces.map(piece => Buffer.from(piece).toString()),
+        );
       }
-
-      gcTick(false);
-      expect(buffer.toString("utf8")).toBe(content);
-      expect(parts).toBeGreaterThan(1);
+      expect(Buffer.concat(chunks).toString("utf8")).toBe(content);
     });
 
-    test(`Content-Length response works (single part) with ${compression} compression`, async () => {
-      const content = "a".repeat(1024);
+    it(`Content-Length response works (single part) with ${compression} compression`, async () => {
+      const content = Buffer.alloc(1024, "a").toString();
+      const data = compress(compression, Buffer.from(content));
       using server = Bun.serve({
         port: 0,
-        fetch(req) {
-          return new Response(compress(compression, Buffer.from(content)), {
+        fetch() {
+          return new Response(data, {
             status: 200,
-            headers: {
-              "Content-Type": "text/plain",
-              ...headers,
-            },
+            headers: { "Content-Type": "text/plain", ...headers },
           });
         },
       });
-      let res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      gcTick(false);
-      const result = await res.text();
-      gcTick(false);
-      expect(result).toBe(content);
 
-      res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      gcTick(false);
-      const reader = res.body?.getReader();
+      let res = await fetch(server.url);
+      await gcTick();
+      expect(await res.text()).toBe(content);
 
-      let buffer = Buffer.alloc(0);
-      let parts = 0;
-      while (true) {
-        gcTick(false);
-
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-        if (value) {
-          buffer = Buffer.concat([buffer, value]);
-          parts++;
-        }
-        if (done) {
-          break;
-        }
-      }
-
-      gcTick(false);
-      expect(buffer.toString("utf8")).toBe(content);
-      expect(parts).toBe(1);
+      res = await fetch(server.url);
+      await gcTick();
+      expect(res.headers.get("content-length")).toBe(String(data.byteLength));
+      const chunks = await readChunks(res.body!.getReader());
+      expect(chunks.length).toBe(1);
+      expect(Buffer.concat(chunks).toString("utf8")).toBe(content);
     });
 
-    test(`Content-Length response works (multiple parts) with ${compression} compression`, async () => {
+    it(`Content-Length response works (multiple parts) with ${compression} compression`, async () => {
       const rawBytes = Buffer.allocUnsafe(1024 * 1024);
       // Random data doesn't compress well. We need enough random data that
       // the compressed data is larger than 64 bytes.
-      require("crypto").randomFillSync(rawBytes);
+      randomFillSync(rawBytes);
       const content = rawBytes.toString("hex");
       const contentBuffer = Buffer.from(content);
+      const pieces = split(compress(compression, contentBuffer), 10);
 
-      const data = compress(compression, contentBuffer);
-      var onReceivedHeaders = Promise.withResolvers();
+      // The handler enqueues the first piece, then waits until the client has the
+      // response head before it enqueues the rest, so the body always crosses the wire
+      // in more than one chunk. One gate per request.
+      const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+      let requests = 0;
       using server = Bun.serve({
         port: 0,
-        async fetch(req) {
+        fetch() {
+          const gate = gates[requests++].promise;
+          let next = 0;
           return new Response(
             new ReadableStream({
               async pull(controller) {
-                // Ensure we actually send it over the network in multiple chunks.
-                let tenth = (data.length / 10) | 0;
-                let remaining = data;
-                while (remaining.length > 0) {
-                  const chunk = remaining.subarray(0, Math.min(tenth, remaining.length));
-                  controller.enqueue(chunk);
-                  if (remaining === data) {
-                    await onReceivedHeaders.promise;
-                  }
-                  remaining = remaining.subarray(chunk.length);
-                  await Bun.sleep(1);
-                }
-                controller.close();
+                if (next === 1) await gate;
+                controller.enqueue(pieces[next++]);
+                if (next === pieces.length) controller.close();
               },
             }),
             {
               status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-                ...headers,
-              },
+              headers: { "Content-Type": "text/plain", ...headers },
             },
           );
         },
       });
-      let res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      let onReceiveHeadersResolve = onReceivedHeaders.resolve;
-      onReceivedHeaders = Promise.withResolvers();
-      onReceiveHeadersResolve();
-      gcTick(false);
-      const result = await res.text();
-      gcTick(false);
-      expect(result).toBe(content);
 
-      res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      onReceiveHeadersResolve = onReceivedHeaders.resolve;
-      onReceivedHeaders = Promise.withResolvers();
-      onReceiveHeadersResolve();
+      let res = await fetch(server.url);
+      gates[0].resolve();
+      await gcTick();
+      expect(await res.text()).toBe(content);
 
-      gcTick(false);
-      const reader = res.body?.getReader();
+      res = await fetch(server.url);
+      gates[1].resolve();
+      await gcTick();
+      const reader = res.body!.getReader();
 
-      let chunks: Uint8Array[] = [];
       let currentRange = 0;
-      while (true) {
-        gcTick(false);
-
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-        if (value) {
-          chunks.push(value);
-
-          // Check the content is what is expected at this time.
-          // We're avoiding calling .buffer since that changes the internal representation in JSC and we want to test the raw data.
-          expect(contentBuffer.compare(value, undefined, undefined, currentRange, currentRange + value.length)).toEqual(
-            0,
-          );
-          currentRange += value.length;
-        }
-        if (done) {
-          break;
-        }
-      }
-
-      gcTick(false);
+      const chunks = await readChunks(reader, async chunk => {
+        // Check the content is what is expected at this time.
+        // We're avoiding calling .buffer since that changes the internal representation in JSC and we want to test the raw data.
+        expect(contentBuffer.compare(chunk, undefined, undefined, currentRange, currentRange + chunk.length)).toBe(0);
+        const isFirstChunk = currentRange === 0;
+        currentRange += chunk.length;
+        // One collection while the rest of the body is still in flight.
+        if (isFirstChunk) await gcTick();
+      });
       expect(Buffer.concat(chunks).toString("utf8")).toBe(content);
       expect(chunks.length).toBeGreaterThan(1);
 
@@ -1029,342 +675,105 @@ describe.concurrent("fetch() with streaming", () => {
       for (const chunk of chunks) {
         // Check that each chunk hasn't been modified.
         // We want to be 100% sure that there is no accidental memory re-use here.
-        expect(contentBuffer.compare(chunk, undefined, undefined, currentRange, currentRange + chunk.length)).toEqual(
-          0,
-        );
+        expect(contentBuffer.compare(chunk, undefined, undefined, currentRange, currentRange + chunk.length)).toBe(0);
         currentRange += chunk.length;
       }
     });
 
-    test(`Extra data should be ignored on streaming (multiple chunks, TCP server) with ${compression} compression`, async () => {
-      const parts = 5;
-      const content = "Hello".repeat(parts);
-      using server = Bun.listen({
-        port: 0,
-        hostname: "0.0.0.0",
-        socket: {
-          async open(socket) {
-            var corked: any[] = [];
-            var cork = true;
-            async function write(chunk: any) {
-              await new Promise<void>((resolve, reject) => {
-                if (cork) {
-                  corked.push(chunk);
-                }
+    it(`Extra data should be ignored on streaming (multiple chunks, TCP server) with ${compression} compression`, async () => {
+      const content = "Hello".repeat(5);
+      const compressed = compress(compression, Buffer.from(content, "utf8"));
+      using server = rawServer(responseHead({ ...headers, "Content-Length": compressed.byteLength }), [
+        ...split(compressed, 5),
+        "Extra Data!",
+        "Extra Data!",
+      ]);
 
-                if (!cork && corked.length) {
-                  socket.write(corked.join(""));
-                  corked.length = 0;
-                  socket.flush();
-                }
-
-                if (!cork) {
-                  socket.write(chunk);
-                  socket.flush();
-                }
-
-                resolve();
-              });
-            }
-            const compressed = compress(compression, Buffer.from(content, "utf8"));
-            await write("HTTP/1.1 200 OK\r\n");
-            await write("Content-Type: text/plain\r\n");
-            for (const [key, value] of Object.entries(headers)) {
-              await write(key + ": " + value + "\r\n");
-            }
-            await write("Content-Length: " + compressed.byteLength + "\r\n");
-            await write("\r\n");
-            const size = compressed.byteLength / 5;
-            for (var i = 0; i < 5; i++) {
-              cork = false;
-              await write(compressed.slice(size * i, size * (i + 1)));
-            }
-            await write("Extra Data!");
-            await write("Extra Data!");
-            socket.flush();
-          },
-          drain(socket) {},
-        },
-      });
-
-      const res = await fetch(`http://${server.hostname}:${server.port}`, {});
-      gcTick(false);
-      const reader = res.body?.getReader();
-
-      let buffer = Buffer.alloc(0);
-      while (true) {
-        gcTick(false);
-
-        const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-        if (value) {
-          buffer = Buffer.concat([buffer, value]);
-        }
-        if (done) {
-          break;
-        }
-      }
-
-      gcTick(false);
-      expect(buffer.toString("utf8")).toBe(content);
+      const res = await fetch(`http://127.0.0.1:${server.port}`);
+      await gcTick();
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-length")).toBe(String(compressed.byteLength));
+      const chunks = await readChunks(res.body!.getReader());
+      expect(Buffer.concat(chunks).toString("utf8")).toBe(content);
     });
 
-    test(`Missing data should timeout on streaming (multiple chunks, TCP server) with ${compression} compression`, async () => {
-      const parts = 5;
-      const content = "Hello".repeat(parts);
-      using server = Bun.listen({
-        port: 0,
-        hostname: "0.0.0.0",
-        socket: {
-          async open(socket) {
-            var corked: any[] = [];
-            var cork = true;
-            async function write(chunk: any) {
-              await new Promise<void>((resolve, reject) => {
-                if (cork) {
-                  corked.push(chunk);
-                }
+    it(`Missing data should timeout on streaming (multiple chunks, TCP server) with ${compression} compression`, async () => {
+      const content = "Hello".repeat(5);
+      const compressed = compress(compression, Buffer.from(content, "utf8"));
+      // 10 extra bytes that the server never sends.
+      using server = rawServer(
+        responseHead({ ...headers, "Content-Length": compressed.byteLength + 10 }),
+        split(compressed, 5),
+      );
 
-                if (!cork && corked.length) {
-                  socket.write(corked.join(""));
-                  corked.length = 0;
-                  socket.flush();
-                }
-
-                if (!cork) {
-                  socket.write(chunk);
-                  socket.flush();
-                }
-
-                resolve();
-              });
-            }
-            const compressed = compress(compression, Buffer.from(content, "utf8"));
-            await write("HTTP/1.1 200 OK\r\n");
-            await write("Content-Type: text/plain\r\n");
-            for (const [key, value] of Object.entries(headers)) {
-              await write(key + ": " + value + "\r\n");
-            }
-            // 10 extra missing bytes that we will never sent
-            await write("Content-Length: " + compressed.byteLength + 10 + "\r\n");
-            await write("\r\n");
-            const size = compressed.byteLength / 5;
-            for (var i = 0; i < 5; i++) {
-              cork = false;
-              await write(compressed.slice(size * i, size * (i + 1)));
-            }
-            socket.flush();
-          },
-          drain(socket) {},
-        },
-      });
-      try {
-        const res = await fetch(`http://${server.hostname}:${server.port}`, {
-          signal: AbortSignal.timeout(1000),
-        });
-        gcTick(false);
-        const reader = res.body?.getReader();
-
-        let buffer = Buffer.alloc(0);
-        while (true) {
-          gcTick(false);
-
-          const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
-          if (value) {
-            buffer = Buffer.concat([buffer, value]);
-          }
-          if (done) {
-            break;
-          }
-        }
-
-        gcTick(false);
-        expect(buffer.toString("utf8")).toBe("unreachable");
-      } catch (err) {
-        expect((err as Error).name).toBe("TimeoutError");
-      }
-    });
-
-    if (compression !== "no") {
-      test(`can handle corrupted ${compression} compression`, async () => {
-        {
-          const parts = 5;
-          const content = "Hello".repeat(parts);
-          using server = Bun.listen({
-            port: 0,
-            hostname: "0.0.0.0",
-            socket: {
-              async open(socket) {
-                var corked: any[] = [];
-                var cork = true;
-                async function write(chunk: any) {
-                  await new Promise<void>((resolve, reject) => {
-                    if (cork) {
-                      corked.push(chunk);
-                    }
-
-                    if (!cork && corked.length) {
-                      socket.write(corked.join(""));
-                      corked.length = 0;
-                      socket.flush();
-                    }
-
-                    if (!cork) {
-                      socket.write(chunk);
-                      socket.flush();
-                    }
-
-                    resolve();
-                  });
-                }
-                const compressed = compress(compression, Buffer.from(content, "utf8"));
-                await write("HTTP/1.1 200 OK\r\n");
-                await write("Content-Type: text/plain\r\n");
-                for (const [key, value] of Object.entries(headers)) {
-                  await write(key + ": " + value + "\r\n");
-                }
-                // 10 extra missing bytes that we will never sent in this case we will wait to close
-                await write("Content-Length: " + compressed.byteLength + "\r\n");
-                await write("\r\n");
-                const size = compressed.byteLength / 5;
-                compressed[0] = 0; // corrupt data
-                cork = false;
-                for (var i = 0; i < 5; i++) {
-                  compressed[size * i] = 0; // corrupt data even more
-                  await write(compressed.slice(size * i, size * (i + 1)));
-                }
-                socket.flush();
-              },
-              drain(socket) {},
-            },
+      const received: Uint8Array[] = [];
+      const error = await rejection(
+        (async () => {
+          const res = await fetch(`http://127.0.0.1:${server.port}`, { signal: AbortSignal.timeout(1000) });
+          await gcTick();
+          await readChunks(res.body!.getReader(), chunk => {
+            received.push(chunk);
           });
+        })(),
+      );
+      expect(error).toBeInstanceOf(DOMException);
+      expect(error.name).toBe("TimeoutError");
+      // Whatever was decoded before the timeout is a prefix of the content.
+      expect(content).toStartWith(Buffer.concat(received).toString("utf8"));
+    });
 
-          try {
-            const res = await fetch(`http://${server.hostname}:${server.port}`, {});
-            gcTick(false);
+    if (corruptError !== null) {
+      it(`can handle corrupted ${compression} compression`, async () => {
+        const content = "Hello".repeat(5);
+        const compressed = compress(compression, Buffer.from(content, "utf8"));
+        const pieces = split(compressed, 5);
+        // Corrupt the first byte of every piece (the views share the compressed buffer).
+        for (const piece of pieces) piece[0] = 0;
+        using server = rawServer(responseHead({ ...headers, "Content-Length": compressed.byteLength }), pieces);
 
-            const reader = res.body?.getReader();
-
-            let buffer = Buffer.alloc(0);
-
-            while (true) {
-              gcTick(false);
-              const read_promise = reader?.read();
-              const { done, value } = (await read_promise) as ReadableStreamDefaultReadResult<any>;
-
-              if (value) {
-                buffer = Buffer.concat([buffer, value]);
-              }
-
-              if (done) {
-                break;
-              }
-            }
-
-            gcTick(false);
-            expect(buffer.toString("utf8")).toBe("unreachable");
-          } catch (err) {
-            expect(err).toBeInstanceOf(TypeError);
-            if (compression === "br") {
-              expect((err as Error).code).toBe("BrotliDecompressionError");
-            } else if (compression === "deflate-libdeflate") {
-              expect((err as Error).code).toBe("ZlibError");
-            } else if (compression === "zstd") {
-              expect((err as Error).code).toBe("ZstdDecompressionError");
-            } else {
-              expect((err as Error).code).toBe("ZlibError");
-            }
-          }
-        }
+        const url = `http://127.0.0.1:${server.port}`;
+        const error = await rejection(
+          (async () => {
+            const res = await fetch(url);
+            await gcTick();
+            await readChunks(res.body!.getReader());
+          })(),
+        );
+        expect(error).toBeInstanceOf(TypeError);
+        expect(error.code).toBe(corruptError);
+        expect(error.message).toStartWith(`${corruptError} fetching "${url}/"`);
       });
     }
 
-    test(`can handle socket close with ${compression} compression`, async () => {
-      const parts = 5;
-      const content = "Hello".repeat(parts);
-      const { promise, resolve: resolveSocket } = Promise.withResolvers<Socket>();
-      using server = Bun.listen({
-        port: 0,
-        hostname: "0.0.0.0",
-        socket: {
-          async open(socket) {
-            var corked: any[] = [];
-            var cork = true;
-            async function write(chunk: any) {
-              await new Promise<void>((resolve, reject) => {
-                if (cork) {
-                  corked.push(chunk);
-                }
+    it(`can handle socket close with ${compression} compression`, async () => {
+      const content = "Hello".repeat(5);
+      const compressed = compress(compression, Buffer.from(content, "utf8"));
+      const { promise: opened, resolve: onHead } = Promise.withResolvers<Socket>();
+      // 10 extra bytes that the server never sends, so the close below cuts the body short.
+      using server = rawServer(
+        responseHead({ ...headers, "Content-Length": compressed.byteLength + 10 }),
+        split(compressed, 5),
+        onHead,
+      );
 
-                if (!cork && corked.length) {
-                  socket.write(corked.join(""));
-                  corked.length = 0;
-                  socket.flush();
-                }
-
-                if (!cork) {
-                  socket.write(chunk);
-                  socket.flush();
-                }
-
-                resolve();
-              });
-            }
-            const compressed = compress(compression, Buffer.from(content, "utf8"));
-            await write("HTTP/1.1 200 OK\r\n");
-            await write("Content-Type: text/plain\r\n");
-            for (const [key, value] of Object.entries(headers)) {
-              await write(key + ": " + value + "\r\n");
-            }
-            // 10 extra missing bytes that we will never sent in this case we will wait to close
-            await write("Content-Length: " + compressed.byteLength + 10 + "\r\n");
-            await write("\r\n");
-
-            resolveSocket(socket);
-
-            const size = compressed.byteLength / 5;
-            for (var i = 0; i < 5; i++) {
-              cork = false;
-              await write(compressed.slice(size * i, size * (i + 1)));
-            }
-            socket.flush();
-          },
-          drain(socket) {},
-        },
-      });
-
-      let socket: Socket | null = null;
-
-      try {
-        const res = await fetch(`http://${server.hostname}:${server.port}`, {});
-        socket = await promise;
-        gcTick(false);
-
-        const reader = res.body?.getReader();
-
-        let buffer = Buffer.alloc(0);
-
-        while (true) {
-          gcTick(false);
-          const read_promise = reader?.read();
-          socket?.end();
-          socket = null;
-          const { done, value } = (await read_promise) as ReadableStreamDefaultReadResult<any>;
-
-          if (value) {
-            buffer = Buffer.concat([buffer, value]);
-          }
-
-          if (done) {
-            break;
-          }
-        }
-
-        gcTick(false);
-        expect(buffer.toString("utf8")).toBe("unreachable");
-      } catch (err) {
-        expect(err).toBeInstanceOf(TypeError);
-        expect((err as Error).code).toBe("ECONNRESET");
-      }
+      const received: Uint8Array[] = [];
+      const error = await rejection(
+        (async () => {
+          const res = await fetch(`http://127.0.0.1:${server.port}`);
+          const socket = await opened;
+          await gcTick();
+          const reader = res.body!.getReader();
+          const reading = readChunks(reader, chunk => {
+            received.push(chunk);
+          });
+          // Close the server side while the first read is pending.
+          socket.end();
+          await reading;
+        })(),
+      );
+      expect(error).toBeInstanceOf(TypeError);
+      expect(error.code).toBe("ECONNRESET");
+      expect(content).toStartWith(Buffer.concat(received).toString("utf8"));
     });
   }
 

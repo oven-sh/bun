@@ -1883,6 +1883,36 @@ export function libcPathForDlopen() {
   }
 }
 
+/**
+ * Spawns a process that looks `path` up in a loop until the returned process is killed, or until
+ * this process is gone. Resolves when the loop runs.
+ */
+export async function spawnLookupLoop(path: string) {
+  const lookupLoop = `
+    const { statSync, writeSync } = require("node:fs");
+    const path = process.argv[1];
+    const parent = process.ppid;
+    statSync(path);
+    writeSync(1, "ready\\n");
+    while (process.ppid === parent) for (let i = 0; i < 4096; i++) statSync(path);
+  `;
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "-e", lookupLoop, path],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = proc.stdout.getReader();
+  const { value } = await reader.read();
+  reader.releaseLock();
+  const ready = new TextDecoder().decode(value);
+  if (ready !== "ready\n") {
+    proc.kill();
+    throw new Error(`spawnLookupLoop: expected "ready", got ${JSON.stringify(ready)}`);
+  }
+  return proc;
+}
+
 export function cwdScope(cwd: string) {
   const original = process.cwd();
   process.chdir(cwd);

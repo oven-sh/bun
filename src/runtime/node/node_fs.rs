@@ -7655,7 +7655,8 @@ impl NodeFS {
             };
             let _close = scopeguard::guard(fd, |fd| fd.close());
 
-            let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
+            let buf = match Syscall::get_fd_path_opened_from(fd, path.as_bytes(), None, &mut outbuf)
+            {
                 Err(err) => return Err(err.with_path(path)),
                 Ok(buf_) => buf_,
             };

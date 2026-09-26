@@ -1493,6 +1493,7 @@ pub mod fs {
                 let mut file_kind = kind_from_mode(stat_.st_mode as bun_sys::Mode);
 
                 let mut symlink: &[u8] = b"";
+                let mut symlink_buf = None;
 
                 if is_symlink {
                     let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
@@ -1529,7 +1530,12 @@ pub mod fs {
                     });
 
                     let file_stat = bun_sys::fstat(*_guard)?;
-                    symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
+                    symlink = bun_sys::get_fd_path_opened_from(
+                        *_guard,
+                        absolute_path_c.as_bytes(),
+                        Some(&file_stat),
+                        &mut **symlink_buf.insert(bun_paths::path_buffer_pool::get()),
+                    )?;
                     file_kind = kind_from_mode(file_stat.st_mode as bun_sys::Mode);
                 }
 

@@ -7610,6 +7610,68 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     }
 }
 
+/// [`get_fd_path`] for an `fd` opened from `path`. `stat` is the `fstat` of `fd`, when known.
+pub fn get_fd_path_opened_from<'a>(
+    fd: Fd,
+    path: &[u8],
+    stat: Option<&Stat>,
+    out: &'a mut bun_paths::PathBuffer,
+) -> Maybe<&'a mut [u8]> {
+    #[cfg(target_os = "macos")]
+    {
+        let len = get_fd_path(fd, out)?.len();
+        // `F_GETPATH` names a hard-linked file by the link that any process looked up last.
+        if out.0[..len] == *path || path.len() >= out.0.len() {
+            return Ok(&mut out.0[..len]);
+        }
+        let file = match stat {
+            Some(st) => *st,
+            None => match fstat(fd) {
+                Ok(st) => st,
+                Err(_) => return Ok(&mut out.0[..len]),
+            },
+        };
+        if file.st_nlink <= 1 || S::ISDIR(file.st_mode as _) {
+            return Ok(&mut out.0[..len]);
+        }
+        let mut scratch = bun_paths::path_buffer_pool::get();
+        let is_same_entry = bun_paths::basename(&out.0[..len]) == bun_paths::basename(path)
+            && matches!(
+                (stat_directory_of(&out.0[..len], &mut scratch), stat_directory_of(path, &mut scratch)),
+                (Some(a), Some(b)) if a.st_dev == b.st_dev && a.st_ino == b.st_ino
+            );
+        if is_same_entry {
+            return Ok(&mut out.0[..len]);
+        }
+        scratch.0[..path.len()].copy_from_slice(path);
+        scratch.0[path.len()] = 0;
+        // realpath(3) walks `path`, so it names the link that was opened.
+        if let Ok(walked) = realpath(ZStr::from_buf(&scratch.0[..], path.len()), out) {
+            let len = walked.len();
+            // A hard link is on the device of its file. `/dev/fd/N` is not.
+            if stat_directory_of(&out.0[..len], &mut scratch)
+                .is_some_and(|dir| dir.st_dev == file.st_dev)
+            {
+                return Ok(&mut out.0[..len]);
+            }
+        }
+        return get_fd_path(fd, out);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (path, stat);
+        get_fd_path(fd, out)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn stat_directory_of(path: &[u8], scratch: &mut bun_paths::PathBuffer) -> Option<Stat> {
+    let directory = bun_paths::dirname(path).unwrap_or(b".");
+    scratch.0[..directory.len()].copy_from_slice(directory);
+    scratch.0[directory.len()] = 0;
+    stat(ZStr::from_buf(&scratch.0[..], directory.len())).ok()
+}
+
 /// fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
 /// `\\?\` prefix and `\\?\UNC\` are stripped. Higher-tier callers
 /// (`bun.getFdPathW`) re-export this. A libc/kernel32-only sibling lives at

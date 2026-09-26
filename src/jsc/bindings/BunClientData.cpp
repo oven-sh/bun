@@ -63,7 +63,6 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvide
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
-    , m_heapSizeAfterLastCollection(vm.heap)
 {
 }
 

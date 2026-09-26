@@ -4208,6 +4208,14 @@ extern "C" int getPeakRSS(size_t* peak)
 #endif
 }
 
+// heap.size() walks every block. Until the first collection nothing has been freed, so the whole heap counts as used.
+HeapUsage heapUsage(JSC::VM& vm)
+{
+    size_t total = vm.heap.blockBytesAllocated();
+    size_t used = vm.heap.sizeAfterLastCollection();
+    return { total, used ? used : total };
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -4231,18 +4239,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     //    arrayBuffers: 9386
     // }
 
-    size_t heapTotal = vm.heap.blockBytesAllocated();
+    HeapUsage usage = heapUsage(vm);
     result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(heapTotal));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(usage.total));
+    result->putDirectOffset(vm, 2, JSC::jsNumber(usage.used));
 
-    // heap.size() walks every block of the heap, so report the size JSC measured
-    // at the end of the most recent collection instead. Nothing requests a
-    // collection while Bun starts up, and until the first one nothing has been
-    // freed either, so the whole heap counts as used. (external is measured by
-    // collections too and stays 0 until then.)
-    size_t heapUsed = WebCore::clientData(vm)->heapSizeAfterLastCollection();
-    result->putDirectOffset(vm, 2, JSC::jsNumber(heapUsed ? heapUsed : heapTotal));
-
+    // Cells report their extra memory when a collection visits them: until the first one this counts only array buffers.
     result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 
     // JSC won't count this number until vm.heap.addReference() is called.

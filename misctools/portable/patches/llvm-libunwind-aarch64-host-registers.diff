@@ -1,0 +1,121 @@
+diff --git a/libunwind/src/Registers.hpp b/libunwind/src/Registers.hpp
+index c88422a..0a89009 100644
+--- a/libunwind/src/Registers.hpp
++++ b/libunwind/src/Registers.hpp
+@@ -1838,7 +1838,6 @@ inline const char *Registers_ppc64::getRegisterName(int regNum) {
+ /// Registers_arm64  holds the register state of a thread in a 64-bit arm
+ /// process.
+ class _LIBUNWIND_HIDDEN Registers_arm64;
+-extern "C" int64_t __libunwind_Registers_arm64_za_disable();
+ extern "C" void __libunwind_Registers_arm64_jumpto(Registers_arm64 *,
+                                                    unsigned walkedFrames);
+ 
+@@ -1936,12 +1935,11 @@ public:
+ private:
+   uint64_t lazyGetVG() const;
+ 
+-  void zaDisable() const {
+-    if (!_misc_registers.__has_sme)
+-      return;
+-    if (__libunwind_Registers_arm64_za_disable() != 0)
+-      _LIBUNWIND_ABORT("SME ZA disable failed");
+-  }
++  // The portable image has no code that turns ZA on, so there is no ZA state
++  // to save or to switch off before the unwinder leaves a frame, and
++  // TPIDR2_EL0, which names the buffer of that state, is left to the system
++  // that runs the image.
++  void zaDisable() const {}
+ 
+ #if defined(__APPLE__)
+   static bool checkHasSME() {
+diff --git a/libunwind/src/UnwindRegistersRestore.S b/libunwind/src/UnwindRegistersRestore.S
+index 37e8156..aa7526b 100644
+--- a/libunwind/src/UnwindRegistersRestore.S
++++ b/libunwind/src/UnwindRegistersRestore.S
+@@ -675,7 +675,10 @@ DEFINE_LIBUNWIND_FUNCTION(__libunwind_Registers_arm64_jumpto)
+   ldp    x14,x15, [x0, #0x070]
+   // x16 and x17 were clobbered by the call into the unwinder, so no point in
+   // restoring them.
+-  ldp    x18,x19, [x0, #0x090]
++  // x18 belongs to the system that runs the portable image (the TEB on
++  // Windows, reserved on macOS). No code of the image writes it, so the value
++  // in the context is the value that the register has.
++  ldr    x19,     [x0, #0x098]
+   ldp    x20,x21, [x0, #0x0A0]
+   ldp    x22,x23, [x0, #0x0B0]
+ #if defined(__LFI__)
+diff --git a/libunwind/src/UnwindRegistersSave.S b/libunwind/src/UnwindRegistersSave.S
+index f44f6a1..06df0b2 100644
+--- a/libunwind/src/UnwindRegistersSave.S
++++ b/libunwind/src/UnwindRegistersSave.S
+@@ -836,67 +836,9 @@ DEFINE_LIBUNWIND_FUNCTION(__unw_getcontext)
+   ret
+ #endif
+ 
+-//
+-// extern "C" int64_t __libunwind_Registers_arm64_za_disable()
+-//
+-//   This function implements the requirements of the __arm_za_disable ABI
+-//   routine, except that it will not abort; it will return a non-zero value
+-//   to signify the routine failed.
+-//
+-//   Note: This function uses SME instructions. It must only be called if SME
+-//   has been confirmed to be available.
+-//
+-// On return:
+-//
+-//   A status is placed in x0. A zero value indicates success; any non-zero
+-//   value indicates failure.
+-//
+-  .p2align 2
+-DEFINE_LIBUNWIND_FUNCTION(__libunwind_Registers_arm64_za_disable)
+-  .variant_pcs __libunwind_Registers_arm64_za_disable
+-#if __has_feature(ptrauth_calls)
+-  pacibsp
+-#endif
+-  // If TPIDR2_EL0 is null, the subroutine just disables ZA.
+-  .inst 0xd53bd0b0 // mrs x16, TPIDR2_EL0
+-  cbz x16, 1f
+-
+-  // If any of the reserved bytes in the first 16 bytes of the TPIDR2 block are
+-  // nonzero, return a non-zero value (libunwind will then abort).
+-  ldrh w0, [x16, #10]
+-  cbnz w0, 2f
+-  ldr w0, [x16, #12]
+-  cbnz w0, 2f
+-
+-  // If num_za_save_slices is zero, the subroutine just disables ZA.
+-  ldrh w0, [x16, #8]
+-  cbz x0, 1f
+-
+-  // If za_save_buffer is NULL, the subroutine just disables ZA.
+-  ldr x16, [x16]
+-  cbz x16, 1f
+-
+-  // Store ZA to za_save_buffer.
+-  mov x15, xzr
+-0:
+-  .inst 0xe1206200 // str za[w15,0], [x16]
+-  .inst 0x04305830 // addsvl x16, x16, #1
+-  add x15, x15, #1
+-  cmp x0, x15
+-  b.ne 0b
+-1:
+-  // * Set TPIDR2_EL0 to null.
+-  .inst 0xd51bd0bf // msr TPIDR2_EL0, xzr
+-  // * Set PSTATE.ZA to 0.
+-  .inst 0xd503447f // smstop za
+-  // * Return zero (success)
+-  mov x0, xzr
+-2:
+-#if __has_feature(ptrauth_calls)
+-  retab
+-#else
+-  ret
+-#endif
++// __libunwind_Registers_arm64_za_disable is not in the portable image: it
++// reads and writes TPIDR2_EL0, a register of the system that runs the image.
++// See zaDisable() in Registers.hpp.
+ 
+ #elif defined(__arm__) && !defined(__APPLE__)
+ 

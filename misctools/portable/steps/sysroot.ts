@@ -32,6 +32,18 @@ import { BuildError, fetchArchive, fetchGit, run, sha256File } from "./run.ts";
 /** compiler-rt's x86_64/floatundixf.S keeps a value below the stack pointer. */
 const BUILTINS_PATCH = join(TREE, "patches", "llvm-compiler-rt-floatundixf-no-red-zone.diff");
 
+/**
+ * libunwind's assembly for aarch64 loads x18 when it goes to a frame, and reads and writes TPIDR2_EL0
+ * before that. Both registers belong to the system that runs the image. With the patch the unwinder leaves
+ * them alone: x18 has one value for the whole life of a thread, because no code of the image writes it
+ * (-ffixed-x18, and the static checks), so loading it from the context of the frame would load what it
+ * holds; and TPIDR2_EL0 names the buffer of the ZA state of SME, which no code of the image turns on.
+ */
+const UNWIND_PATCH = join(TREE, "patches", "llvm-libunwind-aarch64-host-registers.diff");
+
+/** The patches of llvm-project, in the order in which they are applied. */
+const LLVM_PATCHES = [BUILTINS_PATCH, UNWIND_PATCH];
+
 const tool = (ctx: Context, name: string) => join(ctx.llvm, name);
 
 /** What cmake is told in every step that runs it: the compiler, the target, the sysroot. */
@@ -59,11 +71,11 @@ export function cmakeToolchain(ctx: Context): string[] {
 /** The checkout of llvm-project that builtins, runtimes and memfn compile: the pinned commit, patched. */
 function llvmProject(ctx: Context): string {
   const dir = inOut(ctx, "src", "llvm-project");
-  fetchGit("llvm-project", ctx.sources.llvm, dir, [BUILTINS_PATCH], inOut(ctx, "logs"));
+  fetchGit("llvm-project", ctx.sources.llvm, dir, LLVM_PATCHES, inOut(ctx, "logs"));
   return dir;
 }
 
-const llvmInputs = (ctx: Context) => [ctx.sources.llvm.commit, sha256File(BUILTINS_PATCH)];
+const llvmInputs = (ctx: Context) => [ctx.sources.llvm.commit, ...LLVM_PATCHES.map(sha256File)];
 
 // ───────────────────────────────────────────────────────────────────────────
 // musl

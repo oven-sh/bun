@@ -590,6 +590,82 @@ pub(crate) fn js_node_test_mark_result(
     Ok(JSValue::UNDEFINED)
 }
 
+/// The sequence of the entry whose callback is on the stack; unlike `get_current_state_data()` it is known inside a concurrent group too.
+fn node_test_on_stack_sequence(
+    buntest: &mut bun_test::BunTest,
+) -> Option<NonNull<super::execution::ExecutionSequence>> {
+    let on_stack = RefDataValue::Execution {
+        group_index: buntest.execution.group_index,
+        entry_data: Some(buntest.execution.on_stack_entry_data.get()?),
+    };
+    let (sequence, _) = buntest.execution.get_current_and_valid_execution_sequence(&on_stack)?;
+    Some(sequence)
+}
+
+/// Reached only from `node:test`, from the callback of one of its tests: adds `callback` as the entry right after that test entry, so the next test waits for the hooks `node:test` runs inside that one callback.
+pub(crate) fn js_node_test_after_entry(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [callback] = callframe.arguments_as_array::<1>();
+    if !callback.is_callable() {
+        return Ok(JSValue::UNDEFINED);
+    }
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    let Some(sequence) = node_test_on_stack_sequence(buntest) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: NonNull into `execution.sequences`; read at point-of-use only.
+    let Some(test_entry) = unsafe { sequence.as_ref() }.test_entry else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+    let timeout = unsafe { test_entry.as_ref() }.timeout;
+    let entry = buntest.insert_execution_entry(
+        test_entry.as_ptr(),
+        Some(callback),
+        bun_test::ExecutionEntryCfg { timeout, ..Default::default() },
+    );
+    // SAFETY: just allocated by `insert_execution_entry`, owned by `buntest`.
+    unsafe {
+        (*entry).node_test_wind_down = true;
+        // Like the test entry, a timeout of this one skips only itself: bun:test's own afterEach entries follow it.
+        (*entry).failure_skip_past = Some(entry);
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+/// Reached only from a callback that [`js_node_test_after_entry`] added: the timeout (ms) that ended the test entry before it, else `undefined`.
+pub(crate) fn js_node_test_timed_out_after(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use super::execution::Result as ExecResult;
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    let Some(sequence) = node_test_on_stack_sequence(buntest) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: NonNull into `execution.sequences`; read at point-of-use only.
+    let sequence = unsafe { sequence.as_ref() };
+    let timed_out = matches!(
+        sequence.result,
+        ExecResult::FailBecauseTimeout | ExecResult::FailBecauseTimeoutWithDoneCallback
+    );
+    Ok(match sequence.test_entry {
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+        Some(test_entry) if timed_out => JSValue::from(unsafe { test_entry.as_ref() }.timeout),
+        _ => JSValue::UNDEFINED,
+    })
+}
+
 pub(crate) mod on_unhandled_rejection {
     use super::*;
 

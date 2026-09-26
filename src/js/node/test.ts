@@ -1639,6 +1639,10 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
+// bun:test runs `callback` as the entry right after the calling test's entry, on every way out of it, and awaits its promise.
+const afterTestEntry = $newRustFunction("jest.rs", "jsNodeTestAfterEntry", 1);
+// In that callback: the bun:test timeout (ms) that ended the test entry, else undefined.
+const timedOutAfter = $newRustFunction("jest.rs", "jsNodeTestTimedOutAfter", 0);
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -2144,22 +2148,34 @@ function invokeTestFn(fn: Function, arg: unknown) {
   return fn(arg);
 }
 
-// A single timeout armed once per test and raced against both the body and
-// plan.check(), matching Node's stopTest()/stopPromise. `promise` never
-// resolves; it only rejects with the timeout error. Callers must dispose().
-function createStopController(timeout: number | undefined) {
-  if (typeof timeout !== "number" || !Number.isFinite(timeout)) {
-    return undefined;
-  }
-  let timer: ReturnType<typeof setTimeout>;
-  const promise = new Promise<never>((_, reject) => {
-    // Not unref'd: dispose() always clears it, and on Windows an unref'd timer
-    // alone under bun:test leaves the uws loop inactive so auto_tick busy-spins.
-    timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
-  });
+type StopController = ReturnType<typeof createStopController>;
+
+// Node's stopPromise, on intrinsics because a test body may stub Promise.race or Promise.withResolvers. Callers must dispose().
+function createStopController() {
+  const promise = $newPromise<never>();
   // Swallow the rejection when nothing is racing it anymore.
-  promise.catch(() => {});
-  return { promise, dispose: () => realClearTimeout(timer) };
+  $pokePromiseAsHandled(promise);
+  const reject = (failure: unknown) => $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, failure);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return {
+    promise,
+    reject,
+    arm(timeout: number | undefined) {
+      if (typeof timeout !== "number" || !Number.isFinite(timeout)) return;
+      // Not unref'd: on Windows an unref'd timer alone under bun:test leaves the uws loop inactive, so auto_tick busy-spins.
+      timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
+    },
+    dispose: () => realClearTimeout(timer),
+  };
+}
+
+// Promise.race([stop.promise, awaited]) for native promises, without the lookups a test can stub.
+function untilStopped<T>(stop: StopController, awaited: Promise<T>): Promise<T> {
+  const first = $newPromise<T>();
+  const reject = (err: unknown) => $rejectPromiseWithFirstResolvingFunctionCallCheck(first, err);
+  awaited.$then(value => $resolvePromiseWithFirstResolvingFunctionCallCheck(first, value), reject);
+  stop.promise.$then(undefined, reject);
+  return first;
 }
 
 // Runs `run` racing Node's test timeout; the timer starts before the body so a
@@ -2264,10 +2280,11 @@ async function runOwnBeforeHooks(node: TestNode) {
   }
 }
 
-async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
+async function executeTestNode(node: TestNode, fn: TestFn, stop = createStopController()): Promise<unknown> {
   // Runs a single test (top-level or subtest): inherited beforeEach hooks, the
   // body, pending subtests, the plan check, inherited afterEach hooks, and the
   // test's own after hooks. Returns the failure (if any) instead of throwing.
+  // `stop` ends the wait on a beforeEach hook, the body, the subtests or the plan; afterEach and after hooks always run to their end.
   node.started = true;
   const started = runChildReporterEnabled ? performance.now() : 0;
   const ctx = node.getCtx();
@@ -2285,7 +2302,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   try {
     for (const ancestor of ancestors) {
       for (const hook of ancestor.hooks.beforeEach) {
-        await runHook(hook, ancestor, ctx);
+        await untilStopped(stop, runHook(hook, ancestor, ctx));
       }
     }
   } catch (err) {
@@ -2296,7 +2313,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     // Node arms one stopPromise (timeout + signal) and races both the body
     // AND the plan wait against it. Arm timeout once here so plan({wait:true})
     // is bounded by the same test timeout, not left unbounded.
-    const stop = createStopController(node.options.timeout);
+    stop.arm(node.options.timeout);
     try {
       const runBody = async () => {
         await runWithNode(node, () => invokeTestFn(fn, ctx));
@@ -2306,7 +2323,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       };
 
       try {
-        await (stop === undefined ? runBody() : Promise.race([stop.promise, runBody()]));
+        await untilStopped(stop, runBody());
       } catch (err) {
         // A body that throws or rejects with a nullish value must still fail.
         failure = err ?? makeTestFailure("test failed");
@@ -2324,19 +2341,18 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
             // Defuse: if stop wins the race, plan's own wait-timeout may still
             // reject `pending` afterward with no one listening.
             pending.catch(() => {});
-            await (stop === undefined ? pending : Promise.race([stop.promise, pending]));
+            await untilStopped(stop, pending);
             // A t.test() that fulfilled the plan from an async callback was
             // scheduled onto subtestChain during the wait; drain again so its
             // failure reaches failedSubtests below (Node fails the parent).
-            const drain = drainSubtestChain(node);
-            await (stop === undefined ? drain : Promise.race([stop.promise, drain]));
+            await untilStopped(stop, drainSubtestChain(node));
           }
         } catch (err) {
           failure = err;
         }
       }
     } finally {
-      stop?.dispose();
+      stop.dispose();
       node.plan?.cancel();
     }
 
@@ -2536,17 +2552,45 @@ function currentCollectionParent(): TestNode {
   return getRootNode();
 }
 
-function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = false) {
+function createTopLevelTestRunner(declared: TestNode, fn: TestFn, declaredTodo = false) {
+  const { todoFlag } = declared;
+  let ran = false;
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
   return (done: (error?: unknown) => void) => {
+    // A retry calls this again, and a node keeps its run's state (finished, failed subtests, added hooks).
+    let node = declared;
+    if (ran) {
+      node = new TestNode(declared.name, declared.parent, declared.options, false, false);
+      node.filePath = declared.filePath;
+      node.ownTags = declared.ownTags;
+      node.todoFlag = todoFlag;
+    }
+    ran = true;
     // Under plain bun:test a describe.todo scope already handles its children's
     // todo verdict (FailBecauseTodoPassed under --todo), so don't override when
     // the flag was only inherited; under a run() child the suite registers as a
     // plain describe so bun:test has no todo scope to consult.
     const todoBefore = node.todoFlag;
-    executeTestNode(node, fn).then(
+    // bun:test's timeout fails this entry and moves on while executeTestNode() still waits; the entry after it ends that wait and holds the next test until the hooks have run.
+    const stop = createStopController();
+    let finished = false;
+    let abandoned = false;
+    afterTestEntry(() => {
+      if (finished) return;
+      abandoned = true;
+      const timeout = timedOutAfter();
+      // Ended by an uncaught error: bun:test moves on, as before.
+      if (timeout === undefined) return;
+      stop.reject(makeTestFailure(`test timed out after ${timeout}ms`));
+      return run;
+    });
+    const run = executeTestNode(node, fn, stop);
+    run.$then(
       failure => {
+        finished = true;
+        // bun:test ended this entry first; a late `done` would land on a retry of it.
+        if (abandoned) return;
         // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting
         // (Node counts these as skip/todo even when the body threw); a declared
         // todo body's failure must reach bun:test's own todo accounting instead.
@@ -2560,7 +2604,10 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
         }
         done(undefined);
       },
-      err => done(err),
+      err => {
+        finished = true;
+        if (!abandoned) done(err);
+      },
     );
   };
 }

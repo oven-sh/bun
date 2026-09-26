@@ -356,6 +356,24 @@ socket.addEventListener("message", event => {
 
 `pause()` and `resume()` return `true` when they took effect (or will, once a connecting socket opens) and `false` when there is no socket to act on; `socket.isPaused` reports the current state. Messages already decoded when `pause()` is called may still be delivered. The `ws` package's `pause()`, `resume()`, and `isPaused` map to the same methods.
 
+A paused client reads nothing from the socket. It does not answer the server's Ping frames. It does not see a Close frame or the end of the connection, so the `close` event can wait until you call `resume()`.
+
+A server with an idle timeout closes a connection that stays silent for too long. `Bun.serve` closes a WebSocket connection that has been idle for [`idleTimeout`](#timeouts-and-limits) seconds, 120 by default. `send()`, `ping()`, and `pong()` still work while paused, and `Bun.serve` counts every frame it receives as activity. If a pause can last longer than the server's idle timeout, send a frame on a timer until you resume. A [Pong that answers no Ping](https://datatracker.ietf.org/doc/html/rfc6455#section-5.5.3) is a valid one-way heartbeat.
+
+```ts
+socket.addEventListener("message", event => {
+  if (!file.write(event.data)) {
+    socket.pause();
+    // Show the server that this connection is alive while it is paused.
+    const heartbeat = setInterval(() => socket.pong(), 30_000);
+    file.once("drain", () => {
+      clearInterval(heartbeat);
+      socket.resume();
+    });
+  }
+});
+```
+
 ---
 
 ## Reference

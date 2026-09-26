@@ -28,6 +28,7 @@ pub mod starting_style;
 pub mod style;
 pub mod supports;
 pub mod unknown;
+pub mod view_transition;
 pub mod viewport;
 
 // ─── CssRule / CssRuleList ─────────────────────────────────────────────────
@@ -36,7 +37,7 @@ pub mod viewport;
 // lifetime-free here.
 
 // ─── CssRule variant table ────────────────────────────────────────────────
-// Single source of truth for the 20 typed at-rule payloads. Adding a new
+// Single source of truth for the 21 typed at-rule payloads. Adding a new
 // at-rule = one line here; the enum variant + `to_css` arm + `deep_clone`
 // arm are generated. `Unknown`/`Custom`/`Ignored` stay a fixed tail because
 // their `to_css` arms are special-cased (see the note on `Custom`).
@@ -133,6 +134,8 @@ css_rule_variants! {
     Scope(scope::ScopeRule<R>),
     /// A `@starting-style` rule.
     StartingStyle(starting_style::StartingStyleRule<R>),
+    /// A `@view-transition` rule.
+    ViewTransition(view_transition::ViewTransitionRule),
 }
 
 // SAFETY: the CSS AST contains `SmallList<T, N>` (raw `*mut T`) and

@@ -883,6 +883,7 @@ pub enum AtRulePrelude<T> {
         condition: ContainerCondition,
     },
     StartingStyle,
+    ViewTransition,
     Nest(SelectorList),
     Scope {
         scope_start: Option<SelectorList>,
@@ -1632,6 +1633,7 @@ mod rule_parsers {
                         };
                         break 'brk AtRulePrelude::Scope { scope_start, scope_end };
                     },
+                    b"view-transition" => break 'brk AtRulePrelude::ViewTransition,
                     b"nest" => if this.is_in_style_rule {
                         this.options.warn(&input.new_custom_error(ParserError::deprecated_nest_rule));
                         let mut selector_parser = selector_parser::SelectorParser {
@@ -1855,6 +1857,11 @@ mod rule_parsers {
                     this.rules.v.push(CssRule::StartingStyle(
                         css_rules::starting_style::StartingStyleRule { rules, loc },
                     ));
+                    Ok(())
+                }
+                AtRulePrelude::ViewTransition => {
+                    let rule = css_rules::view_transition::ViewTransitionRule::parse(input, loc)?;
+                    this.rules.v.push(CssRule::ViewTransition(rule));
                     Ok(())
                 }
                 AtRulePrelude::Nest(selectors) => {

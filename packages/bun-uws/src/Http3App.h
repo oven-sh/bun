@@ -53,6 +53,9 @@ struct H3App {
     void clearRoutes() {
         http3Context->getContextData()->router = decltype(http3Context->getContextData()->router){};
     }
+    void setSlashNormalization(bool ignoreTrailingSlash, bool ignoreDuplicateSlashes) {
+        http3Context->getContextData()->router.setSlashNormalization(ignoreTrailingSlash, ignoreDuplicateSlashes);
+    }
     /* GOAWAY + drain. The engine itself is torn down in the destructor. */
     void close() { http3Context->shutdown(); }
     bool addServerNameWithOptions(const char *hostname, SocketContextOptions options) {

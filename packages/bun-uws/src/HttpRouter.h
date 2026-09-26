@@ -52,6 +52,12 @@ private:
     std::string_view urlSegmentVector[MAX_URL_SEGMENTS] = {};
     int urlSegmentTop = -1;
 
+    /* Lenient slash matching (default off). See setSlashNormalization(). */
+    bool ignoreTrailingSlash = false;
+    bool ignoreDuplicateSlashes = false;
+    /* Backing buffer that currentUrl may view after cleanSlashes(). */
+    std::string normalizedUrl;
+
     /* The matching tree */
     struct Node {
         std::string name = {};
@@ -118,10 +124,36 @@ private:
         }
     } routeParameters;
 
+    /* Collapse duplicate and/or trailing slashes per the flags. */
+    std::string_view cleanSlashes(std::string_view url) {
+        normalizedUrl.clear();
+        normalizedUrl.reserve(url.size());
+
+        bool lastWasSlash = false;
+        for (char c : url) {
+            if (c == '/' && lastWasSlash && ignoreDuplicateSlashes) {
+                continue;
+            }
+            normalizedUrl.push_back(c);
+            lastWasSlash = (c == '/');
+        }
+
+        /* Trim a trailing slash, keeping the root "/". */
+        if (ignoreTrailingSlash && normalizedUrl.size() > 1 && normalizedUrl.back() == '/') {
+            normalizedUrl.pop_back();
+        }
+
+        return normalizedUrl;
+    }
+
     /* Set URL for router. Will reset any URL cache */
     void setUrl(std::string_view url) {
 
         /* Todo: URL may also start with "http://domain/" or "*", not only "/" */
+
+        if (ignoreTrailingSlash || ignoreDuplicateSlashes) {
+            url = cleanSlashes(url);
+        }
 
         /* We expect to stand on a slash */
         currentUrl = url;
@@ -241,6 +273,12 @@ public:
     HttpRouter() {
         /* Always have ANY route */
         getNode(&root, std::string(ANY_METHOD_TOKEN), false);
+    }
+
+    /* Enable lenient slash matching (default off). */
+    void setSlashNormalization(bool ignoreTrailing, bool ignoreDuplicate) {
+        ignoreTrailingSlash = ignoreTrailing;
+        ignoreDuplicateSlashes = ignoreDuplicate;
     }
 
     std::pair<int, std::string_view *> getParameters() {

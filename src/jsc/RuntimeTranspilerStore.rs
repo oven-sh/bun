@@ -27,6 +27,7 @@ use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
 use bun_threading::Guarded;
+use bun_threading::thread_pool::Thread as ThreadPoolThread;
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
@@ -450,17 +451,74 @@ unsafe impl unbounded_queue::Linked for TranspilerJob {
     }
 }
 
-/// Per-worker output buffer. The printer is the **only** state
-/// retained across `run()` calls — its backing `Vec<u8>` is genuinely worth
-/// reusing (capped at 512 K / 2 M below). The parse arena and AST memory
-/// store, by contrast, are stack-local per call and bulk-freed on return; see
-/// the RSS-regression note in `run()`.
+/// Per-worker output buffer, reused across `run()` calls (capped at 512 K / 2 M below).
 //
 // `#[thread_local]` not `thread_local!`: the macro's `LocalKey::__getit`
 // wrapper showed up on the
 // async-import hot path. Const-init `Cell<ptr>` (no dtor).
 #[thread_local]
 static SOURCE_CODE_PRINTER: Cell<Option<NonNull<BufferPrinter>>> = Cell::new(None);
+
+/// One parse arena per worker for its back-to-back jobs: a heap per module costs more than a small parse.
+struct WorkerArena {
+    arena: Arena,
+    /// Frees `self` when the worker runs out of tasks: arenas kept by idle workers cost +12 % RSS (server/elysia).
+    release_task: WorkPoolTask,
+}
+
+#[thread_local]
+static WORKER_ARENA: Cell<Option<NonNull<WorkerArena>>> = Cell::new(None);
+
+impl WorkerArena {
+    /// Dead blocks a job may leave for the next. More adds RSS after a burst, and no CPU gain for small modules.
+    const RETAIN_LIMIT: usize = 64 * 1024;
+
+    fn for_current_worker() -> NonNull<WorkerArena> {
+        if let Some(this) = WORKER_ARENA.get() {
+            return this;
+        }
+        let this = bun_core::heap::into_raw_nn(Box::new(WorkerArena {
+            arena: Arena::new(),
+            release_task: WorkPoolTask {
+                node: Default::default(),
+                callback: WorkerArena::release,
+            },
+        }));
+        WORKER_ARENA.set(Some(this));
+        let worker = NonNull::new(ThreadPoolThread::current())
+            .expect("a TranspilerJob runs on a work pool thread");
+        // SAFETY: `worker` is this thread's own live `Thread`. `this` stays
+        // allocated until `release` runs, and only the idle queue runs it.
+        unsafe {
+            worker
+                .as_ref()
+                .push_idle_task(&raw mut (*this.as_ptr()).release_task)
+        };
+        this
+    }
+
+    /// SAFETY: call on the thread that owns `this`, with no borrow of `this.arena` alive.
+    unsafe fn recycle(this: NonNull<WorkerArena>, smol: bool) {
+        // SAFETY: per the contract above, this is the only reference.
+        let arena = unsafe { &mut (*this.as_ptr()).arena };
+        if smol {
+            arena.reset();
+        } else {
+            arena.reset_retain_with_limit(Self::RETAIN_LIMIT);
+        }
+    }
+
+    unsafe fn release(task: *mut WorkPoolTask) {
+        // SAFETY: the only `Task` with this callback is the `release_task`
+        // field of the boxed `WorkerArena` that `for_current_worker` queued.
+        let this = unsafe { bun_core::from_field_ptr!(WorkerArena, release_task, task) };
+        debug_assert_eq!(WORKER_ARENA.get().map(NonNull::as_ptr), Some(this));
+        WORKER_ARENA.set(None);
+        // SAFETY: the idle queue runs on the owning worker between tasks, so
+        // no job borrows the arena, and the slot no longer points at it.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+}
 
 /// Get-or-leak accessor for the `#[thread_local]` `Cell<Option<NonNull<T>>>`
 /// slot above. Returns `&'static mut T` because the Box is leaked for the
@@ -607,21 +665,18 @@ impl TranspilerJob {
     }
 
     fn run(&mut self, ticket: &crate::Ticket) {
-        // Stack-local per call, bulk-freed on return. An earlier version hoisted
-        // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
-        // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at
-        // the *start* of the next call. On a 64-core box ~40 thread-pool
-        // workers each parse one or two modules then go idle, leaving ~80
-        // undestroyed `mi_heap_t`s holding ~7 MB requested / ~10–11 MB
-        // committed of dead AST between calls — the +12 % RSS regression seen
-        // on `server/elysia`. The hoist existed only to manufacture a
-        // `&'static Arena` for `Transpiler::set_arena`; the lifetime-erased
-        // `Transpiler<'_>` cast below accepts `&arena` directly, so the hoist
-        // bought nothing and cost RSS. `MimallocArena::Drop` =
-        // `mi_heap_destroy`, so the per-call heap-churn is identical to a
-        // start-of-call `reset()` but the worker holds **zero** retained pages
-        // between calls.
-        let arena = Arena::new();
+        let worker_arena = WorkerArena::for_current_worker();
+        // SAFETY: leaf scalar field read on `*vm`; see the `vm` note below.
+        let smol = unsafe { (*self.vm).smol };
+        // Declared before every user of `arena`, so it runs after all of them.
+        let _recycle_arena = scopeguard::guard(worker_arena, move |worker_arena| {
+            // SAFETY: on the owning worker, and every borrow of the arena
+            // made below is gone by the time this guard drops.
+            unsafe { WorkerArena::recycle(worker_arena, smol) };
+        });
+        // SAFETY: `worker_arena` is this worker's live arena. It is freed only
+        // by `WorkerArena::release`, which cannot run during a task.
+        let arena: &Arena = unsafe { &(*worker_arena.as_ptr()).arena };
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let this_ptr: *mut TranspilerJob = self;
@@ -655,10 +710,8 @@ impl TranspilerJob {
             return;
         }
 
-        // `borrowing()`: the AST node store and the
-        // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`
-        // drops at the end of `run()`.
-        let mut ast_memory_store = ASTMemoryAllocator::borrowing(&arena);
+        // `borrowing()`: the AST node store and the `AstVec` spill live in `arena`'s heap and are freed with it.
+        let mut ast_memory_store = ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_store.enter();
 
         let path = self.path;
@@ -699,15 +752,14 @@ impl TranspilerJob {
         // fields aren't double-freed against `vm.transpiler`.
         let mut transpiler_storage =
             core::mem::ManuallyDrop::new(unsafe { ptr::read(ptr::addr_of!((*vm).transpiler)) });
-        // SAFETY: lifetime erasure — `Transpiler<'a>`'s `'a` only constrains the
-        // `allocator` field (and resolver opts that share it), which we
-        // immediately overwrite below via `set_arena(&arena)` to the stack-local
-        // arena above. `arena` is declared before `transpiler_storage`, so it
-        // drops after; the bytewise copy is never dropped (ManuallyDrop), so no
-        // borrow tied to the shortened `'a` outlives the arena.
+        // SAFETY: lifetime erasure. `Transpiler<'a>`'s `'a` only constrains the
+        // `allocator` field (and resolver opts that share it), which
+        // `set_arena(arena)` overwrites below. `_recycle_arena` is declared
+        // before `transpiler_storage` and the bytewise copy is never dropped
+        // (ManuallyDrop), so no borrow tied to `'a` outlives the arena's blocks.
         let transpiler: &mut Transpiler<'_> =
             unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
-        transpiler.set_arena(&arena);
+        transpiler.set_arena(arena);
         transpiler.set_log(&raw mut log);
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
@@ -804,7 +856,7 @@ impl TranspilerJob {
         };
 
         let mut parse_options = ParseOptions {
-            arena: &arena,
+            arena,
             path,
             loader,
             dirname_fd: Fd::INVALID,
@@ -1111,9 +1163,8 @@ impl TranspilerJob {
                 },
             );
             transpiler.print_with_source_map(
-                // Same per-call `arena` that `transpiler.set_arena(&arena)`
-                // and `parse_options.arena` used to build `parse_result.ast`.
-                &arena,
+                // The `arena` that built `parse_result.ast`.
+                arena,
                 parse_result,
                 &mut printer,
                 js_printer::Format::EsmAscii,
@@ -1173,9 +1224,6 @@ impl TranspilerJob {
             ..Default::default()
         };
 
-        // `arena` and `ast_memory_store` drop here (after `_ast_scope` restores
-        // the thread-local AST heap pointer), `mi_heap_destroy`ing every parse
-        // / AST allocation made by this call. Nothing references them past
-        // this point — `source_code` above is a fresh WTF::String copy.
+        // `source_code` is a fresh WTF::String copy: nothing points into the arena when `_recycle_arena` runs.
     }
 }

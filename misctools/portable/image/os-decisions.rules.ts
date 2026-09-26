@@ -169,7 +169,15 @@ export const rules: Rule[] = [
     kind: ["rust-const"],
     text: /^(SEP|SEP_STR|DELIMITER|NODE_MODULES_NEEDLE|Platform::AUTO)$/,
     // Not the files that define the constants, and not the two that have a constant of their own by that name.
-    file: /^src\/(?!paths\/lib\.rs|bun_alloc\/lib\.rs|bun_core\/|sys\/lib\.rs|runtime\/test_runner\/ScopeFunctions\.rs)/,
+    file: /^src\/(?!paths\/lib\.rs|bun_alloc\/lib\.rs|bun_core\/|sys\/lib\.rs|which\/lib\.rs|runtime\/test_runner\/ScopeFunctions\.rs)/,
+  },
+  {
+    id: "which-separator",
+    class: "R",
+    why: "SEP of src/which/lib.rs is a local that holds sep() in the portable image, and the constant elsewhere",
+    kind: ["rust-const"],
+    text: /^(SEP|DELIMITER)$/,
+    file: /^src\/which\/lib\.rs$/,
   },
   {
     id: "own-constant-of-that-name",

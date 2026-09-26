@@ -1719,15 +1719,17 @@ describe("inbound stream lifecycle", () => {
 });
 
 // A DATA frame that cannot be written right away (the peer's flow-control window is used up, the
-// socket has backpressure, or another stream on the session already has frames waiting) is put on
-// the session's outbound queue and written later, when a WINDOW_UPDATE or a writable socket drains
-// the queue. Writing the last queued frame of a stream whose peer half is already closed completes
-// the stream, and, exactly like the direct-write path, has to release it (the JS stream object and
+// socket has backpressure, or the same stream already has frames waiting) is put on the stream's
+// outbound queue and written later, when a WINDOW_UPDATE or a writable socket drains the queue.
+// Writing the last queued frame of a stream whose peer half is already closed completes the
+// stream, and, exactly like the direct-write path, has to release it (the JS stream object and
 // the native entry) while the session lives on. Node releases these streams too; a stream that is
-// only released at session teardown is a per-request leak on a long-lived session. END_STREAM can
-// ride on the queued frame that carries the last of the body or on an empty frame queued by itself
-// (end() without a body, or the empty frame that follows a body once no trailers are coming); the
-// queue writes the two through different branches, so both shapes are covered below.
+// only released at session teardown is a per-request leak on a long-lived session. The first and
+// the last case below reach the queue through the stream's own window. The cases that answer
+// behind another stream's stalled response do not: a stream waits only behind its own queue, so
+// those responses are written directly. They cover the same release on a session that carries a
+// stalled stream, with END_STREAM on the body's frame and on an empty frame of its own (end()
+// without a body, or the empty frame that follows a body once no trailers are coming).
 describe("stream release after a queued END_STREAM", () => {
   // Well above GC_STRAGGLERS: without the release every one of these survives.
   const STREAMS = 16;
@@ -1850,7 +1852,7 @@ describe("stream release after a queued END_STREAM", () => {
       refs.push(new WeakRef(stream));
       stream.resume();
       // Answer once the request's END_STREAM has been processed, like a handler that consumes the
-      // request body does: the queued response is then the only thing the stream still waits for.
+      // request body does: the response is then the only thing the stream still waits for.
       stream.on("end", () => {
         stream.respond({ ":status": 200 });
         finish(stream);

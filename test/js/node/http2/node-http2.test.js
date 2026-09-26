@@ -5749,6 +5749,97 @@ it("Http2Stream pull-mode read() after pause() replenishes the receive window", 
   }
 });
 
+// DATA that waits for stream A's own send window must not hold back stream B: B's window and
+// the connection window still have credit. The raw client never sends WINDOW_UPDATE, so after
+// a write on B the server receives nothing that would flush a queued frame. The PING is the
+// first inbound traffic after that write: a frame that needed it shows up after the PING ACK.
+it("http2 sends DATA on one stream while another stream's DATA waits for its own send window", async () => {
+  const STREAM_WINDOW = 16384; // the connection window stays at the default 65535
+  const server = http2.createServer();
+  let socket;
+  try {
+    const serverStreams = [];
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (serverStreams.push(stream) === 1) {
+        // A: more than its send window. The rest stays queued for good.
+        stream.respond({ ":status": 200 });
+        stream.write(Buffer.alloc(4 * STREAM_WINDOW, "a"));
+      } else {
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      }
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+    // HPACK: :method GET, :scheme http, :path /, :authority localhost (literal, 7-bit length).
+    const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 9]), Buffer.from("localhost")]);
+    const settings = http2.getPackedSettings({ initialWindowSize: STREAM_WINDOW });
+    socket = net.connect(server.address().port, "127.0.0.1", () => {
+      socket.write(http2utils.kClientMagic);
+      socket.write(Buffer.concat([new http2utils.Frame(settings.length, 4, 0, 0).data, settings]));
+      socket.write(new http2utils.HeadersFrame(1, requestBlock, 0, true, true).data); // A
+      socket.write(new http2utils.HeadersFrame(3, requestBlock, 0, true, true).data); // B
+    });
+
+    const wireOrder = []; // B's DATA frames and PING ACKs
+    let aBytes = 0;
+    let bResponded = false;
+    let closed;
+    let progress = Promise.withResolvers();
+    const notify = () => {
+      progress.resolve();
+      progress = Promise.withResolvers();
+    };
+    // Waits until the frames received so far satisfy `condition`.
+    const until = async condition => {
+      while (!condition()) {
+        if (closed) throw closed;
+        await progress.promise;
+      }
+    };
+    socket.on("error", err => ((closed = err), notify()));
+    socket.on("close", () => ((closed ??= new Error("the server closed the connection")), notify()));
+    let received = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      received = Buffer.concat([received, chunk]);
+      while (received.length >= 9) {
+        const length = received.readUIntBE(0, 3);
+        if (received.length < 9 + length) break;
+        const type = received[3];
+        const endFlag = (received[4] & 1) !== 0; // END_STREAM on DATA, ACK on PING
+        const streamId = received.readUInt32BE(5) & 0x7fffffff;
+        const payload = received.subarray(9, 9 + length).toString();
+        received = received.subarray(9 + length);
+        if (type === 0 && streamId === 1) aBytes += length;
+        if (type === 1 && streamId === 3) bResponded = true;
+        if (type === 0 && streamId === 3) wireOrder.push({ data: payload, endStream: endFlag });
+        if (type === 6 && endFlag) wireOrder.push("PING ACK");
+      }
+      notify();
+    });
+
+    await until(() => aBytes === STREAM_WINDOW && bResponded);
+    const b = serverStreams[1];
+    b.write("hello from b");
+    socket.write(new http2utils.PingFrame(false).data);
+    await until(() => wireOrder.includes("PING ACK"));
+    expect(wireOrder).toEqual([{ data: "hello from b", endStream: false }, "PING ACK"]);
+
+    // sendTrailers({}) ends B with an empty DATA frame, which has its own path in the writer.
+    // Node sends that frame from a later event loop phase, so no PING here: wait for the frame.
+    const wantTrailers = new Promise(resolve => b.once("wantTrailers", resolve));
+    b.end();
+    await wantTrailers;
+    b.sendTrailers({});
+    await until(() => wireOrder.length === 3);
+    expect(wireOrder[2]).toEqual({ data: "", endStream: true });
+    expect(aBytes).toBe(STREAM_WINDOW);
+  } finally {
+    socket?.destroy();
+    server.close();
+  }
+});
+
 // The outbound cork buffer is thread-local across every Http2Session. Interleaving
 // respond()/write() across two sessions used to let the second session's corked
 // HEADERS be prepended to the first session's multi-frame DATA batch and sent to

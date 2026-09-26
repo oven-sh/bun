@@ -2827,6 +2827,11 @@ impl H2FrameParser {
         self.write_buffer.get().len_u32() > 0 || self.has_nonnative_backpressure.get()
     }
 
+    /// Per stream, not per session: another stream's queue can wait on its own window forever.
+    fn must_queue_data(&self, stream: &Stream) -> bool {
+        self.has_backpressure() || !stream.data_frame_queue.is_empty()
+    }
+
     /// Whether a write to this session's transport synchronously runs user JS: a JS-backed
     /// socket's onWrite is the user's Duplex, and a socket upgraded from a JS Duplex
     /// (`tls.connect({ socket })`) writes its records through that Duplex.
@@ -5171,7 +5176,7 @@ impl H2FrameParser {
                 stream_identifier: stream_id,
                 length: 0,
             };
-            if self.has_backpressure() || self.outbound_queue_size.get() > 0 {
+            if self.must_queue_data(stream) {
                 enqueued = true;
                 stream.queue_frame(self, b"", callback, close);
             } else {
@@ -5209,10 +5214,7 @@ impl H2FrameParser {
                 offset += size;
                 let end_stream = offset >= payload.len() && can_close;
 
-                if self.has_backpressure()
-                    || self.outbound_queue_size.get() > 0
-                    || is_flow_control_limited
-                {
+                if self.must_queue_data(stream) || is_flow_control_limited {
                     // Preserve wire order: anything already batched goes out before the
                     // queued remainder is flushed later by the drain path.
                     self.flush_batch_buffer();

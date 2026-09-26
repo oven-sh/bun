@@ -339,6 +339,54 @@ describe("FormData", () => {
     }
   });
 
+  // The multipart serializer writes `\` verbatim and percent-encodes `"`, so a
+  // `\` right before the closing quote is part of the value, not an escape.
+  describe("Content-Disposition: backslash before the closing quote", () => {
+    const boundary = "BX8";
+    const headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
+    const describeEntry = (v: FormDataEntryValue) =>
+      typeof v === "string" ? { kind: "string", value: v } : { kind: "file", name: v.name, size: v.size };
+
+    for (const C of [Response, Request] as const) {
+      const make = (body: BodyInit) =>
+        C === Response ? new Response(body, { headers }) : new Request("http://x/", { method: "POST", body, headers });
+
+      it(`${C.name}: raw body`, async () => {
+        const body =
+          `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="dir\\"; filename="a.bin"\r\n` +
+          `Content-Type: application/octet-stream\r\n\r\n` +
+          `\x01\x02\x03\r\n` +
+          `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="note\\"\r\n\r\n` +
+          `plain value\r\n` +
+          `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="f2"; filename="C:\\tmp\\"\r\n\r\n` +
+          `x\r\n` +
+          `--${boundary}--\r\n`;
+        const fd = await make(body).formData();
+        expect([...fd.entries()].map(([k, v]) => [k, describeEntry(v)])).toEqual([
+          ["dir\\", { kind: "file", name: "a.bin", size: 3 }],
+          ["note\\", { kind: "string", value: "plain value" }],
+          ["f2", { kind: "file", name: "C:\\tmp\\", size: 1 }],
+        ]);
+      });
+    }
+
+    it("round-trips bun's own serializer output", async () => {
+      const fd = new FormData();
+      fd.append("dir\\", new File([new Uint8Array([1, 2, 3])], "a.bin", { type: "application/octet-stream" }));
+      fd.append("note\\", "plain value");
+      fd.append("f2", new File(["x"], "C:\\tmp\\", { type: "text/plain" }));
+      const parsed = await new Response(fd).formData();
+      expect([...parsed.entries()].map(([k, v]) => [k, describeEntry(v)])).toEqual([
+        ["dir\\", { kind: "file", name: "a.bin", size: 3 }],
+        ["note\\", { kind: "string", value: "plain value" }],
+        ["f2", { kind: "file", name: "C:\\tmp\\", size: 1 }],
+      ]);
+    });
+  });
+
   test("FormData.from (URLSearchParams)", () => {
     expect(
       // @ts-expect-error

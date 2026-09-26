@@ -2633,10 +2633,11 @@ fn parse_build_command_options(
 
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
-            // Same rule as `Bun.build({ sourcemap: true })`.
-            let writes_to_disk = ctx.bundler_options.compile
-                || !ctx.bundler_options.outdir.is_empty()
-                || !ctx.bundler_options.outfile.is_empty();
+            // Same rule as `Bun.build({ sourcemap: true })`. `--compile` alone does not
+            // decide it: an executable gets `external` either way, and a standalone
+            // HTML page with no output location goes to stdout.
+            let writes_to_disk =
+                !ctx.bundler_options.outdir.is_empty() || !ctx.bundler_options.outfile.is_empty();
             opts.source_map = Some(if writes_to_disk {
                 api::SourceMapMode::Linked
             } else {

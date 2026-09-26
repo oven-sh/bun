@@ -11,6 +11,13 @@ const { getMachOImageZeroOffset } = crash_handler;
 // next unrelated failing test as "crash reported" and blocks its retries.
 const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
 
+// For children that die via SIG_DFL (rather than via a test hook that calls
+// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
+// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
+// wrapper is inherited by the bun child (and by anything it spawns); every
+// user is isPosix-gated so /bin/sh is available.
+const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
+
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
 const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-23"));
@@ -244,7 +251,7 @@ describe.if(isPosix)("native stack overflow is reported", () => {
       ["a read past the top of the stack", `crashAt(past, ptr => read.u8(ptr, 0));`],
     ])("%s", async (_, crash) => {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "-e", prelude + crash],
+        cmd: noCoreCmd([bunExe(), "--debug-crash-handler-use-trace-string", "-e", prelude + crash]),
         env,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -513,13 +520,6 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
 });
-
-// For children that die via SIG_DFL (rather than via a test hook that calls
-// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
-// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
-// wrapper is inherited by the bun child (and by anything it spawns); every
-// user is isPosix-gated so /bin/sh is available.
-const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
 
 // SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
 // SIGTRAP (WTF CRASH()/RELEASE_ASSERT, __builtin_trap() -> `brk` on aarch64)

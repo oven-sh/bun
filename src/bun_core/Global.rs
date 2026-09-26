@@ -613,8 +613,9 @@ pub fn set_thread_name(name: &ZStr) {
     }
 }
 
-/// The calling thread's name from [`set_thread_name`], or empty. Async-signal-safe
-/// (syscalls only): the crash handler calls it from the SIGSEGV handler.
+/// The calling thread's name, whoever set it (bun, WTF, `std::thread`), or empty.
+/// Called from the crash handler: a syscall on Linux, elsewhere a libpthread
+/// read of the calling thread's own record.
 #[cfg(unix)]
 pub fn current_thread_name(buf: &mut [u8; 64]) -> &[u8] {
     buf.fill(0);

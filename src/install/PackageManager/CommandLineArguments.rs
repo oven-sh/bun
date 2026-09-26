@@ -460,6 +460,9 @@ static PRUNE_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!(
+            "--check                                Exit with code 1 if node_modules has packages that can be removed, without deleting anything"
+        ),
+        clap::param!(
             "-F, --filter <STR>...                  Only prune the node_modules folders of the matching workspaces"
         ),
         clap::param!("<POS> ...                              "),
@@ -472,6 +475,9 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
     ),
     clap::param!(
         "--omit <dev|optional|peer>...          Also remove packages that are only needed by the given dependency types"
+    ),
+    clap::param!(
+        "--check                                Exit with code 1 if node_modules has packages that can be removed, without deleting anything"
     ),
     clap::param!(
         "--dry-run                              Print what would be removed without deleting anything"
@@ -1214,6 +1220,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/dedupe<r
   <d>Show what would be removed without deleting anything<r>
   <b><green>bun prune<r> <cyan>--dry-run<r>
 
+  <d>Only report what would be removed; exit code 1 if there is anything (for CI)<r>
+  <b><green>bun prune<r> <cyan>--check<r>
+
   <d>Only prune what the app workspace no longer needs<r>
   <b><green>bun prune<r> <cyan>--production --filter app<r>
 
@@ -1417,7 +1426,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             // cli.json_output = args.flag(b"--json");
         }
 
-        if subcommand == Subcommand::Dedupe && args.flag(b"--check") {
+        if matches!(subcommand, Subcommand::Dedupe | Subcommand::Prune) && args.flag(b"--check") {
             cli.check = true;
             cli.dry_run = true;
         }

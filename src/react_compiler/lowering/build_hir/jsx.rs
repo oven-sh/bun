@@ -6,8 +6,8 @@
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
-    AstAlloc, BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, Place,
-    PrimitiveValue, PropertyLiteral, SourceLocation, StoreStr, VariableBinding,
+    BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, Place, PrimitiveValue,
+    PropertyLiteral, SourceLocation, StoreStr, VariableBinding,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::{E, Expr, G, Loc, Ref};
@@ -230,8 +230,8 @@ pub(super) fn lower_jsx_call(
         _ => None,
     };
 
-    let mut props: HirVec<JsxAttribute> = AstAlloc::vec();
-    let mut children: HirVec<Place> = AstAlloc::vec();
+    let mut props: HirVec<JsxAttribute> = Vec::new();
+    let mut children: HirVec<Place> = Vec::new();
 
     if let Some(obj) = automatic_props {
         // visit_expr.rs only wraps `children` in a synthetic E::Array when

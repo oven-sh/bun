@@ -5,8 +5,6 @@
 //! `react_compiler::entrypoint`) to read and write `bun_ast` directly, and
 //! depends on the vendored HIR-level crates unmodified.
 
-#![feature(allocator_api)]
-
 pub mod collections;
 pub mod diagnostics;
 pub mod hir;

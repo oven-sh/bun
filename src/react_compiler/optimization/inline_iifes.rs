@@ -49,8 +49,8 @@ use crate::hir::cfg_utils::{
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
-    AstAlloc, BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE,
-    GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionId, InstructionKind,
+    BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE, GotoVariant,
+    HirFunction, HirVec, IdentifierId, Instruction, InstructionId, InstructionKind,
     InstructionValue, LValue, Place, Terminal,
 };
 
@@ -133,15 +133,14 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
 
                     // Create a new block which will contain code following the IIFE call
                     let continuation_block_id = env.next_block_id();
-                    let continuation_instructions = AstAlloc::vec_from_slice(
-                        &func.body.blocks[&block_id].instructions[ii + 1..],
-                    );
+                    let continuation_instructions =
+                        func.body.blocks[&block_id].instructions[ii + 1..].to_vec();
                     let continuation_terminal = func.body.blocks[&block_id].terminal.clone();
                     let continuation_block = BasicBlock {
                         id: continuation_block_id,
                         instructions: continuation_instructions,
                         kind: block_kind,
-                        phis: AstAlloc::vec(),
+                        phis: Vec::new(),
                         preds: crate::collections::IndexSet::new(),
                         terminal: continuation_terminal,
                     };
@@ -176,7 +175,7 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
                         let inner_blocks: Vec<(BlockId, BasicBlock)> =
                             inner_func.body.blocks.drain(..).collect();
                         let inner_instructions: Vec<Instruction> =
-                            inner_func.instructions.drain(..).collect();
+                            std::mem::take(&mut inner_func.instructions);
 
                         // Append inner instructions first, then remap block instruction IDs
                         let instr_offset = func.instructions.len() as u32;
@@ -249,7 +248,7 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
                         let inner_blocks: Vec<(BlockId, BasicBlock)> =
                             inner_func.body.blocks.drain(..).collect();
                         let inner_instructions: Vec<Instruction> =
-                            inner_func.instructions.drain(..).collect();
+                            std::mem::take(&mut inner_func.instructions);
 
                         // Append inner instructions first, then remap block instruction IDs
                         let instr_offset = func.instructions.len() as u32;

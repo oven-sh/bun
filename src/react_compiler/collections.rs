@@ -1,9 +1,6 @@
 //! Drop-in `IndexMap` / `IndexSet` for the React Compiler port.
 //!
-//! Newtype wrappers over [`bun_collections::ArrayHashMap`] with the allocator
-//! fixed to [`bun_alloc::AstAlloc`], so every map/set built during a compile
-//! lives in the per-parse arena and is bulk-freed on reset (no per-entry
-//! `Drop`). Method surface mirrors `indexmap::IndexMap` / `indexmap::IndexSet`
+//! Newtype wrappers over [`bun_collections::ArrayHashMap`] that mirror `indexmap`
 //! closely enough that upstream call sites need only swap the `use` line.
 //!
 //! Semantic notes vs `indexmap`:
@@ -17,7 +14,6 @@ use core::hash::Hash;
 use core::iter::{FromIterator, Zip};
 use core::slice;
 
-use bun_alloc::AstAlloc;
 use bun_collections::array_hash_map::{ArrayHashMap, AutoContext, MapEntry};
 
 /// Unordered map/set keyed by small `Copy` ids — `std`'s SipHash is the wrong
@@ -29,9 +25,9 @@ pub type FxHashMap<K, V> = std::collections::HashMap<K, V, rustc_hash::FxBuildHa
 #[allow(clippy::disallowed_types)]
 pub type FxHashSet<K> = std::collections::HashSet<K, rustc_hash::FxBuildHasher>;
 
-type Inner<K, V> = ArrayHashMap<K, V, AutoContext, AstAlloc>;
+type Inner<K, V> = ArrayHashMap<K, V, AutoContext>;
 
-pub(crate) type Entry<'a, K, V> = MapEntry<'a, K, V, AutoContext, AstAlloc>;
+pub(crate) type Entry<'a, K, V> = MapEntry<'a, K, V, AutoContext>;
 pub use bun_collections::array_hash_map::{OccupiedEntry, VacantEntry};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -181,8 +177,8 @@ impl<K: Hash + Eq, V> core::ops::Index<&K> for IndexMap<K, V> {
 extern crate alloc;
 
 pub struct IntoIter<K, V> {
-    keys: alloc::vec::IntoIter<K, AstAlloc>,
-    values: alloc::vec::IntoIter<V, AstAlloc>,
+    keys: alloc::vec::IntoIter<K>,
+    values: alloc::vec::IntoIter<V>,
 }
 impl<K, V> Iterator for IntoIter<K, V> {
     type Item = (K, V);
@@ -318,7 +314,7 @@ impl<K: Hash + Eq, const N: usize> From<[K; N]> for IndexSet<K> {
 
 impl<K> IntoIterator for IndexSet<K> {
     type Item = K;
-    type IntoIter = alloc::vec::IntoIter<K, AstAlloc>;
+    type IntoIter = alloc::vec::IntoIter<K>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_entries().0.into_iter()
     }

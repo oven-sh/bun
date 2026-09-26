@@ -18,8 +18,8 @@ use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
 
 use crate::hir::{
-    AliasingEffect, AstAlloc, BlockId, Effect, EvaluationOrder, FunctionId, HIR, HirFunction,
-    IdentifierId, InstructionValue, Place, ReactFunctionType,
+    AliasingEffect, BlockId, Effect, EvaluationOrder, FunctionId, HIR, HirFunction, IdentifierId,
+    InstructionValue, Place, ReactFunctionType,
 };
 
 /// Analyse all nested function expressions and object methods in `func`.
@@ -137,7 +137,7 @@ where
     // inferReactiveScopeVariables on the inner function
     crate::inference::infer_reactive_scope_variables::infer_reactive_scope_variables(func, env)?;
 
-    func.aliasing_effects = Some(AstAlloc::vec_from_iter(function_effects.iter().cloned()));
+    func.aliasing_effects = Some(Vec::from_iter(function_effects.iter().cloned()));
 
     // Phase 2: Populate the Effect of each context variable to use in inferring
     // the outer function. Corresponds to TS Phase 2 in lowerWithMutationAliasing.
@@ -201,7 +201,7 @@ fn placeholder_function() -> HirFunction {
         id: None,
         name_hint: None,
         fn_type: ReactFunctionType::Other,
-        params: AstAlloc::vec(),
+        params: Vec::new(),
         return_type_annotation: None,
         returns: Place {
             identifier: IdentifierId(0),
@@ -209,15 +209,15 @@ fn placeholder_function() -> HirFunction {
             reactive: false,
             loc: None,
         },
-        context: AstAlloc::vec(),
+        context: Vec::new(),
         body: HIR {
             entry: BlockId(0),
             blocks: IndexMap::new(),
         },
-        instructions: AstAlloc::vec(),
+        instructions: Vec::new(),
         generator: false,
         is_async: false,
-        directives: AstAlloc::vec(),
+        directives: Vec::new(),
         aliasing_effects: None,
     }
 }

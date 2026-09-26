@@ -43,7 +43,7 @@ pub(crate) fn build_reactive_function(
         name_hint: hir
             .name_hint
             .map(|s| bun_core::BStr::new(s.slice()).to_string()),
-        params: hir.params.to_vec(),
+        params: hir.params.clone(),
         generator: hir.generator,
         is_async: hir.is_async,
         body,
@@ -357,7 +357,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                     id: instr.id,
                     lvalue: Some(instr.lvalue.clone()),
                     value: ReactiveValue::Instruction(instr.value.clone()),
-                    effects: instr.effects.as_ref().map(|e| e.to_vec()),
+                    effects: instr.effects.clone(),
                     loc: instr.loc,
                 }));
             }
@@ -1192,7 +1192,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                             id: instr.id,
                             lvalue: Some(instr.lvalue.clone()),
                             value: ReactiveValue::Instruction(instr.value.clone()),
-                            effects: instr.effects.as_ref().map(|e| e.to_vec()),
+                            effects: instr.effects.clone(),
                             loc: instr.loc,
                         }
                     })
@@ -1396,7 +1396,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                     id: instr.id,
                     lvalue: Some(instr.lvalue.clone()),
                     value: ReactiveValue::Instruction(instr.value.clone()),
-                    effects: instr.effects.as_ref().map(|e| e.to_vec()),
+                    effects: instr.effects.clone(),
                     loc: instr.loc,
                 }
             })
@@ -1473,7 +1473,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                     id: instr.id,
                     lvalue: Some(instr.lvalue.clone()),
                     value: ReactiveValue::Instruction(instr.value.clone()),
-                    effects: instr.effects.as_ref().map(|e| e.to_vec()),
+                    effects: instr.effects.clone(),
                     loc: instr.loc,
                 }
             })

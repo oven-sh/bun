@@ -1,28 +1,23 @@
+import { cssInternals } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 
-test("CSS bundler maps logical border-radius properties to correct physical properties", async () => {
-  using dir = tempDir("css-logical-border-radius", {
-    "input.css": `.box {
+const { prefixTest } = cssInternals;
+
+// https://github.com/oven-sh/bun/issues/27458
+// Safari 14 does not support logical border-radius properties, so they are
+// compiled to physical properties with LTR/RTL variants.
+test("CSS bundler maps logical border-radius properties to correct physical properties", () => {
+  const output = prefixTest(
+    `.box {
   border-start-start-radius: var(--r, 20px);
   border-start-end-radius: var(--r, 20px);
   border-end-start-radius: var(--r, 20px);
   border-end-end-radius: var(--r, 20px);
 }
 `,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "input.css", "--target=browser", "--outdir", "out"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  const output = await Bun.file(`${dir}/out/input.css`).text();
+    "",
+    { safari: 14 << 16 },
+  );
 
   // Each logical property must map to its own distinct physical property.
   // The output contains LTR and RTL variants (with :lang() selectors), so
@@ -40,6 +35,4 @@ test("CSS bundler maps logical border-radius properties to correct physical prop
   expect((firstBlock.match(/border-top-right-radius/g) || []).length).toBe(1);
   expect((firstBlock.match(/border-bottom-right-radius/g) || []).length).toBe(1);
   expect((firstBlock.match(/border-bottom-left-radius/g) || []).length).toBe(1);
-
-  expect(exitCode).toBe(0);
 });

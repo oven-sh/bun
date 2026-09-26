@@ -5511,6 +5511,28 @@ describe("css tests", () => {
       },
     );
 
+    // https://github.com/oven-sh/bun/issues/21169
+    prefix_test(
+      "a:is(input:checked) {color:red}",
+      `
+      a:-webkit-any(input:checked) {
+        color: red;
+      }
+
+      a:-moz-any(input:checked) {
+        color: red;
+      }
+
+      a:is(input:checked) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+
     prefix_test(
       "a:lang(en, fr) {color:red}",
       `

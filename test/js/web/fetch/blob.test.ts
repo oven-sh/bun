@@ -825,3 +825,27 @@ test.each([
   const blob = new Blob(["abc"], { type });
   expect(blob.slice(0, 1).type).toBe(expected);
 });
+
+// WebIDL: an operation that returns a promise never throws. A wrong `this`
+// rejects the promise, like node and browsers do.
+describe("Blob.prototype method called with a `this` that is not a Blob", () => {
+  test.each(["text", "json", "arrayBuffer", "bytes", "formData"] as const)("%s() rejects", async method => {
+    for (const thisValue of [undefined, null, 1, { size: 0, type: "" }, new Response("{}")]) {
+      const result: unknown = Blob.prototype[method].call(thisValue);
+      expect(result).toBeInstanceOf(Promise);
+      const reason = await (result as Promise<unknown>).then(
+        value => ({ resolved: value }),
+        error => error,
+      );
+      expect(reason).toBeInstanceOf(TypeError);
+      expect(reason.code).toBe("ERR_INVALID_THIS");
+      expect(reason.message).toStartWith("Expected this to be instanceof Blob");
+    }
+  });
+
+  test("a method that does not return a promise still throws synchronously", () => {
+    expect(() => Blob.prototype.slice.call({ size: 0 })).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_THIS" }),
+    );
+  });
+});

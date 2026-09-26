@@ -322,6 +322,50 @@ describe("bind parameters object mutated by a getter during bind", () => {
   });
 });
 
+describe("strict mode numeric parameter names", () => {
+  it("binds $N, :N, @N from the key matching the name without the prefix", () => {
+    const db = Database.open(":memory:", { strict: true });
+    expect(db.query("select $1 as a").all({ 1: "one" })).toEqual([{ a: "one" }]);
+    expect(db.query("select :1 as a").all({ 1: "one" })).toEqual([{ a: "one" }]);
+    expect(db.query("select @1 as a").all({ 1: "one" })).toEqual([{ a: "one" }]);
+    expect(db.query("select :2 as two, :1 as one").all({ 1: "A", 2: "B" })).toEqual([{ two: "B", one: "A" }]);
+  });
+
+  it("does not bind a numeric name from the neighboring key", () => {
+    const db = Database.open(":memory:", { strict: true });
+    expect(() => db.query("select $1 as a").all({ 0: "zero" })).toThrow('Missing parameter "$1"');
+    expect(() => db.query("select :2 as two, :1 as one").all({ 0: "A", 1: "B" })).toThrow('Missing parameter ":2"');
+  });
+
+  it("$0 binds from key 0, not key 4294967295", () => {
+    const db = Database.open(":memory:", { strict: true });
+    expect(db.query("select $0 as a").all({ 0: "zero" })).toEqual([{ a: "zero" }]);
+    expect(() => db.query("select $0 as a").all({ "4294967295": "wrapped" })).toThrow('Missing parameter "$0"');
+  });
+
+  it("non-canonical numeric names bind from the literal key", () => {
+    const db = Database.open(":memory:", { strict: true });
+    expect(db.query("select $01 as a").all({ "01": "x" })).toEqual([{ a: "x" }]);
+    expect(db.query("select $4294967295 as a").all({ "4294967295": "x" })).toEqual([{ a: "x" }]);
+    expect(db.query("select $1abc as a").all({ "1abc": "x" })).toEqual([{ a: "x" }]);
+  });
+
+  it("mixes word names and numeric names", () => {
+    const db = Database.open(":memory:", { strict: true });
+    expect(db.query("select $name as n, $2 as b").all({ name: "x", 2: "y" })).toEqual([{ n: "x", b: "y" }]);
+  });
+
+  it("?N still binds from 0-based array-like keys", () => {
+    const db = Database.open(":memory:", { strict: true });
+    expect(db.query("select ?2 as two, ?1 as one").all({ 0: "A", 1: "B" })).toEqual([{ two: "B", one: "A" }]);
+  });
+
+  it("default mode still binds numeric names by the prefixed key", () => {
+    const db = Database.open(":memory:");
+    expect(db.query("select $1 as a").all({ $1: "one" })).toEqual([{ a: "one" }]);
+  });
+});
+
 var encode = text => new TextEncoder().encode(text);
 
 // Use different numbers of columns to ensure we crash if using initializeIndex() on a large array can cause bugs.

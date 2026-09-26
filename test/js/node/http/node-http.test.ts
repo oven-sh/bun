@@ -199,6 +199,25 @@ describe("node:http", () => {
       });
     });
 
+    // Node reports ENOTSUP for reusePort on Windows, so the test skips there.
+    it.skipIf(process.platform === "win32")("listen({ reusePort: true }) lets two servers share a port", async () => {
+      const first = createServer((_req, res) => res.end("first"));
+      const second = createServer((_req, res) => res.end("second"));
+      try {
+        first.listen({ port: 0, host: "127.0.0.1", reusePort: true });
+        await once(first, "listening");
+        const { port } = first.address() as AddressInfo;
+
+        second.listen({ port, host: "127.0.0.1", reusePort: true });
+        // Without the fix this rejects with EADDRINUSE.
+        await once(second, "listening");
+        expect((second.address() as AddressInfo).port).toBe(port);
+      } finally {
+        // close(cb) calls back with ERR_SERVER_NOT_RUNNING for a server that never listened.
+        await Promise.all([second, first].map(server => new Promise<void>(resolve => server.close(() => resolve()))));
+      }
+    });
+
     // vite's port auto-increment (#27406): the callback of the failed listen() belongs to the
     // server, not to that attempt, so the retry from the 'error' handler calls it.
     it("calls the listen() callback after a retry from the EADDRINUSE 'error' handler", async () => {

@@ -665,15 +665,24 @@ class InspectorCDPAdapter {
   }
 
   #translateConsoleMessage(message: AnyObject): void {
-    const level = message.level ?? "log";
-    const args = message.parameters?.length ? message.parameters : [{ type: "string", value: message.text ?? "" }];
+    const { level = "log", parameters, text, type: jscType } = message;
+    let args = parameters?.length ? parameters : [{ type: "string", value: text ?? "" }];
+    // JSC's timeLog puts the elapsed-time string in `text` and only the
+    // caller's extra data in `parameters`; Node emits the timing string as
+    // args[0] followed by the extras.
+    if (jscType === "timing" && parameters?.length && text) {
+      args = [{ type: "string", value: text }, ...args];
+    }
+    // JSC's Console.messageAdded timestamp is WallTime::secondsSinceEpoch();
+    // CDP Runtime.Timestamp is milliseconds since epoch.
+    const timestamp = typeof message.timestamp === "number" ? message.timestamp * 1000 : Date.now();
 
     if (message.source !== "console-api" && level === "error") {
       this.#emitToClient("Runtime.exceptionThrown", {
-        timestamp: message.timestamp ?? Date.now(),
+        timestamp,
         exceptionDetails: {
           exceptionId: this.#nextExceptionId++,
-          text: message.text ?? "Uncaught",
+          text: text ?? "Uncaught",
           lineNumber: Math.max((message.line ?? 1) - 1, 0),
           columnNumber: Math.max((message.column ?? 1) - 1, 0),
           url: toCdpUrl(message.url ?? ""),
@@ -683,15 +692,12 @@ class InspectorCDPAdapter {
       return;
     }
 
-    const type =
-      message.type && CONSOLE_TYPE_MAP[message.type]
-        ? CONSOLE_TYPE_MAP[message.type]
-        : (CONSOLE_LEVEL_MAP[level] ?? "log");
+    const type = (jscType && CONSOLE_TYPE_MAP[jscType]) || (CONSOLE_LEVEL_MAP[level] ?? "log");
     this.#emitToClient("Runtime.consoleAPICalled", {
       type,
       args,
       executionContextId: EXECUTION_CONTEXT_ID,
-      timestamp: message.timestamp ?? Date.now(),
+      timestamp,
       stackTrace: this.#translateStackTrace(message.stackTrace),
     });
   }

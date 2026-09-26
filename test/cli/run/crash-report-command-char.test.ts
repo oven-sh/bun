@@ -2,9 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, mergeWindowEnvs, tempDir } from "harness";
 import path from "path";
 
-// NOTE: kept separate from run-crash-handler.test.ts on purpose — that file
-// is skip-listed in test/expectations.txt (its segfault-reporter test is
-// broken), so anything added there never runs in CI.
+// The rest of the crash handler's coverage lives in run-crash-handler.test.ts.
 describe.concurrent("crash report command character", () => {
   // Crash while a given subcommand is running and return the command
   // character from the trace string printed to stderr:

@@ -12,25 +12,25 @@ import {
   runBunInstall,
   runBunUpdate,
   toMatchNodeModulesAt,
-  VerdaccioRegistry,
 } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
 
-var verdaccio: VerdaccioRegistry;
+var registry: TestRegistry;
 
 setDefaultTimeout(1000 * 60 * 5);
 
 beforeAll(async () => {
-  verdaccio = new VerdaccioRegistry();
-  await verdaccio.start();
+  registry = new TestRegistry();
+  await registry.start();
 });
 
 afterAll(() => {
-  verdaccio.stop();
+  registry.stop();
 });
 
 // Each test spawns 1-5 `bun install` child processes. Running every test at once would
@@ -68,7 +68,7 @@ async function setupTest(): Promise<TestCtx> {
   await acquireSlot();
   let released = false;
   try {
-    const { packageDir, packageJson } = await verdaccio.createTestDir();
+    const { packageDir, packageJson } = await registry.createTestDir();
     const env: Record<string, string> = {
       ...baseEnv,
       BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
@@ -1106,7 +1106,7 @@ test.concurrent("adding packages in a subdirectory of a workspace", async () => 
     "2 packages installed",
   ]);
   expect(await exited).toBe(0);
-  assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
   expect(await file(packageJson).json()).toEqual({
     name: "root",
@@ -1134,7 +1134,7 @@ test.concurrent("adding packages in a subdirectory of a workspace", async () => 
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
   expect(await file(join(packageDir, "foo", "package.json")).json()).toEqual({
     name: "foo",
@@ -1163,7 +1163,7 @@ test.concurrent("adding packages in a subdirectory of a workspace", async () => 
     "3 packages installed",
   ]);
   expect(await exited).toBe(0);
-  assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "foo", "no-deps", "what-bin"]);
 
@@ -1186,7 +1186,7 @@ test.concurrent("adding packages in a subdirectory of a workspace", async () => 
     "3 packages installed",
   ]);
   expect(await exited).toBe(0);
-  assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "foo", "no-deps", "what-bin"]);
 });
@@ -1241,7 +1241,7 @@ test.concurrent("adding packages in workspaces", async () => {
     "3 packages installed",
   ]);
   expect(await exited).toBe(0);
-  assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
   expect(await exists(join(packageDir, "node_modules", "bar"))).toBeTrue();
   expect(await exists(join(packageDir, "node_modules", "boba"))).toBeTrue();
@@ -1265,7 +1265,7 @@ test.concurrent("adding packages in workspaces", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
   expect(await file(packageJson).json()).toEqual({
     name: "foo",
@@ -1294,7 +1294,7 @@ test.concurrent("adding packages in workspaces", async () => {
     "3 packages installed",
   ]);
   expect(await exited).toBe(0);
-  assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
   expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
     name: "boba",
@@ -1331,7 +1331,7 @@ test.concurrent("adding packages in workspaces", async () => {
     "1 package installed",
   ]);
   expect(await exited).toBe(0);
-  assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+  assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
   expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
     name: "boba",
@@ -1461,7 +1461,7 @@ for (const rootVersion of versions) {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -1483,7 +1483,7 @@ for (const rootVersion of versions) {
         "Checked 2 installs across 3 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       await rm(join(packageDir, "bun.lock"), { recursive: true, force: true });
@@ -1510,7 +1510,7 @@ for (const rootVersion of versions) {
         "2 packages installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -1532,7 +1532,7 @@ for (const rootVersion of versions) {
         "Checked 2 installs across 3 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
     });
   }
 }
@@ -1588,7 +1588,7 @@ for (const version of versions) {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
         name: "workspace-1",
@@ -1618,7 +1618,7 @@ for (const version of versions) {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
         name: "workspace-1",
@@ -1680,7 +1680,7 @@ for (const version of versions) {
         "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registry.registryUrl());
 
       expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
         name: "workspace-1",
@@ -2509,7 +2509,7 @@ describe("LinkWorkspacePackages", () => {
         Bun.TOML.stringify({
           install: {
             linkWorkspacePackages: false,
-            registry: verdaccio.registryUrl(),
+            registry: registry.registryUrl(),
           },
         }),
       ),
@@ -2563,7 +2563,7 @@ describe("LinkWorkspacePackages", () => {
         Bun.TOML.stringify({
           install: {
             linkWorkspacePackages: false,
-            registry: verdaccio.registryUrl(),
+            registry: registry.registryUrl(),
           },
         }),
       ),

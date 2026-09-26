@@ -1,10 +1,11 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { copyFile, exists, mkdir, realpath, rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, readdirSorted, runBunInstall } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, readdirSorted, runBunInstall } from "harness";
 import { dirname, join } from "path";
+import { TestRegistry } from "registry";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();

@@ -1,8 +1,9 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
-import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { isAbsolute, join, sep } from "path";
+import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
 
 type Linker = "hoisted" | "isolated";
@@ -17,7 +18,7 @@ type LicenseEntry = {
   description?: string;
 };
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();

@@ -1,16 +1,17 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, realpathSync, rmSync } from "fs";
-import { bunEnv, bunExe, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, nodeModulesPackages, tempDir } from "harness";
 import { dirname, join } from "path";
+import { TestRegistry } from "registry";
 
-const verdaccio = new VerdaccioRegistry();
+const fixtures = new TestRegistry();
 
 beforeAll(async () => {
-  await verdaccio.start();
+  await fixtures.start();
 });
 
 afterAll(() => {
-  verdaccio.stop();
+  fixtures.stop();
 });
 
 async function run(cwd: string, ...args: string[]) {
@@ -156,7 +157,7 @@ describe("pnpm-lock.yaml v9", () => {
   });
 
   test("v9 alias in snapshot optionalDependencies gets the npm: prefix", async () => {
-    const { packageDir } = await verdaccio.createTestDir({
+    const { packageDir } = await fixtures.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/v9-alias-in-optional-dependencies"),
     });
@@ -236,7 +237,7 @@ describe("pnpm-lock.yaml v9", () => {
 
   test("registry-qualified dep path resolves from the configured registry with a warning", async () => {
     // shape from pnpm11/deps/path/test/index.ts parse() `foo@work:1.0.0`
-    const { packageDir } = await verdaccio.createTestDir({
+    const { packageDir } = await fixtures.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
         "package.json": JSON.stringify({ name: "registry-qualified", dependencies: { "no-deps": "^1.0.0" } }),
@@ -261,7 +262,7 @@ describe("pnpm-lock.yaml v9", () => {
   describe("named registries", () => {
     // pnpm11/lockfile/utils/src/pkgSnapshotToResolution.ts: named registry -> scope registry -> default
     test("built-in npmjs: entries record the npmjs registry", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({ name: "npmjs-qualified", dependencies: { "no-deps": "^1.0.0" } }),
@@ -281,16 +282,16 @@ describe("pnpm-lock.yaml v9", () => {
       const bunLock = await bunLockOf(packageDir);
       // bun.lock spells the default registry as "" (bun.lock.rs url_is_under_registry(DEFAULT_URL)).
       expect(bunLock).toContain(`["no-deps@1.0.1", "", {}, "${NO_DEPS_1_0_1_INTEGRITY}"]`);
-      expect(bunLock).not.toContain(verdaccio.registryUrl());
+      expect(bunLock).not.toContain(fixtures.registryUrl());
       expect(bunLock).not.toContain("npmjs:");
     });
 
     test("namedRegistries entry pointing at the configured registry needs no warning", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({ name: "named-registry-same", dependencies: { "no-deps": "^1.0.0" } }),
-          "pnpm-workspace.yaml": `namedRegistries:\n  work: ${verdaccio.registryUrl()}\n`,
+          "pnpm-workspace.yaml": `namedRegistries:\n  work: ${fixtures.registryUrl()}\n`,
           "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("work"),
         },
       });
@@ -314,8 +315,8 @@ describe("pnpm-lock.yaml v9", () => {
     });
 
     test("namedRegistries entry pointing at another registry is used for the tarballs", async () => {
-      const named = `http://127.0.0.1:${verdaccio.port}/`;
-      const { packageDir } = await verdaccio.createTestDir({
+      const named = `http://127.0.0.1:${fixtures.port}/`;
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({
@@ -374,7 +375,7 @@ snapshots:
       expect(bunLock).toContain(
         `["peer-deps-fixed@1.0.0", "${named}peer-deps-fixed/-/peer-deps-fixed-1.0.0.tgz", { "peerDependencies": { "no-deps": "^1.0.0" } }, "${PEER_DEPS_FIXED_1_0_0_INTEGRITY}"]`,
       );
-      expect(bunLock).not.toContain(verdaccio.registryUrl());
+      expect(bunLock).not.toContain(fixtures.registryUrl());
       expect(bunLock).not.toContain("work:");
 
       const install = await run(packageDir, "install", "--frozen-lockfile");
@@ -388,7 +389,7 @@ snapshots:
     });
 
     test("two packages from one unknown registry warn once", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({
@@ -443,7 +444,7 @@ snapshots:
     });
 
     test("built-in gh: entries record the GitHub Packages registry", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({ name: "gh-qualified", dependencies: { "no-deps": "^1.0.0" } }),
@@ -464,16 +465,16 @@ snapshots:
       expect(bunLock).toContain(
         `["no-deps@1.0.1", "https://npm.pkg.github.com/no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"]`,
       );
-      expect(bunLock).not.toContain(verdaccio.registryUrl());
+      expect(bunLock).not.toContain(fixtures.registryUrl());
       expect(bunLock).not.toContain("gh:");
     });
 
     test("namedRegistries overrides the built-in npmjs entry", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({ name: "npmjs-overridden", dependencies: { "no-deps": "^1.0.0" } }),
-          "pnpm-workspace.yaml": `namedRegistries:\n  npmjs: ${verdaccio.registryUrl()}\n`,
+          "pnpm-workspace.yaml": `namedRegistries:\n  npmjs: ${fixtures.registryUrl()}\n`,
           "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("npmjs"),
         },
       });
@@ -499,7 +500,7 @@ snapshots:
     });
 
     test("aliased snapshot dependency with a registry-qualified dep path drops the registry from the alias", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({
@@ -511,7 +512,7 @@ snapshots:
             version: "1.0.0",
             dependencies: { nd: "npm:no-deps@^1.0.0" },
           }),
-          "pnpm-workspace.yaml": `namedRegistries:\n  work: ${verdaccio.registryUrl()}\n`,
+          "pnpm-workspace.yaml": `namedRegistries:\n  work: ${fixtures.registryUrl()}\n`,
           "pnpm-lock.yaml": `lockfileVersion: '9.0'
 
 importers:
@@ -706,7 +707,7 @@ importers:
     });
 
     test("bare hash on a registry package with a bare `name` key in pnpm-workspace.yaml", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: join(import.meta.dir, "pnpm/v9-patch-bare-hash-registry"),
       });
@@ -769,7 +770,7 @@ snapshots:
     }
 
     test("bare hash whose path is only in package.json pnpm.patchedDependencies", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({
@@ -808,7 +809,7 @@ snapshots:
     });
 
     test("versioned lockfile key falls back to the bare config key", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({ name: "patch-key-fallback", dependencies: { "no-deps": "^1.0.0" } }),
@@ -840,7 +841,7 @@ snapshots:
     });
 
     test("two packages patched by the same patch file share one hash", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({
@@ -919,7 +920,7 @@ snapshots:
     test.each(["hoisted", "isolated"] as const)(
       "the migrated bun.lock patches the installed registry package (%s linker)",
       async linker => {
-        const { packageDir } = await verdaccio.createTestDir({
+        const { packageDir } = await fixtures.createTestDir({
           bunfigOpts: { linker },
           files: {
             "package.json": JSON.stringify({ name: "patch-installs", dependencies: { "no-deps": "^1.0.0" } }),
@@ -951,7 +952,7 @@ snapshots:
   });
 
   test("catalog:default is the default catalog", async () => {
-    const { packageDir } = await verdaccio.createTestDir({
+    const { packageDir } = await fixtures.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/v9-catalog-default"),
     });
@@ -968,7 +969,7 @@ snapshots:
 
   test("reference shapes: scoped + peer suffix, short alias, scoped alias, file: tarball", async () => {
     // reference vectors from pnpm11/deps/path/test/index.ts refToRelative()
-    const { packageDir } = await verdaccio.createTestDir({
+    const { packageDir } = await fixtures.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/v9-reference-shapes"),
     });
@@ -1159,7 +1160,7 @@ snapshots:
   describe("pruned snapshots", () => {
     // pnpm11/lockfile/fs convertToLockfileObject rebuilds `file:` directories whose packages: entry turbo prune dropped
     test("file: variants without a packages entry are rebuilt", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: join(import.meta.dir, "pnpm/v9-snapshot-only-file-variants"),
       });
@@ -1245,7 +1246,7 @@ snapshots:
 
   describe("peer dependencies", () => {
     test("packages keep their declared peer ranges and optional peers", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({
@@ -1339,8 +1340,8 @@ snapshots:
 
     // pnpm11/__fixtures__/with-peer: the packages entry declares `ajv: ^6.9.1`, the snapshot resolves 6.10.2
     test("declared ranges win over the snapshot's resolved versions; peers pnpm left out are still emitted", async () => {
-      const registry = verdaccio.registryUrl();
-      const { packageDir } = await verdaccio.createTestDir({
+      const registry = fixtures.registryUrl();
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({
@@ -1442,7 +1443,7 @@ snapshots:
     });
 
     test("a peer range dedupes onto the hoisted version like a fresh install", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: join(import.meta.dir, "pnpm/v9-peer-range-dedupe"),
       });
@@ -1537,14 +1538,14 @@ snapshots:
 ${variants}`;
 
     test("peer variants of one package migrate identically regardless of snapshot order", async () => {
-      const { packageDir: forward } = await verdaccio.createTestDir({
+      const { packageDir: forward } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           ...peerVariantPackageJsons,
           "pnpm-lock.yaml": peerVariantLockfile(`${peerVariant101}\n${peerVariant200}`),
         },
       });
-      const { packageDir: swapped } = await verdaccio.createTestDir({
+      const { packageDir: swapped } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           ...peerVariantPackageJsons,
@@ -1574,7 +1575,7 @@ ${variants}`;
       expect((await installedPackageJson(forward, "apps/b", "no-deps")).version).toBe("2.0.0");
 
       // pins existing behaviour (not a fix): a variant lockfile migrates to the bun.lock a fresh install writes
-      const { packageDir: fresh } = await verdaccio.createTestDir({
+      const { packageDir: fresh } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: peerVariantPackageJsons,
       });
@@ -1588,7 +1589,7 @@ ${variants}`;
 
     test("importers that reference different peer variants get one store entry per peer set with the isolated linker", async () => {
       // pins existing behaviour (not a fix): pnpm's per-importer variants (pnpm/pnpm peers-suffix) are rebuilt by the isolated linker from the single migrated entry
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "isolated" },
         files: {
           ...peerVariantPackageJsons,
@@ -1629,7 +1630,7 @@ ${variants}`;
 
     test("a peer met in one importer and unmet in another is bound from the met variant", async () => {
       // pnpm sorts the unsuffixed (peer-unmet) variant first; the met variant must still bind the peer
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "isolated" },
         files: join(import.meta.dir, "pnpm/v9-peer-variant-merge"),
       });
@@ -1763,7 +1764,7 @@ ${snapshots}`;
     });
 
     test("root and workspace peerDependencies come from package.json", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: join(import.meta.dir, "pnpm/v9-importer-peers"),
       });
@@ -1813,7 +1814,7 @@ ${snapshots}`;
         devDependencies: { "no-deps": "^1.0.0" },
         peerDependencies: { "no-deps": "^1.0.0" },
       });
-      const { packageDir: migrated } = await verdaccio.createTestDir({
+      const { packageDir: migrated } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": packageJson,
@@ -1851,7 +1852,7 @@ snapshots:
       expect(migratedRoot).toContain(`      "devDependencies": {\n        "no-deps": "^1.0.0",\n      },`);
       expect(migratedRoot).toContain(`      "peerDependencies": {\n        "no-deps": "^1.0.0",\n      },`);
 
-      const { packageDir: fresh } = await verdaccio.createTestDir({
+      const { packageDir: fresh } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: { "package.json": packageJson },
       });
@@ -1865,7 +1866,7 @@ snapshots:
 
     test("workspace peers pnpm did not auto-install are merged from the member's package.json", async () => {
       // port of pnpm11/installing/deps-installer/test/install/injectLocalPackages.ts 'inject local packages'
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "isolated" },
         files: {
           "package.json": JSON.stringify({ name: "v9-workspace-peers", workspaces: ["packages/*"] }),
@@ -2015,7 +2016,7 @@ snapshots:
     });
 
     test("an unrecorded required peer is reported and left for bun install", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({
@@ -2069,7 +2070,7 @@ snapshots:
     });
 
     test("peers declared with a catalog: range keep the catalog reference", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({
@@ -2129,7 +2130,7 @@ snapshots:
 
     test("bun install after bun pm migrate does not rewrite bun.lock", async () => {
       // real pnpm output: the root's peer-only `a-dep` sits under the importer's dependencies
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: join(import.meta.dir, "pnpm/basic"),
       });
@@ -2156,8 +2157,8 @@ snapshots:
 
     test("bun install straight from pnpm-lock.yaml writes the same importers as bun pm migrate", async () => {
       const files = join(import.meta.dir, "pnpm/basic");
-      const { packageDir: viaMigrate } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
-      const { packageDir: viaInstall } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+      const { packageDir: viaMigrate } = await fixtures.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+      const { packageDir: viaInstall } = await fixtures.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
 
       const migrated = await migrate(viaMigrate);
       expect(migrated.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
@@ -2182,7 +2183,7 @@ snapshots:
 
   test("excludeLinksFromLockfile omissions are reported", async () => {
     // pnpm11/installing/deps-installer/test/install/excludeLinksFromLockfile.ts
-    const { packageDir } = await verdaccio.createTestDir({
+    const { packageDir } = await fixtures.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
         "package.json": JSON.stringify({
@@ -2303,9 +2304,9 @@ snapshots:
   describe("registry tarball: urls", () => {
     // pnpm/pnpm#13534: GitHub Packages / npm Enterprise tarballs are not on the canonical `/-/` path
     test("recorded under the configured registry is kept", async () => {
-      const registry = verdaccio.registryUrl();
+      const registry = fixtures.registryUrl();
       const tarball = `${registry}download/no-deps/1.0.1/0123456789abcdef`;
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({ name: "kept-tarball", dependencies: { "no-deps": "^1.0.0" } }),
@@ -2324,8 +2325,8 @@ snapshots:
 
     // guards for the keep-tarball path above (pnpm/pnpm#5920 / #4361): off-registry urls are rebuilt
     test("recorded on a foreign host is rebuilt from the configured registry", async () => {
-      const registry = verdaccio.registryUrl();
-      const { packageDir } = await verdaccio.createTestDir({
+      const registry = fixtures.registryUrl();
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({ name: "foreign-tarball", dependencies: { "no-deps": "^1.0.0" } }),
@@ -2346,9 +2347,9 @@ snapshots:
     });
 
     test("under a registry whose hostname is a prefix of the recorded url's is rebuilt", async () => {
-      const registry = verdaccio.registryUrl();
+      const registry = fixtures.registryUrl();
       const lookalike = `${registry.slice(0, -1)}.evil.example.com/no-deps/-/no-deps-1.0.1.tgz`;
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({ name: "lookalike-tarball", dependencies: { "no-deps": "^1.0.0" } }),
@@ -2779,7 +2780,7 @@ importers:
   // after the install, so the entry has to be re-parsed after the migration
   // or the second print reads freed memory.
   test("bun add migrates pnpm-workspace.yaml and keeps the migrated fields", async () => {
-    const { packageDir } = await verdaccio.createTestDir({
+    const { packageDir } = await fixtures.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
         "package.json": JSON.stringify({ name: "add-after-migration", private: true }),
@@ -2827,7 +2828,7 @@ importers:
   // #23694: `bun update -i` migrates once to list the outdated packages, edits
   // package.json through the cache entry, and migrates again when it installs.
   test("bun update -i as the first bun command in a pnpm workspace", async () => {
-    const { packageDir } = await verdaccio.createTestDir({
+    const { packageDir } = await fixtures.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
         "package.json": JSON.stringify({ name: "update-i-after-migration", dependencies: { "no-deps": "^1.0.0" } }),
@@ -2890,7 +2891,7 @@ snapshots:
   describe("catalogs", () => {
     // pnpm/pnpm#10551: pruned Docker contexts ship the lockfile without pnpm-workspace.yaml
     test("lockfile catalogs: section is enough without pnpm-workspace.yaml", async () => {
-      const { packageDir } = await verdaccio.createTestDir({
+      const { packageDir } = await fixtures.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: join(import.meta.dir, "pnpm/v9-catalog-default"),
       });

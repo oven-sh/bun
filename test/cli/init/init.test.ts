@@ -137,6 +137,50 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
   });
 
+  // The template menu hides the cursor while it is up. A signal exit writes
+  // the startup termios back but the hidden cursor is terminal state, not
+  // termios: the exit path has to write `CSI ? 25 h` itself.
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    test.skipIf(isWindows)(`bun init shows the cursor again when ${signal} ends the template menu`, async () => {
+      await using temp = tempDir("bun-init-" + signal.toLowerCase(), {});
+
+      const decoder = new TextDecoder();
+      let output = "";
+      const hidden = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init"],
+        cwd: String(temp),
+        // Colors on (the tty default), otherwise the menu leaves the cursor alone.
+        env: { ...initEnv, NO_COLOR: undefined },
+        terminal: {
+          cols: 80,
+          rows: 24,
+          data(_, chunk: Uint8Array) {
+            output += decoder.decode(chunk, { stream: true });
+            if (output.includes("\x1b[?25l")) hidden.resolve();
+          },
+          exit() {
+            closed.resolve();
+          },
+        },
+      });
+      const exitedEarly = proc.exited.then(code => {
+        throw new Error(`bun init exited before the menu (code ${code}):\n${output}`);
+      });
+      exitedEarly.catch(() => {});
+      await Promise.race([hidden.promise, exitedEarly]);
+
+      proc.kill(signal);
+      await proc.exited;
+      await closed.promise;
+
+      expect(output.slice(output.lastIndexOf("\x1b[?25l"))).toContain("\x1b[?25h");
+      expect(proc.signalCode).toBe(signal);
+      expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
+    });
+  }
+
   test("bun init in folder", async () => {
     await using temp = tempDir("bun-init-in-folder", {
       "mydir": {

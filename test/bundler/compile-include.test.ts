@@ -326,12 +326,19 @@ describe.concurrent("compile include", () => {
       "accepts a relative path with a colon in its second character",
       async () => {
         using dir = tempDir(`compile-include-colon-${via}`, {
-          "index.ts": `console.log("x");`,
-          "c:d/target.js": `export default 1;`,
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            const mod = await import(join(import.meta.dirname, "c:d", "target.js"));
+            console.log(JSON.stringify({ value: mod.default }));
+          `,
+          "c:d/target.js": `export default "included-value";`,
         });
         const built = await build(String(dir), via, ["./c:d"]);
-        expect(built.message).not.toContain("must be relative to cwd");
-        expect(built.failed).toBe(false);
+        expect(built).toEqual({ failed: false, message: expect.any(String) });
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+        expect(exitCode).toBe(0);
       },
       TIMEOUT,
     );

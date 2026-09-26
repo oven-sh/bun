@@ -1705,6 +1705,86 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
+    /// The path the module loader loads the existing file `path` under, for `import.meta.resolve`.
+    pub fn real_path_of_file<'b>(
+        &mut self,
+        path: &[u8],
+        buf: &'b mut PathBuffer,
+    ) -> Option<&'b [u8]> {
+        use bun_sys::FileKind;
+        let kind_of = |stat: bun_sys::Stat| bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+
+        if self.opts.preserve_symlinks
+            || !bun_paths::is_absolute(path)
+            // `resolve` marks such an import as external.
+            || path.starts_with(b"//")
+            || Self::import_path_names_directory(path)
+            || strings::contains_char(path, 0)
+            // Path normalization reads `\` as a separator, also in a POSIX file name.
+            || (cfg!(not(windows)) && strings::contains_char(path, b'\\'))
+            || ::bun_options_types::standalone_path::is_bun_standalone_file_path(path)
+        {
+            return None;
+        }
+
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
+        let capacity = abs_buf.len() - 1;
+        let abs_len = self
+            .fs_ref()
+            .abs_buf_checked(&[path], &mut abs_buf[..capacity])?
+            .len();
+        abs_buf[abs_len] = 0;
+        let abs_path = bun_core::ZStr::from_buf(&abs_buf[..], abs_len);
+
+        // Not the directory cache: a missing file must not leave a not-found entry there.
+        let file_kind = kind_of(bun_sys::lstat(abs_path).ok()?);
+        if file_kind == FileKind::Directory {
+            return None;
+        }
+        let name = Fs::PathName::init(abs_path.as_bytes());
+
+        // The file exists, so a directory that is cached as not found was made since.
+        let dir = self.read_dir_info_ignore_error(name.dir).or_else(|| {
+            self.bust_dir_cache(name.dir)
+                .then(|| self.read_dir_info_ignore_error(name.dir))
+                .flatten()
+        });
+
+        let mut real_buf = bun_paths::path_buffer_pool::get();
+        let real: &[u8] = if file_kind == FileKind::SymLink {
+            // Not a dangling link, and not a link to a directory.
+            let target_kind = kind_of(bun_sys::stat(abs_path).ok()?);
+            if target_kind == FileKind::Directory {
+                return None;
+            }
+            // The lazy stat of the entry opens the target, and an open of a pipe can block.
+            let from_entry = (target_kind == FileKind::File)
+                .then(|| dir?.get_entry(self.generation, name.filename))
+                .flatten()
+                .filter(|query| query.entry().base() == name.filename)
+                // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy stat inside
+                // `symlink()` is serialized on the per-entry mutex.
+                .map(|query| unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) })
+                .filter(|target| !target.is_empty());
+            match from_entry {
+                Some(target) => target,
+                None => bun_sys::realpath(abs_path, &mut real_buf).ok()?,
+            }
+        } else {
+            let dir_real_path = dir?.abs_real_path;
+            if dir_real_path.is_empty() {
+                abs_path.as_bytes()
+            } else {
+                self.fs_ref()
+                    .abs_buf_checked(&[dir_real_path, name.filename], &mut real_buf[..])?
+            }
+        };
+
+        let out = buf.get_mut(..real.len())?;
+        out.copy_from_slice(real);
+        Some(out)
+    }
+
     pub(crate) fn resolve_without_symlinks(
         &mut self,
         source_dir: &[u8],

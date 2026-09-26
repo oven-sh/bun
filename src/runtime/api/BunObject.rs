@@ -1287,6 +1287,29 @@ pub(crate) fn bun_resolve_sync_with_strings(
     })
 }
 
+// HOST_EXPORT(Bun__importMetaResolveRealPath, c)
+pub fn bun_import_meta_resolve_real_path(global: &JSGlobalObject, path: &BunString) -> BunString {
+    let path = path.to_utf8();
+    // A malformed package.json or tsconfig.json next to `path` reports here, not to the VM's log.
+    let mut log = bun_ast::Log::default();
+    let vm = global.bun_vm_ptr();
+    // SAFETY: `vm` is this thread's live VM. `log` is declared before the guard, so the guard
+    // restores the resolver's log before `log` drops.
+    let _restore_log = unsafe {
+        bun_resolver::Resolver::scoped_log(
+            &raw mut (*vm).transpiler.resolver,
+            core::ptr::NonNull::from(&mut log),
+        )
+    };
+    // SAFETY: `vm` as above; nothing else borrows its resolver during this synchronous call.
+    let resolver = unsafe { &mut (*vm).transpiler.resolver };
+    let mut buf = bun_paths::path_buffer_pool::get();
+    match resolver.real_path_of_file(path.slice(), &mut buf) {
+        Some(real) => BunString::clone_utf8(real),
+        None => BunString::DEAD,
+    }
+}
+
 /// Resolves `specifier` relative to `source`. A specifier the resolver cannot resolve (the
 /// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
 /// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier

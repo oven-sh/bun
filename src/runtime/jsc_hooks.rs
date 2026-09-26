@@ -4034,6 +4034,43 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
     })
 }
 
+/// Whether Node runs the file at `specifier` as an ES module whatever its
+/// syntax: a `.mjs`/`.mts` file, or a `.js`/`.ts` file under a package.json
+/// with `"type": "module"`.
+///
+/// # Safety
+/// `jsc_vm` is the live per-thread VM.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__isESModuleByPathOrPackage(
+    jsc_vm: *mut VirtualMachine,
+    specifier: &bun_core::String,
+) -> bool {
+    let specifier = specifier.to_utf8();
+    let path: &[u8] = match bun_core::strings::index_of_char_usize(&specifier, b'?') {
+        Some(query) => &specifier[..query],
+        None => &specifier,
+    };
+    match bun_paths::extension(path) {
+        b".mjs" | b".mts" => return true,
+        b".js" | b".ts" => {}
+        _ => return false,
+    }
+    let Some(dir) = bun_paths::dirname(path) else {
+        return false;
+    };
+    if !bun_paths::is_absolute(dir) {
+        return false;
+    }
+    // SAFETY: per fn contract. `read_dir_info` is re-entrant on the JS thread
+    // and returns a stable cache slot.
+    match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
+        Ok(Some(dir_info)) => dir_info
+            .package_json_for_module_type
+            .is_some_and(|pkg| pkg.module_type == ModuleType::Esm),
+        _ => false,
+    }
+}
+
 /// Modules that must always transpile on-thread (see [`Bun__transpileFile`]).
 const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
 

@@ -1779,3 +1779,42 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
     expect(exitCode, `run ${run}`).toBe(0);
   }
 });
+
+// A module that throws while being evaluated is retried by the next require().
+// Under --isolate the first attempt leaves its SourceProvider in the cache and
+// a failed entry in the module registry. The retry drops both, so it reads the
+// file from disk again instead of rethrowing the stored error.
+test.concurrent("--isolate: require() retries a cached module that threw", async () => {
+  using dir = tempDir("isolate-require-retry", {
+    // No CommonJS or ES module syntax on purpose: such files load through the
+    // module registry.
+    "flaky.js": `throw new Error("fail 1");`,
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      import { writeFileSync } from "node:fs";
+      import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+
+      test("second require() evaluates the module again", () => {
+        const path = require.resolve("./flaky.js");
+        expect(() => require("./flaky.js")).toThrow("fail 1");
+        expect(isolatedModuleCacheSourceType(path)).toBe("BunTranspiledModule");
+        writeFileSync(path, "globalThis.fixed = true;");
+        require("./flaky.js");
+        expect(globalThis.fixed).toBe(true);
+        expect(isolatedModuleCacheSourceType(path)).toBe("BunTranspiledModule");
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./a.test.ts"],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});

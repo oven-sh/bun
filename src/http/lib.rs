@@ -962,7 +962,7 @@ fn is_same_origin_url(a: &URL<'_>, b: &URL<'_>) -> bool {
 
 /// RFC 9110 §9.3.6: any 2xx response to CONNECT switches to tunnel mode.
 #[inline]
-fn is_successful_connect_status(status_code: u32) -> bool {
+pub fn is_successful_connect_status(status_code: u32) -> bool {
     (200..300).contains(&status_code)
 }
 

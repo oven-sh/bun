@@ -82,7 +82,7 @@ enum State {
     Initializing,
     Reading,
     Failed,
-    /// Sent CONNECT, waiting for 200
+    /// Sent CONNECT, waiting for a 2xx reply
     ProxyHandshake,
     /// WebSocket upgrade complete, forwarding data through tunnel
     Done,
@@ -852,18 +852,6 @@ where
     fn handle_proxy_response(this: ThisPtr<Self>, socket: Socket<SSL>, data: &[u8]) {
         log!("handleProxyResponse");
 
-        const HTTP_200: &[u8] = b"HTTP/1.1 200 ";
-        const HTTP_200_ALT: &[u8] = b"HTTP/1.0 200 ";
-        if this.body.get().is_empty()
-            && data.len() > HTTP_200.len()
-            && !data.starts_with(HTTP_200)
-            && !data.starts_with(HTTP_200_ALT)
-        {
-            // Proxy connection failed
-            Self::terminate(this, ErrorCode::ProxyConnectFailed);
-            return;
-        }
-
         let (full, status_code, head_len) = match this.buffer_and_parse_head(data) {
             HeadParse::Done {
                 full,
@@ -877,8 +865,7 @@ where
             HeadParse::NeedMore => return,
         };
 
-        // Proxy returned non-200 status
-        if status_code != 200 {
+        if !bun_http::is_successful_connect_status(status_code) {
             if status_code == 407 {
                 Self::terminate(this, ErrorCode::ProxyAuthenticationRequired);
             } else {

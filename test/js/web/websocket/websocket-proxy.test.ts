@@ -4,7 +4,7 @@ import { tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import tls from "node:tls";
 import {
   type ClientEvent,
@@ -249,7 +249,7 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
     });
     // The proxy answered 407 to a CONNECT without credentials.
     expect({ events: await failingSession(ws), requests: recorded.requests }).toEqual({
-      events: failed(url, "Proxy connection failed", 1006),
+      events: failed(url, "Proxy authentication required", 1006),
       requests: [connectRequest(wsPort)],
     });
     gc();
@@ -267,6 +267,149 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
       requests: [connectRequest(wsPort, { "proxy-authorization": `Basic ${btoa("wrong_user:wrong_pass")}` })],
     });
     gc();
+  });
+});
+
+describe("the CONNECT reply gives the same outcome wherever the first read ends", () => {
+  const message = "hello after the CONNECT reply";
+
+  // The event loop runs setImmediate callbacks, then polls sockets. The second
+  // callback therefore runs after a poll, and in that poll the client read
+  // what the proxy wrote before this call.
+  async function socketPoll() {
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+
+  /**
+   * A proxy that answers every CONNECT with `reply`. With `splitAt`, the client
+   * reads that many bytes of the reply before the proxy writes the rest. With
+   * `tunnel`, the proxy then relays to the echo server, otherwise it hangs up.
+   */
+  async function startFixedReplyProxy(reply: string, { splitAt, tunnel }: { splitAt?: number; tunnel: boolean }) {
+    let connections = 0;
+    const proxy = net.createServer(client => {
+      connections++;
+      let request = "";
+      let target: net.Socket | undefined;
+      // The client hangs up as soon as it rejects a reply, so a later write can fail.
+      client.on("error", () => {});
+      client.on("data", async chunk => {
+        if (target) {
+          target.write(chunk);
+          return;
+        }
+        request += chunk.toString("latin1");
+        if (!request.endsWith("\r\n\r\n")) return;
+
+        if (splitAt === undefined) {
+          client.write(reply);
+        } else {
+          client.write(reply.slice(0, splitAt));
+          await socketPoll();
+          client.write(reply.slice(splitAt));
+        }
+        if (!tunnel) {
+          client.end();
+          return;
+        }
+        target = net.connect(wsPort, "127.0.0.1");
+        target.on("data", bytes => client.write(bytes));
+        target.on("error", () => client.destroy());
+        target.on("close", () => client.destroy());
+        client.on("close", () => target!.destroy());
+      });
+    });
+    const port = await startProxy(proxy);
+    return {
+      port,
+      get connections() {
+        return connections;
+      },
+      [Symbol.dispose]() {
+        proxy.close();
+      },
+    };
+  }
+
+  describe.each([
+    {
+      name: "407",
+      reply:
+        "HTTP/1.1 407 Proxy Authentication Required\r\n" +
+        'Proxy-Authenticate: Basic realm="proxy"\r\n' +
+        "Content-Length: 0\r\n\r\n",
+      tunnel: false,
+      events: (url: string) => failed(url, "Proxy authentication required", 1006),
+    },
+    {
+      name: "502",
+      reply: "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n",
+      tunnel: false,
+      events: (url: string) => failed(url, "Proxy connection failed", 1006),
+    },
+    {
+      name: "200 without a reason phrase",
+      reply: "HTTP/1.1 200\r\n\r\n",
+      tunnel: true,
+      events: () => echoed(message),
+    },
+    {
+      name: "200 over HTTP/1.0",
+      reply: "HTTP/1.0 200 Connection established\r\n\r\n",
+      tunnel: true,
+      events: () => echoed(message),
+    },
+    // RFC 9110 section 9.3.6: any 2xx reply opens the tunnel. fetch() applies the same rule.
+    {
+      name: "101",
+      reply: "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+      tunnel: false,
+      events: (url: string) => failed(url, "Proxy connection failed", 1006),
+    },
+    {
+      name: "201",
+      reply: "HTTP/1.1 201 Created\r\n\r\n",
+      tunnel: true,
+      events: () => echoed(message),
+    },
+    {
+      name: "204",
+      reply: "HTTP/1.1 204 No Content\r\n\r\n",
+      tunnel: true,
+      events: () => echoed(message),
+    },
+    {
+      name: "299",
+      reply: "HTTP/1.1 299 Tunnel Ready\r\n\r\n",
+      tunnel: true,
+      events: () => echoed(message),
+    },
+    {
+      name: "300",
+      reply: "HTTP/1.1 300 Multiple Choices\r\nContent-Length: 0\r\n\r\n",
+      tunnel: false,
+      events: (url: string) => failed(url, "Proxy connection failed", 1006),
+    },
+    {
+      name: "a reply that is not HTTP",
+      reply: "SSH-2.0-OpenSSH_9.6\r\n",
+      tunnel: false,
+      events: (url: string) => failed(url, "Invalid response", 1002),
+    },
+  ])("$name", ({ reply, tunnel, events }) => {
+    test.each([
+      ["in one read", undefined],
+      ["in two reads, the first one 10 bytes long", 10],
+    ] as const)("%s", async (_, splitAt) => {
+      using proxy = await startFixedReplyProxy(reply, { splitAt, tunnel });
+      const url = `ws://127.0.0.1:${wsPort}`;
+      const ws = new WebSocket(url, { proxy: `http://127.0.0.1:${proxy.port}` });
+      expect({ events: await echoSession(ws, message), proxyConnections: proxy.connections }).toEqual({
+        events: events(url),
+        proxyConnections: 1,
+      });
+    });
   });
 });
 
@@ -904,8 +1047,8 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
         ? { stdout: `message: connected\nclose: 1000 ""\n`, stderr: "", exitCode: 0, proxyConnections: 0 }
         : {
             stdout:
-              `error: WebSocket connection to 'ws://127.0.0.1:${wsPort}/' failed: Proxy connection failed\n` +
-              `close: 1006 "Proxy connection failed"\n`,
+              `error: WebSocket connection to 'ws://127.0.0.1:${wsPort}/' failed: Proxy authentication required\n` +
+              `close: 1006 "Proxy authentication required"\n`,
             stderr: "",
             exitCode: 0,
             proxyConnections: 1,

@@ -194,6 +194,12 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
     return listeners;
 }
 
+// events.errorMonitor in src/js/node/events.ts is Symbol.for("events.errorMonitor").
+static Identifier errorMonitorIdentifier(VM& vm)
+{
+    return Identifier::fromUid(vm.symbolRegistry().symbolForKey("events.errorMonitor"_s));
+}
+
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
 bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
@@ -207,8 +213,8 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 
     bool isErrorEvent = eventType == vm.propertyNames->error;
     if (isErrorEvent) [[unlikely]] {
-        // events.errorMonitor listeners observe 'error' before its handlers run, whether or not it is handled (see emitError in events.ts).
-        auto errorMonitor = Identifier::fromUid(vm.symbolRegistry().symbolForKey("events.errorMonitor"_s));
+        // errorMonitor listeners observe 'error' before its handlers run, whether or not it is handled (see emitError in events.ts).
+        auto errorMonitor = errorMonitorIdentifier(vm);
         if (auto* monitors = data->eventListenerMap.find(errorMonitor)) [[unlikely]]
             invokeEventListeners(*data, errorMonitor, *monitors, arguments);
     }
@@ -291,8 +297,8 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         if (exception) [[unlikely]] {
             auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
-            if (!hasErrorListener || eventType == errorIdentifier) {
-                // If the event type is error, report the exception to the console.
+            // A throw while dispatching 'error' (its handlers or its errorMonitor pass) must not emit 'error' again.
+            if (!hasErrorListener || eventType == errorIdentifier || eventType == errorMonitorIdentifier(vm)) {
                 Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
             } else if (hasErrorListener) {
                 MarkedArgumentBuffer expcep;

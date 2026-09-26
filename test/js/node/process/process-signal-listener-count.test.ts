@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import { EventEmitter } from "node:events";
 
@@ -193,106 +193,89 @@ done lc=1"
 
 describe("process counts listener registrations like node:events", () => {
   const event = "process-signal-listener-count-test-event";
+  afterEach(() => {
+    process.removeAllListeners(event);
+  });
 
   test("on() twice with one function registers it twice", () => {
     let calls = 0;
     const fn = () => calls++;
-    try {
-      process.on(event, fn);
-      process.on(event, fn);
-      expect(process.listenerCount(event)).toBe(2);
-      process.emit(event);
-      expect(calls).toBe(2);
-      process.removeListener(event, fn);
-      expect(process.listenerCount(event)).toBe(1);
-      process.emit(event);
-      expect(calls).toBe(3);
-    } finally {
-      process.removeAllListeners(event);
-    }
+    process.on(event, fn);
+    process.on(event, fn);
+    expect(process.listenerCount(event)).toBe(2);
+    process.emit(event);
+    expect(calls).toBe(2);
+    process.removeListener(event, fn);
+    expect(process.listenerCount(event)).toBe(1);
+    process.emit(event);
+    expect(calls).toBe(3);
   });
 
   test("prependListener() and once() do not dedupe against an existing registration", () => {
     let calls = 0;
     const fn = () => calls++;
-    try {
-      process.on(event, fn);
-      process.prependListener(event, fn);
-      process.once(event, fn);
-      process.prependOnceListener(event, fn);
-      expect(process.listenerCount(event)).toBe(4);
-      process.emit(event);
-      expect(calls).toBe(4);
-      expect(process.listenerCount(event)).toBe(2);
-      process.emit(event);
-      expect(calls).toBe(6);
-    } finally {
-      process.removeAllListeners(event);
-    }
+    process.on(event, fn);
+    process.prependListener(event, fn);
+    process.once(event, fn);
+    process.prependOnceListener(event, fn);
+    expect(process.listenerCount(event)).toBe(4);
+    process.emit(event);
+    expect(calls).toBe(4);
+    expect(process.listenerCount(event)).toBe(2);
+    process.emit(event);
+    expect(calls).toBe(6);
   });
 
   test("once() twice with one function runs it twice, then nothing is left", () => {
     let calls = 0;
     const fn = () => calls++;
-    try {
-      process.once(event, fn);
-      process.once(event, fn);
-      expect(process.listenerCount(event)).toBe(2);
-      process.emit(event);
-      expect(calls).toBe(2);
-      expect(process.listenerCount(event)).toBe(0);
-      expect(process.emit(event)).toBe(false);
-      expect(calls).toBe(2);
-    } finally {
-      process.removeAllListeners(event);
-    }
+    process.once(event, fn);
+    process.once(event, fn);
+    expect(process.listenerCount(event)).toBe(2);
+    process.emit(event);
+    expect(calls).toBe(2);
+    expect(process.listenerCount(event)).toBe(0);
+    expect(process.emit(event)).toBe(false);
+    expect(calls).toBe(2);
   });
 
-  test("removeListener() removes the most recently added matching registration", () => {
+  test("removeListener() removes the last matching registration", () => {
     const order: string[] = [];
     const fn = () => order.push("fn");
     const other = () => order.push("other");
-    try {
-      process.once(event, fn);
-      process.on(event, other);
-      process.on(event, fn);
-      // Drops the trailing on(fn); the leading once(fn) stays and fires first.
-      process.removeListener(event, fn);
-      expect(process.listenerCount(event)).toBe(2);
-      process.emit(event);
-      expect(order).toEqual(["fn", "other"]);
-      expect(process.listenerCount(event)).toBe(1);
-      process.emit(event);
-      expect(order).toEqual(["fn", "other", "other"]);
-    } finally {
-      process.removeAllListeners(event);
-    }
+    process.once(event, fn);
+    process.on(event, other);
+    process.on(event, fn);
+    // Drops the trailing on(fn); the leading once(fn) stays and fires first.
+    process.removeListener(event, fn);
+    expect(process.listenerCount(event)).toBe(2);
+    process.emit(event);
+    expect(order).toEqual(["fn", "other"]);
+    expect(process.listenerCount(event)).toBe(1);
+    process.emit(event);
+    expect(order).toEqual(["fn", "other", "other"]);
   });
 
   test("listenerCount(event, fn) counts only that function", () => {
     const a = () => {};
     const b = () => {};
-    try {
-      process.on(event, a);
-      process.on(event, a);
-      process.on(event, b);
-      expect([
-        process.listenerCount(event),
-        process.listenerCount(event, b),
-        process.listenerCount(event, a),
-        process.listenerCount(event, () => {}),
-        process.listenerCount(event, undefined),
-        process.listenerCount(event, null),
-      ]).toEqual([3, 1, 2, 0, 3, 3]);
+    process.on(event, a);
+    process.on(event, a);
+    process.on(event, b);
+    expect([
+      process.listenerCount(event),
+      process.listenerCount(event, b),
+      process.listenerCount(event, a),
+      process.listenerCount(event, () => {}),
+      process.listenerCount(event, undefined),
+      process.listenerCount(event, null),
+    ]).toEqual([3, 1, 2, 0, 3, 3]);
 
-      const ee = new EventEmitter();
-      ee.on(event, a);
-      ee.on(event, a);
-      ee.on(event, b);
-      expect([ee.listenerCount(event), ee.listenerCount(event, b), ee.listenerCount(event, a)]).toEqual([3, 1, 2]);
-    } finally {
-      process.removeAllListeners(event);
-    }
+    const ee = new EventEmitter();
+    ee.on(event, a);
+    ee.on(event, a);
+    ee.on(event, b);
+    expect([ee.listenerCount(event), ee.listenerCount(event, b), ee.listenerCount(event, a)]).toEqual([3, 1, 2]);
   });
 
   test("'exit' listener added twice runs twice", async () => {

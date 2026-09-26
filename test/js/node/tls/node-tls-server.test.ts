@@ -1804,7 +1804,8 @@ describe("setSecureContext() on a listening server", () => {
       JSON.stringify({ handleAfterListen: "none", default: "agent3", viaAddContext: "agent2" }),
     );
     expect(exitCode).toBe(0);
-  });
+    // Two processes: a debug build on a loaded machine needs about 5 s.
+  }, 30_000);
 });
 
 it("an addContext() wildcard covers the hostname the server is bound to", async () => {

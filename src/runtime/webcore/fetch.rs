@@ -262,7 +262,7 @@ fn bun_fetch_preconnect(
         };
     }
 
-    if !url.is_http() && !url.is_https() && !url.is_s3() {
+    if !url.is_http() && !url.is_https() {
         reclaim_href!();
         return Err(
             global_object.throw_invalid_arguments(format_args!("URL must be HTTP or HTTPS"))

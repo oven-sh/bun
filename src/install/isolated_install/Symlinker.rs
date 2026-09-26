@@ -123,29 +123,31 @@ impl Symlinker {
                     {
                         return Ok(false);
                     }
+                }
 
-                    // this existing link is pointing to the wrong package.
-                    // on windows rmdir must be used for symlinks created to point
-                    // at directories, even if the target no longer exists
-                    match bun_sys::rmdir(self.dest.slice_z()) {
-                        Ok(()) => {}
-                        Err(err) => match err.get_errno() {
-                            Errno::EPERM => {
-                                let _ = bun_sys::unlink(self.dest.slice_z());
-                            }
-                            _ => {}
-                        },
-                    }
-                }
-                #[cfg(not(windows))]
-                {
-                    // this existing link is pointing to the wrong package
-                    let _ = bun_sys::unlink(self.dest.slice_z());
-                }
+                // this existing link is pointing to the wrong package
+                remove_link(self.dest.slice_z());
 
                 return self.symlink().map(|()| true);
             }
         }
+    }
+}
+
+/// Removes the link at `dest`. Errors are ignored.
+pub(crate) fn remove_link(dest: &bun_core::ZStr) {
+    #[cfg(windows)]
+    {
+        // a directory symlink needs rmdir, even if the target no longer exists
+        if let Err(err) = bun_sys::rmdir(dest) {
+            if matches!(err.get_errno(), Errno::EPERM) {
+                let _ = bun_sys::unlink(dest);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = bun_sys::unlink(dest);
     }
 }
 

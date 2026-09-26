@@ -803,6 +803,10 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
                     state.insert(SelectorParsingState::AFTER_VIEW_TRANSITION);
                 }
 
+                if p.is_search_text() {
+                    state.insert(SelectorParsingState::AFTER_SEARCH_TEXT);
+                }
+
                 builder.push_simple_selector(GenericComponent::PseudoElement(p));
             }
         }
@@ -990,6 +994,12 @@ pub enum PseudoClass {
 
     /// The [:autofill](https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill) pseudo class.
     Autofill(css::VendorPrefix),
+
+    /// The [:state()](https://html.spec.whatwg.org/multipage/custom-elements.html#custom-state-pseudo-class) pseudo class for custom element states.
+    State {
+        /// The custom state identifier. Script defines it, so it is a plain `<ident>`.
+        state: Ident,
+    },
 
     // CSS modules
     /// The CSS modules :local() pseudo class.
@@ -1222,7 +1232,7 @@ impl<'a> SelectorParser<'a> {
         // `::View-Transition-Group(..)` fall through to `CustomFunction`,
         // so look up `name` verbatim with no case folding.
         //
-        // PERF: 8 entries with near-unique lengths (3/6/10/19/19/21/26/30) —
+        // PERF: 9 entries with near-unique lengths (3/6/9/10/19/19/21/26/30) —
         // a length-gated `match` rejects the overwhelmingly-common miss path
         // (unknown `::-webkit-foo(...)` etc.) on a single `usize` compare,
         // versus a hash lookup's hash + table load + slice compare. Only
@@ -1239,6 +1249,11 @@ impl<'a> SelectorParser<'a> {
             6 if name == b"picker" => {
                 return Ok(PseudoElement::PickerFunction {
                     identifier: Ident::parse(input)?,
+                });
+            }
+            9 if name == b"highlight" => {
+                return Ok(PseudoElement::HighlightFunction {
+                    name: Ident::parse(input)?,
                 });
             }
             10 if name == b"cue-region" => {
@@ -1362,6 +1377,9 @@ impl<'a> SelectorParser<'a> {
             },
             b"dir" => PseudoClass::Dir {
                 direction: Direction::parse(parser)?,
+            },
+            b"state" => PseudoClass::State {
+                state: Ident::parse(parser)?,
             },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
                 selector: Box::new(Selector::parse(self, parser)?),
@@ -1565,6 +1583,10 @@ fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
         b"details-content" => PE::DetailsContent,
         b"picker-icon" => PE::PickerIcon,
         b"checkmark" => PE::Checkmark,
+        b"target-text" => PE::TargetText,
+        b"search-text" => PE::SearchText,
+        b"spelling-error" => PE::SpellingError,
+        b"grammar-error" => PE::GrammarError,
         _ => return None,
     } })
 }
@@ -2641,6 +2663,7 @@ bitflags::bitflags! {
         const AFTER_WEBKIT_SCROLLBAR = 1 << 8;
         const AFTER_VIEW_TRANSITION = 1 << 9;
         const AFTER_UNKNOWN_PSEUDO_ELEMENT = 1 << 10;
+        const AFTER_SEARCH_TEXT = 1 << 11;
     }
 }
 
@@ -2950,6 +2973,19 @@ pub enum PseudoElement {
         /// The identifier argument, e.g. `select` in `::picker(select)`.
         identifier: Ident,
     },
+    /// The [::target-text](https://drafts.csswg.org/css-pseudo-4/#selectordef-target-text) pseudo element.
+    TargetText,
+    /// The [::search-text](https://drafts.csswg.org/css-pseudo-4/#selectordef-search-text) pseudo element.
+    SearchText,
+    /// The [::spelling-error](https://drafts.csswg.org/css-pseudo-4/#selectordef-spelling-error) pseudo element.
+    SpellingError,
+    /// The [::grammar-error](https://drafts.csswg.org/css-pseudo-4/#selectordef-grammar-error) pseudo element.
+    GrammarError,
+    /// The [::highlight()](https://drafts.csswg.org/css-highlight-api/#custom-highlight-pseudo) functional pseudo element.
+    HighlightFunction {
+        /// A custom highlight name. Script registers it, so it is a plain `<ident>`.
+        name: Ident,
+    },
     /// An unknown pseudo element.
     Custom {
         /// The name of the pseudo element.
@@ -3039,6 +3075,10 @@ impl PseudoElement {
         matches!(self, PseudoElement::WebkitScrollbar(_))
     }
 
+    pub(crate) fn is_search_text(&self) -> bool {
+        matches!(self, PseudoElement::SearchText)
+    }
+
     pub(crate) fn is_view_transition(&self) -> bool {
         use PseudoElement as PE;
         matches!(
@@ -3085,6 +3125,11 @@ impl fmt::Display for PseudoElement {
             Self::PickerIcon => "picker_icon",
             Self::Checkmark => "checkmark",
             Self::PickerFunction { .. } => "picker_function",
+            Self::TargetText => "target_text",
+            Self::SearchText => "search_text",
+            Self::SpellingError => "spelling_error",
+            Self::GrammarError => "grammar_error",
+            Self::HighlightFunction { .. } => "highlight_function",
             Self::Custom { .. } => "custom",
             Self::CustomFunction { .. } => "custom_function",
         })
@@ -3626,7 +3671,12 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
         });
     }
 
-    if !state.allows_custom_functional_pseudo_classes() {
+    // `::part(x):state(y)` is valid: `:state()` is a state pseudo-class.
+    let is_state_after_part = strings::eql_case_insensitive_ascii_check_length(name, b"state")
+        && !state.intersects(
+            SelectorParsingState::AFTER_SLOTTED | SelectorParsingState::AFTER_PSEUDO_ELEMENT,
+        );
+    if !state.allows_custom_functional_pseudo_classes() && !is_state_after_part {
         return Err(input
             .new_custom_error(SelectorParseErrorKind::InvalidState.into_default_parser_error()));
     }
@@ -3682,7 +3732,9 @@ pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
             ));
         }
     } else if state.contains(SelectorParsingState::AFTER_PSEUDO_ELEMENT) {
-        if !pseudo_class.is_user_action_state() {
+        let is_search_text_current = state.contains(SelectorParsingState::AFTER_SEARCH_TEXT)
+            && matches!(pseudo_class, PseudoClass::Current);
+        if !pseudo_class.is_user_action_state() && !is_search_text_current {
             return Err(location.new_custom_error(
                 SelectorParseErrorKind::InvalidPseudoClassAfterPseudoElement
                     .into_default_parser_error(),

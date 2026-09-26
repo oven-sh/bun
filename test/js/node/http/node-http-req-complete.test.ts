@@ -9,7 +9,7 @@
 import assert from "node:assert";
 import { once } from "node:events";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -70,6 +70,38 @@ describe("req.complete of a request without a body", () => {
       assert.deepStrictEqual(seen, { listener: false, nextTick: true, immediate: true, finish: true });
     });
   }
+
+  // llhttp completes these at the end of the head, and Node emits the event after the parser returns.
+  for (const [event, payload] of [
+    ["connect", "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"],
+    ["upgrade", head + "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n"],
+  ]) {
+    test(`is true inside '${event}'`, async () => {
+      const { promise: seen, resolve: onSeen, reject } = Promise.withResolvers<boolean>();
+      const server = http.createServer();
+      server.on(event, (req: http.IncomingMessage, socket: Socket) => {
+        onSeen(req.complete);
+        socket.destroy();
+      });
+      await withServer(server, async port => {
+        send(port, payload, reject);
+        assert.strictEqual(await seen, true);
+      });
+    });
+  }
+
+  test("with optimizeEmptyRequests, the parser lets go of the request when its response finishes", async () => {
+    const { promise: closed, resolve: onClose, reject } = Promise.withResolvers<boolean>();
+    const server = http.createServer({ optimizeEmptyRequests: true } as http.ServerOptions, (req, res) => {
+      const parser = (req.socket as any).parser;
+      res.on("close", () => onClose(parser.incoming === req));
+      res.end("ok");
+    });
+    await withServer(server, async port => {
+      send(port, head + "\r\n", reject);
+      assert.strictEqual(await closed, false);
+    });
+  });
 
   test("is true for a request that is pipelined behind a pending response", async () => {
     const seen: Record<string, Seen> = {};

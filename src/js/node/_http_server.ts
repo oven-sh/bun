@@ -819,6 +819,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.upgrade = true;
             // Node frees the parser before handing the raw socket to 'connect'.
             releaseServerParserShim(socket, http_req);
+            // llhttp completes a CONNECT request at the end of its head, before Node emits 'connect'.
+            http_req.complete = true;
             try {
               server.emit("connect", http_req, socket, head);
             } catch (err) {
@@ -1047,6 +1049,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           if (hasBody) {
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
+          } else {
+            http_req.complete = true;
           }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
           let upgradeHandled;
@@ -2609,6 +2613,9 @@ function emitResponseFinish() {
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
   const socket = this.req?.socket ?? this.socket;
+  // Node's clearIncoming: a request that ended before its response did. Any other one is cleared at its EOF.
+  const parser = socket?.parser;
+  if (parser != null && parser.incoming === req && req.readableEnded) parser.incoming = null;
   onResponseFinishHandleSocket(socket?.server, socket, this);
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.

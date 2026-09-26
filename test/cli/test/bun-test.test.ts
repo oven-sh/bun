@@ -1945,6 +1945,51 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Two path arguments can select the same file: a directory and a file
+  // inside it, or a directory and ".". With --isolate or --parallel each entry
+  // in the run list is a separate load, so the file runs once only if the
+  // scanner lists it once. In the default mode a repeat only prints the file
+  // header twice and counts two files. The cwd and its ancestors are listed
+  // by the resolver before the scanner runs, so those arguments are served
+  // from the cache and must still be walked.
+  describe.each([
+    ["directory then file", ["./sub", "./sub/b.test.ts"], "Ran 2 tests across 2 files."],
+    ["file then directory", ["./sub/b.test.ts", "./sub"], "Ran 2 tests across 2 files."],
+    ["the same file twice", ["./sub/b.test.ts", "./sub/b.test.ts"], "Ran 1 test across 1 file."],
+    ["subdirectory then cwd", ["./sub", "."], "Ran 3 tests across 3 files."],
+    ["cwd then subdirectory", [".", "./sub"], "Ran 3 tests across 3 files."],
+    ["parent of the cwd", ["../"], "Ran 4 tests across 4 files."],
+  ])("a file selected by two path arguments runs once (%s)", (_name, args, summary) => {
+    test.each([
+      ["default", []],
+      ["--isolate", ["--isolate"]],
+      ["--parallel", ["--parallel"]],
+    ])("%s", async (_mode, flags) => {
+      using dir = tempDir("scanner-duplicate-args", {
+        "outer.test.ts": `import { test } from "bun:test"; test("outer", () => { console.log("RAN outer"); });`,
+        "cwd/top.test.ts": `import { test } from "bun:test"; test("top", () => { console.log("RAN top"); });`,
+        "cwd/sub/a.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a"); });`,
+        "cwd/sub/b.test.ts": `import { test } from "bun:test"; test("b", () => { console.log("RAN b"); });`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...flags, ...args],
+        env: bunEnv,
+        cwd: join(String(dir), "cwd"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // --parallel forwards the console output of a worker through stderr.
+      const out = stdout + stderr;
+      expect(out.split("RAN b").length - 1).toBe(1);
+      expect(out.split(`sub${sep}b.test.ts:`).length - 1).toBe(1);
+      expect(stderr).toContain(summary);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // The scanner builds every absolute path in a PathBuffer of MAX_PATH_BYTES:
   // 4096 on Linux, 1024 on every other POSIX (src/bun_core/util.rs). On Windows
   // it is 32767*3+1 bytes, more than a command line or an NT path can hold, so

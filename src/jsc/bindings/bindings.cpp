@@ -5746,6 +5746,44 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     properties.releaseData();
 }
 
+// True only when forEachProperty (forEachPropertyOrdered if `ordered`) reports nothing. Runs no JS, so false can mean "unknown".
+extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isDefinitelyEmptyForEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, bool ordered)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
+    if (!object)
+        return false;
+
+    auto& vm = JSC::getVM(globalObject);
+    // forEachProperty reads the object and four prototypes. forEachPropertyOrdered reads the object only.
+    const unsigned maxLevels = ordered ? 1 : 5;
+    for (unsigned level = 0; level < maxLevels; level++) {
+        JSC::Structure* structure = object->structure();
+        const JSC::TypeInfo& typeInfo = structure->typeInfo();
+        // The property table must list every own property name of this level.
+        if (typeInfo.overridesGetOwnPropertySlot() || typeInfo.overridesAnyFormOfGetOwnPropertyNames() || typeInfo.overridesGetPrototype()
+            || structure->hasNonReifiedStaticProperties() || hasIndexedProperties(structure->indexingType()))
+            return false;
+
+        bool skipsEveryProperty = true;
+        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+            // forEachProperty hides every `constructor`. An own enumerable one is real content, so that object is not empty.
+            bool isHiddenConstructor = entry.key() == vm.propertyNames->constructor && (level > 0 || (entry.attributes() & PropertyAttribute::DontEnum));
+            // A private name on every level makes forEachProperty read a fifth prototype, so only the object may hold one.
+            bool isHiddenPrivateName = level == 0 && PropertyName(entry.key()).isPrivateName() && !JSC::Options::showPrivateScriptsInStackTraces();
+            skipsEveryProperty = isHiddenConstructor || isHiddenPrivateName;
+            return skipsEveryProperty;
+        });
+        if (!skipsEveryProperty)
+            return false;
+
+        JSValue prototype = object->getPrototypeDirect();
+        if (!prototype.isObject() || prototype == globalObject->objectPrototype() || prototype == globalObject->functionPrototype())
+            return true;
+        object = asObject(prototype);
+    }
+    return true;
+}
+
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0)
 {
     JSValue value = JSValue::decode(JSValue0);

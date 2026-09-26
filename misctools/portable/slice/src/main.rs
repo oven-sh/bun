@@ -20,7 +20,7 @@ use core::ffi::{c_char, c_int};
 
 use bun_core::ZStr;
 use bun_paths::resolve_path::{self, platform};
-use bun_sys::{E, Fd, File, Maybe, O};
+use bun_sys::{Fd, File, Maybe, O};
 
 #[cfg(bun_portable)]
 mod abi;
@@ -454,6 +454,12 @@ fn run_steps(directory: &[u8]) -> bool {
     report.print()
 }
 
+unsafe extern "C" {
+    /// bun_core: what bun runs when the process ends. It flushes the output and gives the console
+    /// back as it was (on Windows: its modes and its code pages).
+    safe fn Bun__onExit();
+}
+
 fn usage() -> c_int {
     let _ = File::borrow(&Fd::stderr()).write_all(
         b"usage: bun_fs_slice <directory> | --imports | --layout | --abi\n",
@@ -488,6 +494,6 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
         [directory] if !directory.starts_with(b"--") => run_steps(directory),
         _ => return usage(),
     };
-    let _ = E::SUCCESS;
+    Bun__onExit();
     if passed { 0 } else { 1 }
 }

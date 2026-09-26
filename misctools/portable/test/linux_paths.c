@@ -24,6 +24,10 @@
 //                  The handler changes program counter, first argument register and stack
 //                  pointer, and the thread goes on in the function that the handler chose
 //   maperr         the same for an address where nothing is mapped: SEGV_MAPERR
+//   vectors        aarch64: the vector registers of the code that ran into a fault are in
+//                  the record of the signal context that Linux has for them (fpsimd, in
+//                  __reserved of the machine context), and what the handler writes there
+//                  is what the code goes on with
 #define _GNU_SOURCE
 #include <errno.h>
 #include <pthread.h>
@@ -105,6 +109,49 @@ static void on_fault(int sig, siginfo_t *info, void *context) {
 }
 __attribute__((noinline)) static int read_byte(volatile char *p) { return *p; }
 
+#if defined(__aarch64__)
+/* d8 = 1.5 and d9 = 2.5, then a read at x0 that is a fault. The handler looks for the two
+   values, writes 4.5 for d9 and lets the code go on after the read. The sum comes back. */
+__attribute__((naked, noinline)) static double fault_with_vectors(volatile char *p) {
+  __asm__("stp d8, d9, [sp, #-16]!\n fmov d8, #1.5\n fmov d9, #2.5\n ldrb w1, [x0]\n fadd d0, d8, d9\n ldp d8, d9, [sp], #16\n ret\n");
+}
+static volatile int vectors_seen;
+static void on_vector_fault(int sig, siginfo_t *info, void *context) {
+  (void)sig; (void)info;
+  ucontext_t *uc = context;
+  unsigned char *records = (unsigned char *)uc->uc_mcontext.__reserved;
+  for (size_t at = 0; at + 8 <= sizeof uc->uc_mcontext.__reserved;) {
+    uint32_t magic, size;
+    memcpy(&magic, records + at, 4);
+    memcpy(&size, records + at + 4, 4);
+    double changed = 4.5;
+    if (magic == 0x46508001 && size == 528) {
+      double d8, d9;
+      memcpy(&d8, records + at + 16 + 8 * 16, 8);
+      memcpy(&d9, records + at + 16 + 9 * 16, 8);
+      vectors_seen = d8 == 1.5 && d9 == 2.5;
+      memcpy(records + at + 16 + 9 * 16, &changed, 8);
+    }
+    /* A processor with SVE, on Linux by itself: the longer registers have a record of their
+       own (the length of a register in bytes after the header, then Z0 to Z31), and d9
+       is the start of Z9. A host hands out the record above only. */
+    if (magic == 0x53564501 && size > 16) {
+      uint16_t bytes;
+      memcpy(&bytes, records + at + 8, 2);
+      memcpy(records + at + 16 + 9 * (size_t)bytes, &changed, 8);
+    }
+    if (!magic || size < 8) break;
+    at += size;
+  }
+  uc->uc_mcontext.pc += 4;
+}
+#define VECTORS_FORMAT " vectors=%d"
+#define VECTORS_VALUE , vectors_ok
+#else
+#define VECTORS_FORMAT
+#define VECTORS_VALUE
+#endif
+
 static int wait_for(volatile int *value) {
   for (int i = 0; i < 400 && !*value; i++) {
     struct timespec pause = {0, 5000000};
@@ -118,6 +165,9 @@ int main(int argc, char **argv) {
   int direct = !strcmp(mode, "direct"), signals = direct || !strcmp(mode, "hosted-signals");
   int vfork_ok, signal_ok, cancel_ok = 1, stack_ok, mask_ok = 1, thread_signal_ok = 1, fault_ok = 1, maperr_ok = 1;
   int tls_align_ok = tls_aligned();
+#if defined(__aarch64__)
+  int vectors_ok = 1;
+#endif
 
   volatile int marker = 1;
   errno = 0;
@@ -190,6 +240,11 @@ int main(int argc, char **argv) {
         maperr_ok = 0;
       } else maperr_ok = landed_with == 1234 && fault_signal == SIGSEGV && fault_address == (uintptr_t)page + 20 && fault_code == SEGV_MAPERR;
     }
+#if defined(__aarch64__)
+    fa.sa_sigaction = on_vector_fault;
+    char *closed = mmap(0, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    vectors_ok = closed != MAP_FAILED && !sigaction(SIGSEGV, &fa, 0) && fault_with_vectors(closed) == 6.0 && vectors_seen;
+#endif
     signal(SIGSEGV, SIG_DFL);
   }
   if (direct) {
@@ -205,7 +260,10 @@ int main(int argc, char **argv) {
     }
   }
 
-  printf("linux_paths: mode=%s vfork=%d signal=%d cancel=%d main_tls=%d stack=%d mask=%d thread_signal=%d fault=%d maperr=%d tls_align=%d\n",
-         mode, vfork_ok, signal_ok, cancel_ok, tl_value, stack_ok, mask_ok, thread_signal_ok, fault_ok, maperr_ok, tls_align_ok);
+  printf("linux_paths: mode=%s vfork=%d signal=%d cancel=%d main_tls=%d stack=%d mask=%d thread_signal=%d fault=%d maperr=%d tls_align=%d" VECTORS_FORMAT "\n",
+         mode, vfork_ok, signal_ok, cancel_ok, tl_value, stack_ok, mask_ok, thread_signal_ok, fault_ok, maperr_ok, tls_align_ok VECTORS_VALUE);
+#if defined(__aarch64__)
+  if (!vectors_ok) return 1;
+#endif
   return vfork_ok && signal_ok && cancel_ok && tl_value == 7 && stack_ok && mask_ok && thread_signal_ok && fault_ok && maperr_ok && tls_align_ok ? 42 : 1;
 }

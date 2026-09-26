@@ -230,13 +230,19 @@ export async function test(ctx: Context, runs: number): Promise<boolean> {
       macos,
     );
 
-    // 132 is SIGILL, 139 is SIGSEGV
-    await expect(139, /Segmentation fault/, "aarch64 must fail: hosted, host does not reload x18", [
-      ...emulator,
-      hostNoReload,
-      image("threads"),
-      probe,
-    ]);
+    // 132 is SIGILL. A host whose shims do not put x18 back is ended by its own check of x18 (exit
+    // code 96): the next request finds what the host left in the register.
+    await expect(
+      96,
+      /^host: the image changed x18: it is 0xdead/m,
+      "aarch64 must fail: hosted, host does not reload x18",
+      [
+        ...emulator,
+        hostNoReload,
+        image("threads"),
+        probe,
+      ],
+    );
     await expect(132, /Illegal instruction/, "aarch64 must fail: direct, image with traps on svc", [
       ...emulator,
       threadsX18Only,

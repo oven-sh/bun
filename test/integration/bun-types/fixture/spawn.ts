@@ -226,3 +226,18 @@ tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.
   Bun.spawnSync({ cmd: ["echo", "hello"], stdout: "pipe", stderr: "pipe", lazy: true,
   });
 }
+
+// windowsKeepAlive (Windows only at runtime, typed everywhere)
+{
+  const p3 = Bun.spawn(["powershell.exe", "-NoProfile", "-Command", "exit 0"], {
+    stdio: ["ignore", 1, 2],
+    windowsHide: true,
+    windowsKeepAlive: true,
+  });
+  p3.unref();
+
+  Bun.spawnSync({ cmd: ["cmd.exe", "/c", "exit"], windowsKeepAlive: false });
+
+  // @ts-expect-error windowsKeepAlive is a boolean
+  Bun.spawn({ cmd: ["cmd.exe"], windowsKeepAlive: "yes" });
+}

@@ -472,6 +472,25 @@ impl Group {
         }
     }
 
+    /// A group that no version satisfies.
+    fn null_set(input: &[u8]) -> Group {
+        Group {
+            head: List {
+                head: Query {
+                    range: Range {
+                        left: Comparator::null_set(),
+                        ..Default::default()
+                    },
+                    next: None,
+                },
+                tail: None,
+                next: None,
+            },
+            input: std::ptr::from_ref::<[u8]>(input),
+            ..Default::default()
+        }
+    }
+
     pub fn is_exact(&self) -> bool {
         self.head.next.is_none()
             && self.head.head.next.is_none()
@@ -945,6 +964,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
         if !skip_round {
             let parse_result = Version::parse(sliced.sub(&input[i..]));
+            // node-semver rejects the whole range for a number it cannot hold.
+            if parse_result.overflow {
+                return Ok(Group::null_set(input));
+            }
             let version = parse_result.version.min();
             if version.tag.has_build() {
                 list.flags.set(Flags::BUILD);
@@ -997,6 +1020,9 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
             if hyphenate {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
+                if second_parsed.overflow {
+                    return Ok(Group::null_set(input));
+                }
                 let mut second_version = second_parsed.version.min();
                 if second_version.tag.has_build() {
                     list.flags.set(Flags::BUILD);

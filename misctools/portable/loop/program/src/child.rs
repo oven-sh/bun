@@ -98,8 +98,7 @@ pub struct Child {
 // whose crate it is built without, the lifecycle scripts of `bun install`.
 bun_io::impl_buffered_reader_parent! {
     LifecycleScript for Child;
-    has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
+    has_on_read_chunk = false;
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).event_loop.native_loop();
@@ -127,22 +126,22 @@ impl StaticPipeWriterProcess for Child {
 }
 
 impl Child {
-    fn on_read_chunk(&mut self, _chunk: bun_io::Chunk<'_>, _has_more: bun_io::ReadState) -> bool {
-        if let Some(word) = self.kill_after {
-            if !self.killed
-                && self
-                    .stdout
-                    .buffer()
-                    .windows(word.len())
-                    .any(|part| part == word)
-            {
-                self.killed = true;
-                if let Some(process) = &self.process {
-                    let _ = process.kill(KILL);
-                }
-            }
+    /// Kills the child once it has said the word it is to be killed after.
+    fn kill_when_it_is_time(&mut self) {
+        let Some(word) = self.kill_after else { return };
+        if self.killed
+            || !self
+                .stdout
+                .buffer()
+                .windows(word.len())
+                .any(|part| part == word)
+        {
+            return;
         }
-        true
+        self.killed = true;
+        if let Some(process) = &self.process {
+            let _ = process.kill(KILL);
+        }
     }
 
     fn on_reader_done(&mut self) {
@@ -202,7 +201,9 @@ impl Child {
                     loop_: event_loop,
                     ..Default::default()
                 },
-                stream: false,
+                // The outputs are read while the child runs: pipes, and not the file in memory that
+                // Linux has for an output that is read at the end.
+                stream: true,
                 ..Default::default()
             };
             let spawned =
@@ -230,12 +231,16 @@ impl Child {
 
             #[cfg(unix)]
             {
-                for (reader, fd) in [
-                    (&raw mut (*this).stdout, spawned.stdout),
-                    (&raw mut (*this).stderr, spawned.stderr),
+                for (reader, fd, in_memory) in [
+                    (&raw mut (*this).stdout, spawned.stdout, spawned.memfds[1]),
+                    (&raw mut (*this).stderr, spawned.stderr, spawned.memfds[2]),
                 ] {
                     let Some(fd) = fd else { continue };
                     (*reader).set_parent(this.cast::<c_void>());
+                    if in_memory {
+                        (*reader).start_memfd(fd);
+                        continue;
+                    }
                     let _ = bun_sys::set_nonblocking(fd);
                     (*reader)
                         .flags
@@ -407,7 +412,10 @@ fn run(
     match started {
         Ok(()) => {
             // SAFETY: the callbacks that write the child run inside of `run_until`, on this thread.
-            event_loop.run_until(|| unsafe { (*pointer).is_done() });
+            event_loop.run_until(|| unsafe {
+                (*pointer).kill_when_it_is_time();
+                (*pointer).is_done()
+            });
             report.boolean("started", true);
         }
         Err(error) => {

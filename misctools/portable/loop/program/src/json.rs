@@ -69,7 +69,7 @@ impl Report {
 
     pub fn end_ok(&mut self) {
         self.boolean("ok", true);
-        self.out.extend_from_slice(b"}\n");
+        self.end_line();
     }
 
     /// The error as bun names it: the name of the errno and the system call that bun attributes it to.
@@ -77,7 +77,7 @@ impl Report {
         self.boolean("ok", false);
         self.string("error", error.name());
         self.string("syscall", <&'static str>::from(error.syscall).as_bytes());
-        self.out.extend_from_slice(b"}\n");
+        self.end_line();
     }
 
     pub fn step<T>(&mut self, step: &str, path: &[u8], result: Maybe<T>) {
@@ -91,7 +91,8 @@ impl Report {
         }
     }
 
-    /// Writes what was collected to the standard output. Returns whether all of it was written.
+    /// Writes what was collected to the standard output. Returns whether everything so far was
+    /// written.
     pub fn print(&mut self) -> bool {
         if File::borrow(&Fd::stdout()).write_all(&self.out).is_err() {
             self.failed_to_print = true;
@@ -120,9 +121,11 @@ fn quoted(out: &mut Vec<u8>, value: &[u8]) {
 }
 
 impl Report {
-    /// Ends an object that has its own `ok`.
+    /// Ends an object that has its own `ok`. A line is written when it is complete: the lines of
+    /// the steps before are there when a step does not return.
     pub fn end_line(&mut self) {
         self.out.extend_from_slice(b"}\n");
+        self.print();
     }
 
     pub fn raw(&mut self, bytes: &[u8]) {

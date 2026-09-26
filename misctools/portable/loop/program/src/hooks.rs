@@ -165,11 +165,37 @@ pub unsafe extern "C" fn Bun__parseIpAddress(
     1
 }
 
+// ---- src/runtime/timer/DateHeaderTimer.rs ----
+
+/// uSockets asks for the timer of the `Date` header of `Bun.serve` when the first socket is there.
+/// `bun_runtime` starts it when the thread has a JavaScript VM, and this program has none.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(_loop: *mut bun_uws_sys::Loop) {}
+
 // ---- src/runtime/bin_entry/c_abi_exports.rs ----
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__outOfMemory() -> ! {
     bun_core::out_of_memory()
+}
+
+// ---- src/runtime/jsc_hooks.rs: the loop that a poll or a pipe of this thread belongs to ----
+
+/// The loop of `bun install` is the only one here: the other is the loop of a JavaScript VM.
+#[cfg(not(windows))]
+#[unsafe(no_mangle)]
+pub fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
+    match kind {
+        bun_io::AllocatorType::Js => {
+            panic!("the loop of a JavaScript VM in a program without bun's runtime")
+        }
+        bun_io::AllocatorType::Mini => {
+            let mini = bun_event_loop::MiniEventLoop::GLOBAL.with(|global| global.get());
+            // SAFETY: `Loop::get` made the loop before anything asks for it, and it lives as long
+            // as the process.
+            bun_event_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(unsafe { &mut *mini })
+        }
+    }
 }
 
 // ---- src/runtime/dispatch.rs: a file descriptor is ready, for the owners this program has ----

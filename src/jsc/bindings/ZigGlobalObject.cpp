@@ -3373,7 +3373,7 @@ void GlobalObject::handleRejectedPromises()
             if (promise->isHandled())
                 continue;
             // From here on a handler on this promise is late: promiseRejectionTracker(Handle) owes it 'rejectionHandled'.
-            // (Not one a Bun.ModuleGraph's handler is given: the process is not told of it, so it is owed nothing.)
+            // A rejection a Bun.ModuleGraph is given is never reported to the process, so it is owed none.
             if (!rejectionOwners.at(i).isCell())
                 m_aboutToBeNotifiedRejectedPromises.markReported(this, promise);
 

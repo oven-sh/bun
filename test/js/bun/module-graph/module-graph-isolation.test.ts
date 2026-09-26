@@ -321,7 +321,7 @@ const dir = String(
       tenant.run(() => inner.startsIt());
       while (hostSaw.length === 0 && calls <= 50) await new Promise(resolve => setImmediate(resolve));
       for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
-      console.log(JSON.stringify({ callsOfTheTenantsOnError: calls, hostSaw }));
+      console.log(JSON.stringify({ callsOfTheTenantsHandler: calls, hostSaw }));
       process.exit(0);
     `,
     "imports-a-commonjs-module.mjs": `import ran from "./commonjs-that-tells.cjs"; export default ran;`,
@@ -3742,7 +3742,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
     });
   });
   test.each(["by its script", "by a host function it called"])(
-    "errors of a graph made in its context (%s) without an uncaughtException go to its uncaughtException, not to the host",
+    "errors of a graph made in its context (%s) without a handler go to its uncaughtException, not to the host",
     async how => {
       expect(await runsFixture("errors-of-a-graph-made-by-a-graph.mjs", how)).toEqual({
         stdout: `{"hostSaw":[],"tenantSaw":["rejected and unhandled","thrown from a timer"]}`,
@@ -3752,7 +3752,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   );
   test("a rejection its uncaughtException causes in the code of a graph it made goes to the host, not back to that uncaughtException", async () => {
     expect(await runsFixture("on-error-that-causes-an-inner-rejection.mjs")).toEqual({
-      stdout: `{"callsOfTheTenantsOnError":1,"hostSaw":["rejected by the inner graph's code"]}`,
+      stdout: `{"callsOfTheTenantsHandler":1,"hostSaw":["rejected by the inner graph's code"]}`,
       exitCode: 0,
     });
   });

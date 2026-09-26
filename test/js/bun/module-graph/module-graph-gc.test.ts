@@ -538,7 +538,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
             "graph",
             new ModuleGraph({
               globals: { control: state },
-              uncaughtException: (error: any, kind) => told.push(kind + ": " + error.message),
+              uncaughtException: (error: any, origin) => told.push(origin + ": " + error.message),
             }),
           );
           const io = await graph.import(file("io.mjs"));

@@ -902,7 +902,7 @@ const hostedEvents: Record<string, HostedEvent> = {
     orders: true,
     needsGraph: true,
   },
-  "the graph's code throws and there is no uncaughtException": {
+  "the graph's code throws and the graph has no handler": {
     hostPlan: ["order:throw", "errored"],
     mainPlan: ["ready"],
     ends: "threw",

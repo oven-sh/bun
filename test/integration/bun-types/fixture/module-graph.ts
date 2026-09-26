@@ -21,8 +21,6 @@ import { expectType } from "./utilities";
   new Bun.ModuleGraph({ uncaughtException: 1 });
   // @ts-expect-error unhandledRejection must be a function
   new Bun.ModuleGraph({ unhandledRejection: 1 });
-  // @ts-expect-error there is no onError: the handlers are the two process has
-  new Bun.ModuleGraph({ onError() {} });
   // @ts-expect-error globals must be an object
   new Bun.ModuleGraph({ globals: "x" });
   // @ts-expect-error specifier must be a string

@@ -105,7 +105,7 @@ const graph = new Bun.ModuleGraph({
 
 ## Errors
 
-Uncaught exceptions and unhandled rejections go to the handlers of the graph in whose context they happen, instead of the process-wide handlers. The two handlers are the ones `process` has:
+Uncaught exceptions and unhandled rejections go to the handlers of the graph in whose context they happen, instead of the process-wide handlers. The two handlers take what the `process` events of the same name take:
 
 ```ts
 const graph = new Bun.ModuleGraph({
@@ -116,9 +116,15 @@ const graph = new Bun.ModuleGraph({
 });
 ```
 
-As in Node.js, an unhandled rejection of a graph with no `unhandledRejection` goes to its `uncaughtException` with the origin `"unhandledRejection"`. A reason that is not an error reaches `uncaughtException` as an error with the code `ERR_UNHANDLED_REJECTION` that names it; `unhandledRejection` is given the reason as it is.
+| What happened                                                                                   | Bun calls            | With                                                 |
+| ----------------------------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------- |
+| Nothing caught an exception.                                                                    | `uncaughtException`  | The exception, and the origin `"uncaughtException"`. |
+| Nothing handled a rejection.                                                                    | `unhandledRejection` | The reason, unchanged, and the rejected promise.     |
+| Nothing handled a rejection, and the graph has `uncaughtException` but no `unhandledRejection`. | `uncaughtException`  | An error, and the origin `"unhandledRejection"`.     |
 
-The process is not told of a rejection that a graph was given: it gets no `rejectionHandled` event when that promise is handled later.
+In the last row the error is the reason when the reason is an error, as in Node.js. Otherwise it is a new error with the code `ERR_UNHANDLED_REJECTION` that describes the reason.
+
+When a graph's handler takes a rejection, `process` gets no `unhandledRejection` event for it and no `rejectionHandled` event later.
 
 The context an error happens in is the same context that owns what the code opens: a graph's modules and everything they start run in the graph's context, and so does what the host calls through `run()`.
 

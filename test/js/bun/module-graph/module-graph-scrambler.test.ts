@@ -1,5 +1,5 @@
 // Bun.ModuleGraph under random compositions: chains of hops through timers, promises, emitters and run(), through
-// the code of several graphs and of the host, each ending in an error nobody handles. See scrambler/scrambler.mjs
+// the code of several graphs and of the host, each ending in an error nobody handles. See scrambler/scrambler-fixture.mjs
 // for what is checked.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
@@ -13,7 +13,7 @@ describe.concurrent("Bun.ModuleGraph scrambler", () => {
     "every hop runs in the context it was scheduled in, and every error is heard by its graph: seed %d",
     async seed => {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), join(import.meta.dir, "scrambler", "scrambler.mjs")],
+        cmd: [bunExe(), join(import.meta.dir, "scrambler", "scrambler-fixture.mjs")],
         env: { ...bunEnv, SEED: String(seed), CHAINS: String(chains), DEADLINE: String(deadline) },
         stdout: "pipe",
         stderr: "pipe",

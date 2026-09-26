@@ -55,12 +55,8 @@ static JSModuleGraph* moduleGraphOfOverlay(VM& vm, JSScope* scope)
 static ModuleGraphState& moduleGraphState(Zig::GlobalObject* globalObject)
 {
     auto& state = globalObject->m_moduleGraphs;
-    if (!state) {
+    if (!state)
         state = makeUnique<ModuleGraphState>(globalObject->vm());
-        // Whose an unhandled rejection is is the graph of the async context it is reported in
-        // (moduleGraphRejecting()), also when what rejects the promise is a job that runs no script.
-        globalObject->vm().reportUnhandledRejectionsInAsyncContext();
-    }
     return *state;
 }
 
@@ -161,15 +157,17 @@ JSModuleLoader* moduleLoaderOf(JSGlobalObject* globalObject, ThrowScope& scope, 
     return graph ? graph->loader() : globalObject->moduleLoader();
 }
 
-enum class GraphError : uint8_t { UncaughtException,
-    UnhandledRejection };
+enum class GraphErrorKind : uint8_t {
+    UncaughtException,
+    UnhandledRejection,
+};
 
 // The graph that is given an error of `graph`'s code: the nearest of it and the graphs that made it with a
 // handler for it (a graph given none is part of the program of the graph whose code made it). An unhandled
 // rejection with no `unhandledRejection` is an uncaught exception, as in Node. Null: the host's handlers.
-static JSModuleGraph* graphGivenErrorsOf(JSModuleGraph* graph, GraphError kind)
+static JSModuleGraph* graphGivenErrorsOf(JSModuleGraph* graph, GraphErrorKind kind)
 {
-    while (graph && !graph->uncaughtExceptionHandler() && !(kind == GraphError::UnhandledRejection && graph->unhandledRejectionHandler()))
+    while (graph && !graph->uncaughtExceptionHandler() && !(kind == GraphErrorKind::UnhandledRejection && graph->unhandledRejectionHandler()))
         graph = graph->maker();
     return graph;
 }
@@ -178,16 +176,17 @@ static JSModuleGraph* graphGivenErrorsOf(JSModuleGraph* graph, GraphError kind)
 // promise is rejected.
 JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject)
 {
-    return graphGivenErrorsOf(currentModuleGraph(globalObject), GraphError::UnhandledRejection);
+    return graphGivenErrorsOf(currentModuleGraph(globalObject), GraphErrorKind::UnhandledRejection);
 }
 
 // ─── uncaughtException, unhandledRejection ───────────────────────────────────────────
 
+// virtual_machine_exports.rs: the reason if it is an error, else an ERR_UNHANDLED_REJECTION error that names it.
 extern "C" EncodedJSValue Bun__unhandledRejectionAsUncaughtError(JSGlobalObject*, EncodedJSValue reason);
 
 // options.unhandledRejection(reason, promise), or options.uncaughtException(error, origin) with Node's
-// origins ("uncaughtException", "unhandledRejection"). `promise`: the rejected one, or empty.
-static bool deliverToHandler(Zig::GlobalObject* globalObject, JSModuleGraph* graph, GraphError kind, JSValue error, JSValue promise)
+// origins ("uncaughtException", "unhandledRejection"). `promise`: empty for an uncaught exception.
+static bool deliverToHandler(Zig::GlobalObject* globalObject, JSModuleGraph* graph, GraphErrorKind kind, JSValue error, JSValue promise)
 {
     graph = graphGivenErrorsOf(graph, kind);
     if (!graph)
@@ -199,23 +198,20 @@ static bool deliverToHandler(Zig::GlobalObject* globalObject, JSModuleGraph* gra
     // else giving it the error runs (a trap of a reason that is a Proxy).
     ErrorHandlerContextScope inMakersContext(globalObject, graph->maker());
     MarkedArgumentBuffer args;
-    JSObject* handler;
-    if (kind == GraphError::UnhandledRejection && graph->unhandledRejectionHandler()) {
+    JSObject* handler = graph->uncaughtExceptionHandler();
+    bool isRejection = kind == GraphErrorKind::UnhandledRejection;
+    if (isRejection && graph->unhandledRejectionHandler()) {
         handler = graph->unhandledRejectionHandler();
         args.append(error);
-        args.append(promise ? promise : jsUndefined());
-    } else if (kind == GraphError::UnhandledRejection) {
-        handler = graph->uncaughtExceptionHandler();
-        // As the process's uncaughtException is: a reason that is not an error is named by one.
-        JSValue asError = JSValue::decode(Bun__unhandledRejectionAsUncaughtError(globalObject, JSValue::encode(error)));
-        if (auto* exception = dynamicDowncast<JSC::Exception>(asError); exception && vm.isTerminationException(exception)) [[unlikely]]
-            return true;
-        args.append(asError);
-        args.append(jsNontrivialString(vm, "unhandledRejection"_s));
+        args.append(promise);
     } else {
-        handler = graph->uncaughtExceptionHandler();
+        if (isRejection) {
+            error = JSValue::decode(Bun__unhandledRejectionAsUncaughtError(globalObject, JSValue::encode(error)));
+            if (auto* exception = dynamicDowncast<JSC::Exception>(error); exception && vm.isTerminationException(exception)) [[unlikely]]
+                return true;
+        }
         args.append(error);
-        args.append(jsNontrivialString(vm, "uncaughtException"_s));
+        args.append(jsString(vm, String(isRejection ? "unhandledRejection"_s : "uncaughtException"_s)));
     }
     JSC::call(globalObject, handler, getCallData(handler), jsUndefined(), args);
     if (scope.exception()) [[unlikely]] {
@@ -245,7 +241,7 @@ extern "C" EncodedJSValue Bun__ModuleGraph__rejecting(JSGlobalObject* lexicalGlo
 extern "C" bool Bun__ModuleGraph__handleUnhandledRejection(JSGlobalObject* lexicalGlobalObject, EncodedJSValue reason, EncodedJSValue promise, EncodedJSValue owner)
 {
     auto* graph = dynamicDowncast<JSModuleGraph>(JSValue::decode(owner));
-    return graph && deliverToHandler(defaultGlobalObject(lexicalGlobalObject), graph, GraphError::UnhandledRejection, JSValue::decode(reason), JSValue::decode(promise));
+    return graph && deliverToHandler(defaultGlobalObject(lexicalGlobalObject), graph, GraphErrorKind::UnhandledRejection, JSValue::decode(reason), JSValue::decode(promise));
 }
 
 static JSModuleGraph* moduleGraphOfFrame(Zig::GlobalObject*, JSValue asyncContext, JSObject** enteredWith);
@@ -266,7 +262,7 @@ extern "C" bool Bun__ModuleGraph__handleUncaughtException(JSGlobalObject* lexica
     }
     if (!asyncContext)
         asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-    return deliverToHandler(globalObject, moduleGraphOfFrame(globalObject, asyncContext, nullptr), GraphError::UncaughtException, error, JSValue());
+    return deliverToHandler(globalObject, moduleGraphOfFrame(globalObject, asyncContext, nullptr), GraphErrorKind::UncaughtException, error, JSValue());
 }
 
 // ─── The graph's context ─────────────────────────────────────────────────────────────
@@ -543,8 +539,8 @@ JSModuleGraph::JSModuleGraph(VM& vm, Structure* structure, Ref<WebCore::ScriptEx
     : Base(vm, structure)
     , m_context(WTF::move(context))
     , m_loader(loader, WriteBarrierEarlyInit)
-    , m_uncaughtException(uncaughtException, WriteBarrierEarlyInit)
-    , m_unhandledRejection(unhandledRejection, WriteBarrierEarlyInit)
+    , m_uncaughtExceptionHandler(uncaughtException, WriteBarrierEarlyInit)
+    , m_unhandledRejectionHandler(unhandledRejection, WriteBarrierEarlyInit)
     , m_maker(maker, WriteBarrierEarlyInit)
     , m_overlayShape(overlayShape)
 {
@@ -580,6 +576,9 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     // modules runs in it however their evaluation is reached, and run() enters it.
     auto* zigGlobal = defaultGlobalObject(globalObject);
     zigGlobal->setAsyncContextTrackingEnabled(true);
+    // moduleGraphRejecting() reads the async context a rejection is reported in: have the engine report in the
+    // right one the rejections its own promise jobs make.
+    vm.reportUnhandledRejectionsInAsyncContext();
     m_loader->setAsyncContext(vm, createModuleGraphFrame(zigGlobal, this, jsUndefined()));
 }
 
@@ -597,8 +596,8 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_loader);
     visitor.append(thisObject->m_requireMap);
     visitor.append(thisObject->m_requireCache);
-    visitor.append(thisObject->m_uncaughtException);
-    visitor.append(thisObject->m_unhandledRejection);
+    visitor.append(thisObject->m_uncaughtExceptionHandler);
+    visitor.append(thisObject->m_unhandledRejectionHandler);
     visitor.append(thisObject->m_maker);
     visitor.append(thisObject->m_mainPath);
 }
@@ -831,6 +830,18 @@ private:
 
 const ClassInfo JSModuleGraphConstructor::s_info = { "ModuleGraph"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleGraphConstructor) };
 
+// options[name]: a function, or null if it is undefined.
+static JSObject* handlerOption(Zig::GlobalObject* globalObject, ThrowScope& scope, JSObject* options, ASCIILiteral name, ASCIILiteral label)
+{
+    JSValue value = options->get(globalObject, Identifier::fromString(globalObject->vm(), name));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (value.isUndefined())
+        return nullptr;
+    V::validateFunction(scope, globalObject, value, label);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return asObject(value);
+}
+
 // new Bun.ModuleGraph({ globals?, uncaughtException?, unhandledRejection? })
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
@@ -853,20 +864,10 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSModuleGraphConstructor::construct(JSGl
             RETURN_IF_EXCEPTION(scope, {});
             globals = globalsValue.getObject();
         }
-        JSValue uncaughtExceptionValue = options->get(globalObject, Identifier::fromString(vm, "uncaughtException"_s));
+        uncaughtException = handlerOption(globalObject, scope, options, "uncaughtException"_s, "options.uncaughtException"_s);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!uncaughtExceptionValue.isUndefined()) {
-            V::validateFunction(scope, globalObject, uncaughtExceptionValue, "options.uncaughtException"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            uncaughtException = asObject(uncaughtExceptionValue);
-        }
-        JSValue unhandledRejectionValue = options->get(globalObject, Identifier::fromString(vm, "unhandledRejection"_s));
+        unhandledRejection = handlerOption(globalObject, scope, options, "unhandledRejection"_s, "options.unhandledRejection"_s);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!unhandledRejectionValue.isUndefined()) {
-            V::validateFunction(scope, globalObject, unhandledRejectionValue, "options.unhandledRejection"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            unhandledRejection = asObject(unhandledRejectionValue);
-        }
     }
 
     Structure* structure = globalObject->JSModuleGraphStructure();

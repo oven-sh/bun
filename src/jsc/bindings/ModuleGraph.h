@@ -49,8 +49,8 @@ public:
     unsigned overlayShape() const { return m_overlayShape; }
     JSC::JSMap* requireMap() const { return m_requireMap.get(); }
     // options.uncaughtException and options.unhandledRejection: null if the host gave none.
-    JSC::JSObject* uncaughtExceptionHandler() const { return m_uncaughtException.get(); }
-    JSC::JSObject* unhandledRejectionHandler() const { return m_unhandledRejection.get(); }
+    JSC::JSObject* uncaughtExceptionHandler() const { return m_uncaughtExceptionHandler.get(); }
+    JSC::JSObject* unhandledRejectionHandler() const { return m_unhandledRejectionHandler.get(); }
     // The graph in whose context this one was made (null: the host's). Errors a graph was given no
     // handler for go to its maker's.
     JSModuleGraph* maker() const { return m_maker.get(); }
@@ -75,8 +75,8 @@ private:
     JSC::WriteBarrier<JSC::JSModuleLoader> m_loader;
     JSC::WriteBarrier<JSC::JSMap> m_requireMap;
     JSC::WriteBarrier<JSC::Unknown> m_requireCache;
-    JSC::WriteBarrier<JSC::JSObject> m_uncaughtException;
-    JSC::WriteBarrier<JSC::JSObject> m_unhandledRejection;
+    JSC::WriteBarrier<JSC::JSObject> m_uncaughtExceptionHandler;
+    JSC::WriteBarrier<JSC::JSObject> m_unhandledRejectionHandler;
     JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
     unsigned m_overlayShape { 0 };

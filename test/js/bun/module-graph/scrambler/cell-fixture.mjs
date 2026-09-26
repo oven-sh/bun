@@ -1,4 +1,4 @@
-// Fixture of module-graph-scrambler.test.ts, loaded by every graph and by the host. Nothing here knows which
+// Fixture of module-graph-scrambler.test.ts and module-graph.test.ts, loaded by every graph and by the host. Nothing here knows which
 // graph it is of: whose context a callback runs in is decided by where it was scheduled, not by whose code
 // scheduled it.
 import { EventEmitter } from "node:events";
@@ -119,10 +119,13 @@ export const rejects = {
       .then(() => {}),
   "Promise.all()": tag => void Promise.all([soon(), rejecting(tag)]),
   "Promise.race()": tag => void Promise.race([rejectedLater(tag)]),
-  "Promise.any()": tag =>
-    void Promise.any([rejecting(tag)]).catch(error => {
-      throw error.errors[0];
-    }),
+  // Rejects with an AggregateError: `tagOf` reads the tag of its first error.
+  "Promise.any()": tag => void Promise.any([rejecting(tag)]),
+  "finally() of a rejected promise": tag => void Promise.reject(new Error(tag)).finally(() => {}),
+  "new Promise resolved with a thenable that rejects": tag =>
+    void new Promise(resolve => resolve({ then: (_, reject) => reject(new Error(tag)) })),
+  "then() with no handler for the rejection, of an instance of a subclass": tag =>
+    void new (class extends Promise {})((_, reject) => setTimeout(() => reject(new Error(tag)), 0)).then(() => {}),
   "an async generator that throws, in for await": tag =>
     void (async () => {
       for await (const _ of (async function* () {
@@ -141,5 +144,7 @@ export const rejects = {
   "a file that does not exist": tag =>
     void readFile(import.meta.path + ".missing").catch(() => Promise.reject(new Error(tag))),
 };
+
+export const tagOf = error => (error instanceof AggregateError ? error.errors[0] : error).message;
 
 export const makeGraph = options => new Bun.ModuleGraph(options);

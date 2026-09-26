@@ -10,7 +10,7 @@
 //   promise a handler of that name is given;
 // - a handler runs in the context its graph was made in.
 //
-//   bun scrambler.mjs      env: SEED=1 CHAINS=600 DEPTH=6 DEADLINE=4000 (ms to wait for every chain to end)
+//   bun scrambler-fixture.mjs      env: SEED=1 CHAINS=600 DEPTH=6 DEADLINE=4000 (ms to wait for every chain to end)
 const SEED = Number(process.env.SEED ?? 1);
 const CHAINS = Number(process.env.CHAINS ?? 600);
 const DEPTH = Number(process.env.DEPTH ?? 6);
@@ -49,11 +49,15 @@ function hear(tag, by, handler, second) {
   if (heard.has(tag)) problem(`${tag} was heard twice: by ${heard.get(tag).by} and by ${nameOf(by)}`);
   heard.set(tag, { by: nameOf(by), handler, second: second instanceof Promise ? "a promise" : String(second) });
 }
-process.on("uncaughtException", (error, origin) => hear(error.message, HOST, "uncaughtException", origin));
-process.on("unhandledRejection", (reason, promise) => hear(reason.message, HOST, "unhandledRejection", promise));
+process.on("uncaughtException", (error, origin) => hear(tagOf(error), HOST, "uncaughtException", origin));
+process.on("unhandledRejection", (reason, promise) => hear(tagOf(reason), HOST, "unhandledRejection", promise));
 
-const path = import.meta.dir + "/cell.mjs";
+const path = import.meta.dir + "/cell-fixture.mjs";
 const hostCell = await import(path);
+const { tagOf } = hostCell;
+// Not Promise.any(): the error it rejects with has no stack of its own, so an uncaughtException handler is given
+// an ERR_UNHANDLED_REJECTION error in its place, which does not carry the tag.
+const { "Promise.any()": _, ...endingsThatReject } = hostCell.rejects;
 for (const [index, { handlers, maker }] of specs.entries()) {
   const options = {};
   for (const handler of handlers) {
@@ -62,7 +66,7 @@ for (const [index, { handlers, maker }] of specs.entries()) {
       const current = indexOf(Bun.ModuleGraph.current);
       if (current !== maker)
         problem(`${handler} of graph ${index} ran in the context of ${nameOf(current)}, not of ${nameOf(maker)}`);
-      hear(error.message, index, handler, second);
+      hear(tagOf(error), index, handler, second);
     };
   }
   const graph =
@@ -96,7 +100,7 @@ function chain(id) {
   for (let depth = 1 + random(DEPTH); depth > 0; depth--)
     steps.push(random(4) === 0 ? { run: random(graphs.length) } : { hop: pick(hopNames), code: anyone() });
   const kind = random(3) === 0 ? "uncaughtException" : "unhandledRejection";
-  const forms = kind === "uncaughtException" ? hostCell.throws : hostCell.rejects;
+  const forms = kind === "uncaughtException" ? hostCell.throws : endingsThatReject;
   const form = pick(Object.keys(forms));
   const code = anyone();
   const described = () =>

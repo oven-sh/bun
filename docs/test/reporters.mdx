@@ -62,7 +62,7 @@ To generate a JUnit XML report, use the `--reporter=junit` flag along with `--re
 bun test --reporter=junit --reporter-outfile=./junit.xml
 ```
 
-Console output is unchanged; Bun writes the JUnit XML report to the specified path at the end of the test run.
+Console output is unchanged; Bun writes the JUnit XML report to the specified path at the end of the test run. `--reporter` can be passed more than once, so `--reporter=junit --reporter-outfile=./junit.xml --reporter=dots` writes the report and prints dots.
 
 #### Configuring via bunfig.toml
 

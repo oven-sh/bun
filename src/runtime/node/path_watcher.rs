@@ -175,6 +175,13 @@ impl PathWatcherManager {
     }
 
     /// Remove `watcher` from the dedup map. Caller holds `mutex`.
+    ///
+    /// `detach()` calls this for the last handler. The inotify and kqueue readers
+    /// also call it when the watched root's inode is deleted or renamed away:
+    /// those backends follow the inode, so the watcher no longer describes the
+    /// path. The next `fs.watch(path)` then registers whatever is at the path
+    /// now instead of joining the dead watch (node has one handle per call and
+    /// never shares one). The watcher itself lives until its handlers detach.
     fn unlink_watcher_locked(&self, watcher: *mut PathWatcher) {
         // SAFETY: caller holds self.mutex; exclusive access to self.watchers
         // for the duration of this block (nothing here re-enters the map).
@@ -185,6 +192,24 @@ impl PathWatcherManager {
                 watchers.swap_remove_at(i);
             }
         }
+    }
+
+    /// The reader thread's fd failed for good: report `err` to every watcher
+    /// with `close`, so each JS `FSWatcher` emits 'error' and closes. Takes
+    /// `mutex`.
+    #[cfg(not(windows))]
+    fn fail_all_watchers(&self, err: &sys::Error) {
+        self.mutex.lock();
+        // SAFETY: holding self.mutex.
+        let watchers = unsafe { &*self.watchers.get() };
+        for &w in watchers.values() {
+            // SAFETY: holding self.mutex; w is live.
+            unsafe {
+                (*w).emit_error(err, true);
+                (*w).flush();
+            }
+        }
+        self.mutex.unlock();
     }
 }
 
@@ -919,22 +944,7 @@ impl Linux {
                 E::EAGAIN | E::EINTR => continue,
                 errno => {
                     // Fatal: surface to every watcher, then exit the thread.
-                    let err = sys::Error {
-                        errno: errno as u16,
-                        syscall: Tag::read,
-                        ..Default::default()
-                    };
-                    manager.mutex.lock();
-                    // SAFETY: holding manager.mutex.
-                    let watchers = unsafe { &*manager.watchers.get() };
-                    for &w in watchers.values() {
-                        // SAFETY: holding manager.mutex; w is live.
-                        unsafe {
-                            (*w).emit_error(&err, true);
-                            (*w).flush();
-                        }
-                    }
-                    manager.mutex.unlock();
+                    manager.fail_all_watchers(&sys::Error::from_code(errno, Tag::read));
                     return;
                 }
             }
@@ -1120,6 +1130,13 @@ impl Linux {
                         );
                     }
                     let _ = handle_oom(touched.get_or_put(owner_watcher));
+
+                    // The watched root itself is gone from its path (see
+                    // `unlink_watcher_locked`).
+                    if owner_subpath.is_empty() && ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0
+                    {
+                        manager.unlink_watcher_locked(owner_watcher);
+                    }
 
                     // Recursive: a new directory appeared under this owner's tree —
                     // start watching it so future events inside it are delivered.
@@ -1661,7 +1678,13 @@ impl Kqueue {
         while running.load(Ordering::Acquire) {
             let count = match sys::kevent(kq, &[], &mut events, None) {
                 Ok(n) => n,
-                Err(_) => continue,
+                Err(err) => {
+                    // `sys::kevent` retried EINTR; anything else (EBADF after the
+                    // kqueue fd was closed out from under us) is fatal. Surface it
+                    // to every watcher and exit, as the inotify reader does.
+                    manager.fail_all_watchers(&sys::Error::from_code(err.get_errno(), Tag::kevent));
+                    return;
+                }
             };
             if count == 0 {
                 continue;
@@ -1712,6 +1735,14 @@ impl Kqueue {
 
                 watcher.emit(event_type, rel, entry.is_file);
                 let _ = handle_oom(touched.get_or_put(entry.watcher));
+
+                // The watched root itself is gone from its path (see
+                // `unlink_watcher_locked`).
+                if entry.subpath.is_empty()
+                    && kev.fflags & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE) != 0
+                {
+                    manager.unlink_watcher_locked(entry.watcher);
+                }
             }
 
             for &w in touched.keys() {

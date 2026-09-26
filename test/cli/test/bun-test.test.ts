@@ -2023,7 +2023,7 @@ describe.concurrent("test file discovery (scanner)", () => {
   }
 
   test.skipIf(isWindows)(
-    "a path argument longer than MAX_PATH_BYTES is skipped like a missing path when other arguments match",
+    "a path argument longer than MAX_PATH_BYTES is reported like a missing path when other arguments match",
     async () => {
       using dir = tempDir("scanner-long-arg-mixed", { "exists.test.ts": existsTest });
       const longArg = "/" + Buffer.alloc(5000, "a").toString() + ".test.ts";
@@ -2036,10 +2036,135 @@ describe.concurrent("test file discovery (scanner)", () => {
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toContain("had no matches");
       expect(stderr).toContain("Ran 1 test across 1 file.");
-      expect(exitCode).toBe(0);
+      expect(exitCode).toBe(1);
     },
   );
+
+  // Every path argument that selects no test file is reported, before the
+  // run and again after the summary. The other arguments still run. Only a
+  // path that does not exist fails the run: a shell glob can expand to a
+  // directory with no test files. --pass-with-no-tests opts out of the exit
+  // code.
+  describe.each([
+    ["a missing file", ["./exists.test.ts", "./missing.test.ts"], ["./missing.test.ts"], 1],
+    ["a missing file first", ["./missing.test.ts", "./exists.test.ts"], ["./missing.test.ts"], 1],
+    ["a directory with no test files", ["./exists.test.ts", "./empty"], ["./empty"], 0],
+    ["a file that is not a test file", ["./exists.test.ts", "./empty/not-a-test.md"], ["./empty/not-a-test.md"], 0],
+    [
+      "a missing file and an empty directory",
+      ["./exists.test.ts", "./missing.test.ts", "./empty"],
+      ["./missing.test.ts", "./empty"],
+      1,
+    ],
+  ])("a path argument with no matches is reported (%s)", (_name, args, unmatched, expectedExitCode) => {
+    test.concurrent.each([
+      ["plain", { AGENT: "false" }, ""],
+      ["agent", { AGENT: undefined, CLAUDECODE: "1" }, " in --cwd="],
+    ])("%s output", async (_mode, extraEnv, suffix) => {
+      using dir = tempDir("scanner-unmatched-arg", {
+        "exists.test.ts": existsTest,
+        "empty/not-a-test.md": "",
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        env: { ...bunEnv, ...extraEnv },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      const summaryAt = stderr.indexOf("Ran 1 test across 1 file.");
+      expect(summaryAt).toBeGreaterThan(-1);
+      for (const arg of unmatched) {
+        const line = `Test filter "${arg}" had no matches${suffix}`;
+        expect(stderr.indexOf(line)).toBeLessThan(summaryAt);
+        expect(stderr.indexOf(line, summaryAt)).toBeGreaterThan(summaryAt);
+      }
+      expect(exitCode).toBe(expectedExitCode);
+    });
+
+    test.concurrent("--pass-with-no-tests exits 0", async () => {
+      using dir = tempDir("scanner-unmatched-arg-pass", {
+        "exists.test.ts": existsTest,
+        "empty/not-a-test.md": "",
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--pass-with-no-tests", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      for (const arg of unmatched) {
+        expect(stderr).toContain(`Test filter "${arg}" had no matches`);
+      }
+      expect(stderr).toContain("Ran 1 test across 1 file.");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // A file an earlier argument already listed still counts as a match for
+  // the later argument, so overlapping arguments do not fail the run.
+  test.concurrent.each([
+    ["the same directory twice", ["./sub", "./sub"], "Ran 1 test across 1 file."],
+    ["a directory then a file in it", ["./sub", "./sub/b.test.ts"], "Ran 1 test across 1 file."],
+    ["the cwd then a subdirectory", [".", "./sub"], "Ran 2 tests across 2 files."],
+  ])("a path argument whose files an earlier argument listed is a match (%s)", async (_name, args, summary) => {
+    using dir = tempDir("scanner-overlapping-args", {
+      "a.test.ts": `import { test } from "bun:test"; test("a", () => {});`,
+      "sub/b.test.ts": `import { test } from "bun:test"; test("b", () => {});`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("had no matches");
+    expect(stderr).toContain(summary);
+    expect(exitCode).toBe(0);
+  });
+
+  // When every path argument is unmatched nothing runs. Each argument gets its
+  // own line, and the exit code follows --pass-with-no-tests.
+  describe.each([
+    ["one missing path", ["./does-not-exist"]],
+    ["two missing paths", ["./does-not-exist", "./also-missing.test.ts"]],
+    ["a directory with no test files", ["./empty"]],
+  ])("every path argument unmatched (%s)", (_name, paths) => {
+    test.concurrent.each([
+      ["exits 1", [], 1],
+      ["--pass-with-no-tests exits 0", ["--pass-with-no-tests"], 0],
+    ])("%s", async (_label, flags, expectedExitCode) => {
+      using dir = tempDir("scanner-all-unmatched", {
+        "exists.test.ts": existsTest,
+        "empty/not-a-test.ts": `console.log("hello");`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...flags, ...paths],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      for (const path of paths) {
+        expect(stderr).toContain(`Test filter "${path}" had no matches`);
+      }
+      expect(stderr).toContain("Tests need");
+      expect(stderr).not.toContain("exists");
+      expect(exitCode).toBe(expectedExitCode);
+    });
+  });
 
   // The directory walk joins parent + entry name for every directory it
   // descends into and every candidate test file. With pathIgnorePatterns

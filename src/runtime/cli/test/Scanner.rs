@@ -33,6 +33,8 @@ pub struct Scanner<'a> {
     pub(crate) open_dir_buf: PathBuffer,
     pub(crate) options: &'a BundleOptions<'a>,
     pub(crate) search_count: usize,
+    /// Matches per argument. Not `test_files.len()`: a file an earlier argument listed is not pushed again.
+    matched: usize,
     /// Set by `next`. False after `read_dir_with_name` means the listing came from the cache.
     iterator_invoked: bool,
     /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
@@ -91,6 +93,7 @@ impl<'a> Scanner<'a> {
             seen_test_files: HashMap::new(),
             open_dir_buf: PathBuffer::ZEROED,
             search_count: 0,
+            matched: 0,
             iterator_invoked: false,
             current_dir: None,
         })
@@ -129,8 +132,8 @@ impl<'a> Scanner<'a> {
         Ok(core::mem::take(&mut self.test_files).into_boxed_slice())
     }
 
-    /// Append `path` to `test_files` unless an earlier scan already found it.
     fn push_test_file(&mut self, path: Interned) -> Result<(), AllocError> {
+        self.matched += 1;
         if self
             .seen_test_files
             .get_or_put(path.as_bytes())?
@@ -142,7 +145,9 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
-    pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
+    /// Returns how many test files `path_literal` selects, counting files an earlier argument listed.
+    pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<usize, ScanError> {
+        let matched_before = self.matched;
         let mut scan_dir_buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
         let Some(path) = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf)
@@ -208,7 +213,7 @@ impl<'a> Scanner<'a> {
             result.map_err(|_| ScanError::OutOfMemory)?;
         }
 
-        Ok(())
+        Ok(self.matched - matched_before)
     }
 
     /// A cached listing is returned without invoking the iterator. Sorted so the run order is stable.
@@ -391,8 +396,9 @@ impl<'a> Scanner<'a> {
                 });
             }
             fs::EntryKind::File => {
-                // already seen it!
+                // An earlier argument listed it. It still counts as a match for this one.
                 if !entry.abs_path.is_empty() {
+                    self.push_test_file(entry.abs_path).unwrap_or_oom();
                     return;
                 }
 

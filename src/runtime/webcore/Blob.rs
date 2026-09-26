@@ -1273,11 +1273,17 @@ impl BlobExt for Blob {
             return JSValue::TRUE;
         }
 
-        // We say regular files and pipes exist.
         let store::Data::File(file) = &store.data else {
             return JSValue::FALSE;
         };
-        JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
+        JSValue::from(match file.pathlike {
+            // `mode` is 0 until a stat succeeds.
+            PathOrFileDescriptor::Path(_) => file.mode != 0 && !bun_sys::S::ISDIR(file.mode),
+            // Programs guard stdin reads with this, so a terminal and /dev/null answer false.
+            PathOrFileDescriptor::Fd(_) => {
+                bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode)
+            }
+        })
     }
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let cx = global_this.js_thread_of_caller(callframe);
@@ -1353,7 +1359,7 @@ impl BlobExt for Blob {
         }
     }
 
-    // This mostly means 'can it be read?'
+    // For a path, true does not mean that a read succeeds.
     fn get_exists(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         if self.is_s3() {
             return crate::webcore::s3_file::S3BlobStatTask::exists(

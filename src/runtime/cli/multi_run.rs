@@ -859,7 +859,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             script_names.push(pos.clone());
         }
     }
-    for pt in &ctx.passthrough {
+    for pt in RunCommand::passthrough_for_script(&ctx.passthrough) {
         if !pt.is_empty() {
             script_names.push(pt.clone());
         }

@@ -139,7 +139,7 @@ pub struct PostgresSQLConnection {
     pub(crate) backend_parameters: JsCell<StringMap>,
 
     // Self-referential — `database`/`user`/`password`/`path`/`options` are slices
-    // into `options_buf` (built via StringBuilder in `call`). Struct is Box-allocated
+    // into `options_buf` (built by `ConnectionStrings::new`). Struct is Box-allocated
     // and never moves (intrusive refcount), so the `RawSlice` backing-outlives-holder
     // invariant holds. Private — reassigning `options_buf` is UAF.
     // Reach via `database()`/`user()`/`password()`/`path()`/`options()`.
@@ -267,9 +267,7 @@ impl PostgresSQLConnection {
 
     // ---- self-referential connection-string slices ----------------------------
     // `database`/`user`/`password`/`path`/`options` are raw `*const [u8]` fat
-    // pointers into `self.options_buf`. They are populated once in `call()` (each
-    // initialised to `b""` then re-pointed at the StringBuilder allocation that
-    // becomes `options_buf`) and never reassigned. The struct is Box-allocated
+    // pointers into `self.options_buf`. `open` sets them once. The struct is Box-allocated
     // via `heap::alloc` and freed only when the intrusive refcount hits zero,
     // so `options_buf` — and thus every slice — remains valid for any `&self`.
     //
@@ -1095,71 +1093,26 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     };
     let (secure, tls_config) = (args.secure, args.tls_config);
 
-    // `StringBuilder::append` takes `&mut self` and returns a borrow
-    // of the backing buffer, so successive appends can't keep their `&[u8]`
-    // results live across each other. The buffer is allocated once and never
-    // moved (`move_to_slice` hands back the same allocation), so detach each
-    // result to a `RawSlice` immediately — the struct stores them as
-    // `RawSlice` (self-referential into `options_buf`).
-    let username: bun_ptr::RawSlice<u8>;
-    let password: bun_ptr::RawSlice<u8>;
-    let database: bun_ptr::RawSlice<u8>;
-    let options: bun_ptr::RawSlice<u8>;
-    let path: bun_ptr::RawSlice<u8>;
-
     let options_str = arguments[7].to_bun_string(global_object)?;
-
     let path_str = arguments[8].to_bun_string(global_object)?;
-
-    let options_buf: Box<[u8]> = 'brk: {
-        let mut b = bun_core::StringBuilder::default();
-        b.cap += args.username_str.utf8_byte_length()
-            + 1
-            + args.password_str.utf8_byte_length()
-            + 1
-            + args.database_str.utf8_byte_length()
-            + 1
-            + options_str.utf8_byte_length()
-            + 1
-            + path_str.utf8_byte_length()
-            + 1;
-
-        let _ = b.allocate();
-        let u = args.username_str.to_utf8();
-        username = bun_ptr::RawSlice::new(b.append(u.slice()));
-        drop(u);
-
-        let p = args.password_str.to_utf8();
-        password = bun_ptr::RawSlice::new(b.append(p.slice()));
-        drop(p);
-
-        let d = args.database_str.to_utf8();
-        database = bun_ptr::RawSlice::new(b.append(d.slice()));
-        drop(d);
-
-        let o = options_str.to_utf8();
-        options = bun_ptr::RawSlice::new(b.append(o.slice()));
-        drop(o);
-
-        let _path = path_str.to_utf8();
-        path = bun_ptr::RawSlice::new(b.append(_path.slice()));
-        drop(_path);
-
-        break 'brk b.move_to_slice();
-    };
+    let (username, password, database, options, path) = (
+        args.username_str.to_utf8(),
+        args.password_str.to_utf8(),
+        args.database_str.to_utf8(),
+        options_str.to_utf8(),
+        path_str.to_utf8(),
+    );
 
     // Reject null bytes in connection parameters to prevent Postgres startup
     // message parameter injection (null bytes act as field terminators in the
     // wire protocol's key\0value\0 format).
     for (entry, name) in [
-        (username, &b"username"[..]),
-        (password, b"password"),
-        (database, b"database"),
-        (path, b"path"),
+        (username.slice(), &b"username"[..]),
+        (password.slice(), b"password"),
+        (database.slice(), b"database"),
+        (path.slice(), b"path"),
     ] {
-        let entry = entry.slice();
         if !entry.is_empty() && strings::contains_char(entry, 0) {
-            drop(options_buf);
             return Err(global_object.throw_invalid_arguments(format_args!(
                 "{} must not contain null bytes",
                 bstr::BStr::new(name)
@@ -1167,129 +1120,233 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         }
     }
 
-    let on_connect = arguments[9];
-    let on_close = arguments[10];
-    let idle_timeout = arguments[11].to_int32();
-    let connection_timeout = arguments[12].to_int32();
-    let max_lifetime = arguments[13].to_int32();
-    let use_unnamed_prepared_statements = arguments[14].as_boolean();
-
-    let ptr: *mut PostgresSQLConnection =
-        bun_core::heap::into_raw(Box::new(PostgresSQLConnection {
-            socket: JsCell::new(Socket::SocketTcp(uws::SocketTCP {
-                socket: uws::InternalSocket::Detached,
-            })),
-            status: Cell::new(Status::Connecting),
-            ref_count: Cell::new(1),
-            write_buffer: JsCell::new(OffsetByteList::default()),
-            write_epoch: Cell::new(0),
-            read_buffer: JsCell::new(OffsetByteList::default()),
-            last_message_start: Cell::new(0),
-            requests: JsCell::new(PostgresRequest::Queue::new()),
-            pipelined_requests: Cell::new(0),
-            nonpipelinable_requests: Cell::new(0),
-            pending_requests: Cell::new(0),
-            poll_ref: JsCell::new(KeepAlive::default()),
-            global_object: BackRef::new(global_object),
-            vm: BackRef::from(
-                core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
+    let hostname = args.hostname_str.to_utf8();
+    PostgresSQLConnection::open(
+        global_object,
+        vm.postgres_socket_group::<false>(context),
+        ConnectParams {
+            hostname: hostname.slice(),
+            port: args.port,
+            strings: ConnectionStrings::new(
+                username.slice(),
+                password.slice(),
+                database.slice(),
+                options.slice(),
+                path.slice(),
             ),
-            statements: JsCell::new(PreparedStatementsMap::default()),
-            prepared_statement_id: Cell::new(0),
-            pending_activity_count: AtomicU32::new(0),
-            js_value: JsCell::new(crate::jsc::JsRef::empty()),
-            backend_parameters: JsCell::new(StringMap::init(true)),
-            database,
-            user: username,
-            password,
-            path,
-            options,
-            options_buf,
-            authentication_state: JsCell::new(AuthenticationState::Pending),
             secure,
             tls_config,
-            tls_status: Cell::new(if args.ssl_mode != SSLMode::Disable {
-                TLSStatus::Pending
-            } else {
-                TLSStatus::None
-            }),
             ssl_mode: args.ssl_mode,
-            idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
-            connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
-            flags: Cell::new(if use_unnamed_prepared_statements {
-                ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
-            } else {
-                ConnectionFlags::empty()
-            }),
-            timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::PostgresSQLConnectionTimeout,
-            )),
-            max_lifetime_interval_ms: u32::try_from(max_lifetime).expect("int cast"),
-            max_lifetime_timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
-            )),
-            auto_flusher: JsCell::new(AutoFlusher::default()),
-            channel_names: JsCell::new(Vec::new()),
-        }));
+            idle_timeout: arguments[11].to_int32(),
+            connection_timeout: arguments[12].to_int32(),
+            max_lifetime: arguments[13].to_int32(),
+            use_unnamed_prepared_statements: arguments[14].as_boolean(),
+            on_connect: arguments[9],
+            on_close: arguments[10],
+        },
+    )
+    .map_err(|err| {
+        global_object.throw_error(
+            bun_jsc::CrateError::from(err),
+            "failed to connect to postgresql",
+        )
+    })
+}
 
-    // `heap::into_raw` is `Box::into_raw` — never null. Sole owner until
-    // `to_js` below. R-2: every field is interior-mutable, so a shared
-    // `ParentRef` deref is sufficient for the writes below.
-    let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
+/// The strings of a connection, in one buffer that moves into the connection with them.
+pub(crate) struct ConnectionStrings {
+    buf: Box<[u8]>,
+    user: bun_ptr::RawSlice<u8>,
+    password: bun_ptr::RawSlice<u8>,
+    database: bun_ptr::RawSlice<u8>,
+    options: bun_ptr::RawSlice<u8>,
+    path: bun_ptr::RawSlice<u8>,
+}
 
-    {
-        let hostname = args.hostname_str.to_utf8();
-
-        // Postgres always opens plain TCP first (SSLRequest happens in-band),
-        // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
-        // adopts into `postgres_tls_group` after the server's `S`.
-        let group = vm.postgres_socket_group::<false>(context);
-        let path_slice = this.path.slice();
-        let result = if !path_slice.is_empty() {
-            uws::SocketTCP::connect_unix_group(
-                group,
-                uws::SocketKind::Postgres,
-                None,
-                path_slice,
-                ptr,
-                false,
-            )
-        } else {
-            uws::SocketTCP::connect_group(
-                group,
-                uws::SocketKind::Postgres,
-                None,
-                hostname.slice(),
-                args.port,
-                ptr,
-                false,
-            )
-        };
-
-        this.socket.set(Socket::SocketTcp(match result {
-            Ok(s) => s,
-            Err(err) => {
-                // SAFETY: fresh allocation, sole ref.
-                drop(unsafe { bun_core::heap::take(ptr) });
-                return Err(global_object.throw_error(
-                    bun_jsc::CrateError::from(err),
-                    "failed to connect to postgresql",
-                ));
-            }
-        }));
+impl ConnectionStrings {
+    pub(crate) fn new(
+        user: &[u8],
+        password: &[u8],
+        database: &[u8],
+        options: &[u8],
+        path: &[u8],
+    ) -> Self {
+        let mut b = bun_core::StringBuilder::default();
+        for string in [user, password, database, options, path] {
+            b.count_z(string);
+        }
+        let _ = b.allocate();
+        // The buffer never moves again, so each slice can outlive the borrow of `b`.
+        let user = bun_ptr::RawSlice::new(b.append_z(user).as_bytes());
+        let password = bun_ptr::RawSlice::new(b.append_z(password).as_bytes());
+        let database = bun_ptr::RawSlice::new(b.append_z(database).as_bytes());
+        let options = bun_ptr::RawSlice::new(b.append_z(options).as_bytes());
+        let path = bun_ptr::RawSlice::new(b.append_z(path).as_bytes());
+        Self {
+            buf: b.move_to_slice(),
+            user,
+            password,
+            database,
+            options,
+            path,
+        }
     }
+}
 
-    // only call toJS if connectUnixAnon does not fail immediately
-    this.update_has_pending_activity();
-    this.reset_connection_timeout();
-    this.poll_ref.with_mut(|r| r.ref_(this.vm_ctx()));
-    let js_value = js::to_js(ptr, global_object);
-    js_value.ensure_still_alive();
-    this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
-    js::onconnect_set_cached(js_value, global_object, on_connect);
-    js::onclose_set_cached(js_value, global_object, on_close);
-    bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
-    Ok(js_value)
+/// What `PostgresSQLConnection::open` builds a connection from.
+pub(crate) struct ConnectParams<'a> {
+    /// Dialed when the path of `strings` is empty.
+    pub hostname: &'a [u8],
+    pub port: i32,
+    pub strings: ConnectionStrings,
+    pub secure: Option<OwnedSslCtx>,
+    pub tls_config: jsc::api::ServerConfig::SSLConfig,
+    pub ssl_mode: SSLMode,
+    pub idle_timeout: i32,
+    pub connection_timeout: i32,
+    pub max_lifetime: i32,
+    pub use_unnamed_prepared_statements: bool,
+    pub on_connect: JSValue,
+    pub on_close: JSValue,
+}
+
+impl PostgresSQLConnection {
+    /// Allocates the connection, dials it in `group` and wraps it for JS.
+    pub(crate) fn open(
+        global_object: &JSGlobalObject,
+        group: &mut bun_uws::SocketGroup,
+        params: ConnectParams<'_>,
+    ) -> Result<JSValue, uws::ConnectError> {
+        let ConnectParams {
+            hostname,
+            port,
+            strings:
+                ConnectionStrings {
+                    buf: options_buf,
+                    user: username,
+                    password,
+                    database,
+                    options,
+                    path,
+                },
+            secure,
+            tls_config,
+            ssl_mode,
+            idle_timeout,
+            connection_timeout,
+            max_lifetime,
+            use_unnamed_prepared_statements,
+            on_connect,
+            on_close,
+        } = params;
+
+        let ptr: *mut PostgresSQLConnection =
+            bun_core::heap::into_raw(Box::new(PostgresSQLConnection {
+                socket: JsCell::new(Socket::SocketTcp(uws::SocketTCP {
+                    socket: uws::InternalSocket::Detached,
+                })),
+                status: Cell::new(Status::Connecting),
+                ref_count: Cell::new(1),
+                write_buffer: JsCell::new(OffsetByteList::default()),
+                write_epoch: Cell::new(0),
+                read_buffer: JsCell::new(OffsetByteList::default()),
+                last_message_start: Cell::new(0),
+                requests: JsCell::new(PostgresRequest::Queue::new()),
+                pipelined_requests: Cell::new(0),
+                nonpipelinable_requests: Cell::new(0),
+                pending_requests: Cell::new(0),
+                poll_ref: JsCell::new(KeepAlive::default()),
+                global_object: BackRef::new(global_object),
+                vm: BackRef::from(
+                    core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
+                ),
+                statements: JsCell::new(PreparedStatementsMap::default()),
+                prepared_statement_id: Cell::new(0),
+                pending_activity_count: AtomicU32::new(0),
+                js_value: JsCell::new(crate::jsc::JsRef::empty()),
+                backend_parameters: JsCell::new(StringMap::init(true)),
+                database,
+                user: username,
+                password,
+                path,
+                options,
+                options_buf,
+                authentication_state: JsCell::new(AuthenticationState::Pending),
+                secure,
+                tls_config,
+                tls_status: Cell::new(if ssl_mode != SSLMode::Disable {
+                    TLSStatus::Pending
+                } else {
+                    TLSStatus::None
+                }),
+                ssl_mode,
+                idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
+                connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
+                flags: Cell::new(if use_unnamed_prepared_statements {
+                    ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
+                } else {
+                    ConnectionFlags::empty()
+                }),
+                timer: JsCell::new(EventLoopTimer::init_paused(
+                    EventLoopTimerTag::PostgresSQLConnectionTimeout,
+                )),
+                max_lifetime_interval_ms: u32::try_from(max_lifetime).expect("int cast"),
+                max_lifetime_timer: JsCell::new(EventLoopTimer::init_paused(
+                    EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
+                )),
+                auto_flusher: JsCell::new(AutoFlusher::default()),
+                channel_names: JsCell::new(Vec::new()),
+            }));
+
+        // Sole owner until `to_js` below. Every field is interior-mutable.
+        let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
+
+        {
+            // Plain TCP in every sslmode: `setup_tls` adopts the socket after the server's `S`.
+            let path_slice = this.path.slice();
+            let result = if !path_slice.is_empty() {
+                uws::SocketTCP::connect_unix_group(
+                    group,
+                    uws::SocketKind::Postgres,
+                    None,
+                    path_slice,
+                    ptr,
+                    false,
+                )
+            } else {
+                uws::SocketTCP::connect_group(
+                    group,
+                    uws::SocketKind::Postgres,
+                    None,
+                    hostname,
+                    port,
+                    ptr,
+                    false,
+                )
+            };
+
+            this.socket.set(Socket::SocketTcp(match result {
+                Ok(s) => s,
+                Err(err) => {
+                    // SAFETY: fresh allocation, sole ref.
+                    drop(unsafe { bun_core::heap::take(ptr) });
+                    return Err(err);
+                }
+            }));
+        }
+
+        // only call toJS if connectUnixAnon does not fail immediately
+        this.update_has_pending_activity();
+        this.reset_connection_timeout();
+        this.poll_ref.with_mut(|r| r.ref_(this.vm_ctx()));
+        let js_value = js::to_js(ptr, global_object);
+        js_value.ensure_still_alive();
+        this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
+        js::onconnect_set_cached(js_value, global_object, on_connect);
+        js::onclose_set_cached(js_value, global_object, on_close);
+        bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
+        Ok(js_value)
+    }
 }
 
 pub struct SocketHandler<const SSL: bool>;

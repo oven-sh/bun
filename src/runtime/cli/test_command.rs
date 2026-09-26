@@ -2034,7 +2034,11 @@ impl TestCommand {
             }
             false
         };
+        // Every path argument that selects no test file is reported. Only one
+        // that does not exist fails the run: a shell glob can expand to a
+        // directory with no test files, and that is not a mistake.
         let mut unmatched_path_args: Vec<&'static [u8]> = Vec::new();
+        let mut has_missing_path_arg = false;
         if has_relative_path {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
@@ -2042,7 +2046,10 @@ impl TestCommand {
                 let matched = match scanner.scan(arg) {
                     Ok(matched) => matched,
                     Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
-                    Err(scanner::ScanError::DoesNotExist) => 0,
+                    Err(scanner::ScanError::DoesNotExist) => {
+                        has_missing_path_arg = true;
+                        0
+                    }
                 };
                 if matched == 0 {
                     // SAFETY: bytes live in `ctx.positionals` (process-lifetime)
@@ -2660,7 +2667,7 @@ impl TestCommand {
 
         let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests
             && (failed_to_find_any_tests
-                || had_unmatched_path_arg
+                || has_missing_path_arg
                 || summary.did_label_filter_out_all_tests());
         if should_fail_on_no_tests
             || summary.fail > 0

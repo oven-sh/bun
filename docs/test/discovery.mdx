@@ -50,7 +50,7 @@ To run a specific file in the test runner, make sure the path starts with `./` o
 bun test ./test/specific-file.test.ts
 ```
 
-When one argument is a path, every argument is treated as a path. A path that does not exist, or a directory with no test files, is reported as `Test filter "<path>" had no matches`. The other paths still run, and the exit code is 1. Pass `--pass-with-no-tests` to exit 0 instead.
+When one argument is a path, every argument is treated as a path. A path that selects no test file is reported as `Test filter "<path>" had no matches`. The other paths still run. If a path does not exist, the exit code is 1. Pass `--pass-with-no-tests` to exit 0 instead.
 
 ### Filter by Test Name
 

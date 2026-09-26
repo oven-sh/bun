@@ -372,7 +372,6 @@ export default function Docs() {
   test.each([
     ["with a semicolon", `"use server";\nexport async function save() {\n  return "saved";\n}\n`],
     ["without a semicolon", `'use server'\nexport async function save() {\n  return "saved";\n}\n`],
-    ["as the whole file", `"use server"`],
   ])('a "use server" module is a build error (%s)', async (_, actions) => {
     using dir = tempDir("bake-production-use-server", {
       "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,

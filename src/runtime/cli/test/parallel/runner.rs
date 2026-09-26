@@ -302,12 +302,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     // (see test_command.rs handle_test_completed), which the coordinator would
     // misread as a crash. Cross-worker bail is handled at file granularity by
     // the coordinator instead.
-    if opts.repeat_count > 0 {
-        argv.push(print_z(format_args!("--rerun-each={}", opts.repeat_count))?);
-    }
-    if opts.retry > 0 {
-        argv.push(print_z(format_args!("--retry={}", opts.retry))?);
-    }
+    // Forwarded even when 0: the worker reloads bunfig.toml, and 0 may override its `[test]` key.
+    argv.push(print_z(format_args!("--rerun-each={}", opts.repeat_count))?);
+    argv.push(print_z(format_args!("--retry={}", opts.retry))?);
     argv.push(print_z(format_args!(
         "--max-concurrency={}",
         opts.max_concurrency

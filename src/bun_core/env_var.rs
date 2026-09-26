@@ -77,6 +77,8 @@ new!(pub BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: boolean, "BUN_DEBUG_ENA
 new!(pub BUN_DEBUG_FORCE_NIX_HOST: boolean, "BUN_DEBUG_FORCE_NIX_HOST", { default: false });
 // Testing hook for #15753: enable the glibc-addon pre-dlopen check on glibc hosts.
 new!(pub BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK: boolean, "BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK", { default: false });
+// Testing hook for clipboard.test.ts: seconds before the clipboard helper watchdog fires.
+platform_specific_new!(pub BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT: unsigned, posix = "BUN_INTERNAL_CLIPBOARD_HELPER_TIMEOUT", windows = None, { default: 10 });
 new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { deser: { error_handling: NotSet } });
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 // Testing hook for `bun build --compile`, debug builds only: lowers the 4 GiB

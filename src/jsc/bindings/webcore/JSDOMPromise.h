@@ -49,6 +49,14 @@ public:
 
     static IsCallbackRegistered whenPromiseIsSettled(JSDOMGlobalObject*, JSC::JSObject* promise, Function<void()>&&);
 
+    IsCallbackRegistered whenSettledWithResult(Function<void(JSDOMGlobalObject*, bool isFulfilled, JSC::JSValue result)>&&);
+
+    // Runs `reaction` with the value once this promise fulfills, the way `then` runs its
+    // callback: what it returns fulfills `derived`, what it throws rejects `derived`, and a
+    // rejection of this promise passes through. JSC routes the exceptions, so a reaction that
+    // runs user code propagates them and never catches.
+    IsCallbackRegistered whenFulfilled(JSC::JSPromise& derived, Function<JSC::JSValue(JSDOMGlobalObject&, JSC::JSValue)>&& reaction);
+
 private:
     DOMPromise(JSDOMGlobalObject& globalObject, JSC::JSPromise& promise)
         : DOMGuarded<JSC::JSPromise>(globalObject, promise)

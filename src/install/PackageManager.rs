@@ -137,7 +137,8 @@ impl PackageManagerCommand {
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
   <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
-  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies
+  <d>├<r> <cyan>--trusted<r>                 list only trusted dependencies
+  <d>└<r> <cyan>-g<r>                        list the <b>global<r> dependency tree
   <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license
   <d>├<r> <cyan>--json<r>                    output as JSON

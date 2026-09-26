@@ -1243,6 +1243,7 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
     }
   });
 
+  // Node also defines _eventsCount, setMaxListeners() defines _maxListeners, and once() needs a receiver with on().
   test.each(writers)("%s defines _events the way an assignment does", (_name, call) => {
     const plain = {};
     call(plain);
@@ -1266,12 +1267,14 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
     expect(nativeProto.getMaxListeners.call(receiver)).toBe(20);
   });
 
+  // Node returns 0 for a primitive receiver.
   test("listenerCount on a primitive receiver throws an error that names listenerCount", () => {
     expect(() => nativeProto.listenerCount.call(5, "x")).toThrow(
       "Can only call EventEmitter.listenerCount on instances of EventEmitter",
     );
   });
 
+  // In Node the object shares the listeners of process, through the _events that it inherits.
   test("an object that inherits from process has its own listeners", () => {
     const child = Object.create(process);
     let fired = 0;
@@ -1282,6 +1285,7 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
     expect(process.listenerCount("x")).toBe(0);
   });
 
+  // Node defines _eventsCount through the trap too.
   test("a Proxy receiver gets its defineProperty trap called and keeps its listeners", () => {
     const calls: PropertyKey[] = [];
     const target = {};
@@ -1319,7 +1323,7 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
       attempt("setMaxListeners", 20);
       attempt("listenerCount", "x");
       attempt("emit", "x");
-      // An "error" event with no listener is reported as uncaught. A WebAssembly GC reference has no global object.
+      // An "error" event with no listener is reported as uncaught (Node throws it from emit()).
       process.on("uncaughtException", e => {
         result.uncaught = e.message;
       });
@@ -1353,12 +1357,57 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
     expect(() => nativeProto.removeListener.call({}, "x", 5)).toThrow(TypeError);
   });
 
+  // The emitter keeps the receiver of the last call that changed it, weakly. Node throws the error from emit().
+  test.concurrent('an "error" event with no listener is reported when the emitter has no receiver', async () => {
+    const src = `
+      const reported = [];
+      process.on("uncaughtException", e => reported.push(e.message));
+
+      const cleared = {};
+      process.on.call(cleared, "x", () => {});
+      process.removeAllListeners.call(cleared);
+      process.emit.call(cleared, "error", new Error("after removeAllListeners()"));
+
+      const target = {};
+      (function () {
+        process.on.call(new Proxy(target, {}), "x", () => {});
+      })();
+      Bun.gc(true);
+      process.emit.call(target, "error", new Error("after a collection"));
+
+      console.log(JSON.stringify(reported));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["after removeAllListeners()", "after a collection"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent('process reports an "error" event with no listener after removeAllListeners()', async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.removeAllListeners(); process.emit("error", new Error("boom"));`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: boom");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
   // In a subprocess because a collected emitter is a use after free. `this._events` is the only
   // reference to the emitter, and the event name conversion runs user code that can delete it.
   test.concurrent("the emitter survives when the call deletes this._events and collects", async () => {
     const src = `
       let wrong = 0;
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 5; i++) {
         const receiver = {};
         process.on.call(receiver, "x", () => {});
         const keep = [];

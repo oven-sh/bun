@@ -24,15 +24,15 @@ test("process.ppid is a data property to JS (#29169)", () => {
   });
 });
 
-// Windows keeps the pid of a dead parent, so there is nothing to observe there.
-test.skipIf(isWindows)("process.ppid follows a reparent (#29169)", async () => {
-  // The first process spawns the second one, waits until that one has read process.ppid, and exits.
-  // The OS then gives the second process a new parent, and it polls process.ppid until the value
-  // changes. Its stdout is the pipe of this test, so the read below ends when it exits.
+// The first process spawns the second one, waits until that one has read process.ppid, and exits.
+// The OS then gives the second process a new parent, and it polls process.ppid until the value
+// changes. Its stdout is the pipe of this test, so the read below ends when it exits.
+async function ppidAfterReparent(prelude: string, deadlineMs: number) {
   const second = `
+    ${prelude}
     const before = process.ppid;
     process.send("read");
-    const deadline = performance.now() + 30_000;
+    const deadline = performance.now() + ${deadlineMs};
     (function poll() {
       const now = process.ppid;
       if (now !== before || performance.now() > deadline) {
@@ -62,10 +62,26 @@ test.skipIf(isWindows)("process.ppid follows a reparent (#29169)", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ beforeWasTheFirstProcess: true, changed: true });
-  expect(exitCode).toBe(0);
+  return { stdout, stderr, exitCode };
+}
+const followed = {
+  stdout: JSON.stringify({ beforeWasTheFirstProcess: true, changed: true }) + "\n",
+  stderr: "",
+  exitCode: 0,
+};
+
+// Windows keeps the pid of a dead parent, so there is nothing to observe there.
+test.skipIf(isWindows)("process.ppid follows a reparent (#29169)", async () => {
+  expect(await ppidAfterReparent("", 30_000)).toEqual(followed);
 });
+
+// Object.seal() and Object.freeze() redefine each property, and JSC then stores the value that the
+// native getter gave at that moment. Node keeps the getter.
+for (const lock of ["seal", "freeze"]) {
+  test.todo(`process.ppid follows a reparent after Object.${lock}(process)`, async () => {
+    expect(await ppidAfterReparent(`Object.${lock}(process);`, 2_000)).toEqual(followed);
+  });
+}
 
 // Sanity check on Linux: the getter's return value agrees with
 // what the kernel reports in /proc/self/stat. Runs synchronously

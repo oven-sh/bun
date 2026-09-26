@@ -193,10 +193,6 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
     if (!listenersVector) [[unlikely]] {
         if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
             Ref<EventEmitter> protectedThis(*this);
-            auto* thisObject = protectedThis->m_thisObject.get();
-            if (!thisObject)
-                return false;
-
             // The realm of the emitter, not of `this`: the same one emit() reports to for a `this` with no emitter.
             Bun__reportUnhandledError(scriptExecutionContext()->jsGlobalObject(), JSValue::encode(arguments.at(0)));
             return false;

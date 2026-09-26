@@ -1,0 +1,33 @@
+# The steps of the loop slice: a library, which the portable image holds once for each OS (flavor.ts).
+# It is its own workspace: a plain `cargo check` here checks it as a program for this machine.
+[workspace]
+
+[package]
+name = "loop_program"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+name = "loop_program"
+path = "src/lib.rs"
+
+[dependencies]
+bun_core = { path = "../../../../src/bun_core" }
+bun_errno = { path = "../../../../src/errno" }
+bun_event_loop = { path = "../../../../src/event_loop" }
+bun_io = { path = "../../../../src/io" }
+bun_paths = { path = "../../../../src/paths" }
+bun_ptr = { path = "../../../../src/ptr" }
+bun_spawn = { path = "../../../../src/spawn" }
+bun_sys = { path = "../../../../src/sys" }
+bun_threading = { path = "../../../../src/threading" }
+bun_uws = { path = "../../../../src/uws" }
+bun_uws_sys = { path = "../../../../src/uws_sys" }
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+bun_libuv_sys = { path = "../../../../src/libuv_sys" }
+bun_windows_sys = { path = "../../../../src/windows_sys" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_portable)', 'cfg(bun_flavor, values("windows", "posix"))'] }

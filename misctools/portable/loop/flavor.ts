@@ -281,6 +281,12 @@ function exportsOf(all: Token[], edits: Edits | undefined, suffix: string, done:
       if (all[at]?.text !== "fn" && all[at]?.text !== "static") continue;
       let name = all[at + 1];
       if (name?.text === "mut") name = all[at + 2];
+      // In the body of a macro the name is one of its variables.
+      if (name?.text === "$" && all[all.indexOf(name) + 1]?.kind === "ident") {
+        const variable = all[all.indexOf(name) + 1].text;
+        edits?.replace(all[i].start, all[close].end, `[unsafe(export_name = concat!(stringify!($${variable}), "${suffix}"))]`);
+        continue;
+      }
       if (name?.kind !== "ident") continue;
       done.exports.push(name.text);
       edits?.replace(all[i].start, all[close].end, `[unsafe(export_name = "${name.text}${suffix}")]`);
@@ -295,6 +301,8 @@ function exportsOf(all: Token[], edits: Edits | undefined, suffix: string, done:
     }
   }
 }
+
+const isLinkAttribute = (text: string) => /^#\s*\[\s*(cfg_attr\s*\((all\(\)|any\(\)|[^,]*),\s*)?link\s*\(/.test(text);
 
 type ExternItem = {
   kind: "fn" | "static" | "other";
@@ -407,20 +415,24 @@ function everyExternBlock(all: Token[], source: string, edits: Edits, rules: Rul
     const imported: ExternItem[] = [];
     const library = libraryOf(all, attributes);
     for (const item of externItems(all, open)) {
-      if (item.kind === "other") continue;
-      if (rules.ofFlavour.has(item.symbol)) {
-        if (item.linkName) edits.replace(item.linkName.start, item.linkName.end, `"${item.symbol}${suffix}"`);
-        else edits.insert(item.start, `#[link_name = "${item.symbol}${suffix}"]\n`);
-        done.renamed.push(item.symbol);
+      // What the image defines once has one name. Everything else of the flavour for Windows, defined
+      // by it or not, has the name of the flavour: the same name in the flavour for POSIX is another
+      // function.
+      if (item.kind === "other" || rules.os !== "windows" || rules.ofImage.has(item.symbol)) continue;
+      if (abi !== '"Rust"' && item.kind === "fn" && !item.variadic && !rules.ofFlavour.has(item.symbol) && isOfTheHost(item.symbol, abi, library !== "*")) {
+        imported.push(item);
         continue;
       }
-      if (rules.os !== "windows" || abi === '"Rust"' || item.kind !== "fn" || item.variadic) continue;
-      if (rules.ofImage.has(item.symbol)) continue;
-      if (isOfTheHost(item.symbol, abi, library !== "*")) imported.push(item);
-      else done.missing.push(item.symbol);
+      if (item.linkName) edits.replace(item.linkName.start, item.linkName.end, `"${item.symbol}${suffix}"`);
+      else edits.insert(item.start, `#[link_name = "${item.symbol}${suffix}"]\n`);
+      (rules.ofFlavour.has(item.symbol) ? done.renamed : done.missing).push(item.symbol);
     }
+    // The image is not linked against a library of Windows: the host has them.
+    if (rules.os === "windows")
+      for (const [from, to] of attributes)
+        if (isLinkAttribute(source.slice(all[from].start, all[to].end))) edits.replace(all[from].start, all[to].end, "");
     if (!imported.length) continue;
-    const keptAttributes = attributeText.filter(text => !/^#\s*\[\s*(cfg_attr\s*\([^,]*,\s*)?link\s*\(/.test(text));
+    const keptAttributes = attributeText.filter(text => !isLinkAttribute(text));
     let block = `\n${keptAttributes.join("\n")}\n#[bun_portable_macros::imports(library = "${library}")]\nunsafe extern ${abi} {\n`;
     for (const item of imported) {
       // With the comments in front of it.
@@ -467,6 +479,8 @@ function everyCallback(all: Token[], edits: Edits, rules: Rules, done: Done) {
       const head = headStart(all, i);
       const attributes = attributesBefore(all, head);
       if (attributes.some(([from, to]) => all.slice(from, to).some(token => token.text === "win_abi"))) continue;
+      // A function with a name for the linker is one that the C and C++ of the image call.
+      if (attributes.some(([from, to]) => all.slice(from, to).some(token => token.text === "export_name" || token.text === "no_mangle")) && !abiName.startsWith("system")) continue;
       edits.insert(all[head].start, "#[bun_portable_macros::win_abi] ");
       done.callbacks.push(all[at + 1].text);
     } else if (rules.arch === "x86_64") {
@@ -518,8 +532,8 @@ type Package = {
   }[];
 };
 
-function metadata(directory: string) {
-  const result = Bun.spawnSync(["cargo", "metadata", "--format-version", "1", "--locked"], {
+function metadata(directory: string, locked = true) {
+  const result = Bun.spawnSync(["cargo", "metadata", "--format-version", "1", ...(locked ? ["--locked"] : [])], {
     cwd: directory,
     stdout: "pipe",
     stderr: "pipe",
@@ -624,8 +638,10 @@ if (import.meta.main) {
       roots.push(root);
       continue;
     }
-    const own = metadata(resolve(root));
     const directory = resolve(root);
+    // A crate of its own workspace takes the versions that bun is built with.
+    if (!existsSync(join(directory, "Cargo.lock"))) cpSync(join(repo, "Cargo.lock"), join(directory, "Cargo.lock"));
+    const own = metadata(directory, false);
     const found = own.packages.find(p => dirname(p.manifest_path) === directory);
     if (!found) throw new Error(`${root}: no crate`);
     packages.set(found.name, found);

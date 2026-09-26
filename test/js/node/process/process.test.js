@@ -2318,159 +2318,134 @@ describe("process.exitCode", () => {
     );
   });
 
-  // The entry module above rejects the entry promise itself. The cases below
-  // are rejections the event loop reports later (no listener, default
-  // --unhandled-rejections mode). Node raises those as uncaught exceptions,
-  // which set process.exitCode = 1 before 'exit' is emitted and skip
-  // 'beforeExit'. Expected values were taken from node v26.
-  it("unhandled rejection reported by the event loop", async () => {
-    await runInlineFixture(
-      `
-      process.on("exit", (code) => console.log("exit", code, process.exitCode));
-      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
-
+  // bun prints an error that nothing handled and fails the run. The 'exit'
+  // listeners are told so: they receive 1 and read it from process.exitCode.
+  describe.concurrent("after an error that nothing handled", () => {
+    const logExit = `process.on("exit", (code) => console.log("exit", code, process.exitCode));`;
+    const logBeforeExit = `process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));`;
+    const rejection = `Promise.reject(new Error("oops"));`;
+    const throwLater = `setImmediate(() => { throw new Error("oops"); });`;
+    const inExit = statement =>
+      `process.on("exit", (code) => { console.log("exit", code, process.exitCode); ${statement} });`;
+    // Bun.build() with an async plugin runs the event loop inside the listener.
+    const rejectAndRunLoop = `
       Promise.reject(new Error("oops"));
-    `,
-      "exit 1 1\n",
-      1,
-    );
-  });
+      Bun.build({
+        entrypoints: [__filename],
+        plugins: [{ name: "wait", async setup() { await new Promise(resolve => setImmediate(resolve)); } }],
+      }).catch(() => {});`;
 
-  it("unhandled rejection from a later event loop turn", async () => {
-    await runInlineFixture(
-      `
-      process.on("exit", (code) => console.log("exit", code, process.exitCode));
-
-      setImmediate(() => {
-        Promise.reject(new Error("oops"));
-      });
-    `,
-      "exit 1 1\n",
-      1,
-    );
-  });
-
-  it("unhandled rejection replaces a process.exitCode set earlier", async () => {
-    await runInlineFixture(
-      `
-      process.exitCode = 5;
-      process.on("exit", (code) => console.log("exit", code, process.exitCode));
-
-      Promise.reject(new Error("oops"));
-    `,
-      "exit 1 1\n",
-      1,
-    );
-  });
-
-  it("an exit listener can change the code set by an unhandled rejection", async () => {
-    await runInlineFixture(
-      `
-      process.on("exit", (code) => {
-        console.log("exit", code, process.exitCode);
-        process.exitCode = 98;
-      });
-
-      Promise.reject(new Error("oops"));
-    `,
-      "exit 1 1\n",
-      98,
-    );
-  });
-
-  it("an exit listener can change the code set by an uncaught exception from the event loop", async () => {
-    await runInlineFixture(
-      `
-      process.on("exit", (code) => {
-        console.log("exit", code, process.exitCode);
-        process.exitCode = 98;
-      });
-
-      setImmediate(() => {
-        throw new Error("oops");
-      });
-    `,
-      "exit 1 1\n",
-      98,
-    );
-  });
-
-  it("a rejection consumed by an unhandledRejection listener leaves the exit code alone", async () => {
-    await runInlineFixture(
-      `
-      process.on("unhandledRejection", (err) => console.log("unhandledRejection", err.message));
-      process.on("exit", (code) => console.log("exit", code, process.exitCode));
-      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
-
-      Promise.reject(new Error("oops"));
-    `,
-      "unhandledRejection oops\nbeforeExit 0 undefined\nexit 0 undefined\n",
-      0,
-    );
-  });
-
-  // bun keeps running after it prints an error that nothing handled (node exits
-  // there), so code that runs later can assign process.exitCode. That must not
-  // turn the failed run into a success.
-  it.each([
-    ["reportError()", `reportError(new Error("oops"));`],
-    [
-      "a throwing EventTarget listener",
-      `const target = new EventTarget();
-      target.addEventListener("x", () => { throw new Error("oops"); });
-      target.dispatchEvent(new Event("x"));`,
-    ],
-  ])("process.exitCode = 0 after %s does not clear the failure", async (_, report) => {
-    await runInlineFixture(
-      `
-      process.on("exit", (code) => console.log("exit", code, process.exitCode));
-      ${report}
-      process.exitCode = 0;
-    `,
-      "exit 1 1\n",
-      1,
-    );
-  });
-
-  it("process.exitCode = 0 after a rejection in a --preload module does not clear the failure", async () => {
-    using dir = tempDir("process-exitcode-preload", {
-      "preload.js": `Promise.reject(new Error("oops"));`,
-      "index.js": `
-        process.on("exit", (code) => console.log("exit", code, process.exitCode));
-        process.exitCode = 0;
-      `,
+    it.each([
+      // These rows print the same and exit with the same code on node v26.3.0.
+      ["a rejection is reported to 'exit', not to 'beforeExit'", [logExit, logBeforeExit, rejection], "exit 1 1\n", 1],
+      ["a rejection from a later turn", [logExit, `setImmediate(() => { ${rejection} });`], "exit 1 1\n", 1],
+      [
+        "a rejection replaces a process.exitCode set earlier",
+        ["process.exitCode = 5;", logExit, rejection],
+        "exit 1 1\n",
+        1,
+      ],
+      [
+        "an exit listener replaces the code of a rejection with 98",
+        [inExit("process.exitCode = 98;"), rejection],
+        "exit 1 1\n",
+        98,
+      ],
+      [
+        "an exit listener replaces the code of a rejection with 0",
+        [inExit("process.exitCode = 0;"), rejection],
+        "exit 1 1\n",
+        0,
+      ],
+      [
+        "an exit listener replaces the code of a throw from the event loop with 98",
+        [inExit("process.exitCode = 98;"), throwLater],
+        "exit 1 1\n",
+        98,
+      ],
+      [
+        "an exit listener replaces the code of a throw from the event loop with 0",
+        [inExit("process.exitCode = 0;"), throwLater],
+        "exit 1 1\n",
+        0,
+      ],
+      [
+        "an exit listener replaces the code of reportError() with 98",
+        [inExit("process.exitCode = 98;"), `reportError(new Error("oops"));`],
+        "exit 1 1\n",
+        98,
+      ],
+      [
+        "an exit listener that calls process.exit() exits with 1",
+        [inExit("process.exit();"), rejection],
+        "exit 1 1\n",
+        1,
+      ],
+      [
+        "process.exitCode = 0 after reportError() does not clear the failure",
+        [logExit, `reportError(new Error("oops"));`, "process.exitCode = 0;"],
+        "exit 1 1\n",
+        1,
+      ],
+      [
+        "process.exitCode = 0 after a throwing EventTarget listener does not clear the failure",
+        [
+          logExit,
+          `const target = new EventTarget();`,
+          `target.addEventListener("x", () => { throw new Error("oops"); });`,
+          `target.dispatchEvent(new Event("x"));`,
+          "process.exitCode = 0;",
+        ],
+        "exit 1 1\n",
+        1,
+      ],
+      [
+        "a rejection that an unhandledRejection listener consumes leaves the code alone",
+        [
+          `process.on("unhandledRejection", (err) => console.log("unhandledRejection", err.message));`,
+          logExit,
+          logBeforeExit,
+          rejection,
+        ],
+        "unhandledRejection oops\nbeforeExit 0 undefined\nexit 0 undefined\n",
+        0,
+      ],
+      // bun only. The error is printed after 'exit' was emitted with 0, and the run still fails.
+      [
+        "an error first printed while an exit listener runs the event loop",
+        [inExit(rejectAndRunLoop)],
+        "exit 0 undefined\n",
+        1,
+      ],
+      [
+        "an error first printed while an exit listener runs the event loop, after the listener assigned 98",
+        [inExit(`process.exitCode = 98; ${rejectAndRunLoop}`)],
+        "exit 0 undefined\n",
+        1,
+      ],
+    ])("%s", async (_, lines, stdout, exitCode) => {
+      await runInlineFixture(lines.join("\n"), stdout, exitCode);
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--preload", "./preload.js", "index.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("error: oops");
-    expect({ stdout, exitCode }).toEqual({ stdout: "exit 1 1\n", exitCode: 1 });
-  });
-
-  it("an error first printed while an exit listener runs the event loop fails the run", async () => {
-    // Bun.build() with an async plugin runs the event loop inside the listener,
-    // so the rejection is printed after 'exit' was emitted with 0.
-    await runInlineFixture(
-      `
-      process.on("exit", (code) => {
-        console.log("exit", code, process.exitCode);
-        Promise.reject(new Error("oops"));
-        Bun.build({
-          entrypoints: [__filename],
-          plugins: [{ name: "wait", async setup() { await new Promise(resolve => setImmediate(resolve)); } }],
-        }).catch(() => {});
+    // `node --require ./preload.js index.js` prints the same and exits with 1.
+    it("process.exitCode = 0 after a rejection in a --preload module does not clear the failure", async () => {
+      using dir = tempDir("process-exitcode-preload", {
+        "preload.js": rejection,
+        "index.js": `${logExit}\nprocess.exitCode = 0;`,
       });
-    `,
-      "exit 0 undefined\n",
-      1,
-    );
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--preload", "./preload.js", "index.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("error: oops");
+      expect({ stdout, exitCode }).toEqual({ stdout: "exit 1 1\n", exitCode: 1 });
+    });
   });
 
   it("exitsOnExitCodeSet", async () => {

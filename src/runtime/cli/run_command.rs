@@ -1564,21 +1564,19 @@ impl Run<'_> {
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
         let _ = vm.global().handle_rejected_promises();
         // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
-        if vm.unhandled_error_counter > 0 {
+        let fatal = vm.unhandled_error_counter > 0;
+        if fatal {
             vm.exit_handler.requested = true;
         }
-        // A printed error fails the run, whatever `process.exitCode` held since.
-        // Decide it before `on_exit()`: the 'exit' listeners receive this code,
-        // and the code they leave is final.
-        let failed_before_exit = ANY_UNHANDLED.load(Ordering::Relaxed);
-        if failed_before_exit {
+        // Before on_exit(): the 'exit' listeners receive this code.
+        if ANY_UNHANDLED.load(Ordering::Relaxed) {
             vm.exit_handler.exit_code = 1;
         }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
-            // First printed while an 'exit' listener ran the loop.
-            if !failed_before_exit {
+            // As in Node, an 'exit' listener can replace the code of a fatal error. Other printed errors keep 1.
+            if !fatal {
                 vm.exit_handler.exit_code = 1;
             }
             print_unhandled_version_note();
@@ -1676,8 +1674,7 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
     exit_with_unhandled_note(vm);
 }
 
-/// Cold tail of an exit on which `ANY_UNHANDLED` tripped: print the sourcemap
-/// note + version string.
+/// Prints the sourcemap note + version string after `ANY_UNHANDLED` tripped.
 #[cold]
 #[inline(never)]
 #[cfg_attr(

@@ -39,12 +39,21 @@ test("Bun.serve() propagates errors to the parent", async () => {
   expect(stderr.toString()).toContain("error: Test failed successfully");
 });
 
-test.each([
-  ["", ""],
-  [", also when process.exitCode = 0 runs afterwards", "process.exitCode = 0;"],
+// A fetch handler error with no error() handler is printed like any other
+// unhandled error, and the run fails. Node has no counterpart for these rows.
+test.concurrent.each([
+  ["its exit listeners are told 1", "", "500\nexit 1 1\n", 1],
+  ["process.exitCode = 0 afterwards does not clear the failure", "process.exitCode = 0;", "500\nexit 1 1\n", 1],
+  [
+    "an exit listener does not replace the code",
+    `process.on("exit", () => { process.exitCode = 98; });`,
+    "500\nexit 1 1\n",
+    1,
+  ],
+  ["process.exit() afterwards exits with the code it stored", "process.exit();", "500\nexit 0 undefined\n", 0],
 ])(
-  "under bun run, a fetch handler error with no error() handler fails the process and its exit listeners see it%s",
-  async (_, afterwards) => {
+  "under bun run, a fetch handler error with no error() handler fails the process: %s",
+  async (_, afterwards, expectedStdout, expectedExitCode) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -69,8 +78,6 @@ test.each([
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("error: Test failed successfully");
-    // The served 500 is printed like any other unhandled error. The run fails,
-    // and 'exit' is emitted with the code the process exits with.
-    expect({ stdout, exitCode }).toEqual({ stdout: "500\nexit 1 1\n", exitCode: 1 });
+    expect({ stdout, exitCode }).toEqual({ stdout: expectedStdout, exitCode: expectedExitCode });
   },
 );

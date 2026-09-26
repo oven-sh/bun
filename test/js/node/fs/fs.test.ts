@@ -1943,6 +1943,25 @@ describe("readSync", () => {
     }
   });
 
+  it("reports an out of range bigint position like Node", () => {
+    const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+    try {
+      const buf = new Uint8Array(4);
+      const maxPosition = 2n ** 63n - 1n - 4n;
+      for (const position of [-2n, maxPosition + 1n]) {
+        expect(() => readSync(fd, buf, 0, 4, position)).toThrow(
+          expect.objectContaining({
+            name: "RangeError",
+            code: "ERR_OUT_OF_RANGE",
+            message: `The value of "position" is out of range. It must be >= -1 && <= ${maxPosition}. Received ${position}n`,
+          }),
+        );
+      }
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];
 
   it("works on large files", () => {

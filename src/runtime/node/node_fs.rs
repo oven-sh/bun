@@ -4069,13 +4069,15 @@ pub(crate) mod args {
                 if position.order(-1i64) == core::cmp::Ordering::Less
                     || position.order(max_position) == core::cmp::Ordering::Greater
                 {
-                    let position_bytes = position.to_string(ctx)?.to_owned_slice();
+                    // Node spells this range with "&&" (lib/internal/fs/utils.js validatePosition).
+                    let range = format!(">= -1 && <= {max_position}");
+                    let mut received = position.to_string(ctx)?.to_owned_slice();
+                    received.push(b'n');
                     return Err(ctx.throw_range_error(
-                        &position_bytes[..],
+                        &received[..],
                         bun_jsc::RangeErrorOptions {
                             field_name: b"position",
-                            min: -1,
-                            max: max_position,
+                            msg: range.as_bytes(),
                             ..Default::default()
                         },
                     ));

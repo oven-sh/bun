@@ -19,8 +19,10 @@ mod imports;
 
 /// On an `unsafe extern "system" { .. }` or `unsafe extern "C" { .. }` block.
 ///
-/// `#[cfg_attr(bun_portable, bun_portable_macros::imports)]` takes the library from the block's
-/// `link(name = "..")`; a block that has none names it: `imports(library = "libuv")`.
+/// `#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]`. The library is
+/// named here because the block's `cfg_attr(windows, link(name = ".."))` is gone when the macro runs:
+/// the image is not compiled for Windows. A function of another library than the block's says so with
+/// `#[cfg_attr(bun_portable, library = "ntdll")]`.
 ///
 /// Every `fn` of the block becomes a function of the same name, visibility, arguments and result, `unsafe`
 /// unless it was declared `safe`. It calls the address in its entry of the image's import table

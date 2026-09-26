@@ -12,6 +12,8 @@ struct Function {
     is_safe: bool,
     name: Ident,
     symbol: String,
+    /// The library of this function, when it is not the one of the block.
+    library: Option<String>,
     arguments: Vec<Argument>,
     result: Tokens,
 }
@@ -99,12 +101,32 @@ fn link_name_of_block(attribute: &Group) -> Option<String> {
     })
 }
 
+/// `#[cfg_attr(bun_portable, library = "..")]` on a function of the block. The attributes inside of an
+/// item are not evaluated before an attribute macro on the item runs, so it arrives as it is written.
+fn library_of_function(attribute: &Group) -> Option<String> {
+    if attribute_name(attribute).as_deref() != Some("cfg_attr") {
+        return None;
+    }
+    let TokenTree::Group(arguments) = attribute.stream().into_iter().nth(1)? else {
+        return None;
+    };
+    let mut tokens = arguments.stream().into_iter();
+    match tokens.next()? {
+        TokenTree::Ident(predicate) if predicate == "bun_portable" => {}
+        _ => return None,
+    }
+    string_value(tokens.skip(1).collect(), "library")
+}
+
 fn parse_function(cursor: &mut Cursor) -> syn::Result<Function> {
     let mut symbol = None;
+    let mut library = None;
     let mut attributes = Vec::new();
     for attribute in cursor.take_attributes()? {
         if attribute_name(&attribute).as_deref() == Some("link_name") {
             symbol = string_value(attribute.stream(), "link_name");
+        } else if let Some(name) = library_of_function(&attribute) {
+            library = Some(name);
         } else {
             attributes.push(attribute);
         }
@@ -147,6 +169,7 @@ fn parse_function(cursor: &mut Cursor) -> syn::Result<Function> {
         visibility,
         is_safe,
         symbol: symbol.unwrap_or_else(|| name.to_string()),
+        library,
         name,
         arguments,
         result,
@@ -219,9 +242,11 @@ fn wrapper(function: &Function, library: &str, block_attributes: &[Tokens]) -> T
         is_safe,
         name,
         symbol,
+        library: own_library,
         arguments,
         result,
     } = function;
+    let library = own_library.as_deref().unwrap_or(library);
     let attributes = attributes.iter().map(attribute_tokens);
     let unsafety = if *is_safe { quote!() } else { quote!(unsafe) };
     let names: Vec<&Ident> = arguments.iter().map(|argument| &argument.name).collect();

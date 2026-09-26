@@ -1981,38 +1981,34 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    // SQLite dereferences pArg without a null check. -1 is "query" for the in/out opcodes.
     int64_t resultInt = -1;
-    void* resultPtr = nullptr;
-    if (resultValue.isObject()) {
-        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(resultValue.getObject())) {
-            if (view->isDetached()) {
-                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray is detached"_s));
-                return {};
-            }
-
-            if (view->byteLength() < sizeof(int64_t)) {
-                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray must be at least 8 bytes"_s));
-                return {};
-            }
-
-            resultPtr = view->vector();
-            if (resultPtr == nullptr) {
-                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected buffer"_s));
-                return {};
-            }
-        }
-    } else if (resultValue.isNumber()) {
+    void* resultPtr = &resultInt;
+    if (resultValue.isNumber()) {
         resultInt = resultValue.toInt32(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
+    } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(resultValue)) {
+        if (view->isDetached()) {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray is detached"_s));
+            return {};
+        }
 
-        resultPtr = &resultInt;
-    } else if (resultValue.isNull()) {
+        if (view->byteLength() < sizeof(int64_t)) {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray must be at least 8 bytes"_s));
+            return {};
+        }
 
-    } else {
+        resultPtr = view->vector();
+        if (resultPtr == nullptr) {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected buffer"_s));
+            return {};
+        }
+    } else if (!resultValue.isNull()) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected result to be a number, null or a TypedArray"_s));
         return {};
     }
 
+    ASSERT(resultPtr);
     int statusCode = sqlite3_file_control(db, fileNameStr.isNull() ? nullptr : fileNameStr.data(), op, resultPtr);
 
     if (statusCode == SQLITE_ERROR) {

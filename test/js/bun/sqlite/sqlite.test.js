@@ -2563,6 +2563,211 @@ it("fileControl rejects result TypedArrays smaller than 8 bytes", () => {
   db.close();
 });
 
+// SQLite dereferences the argument of sqlite3_file_control without a null
+// check. null and an object that is not a TypedArray used to reach it as a
+// NULL pointer, and each opcode below then faulted at address 0.
+describe("fileControl without storage from the caller", () => {
+  // sqlite3_file_control answers these itself, on every VFS.
+  const core = ["FILE_POINTER", "VFS_POINTER", "JOURNAL_POINTER", "DATA_VERSION", "RESERVE_BYTES", "RESET_CACHE"];
+  // The VFS of a database file answers these.
+  const vfs = [
+    "LOCKSTATE",
+    "LAST_ERRNO",
+    "SIZE_HINT",
+    "CHUNK_SIZE",
+    "PERSIST_WAL",
+    "VFSNAME",
+    "POWERSAFE_OVERWRITE",
+    "TEMPFILENAME",
+    "MMAP_SIZE",
+    "HAS_MOVED",
+    "EXTERNAL_READER",
+  ];
+  // The memdb VFS of a deserialized database answers these.
+  const memdb = ["VFSNAME", "SIZE_LIMIT"];
+
+  async function runWithFileDatabase(dir, script) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { Database, constants } from "bun:sqlite";
+          const op = name => constants["SQLITE_FCNTL_" + name];
+          const file = new Database("file.db");
+          file.run("CREATE TABLE t (v)");
+          ${script}
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent("null is the same as -1", async () => {
+    using dir = tempDir("sqlite-fcntl-null", {});
+    const { stdout, stderr, exitCode } = await runWithFileDatabase(
+      dir,
+      `
+        file.run("ATTACH DATABASE 'attached.db' AS attached");
+        file.run("CREATE TABLE attached.t (v)");
+        const deserialized = Database.deserialize(file.serialize());
+
+        // Each row: the status with -1, then the status of each call with null.
+        const statuses = (db, names) =>
+          Object.fromEntries(
+            names.map(name => [
+              name,
+              [
+                db.fileControl(op(name), -1),
+                db.fileControl(op(name), null),
+                db.fileControl("main", op(name), null),
+              ],
+            ]),
+          );
+        const result = {
+          memory: statuses(new Database(":memory:"), ${JSON.stringify(core)}),
+          deserialized: statuses(deserialized, ${JSON.stringify([...core, ...memdb])}),
+          file: statuses(file, ${JSON.stringify([...core, ...vfs])}),
+          attached: Object.fromEntries(
+            ${JSON.stringify(vfs)}.map(name => [
+              name,
+              [file.fileControl("attached", op(name), -1), file.fileControl("attached", op(name), null)],
+            ]),
+          ),
+          unknownOpcode: [file.fileControl(99999, -1), file.fileControl(99999, null)],
+        };
+
+        // -1 asks PERSIST_WAL for the flag and does not change it.
+        const flagAfterNull = flag => {
+          file.fileControl(op("PERSIST_WAL"), flag);
+          file.fileControl(op("PERSIST_WAL"), null);
+          const read = new Int32Array([-1, 0]);
+          file.fileControl(op("PERSIST_WAL"), read);
+          return read[0];
+        };
+        result.persistWal = [flagAfterNull(0), flagAfterNull(1)];
+
+        // A negative 64-bit value asks SIZE_LIMIT for the limit and does not change it.
+        const sizeLimit = () => {
+          const read = new BigInt64Array([-1n]);
+          deserialized.fileControl(op("SIZE_LIMIT"), read);
+          return String(read[0]);
+        };
+        const sizeLimitBefore = sizeLimit();
+        deserialized.fileControl(op("SIZE_LIMIT"), null);
+        result.sizeLimitKept = sizeLimit() === sizeLimitBefore;
+
+        file.close();
+        result.closed = String(file.fileControl(op("DATA_VERSION"), null));
+        console.log(JSON.stringify(result));
+      `,
+    );
+
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout);
+
+    // Linux and Windows run the SQLite that bun bundles, so the status is
+    // known. winFileControl has no case for HAS_MOVED and EXTERNAL_READER and
+    // answers SQLITE_NOTFOUND (12). macOS loads the system SQLite. There, the
+    // status is the one that the same call with -1 returns.
+    const status = (name, withMinusOne) => {
+      if (isMacOS) return withMinusOne;
+      if (isWindows && (name === "HAS_MOVED" || name === "EXTERNAL_READER")) return 12;
+      return 0;
+    };
+    const expected = (names, table, calls) =>
+      Object.fromEntries(names.map(name => [name, Array(calls).fill(status(name, table?.[name]?.[0]))]));
+
+    expect(result).toEqual({
+      memory: expected(core, result.memory, 3),
+      deserialized: expected([...core, ...memdb], result.deserialized, 3),
+      file: expected([...core, ...vfs], result.file, 3),
+      attached: expected(vfs, result.attached, 2),
+      unknownOpcode: Array(2).fill(isMacOS ? result.unknownOpcode?.[0] : 12),
+      persistWal: [0, 1],
+      sizeLimitKept: true,
+      closed: "undefined",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("a value that is not a number, null or a TypedArray throws", async () => {
+    using dir = tempDir("sqlite-fcntl-object", {});
+    const { stdout, stderr, exitCode } = await runWithFileDatabase(
+      dir,
+      `
+        const values = {
+          object: {},
+          date: new Date(0),
+          array: [1, 2, 3],
+          function: () => {},
+          arrayBuffer: new ArrayBuffer(8),
+          sharedArrayBuffer: new SharedArrayBuffer(8),
+          boolean: true,
+          string: "1",
+          bigint: 1n,
+          symbol: Symbol(),
+          undefined: undefined,
+        };
+        const message = call => {
+          try {
+            return call();
+          } catch (error) {
+            return error.message;
+          }
+        };
+        const result = { omitted: message(() => file.fileControl(op("PERSIST_WAL"))) };
+        for (const [name, value] of Object.entries(values)) {
+          result[name] = message(() => file.fileControl(op("PERSIST_WAL"), value));
+        }
+        console.log(JSON.stringify(result));
+      `,
+    );
+
+    const message = "Expected result to be a number, null or a TypedArray";
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      omitted: message,
+      object: message,
+      date: message,
+      array: message,
+      function: message,
+      arrayBuffer: message,
+      sharedArrayBuffer: message,
+      boolean: message,
+      string: message,
+      bigint: message,
+      symbol: message,
+      undefined: message,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("a TypedArray reads the value that SQLite writes back", () => {
+    using dir = tempDir("sqlite-fcntl-readback", {});
+    using db = new Database(path.join(String(dir), "file.db"));
+    db.run("CREATE TABLE t (v)");
+
+    const before = new Uint32Array(2);
+    const after = new Uint32Array(2);
+    expect(db.fileControl(constants.SQLITE_FCNTL_DATA_VERSION, before)).toBe(0);
+    db.run("INSERT INTO t VALUES (1)");
+    expect(db.fileControl(constants.SQLITE_FCNTL_DATA_VERSION, after)).toBe(0);
+    expect(after[0]).not.toBe(before[0]);
+
+    // A number argument sets the flag. The return value is the status.
+    expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 1)).toBe(0);
+    const persistWal = new Int32Array([-1, 0]);
+    expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, persistWal)).toBe(0);
+    expect(persistWal[0]).toBe(1);
+  });
+});
+
 it("decodes non-UTF-8 TEXT leniently and consistently across the 64-byte boundary", () => {
   const db = new Database(":memory:");
   const q = bytes => db.query(`SELECT CAST(x'${Buffer.from(bytes).toString("hex")}' AS TEXT) t`);

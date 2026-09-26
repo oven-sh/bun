@@ -5174,22 +5174,12 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    // Declared before the truncate guard so it drops *after* it (close runs last).
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
-
-    // scopeguard's closure captures borrows at construction, conflicting
-    // with later `written += ...` / `truncate = false`. Route through `Cell`
-    // so the guard and the loop body share `&Cell<_>` (no mutable-borrow conflict).
-    let truncate = core::cell::Cell::new(NEEDS_OPEN || str.is_empty());
-    let written = core::cell::Cell::new(0usize);
 
     // we only truncate if it's a path
     // if it's a file descriptor, we assume they want manual control over that behavior
-    scopeguard::defer! {
-        if truncate.get() {
-            let _ = bun_sys::ftruncate(fd, i64::try_from(written.get()).expect("int cast"));
-        }
-    }
+    let truncate = NEEDS_OPEN || str.is_empty();
+    let mut written: usize = 0;
 
     if !str.is_empty() {
         let decoded = str.to_utf8();
@@ -5197,14 +5187,13 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         while !remain.is_empty() {
             match bun_sys::write(fd, remain) {
                 bun_sys::Result::Ok(res) => {
-                    written.set(written.get() + res);
+                    written += res;
                     remain = &remain[res..];
                     if res == 0 {
                         break;
                     }
                 }
                 bun_sys::Result::Err(err) => {
-                    truncate.set(false);
                     if err.get_errno() == bun_sys::E::EAGAIN {
                         *needs_async = true;
                         return JSValue::ZERO;
@@ -5220,7 +5209,20 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     }
 
-    JSPromise::resolved_promise_value(global_this, JSValue::js_number(written.get() as f64))
+    // A caller-owned fd keeps the best-effort resize.
+    if truncate
+        && let Err(err) =
+            bun_sys::ftruncate_after_write(fd, i64::try_from(written).expect("int cast"))
+        && NEEDS_OPEN
+    {
+        return JSPromise::rejected_promise(
+            global_this,
+            err.with_path(pathlike.path().slice()).to_js(global_this),
+        )
+        .to_js();
+    }
+
+    JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))
 }
 
 #[cfg(not(windows))]
@@ -5292,14 +5294,17 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         }
     }
 
-    if truncate {
-        #[cfg(windows)]
-        // SAFETY: fd is a valid open handle on this code path; FFI call.
-        unsafe {
-            bun_sys::windows::kernel32::SetEndOfFile(fd.native())
-        };
-        #[cfg(not(windows))]
-        let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
+    // A caller-owned fd keeps the best-effort resize.
+    if truncate
+        && let Err(err) =
+            bun_sys::ftruncate_after_write(fd, i64::try_from(written).expect("int cast"))
+        && NEEDS_OPEN
+    {
+        return JSPromise::rejected_promise(
+            global_this,
+            err.with_path(pathlike.path().slice()).to_js(global_this),
+        )
+        .to_js();
     }
 
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))

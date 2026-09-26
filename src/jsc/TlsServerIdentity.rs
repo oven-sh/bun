@@ -214,6 +214,16 @@ pub fn check_with_callback(
         callback.call(global, JSValue::UNDEFINED, &[js_hostname, js_cert])
     };
     let result = result.map_err(|e| global.take_exception(e))?;
+    // A VM that is stopping calls nobody and answers `undefined`: nobody approved this certificate.
+    let vm = global.bun_vm();
+    if !vm.script_allowed() || global.vm().execution_forbidden() || vm.calls_nobody() {
+        return Err(global
+            .err(
+                ErrorCode::TLS_CERT_ALTNAME_INVALID,
+                format_args!("\"tls.checkServerIdentity\" did not run"),
+            )
+            .to_js());
+    }
     verdict_of(global, result)
 }
 

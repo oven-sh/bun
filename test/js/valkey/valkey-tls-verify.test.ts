@@ -6,6 +6,7 @@ import fs from "node:fs";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import tls from "node:tls";
+import { Worker } from "node:worker_threads";
 
 // Server presents a cert for CN=agent1 (no SAN), signed by ca1.
 // A client connecting to host "localhost" with ca1 trusted will pass chain
@@ -499,6 +500,37 @@ describe("RedisClient tls.checkServerIdentity", () => {
         client.close();
       }
     });
+  });
+
+  test("a worker terminated inside the callback stops, and sends nothing to the server", async () => {
+    const { promise: serverSocketClosed, resolve } = Promise.withResolvers<void>();
+    let bytesFromClient = 0;
+    const server = tls.createServer({ key: localhostTls.key, cert: localhostTls.cert }, socket => {
+      socket.on("data", chunk => (bytesFromClient += chunk.length));
+      socket.on("error", () => {});
+      socket.on("close", () => resolve());
+    });
+    server.listen(0);
+    await once(server, "listening");
+    try {
+      const counters = new SharedArrayBuffer(12);
+      const count = new Int32Array(counters);
+      const worker = new Worker(new URL("./valkey-tls-verify-worker-fixture.ts", import.meta.url), {
+        workerData: { port: (server.address() as AddressInfo).port, ca: localhostTls.cert, counters },
+      });
+      const exited = once(worker, "exit");
+      await Atomics.waitAsync(count, 0, 0).value;
+      await worker.terminate();
+      await Promise.all([exited, serverSocketClosed]);
+      expect({ callbackEntered: count[0], oncloseRan: count[1], commandSettled: count[2], bytesFromClient }).toEqual({
+        callbackEntered: 1,
+        oncloseRan: 0,
+        commandSettled: 0,
+        bytesFromClient: 0,
+      });
+    } finally {
+      server.close();
+    }
   });
 
   test("a callback that closes the client rejects the pending command", async () => {

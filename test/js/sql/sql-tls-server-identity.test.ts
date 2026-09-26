@@ -10,10 +10,12 @@ import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { tls as localhostTls } from "harness";
 import { X509Certificate } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs";
 import type net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
+import { Worker } from "node:worker_threads";
 import {
   MYSQL_CLIENT_SSL,
   MYSQL_DEFAULT_CAPABILITIES,
@@ -44,6 +46,8 @@ type MockServer = {
   url: string;
   /** SNI of every completed TLS handshake, in order. */
   servernames: (string | false)[];
+  /** Set by a test that needs them: called with the bytes a connection sent inside TLS, when it closes. */
+  onTlsClose?: (bytesFromClient: number) => void;
   close(): void;
 };
 
@@ -52,18 +56,21 @@ type MockServer = {
  * done. Bytes already buffered past the prelude are TLS records: hand them to
  * the TLS engine instead of the plaintext parser.
  */
-function upgrade(rawSocket: net.Socket, cert: ServerCert, leftover: Buffer, servernames: (string | false)[]) {
+function upgrade(rawSocket: net.Socket, cert: ServerCert, leftover: Buffer, mock: MockServer) {
   rawSocket.pause();
   if (leftover.length) rawSocket.unshift(leftover);
   const socket = new tls.TLSSocket(rawSocket, { isServer: true, ...cert });
-  socket.on("secure", () => servernames.push(socket.servername));
+  let bytesFromClient = 0;
+  socket.on("secure", () => mock.servernames.push(socket.servername));
+  socket.on("data", (chunk: Buffer) => (bytesFromClient += chunk.length));
+  socket.on("close", () => mock.onTlsClose?.(bytesFromClient));
   socket.on("error", () => {});
   return socket;
 }
 
 /** Answers SSLRequest with 'S', upgrades, then accepts any StartupMessage. */
 async function postgresServer(cert: ServerCert): Promise<MockServer> {
-  const servernames: (string | false)[] = [];
+  const mock: MockServer = { url: "", servernames: [], close: () => {} };
   const { server, port } = await listeningServer(rawSocket => {
     rawSocket.on("error", () => {});
     let buffered = Buffer.alloc(0);
@@ -74,7 +81,7 @@ async function postgresServer(cert: ServerCert): Promise<MockServer> {
       if (buffered.length < 8) return;
       rawSocket.removeListener("data", onPlainData);
       rawSocket.write(pgSSLResponse("S"));
-      const socket = upgrade(rawSocket, cert, buffered.subarray(8), servernames);
+      const socket = upgrade(rawSocket, cert, buffered.subarray(8), mock);
       let startup = true;
       socket.on("data", () => {
         if (startup) {
@@ -85,12 +92,14 @@ async function postgresServer(cert: ServerCert): Promise<MockServer> {
     };
     rawSocket.on("data", onPlainData);
   });
-  return { url: `postgres://u@127.0.0.1:${port}/db`, servernames, close: () => server.close() };
+  mock.url = `postgres://u@127.0.0.1:${port}/db`;
+  mock.close = () => server.close();
+  return mock;
 }
 
 /** Advertises CLIENT_SSL, upgrades after the SSLRequest packet, then accepts the login. */
 async function mysqlServer(cert: ServerCert): Promise<MockServer> {
-  const servernames: (string | false)[] = [];
+  const mock: MockServer = { url: "", servernames: [], close: () => {} };
   const { server, port } = await listeningServer(rawSocket => {
     rawSocket.on("error", () => {});
     rawSocket.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }));
@@ -104,7 +113,7 @@ async function mysqlServer(cert: ServerCert): Promise<MockServer> {
       const leftover = buffered.subarray(4 + length);
       buffered = Buffer.alloc(0);
       rawSocket.removeListener("data", onPlainData);
-      const socket = upgrade(rawSocket, cert, leftover, servernames);
+      const socket = upgrade(rawSocket, cert, leftover, mock);
       let authed = false;
       socket.on("data", (chunk: Buffer) => {
         buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
@@ -119,7 +128,9 @@ async function mysqlServer(cert: ServerCert): Promise<MockServer> {
     };
     rawSocket.on("data", onPlainData);
   });
-  return { url: `mysql://u@127.0.0.1:${port}/db`, servernames, close: () => server.close() };
+  mock.url = `mysql://u@127.0.0.1:${port}/db`;
+  mock.close = () => server.close();
+  return mock;
 }
 
 async function connect(url: string, tlsOptions: Bun.SQL.Options["tls"], sslmode = "verify-full"): Promise<unknown> {
@@ -268,6 +279,28 @@ describe.each([
       );
       expect(result).toBe("CONNECTED");
       expect(calls).toBe(0);
+    });
+  });
+
+  test("a worker terminated inside tls.checkServerIdentity stops, and sends nothing to the server", async () => {
+    await withServer(localhost, async server => {
+      const { promise: tlsClosed, resolve } = Promise.withResolvers<number>();
+      server.onTlsClose = resolve;
+      const counters = new SharedArrayBuffer(12);
+      const count = new Int32Array(counters);
+      const worker = new Worker(new URL("./sql-tls-server-identity-worker-fixture.ts", import.meta.url), {
+        workerData: { url: `${server.url}?sslmode=verify-full`, ca: localhost.ca, counters },
+      });
+      const exited = once(worker, "exit");
+      await Atomics.waitAsync(count, 0, 0).value;
+      await worker.terminate();
+      const [bytesFromClient] = await Promise.all([tlsClosed, exited]);
+      expect({ callbackEntered: count[0], oncloseRan: count[1], connectSettled: count[2], bytesFromClient }).toEqual({
+        callbackEntered: 1,
+        oncloseRan: 0,
+        connectSettled: 0,
+        bytesFromClient: 0,
+      });
     });
   });
 

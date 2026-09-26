@@ -37,7 +37,9 @@ impl Default for CompileTarget {
                 tag: Default::default(),
                 _tag_padding: Default::default(),
             },
-            libc: if Environment::IS_MUSL {
+            libc: if cfg!(bun_portable) {
+                Libc::Portable
+            } else if Environment::IS_MUSL {
                 Libc::Musl
             } else if Environment::IS_ANDROID {
                 Libc::Android
@@ -58,24 +60,12 @@ pub enum Libc {
     Musl,
     /// bionic (Android)
     Android,
+    /// The portable image: compiled for Linux (`os`), run on Linux, macOS and Windows by a host program of that OS.
+    Portable,
 }
 
-impl Libc {
-    /// npm package name, `@oven-sh/bun-{os}-{arch}`
-    const fn npm_name(self) -> &'static str {
-        match self {
-            Libc::Default => "",
-            Libc::Musl => "-musl",
-            Libc::Android => "-android",
-        }
-    }
-}
-
-impl fmt::Display for Libc {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.npm_name())
-    }
-}
+/// The metadata of a Windows executable (`--windows-icon` and the like), asked of a portable target.
+pub const PORTABLE_TARGET_WITH_WINDOWS_METADATA: &str = "a portable executable takes no Windows icon, title, publisher, version, description or copyright: its Windows part is the host program of the image, and the resources of that program are not written when compiling";
 
 struct BaselineFormatter {
     baseline: bool,
@@ -96,9 +86,50 @@ pub enum ParseError {
     UnsupportedTarget,
     #[error("InvalidTarget")]
     InvalidTarget,
+    /// `portable` without a CPU architecture.
+    #[error("PortableTargetWithoutArch")]
+    PortableTargetWithoutArch,
+    /// `portable` with an operating system, a libc, `baseline` or `modern`.
+    #[error("PortableTargetWithToken")]
+    PortableTargetWithToken,
+}
+
+impl ParseError {
+    /// What is wrong with a `portable` target, for the message of the error. `None` for the other errors.
+    pub fn portable_target_message(&self) -> Option<&'static str> {
+        match self {
+            // No default: an x64 file does not start on an arm64 machine, and the name promises neither.
+            ParseError::PortableTargetWithoutArch => Some(
+                "a portable executable is one file per CPU architecture, use bun-portable-x64 or bun-portable-arm64",
+            ),
+            ParseError::PortableTargetWithToken => Some(
+                "a portable executable runs on Linux, macOS and Windows and on every CPU of its architecture: \"portable\" takes the place of the operating system, and no libc, \"baseline\" or \"modern\" goes with it",
+            ),
+            ParseError::UnsupportedTarget | ParseError::InvalidTarget => None,
+        }
+    }
 }
 
 impl CompileTarget {
+    /// `os` and `libc` of `bun-{os}-{arch}{libc}`, the name of the npm package and of the file in the cache.
+    const fn os_and_libc_names(&self) -> (&'static str, &'static str) {
+        match self.libc {
+            Libc::Default => (self.os.npm_name(), ""),
+            Libc::Musl => (self.os.npm_name(), "-musl"),
+            Libc::Android => (self.os.npm_name(), "-android"),
+            Libc::Portable => ("portable", ""),
+        }
+    }
+
+    /// The executable of the target is a packed portable image (or that image alone), not a bun of one OS.
+    pub const fn is_portable(&self) -> bool {
+        matches!(self.libc, Libc::Portable)
+    }
+
+    pub const fn arch(&self) -> Architecture {
+        self.arch
+    }
+
     pub(crate) fn eql(&self, other: &CompileTarget) -> bool {
         self.os == other.os
             && self.arch == other.arch
@@ -140,9 +171,9 @@ impl CompileTarget {
         }
 
         // Runtime concat is fine for a one-shot URL build.
-        let os = self.os.npm_name().as_bytes();
+        let (os, libc) = self.os_and_libc_names();
+        let os = os.as_bytes();
         let arch = self.arch.npm_name();
-        let libc = self.libc.npm_name();
         let baseline: &[u8] = if self.baseline { b"-baseline" } else { b"" };
 
         let total = buf.len();
@@ -284,22 +315,8 @@ impl CompileTarget {
                 _found_baseline = true;
                 continue;
             } else if strings::has_prefix(token, b"v1.") || strings::has_prefix(token, b"v0.") {
-                let version = Version::parse(SlicedString::init(&token[1..], &token[1..]));
-                if version.valid {
-                    if version.version.major.is_none()
-                        || version.version.minor.is_none()
-                        || version.version.patch.is_none()
-                    {
-                        return Err(ParseError::InvalidTarget);
-                    }
-
-                    this.version = Version {
-                        major: version.version.major.unwrap(),
-                        minor: version.version.minor.unwrap(),
-                        patch: version.version.patch.unwrap(),
-                        tag: Default::default(),
-                        _tag_padding: Default::default(),
-                    };
+                if let Some(version) = Self::version_of_token(token)? {
+                    this.version = version;
                     _found_version = true;
                     continue;
                 }
@@ -311,6 +328,8 @@ impl CompileTarget {
                 this.libc = Libc::Android;
                 found_libc = true;
                 continue;
+            } else if token == b"portable" {
+                return Self::try_from_portable(input);
             } else {
                 return Err(ParseError::UnsupportedTarget);
             }
@@ -318,6 +337,12 @@ impl CompileTarget {
 
         if !found_libc && this.libc != Libc::Default && this.os != OperatingSystem::Linux {
             // "bun-windows-x64" should not implicitly be "bun-windows-x64-musl"
+            this.libc = Libc::Default;
+        }
+
+        // Asked of a bun that is a portable image: "bun-linux-x64" is a bun of Linux, not this image.
+        #[cfg(bun_portable)]
+        if found_os && !found_libc {
             this.libc = Libc::Default;
         }
 
@@ -345,9 +370,82 @@ impl CompileTarget {
         Ok(this)
     }
 
+    /// The version of a token that starts with `v0.` or `v1.`. `None` when the rest is not a version.
+    fn version_of_token(token: &[u8]) -> Result<Option<Version>, ParseError> {
+        let version = Version::parse(SlicedString::init(&token[1..], &token[1..]));
+        if !version.valid {
+            return Ok(None);
+        }
+        let (Some(major), Some(minor), Some(patch)) = (
+            version.version.major,
+            version.version.minor,
+            version.version.patch,
+        ) else {
+            return Err(ParseError::InvalidTarget);
+        };
+        Ok(Some(Version {
+            major,
+            minor,
+            patch,
+            tag: Default::default(),
+            _tag_padding: Default::default(),
+        }))
+    }
+
+    /// A target that names `portable`. The CPU architecture has to be named with it; a version may be.
+    fn try_from_portable(input: &[u8]) -> Result<CompileTarget, ParseError> {
+        let mut this = CompileTarget {
+            os: OperatingSystem::Linux,
+            libc: Libc::Portable,
+            baseline: false,
+            ..CompileTarget::default()
+        };
+        let mut found_arch = false;
+        let mut splitter = strings::split(input, b"-");
+        while let Some(token) = splitter.next() {
+            if token.is_empty() || token == b"portable" {
+                continue;
+            }
+            if let Some(arch) = ARCHITECTURE_NAMES.get(token) {
+                this.arch = *arch;
+                found_arch = true;
+            } else if OPERATING_SYSTEM_NAMES.get(token).is_some()
+                || token == b"musl"
+                || token == b"android"
+                || token == b"baseline"
+                || token == b"modern"
+            {
+                return Err(ParseError::PortableTargetWithToken);
+            } else if strings::has_prefix(token, b"v1.") || strings::has_prefix(token, b"v0.") {
+                if let Some(version) = Self::version_of_token(token)? {
+                    this.version = version;
+                }
+            } else {
+                return Err(ParseError::UnsupportedTarget);
+            }
+        }
+        if !found_arch {
+            return Err(ParseError::PortableTargetWithoutArch);
+        }
+        if this.arch == Architecture::Wasm {
+            return Err(ParseError::InvalidTarget);
+        }
+        Ok(this)
+    }
+
     pub fn from(input_: &[u8]) -> CompileTarget {
         match Self::try_from(input_) {
             Ok(t) => t,
+            Err(
+                err @ (ParseError::PortableTargetWithoutArch | ParseError::PortableTargetWithToken),
+            ) => {
+                bun_core::err_generic!(
+                    "invalid target \"bun{}\": {}",
+                    bstr::BStr::new(input_),
+                    err.portable_target_message().unwrap_or_default(),
+                );
+                Global::exit(1);
+            }
             Err(ParseError::UnsupportedTarget) => {
                 let input = strings::trim(input_, b" \t\r");
                 let mut splitter = strings::split(input, b"-");
@@ -362,6 +460,7 @@ impl CompileTarget {
                         && token != b"baseline"
                         && token != b"musl"
                         && token != b"android"
+                        && token != b"portable"
                         && !(strings::has_prefix(token, b"v1.")
                             || strings::has_prefix(token, b"v0."))
                     {
@@ -408,28 +507,26 @@ impl CompileTarget {
         }
     }
 
-    pub fn define_keys(&self) -> [&'static [u8]; 3] {
-        [
-            b"process.platform",
-            b"process.arch",
-            b"process.versions.bun",
-        ]
-    }
-
-    pub fn define_values(&self) -> [&'static [u8]; 3] {
+    /// What `--compile` defines for the target.
+    pub fn defines(&self) -> Defines {
         // Each axis gets its own exhaustive match so that adding a variant to
         // `OperatingSystem` / `Architecture` / `Libc` is a compile error here,
         // not a runtime panic behind a wildcard arm.
-        let platform: &'static [u8] = match self.libc {
+        let (platform, first): (&'static [u8], usize) = match self.libc {
             // process.platform: Node reports "android" on Android, not "linux".
-            Libc::Android => b"\"android\"",
-            Libc::Default | Libc::Musl => match self.os {
-                OperatingSystem::Mac => b"\"darwin\"",
-                OperatingSystem::Linux => b"\"linux\"",
-                OperatingSystem::Windows => b"\"win32\"",
-                OperatingSystem::Freebsd => b"\"freebsd\"",
-                OperatingSystem::Wasm => b"\"wasm\"",
-            },
+            Libc::Android => (b"\"android\"", 0),
+            Libc::Default | Libc::Musl => (
+                match self.os {
+                    OperatingSystem::Mac => b"\"darwin\"",
+                    OperatingSystem::Linux => b"\"linux\"",
+                    OperatingSystem::Windows => b"\"win32\"",
+                    OperatingSystem::Freebsd => b"\"freebsd\"",
+                    OperatingSystem::Wasm => b"\"wasm\"",
+                },
+                0,
+            ),
+            // Not a constant of the build: the executable answers with the OS that runs it.
+            Libc::Portable => (b"", 1),
         };
         let arch: &'static [u8] = match self.arch {
             Architecture::X64 => b"\"x64\"",
@@ -438,7 +535,26 @@ impl CompileTarget {
         };
         const VERSION: &[u8] =
             const_format::concatcp!("\"", bun_core::Global::package_json_version, "\"").as_bytes();
-        [platform, arch, VERSION]
+        Defines {
+            entries: [
+                (b"process.platform", platform),
+                (b"process.arch", arch),
+                (b"process.versions.bun", VERSION),
+            ],
+            first,
+        }
+    }
+}
+
+/// Key and value of `process.platform`, `process.arch` and `process.versions.bun`; a portable target has no platform.
+pub struct Defines {
+    entries: [(&'static [u8], &'static [u8]); 3],
+    first: usize,
+}
+
+impl Defines {
+    pub fn as_slice(&self) -> &[(&'static [u8], &'static [u8])] {
+        &self.entries[self.first..]
     }
 }
 
@@ -446,12 +562,13 @@ impl fmt::Display for CompileTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // bun-darwin-x64-baseline-v1.0.0
         // This doesn't match up 100% with npm, but that's okay.
+        let (os, libc) = self.os_and_libc_names();
         write!(
             f,
             "bun-{}-{}{}{}-v{}.{}.{}",
-            self.os.npm_name(),
+            os,
             self.arch.npm_name(),
-            self.libc,
+            libc,
             BaselineFormatter {
                 baseline: self.baseline
             },

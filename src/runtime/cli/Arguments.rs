@@ -2031,6 +2031,17 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 }
 
+/// `--windows-icon` and the like are asked of a target that is not Windows: what to say when it is a portable target.
+fn crash_if_portable_target(compile_target: &cli::Cli::CompileTarget) {
+    if compile_target.is_portable() {
+        Output::err_generic(
+            "{}",
+            (bun_options_types::compile_target::PORTABLE_TARGET_WITH_WINDOWS_METADATA,),
+        );
+        Global::crash();
+    }
+}
+
 /// Cold path: `bun build` option-group parsing — bundler flags, `--app` (Bake),
 /// `--compile` / `CompileTarget`, sourcemap / format / minify, Windows executable
 /// metadata, etc. Split out of [`parse`] for the same reason as
@@ -2390,7 +2401,9 @@ fn parse_build_command_options(
     }
 
     if args.flag(b"--windows-hide-console") {
-        if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
+        if ctx.bundler_options.compile_target.os != OperatingSystem::Windows
+            && !ctx.bundler_options.compile_target.is_portable()
+        {
             Output::err_generic(
                 "--windows-hide-console requires a Windows compile target",
                 (),
@@ -2405,6 +2418,7 @@ fn parse_build_command_options(
     }
     if let Some(path) = args.option(b"--windows-icon") {
         if !cfg!(windows) {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic(
                 "Using --windows-icon is only available when compiling on Windows",
                 (),
@@ -2412,6 +2426,7 @@ fn parse_build_command_options(
             Global::crash();
         }
         if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic("--windows-icon requires a Windows compile target", ());
             Global::crash();
         }
@@ -2423,6 +2438,7 @@ fn parse_build_command_options(
     }
     if let Some(title) = args.option(b"--windows-title") {
         if !cfg!(windows) {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic(
                 "Using --windows-title is only available when compiling on Windows",
                 (),
@@ -2430,6 +2446,7 @@ fn parse_build_command_options(
             Global::crash();
         }
         if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic("--windows-title requires a Windows compile target", ());
             Global::crash();
         }
@@ -2441,6 +2458,7 @@ fn parse_build_command_options(
     }
     if let Some(publisher) = args.option(b"--windows-publisher") {
         if !cfg!(windows) {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic(
                 "Using --windows-publisher is only available when compiling on Windows",
                 (),
@@ -2448,6 +2466,7 @@ fn parse_build_command_options(
             Global::crash();
         }
         if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic("--windows-publisher requires a Windows compile target", ());
             Global::crash();
         }
@@ -2459,6 +2478,7 @@ fn parse_build_command_options(
     }
     if let Some(version) = args.option(b"--windows-version") {
         if !cfg!(windows) {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic(
                 "Using --windows-version is only available when compiling on Windows",
                 (),
@@ -2466,6 +2486,7 @@ fn parse_build_command_options(
             Global::crash();
         }
         if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic("--windows-version requires a Windows compile target", ());
             Global::crash();
         }
@@ -2477,6 +2498,7 @@ fn parse_build_command_options(
     }
     if let Some(description) = args.option(b"--windows-description") {
         if !cfg!(windows) {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic(
                 "Using --windows-description is only available when compiling on Windows",
                 (),
@@ -2484,6 +2506,7 @@ fn parse_build_command_options(
             Global::crash();
         }
         if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic(
                 "--windows-description requires a Windows compile target",
                 (),
@@ -2498,6 +2521,7 @@ fn parse_build_command_options(
     }
     if let Some(copyright) = args.option(b"--windows-copyright") {
         if !cfg!(windows) {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic(
                 "Using --windows-copyright is only available when compiling on Windows",
                 (),
@@ -2505,6 +2529,7 @@ fn parse_build_command_options(
             Global::crash();
         }
         if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
+            crash_if_portable_target(&ctx.bundler_options.compile_target);
             Output::err_generic("--windows-copyright requires a Windows compile target", ());
             Global::crash();
         }

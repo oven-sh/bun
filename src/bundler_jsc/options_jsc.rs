@@ -81,11 +81,21 @@ pub fn compile_target_from_slice(
     slice_with_bun_prefix: &[u8],
 ) -> JsResult<CompileTarget> {
     let slice = &slice_with_bun_prefix[b"bun-".len()..];
-    let Ok(target_parsed) = CompileTarget::try_from(slice) else {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Unknown compile target: {}",
-            bstr::BStr::new(slice_with_bun_prefix)
-        )));
+    let target_parsed = match CompileTarget::try_from(slice) {
+        Ok(target_parsed) => target_parsed,
+        Err(err) => {
+            return Err(match err.portable_target_message() {
+                Some(message) => global.throw_invalid_arguments(format_args!(
+                    "Invalid compile target {}: {}",
+                    bstr::BStr::new(slice_with_bun_prefix),
+                    message
+                )),
+                None => global.throw_invalid_arguments(format_args!(
+                    "Unknown compile target: {}",
+                    bstr::BStr::new(slice_with_bun_prefix)
+                )),
+            });
+        }
     };
     if !target_parsed.is_supported() {
         return Err(global.throw_invalid_arguments(format_args!(

@@ -85,30 +85,38 @@ impl BuildCommand {
         let compile_target = &ctx.bundler_options.compile_target;
 
         if ctx.bundler_options.compile {
-            let compile_define_keys = compile_target.define_keys();
-            let compile_define_values = compile_target.define_values();
+            let compile_defines = compile_target.defines();
+            let compile_defines = compile_defines.as_slice();
 
             if let Some(define) = ctx.args.define.as_mut() {
                 let mut keys: Vec<Box<[u8]>> =
-                    Vec::with_capacity(compile_define_keys.len() + define.keys.len());
-                keys.extend(compile_define_keys.iter().map(|s| Box::<[u8]>::from(*s)));
+                    Vec::with_capacity(compile_defines.len() + define.keys.len());
+                keys.extend(
+                    compile_defines
+                        .iter()
+                        .map(|(key, _)| Box::<[u8]>::from(*key)),
+                );
                 keys.append(&mut define.keys);
                 let mut values: Vec<Box<[u8]>> =
-                    Vec::with_capacity(compile_define_values.len() + define.values.len());
-                values.extend(compile_define_values.iter().map(|s| Box::<[u8]>::from(*s)));
+                    Vec::with_capacity(compile_defines.len() + define.values.len());
+                values.extend(
+                    compile_defines
+                        .iter()
+                        .map(|(_, value)| Box::<[u8]>::from(*value)),
+                );
                 values.append(&mut define.values);
 
                 define.keys = keys;
                 define.values = values;
             } else {
                 ctx.args.define = Some(api::StringMap {
-                    keys: compile_define_keys
+                    keys: compile_defines
                         .iter()
-                        .map(|s| Box::<[u8]>::from(*s))
+                        .map(|(key, _)| Box::<[u8]>::from(*key))
                         .collect(),
-                    values: compile_define_values
+                    values: compile_defines
                         .iter()
-                        .map(|s| Box::<[u8]>::from(*s))
+                        .map(|(_, value)| Box::<[u8]>::from(*value))
                         .collect(),
                 });
             }

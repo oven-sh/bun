@@ -1324,10 +1324,7 @@ pub(crate) mod js_bundler {
                 if !is_standalone_html {
                     this.target = Target::Bun;
 
-                    let define_keys = compile.compile_target.define_keys();
-                    let define_values = compile.compile_target.define_values();
-                    debug_assert_eq!(define_keys.len(), define_values.len());
-                    for (key, value) in define_keys.iter().zip(define_values) {
+                    for (key, value) in compile.compile_target.defines().as_slice() {
                         this.define.insert(key, value)?;
                     }
 

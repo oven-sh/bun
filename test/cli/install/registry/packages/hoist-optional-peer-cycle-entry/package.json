@@ -1,0 +1,22 @@
+{
+  "_id": "hoist-optional-peer-cycle-entry",
+  "name": "hoist-optional-peer-cycle-entry",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "hoist-optional-peer-cycle-entry",
+      "version": "1.0.0",
+      "dependencies": {
+        "hoist-optional-peer-cycle-x": "1.0.0"
+      },
+      "_id": "hoist-optional-peer-cycle-entry@1.0.0",
+      "dist": {
+        "integrity": "sha512-FDfiSd8eCpyJ3n324Hk8KdEoNLkB/go8tQvT9txL1qt/ULRhuzYfCjT0StP5a3pYykhvjQFYA17VzF1ZMPsEqw==",
+        "shasum": "be52741a45e564b667febacfdcfcd2433ba474ef",
+        "tarball": "http://localhost:4873/hoist-optional-peer-cycle-entry/-/hoist-optional-peer-cycle-entry-1.0.0.tgz"
+      }
+    }
+  }
+}

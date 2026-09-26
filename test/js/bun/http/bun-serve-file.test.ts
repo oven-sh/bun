@@ -1844,6 +1844,8 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
       "/after-size": () => afterSize,
       "/after-exists": () => afterExists,
     };
+    const fd = openSync(small, "r");
+    fds.push(fd);
     server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -1878,6 +1880,7 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
           await echoed;
           return new Response(forms[pathname.slice("/claimed".length)]());
         }
+        if (pathname === "/fd/shared") return new Response(Bun.file(fd));
         if (pathname === "/fd/fresh") {
           const fresh = openSync(small, "r");
           fds.push(fresh);
@@ -2025,6 +2028,19 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
       });
     });
 
+    test.concurrent("HEAD sends no body and no length that GET does not send", async () => {
+      expect({
+        whole: text(await wire(`${producer}/whole`, { method: "HEAD" })),
+        "slice(0, 10)": text(await wire(`${producer}/slice-0-10`, { method: "HEAD" })),
+        large: text(await wire(`${producer}/large`, { method: "HEAD" })),
+      }).toEqual({
+        whole: noLength,
+        // A fetch handler does not ask for the window of the slice.
+        "slice(0, 10)": { ...noLength, contentLength: producer === "/static" ? "10" : null },
+        large: noLength,
+      });
+    });
+
     test.concurrent("a Range request gets the whole body", async () => {
       const { status, head, body } = await wire(`${producer}/whole`, { headers: "Range: bytes=0-9\r\n" });
       expect({
@@ -2072,18 +2088,6 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
         size: text(await wire(`${producer}/after-size`)),
         exists: text(await wire(`${producer}/after-exists`)),
       }).toEqual({ size: empty, exists: empty });
-    });
-  });
-
-  test.concurrent("HEAD of a static route sends no body and no length that GET does not send", async () => {
-    expect({
-      whole: text(await wire("/static/whole", { method: "HEAD" })),
-      "slice(0, 10)": text(await wire("/static/slice-0-10", { method: "HEAD" })),
-      large: text(await wire("/static/large", { method: "HEAD" })),
-    }).toEqual({
-      whole: noLength,
-      "slice(0, 10)": { ...noLength, contentLength: "10" },
-      large: noLength,
     });
   });
 
@@ -2163,6 +2167,7 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
   test.concurrent("the responses on one connection follow each other with no other bytes", async () => {
     const requests: (Sent & { expected: Expected })[] = [
       { path: "/sync/whole", expected: exactly(smallBytes) },
+      { path: "/sync/whole", method: "HEAD", expected: noLength },
       { path: "/async/slice-5-15", expected: exactly(smallBytes.subarray(5, 15)) },
       { path: "/claimed/whole", expected: exactly(smallBytes) },
       { path: "/function/medium", expected: exactly(mediumBytes) },
@@ -2231,6 +2236,7 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
       "dir HEAD": await request("/dir/mem", "HEAD"),
     }).toEqual({
       handler: answer("HTTP/1.1 500 Internal Server Error", `EIO read ${mem}`),
+      // HEAD in a fetch handler reads to tell an empty file from one with bytes, and does not report the error.
       "handler HEAD": empty,
       static: answer("HTTP/1.1 404 Not Found", "the next handler"),
       "static HEAD": { ...answer("HTTP/1.1 404 Not Found", "the next handler"), body: "" },
@@ -2246,6 +2252,13 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
 
   test.concurrent("Bun.file(fd) sends the bytes from the file position", async () => {
     expect(text(await wire("/fd/fresh"))).toEqual(exactly(smallBytes));
+  });
+
+  test("HEAD of Bun.file(fd) leaves the file position to GET", async () => {
+    expect({
+      head: text(await wire("/fd/shared", { method: "HEAD" })),
+      get: text(await wire("/fd/shared")),
+    }).toEqual({ head: noLength, get: exactly(smallBytes) });
   });
 
   test.concurrent("over TLS", async () => {

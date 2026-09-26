@@ -28,6 +28,7 @@
 
 #include "HTTPHeaderNames.h"
 #include <utility>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -48,13 +49,6 @@ public:
         String value;
 
         bool operator==(const CommonHeader& other) const { return key == other.key && value == other.value; }
-    };
-
-    struct HeaderIndex {
-        size_t index;
-        bool isCommon;
-
-        bool isValid() const { return index != notFound; }
     };
 
     struct UncommonHeader {
@@ -165,20 +159,20 @@ public:
 
     WEBCORE_EXPORT String get(const StringView name) const;
     WEBCORE_EXPORT void set(const String& name, const String& value);
-    WEBCORE_EXPORT void add(const String& name, const String& value);
+    // ValueTooLong: the combined value would pass String::MaxLength, and nothing is stored.
+    enum class AddResult : uint8_t {
+        Stored,
+        ValueTooLong,
+    };
+    WEBCORE_EXPORT AddResult add(const String& name, const String& value);
     WEBCORE_EXPORT bool contains(const StringView) const;
     WEBCORE_EXPORT int64_t indexOf(StringView name) const;
     WEBCORE_EXPORT bool remove(const StringView);
     WEBCORE_EXPORT bool removeUncommonHeader(const StringView);
 
-    WEBCORE_EXPORT String getIndex(HeaderIndex index) const;
-    WEBCORE_EXPORT bool setIndex(HeaderIndex index, const String& value);
-    HeaderIndex indexOf(const String& name) const;
-    HeaderIndex indexOf(HTTPHeaderName name) const;
-
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
     void set(HTTPHeaderName, const String& value);
-    void add(HTTPHeaderName, const String& value);
+    AddResult add(HTTPHeaderName, const String& value);
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;
     WEBCORE_EXPORT bool remove(HTTPHeaderName);
 
@@ -230,15 +224,43 @@ public:
     }
 
     void setUncommonHeader(const String& name, const String& value);
-    void addUncommonHeader(const String& name, const String& value);
-    void addUncommonHeaderCloneName(const StringView name, const String& value);
+    AddResult addUncommonHeader(const String& name, const String& value);
+    AddResult addUncommonHeaderCloneName(const StringView name, const String& value);
 
 private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
 
+    // The builders of the values that grew past growThreshold by add(). A copy of the map starts with none.
+    struct Growing {
+        Growing() = default;
+        Growing(const Growing&)
+        {
+        }
+        Growing(Growing&&) = default;
+        Growing& operator=(const Growing&)
+        {
+            builders = nullptr;
+            return *this;
+        }
+        Growing& operator=(Growing&&) = default;
+
+        std::unique_ptr<Vector<StringBuilder, 1>> builders;
+    };
+
+    // Under this length a join is one exact-fit makeString. From it on, the value grows in a builder: N joins copy O(N) bytes.
+    static constexpr unsigned growThreshold = 4096;
+
+    AddResult combine(String& stored, ASCIILiteral delimiter, const String& value);
+    AddResult combineLong(String& stored, ASCIILiteral delimiter, const String& value);
+    StringBuilder* builderOf(const String& stored);
+    void replace(String& stored, const String& value);
+    void forget(const String& stored);
+    void forgetSlow(const String& stored);
+
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;
     Vector<String, 0> m_setCookieHeaders;
+    Growing m_growing;
 };
 
 } // namespace WebCore

@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf, jscDescribe } from "bun:jsc";
+import { isDebug, withoutAggressiveGC } from "harness";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -255,6 +257,291 @@ describe("Headers", () => {
       const headers = new Headers();
       // @ts-expect-error
       expect(() => headers.append("expires")).toThrow(TypeError);
+    });
+
+    // Appending to a name that already has a value used to rebuild the whole
+    // combined value with makeString(), so N appends copied O(N^2) bytes:
+    // 200,000 appends took 1.8s and 400,000 took 9.4s on a release build, where
+    // Node takes 0.5s for 400,000. A combined value under 4 KB is still one
+    // exact-fit string. Past that, the header map keeps a builder for the value
+    // and the value grows in place. Every case below runs in both states, and
+    // the last one measures the cost.
+    describe("with a name that repeats", () => {
+      const COUNT = 100;
+      describe.each([
+        ["under 4 KB", "v"],
+        ["past 4 KB", Buffer.alloc(100, "v").toString()],
+      ])("combined value %s", (_, unit) => {
+        const valueAt = (i: number) => `${unit}${i}`;
+        const joined = (count: number, delimiter = ", ") =>
+          Array.from({ length: count }, (_, i) => valueAt(i)).join(delimiter);
+        const filled = (name = "x-repeated") => {
+          const headers = new Headers();
+          for (let i = 0; i < COUNT; i++) headers.append(name, valueAt(i));
+          return headers;
+        };
+
+        describe.each(["x-repeated", "accept", "cookie"])("%s", name => {
+          const delimiter = name === "cookie" ? "; " : ", ";
+
+          test("appends join in order", () => {
+            expect(filled(name).get(name)).toBe(joined(COUNT, delimiter));
+          });
+
+          test("reading between appends does not change the result", () => {
+            const headers = new Headers();
+            const snapshots: string[] = [];
+            for (let i = 0; i < COUNT; i++) {
+              headers.append(name, valueAt(i));
+              // Each read hands out the combined value so far. A later append
+              // must not edit a string that was already handed out.
+              snapshots.push(headers.get(name)!);
+            }
+            expect(snapshots).toEqual(Array.from({ length: COUNT }, (_, i) => joined(i + 1, delimiter)));
+          });
+        });
+
+        test("set() after appends replaces the combined value", () => {
+          const headers = filled();
+          headers.set("x-repeated", "only");
+          expect(headers.get("x-repeated")).toBe("only");
+          headers.append("x-repeated", "next");
+          expect(headers.get("x-repeated")).toBe("only, next");
+        });
+
+        test("delete() after appends drops the header", () => {
+          const headers = filled();
+          headers.delete("x-repeated");
+          expect(headers.has("x-repeated")).toBe(false);
+          expect(headers.get("x-repeated")).toBeNull();
+        });
+
+        test("delete() then append() starts a new value", () => {
+          const headers = filled();
+          const before = headers.get("x-repeated");
+          headers.delete("x-repeated");
+          headers.append("x-repeated", "again");
+          headers.append("x-repeated", "more");
+          expect(headers.get("x-repeated")).toBe("again, more");
+          expect(before).toBe(joined(COUNT));
+        });
+
+        test("set() with the string that get() returned keeps the value", () => {
+          const headers = filled();
+          headers.set("x-repeated", headers.get("x-repeated")!);
+          headers.append("x-repeated", "next");
+          expect(headers.get("x-repeated")).toBe(`${joined(COUNT)}, next`);
+        });
+
+        test("two names that hold one string grow apart", () => {
+          const headers = filled();
+          headers.set("x-other", headers.get("x-repeated")!);
+          headers.append("x-other", "b");
+          headers.append("x-repeated", "a");
+          headers.append("x-other", "d");
+          headers.append("x-repeated", "c");
+          expect(headers.toJSON()).toEqual({
+            "x-repeated": `${joined(COUNT)}, a, c`,
+            "x-other": `${joined(COUNT)}, b, d`,
+          });
+        });
+
+        test("several names grow in turn", () => {
+          const headers = new Headers();
+          for (let i = 0; i < COUNT; i++) {
+            for (const name of ["x-first", "accept", "x-second", "cookie"]) headers.append(name, valueAt(i));
+          }
+          expect(headers.toJSON()).toEqual({
+            "x-first": joined(COUNT),
+            "accept": joined(COUNT),
+            "x-second": joined(COUNT),
+            "cookie": joined(COUNT, "; "),
+          });
+        });
+
+        // The reported size counts the spare room of a value that grows. A
+        // header that is gone, or that set() replaced, must not leave any.
+        test("delete() and set() release what the value held", () => {
+          const size = (headers: Headers) => estimateShallowMemoryUsageOf(headers);
+          const deleted = filled();
+          expect(size(deleted)).toBeGreaterThan(size(new Headers()) + joined(COUNT).length);
+          deleted.delete("x-repeated");
+          expect(size(deleted)).toBe(size(new Headers()));
+
+          const replaced = filled();
+          replaced.set("x-repeated", "only");
+          expect(size(replaced)).toBe(size(new Headers([["x-repeated", "only"]])));
+        });
+
+        test("a copy does not change when the original keeps appending", () => {
+          const original = filled();
+          const copy = new Headers(original);
+          original.append("x-repeated", "c");
+          expect(copy.get("x-repeated")).toBe(joined(COUNT));
+          expect(original.get("x-repeated")).toBe(`${joined(COUNT)}, c`);
+          copy.append("x-repeated", "d");
+          expect(copy.get("x-repeated")).toBe(`${joined(COUNT)}, d`);
+          expect(original.get("x-repeated")).toBe(`${joined(COUNT)}, c`);
+        });
+
+        test("iteration and toJSON report the combined value", () => {
+          const headers = filled();
+          expect([...headers]).toEqual([["x-repeated", joined(COUNT)]]);
+          expect(headers.toJSON()).toEqual({ "x-repeated": joined(COUNT) });
+        });
+
+        // A Latin-1 value can arrive in a 16-bit string. A UTF-16 round trip
+        // forces that storage, and the first assertion proves that it did.
+        test("values in 16-bit strings combine with values in 8-bit strings", () => {
+          const wide = (s: string) => Buffer.from(s, "utf16le").toString("utf16le");
+          expect(jscDescribe(wide(`${unit}caf\u00e9`))).toContain("8Bit:(0)");
+          for (const wideFirst of [false, true]) {
+            const headers = new Headers();
+            const values: string[] = [];
+            for (let i = 0; i < COUNT; i++) {
+              const value = `${unit}caf\u00e9${i}`;
+              values.push(value);
+              headers.append("x-repeated", (i % 2 === 0) === wideFirst ? wide(value) : value);
+            }
+            expect(headers.get("x-repeated")).toBe(values.join(", "));
+          }
+        });
+      });
+
+      // Each program mixes the operations above at random, on up to three
+      // Headers objects that are copies of each other, and a plain Map of
+      // name to joined value says what every read must return.
+      test("seeded random programs give what a model gives", () => {
+        const names = ["x-a", "x-b", "accept", "cookie"];
+        const wide = (s: string) => (s.length > 1 ? Buffer.from(s, "utf16le").toString("utf16le") : s);
+        const join = (model: Map<string, string>, name: string, value: string) =>
+          model.set(name, model.has(name) ? model.get(name) + (name === "cookie" ? "; " : ", ") + value : value);
+
+        for (let program = 0; program < 12; program++) {
+          let state = program * 7919 + 17;
+          const random = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+          const pick = <T>(list: T[]) => list[(random() * list.length) | 0];
+          const value = (i: number) => {
+            const text = `v${i}-${Buffer.alloc(pick([1, 31, 300, 1500, 5000]), "a").toString()}`;
+            return random() < 0.2 ? wide(text) : text;
+          };
+
+          const live = [{ headers: new Headers(), model: new Map<string, string>() }];
+          const held: [string, string][] = [];
+          for (let i = 0; i < 150; i++) {
+            const { headers, model } = pick(live);
+            const name = pick(names);
+            const operation = random();
+            if (operation < 0.55) {
+              const appended = value(i);
+              headers.append(name, appended);
+              join(model, name, appended);
+            } else if (operation < 0.65) {
+              const replaced = value(i);
+              headers.set(name, replaced);
+              model.set(name, replaced);
+            } else if (operation < 0.75) {
+              const other = pick(names);
+              const shared = headers.get(other);
+              if (shared !== null) {
+                headers.set(name, shared);
+                model.set(name, model.get(other)!);
+              }
+            } else if (operation < 0.83) {
+              headers.delete(name);
+              model.delete(name);
+            } else if (operation < 0.93) {
+              const read = headers.get(name);
+              if (read !== null) held.push([read, model.get(name)!]);
+            } else {
+              live[live.length < 3 ? live.length : (random() * 3) | 0] = {
+                headers: new Headers(headers),
+                model: new Map(model),
+              };
+            }
+          }
+
+          for (const { headers, model } of live) {
+            expect(headers.toJSON()).toEqual(Object.fromEntries(model));
+            for (const name of names) expect(headers.get(name)).toBe(model.get(name) ?? null);
+          }
+          for (const [read, expected] of held) expect(read).toBe(expected);
+        }
+      });
+
+      // This one needs no clock. A value that grows by append has a buffer with
+      // room for the next values, and the size that the object reports counts
+      // that room. The same value stored by one call has none.
+      test("a value that grew past 4 KB by append reports its spare room", () => {
+        const unit = Buffer.alloc(100, "v").toString();
+        const grown = new Headers();
+        for (let i = 0; i < 100; i++) grown.append("x-repeated", unit);
+        const value = grown.get("x-repeated")!;
+        const stored = estimateShallowMemoryUsageOf(new Headers([["x-repeated", value]]));
+        expect(estimateShallowMemoryUsageOf(grown)).toBeGreaterThan(stored);
+        expect(estimateShallowMemoryUsageOf(grown)).toBeLessThan(stored + value.length);
+      });
+
+      // set() is the baseline. It makes the same number of calls with the same
+      // name and the same value, so it pays the same conversion, validation and
+      // lookup cost per call, and it never combines. The ratio of the two is
+      // what combining costs. With the quadratic join that ratio grows with the
+      // call count: measured 10 on debug+ASAN and 107 on release at 1000 calls.
+      // With the builder it is a small constant: 1.3 on debug+ASAN and 2.6 on
+      // release. The release bound is the looser one because a release set()
+      // call is 20x cheaper, so the bytes each append copies are a bigger share
+      // of it.
+      //
+      // Each side of a ratio is its fastest run. Another process or a GC pause
+      // can only add time to a run, so a loaded machine cannot make a linear
+      // append look quadratic, and it cannot make a quadratic one look linear.
+      describe("cost", () => {
+        const VALUE = Buffer.alloc(8192, "x").toString();
+        const repetitions = isDebug ? 3 : 5;
+
+        function time(method: "append" | "set", names: string[], calls: number) {
+          const headers = new Headers();
+          const started = performance.now();
+          for (let i = 0; i < calls; i++) {
+            for (const name of names) headers[method](name, VALUE);
+          }
+          const elapsed = performance.now() - started;
+          const length = method === "append" ? calls * VALUE.length + (calls - 1) * 2 : VALUE.length;
+          for (const name of names) expect(headers.get(name)!.length).toBe(length);
+          return elapsed;
+        }
+
+        function fastestRatio(numerator: () => number, denominator: () => number) {
+          return withoutAggressiveGC(() => {
+            let fastestNumerator = Infinity;
+            let fastestDenominator = Infinity;
+            for (let i = 0; i < repetitions; i++) {
+              fastestDenominator = Math.min(fastestDenominator, denominator());
+              fastestNumerator = Math.min(fastestNumerator, numerator());
+            }
+            return fastestNumerator / fastestDenominator;
+          }) as number;
+        }
+
+        test("append costs about as much per call as set", () => {
+          const ratio = fastestRatio(
+            () => time("append", ["x-repeated"], 1000),
+            () => time("set", ["x-repeated"], 1000),
+          );
+          expect(ratio).toBeLessThan(isDebug ? 4 : 8);
+        });
+
+        // Each name has a builder of its own. If the names had to share one,
+        // every call would seed it again with a copy of the whole value, and
+        // this ratio would be over 100 and not about 3.
+        test("three names that grow in turn cost three times one name", () => {
+          const ratio = fastestRatio(
+            () => time("append", ["x-first", "accept", "x-second"], 300),
+            () => time("append", ["x-repeated"], 300),
+          );
+          expect(ratio).toBeLessThan(8);
+        });
+      });
     });
   });
   describe("set()", () => {

@@ -1,0 +1,119 @@
+diff -ruN a/crypto/curve25519/internal.h b/crypto/curve25519/internal.h
+--- a/crypto/curve25519/internal.h	2026-09-26 03:09:06.404339280 +0000
++++ b/crypto/curve25519/internal.h	2026-09-26 03:09:06.404339280 +0000
+@@ -30,7 +30,8 @@
+ #endif
+ 
+ #if !defined(OPENSSL_NO_ASM) && !defined(OPENSSL_SMALL) && \
+-    (defined(__APPLE__) || defined(__ELF__)) && defined(OPENSSL_X86_64)
++    (defined(__APPLE__) || defined(__ELF__)) && defined(OPENSSL_X86_64) && \
++    !defined(BORINGSSL_NO_RED_ZONE)
+ #define BORINGSSL_FE25519_ADX
+ 
+ // fiat_curve25519_adx_mul is defined in
+diff -ruN a/crypto/hrss/asm/poly_rq_mul.S b/crypto/hrss/asm/poly_rq_mul.S
+--- a/crypto/hrss/asm/poly_rq_mul.S	2026-09-26 03:09:06.406406458 +0000
++++ b/crypto/hrss/asm/poly_rq_mul.S	2026-09-26 03:09:06.406406458 +0000
+@@ -14,7 +14,7 @@
+ 
+ #include <openssl/asm_base.h>
+ 
+-#if !defined(OPENSSL_NO_ASM) && !defined(OPENSSL_SMALL) && defined(OPENSSL_LINUX) && defined(OPENSSL_X86_64)
++#if !defined(OPENSSL_NO_ASM) && !defined(OPENSSL_SMALL) && defined(OPENSSL_LINUX) && defined(OPENSSL_X86_64) && !defined(BORINGSSL_NO_RED_ZONE)
+ 
+ // This is the polynomial multiplication function from [HRSS], provided by kind
+ // permission of the authors.
+diff -ruN a/crypto/hrss/internal.h b/crypto/hrss/internal.h
+--- a/crypto/hrss/internal.h	2026-09-26 03:09:06.405735174 +0000
++++ b/crypto/hrss/internal.h	2026-09-26 03:09:06.405735174 +0000
+@@ -42,7 +42,8 @@
+ // explicit permission for this and signed a CLA.) However it's 57KB of object
+ // code, so it's not used if `OPENSSL_SMALL` is defined.
+ #if !defined(OPENSSL_NO_ASM) && !defined(OPENSSL_SMALL) && \
+-    defined(OPENSSL_X86_64) && defined(OPENSSL_LINUX)
++    defined(OPENSSL_X86_64) && defined(OPENSSL_LINUX) && \
++    !defined(BORINGSSL_NO_RED_ZONE)
+ #define POLY_RQ_MUL_ASM
+ // POLY_MUL_RQ_SCRATCH_SPACE is the number of bytes of scratch space needed
+ // by the assembly function poly_Rq_mul.
+diff -ruN a/third_party/fiat/asm/fiat_curve25519_adx_mul.S b/third_party/fiat/asm/fiat_curve25519_adx_mul.S
+--- a/third_party/fiat/asm/fiat_curve25519_adx_mul.S	2026-09-26 03:09:06.388433555 +0000
++++ b/third_party/fiat/asm/fiat_curve25519_adx_mul.S	2026-09-26 03:09:06.388433555 +0000
+@@ -1,7 +1,7 @@
+ #include <openssl/asm_base.h>
+ 
+ #if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && \
+-    (defined(__APPLE__) || defined(__ELF__))
++    (defined(__APPLE__) || defined(__ELF__)) && !defined(BORINGSSL_NO_RED_ZONE)
+ 
+ .intel_syntax noprefix
+ .text
+diff -ruN a/third_party/fiat/asm/fiat_curve25519_adx_square.S b/third_party/fiat/asm/fiat_curve25519_adx_square.S
+--- a/third_party/fiat/asm/fiat_curve25519_adx_square.S	2026-09-26 03:09:06.402339290 +0000
++++ b/third_party/fiat/asm/fiat_curve25519_adx_square.S	2026-09-26 03:09:06.403339285 +0000
+@@ -1,7 +1,7 @@
+ #include <openssl/asm_base.h>
+ 
+ #if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && \
+-    (defined(__APPLE__) || defined(__ELF__))
++    (defined(__APPLE__) || defined(__ELF__)) && !defined(BORINGSSL_NO_RED_ZONE)
+ 
+ .intel_syntax noprefix
+ .text
+diff -ruN a/third_party/fiat/asm/fiat_p256_adx_mul.S b/third_party/fiat/asm/fiat_p256_adx_mul.S
+--- a/third_party/fiat/asm/fiat_p256_adx_mul.S	2026-09-26 03:09:06.387632921 +0000
++++ b/third_party/fiat/asm/fiat_p256_adx_mul.S	2026-09-26 03:09:06.387632921 +0000
+@@ -1,7 +1,7 @@
+ #include <openssl/asm_base.h>
+ 
+ #if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && \
+-    (defined(__APPLE__) || defined(__ELF__))
++    (defined(__APPLE__) || defined(__ELF__)) && !defined(BORINGSSL_NO_RED_ZONE)
+ 
+ .text
+ #if defined(__APPLE__)
+diff -ruN a/third_party/fiat/asm/fiat_p256_adx_sqr.S b/third_party/fiat/asm/fiat_p256_adx_sqr.S
+--- a/third_party/fiat/asm/fiat_p256_adx_sqr.S	2026-09-26 03:09:06.388182443 +0000
++++ b/third_party/fiat/asm/fiat_p256_adx_sqr.S	2026-09-26 03:09:06.388182443 +0000
+@@ -1,7 +1,7 @@
+ #include <openssl/asm_base.h>
+ 
+ #if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && \
+-    (defined(__APPLE__) || defined(__ELF__))
++    (defined(__APPLE__) || defined(__ELF__)) && !defined(BORINGSSL_NO_RED_ZONE)
+ 
+ .text
+ #if defined(__APPLE__)
+diff -ruN a/third_party/fiat/p256_64.h b/third_party/fiat/p256_64.h
+--- a/third_party/fiat/p256_64.h	2026-09-26 03:09:06.403339285 +0000
++++ b/third_party/fiat/p256_64.h	2026-09-26 03:09:06.403339285 +0000
+@@ -4,7 +4,8 @@
+ #include "../../crypto/internal.h"
+ 
+ #if !defined(OPENSSL_NO_ASM) && (defined(__ELF__) || defined(__APPLE__)) && \
+-    defined(OPENSSL_X86_64) && !defined(OPENSSL_NANOLIBC)
++    defined(OPENSSL_X86_64) && !defined(OPENSSL_NANOLIBC) && \
++    !defined(BORINGSSL_NO_RED_ZONE)
+ // These functions are only available with gas and SysV ABI, used by Apple and
+ // ELF-based platforms. Unlike most of our SysV assembly, they currently rely on
+ // the SysV redzone. This trips one target which looks like it targets SysV but
+@@ -187,7 +188,8 @@
+ static FIAT_P256_FIAT_INLINE void fiat_p256_mul(fiat_p256_montgomery_domain_field_element out1, const fiat_p256_montgomery_domain_field_element arg1, const fiat_p256_montgomery_domain_field_element arg2) {
+   // NOTE: edited by hand, see third_party/fiat/README.md
+ #if !defined(OPENSSL_NO_ASM) && (defined(__ELF__) || defined(__APPLE__)) && \
+-    defined(OPENSSL_X86_64) && !defined(OPENSSL_NANOLIBC)
++    defined(OPENSSL_X86_64) && !defined(OPENSSL_NANOLIBC) && \
++    !defined(BORINGSSL_NO_RED_ZONE)
+   if (bssl::CRYPTO_is_BMI1_capable() && bssl::CRYPTO_is_BMI2_capable() &&
+       bssl::CRYPTO_is_ADX_capable()) {
+     fiat_p256_adx_mul(out1, arg1, arg2);
+@@ -503,7 +505,8 @@
+ static FIAT_P256_FIAT_INLINE void fiat_p256_square(fiat_p256_montgomery_domain_field_element out1, const fiat_p256_montgomery_domain_field_element arg1) {
+   // NOTE: edited by hand, see third_party/fiat/README.md
+ #if !defined(OPENSSL_NO_ASM) && (defined(__ELF__) || defined(__APPLE__)) && \
+-    defined(OPENSSL_X86_64) && !defined(OPENSSL_NANOLIBC)
++    defined(OPENSSL_X86_64) && !defined(OPENSSL_NANOLIBC) && \
++    !defined(BORINGSSL_NO_RED_ZONE)
+   if (bssl::CRYPTO_is_BMI1_capable() && bssl::CRYPTO_is_BMI2_capable() &&
+       bssl::CRYPTO_is_ADX_capable()) {
+     fiat_p256_adx_sqr(out1, arg1);

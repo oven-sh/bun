@@ -4181,11 +4181,12 @@ mod posix_platform_specific_v8_apis {
         -> *mut c_void;
     }
 }
-#[cfg(all(not(windows), target_os = "freebsd"))]
+#[cfg(all(not(windows), any(target_os = "freebsd", bun_portable)))]
 mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
     // FreeBSD's base libc++ uses the same `std::__1::` inline namespace as Apple's,
     // but uint64_t/int64_t are `unsigned long`/`long` (m/l) like Linux, not `long long` (y/x).
+    // The portable image's C++ library is LLVM's libc++ too, on Linux: the same names.
     unsafe extern "C" {
         pub(super) fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
         -> *mut c_void;
@@ -4200,7 +4201,8 @@ mod posix_platform_specific_v8_apis {
     not(windows),
     not(target_os = "android"),
     not(target_os = "macos"),
-    not(target_os = "freebsd")
+    not(target_os = "freebsd"),
+    not(bun_portable)
 ))]
 mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
@@ -5424,7 +5426,7 @@ pub(crate) fn fix_dead_code_elimination() {
         posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEx,
         posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEyiNS0_13SamplingFlagsE,
     );
-    #[cfg(all(not(windows), target_os = "freebsd"))]
+    #[cfg(all(not(windows), any(target_os = "freebsd", bun_portable)))]
     keep_symbols!(
         posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE,
         posix_platform_specific_v8_apis::_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalImEE,
@@ -5435,7 +5437,8 @@ pub(crate) fn fix_dead_code_elimination() {
         not(windows),
         not(target_os = "android"),
         not(target_os = "macos"),
-        not(target_os = "freebsd")
+        not(target_os = "freebsd"),
+        not(bun_portable)
     ))]
     keep_symbols!(
         posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE,

@@ -333,7 +333,46 @@ describe("FileHandle", () => {
       expect(await fd.readv(buffers, 0)).toEqual({ bytesRead: 20, buffers });
     }
     expect(handle.close).toHaveBeenCalled();
-    expect(async () => await handle.read(Buffer.alloc(10))).toThrow("Bad file descriptor");
+    expect(async () => await handle.read(Buffer.alloc(10))).toThrow("file closed");
+  });
+
+  it("FileHandle methods reject with a plain Error('file closed') after close", async () => {
+    const handle = await fs.promises.open(__filename, "r");
+    await handle.close();
+
+    const ops: Array<[string, string, () => Promise<unknown>]> = [
+      ["appendFile", "writeFile", () => handle.appendFile("x")],
+      ["chmod", "fchmod", () => handle.chmod(0o644)],
+      ["chown", "fchown", () => handle.chown(0, 0)],
+      ["datasync", "fdatasync", () => handle.datasync()],
+      ["sync", "fsync", () => handle.sync()],
+      ["read", "read", () => handle.read(Buffer.alloc(2), 0, 2, 0)],
+      ["readv", "readv", () => handle.readv([Buffer.alloc(2)])],
+      ["readFile", "readFile", () => handle.readFile()],
+      ["stat", "fstat", () => handle.stat()],
+      ["truncate", "ftruncate", () => handle.truncate(0)],
+      ["utimes", "futimes", () => handle.utimes(new Date(), new Date())],
+      ["write", "write", () => handle.write("x")],
+      ["writev", "writev", () => handle.writev([Buffer.from("x")])],
+      ["writeFile", "writeFile", () => handle.writeFile("x")],
+    ];
+
+    const results: Record<string, unknown> = {};
+    for (const [method, , f] of ops) {
+      results[method] = await f().then(
+        () => "resolved",
+        e => ({ name: e.name, message: e.message, code: e.code, syscall: e.syscall, str: String(e) }),
+      );
+    }
+
+    expect(results).toEqual(
+      Object.fromEntries(
+        ops.map(([method, syscall]) => [
+          method,
+          { name: "Error", message: "file closed", code: "EBADF", syscall, str: "Error: file closed" },
+        ]),
+      ),
+    );
   });
 
   it("FileHandle#write returns object", async () => {

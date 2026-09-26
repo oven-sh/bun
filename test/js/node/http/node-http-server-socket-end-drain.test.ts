@@ -130,4 +130,72 @@ describe.each(["http", "https"] as const)("%s: the raw socket's FIN follows the 
       body: headEnd === -1 ? null : received.slice(headEnd + 4),
     }).toEqual({ statusLine: "HTTP/1.1 200 OK", body });
   });
+
+  // The transport still holds response bytes when socket.end() runs (16 MB is
+  // more than the loopback socket buffers absorb), and the response never ends.
+  // Node sends the FIN behind those bytes and keeps the connection until the
+  // client ends its side.
+  test.concurrent.each([
+    ["16 KB chunks", 16 * 1024],
+    ["1 MB chunks", 1024 * 1024],
+  ])("a backed-up res.write() (%s) then res.socket.end()", async (_name, chunkSize) => {
+    const chunk = Buffer.alloc(chunkSize, "a");
+    const chunks = (16 * 1024 * 1024) / chunkSize;
+    const { promise: handled, resolve: onHandled } = Promise.withResolvers<boolean>();
+    const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
+    let serverSocket: net.Socket | undefined;
+    const onRequest: Handler = (req, res) => {
+      serverSocket = res.socket!;
+      serverSocket.on("close", onServerSocketClose);
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      let flushed = true;
+      for (let i = 0; i < chunks; i++) flushed = res.write(chunk);
+      res.socket!.end();
+      onHandled(flushed);
+    };
+    await using server = protocol === "https" ? https.createServer(tlsCert, onRequest) : http.createServer(onRequest);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+
+    // allowHalfOpen: the client sends no FIN of its own when the server's arrives.
+    const client =
+      protocol === "https"
+        ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, allowHalfOpen: true })
+        : net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    try {
+      const received: Buffer[] = [];
+      const ended = new Promise<void>((resolve, reject) => {
+        client.on("data", data => received.push(data));
+        client.on("end", resolve);
+        client.on("error", reject);
+      });
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      const lastWriteFlushed = await handled;
+      await ended;
+
+      const response = Buffer.concat(received);
+      const body = response.subarray(response.indexOf("\r\n\r\n") + 4);
+      // No res.end(), so no last chunk.
+      const frame = Buffer.concat([Buffer.from(chunkSize.toString(16) + "\r\n"), chunk, Buffer.from("\r\n")]);
+      const expected = Buffer.concat(new Array(chunks).fill(frame));
+      expect({
+        lastWriteFlushed,
+        statusLine: response.subarray(0, response.indexOf("\r\n")).toString("latin1"),
+        bodyLength: body.length,
+        bodyMatches: body.equals(expected),
+        serverSocketDestroyed: serverSocket!.destroyed,
+      }).toEqual({
+        lastWriteFlushed: false,
+        statusLine: "HTTP/1.1 200 OK",
+        bodyLength: expected.length,
+        bodyMatches: true,
+        serverSocketDestroyed: false,
+      });
+
+      client.end();
+      await serverSocketClosed;
+    } finally {
+      client.destroy();
+    }
+  });
 });

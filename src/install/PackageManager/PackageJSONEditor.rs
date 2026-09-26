@@ -1409,9 +1409,13 @@ pub(crate) fn edit(
                     let installed = request.version.literal.slice(request.version_buf());
                     let resolved = resolutions[request.package_id as usize].npm().version;
                     let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+                    // `foo@npm:bar` parses as a dist-tag but spells no tag to keep verbatim
+                    let bare_alias =
+                        split_npm_alias(installed).is_some_and(|(_, version)| version.is_empty());
                     // `bun update <name>` keeps a dist-tag literal as written unless --latest, like the bare path.
                     if manager.subcommand == Subcommand::Update
                         && request.version.tag == dependency::Tag::DistTag
+                        && !bare_alias
                         && !update_to_latest
                     {
                         break 'npm arena_dup(arena, installed);
@@ -1455,8 +1459,6 @@ pub(crate) fn edit(
                         }
                     }
                     // `foo@npm:bar` (no version part) is saved like `foo` would be: `npm:bar@^<resolved>`.
-                    let bare_alias =
-                        split_npm_alias(installed).is_some_and(|(_, version)| version.is_empty());
                     if request.version.tag == dependency::Tag::DistTag
                         || bare_alias
                         || (manager.subcommand == Subcommand::Update

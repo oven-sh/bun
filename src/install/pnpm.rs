@@ -163,6 +163,13 @@ fn missing_package_entry(
     MigratePnpmLockfileError::PnpmLockfileUnresolvableDependency
 }
 
+/// `parts` resolved against the top-level dir, or `None` when the result does not fit a path buffer.
+fn join_top_level_dir(parts: &[&[u8]]) -> Option<bun_paths::AutoAbsPathChecked> {
+    let mut path = bun_paths::AutoAbsPathChecked::init_top_level_dir();
+    path.join(parts).ok()?;
+    Some(path)
+}
+
 fn collect_patch_paths(
     obj: &Expr,
     out: &mut StringArrayHashMap<Box<[u8]>>,
@@ -1001,10 +1008,14 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         ) {
                             // create a link package for the workspace dependency only if it doesn't already exist
                             if dep.version.tag == dependency::VersionTag::Workspace {
-                                let mut link_path_buf =
-                                    bun_paths::AutoAbsPath::init_top_level_dir();
-                                let _ = link_path_buf.append(workspace_path); // OOM/capacity error is non-actionable here
-                                let _ = link_path_buf.join(&[link_path]); // path-buffer overflow unreachable for bounded inputs
+                                // A link that does not fit a path buffer names no workspace.
+                                let Some(link_path_buf) =
+                                    join_top_level_dir(&[workspace_path, link_path])
+                                else {
+                                    return Err(
+                                        MigratePnpmLockfileError::NonExistentWorkspaceDependency,
+                                    );
+                                };
 
                                 for existing_workspace_path in lockfile.workspace_paths.values() {
                                     let mut workspace_path_buf =
@@ -1037,8 +1048,20 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 ..Default::default()
                             };
 
-                            let mut abs_link_path = bun_paths::AutoAbsPath::init_top_level_dir();
-                            let _ = abs_link_path.join(&[workspace_path, link_path]); // path-buffer overflow unreachable for bounded inputs
+                            let Some(abs_link_path) =
+                                join_top_level_dir(&[workspace_path, link_path])
+                            else {
+                                log.add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "pnpm-lock.yaml dependency '{}' of importer '{}' has a link path that is too long",
+                                        bstr::BStr::new(dep.name.slice(string_bytes!(lockfile))),
+                                        bstr::BStr::new(workspace_path)
+                                    ),
+                                );
+                                return Err(invalid_pnpm_lockfile());
+                            };
 
                             let pkg_entry = pkg_map.get_or_put(abs_link_path.slice())?;
                             if pkg_entry.found_existing {
@@ -1235,10 +1258,21 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
                 // pnpm records injected workspace packages as `name@file:<workspace dir>`.
                 if res.tag == resolution::Tag::Folder {
-                    let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                    let _ = path_buf.join(&[res.folder().slice(string_bytes!(lockfile))]);
+                    let Some(folder_path) =
+                        join_top_level_dir(&[res.folder().slice(string_bytes!(lockfile))])
+                    else {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "pnpm-lock.yaml package '{}' has a directory path that is too long",
+                                bstr::BStr::new(name_str)
+                            ),
+                        );
+                        return Err(invalid_pnpm_lockfile());
+                    };
                     if let Some(workspace_pkg_id) = pkg_map
-                        .get(path_buf.slice())
+                        .get(folder_path.slice())
                         .copied()
                         .filter(|id| (*id as usize) < workspace_pkgs_end)
                     {
@@ -1465,9 +1499,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
                 strings::without_prefix_if_possible_comptime(reference, b"link:")
             {
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
-                if let Some(pkg_id) = pkg_map.get(path_buf.slice()) {
+                if let Some(pkg_id) =
+                    join_top_level_dir(&[maybe_symlink_or_folder_or_workspace_path])
+                        .and_then(|path| pkg_map.get(path.slice()))
+                {
                     lockfile.buffers.resolutions[dep_id as usize] = *pkg_id;
                     continue;
                 }
@@ -1533,9 +1568,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
                 strings::without_prefix_if_possible_comptime(reference, b"link:")
             {
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                let _ = path_buf.join(&[workspace_path, maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
-                if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
+                if let Some(link_pkg_id) =
+                    join_top_level_dir(&[workspace_path, maybe_symlink_or_folder_or_workspace_path])
+                        .and_then(|path| pkg_map.get(path.slice()))
+                {
                     lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
                     continue;
                 }
@@ -1586,9 +1622,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     | dependency::VersionTag::Workspace => {
                         let maybe_symlink_or_folder_or_workspace_path =
                             strings::without_prefix(reference, b"link:");
-                        let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                        let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
-                        if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
+                        if let Some(link_pkg_id) =
+                            join_top_level_dir(&[maybe_symlink_or_folder_or_workspace_path])
+                                .and_then(|path| pkg_map.get(path.slice()))
+                        {
                             lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
                             continue;
                         }

@@ -764,12 +764,11 @@ struct SavedTree {
 }
 
 /// Hoists `manager.lockfile` into the tree an install of `features` lays out for every workspace
-/// (`Lockfile::filter`): the self-contained barrier applied, disabled and bundled dependencies left out.
-/// Returns the tree it replaced.
+/// (`Lockfile::filter`). Returns the tree it replaced and the rows a tarball ships.
 fn hoist_install_tree(
     manager: &mut PackageManager,
     features: InstallFeatures,
-) -> Result<SavedTree, tree::SubtreeError> {
+) -> Result<(SavedTree, tree::ShippedRows), tree::SubtreeError> {
     let saved = SavedTree {
         trees: core::mem::take(&mut manager.lockfile.buffers.trees),
         hoisted_dependencies: core::mem::take(&mut manager.lockfile.buffers.hoisted_dependencies),
@@ -784,7 +783,7 @@ fn hoist_install_tree(
         }
     });
     match result {
-        Ok(_) => Ok(saved),
+        Ok(result) => Ok((saved, result.shipped_rows)),
         Err(err) => {
             restore_tree(&mut manager.lockfile, saved);
             Err(err)
@@ -808,6 +807,8 @@ struct HoistedTree<'a> {
     folders: Vec<TreeFolder>,
     paths: Vec<u8>,
     expected: Vec<(&'a [u8], PackageID)>,
+    /// `bit[expected index]`: a tarball put the folder there, so it matches when it exists.
+    shipped: DynamicBitSet,
     quiet: bool,
     /// The expected tree excludes dev/optional/peer dependencies.
     filtered: bool,
@@ -830,16 +831,22 @@ enum Installed {
 }
 
 #[derive(Clone, Copy)]
-struct HoistedTreeInit {
+struct HoistedTreeInit<'a> {
     /// suppress per-package progress output
     quiet: bool,
     /// the expected tree excludes dev/optional/peer dependencies (`--production` / `--omit`)
     filtered: bool,
+    /// the rows a tarball ships, when the tree is the install tree (`hoist_install_tree`)
+    shipped_rows: Option<&'a tree::ShippedRows>,
 }
 
 impl<'a> HoistedTree<'a> {
-    fn init(lockfile: &'a Lockfile, opts: HoistedTreeInit) -> HoistedTree<'a> {
-        let HoistedTreeInit { quiet, filtered } = opts;
+    fn init(lockfile: &'a Lockfile, opts: HoistedTreeInit<'_>) -> HoistedTree<'a> {
+        let HoistedTreeInit {
+            quiet,
+            filtered,
+            shipped_rows,
+        } = opts;
         let trees = lockfile.buffers.trees.as_slice();
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -854,7 +861,10 @@ impl<'a> HoistedTree<'a> {
         let mut expected: Vec<(&'a [u8], PackageID)> =
             Vec::with_capacity(lockfile.buffers.hoisted_dependencies.len());
 
-        let mut scratch: Vec<(&'a [u8], PackageID)> = Vec::new();
+        let mut shipped = handle_oom(DynamicBitSet::init_empty(
+            lockfile.buffers.hoisted_dependencies.len(),
+        ));
+        let mut scratch: Vec<(&'a [u8], PackageID, bool)> = Vec::new();
         let mut it = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
         while let Some(folder) = it.next(None) {
             let path_start = paths.len();
@@ -865,13 +875,17 @@ impl<'a> HoistedTree<'a> {
                 (
                     deps[dep_id as usize].name.slice(buf),
                     resolutions[dep_id as usize],
+                    shipped_rows.is_some_and(|rows| rows.contains(folder.tree_id, dep_id)),
                 )
             }));
             index_sort::sort_vec_unstable_by(&mut scratch, |a, b| a.cmp(b));
             let start = expected.len();
-            for &item in &scratch {
-                if expected.len() == start || expected[expected.len() - 1].0 != item.0 {
-                    expected.push(item);
+            for &(alias, pkg_id, is_shipped) in &scratch {
+                if expected.len() == start || expected[expected.len() - 1].0 != alias {
+                    if is_shipped {
+                        shipped.set(expected.len());
+                    }
+                    expected.push((alias, pkg_id));
                 }
             }
 
@@ -891,6 +905,7 @@ impl<'a> HoistedTree<'a> {
             folders,
             paths,
             expected,
+            shipped,
             quiet,
             filtered,
             kept_mismatched: Cell::new(false),
@@ -984,7 +999,7 @@ impl<'a> HoistedTree<'a> {
                 Installed::Mismatch
             };
         }
-        let installed = self.installed(tree_id, alias, pkg_id);
+        let installed = self.installed(tree_id, idx, alias, pkg_id);
         self.checked.borrow_mut().set(idx);
         match installed {
             Installed::Matches => self.matched.borrow_mut().set(idx),
@@ -995,8 +1010,24 @@ impl<'a> HoistedTree<'a> {
         installed
     }
 
-    fn installed(&self, tree_id: tree::Id, alias: &[u8], pkg_id: PackageID) -> Installed {
+    fn installed(
+        &self,
+        tree_id: tree::Id,
+        idx: usize,
+        alias: &[u8],
+        pkg_id: PackageID,
+    ) -> Installed {
         let buf = self.lockfile.buffers.string_bytes.as_slice();
+        let Some(folder) = open_tree_folder(self.lockfile, tree_id) else {
+            return Installed::Missing;
+        };
+        let kind = entry_kind_of(&folder, alias);
+        if kind == EntryKind::Unknown {
+            return Installed::Missing;
+        }
+        if self.shipped.is_set(idx) {
+            return Installed::Matches;
+        }
         let Some(res) = self
             .lockfile
             .packages
@@ -1005,13 +1036,6 @@ impl<'a> HoistedTree<'a> {
         else {
             return Installed::Mismatch;
         };
-        let Some(folder) = open_tree_folder(self.lockfile, tree_id) else {
-            return Installed::Missing;
-        };
-        let kind = entry_kind_of(&folder, alias);
-        if kind == EntryKind::Unknown {
-            return Installed::Missing;
-        }
         match res.tag {
             ResolutionTag::Symlink => {
                 return if kind == EntryKind::SymLink {
@@ -1126,9 +1150,9 @@ fn plan_hoisted(
         return;
     }
 
-    if hoist_install_tree(manager, install_features(manager)).is_err() {
+    let Ok((_, shipped_rows)) = hoist_install_tree(manager, install_features(manager)) else {
         manager.crash();
-    }
+    };
 
     let quiet = manager.options.log_level == LogLevel::Silent;
     let features = manager.options.local_package_features;
@@ -1136,7 +1160,14 @@ fn plan_hoisted(
         || !features.optional_dependencies
         || !features.peer_dependencies;
     let lockfile: &Lockfile = &manager.lockfile;
-    let hoisted = HoistedTree::init(lockfile, HoistedTreeInit { quiet, filtered });
+    let hoisted = HoistedTree::init(
+        lockfile,
+        HoistedTreeInit {
+            quiet,
+            filtered,
+            shipped_rows: Some(&shipped_rows),
+        },
+    );
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let trees = lockfile.buffers.trees.as_slice();
@@ -1166,6 +1197,10 @@ fn plan_hoisted(
         }
         let protected: &[Box<[u8]>] = if importer == 0 { root_protected } else { &[] };
         let tree_id = tree_idx as tree::Id;
+        // A folder that a tarball shipped is not bun's to prune.
+        if shipped_rows.contains_tree(trees, tree_id) {
+            continue;
+        }
         let owner = tree_owner(lockfile, tree_idx);
         if owner != invalid_package_id && (owner as usize) < pkg_res.len() {
             visited.set(owner as usize);
@@ -1308,15 +1343,20 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
 /// self-contained barrier, so only it says what a self-contained workspace keeps. The tree carries every
 /// dependency type, so a copy under a dependency that `--production` / `--omit` skipped this run stays.
 pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) {
-    let Ok(saved) = hoist_install_tree(manager, full_install_features(install_features(manager)))
+    let Ok((saved, shipped_rows)) =
+        hoist_install_tree(manager, full_install_features(install_features(manager)))
     else {
         return;
     };
-    plan_and_remove_collapsed_copies(manager, before);
+    plan_and_remove_collapsed_copies(manager, before, &shipped_rows);
     restore_tree(&mut manager.lockfile, saved);
 }
 
-fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile) {
+fn plan_and_remove_collapsed_copies(
+    manager: &PackageManager,
+    before: &Lockfile,
+    shipped_rows: &tree::ShippedRows,
+) {
     let after: &Lockfile = &manager.lockfile;
     let workspace_names = collect_workspace_names(manager);
     if after.buffers.trees.is_empty()
@@ -1330,6 +1370,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         HoistedTreeInit {
             quiet: true,
             filtered: false,
+            shipped_rows: None,
         },
     );
     let new = HoistedTree::init(
@@ -1337,6 +1378,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         HoistedTreeInit {
             quiet,
             filtered: false,
+            shipped_rows: Some(shipped_rows),
         },
     );
     let targets = manager.filtered_link_targets.as_ref();

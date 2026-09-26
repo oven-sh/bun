@@ -97,6 +97,8 @@ pub struct PackageInstaller<'a> {
     /// (real files) rather than hardlinked/cloned/symlinked from the cache, so tools
     /// that walk, prune or rewrite that node_modules cannot reach the shared cache.
     pub(crate) copy_trees: Bitset,
+    /// Rows that a parent's tarball already put on disk. See `lockfile::tree::ShippedRows`.
+    pub(crate) shipped_rows: lockfile::tree::ShippedRows,
 
     // fields used for running lifecycle scripts when it's safe
     //
@@ -2457,6 +2459,11 @@ impl<'a> PackageInstaller<'a> {
     }
 
     pub(crate) fn install_package(&mut self, dep_id: DependencyID, log_level: Options::LogLevel) {
+        if self.shipped_rows.contains(self.current_tree_id, dep_id) {
+            self.increment_tree_install_count(true, self.current_tree_id, log_level);
+            return;
+        }
+
         let package_id = self.lockfile().buffers.resolutions.as_slice()[dep_id as usize];
 
         let name = self.names[package_id as usize];

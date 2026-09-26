@@ -76,7 +76,7 @@ pub(crate) fn install_hoisted_packages(
         .hoisted_dependencies
         .clone_from(&original_tree_dep_ids);
 
-    {
+    let shipped_rows = {
         // `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
@@ -95,9 +95,9 @@ pub(crate) fn install_hoisted_packages(
                 install_root_dependencies,
                 workspace_filters,
                 packages_to_install,
-            )?;
+            )?
         }
-    }
+    };
     // Re-derive after `filter()` so every subsequent `this` use (progress
     // setup through the install loop) is a fresh child of `mgr_ptr` under
     // Stacked Borrows — `&mut *mgr_ptr` inside the block above popped the
@@ -420,6 +420,7 @@ pub(crate) fn install_hoisted_packages(
                     }
                     set
                 },
+                shipped_rows,
             };
         };
 

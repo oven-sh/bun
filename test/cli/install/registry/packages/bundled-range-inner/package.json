@@ -1,0 +1,24 @@
+{
+  "_id": "bundled-range-inner",
+  "name": "bundled-range-inner",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-range-inner",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "no-deps": "^1.0.0",
+        "a-dep": "^1.0.0"
+      },
+      "_id": "bundled-range-inner@1.0.0",
+      "dist": {
+        "integrity": "sha512-tdTm6VlsGbk4TXzQNWi1XJTwR3ZjcEVHMNKWHrFCcJIMm2/E2ntfeqTesSStqq6A8pjLuU+RIMSE/4XFlN6YAA==",
+        "shasum": "a28dbcb7b3efe1bbc57d89d841d620856862681b",
+        "tarball": "http://localhost:4873/bundled-range-inner/-/bundled-range-inner-1.0.0.tgz"
+      }
+    }
+  }
+}

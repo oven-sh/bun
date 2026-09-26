@@ -1,0 +1,27 @@
+{
+  "_id": "bundled-range-host",
+  "name": "bundled-range-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-range-host",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "bundled-range-inner": "1.0.0",
+        "one-dep": "1.0.0"
+      },
+      "bundleDependencies": [
+        "bundled-range-inner"
+      ],
+      "_id": "bundled-range-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-Zib4XYKKBngRH0b+kQkVQfogq3A1h46FrAg7nR+SPmpW3n3n0q9VLUtikhQ4KDdVpTAvOvT1R7aaBZZdpQjDpA==",
+        "shasum": "70fbced6b1e3f91883b487dd0b8f497949729258",
+        "tarball": "http://localhost:4873/bundled-range-host/-/bundled-range-host-1.0.0.tgz"
+      }
+    }
+  }
+}

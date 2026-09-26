@@ -1,0 +1,27 @@
+{
+  "_id": "bundled-conflict-host",
+  "name": "bundled-conflict-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-conflict-host",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "bundled-shipped-inner": "1.0.0",
+        "no-deps": "2.0.0"
+      },
+      "bundleDependencies": [
+        "bundled-shipped-inner"
+      ],
+      "_id": "bundled-conflict-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-KtBxmzI93wLcDWvEkD4RRSeGxSaKe3d3IM63zxOO0HJB2qlTeNz6wyUMpfTqIDK6LjMWcL2qJTKdUJmDX0PW3g==",
+        "shasum": "2eb013ad883193b05e24113c2282f3c67128ba81",
+        "tarball": "http://localhost:4873/bundled-conflict-host/-/bundled-conflict-host-1.0.0.tgz"
+      }
+    }
+  }
+}

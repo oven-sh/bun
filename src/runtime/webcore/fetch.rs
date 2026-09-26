@@ -1327,6 +1327,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
+        // As `Bun.file(url)` and node:fs do: `open` would stop reading the path at a decoded `%00`.
+        if url_type == URLType::File {
+            crate::node::types::Valid::path_null_bytes(url_path_decoded, global_this)?;
+        }
 
         let url_string: BunString;
 

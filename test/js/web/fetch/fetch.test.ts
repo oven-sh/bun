@@ -1815,6 +1815,37 @@ it("fetch() file:// rejects a host that is not this machine", async () => {
   expect(await outcome(`file://${pathname.replace(/\/([^/]*)$/, "%2F$1")}`)).toBe(encoded);
   expect(await outcome(`file://${pathname.replace(/\/([^/]*)$/, "/sub/..%2f$1")}`)).toBe(encoded);
 });
+it("fetch() file:// rejects a path with an encoded NUL", async () => {
+  using dir = tempDir("fetch-file-nul", { "note.txt": "NOTE-TXT" });
+  const url = Bun.pathToFileURL(join(String(dir), "note.txt")).href;
+  // In a child process: where a release build read note.txt, a build with assertions aborted.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `for (const url of process.argv.slice(1)) {
+        const outcome = fetch(url).then(
+          async r => r.status + " " + (await r.text()),
+          e => e.name + " " + e.code + ": " + e.message,
+        );
+        console.log(await outcome);
+      }`,
+      url,
+      url + "%00.png",
+      url + "%00",
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // What Bun.file(url) and node:fs report for the same URL.
+  const rejected = (suffix: string) =>
+    "TypeError ERR_INVALID_ARG_VALUE: The argument 'path' must be a string, Uint8Array, or URL without null bytes. " +
+    `Received ${JSON.stringify(decodeURIComponent(new URL(url).pathname) + suffix)}`;
+  expect(stdout.split("\n")).toEqual(["200 NOTE-TXT", rejected("\0.png"), rejected("\0"), ""]);
+  expect(exitCode).toBe(0);
+});
 
 it("proxy: true is rejected, since it names no proxy", async () => {
   expect(await fetch("http://example.invalid/", { proxy: true } as any).catch(e => e.code)).toBe(

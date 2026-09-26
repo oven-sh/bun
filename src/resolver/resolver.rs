@@ -572,6 +572,10 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+
+    /// Set by [`Self::resolve_for_macro`]; disables the user external checks
+    /// for the duration of one resolve.
+    pub(crate) ignore_user_externals: bool,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -647,6 +651,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            ignore_user_externals: false,
         }
     }
 
@@ -933,10 +938,14 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            ignore_user_externals: false,
         }
     }
 
     pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
+        if self.ignore_user_externals {
+            return false;
+        }
         if self.opts.packages == options::Packages::External && is_package_path(import_path) {
             return true;
         }
@@ -947,6 +956,9 @@ impl<'a> Resolver<'a> {
     /// pattern. Does NOT consider `packages = external`; use
     /// `isExternalPattern` for the combined check.
     pub(crate) fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
+        if self.ignore_user_externals {
+            return false;
+        }
         for pattern in self.opts.external.patterns.iter() {
             if import_path.len() >= pattern.prefix.len() + pattern.suffix.len()
                 && (import_path.starts_with(pattern.prefix.as_ref())
@@ -1484,6 +1496,22 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// [`Self::resolve`] without user externals (`--external`, `packages:
+    /// "external"`). A macro runs at build time and is inlined, so its import
+    /// must resolve to a real module (#40626).
+    pub fn resolve_for_macro(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> crate::CrateResult<Result> {
+        let previous = self.ignore_user_externals;
+        self.ignore_user_externals = true;
+        let result = self.resolve(source_dir, import_path, kind);
+        self.ignore_user_externals = previous;
+        result
+    }
+
     /// Runs a resolution but also checking if a Bun Bake framework has an
     /// override. This is used in one place in the bundler.
     pub fn resolve_with_framework(
@@ -1788,7 +1816,8 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if !kind.is_entry_point()
+            if !self.ignore_user_externals
+                && !kind.is_entry_point()
                 && self.opts.external.abs_paths.count() > 0
                 && self.opts.external.abs_paths.contains(import_path)
             {
@@ -1954,7 +1983,8 @@ impl<'a> Resolver<'a> {
             }
 
             // Check for external packages first
-            if !kind.is_entry_point()
+            if !self.ignore_user_externals
+                && !kind.is_entry_point()
                 && self.opts.external.node_modules.count() > 0
                 // Imports like "process/" need to resolve to the filesystem, not a builtin
                 && !import_path.ends_with(b"/")
@@ -2049,7 +2079,8 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         };
 
-        if !kind.is_entry_point()
+        if !self.ignore_user_externals
+            && !kind.is_entry_point()
             && self.opts.external.abs_paths.count() > 0
             && self.opts.external.abs_paths.contains(abs_path)
         {

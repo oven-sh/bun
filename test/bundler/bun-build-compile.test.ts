@@ -1,6 +1,18 @@
 import { bytecodeOrderNames } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isDebug, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isArm64,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isPosix,
+  isWindows,
+  tempDir,
+} from "harness";
 import {
   chmodSync,
   closeSync,
@@ -1992,8 +2004,9 @@ export function inOther() {
       expect(lines.includes("[Disk Cache] Cache hit for sourceCode")).toBe(bytecode);
       const { before, fromBytecode, positions } = JSON.parse(stdout.trim());
       expect(fromBytecode > 0).toBe(bytecode);
-      // A module of Bun's own is parsed as a function, which is not all of its source, so it has them only out of bytecode.
-      expect(before).toEqual([true, true, bytecode]);
+      // A module of Bun's own is parsed as a function, which is not all of its source, so it has them only out of
+      // bytecode. A build with assertions parses all of that source too, to check what it knows about the function.
+      expect(before).toEqual([true, true, bytecode || isDebug || isASAN]);
 
       // The positions, counted in the text the executable holds. A frame is where the call's arguments start.
       const file = readFileSync(outfile);

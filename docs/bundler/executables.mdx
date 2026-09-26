@@ -396,6 +396,8 @@ await renderFirstScreen();
 Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
 ```
 
+The scale does not hold back every function. When one property access of a function (`o.x` or `o.x = v`) keeps taking the slow path of the interpreter, for example because it sees objects of several shapes or calls a getter, the Baseline JIT compiles that function earlier than the scale says. The scale still applies to the optimizing JIT tiers.
+
 ---
 
 ## Embedding runtime arguments

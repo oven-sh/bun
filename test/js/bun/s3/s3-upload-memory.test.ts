@@ -80,12 +80,13 @@ async function uploadRssDeltaMiB(upload: string, totalMiB: number): Promise<numb
     cwd: String(dir),
     env: {
       ...bunEnv,
-      // The S3 client does not honor NO_PROXY, so an inherited proxy would
-      // hijack the loopback sink.
+      // An inherited proxy would take the requests away from the loopback sink.
       HTTP_PROXY: undefined,
       HTTPS_PROXY: undefined,
+      ALL_PROXY: undefined,
       http_proxy: undefined,
       https_proxy: undefined,
+      all_proxy: undefined,
       // ASAN's quarantine pins freed blocks and keeps RSS at peak.
       ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
         .filter(Boolean)

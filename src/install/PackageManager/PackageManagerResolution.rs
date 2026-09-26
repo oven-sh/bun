@@ -263,6 +263,14 @@ impl PackageManager {
         if dep.name.is_empty()
             || dep.name.slice(string_buf) == dep.version.literal.slice(string_buf)
         {
+            if let Some(request) = self
+                .update_requests
+                .iter()
+                .position(|request| request.matches_exactly(dep, string_buf))
+            {
+                self.named_by_resolution
+                    .push((request as u32, dependency_id));
+            }
             dep.name = self.lockfile.packages.items_name()[package_id as usize];
             dep.name_hash = self.lockfile.packages.items_name_hash()[package_id as usize];
         }

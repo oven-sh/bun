@@ -1,6 +1,6 @@
-use bun_collections::DynamicBitSet;
 use bun_collections::bit_set::Range as BitRange;
-use bun_core::{Global, strings};
+use bun_collections::{DynamicBitSet, index_sort};
+use bun_core::{Global, Output, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_sys::{Fd, File};
@@ -10,7 +10,7 @@ use crate::dependency::DependencyExt as _;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{Dependency, PackageID, PackageNameHash, invalid_package_id};
+use crate::{Dependency, DependencyID, PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
@@ -55,6 +55,103 @@ fn root_target() -> WorkspaceTarget {
         name: Box::default(),
         name_hash: None,
         package_json_path: root_package_json_path(),
+    }
+}
+
+/// Phase 0 (before the lockfile is cleaned): a positional without a name (`bun add ./folder`, a tarball, a git URL) is a row keyed by its literal until it resolves. Every row of the same package.json that already declares the resolved name takes the positional's version and resolution, as for `bun add <name>@<literal>`, and the literal-keyed row is dropped; `PackageJSONEditor::edit` does the same to the file. Otherwise both rows reach the tree and bun.lock under one name. A peer entry and the entry of another group may share a name, so a row is only folded into rows of its own kind.
+pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
+    let named = core::mem::take(&mut manager.named_by_resolution);
+    if named.is_empty()
+        || manager.subcommand != Subcommand::Add
+        || manager.options.add_catalog.is_some()
+    {
+        return;
+    }
+    let pending = manager.pending_filtered_write.as_deref();
+    let workspace_name_hash = manager.workspace_name_hash;
+    let requests = &manager.update_requests;
+    let lockfile: &mut Lockfile = &mut manager.lockfile;
+    let mut dropped: Vec<(PackageID, DependencyID)> = Vec::new();
+
+    for &(request, positional) in &named {
+        let workspace_id = lockfile.get_workspace_pkg_if_workspace_dep(positional);
+        let receives = |request: &UpdateRequest| {
+            lockfile
+                .workspaces_of_update_request(pending, workspace_name_hash, request)
+                .contains(&workspace_id)
+        };
+        if !receives(&requests[request as usize]) {
+            continue;
+        }
+        let list = lockfile.packages.items_dependencies()[workspace_id as usize];
+        let rows = list.get(lockfile.buffers.dependencies.as_slice());
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let row = &rows[(positional - list.off) as usize];
+        // A package.json without a name resolves to "", which two unrelated packages share.
+        if row.name.is_empty() {
+            continue;
+        }
+
+        let declared: Vec<usize> = (list.off as usize..(list.off + list.len) as usize)
+            .filter(|&i| {
+                let declared = &rows[i - list.off as usize];
+                i != positional as usize
+                    && declared.name_hash == row.name_hash
+                    && declared.name.slice(buf) == row.name.slice(buf)
+                    && declared.behavior.is_peer() == row.behavior.is_peer()
+                    && !declared.behavior.is_optional_peer()
+                    && !declared.behavior.is_workspace()
+            })
+            .collect();
+
+        // The same command also asked for this package another way (`./a-v1 ./a-v2`, `./a-v1 pkga@./a-v2`, `./a-v1 pkga`).
+        if let Some(other) = declared.iter().find_map(|&i| {
+            requests.iter().enumerate().position(|(other, candidate)| {
+                other != request as usize
+                    && candidate.matches_exactly(&rows[i - list.off as usize], buf)
+                    && receives(candidate)
+            })
+        }) {
+            let (first, second) = (
+                &requests[other.min(request as usize)],
+                &requests[other.max(request as usize)],
+            );
+            Output::flush();
+            Output::err_generic(
+                "{} and {} both resolve to {}",
+                (
+                    bun_core::fmt::quote(first.version_buf()),
+                    bun_core::fmt::quote(second.version_buf()),
+                    bun_core::fmt::quote(row.name.slice(buf)),
+                ),
+            );
+            bun_core::note!("add one of them");
+            Global::crash();
+        }
+        if declared.is_empty() {
+            continue;
+        }
+
+        for declared in declared {
+            let version = lockfile.buffers.dependencies[positional as usize]
+                .version
+                .clone();
+            lockfile.buffers.dependencies[declared].version = version;
+            lockfile.buffers.resolutions[declared] =
+                lockfile.buffers.resolutions[positional as usize];
+        }
+        dropped.push((workspace_id, positional));
+    }
+
+    // Highest row first: a removal moves only the rows after it.
+    index_sort::sort_slice_unstable_by(&mut dropped, |a, b| b.1.cmp(&a.1));
+    for (workspace_id, row) in dropped {
+        let list = lockfile.packages.items_dependencies()[workspace_id as usize];
+        let range = row as usize..(list.off + list.len) as usize;
+        lockfile.buffers.dependencies[range.clone()].rotate_left(1);
+        lockfile.buffers.resolutions[range].rotate_left(1);
+        lockfile.packages.items_dependencies_mut()[workspace_id as usize].len -= 1;
+        lockfile.packages.items_resolutions_mut()[workspace_id as usize].len -= 1;
     }
 }
 

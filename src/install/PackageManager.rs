@@ -440,6 +440,9 @@ pub struct PackageManager {
     pub(crate) kept_patched: Vec<PackageID>,
     pub kept_patched_text: Vec<u8>,
 
+    // bun add <path|url>: (index in update_requests, row) of each row that took its name from the package it resolved to; drained by package_json_write_back::fold_resolved_positionals.
+    pub(crate) named_by_resolution: Vec<(u32, DependencyID)>,
+
     // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
     pub(crate) dedupe_report: Option<crate::dedupe::Report>,
 
@@ -2137,6 +2140,7 @@ pub fn init(
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
+        wr!(named_by_resolution, Vec::new());
         wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
@@ -2604,6 +2608,7 @@ fn init_with_runtime_once(
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
+        wr!(named_by_resolution, Vec::new());
         wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);

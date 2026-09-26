@@ -809,8 +809,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 while let Some(queries) = curr_list {
                     let mut curr: Option<&Semver::Query> = Some(&queries.head);
                     while let Some(query) = curr {
-                        if group.satisfies(query.range.left.version, buf, buf)
-                            || group.satisfies(query.range.right.version, buf, buf)
+                        if group.satisfies(query.range.left.boundary_version(), buf, buf)
+                            || group.satisfies(query.range.right.boundary_version(), buf, buf)
                         {
                             name = aliased.npm().name;
                             name_hash =

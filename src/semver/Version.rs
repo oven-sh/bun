@@ -934,6 +934,15 @@ pub struct Tag {
 // TODO: support multiple tags
 
 impl Tag {
+    /// `-0`, the lowest prerelease. node-semver's `^1.2.3` is `>=1.2.3 <2.0.0-0`.
+    pub(crate) fn zero_pre() -> Tag {
+        let zero: &[u8] = b"0";
+        Tag {
+            pre: SlicedString::init(zero, zero).external(),
+            build: ExternalString::default(),
+        }
+    }
+
     pub(crate) fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         let lhs_str = self.pre.slice(lhs_buf);
         let rhs_str = rhs.pre.slice(rhs_buf);

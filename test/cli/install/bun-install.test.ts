@@ -3650,6 +3650,71 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("should get npm alias when only the upper bound of its range matches", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": { as: "0.0.3" },
+          "0.0.5": { as: "0.0.5" },
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          workspaces: ["moo"],
+          dependencies: {
+            // `>=0.0.3 <0.1.0-0`: 0.0.3 is outside `>=0.0.4`, the 0.1.0 boundary is inside it
+            "boba": "npm:baz@~0.0.3",
+          },
+        }),
+      );
+      await mkdir(join(ctx.package_dir, "moo"));
+      await writeFile(
+        join(ctx.package_dir, "moo", "package.json"),
+        JSON.stringify({
+          name: "moo",
+          version: "0.0.2",
+          dependencies: {
+            boba: ">=0.0.4",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).toContain("Saved lockfile");
+      const out = await stdout.text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ boba@0.0.5",
+        "",
+        "2 packages installed",
+      ]);
+      expect(await exited).toBe(0);
+      // the alias covers moo's `boba`, so the registry is never asked for a package named boba
+      expect(urls.sort()).toEqual([`${ctx.registry_url}baz`, `${ctx.registry_url}baz-0.0.5.tgz`]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "boba", "moo"]);
+      expect(await file(join(ctx.package_dir, "node_modules", "boba", "package.json")).json()).toEqual({
+        name: "baz",
+        version: "0.0.5",
+        bin: {
+          "baz-exec": "index.js",
+        },
+      });
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/33834
   it("should resolve nested npm: alias to its registry target, not a same-named alias", async () => {
     await withContext(defaultOpts, async ctx => {

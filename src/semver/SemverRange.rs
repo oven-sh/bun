@@ -3,6 +3,7 @@ use core::fmt;
 
 use crate::Version;
 use crate::query::token::Wildcard;
+use crate::version::Tag;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -183,7 +184,7 @@ pub struct Comparator {
 }
 
 impl Comparator {
-    /// `< {major+1}.0.0`, or `<= u64::MAX.u64::MAX.u64::MAX` when `major+1`
+    /// `< {major+1}.0.0-0`, or `<= u64::MAX.u64::MAX.u64::MAX` when `major+1`
     /// would overflow so the desugared range stays non-empty at the ceiling.
     pub(crate) fn lt_next_major(major: u64) -> Comparator {
         match major.checked_add(1) {
@@ -191,6 +192,7 @@ impl Comparator {
                 op: Op::Lt,
                 version: Version {
                     major: m,
+                    tag: Tag::zero_pre(),
                     ..Default::default()
                 },
             },
@@ -206,7 +208,7 @@ impl Comparator {
         }
     }
 
-    /// `< {major}.{minor+1}.0`, or `<= {major}.u64::MAX.u64::MAX` on overflow.
+    /// `< {major}.{minor+1}.0-0`, or `<= {major}.u64::MAX.u64::MAX` on overflow.
     pub(crate) fn lt_next_minor(major: u64, minor: u64) -> Comparator {
         match minor.checked_add(1) {
             Some(m) => Comparator {
@@ -214,6 +216,7 @@ impl Comparator {
                 version: Version {
                     major,
                     minor: m,
+                    tag: Tag::zero_pre(),
                     ..Default::default()
                 },
             },
@@ -229,7 +232,7 @@ impl Comparator {
         }
     }
 
-    /// `< {major}.{minor}.{patch+1}`, or `<= {major}.{minor}.u64::MAX` on overflow.
+    /// `< {major}.{minor}.{patch+1}-0`, or `<= {major}.{minor}.u64::MAX` on overflow.
     pub(crate) fn lt_next_patch(major: u64, minor: u64, patch: u64) -> Comparator {
         match patch.checked_add(1) {
             Some(p) => Comparator {
@@ -238,6 +241,7 @@ impl Comparator {
                     major,
                     minor,
                     patch: p,
+                    tag: Tag::zero_pre(),
                     ..Default::default()
                 },
             },
@@ -251,6 +255,15 @@ impl Comparator {
                 },
             },
         }
+    }
+
+    /// The bound as a candidate version: `X.Y.Z` for a derived `<X.Y.Z-0`.
+    pub fn boundary_version(self) -> Version {
+        let mut version = self.version;
+        if self.op == Op::Lt && version.tag.eql(Tag::zero_pre()) {
+            version.tag = Tag::default();
+        }
+        version
     }
 
     #[inline]

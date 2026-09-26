@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("--rerun-each should run tests exactly N times", async () => {
@@ -228,4 +228,68 @@ test("--rerun-each re-evaluates a file whose path is not ASCII", async () => {
   expect(stdout.match(/Run #\d/g)).toEqual(["Run #1", "Run #2", "Run #3"]);
   expect(stdout + stderr).toMatch(/3 pass/);
   expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/43319
+// Without --isolate the reruns share one module cache. A helper that registers tests is evaluated in run 1 only,
+// so runs 2 and 3 register fewer tests. That must produce a warning, not silence.
+describe.concurrent("--rerun-each warns when a rerun registers fewer tests", () => {
+  const files = {
+    "helper.cjs": `
+      const { test, expect } = require("bun:test");
+      test("from helper", () => {
+        expect(1).toBe(1);
+      });
+    `,
+    "cached.test.ts": `import "./helper.cjs";`,
+    // Its own helper, an ES module this time: the files share one module cache when they run in one process.
+    "helper2.ts": `
+      import { test, expect } from "bun:test";
+      test("from helper2", () => {
+        expect(2).toBe(2);
+      });
+    `,
+    "mixed.test.ts": `
+      import { test, expect } from "bun:test";
+      import "./helper2.ts";
+      test("mixed", () => {
+        expect(1).toBe(1);
+      });
+    `,
+    "own.test.ts": `
+      import { test, expect } from "bun:test";
+      test("own", () => {
+        expect(1).toBe(1);
+      });
+    `,
+  };
+
+  test.each([
+    ["serially", []],
+    ["with --parallel --no-isolate", ["--parallel=2", "--no-isolate"]],
+  ])("%s", async (_, flags) => {
+    using dir = tempDir("test-rerun-each-no-tests", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--rerun-each=3", ...flags, "./cached.test.ts", "./mixed.test.ts", "./own.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const hint = "A module that stays cached between runs registers its tests once.";
+    // Under --parallel the two files finish in either order.
+    expect(stderr.match(/^warn: .*$/gm)?.sort()).toEqual([
+      `warn: cached.test.ts registered 0 tests on run #2 (run #1 registered 1). ${hint}`,
+      `warn: cached.test.ts registered 0 tests on run #3 (run #1 registered 1). ${hint}`,
+      `warn: mixed.test.ts registered 1 test on run #2 (run #1 registered 2). ${hint}`,
+      `warn: mixed.test.ts registered 1 test on run #3 (run #1 registered 2). ${hint}`,
+    ]);
+    expect(stderr).not.toContain("warn: own.test.ts");
+    // The warning does not change the result.
+    expect(stdout + stderr).toMatch(/8 pass/);
+    expect(stdout + stderr).toMatch(/0 fail/);
+    expect(exitCode).toBe(0);
+  });
 });

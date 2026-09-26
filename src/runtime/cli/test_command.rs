@@ -2865,10 +2865,12 @@ impl TestCommand {
 
         let repeat_count = reporter.repeat_count;
         let mut repeat_index: u32 = 0;
+        let mut first_run_with_tests: Option<(u32, u32)> = None;
         vm.on_unhandled_rejection_ctx = None;
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
 
         while repeat_index < repeat_count {
+            let tests_before = reporter.summary().tests();
             // Clear the module cache before re-running (except for the first run)
             if repeat_index > 0 {
                 vm.clear_entry_point()?;
@@ -3034,6 +3036,27 @@ impl TestCommand {
             }
 
             let _ = vm.global().handle_rejected_promises();
+
+            let tests_this_run = reporter.summary().tests() - tests_before;
+            match first_run_with_tests {
+                None if tests_this_run > 0 => {
+                    first_run_with_tests = Some((repeat_index, tests_this_run));
+                }
+                Some((first_index, first_tests)) if tests_this_run < first_tests => {
+                    reporter.jest.current_file.print_if_needed();
+                    pretty_error!(
+                        "<r><yellow>warn<r>: {} registered {} test{} on run #{} (run #{} registered {}). A module that stays cached between runs registers its tests once.\n",
+                        bstr::BStr::new(file_title),
+                        tests_this_run,
+                        if tests_this_run == 1 { "" } else { "s" },
+                        repeat_index + 1,
+                        first_index + 1,
+                        first_tests,
+                    );
+                    Output::flush();
+                }
+                _ => {}
+            }
 
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");

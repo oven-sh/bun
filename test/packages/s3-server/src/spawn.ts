@@ -32,6 +32,7 @@ export interface SpawnedServer extends AsyncDisposable {
     region?: string;
     bucket?: string;
   };
+  /** Stops the server. Without this call, the server stops when the process of the caller ends. */
   stop(): Promise<void>;
 }
 
@@ -71,6 +72,8 @@ export async function spawnServer(options: SpawnOptions = {}): Promise<SpawnedSe
   });
 
   const stop = async () => {
+    // The caller waits for the end of the server.
+    child.ref();
     child.stdin.end();
     child.kill();
     await child.exited;
@@ -109,6 +112,9 @@ export async function spawnServer(options: SpawnOptions = {}): Promise<SpawnedSe
   } finally {
     clearTimeout(timer);
   }
+
+  // A caller that ends without a call to stop() must not wait for the server. Its stdin closes then, and it stops.
+  child.unref();
 
   const { url, port, ...client } = address;
   return {

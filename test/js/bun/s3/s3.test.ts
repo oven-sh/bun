@@ -13,10 +13,12 @@ type S3Credentials = S3Options & {
 };
 
 // The S3 server of test/packages/s3-server, in a process of its own. It needs
-// no container, so these tests run on each platform.
+// no container, so these tests run on each platform. It has a region, so it
+// refuses a signature for another region, as Amazon S3 does.
 const localServer = await spawnServer({
   bunExe: bunExe(),
   env: bunEnv,
+  region: "us-east-1",
   buckets: ["buntest", { name: "buntest-us-west-1", region: "us-west-1" }],
 });
 afterAll(() => localServer.stop());
@@ -163,6 +165,7 @@ for (let credentials of allCredentials) {
       accessKeyId: credentials.accessKeyId,
       secretAccessKey: credentials.secretAccessKey,
       endpoint: credentials.endpoint,
+      region: credentials.region,
     };
 
     const S3Bucket = credentials.bucket;
@@ -1468,6 +1471,7 @@ describe("s3-server", () => {
             // @ts-ignore
             [endpoint]: localCredentials.endpoint as string,
             "S3_BUCKET": localCredentials.bucket as string,
+            "S3_REGION": localCredentials.region as string,
             "S3_ACCESS_KEY_ID": localCredentials.accessKeyId as string,
             "S3_SECRET_ACCESS_KEY": localCredentials.secretAccessKey as string,
           },

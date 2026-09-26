@@ -252,6 +252,11 @@ describe("S3Server", () => {
     server.listen();
     expect((await fetch(server.url + "/kept", { method: "HEAD" })).status).toBe(403);
   });
+
+  test("listen() refuses a port that another server has", async () => {
+    await using first = serve();
+    expect(() => serve({ port: first.port })).toThrow(`Is port ${first.port} in use?`);
+  });
 });
 
 test("the --bucket option of the program is a name, or a name and a region", () => {
@@ -336,9 +341,11 @@ describe.concurrent("the server as a process", () => {
   });
 
   test.each([
-    ["--port", "not-a-port", '"not-a-port" is not a port'],
-    ["--bucket", "name@", '"name@" is not <name> or <name>@<region>'],
-  ])("the program refuses %s %s", async (option, value, message) => {
+    ["--port", "not-a-port", '"not-a-port" is not a port', "\nUsage: bun cli.ts [options]"],
+    ["--bucket", "name@", '"name@" is not <name> or <name>@<region>', "\nUsage: bun cli.ts [options]"],
+    // The option has the right form and the server refuses its value. The program prints the error only.
+    ["--bucket", "Not_Valid", '"Not_Valid" is not a valid bucket name', ""],
+  ])("the program refuses %s %s", async (option, value, message, then) => {
     await using child = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "..", "cli.ts"), "--port", "0", option, value],
       env: bunEnv,
@@ -347,7 +354,24 @@ describe.concurrent("the server as a process", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
     expect(stdout).toBe("");
-    expect(stderr).toStartWith(message + "\n\nUsage: bun cli.ts [options]");
+    expect(stderr.split("\n", 3).join("\n")).toBe(`${message}\n${then}`);
     expect(exitCode).toBe(1);
+  });
+
+  test("a program that ends without a call to stop() does not wait for the server", async () => {
+    // The timer does not keep the program alive. It ends a program that waits for the server.
+    const program = `
+      import { spawnServer } from ${JSON.stringify(join(import.meta.dir, "..", "index.ts"))};
+      const server = await spawnServer();
+      console.log(server.url);
+      setTimeout(() => process.exit(2), 2000).unref();
+    `;
+    await using child = Bun.spawn({ cmd: [bunExe(), "-e", program], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    // The server has the stderr of the program. This pipe closes when the two processes ended.
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/^http:\/\/127\.0\.0\.1:\d+\n$/);
+    expect(exitCode).toBe(0);
+    expect(await answers(stdout.trim())).toBe(false);
   });
 });

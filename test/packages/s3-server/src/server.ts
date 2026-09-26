@@ -240,6 +240,8 @@ export class S3Server {
       maxRequestBodySize: MAX_REQUEST_BODY_SIZE,
       idleTimeout: 0,
       development: false,
+      // `development: false` turns this on. Two servers on one port would each get a part of the requests.
+      reusePort: false,
       fetch: (request, server) => this.fetch(request, server),
     });
     return this;

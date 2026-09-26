@@ -7,7 +7,7 @@
 // A parent process reads it to find the port.
 
 import { parseArgs } from "node:util";
-import { DEFAULT_CREDENTIALS, serve } from "./index.ts";
+import { DEFAULT_CREDENTIALS, serve, type S3Server } from "./index.ts";
 import { parseBucketOption } from "./src/spawn.ts";
 import { warmUp } from "./src/warm-up.ts";
 
@@ -51,9 +51,14 @@ if (values.help) {
   process.exit(0);
 }
 
-function refuse(message: string): never {
-  process.stderr.write(`${message}\n\n${usage}`);
+function fail(message: string): never {
+  process.stderr.write(message + "\n");
   process.exit(1);
+}
+
+/** Ends the program for an option that has a value of the wrong form. */
+function refuse(message: string): never {
+  fail(`${message}\n\n${usage.trimEnd()}`);
 }
 
 const port = Number(values.port);
@@ -63,25 +68,31 @@ const buckets = values.bucket.map(
   value => parseBucketOption(value) ?? refuse(`"${value}" is not <name> or <name>@<region>`),
 );
 
-const server = serve({
-  port,
-  hostname: values.hostname,
-  credentials: {
-    accessKeyId: values["access-key"]!,
-    secretAccessKey: values["secret-key"]!,
-    sessionToken: values["session-token"],
-  },
-  region: values.region,
-  buckets,
-  domains: values.domain,
-  maxRequestLog: 0,
-  onRequest: values.log
-    ? record => {
-        const error = record.errorCode === undefined ? "" : " " + record.errorCode;
-        process.stderr.write(`${record.method} ${record.url} ${record.operation} ${record.status}${error}\n`);
-      }
-    : undefined,
-});
+let server: S3Server;
+try {
+  server = serve({
+    port,
+    hostname: values.hostname,
+    credentials: {
+      accessKeyId: values["access-key"]!,
+      secretAccessKey: values["secret-key"]!,
+      sessionToken: values["session-token"],
+    },
+    region: values.region,
+    buckets,
+    domains: values.domain,
+    maxRequestLog: 0,
+    onRequest: values.log
+      ? record => {
+          const error = record.errorCode === undefined ? "" : " " + record.errorCode;
+          process.stderr.write(`${record.method} ${record.url} ${record.operation} ${record.status}${error}\n`);
+        }
+      : undefined,
+  });
+} catch (error) {
+  // For example a port that another program has, or a bucket name that is not valid.
+  fail(error instanceof Error ? error.message : String(error));
+}
 
 await warmUp();
 process.stdout.write(JSON.stringify({ ...server.clientOptions(), url: server.url, port: server.port }) + "\n");

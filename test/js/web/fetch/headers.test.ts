@@ -469,6 +469,19 @@ describe("Headers", () => {
         }
       });
 
+      // This one needs no clock. A value that grows by append has a buffer with
+      // room for the next values, and the size that the object reports counts
+      // that room. The same value stored by one call has none.
+      test("a value that grew past 4 KB by append reports its spare room", () => {
+        const unit = Buffer.alloc(100, "v").toString();
+        const grown = new Headers();
+        for (let i = 0; i < 100; i++) grown.append("x-repeated", unit);
+        const value = grown.get("x-repeated")!;
+        const stored = estimateShallowMemoryUsageOf(new Headers([["x-repeated", value]]));
+        expect(estimateShallowMemoryUsageOf(grown)).toBeGreaterThan(stored);
+        expect(estimateShallowMemoryUsageOf(grown)).toBeLessThan(stored + value.length);
+      });
+
       // set() is the baseline. It makes the same number of calls with the same
       // name and the same value, so it pays the same conversion, validation and
       // lookup cost per call, and it never combines. The ratio of the two is
@@ -479,9 +492,9 @@ describe("Headers", () => {
       // call is 20x cheaper, so the bytes each append copies are a bigger share
       // of it.
       //
-      // Back-to-back runs in one process cancel machine speed out of each
-      // ratio, and the median over the repetitions discards a repetition that
-      // another process disturbed.
+      // Each side of a ratio is its fastest run. Another process or a GC pause
+      // can only add time to a run, so a loaded machine cannot make a linear
+      // append look quadratic, and it cannot make a quadratic one look linear.
       describe("cost", () => {
         const VALUE = Buffer.alloc(8192, "x").toString();
         const repetitions = isDebug ? 3 : 5;
@@ -498,20 +511,20 @@ describe("Headers", () => {
           return elapsed;
         }
 
-        function medianRatio(numerator: () => number, denominator: () => number) {
-          const ratios = withoutAggressiveGC(() => {
-            denominator();
-            numerator();
-            const measured: number[] = [];
-            for (let i = 0; i < repetitions; i++) measured.push(numerator() / denominator());
-            return measured;
-          }) as number[];
-          ratios.sort((a, b) => a - b);
-          return ratios[ratios.length >> 1];
+        function fastestRatio(numerator: () => number, denominator: () => number) {
+          return withoutAggressiveGC(() => {
+            let fastestNumerator = Infinity;
+            let fastestDenominator = Infinity;
+            for (let i = 0; i < repetitions; i++) {
+              fastestDenominator = Math.min(fastestDenominator, denominator());
+              fastestNumerator = Math.min(fastestNumerator, numerator());
+            }
+            return fastestNumerator / fastestDenominator;
+          }) as number;
         }
 
         test("append costs about as much per call as set", () => {
-          const ratio = medianRatio(
+          const ratio = fastestRatio(
             () => time("append", ["x-repeated"], 1000),
             () => time("set", ["x-repeated"], 1000),
           );
@@ -522,7 +535,7 @@ describe("Headers", () => {
         // every call would seed it again with a copy of the whole value, and
         // this ratio would be over 100 and not about 3.
         test("three names that grow in turn cost three times one name", () => {
-          const ratio = medianRatio(
+          const ratio = fastestRatio(
             () => time("append", ["x-first", "accept", "x-second"], 300),
             () => time("append", ["x-repeated"], 300),
           );

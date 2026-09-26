@@ -328,6 +328,51 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+// Without a separate SSR graph, the server bundle keeps a "use client" module
+// and the parser wraps its exported values in `registerClientReference(value,
+// file, name)`. The parser chose `file` by the JSX development flag. A
+// `@jsxRuntime react-jsx` pragma turns that flag off for one file, and the
+// parser then aborted the process in a branch that was written for production
+// builds.
+devTest('a "use client" module with a @jsxRuntime pragma keeps its client references', {
+  framework: minimalFramework,
+  files: {
+    "components/Button.ts": `
+      "use client";
+      export function Button() {}
+      export const label = "label";
+      export default class Panel {}
+    `,
+    "routes/index.ts": `
+      import Panel, { Button, label } from '../components/Button';
+      export default function (req, meta) {
+        return Response.json(
+          [Panel, Button, label].map(ref => ({ file: ref.file.replaceAll("\\\\", "/"), uid: ref.uid })),
+        );
+      }
+    `,
+  },
+  async test(dev) {
+    const references = [
+      { file: "components/Button.ts", uid: "default" },
+      { file: "components/Button.ts", uid: "Button" },
+      { file: "components/Button.ts", uid: "label" },
+    ];
+    await dev.fetch("/").equals(references);
+
+    await dev.write(
+      "components/Button.ts",
+      `
+        "use client";
+        /** @jsxRuntime react-jsx */
+        export function Button() {}
+        export const label = "label";
+        export default class Panel {}
+      `,
+    );
+    await dev.fetch("/").equals(references);
+  },
+});
 // Regression test: DirectoryWatchStore.Dep.source_file_path borrows the key
 // string from IncrementalGraph.bundled_files. When a client-component boundary
 // is demoted (its "use client" directive is removed) the server graph calls

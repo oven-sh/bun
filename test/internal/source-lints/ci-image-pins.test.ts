@@ -58,14 +58,17 @@ test("scripts/agent.ts, which runs on the machines alone, puts the spec's Rust d
   expect(readFileSync(join(root, "scripts/agent.ts"), "utf8")).toContain(`<string>${locations.rust.darwin}/bin:`);
 });
 
-test("scripts/agent.ts starts the agent's OpenRC service after the docker service an Alpine image enables", () => {
+test("scripts/agent.ts starts the agent after the docker service an Alpine image enables", () => {
   using dir = tempDir("ci-image-pins", {});
   const image = images.find(image => image.os === "linux" && image.distro === "alpine")!;
   const bootstrap = readFileSync(join(generateImage(image, String(dir)).directory, "bootstrap.sh"), "utf8");
+  // `rc-update add` is a link to the service in the runlevel's directory.
   expect(bootstrap.split("\n")).toContain("rc-update add docker default");
 
-  const [, depend] = readFileSync(join(root, "scripts/agent.ts"), "utf8").match(/^ *depend\(\) \{\n([^}]*)\}/m)!;
+  const agent = readFileSync(join(root, "scripts/agent.ts"), "utf8");
+  const [, depend] = agent.match(/^ *depend\(\) \{\n([^}]*)\}/m)!;
   expect(depend.split("\n").map(line => line.trim())).toContain("after docker");
+  expect(agent).toContain('const openRcDockerService = "/etc/runlevels/default/docker";');
 });
 
 test("the Node-API tests build against the headers of the Node.js the CI images install", () => {

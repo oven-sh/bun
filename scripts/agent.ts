@@ -10,6 +10,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { homedir, hostname, tmpdir as osTmpdir, release } from "node:os";
 import { dirname, join } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
@@ -995,33 +996,40 @@ async function install(queueOption: string | undefined): Promise<void> {
 }
 
 /**
- * How long `start` waits for the Docker daemon. dockerd answers within seconds
- * of its service starting, so a machine that uses this up has a daemon that
- * does not start, and the agent starts without it.
+ * The docker service of an OpenRC image, which scripts/build/ci-images/spec.ts
+ * puts in the default runlevel, and the socket its daemon listens on.
  */
-const dockerDaemonWait = 2 * 60 * 1000;
+const openRcDockerService = "/etc/runlevels/default/docker";
+const dockerSocket = "/var/run/docker.sock";
 
 /**
- * Whether the Docker daemon answers within `wait` ms, asked every `interval` ms
- * until it does. While dockerd has its socket and does not serve yet, the
- * question is not refused: it is answered once dockerd serves.
+ * How long `start` waits for dockerd to listen. dockerd listens about 5 seconds
+ * after its service starts, so a machine that uses this up has a daemon that
+ * does not start, and the agent starts without it.
  */
-export async function waitForDockerDaemon(docker: string, wait: number, interval: number = 500): Promise<boolean> {
+const dockerSocketWait = 2 * 60 * 1000;
+
+/**
+ * Whether `socket` takes a connection within `wait` ms, tried every `interval`
+ * ms. A daemon listens before it serves. A client that connects in between is
+ * kept waiting until the daemon serves, and one that comes before is refused.
+ */
+export async function waitForSocket(socket: string, wait: number, interval: number = 100): Promise<boolean> {
   const deadline = Date.now() + wait;
-  for (let probes = 0; ; probes++) {
-    const { status } = spawnSync(docker, ["version"], {
-      stdio: "ignore",
-      timeout: Math.max(1, deadline - Date.now()),
-      killSignal: "SIGKILL",
+  while (true) {
+    const connected = await new Promise<boolean>(resolve => {
+      const client = connect(socket);
+      client.on("connect", () => {
+        client.destroy();
+        resolve(true);
+      });
+      client.on("error", () => resolve(false));
     });
-    if (status === 0) {
+    if (connected) {
       return true;
     }
     if (Date.now() + interval >= deadline) {
       return false;
-    }
-    if (probes === 0) {
-      console.log("Waiting for the Docker daemon...");
     }
     await new Promise(resolve => setTimeout(resolve, interval));
   }
@@ -1138,15 +1146,13 @@ async function start(): Promise<void> {
     .map(([key, value]) => `${key}=${value}`)
     .join(",");
 
-  // The agent takes its job the moment it registers, and the job's tests use
-  // the Docker daemon. OpenRC's docker service has started once dockerd is
-  // spawned, which is before it listens. With systemd there is nothing to wait
-  // for: docker.socket exists before any service starts, and a client of a
-  // daemon that does not serve yet is kept waiting, not refused.
-  const docker = isOpenRc() ? which(["docker"]) : undefined;
-  if (docker !== undefined && !(await waitForDockerDaemon(docker, dockerDaemonWait))) {
+  // The agent takes its job the moment it registers, and a docker client of
+  // the job is refused until dockerd listens. OpenRC's docker service has
+  // started once dockerd is spawned, which is before that. With systemd there
+  // is nothing to wait for: it makes docker.socket before it starts a service.
+  if (existsSync(openRcDockerService) && !(await waitForSocket(dockerSocket, dockerSocketWait))) {
     console.warn(
-      `The Docker daemon did not answer in ${dockerDaemonWait / 1000} seconds: starting the agent without it`,
+      `dockerd did not listen on ${dockerSocket} in ${dockerSocketWait / 1000} seconds: starting the agent without it`,
     );
   }
 

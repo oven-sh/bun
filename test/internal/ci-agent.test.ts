@@ -1,50 +1,73 @@
 // scripts/agent.ts starts the Buildkite agent on a CI machine. A job starts the
-// moment the agent registers, so the agent first waits for the Docker daemon
-// the job's tests use. Here `docker` is a script that records what it is asked.
+// moment the agent registers, so on an OpenRC machine the agent first waits
+// until dockerd listens: a docker client that comes before that is refused.
 import { expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
-import { chmodSync, existsSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync } from "node:fs";
+import { createServer } from "node:net";
 import { join } from "node:path";
-import { waitForDockerDaemon } from "../../scripts/agent.ts";
+import { waitForSocket } from "../../scripts/agent.ts";
 
-/** A `docker` that answers as `answer` (sh) does, in a directory of its own. */
-function fakeDocker(answer: string) {
-  const dir = tempDir("ci-agent", { docker: `#!/bin/sh\necho "$*" >> "$(dirname "$0")/asked"\n${answer}\n` });
-  const docker = join(String(dir), "docker");
-  const asked = join(String(dir), "asked");
-  chmodSync(docker, 0o755);
-  return {
-    docker,
-    /** The arguments of each call. */
-    asked: () => (existsSync(asked) ? readFileSync(asked, "utf8").trimEnd().split("\n") : []),
-    [Symbol.dispose]: () => dir[Symbol.dispose](),
-  };
+/** A process that listens on `socket` and never takes a connection, like a daemon that does not serve yet. */
+async function listener(socket: string) {
+  const daemon = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `require("node:net").createServer().listen(process.argv[1], () => {
+        require("node:fs").writeSync(1, "listening");
+        Bun.sleepSync(600_000);
+      });`,
+      socket,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const { value } = await daemon.stdout.getReader().read();
+  expect(new TextDecoder().decode(value)).toBe("listening");
+  return daemon;
 }
 
-test.skipIf(isWindows)("the agent waits until the Docker daemon answers", async () => {
-  // Like the docker CLI with no daemon, it fails. The daemon is up when it is asked for the third time.
-  using fake = fakeDocker(`[ "$(grep -c version "$(dirname "$0")/asked")" -ge 3 ]`);
+test.skipIf(isWindows)("the agent waits until the daemon listens", async () => {
+  using dir = tempDir("ci-agent", {});
+  const socket = join(String(dir), "docker.sock");
 
-  expect(await waitForDockerDaemon(fake.docker, 60_000, 1)).toBe(true);
-  expect(fake.asked()).toEqual(["version", "version", "version"]);
+  // The first connection is tried at once, and nothing listens yet.
+  const listens = waitForSocket(socket, 60_000, 1);
+  const server = createServer();
+  await new Promise<void>(resolve => server.listen(socket, resolve));
+  try {
+    expect(await listens).toBe(true);
+  } finally {
+    server.close();
+  }
 });
 
-test.skipIf(isWindows)("a daemon that is up is asked once", async () => {
-  using fake = fakeDocker("exit 0");
+test.skipIf(isWindows)("a daemon that listens and does not serve yet is enough", async () => {
+  using dir = tempDir("ci-agent", {});
+  const socket = join(String(dir), "docker.sock");
+  await using daemon = await listener(socket);
 
-  expect(await waitForDockerDaemon(fake.docker, 60_000, 1)).toBe(true);
-  expect(fake.asked()).toEqual(["version"]);
+  expect(await waitForSocket(socket, 60_000, 1)).toBe(true);
+  expect(daemon.exitCode).toBeNull();
 });
 
 test.skipIf(isWindows)("the wait ends without a daemon when its time is used up", async () => {
-  using fake = fakeDocker("exit 1");
+  using dir = tempDir("ci-agent", {});
 
-  expect(await waitForDockerDaemon(fake.docker, 200, 10)).toBe(false);
+  expect(await waitForSocket(join(String(dir), "docker.sock"), 200, 10)).toBe(false);
 });
 
-test.skipIf(isWindows)("a question the daemon does not answer ends with the wait", async () => {
-  // Like the docker CLI while dockerd has its socket and does not serve yet.
-  using fake = fakeDocker("exec sleep 600");
+test.skipIf(isWindows)("the socket of a daemon that is gone is not a daemon", async () => {
+  using dir = tempDir("ci-agent", {});
+  const socket = join(String(dir), "docker.sock");
+  {
+    await using daemon = await listener(socket);
+    daemon.kill("SIGKILL");
+    await daemon.exited;
+  }
 
-  expect(await waitForDockerDaemon(fake.docker, 200, 10)).toBe(false);
+  expect(existsSync(socket)).toBe(true);
+  expect(await waitForSocket(socket, 200, 10)).toBe(false);
 });

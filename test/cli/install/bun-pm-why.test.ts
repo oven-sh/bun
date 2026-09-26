@@ -255,27 +255,20 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     }
   });
 
-  it("should show error for non-existent package", async () => {
+  it("should show error for non-existent package on stderr", async () => {
     await using tmpDir = tempDir(`why-non-existent-${i++}`, {
       "package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
-        dependencies: {
-          lodash: "^4.17.21",
-        },
+      }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "foo" } },
+        packages: {},
       }),
     });
 
-    const install = spawn({
-      cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tmpDir,
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    expect(await install.exited).toBe(0);
-
-    const { stdout, stderr, exited } = spawn({
+    await using proc = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "non-existent-package"],
       cwd: tmpDir,
       env: bunEnv,
@@ -283,13 +276,11 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       stderr: "pipe",
     });
 
-    expect(await exited).toBe(1);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const combinedOutput = (await stdout.text()) + (await stderr.text());
-
-    expect(combinedOutput.includes("No packages matching") || combinedOutput.includes("not found in lockfile")).toBe(
-      true,
-    );
+    expect(stdout).toBe("");
+    expect(stderr).toBe("error: No packages matching 'non-existent-package' found in lockfile\n");
+    expect(exitCode).toBe(1);
   });
 
   it("should show dependency types correctly", async () => {

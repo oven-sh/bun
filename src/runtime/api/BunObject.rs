@@ -773,6 +773,63 @@ fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     JSValue::from(Output::enable_ansi_colors_stdout() || Output::enable_ansi_colors_stderr())
 }
 
+/// `vm.main()` with its symlinks resolved, cached: `Bun.main`. `None` when it cannot be opened.
+pub(crate) fn resolved_main_path(vm: &mut VirtualMachine) -> Option<&BunString> {
+    if vm.main_resolved_path.is_empty() {
+        if vm.main_resolved_path_tried {
+            return None;
+        }
+        vm.main_resolved_path_tried = true;
+
+        // If it's from eval, don't try to resolve it.
+        if strings::ends_with(vm.main(), b"[eval]") {
+            return None;
+        }
+        if strings::ends_with(vm.main(), b"[stdin]") {
+            return None;
+        }
+
+        let fd = sys::openat_a(
+            if cfg!(windows) {
+                Fd::INVALID
+            } else {
+                Fd::cwd()
+            },
+            vm.main(),
+            // Open with the minimum permissions necessary for resolving the file path.
+            if cfg!(any(target_os = "linux", target_os = "android")) {
+                sys::O::PATH
+            } else {
+                sys::O::RDONLY
+            },
+            0,
+        )
+        .ok()?;
+
+        let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
+        #[cfg(windows)]
+        {
+            let mut wpath = bun_paths::w_path_buffer_pool::get();
+            let fdpath = bun_sys::get_fd_path_w(fd, &mut wpath).ok()?;
+            vm.main_resolved_path = BunString::clone_utf16(fdpath);
+        }
+        #[cfg(not(windows))]
+        {
+            let mut path = bun_paths::path_buffer_pool::get();
+            let fdpath = bun_sys::get_fd_path(fd, &mut path).ok()?;
+
+            // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
+            if let Some(atom) = BunString::try_create_atom(fdpath) {
+                vm.main_resolved_path = atom;
+            } else {
+                vm.main_resolved_path = BunString::clone_utf8(fdpath);
+            }
+        }
+    }
+
+    Some(&vm.main_resolved_path)
+}
+
 // callconv(jsc.conv) — `SYSV_ABI` on win-x64 (BunObject.cpp:1103). Returns
 // plain `JSValue` so the generated thunk is a bare deref+call (no
 // `ExceptionValidationScope`).
@@ -788,63 +845,8 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // Attempt to use the resolved filesystem path
     // This makes `eval('require.main === module')` work when the main module is a symlink.
     // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
-    'use_resolved_path: {
-        if vm.main_resolved_path.is_empty() {
-            // If it's from eval, don't try to resolve it.
-            if strings::ends_with(vm.main(), b"[eval]") {
-                break 'use_resolved_path;
-            }
-            if strings::ends_with(vm.main(), b"[stdin]") {
-                break 'use_resolved_path;
-            }
-
-            let Ok(fd) = sys::openat_a(
-                if cfg!(windows) {
-                    Fd::INVALID
-                } else {
-                    Fd::cwd()
-                },
-                vm.main(),
-                // Open with the minimum permissions necessary for resolving the file path.
-                if cfg!(any(target_os = "linux", target_os = "android")) {
-                    sys::O::PATH
-                } else {
-                    sys::O::RDONLY
-                },
-                0,
-            ) else {
-                break 'use_resolved_path;
-            };
-
-            let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
-            #[cfg(windows)]
-            {
-                let mut wpath = bun_paths::w_path_buffer_pool::get();
-                let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
-                    break 'use_resolved_path;
-                };
-                vm.main_resolved_path = BunString::clone_utf16(fdpath);
-            }
-            #[cfg(not(windows))]
-            {
-                let mut path = bun_paths::path_buffer_pool::get();
-                let Ok(fdpath) = bun_sys::get_fd_path(fd, &mut path) else {
-                    break 'use_resolved_path;
-                };
-
-                // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
-                if let Some(atom) = BunString::try_create_atom(fdpath) {
-                    vm.main_resolved_path = atom;
-                } else {
-                    vm.main_resolved_path = BunString::clone_utf8(fdpath);
-                }
-            }
-        }
-
-        return vm
-            .main_resolved_path
-            .to_js(global_this)
-            .or_pending_exception();
+    if let Some(resolved) = resolved_main_path(vm) {
+        return resolved.to_js(global_this).or_pending_exception();
     }
 
     EncodedSlice::from_bytes(vm.main()).to_js(global_this)

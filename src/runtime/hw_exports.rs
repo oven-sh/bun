@@ -157,18 +157,27 @@ pub(crate) fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier
 /// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
 pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
-        return;
-    }
-    let global = this.global();
-    // A failed conversion just skips the note; must never panic at an FFI
-    // boundary.
-    let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
-        return;
-    };
-    if specifier_str.eql_utf8(this.main()) {
+    if !this.entry_point_result.evaluated_as_cjs && specifier_is_entry_point(this, specifier) {
         this.entry_point_result.evaluated_as_cjs = true;
     }
+}
+
+// HOST_EXPORT(Bun__VM__specifierIsEntryPoint, c)
+pub(crate) fn specifier_is_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
+    if this.main().is_empty() {
+        return false;
+    }
+    let global = this.global();
+    // A failed conversion is "no"; must never panic at an FFI boundary.
+    let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
+        return false;
+    };
+    if specifier_str.eql_utf8(this.main()) {
+        return true;
+    }
+    // Under the `node` shim `main()` is a symlink, and the module is keyed by its real path.
+    crate::api::bun_object::resolved_main_path(this)
+        .is_some_and(|resolved| specifier_str.eql(resolved))
 }
 
 /// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to

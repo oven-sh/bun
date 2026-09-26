@@ -365,6 +365,7 @@ public:
     bool m_nodeWorkerEntrySettled { false };
 
     void resetOnEachMicrotaskTick();
+    void armNextTickQueueCheckAfterEntryPoint();
 
     enum class PromiseFunctions : uint8_t {
         BunServe__Plugins__onResolve,

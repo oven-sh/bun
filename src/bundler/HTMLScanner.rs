@@ -370,9 +370,10 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         let settings = lol_html::Settings {
             element_content_handlers,
             encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
+            // Same as `HTMLRewriter`: the parsing buffer only holds the unparsed tail of a write.
             memory_settings: lol_html::MemorySettings {
-                preallocated_parsing_buffer_size: (input.len() / 4).max(1024),
-                max_allowed_memory_usage: 1024 * 1024 * 10,
+                max_allowed_memory_usage: u32::MAX as usize,
+                ..lol_html::MemorySettings::new()
             },
             strict: false,
             ..lol_html::Settings::new()

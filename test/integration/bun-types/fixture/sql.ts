@@ -116,7 +116,7 @@ expectType(sql1.unsafe<{ id: string }[]>("SELECT * FROM users")).is<Bun.SQL.Quer
 expectType(sql1.file("query.sql", [1, 2, 3])).is<Bun.SQL.Query<any>>();
 
 sql1.reserve().then(reserved => {
-  reserved.release();
+  expectType(reserved.release()).is<Promise<void>>();
 
   expectType(reserved<[8]>`SELECT 8`).is<Bun.SQL.Query<[8]>>();
 });

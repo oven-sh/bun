@@ -1009,6 +1009,8 @@ When every connection is busy, `reserve()` waits until one frees up. Pass an `Ab
 using reserved = await sql.reserve({ signal: AbortSignal.timeout(5000) });
 ```
 
+`release()` closes the client at once: new queries and `begin()` calls reject. If a transaction started with `reserved.begin()` is still running, that transaction keeps the connection until it commits or rolls back. The pool gets the connection back after that. The promise `release()` returns resolves at once, so `release()` can be awaited from inside such a transaction.
+
 ---
 
 ## LISTEN / NOTIFY (PostgreSQL)

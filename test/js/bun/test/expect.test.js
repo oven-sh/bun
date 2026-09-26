@@ -2644,6 +2644,17 @@ describe("expect()", () => {
 
     expect([1, 2, 3]).toContainAllKeys(["0", "1", "2"]);
     expect([1, 2, 3]).not.toContainAllKeys(["0", "1", "2", "3"]);
+
+    // An asymmetric matcher can match several keys. Every expected item must still match a key.
+    expect({ a: "hello", b: "world" }).toContainAllKeys([expect.any(String), "a"]);
+    expect({ a: "hello", b: "world" }).toContainAllKeys([expect.any(String), expect.any(String)]);
+    expect({ a: 1, b: 2 }).not.toContainAllKeys([expect.any(String), "zzz"]);
+    expect({ a: 1, b: 2 }).not.toContainAllKeys([expect.any(String), expect.any(Number)]);
+    expect(() => expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), "zzz"])).toThrow();
+    if (isBun) {
+      // jest-extended only walks from expected to the keys, so it passes this one.
+      expect({ a: 1, b: 2 }).not.toContainAllKeys(["a", "a"]);
+    }
   });
 
   test("toContainAnyKeys", () => {
@@ -2786,6 +2797,14 @@ describe("expect()", () => {
     expect(data).toContainValues([]);
     expect(data).toContainValues(["baz", "bar", "foo"]);
     expect(data).not.toContainValues(["qux", "foo"]);
+
+    expect(() => expect(null).toContainValues([1])).toThrow();
+    expect(() => expect(undefined).toContainValues([1])).toThrow();
+    if (isBun) {
+      // jest-extended throws a TypeError from Object.keys(null) here.
+      expect(null).not.toContainValues([1]);
+      expect(undefined).not.toContainValues([1]);
+    }
   });
 
   test("toContainAllValues", () => {

@@ -68,6 +68,12 @@ fn handshake_timeout_seconds() -> core::ffi::c_uint {
     )
 }
 
+/// Raw bound: `max_http_header_size` plus the framing of 128 fields, which llhttp does not count.
+#[inline]
+fn max_response_head_len() -> usize {
+    bun_http::max_http_header_size().saturating_add(128 * 4 + 64)
+}
+
 /// `uws.NewSocketHandler(ssl)`
 type Socket<const SSL: bool> = SocketHandler<SSL>;
 
@@ -95,6 +101,7 @@ enum HeadParse {
         head_len: usize,
     },
     Invalid,
+    TooLarge,
     NeedMore,
 }
 
@@ -730,6 +737,10 @@ where
         };
 
         match parsed {
+            // The cap applies to the head length, complete or not.
+            Ok(HeadParse::Done { head_len, .. }) if head_len > max_response_head_len() => {
+                HeadParse::TooLarge
+            }
             Ok(done) => done,
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => HeadParse::Invalid,
             Err(picohttp::ParseResponseError::ShortRead) => {
@@ -740,8 +751,8 @@ where
                 // `body` is part of an incomplete header — cap that, not
                 // total bytes received (which may include pipelined
                 // WebSocket frames once the header does complete).
-                if self.body.get().len() > bun_http::max_http_header_size() {
-                    HeadParse::Invalid
+                if self.body.get().len() > max_response_head_len() {
+                    HeadParse::TooLarge
                 } else {
                     HeadParse::NeedMore
                 }
@@ -799,6 +810,10 @@ where
             HeadParse::Done { full, .. } => full,
             HeadParse::Invalid => {
                 Self::terminate(this, ErrorCode::InvalidResponse);
+                return;
+            }
+            HeadParse::TooLarge => {
+                Self::terminate(this, ErrorCode::ResponseHeadersTooLarge);
                 return;
             }
             HeadParse::NeedMore => return,
@@ -872,6 +887,10 @@ where
             } => (full, status_code, head_len),
             HeadParse::Invalid => {
                 Self::terminate(this, ErrorCode::InvalidResponse);
+                return;
+            }
+            HeadParse::TooLarge => {
+                Self::terminate(this, ErrorCode::ResponseHeadersTooLarge);
                 return;
             }
             HeadParse::NeedMore => return,
@@ -1046,6 +1065,10 @@ where
             HeadParse::Done { full, .. } => full,
             HeadParse::Invalid => {
                 Self::terminate(this, ErrorCode::InvalidResponse);
+                return;
+            }
+            HeadParse::TooLarge => {
+                Self::terminate(this, ErrorCode::ResponseHeadersTooLarge);
                 return;
             }
             HeadParse::NeedMore => return,

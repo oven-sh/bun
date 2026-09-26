@@ -101,6 +101,8 @@ describe("WebSocket", () => {
 });
 
 describe("WebSocket upgrade split across reads", () => {
+  const TOO_LARGE = "Response headers exceed --max-http-header-size";
+
   function makeAccept(key: string): string {
     const hasher = new Bun.CryptoHasher("sha1");
     hasher.update(key);
@@ -235,10 +237,97 @@ describe("WebSocket upgrade split across reads", () => {
 
     try {
       const msg = await promise;
-      expect(msg).toContain("Invalid response");
+      expect(msg).toContain(TOO_LARGE);
     } finally {
       ws.close();
     }
+  });
+
+  // The bound is on the size of the head, not on where the reads end.
+  // max_http_header_size limits what llhttp counts, not framing (": ", "\r\n"),
+  // so the bound on raw bytes adds the framing of 128 header fields.
+  const MAX_HTTP_HEADER_SIZE = 16384; // default
+  const MAX_HEAD = MAX_HTTP_HEADER_SIZE + 128 * 4 + 64;
+
+  // With `splitAt`, the head goes out in two writes so the client reads an
+  // incomplete head of `splitAt` bytes first.
+  function serve101(headSize: number, splitAt?: number) {
+    return Bun.listen<{ buf: string; done: boolean }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { buf: "", done: false };
+        },
+        data(socket, chunk) {
+          const st = socket.data;
+          if (st.done) return;
+          st.buf += chunk.toString("latin1");
+          if (!st.buf.includes("\r\n\r\n")) return;
+          st.done = true;
+          const m = /Sec-WebSocket-Key:\s*(\S+)/i.exec(st.buf);
+          if (!m) {
+            socket.end();
+            return;
+          }
+          const fixed =
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${makeAccept(m[1])}\r\n` +
+            "X-Pad: ";
+          const padLen = headSize - fixed.length - "\r\n\r\n".length;
+          const head = fixed + Buffer.alloc(padLen, "a").toString() + "\r\n\r\n";
+          expect(head.length).toBe(headSize);
+          if (splitAt === undefined) {
+            socket.write(head);
+            socket.flush();
+            return;
+          }
+          socket.write(head.slice(0, splitAt));
+          socket.flush();
+          setTimeout(() => {
+            socket.write(head.slice(splitAt));
+            socket.flush();
+          }, 50);
+        },
+      },
+    });
+  }
+
+  function connect(port: number): Promise<string> {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const ws = new globalThis.WebSocket(`ws://127.0.0.1:${port}`);
+    ws.onopen = () => {
+      resolve("open");
+      ws.close();
+    };
+    ws.onerror = ev => resolve("error: " + ((ev as ErrorEvent).message ?? "error"));
+    ws.onclose = ev => resolve(`close: ${ev.code} ${ev.reason}`);
+    return promise;
+  }
+
+  test("101 head of exactly the bound in one write opens", async () => {
+    using server = serve101(MAX_HEAD);
+    expect(await connect(server.port)).toBe("open");
+  });
+
+  test("101 head one byte over the bound in one write is rejected", async () => {
+    using server = serve101(MAX_HEAD + 1);
+    expect(await connect(server.port)).toContain(TOO_LARGE);
+  });
+
+  test("101 head over the bound is rejected when the first read stays under the bound", async () => {
+    // The first read is an incomplete head under the bound, so the short-read
+    // check passes. The completed head is over the bound and must still fail.
+    using server = serve101(21000, 16000);
+    expect(await connect(server.port)).toContain(TOO_LARGE);
+  });
+
+  test("101 head that Node accepts opens when the first read is over max_http_header_size", async () => {
+    // Node opens this 16400 byte head: the bytes llhttp counts stay under 16384.
+    using server = serve101(16400, MAX_HTTP_HEADER_SIZE + 6);
+    expect(await connect(server.port)).toBe("open");
   });
 });
 

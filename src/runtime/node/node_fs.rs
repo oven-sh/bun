@@ -9666,9 +9666,18 @@ pub(crate) fn zig_delete_tree(
     kind_hint: sys::FileKind,
 ) -> crate::Result<()> {
     let initial_iterable_dir =
-        match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
-            Some(d) => d,
-            None => return Ok(()),
+        match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint) {
+            // Operand only: `unlinkat` reports EINVAL for a name NT rejects (#13523).
+            #[cfg(windows)]
+            Err(crate::Error::BadPathName)
+                if matches!(dt_open_dir(self_, sub_path), Err(E::ENOENT)) =>
+            {
+                return Err(dt_err(E::ENOENT));
+            }
+            opened => match opened? {
+                Some(d) => d,
+                None => return Ok(()),
+            },
         };
 
     // PERF: a Vec

@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -143,6 +143,81 @@ foo/
       expect(exitCode).toBe(1);
       expect(await fileExists(`${tempdir}/sub_dir_files`)).toBeTrue();
     }
+  });
+
+  // Windows cannot open a file with one of these characters in its name. It
+  // rejects the name (STATUS_OBJECT_NAME_INVALID) instead of reporting the
+  // file as missing. For rm that is a missing file, as on POSIX. The names
+  // cannot be created on Windows, so no fixture has them.
+  test("a name Windows rejects is a missing file", async () => {
+    using tempdir = tempDir("rm-invalid-name", { "emptydir": {}, "keep.txt": "" });
+    const cwd = String(tempdir);
+    const names = ["*.nomatch", "emptydir/*", path.join(cwd, "a*b"), "a?b", "a|b", "a<b", "a>b", 'a"b', "a\tb"];
+
+    const run = async (...args: string[]) => {
+      const { exitCode, stderr } = await $`rm ${args}`.cwd(cwd).quiet();
+      return { exitCode, stderr: stderr.toString() };
+    };
+    const results: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const name of names) {
+      results[name] = {
+        force: await run("-f", name),
+        recursiveForce: await run("-rf", name),
+        dirForce: await run("-df", name),
+        plain: await run(name),
+        recursive: await run("-r", name),
+      };
+      const ignored = { exitCode: 0, stderr: "" };
+      const missing = { exitCode: 1, stderr: `rm: ${name}: No such file or directory\n` };
+      expected[name] = {
+        force: ignored,
+        recursiveForce: ignored,
+        dirForce: ignored,
+        plain: missing,
+        recursive: missing,
+      };
+    }
+    expect(results).toEqual(expected);
+    expect(readdirSync(cwd).sort()).toEqual(["emptydir", "keep.txt"]);
+  });
+
+  // NT rejects an empty or a `..` path component with the same status as a
+  // name it cannot open, and on Windows rm can hand it one (#13523). These
+  // operands name files that exist, so -f must never count them as missing.
+  // `c.txt:s*` is a stream of c.txt on NTFS, where a stream name can hold a `*`.
+  // The last cwd is past MAX_PATH, where a Win32 lookup no longer finds a file
+  // that the NT path of the unlink reaches.
+  test("-f does not report success for a file it left in place", async () => {
+    using tempdir = tempDir("rm-force-existing", { "work/sub/a.txt": "", "work/sub/c.txt": "", "victim/b.txt": "" });
+    const root = String(tempdir);
+    const work = path.join(root, "work");
+    writeFileSync(path.join(work, "sub/c.txt:s*"), "stream");
+    const deep = path.join(root, ...Array.from({ length: 6 }, () => Buffer.alloc(50, "d").toString()));
+    mkdirSync(path.join(deep, "sub"), { recursive: true });
+    writeFileSync(path.join(deep, "sub/x.txt"), "");
+    const operands = [
+      { cwd: work, operand: "sub//a.txt", target: path.join(work, "sub/a.txt") },
+      { cwd: work, operand: "../victim/b.txt", target: path.join(root, "victim/b.txt") },
+      { cwd: work, operand: "sub//c.txt:s*", target: path.join(work, "sub/c.txt:s*") },
+      { cwd: deep, operand: "sub//x.txt", target: path.join(deep, "sub/x.txt") },
+    ];
+    const results: unknown[] = [];
+    for (const { cwd, operand, target } of operands) {
+      const existedBefore = existsSync(target);
+      const { exitCode } = await $`rm -f ${operand}`.cwd(cwd).quiet();
+      const removed = !existsSync(target);
+      const outcome =
+        removed && exitCode === 0
+          ? "removed"
+          : !removed && exitCode !== 0
+            ? "failed"
+            : `exit code ${exitCode}, ${removed ? "removed" : "left in place"}`;
+      results.push({ operand, existedBefore, outcome });
+    }
+    // Until #13523 is fixed, rm on Windows fails for some of these.
+    const outcome = isWindows ? expect.stringMatching(/^(removed|failed)$/) : "removed";
+    expect(results).toEqual(operands.map(({ operand }) => ({ operand, existedBefore: true, outcome })));
   });
 
   // The DirTask parent/child hand-off had a lost-wakeup window between
@@ -432,6 +507,9 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
   using dir = tempDir("rm-long-operand", { "short.txt": "" });
   const long = Buffer.alloc(1100, "a").toString();
   const longer = Buffer.alloc(8192, "b").toString();
+  // Fits a Windows wide path buffer (32767 UTF-16 units) but is three times
+  // that in UTF-8, so joined to the cwd it is past every byte path buffer.
+  const wide = Buffer.alloc(32760 * 3, "あ").toString();
   const absolute = path.join(String(dir), long);
   // Joins back down to "/" no matter how long it is, so it still has to be refused.
   const upToRoot = Buffer.alloc(6000, "../").toString();
@@ -449,6 +527,7 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
       relative: await run(LONG!),
       absolute: await run(ABSOLUTE!),
       overJoinBuffer: await run(LONGER!),
+      wide: await run(Buffer.alloc(32760 * 3, "あ").toString()),
       mixed: { ...(await run(LONG!, "short.txt")), shortRemoved: !existsSync("short.txt") },
       upToRoot: UP_TO_ROOT ? await run(UP_TO_ROOT) : undefined,
     };
@@ -479,6 +558,7 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
     relative: { exitCode: 1, stderr: tooLong(long) },
     absolute: { exitCode: 1, stderr: tooLong(absolute) },
     overJoinBuffer: { exitCode: 1, stderr: tooLong(longer) },
+    wide: { exitCode: 1, stderr: tooLong(wide) },
     mixed: { exitCode: 1, stderr: tooLong(long), shortRemoved: true },
     ...(isWindows ? {} : { upToRoot: { exitCode: 1, stderr: 'rm: "/" may not be removed\n' } }),
   });

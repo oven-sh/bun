@@ -3548,6 +3548,89 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  // Windows cannot open a file with one of these characters in its name. It
+  // rejects the name instead of reporting the file as missing. Node reports
+  // ENOENT from its lstat (libuv maps ERROR_INVALID_NAME to UV_ENOENT), so
+  // `force` ignores it. The names cannot be created on Windows, so no fixture
+  // has them.
+  it("recursive rm treats a name Windows rejects as a missing path", async () => {
+    using dir = tempDir("rm-invalid-name", { "emptydir": {} });
+    const outcome = (remove: () => unknown) =>
+      Promise.resolve()
+        .then(remove)
+        .then(
+          () => "removed",
+          (e: NodeJS.ErrnoException) => `${e.code} ${e.syscall}`,
+        );
+    const results: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const name of ["*.nomatch", "emptydir/*", "a?b", "a|b", "a<b", "a>b", 'a"b', "a\tb"]) {
+      const target = join(String(dir), name);
+      const syncCallbackPromise = (options: { recursive: true; force?: true }) =>
+        Promise.all([
+          outcome(() => rmSync(target, options)),
+          outcome(() => promisify(fs.rm)(target, options)),
+          outcome(() => promises.rm(target, options)),
+        ]);
+      results[name] = {
+        force: await syncCallbackPromise({ recursive: true, force: true }),
+        noForce: await syncCallbackPromise({ recursive: true }),
+      };
+      expected[name] = {
+        force: ["removed", "removed", "removed"],
+        noForce: ["ENOENT lstat", "ENOENT lstat", "ENOENT lstat"],
+      };
+    }
+    expect(results).toEqual(expected);
+    expect(readdirSync(String(dir))).toEqual(["emptydir"]);
+  });
+
+  // NT rejects an empty or a `..` path component with the same status as a
+  // name it cannot open, and on Windows a recursive rm can hand it one for a
+  // relative path (#13523). These paths exist, so `force` must never count
+  // them as missing. "a*b" does not exist.
+  it("recursive rm with force does not report success for a path it left in place", async () => {
+    using dir = tempDir("rm-force-existing", { "sub/a.txt": "", "sub/c.txt": "" });
+    const script = /* js */ `
+      const fs = require("node:fs");
+      const results = [];
+      for (const operand of ["sub//a.txt", "sub/../sub/c.txt", "a*b"]) {
+        const existedBefore = fs.existsSync(operand);
+        let code = null;
+        try {
+          fs.rmSync(operand, { recursive: true, force: true });
+        } catch (e) {
+          code = e.code;
+        }
+        const removed = !fs.existsSync(operand);
+        const outcome =
+          removed && code === null
+            ? "removed"
+            : !removed && code !== null
+              ? "failed"
+              : "threw " + code + ", " + (removed ? "removed" : "left in place");
+        results.push({ operand, existedBefore, outcome });
+      }
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Until #13523 is fixed, rm on Windows fails for the paths that exist.
+    const outcome = isWindows ? expect.stringMatching(/^(removed|failed)$/) : "removed";
+    expect(JSON.parse(stdout)).toEqual([
+      { operand: "sub//a.txt", existedBefore: true, outcome },
+      { operand: "sub/../sub/c.txt", existedBefore: true, outcome },
+      { operand: "a*b", existedBefore: false, outcome: "removed" },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
   // "rooted" and must be resolved against the cwd's drive. existsSync/
   // statSync/unlinkSync all do this; recursive rmSync must agree

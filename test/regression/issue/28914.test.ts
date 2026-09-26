@@ -106,9 +106,8 @@ describe.concurrent("issue #28914 - bundler preserves top-level @layer statement
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const out = await Bun.file(`${dir}/out/entry.css`).text();
-    expect(out).toContain("@layer theme;");
-    expect(out).toContain("@layer base;");
-    expect(out).toContain("@layer components;");
+    // Statements that precede every @import are merged into one, in order.
+    expect(out).toContain("@layer theme, base, components;");
     expect(out).toContain(".foo");
     expect(stdout).toContain("Bundled");
     expect(exitCode).toBe(0);

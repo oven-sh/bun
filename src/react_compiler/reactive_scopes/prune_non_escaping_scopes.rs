@@ -73,7 +73,7 @@ pub(crate) fn prune_non_escaping_scopes(
     }
 
     // Then walk outward from the returned values and find all captured operands.
-    let memoized = compute_memoized_identifiers(&state)?;
+    let memoized = compute_memoized_identifiers(&mut state)?;
 
     // Prune scopes that do not declare/reassign any escaping values
     let mut transform = PruneScopesTransform {
@@ -124,7 +124,8 @@ fn join_aliases(kind1: MemoizationLevel, kind2: MemoizationLevel) -> Memoization
 struct IdentifierNode {
     level: MemoizationLevel,
     memoized: bool,
-    dependencies: IndexSet<DeclarationId>,
+    /// Not in upstream: indices into `CollectState::operands`, not one set of operands per lvalue.
+    dependencies: Vec<usize>,
     scopes: IndexSet<ScopeId>,
     seen: bool,
 }
@@ -133,6 +134,21 @@ struct IdentifierNode {
 struct ScopeNode {
     dependencies: Vec<DeclarationId>,
     seen: bool,
+}
+
+/// Not in upstream: the rvalues of one instruction, the dependencies of each of its lvalues.
+struct Operands {
+    ids: Vec<DeclarationId>,
+    /// `visit` was called on `ids[..visited]`.
+    visited: usize,
+}
+
+impl Operands {
+    fn next_unvisited(&mut self) -> Option<DeclarationId> {
+        let id = self.ids.get(self.visited).copied()?;
+        self.visited += 1;
+        Some(id)
+    }
 }
 
 // =============================================================================
@@ -144,6 +160,8 @@ struct CollectState {
     definitions: IdMap<DeclarationId, DeclarationId>,
     identifiers: IdMap<DeclarationId, IdentifierNode>,
     scopes: IdMap<ScopeId, ScopeNode>,
+    /// Indexed by `IdentifierNode::dependencies`.
+    operands: Vec<Operands>,
     escaping_values: IndexSet<DeclarationId>,
     /// First invariant violation. The `()` visitor callbacks cannot return it.
     error: Option<CompilerError>,
@@ -155,6 +173,7 @@ impl CollectState {
             definitions: IdMap::new(),
             identifiers: IdMap::new(),
             scopes: IdMap::new(),
+            operands: Vec::new(),
             escaping_values: IndexSet::new(),
             error: None,
         }
@@ -174,7 +193,7 @@ impl CollectState {
             IdentifierNode {
                 level: MemoizationLevel::Never,
                 memoized: false,
-                dependencies: IndexSet::new(),
+                dependencies: Vec::new(),
                 scopes: IndexSet::new(),
                 seen: false,
             },
@@ -923,6 +942,18 @@ impl<'a> CollectDependenciesVisitor<'a> {
         }
 
         // Add the operands as dependencies of all lvalues
+        let operands_idx = if aliasing_lvalues.is_empty() || rvalue_data.is_empty() {
+            None
+        } else {
+            state.operands.push(Operands {
+                ids: rvalue_data
+                    .iter()
+                    .map(|(_, operand_id)| *operand_id)
+                    .collect(),
+                visited: 0,
+            });
+            Some(state.operands.len() - 1)
+        };
         for lv in &aliasing_lvalues {
             let lvalue_decl_id = env.identifiers[lv.place_identifier.0 as usize].declaration_id;
             let lvalue_id = state.resolve(lvalue_decl_id);
@@ -932,16 +963,14 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 .or_insert_with(|| IdentifierNode {
                     level: MemoizationLevel::Never,
                     memoized: false,
-                    dependencies: IndexSet::new(),
+                    dependencies: Vec::new(),
                     scopes: IndexSet::new(),
                     seen: false,
                 });
             node.level = join_aliases(node.level, lv.level);
-            for (_, operand_id) in &rvalue_data {
-                if *operand_id == lvalue_id {
-                    continue;
-                }
-                node.dependencies.insert(*operand_id);
+            // Not in upstream, which skips the lvalue itself: a visit of a seen node has no effect.
+            if let Some(operands_idx) = operands_idx {
+                node.dependencies.push(operands_idx);
             }
 
             state.visit_operand(
@@ -1090,69 +1119,45 @@ impl<'a> ReactiveFunctionVisitor for CollectDependenciesVisitor<'a> {
 // computeMemoizedIdentifiers
 // =============================================================================
 
-type IdentNodeTuple = (
-    MemoizationLevel,
-    bool,
-    IndexSet<DeclarationId>,
-    IndexSet<ScopeId>,
-    bool,
-);
-
 fn compute_memoized_identifiers(
-    state: &CollectState,
+    state: &mut CollectState,
 ) -> Result<HashSet<DeclarationId>, CompilerError> {
     let mut memoized = HashSet::new();
-
-    // We need mutable access to the nodes, so we clone the state into mutable structures
-    let mut identifier_nodes: IdMap<DeclarationId, IdentNodeTuple> = IdMap::new();
-    for (id, node) in state.identifiers.iter() {
-        identifier_nodes.insert(
-            id,
-            (
-                node.level,
-                node.memoized,
-                node.dependencies.clone(),
-                node.scopes.clone(),
-                node.seen,
-            ),
-        );
-    }
-
-    let mut scope_nodes: IdMap<ScopeId, (Vec<DeclarationId>, bool)> = IdMap::new();
-    for (id, node) in state.scopes.iter() {
-        scope_nodes.insert(id, (node.dependencies.clone(), node.seen));
-    }
 
     fn visit(
         id: DeclarationId,
         force_memoize: bool,
-        identifier_nodes: &mut IdMap<DeclarationId, IdentNodeTuple>,
-        scope_nodes: &mut IdMap<ScopeId, (Vec<DeclarationId>, bool)>,
+        state: &mut CollectState,
         memoized: &mut HashSet<DeclarationId>,
     ) -> Result<bool, CompilerError> {
-        let Some(&(level, _, _, _, seen)) = identifier_nodes.get(id) else {
+        let Some(node) = state.identifiers.get_mut(id) else {
             return Ok(false);
         };
-        if seen {
-            return Ok(identifier_nodes.get(id).unwrap().1);
+        if node.seen {
+            return Ok(node.memoized);
         }
 
         // Mark as seen, temporarily mark as non-memoized
-        identifier_nodes.get_mut(id).unwrap().4 = true; // seen = true
-        identifier_nodes.get_mut(id).unwrap().1 = false; // memoized = false
+        node.seen = true;
+        node.memoized = false;
+        let level = node.level;
 
-        // Visit dependencies
-        let deps: Vec<DeclarationId> = identifier_nodes
-            .get(id)
-            .unwrap()
-            .2
-            .iter()
-            .copied()
-            .collect();
+        // Visit dependencies, determine if any of them are memoized
+        let dependencies = std::mem::take(&mut node.dependencies);
+        let reads_result = level == MemoizationLevel::Conditional && !force_memoize;
         let mut has_memoized_dependency = false;
-        for dep in deps {
-            let is_dep_memoized = visit(dep, false, identifier_nodes, scope_nodes, memoized)?;
-            has_memoized_dependency |= is_dep_memoized;
+        for &operands_idx in &dependencies {
+            if reads_result {
+                for i in 0..state.operands[operands_idx].ids.len() {
+                    let dep = state.operands[operands_idx].ids[i];
+                    has_memoized_dependency |= visit(dep, false, state, memoized)?;
+                }
+            } else {
+                // Not in upstream: only a first visit has an effect, so lvalues share a cursor.
+                while let Some(dep) = state.operands[operands_idx].next_unvisited() {
+                    visit(dep, false, state, memoized)?;
+                }
+            }
         }
 
         if level == MemoizationLevel::Memoized
@@ -1160,45 +1165,35 @@ fn compute_memoized_identifiers(
                 && (has_memoized_dependency || force_memoize))
             || (level == MemoizationLevel::Unmemoized && force_memoize)
         {
-            identifier_nodes.get_mut(id).unwrap().1 = true; // memoized = true
+            let node = state.identifiers.get_mut(id).unwrap();
+            node.memoized = true;
             memoized.insert(id);
-            let scopes: Vec<ScopeId> = identifier_nodes
-                .get(id)
-                .unwrap()
-                .3
-                .iter()
-                .copied()
-                .collect();
-            for scope_id in scopes {
-                force_memoize_scope_dependencies(
-                    scope_id,
-                    identifier_nodes,
-                    scope_nodes,
-                    memoized,
-                )?;
+            let scopes = std::mem::take(&mut node.scopes);
+            for scope_id in &scopes {
+                force_memoize_scope_dependencies(*scope_id, state, memoized)?;
             }
+            return Ok(true);
         }
-        Ok(identifier_nodes.get(id).unwrap().1)
+        Ok(false)
     }
 
     fn force_memoize_scope_dependencies(
         id: ScopeId,
-        identifier_nodes: &mut IdMap<DeclarationId, IdentNodeTuple>,
-        scope_nodes: &mut IdMap<ScopeId, (Vec<DeclarationId>, bool)>,
+        state: &mut CollectState,
         memoized: &mut HashSet<DeclarationId>,
     ) -> Result<(), CompilerError> {
         // TS: CompilerError.invariant(node !== undefined, ...)
-        let Some(node) = scope_nodes.get_mut(id) else {
+        let Some(node) = state.scopes.get_mut(id) else {
             return Err(cold_invariant("Expected a node for all scopes", None, None));
         };
-        if node.1 {
+        if node.seen {
             return Ok(());
         }
-        node.1 = true; // seen = true
+        node.seen = true;
 
-        let deps: Vec<DeclarationId> = node.0.clone();
+        let deps = std::mem::take(&mut node.dependencies);
         for dep in deps {
-            visit(dep, true, identifier_nodes, scope_nodes, memoized)?;
+            visit(dep, true, state, memoized)?;
         }
         Ok(())
     }
@@ -1206,13 +1201,7 @@ fn compute_memoized_identifiers(
     // Walk from the "roots" aka returned/escaping identifiers
     let escaping: Vec<DeclarationId> = state.escaping_values.iter().copied().collect();
     for value in escaping {
-        visit(
-            value,
-            false,
-            &mut identifier_nodes,
-            &mut scope_nodes,
-            &mut memoized,
-        )?;
+        visit(value, false, state, &mut memoized)?;
     }
 
     Ok(memoized)

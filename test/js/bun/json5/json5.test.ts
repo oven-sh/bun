@@ -757,6 +757,60 @@ describe("stringify", () => {
     expect(JSON5.stringify("back\\slash")).toEqual("'back\\\\slash'");
   });
 
+  test("escapes unpaired surrogates as \\uHHHH, like JSON.stringify", () => {
+    // UTF-8 cannot encode an unpaired surrogate. A pair is a character and stays as is.
+    expect(JSON5.stringify("\uD800")).toBe("'\\ud800'");
+    expect(JSON5.stringify("\uDC00")).toBe("'\\udc00'");
+    expect(JSON5.stringify("x\uDBFFy")).toBe("'x\\udbffy'");
+    expect(JSON5.stringify("x\uDFFFy")).toBe("'x\\udfffy'");
+    expect(JSON5.stringify("\uDC00\uD800")).toBe("'\\udc00\\ud800'");
+    expect(JSON5.stringify("\uD83D\uD83D\uDE00")).toBe("'\\ud83d😀'");
+    expect(JSON5.stringify("\uD83D\uDE00\uDE00")).toBe("'😀\\ude00'");
+    expect(JSON5.stringify("\uD83D\uDE00")).toBe("'😀'");
+    expect(JSON5.stringify(["\uD800", "a\uD800", "\uD83D\uDE00"])).toBe("['\\ud800','a\\ud800','😀']");
+    expect(JSON5.stringify({ ["a\uD800b"]: 1, ["a\uDC00b"]: 2, ["a\uFFFDb"]: 3 })).toBe(
+      "{'a\\ud800b':1,'a\\udc00b':2,'a\uFFFDb':3}",
+    );
+    expect(JSON5.stringify({ ["a\uD800b"]: "\uDC00" }, null, 2)).toBe("{\n  'a\\ud800b': '\\udc00',\n}");
+  });
+
+  test("round-trips unpaired surrogates in values and keys", () => {
+    const obj = { ["a\uD800b"]: 1, ["a\uDC00b"]: 2, ["a\uFFFDb"]: 3 };
+    expect(JSON5.parse(JSON5.stringify(obj))).toEqual(obj);
+    expect(JSON5.parse(JSON5.stringify(obj, null, 2))).toEqual(obj);
+    expect(Object.keys(JSON5.parse(JSON5.stringify(obj)))).toEqual(Object.keys(obj));
+
+    const values = {
+      lead: "x\uD800y",
+      trail: "x\uDC00y",
+      reversed: "\uDC00\uD800",
+      pair: "\uD83D\uDE00",
+      leadThenPair: "\uD83D\uD83D\uDE00",
+      pairThenTrail: "\uD83D\uDE00\uDE00",
+      leadAtEnd: "abc\uDBFF",
+      trailAtStart: "\uDFFFabc",
+      list: ["\uD800", "\uDC00", "a\uD800"],
+    };
+    expect(JSON5.parse(JSON5.stringify(values))).toEqual(values);
+    expect(JSON5.parse(JSON5.stringify(values, null, 2))).toEqual(values);
+  });
+
+  test("round-trips every surrogate code unit", () => {
+    // "|" between the code units so that no lead is followed by a trail.
+    const all = Array.from({ length: 0x800 }, (_, k) => String.fromCharCode(0xd800 + k)).join("|");
+    const back = JSON5.parse(JSON5.stringify(all));
+    expect(typeof back).toBe("string");
+    expect(back.length).toBe(all.length);
+    for (let i = 0; i < all.length; i++) {
+      if (back.charCodeAt(i) !== all.charCodeAt(i)) {
+        throw new Error(
+          `U+${all.charCodeAt(i).toString(16).padStart(4, "0")} did not round-trip: ` +
+            `got U+${back.charCodeAt(i).toString(16).padStart(4, "0")}`,
+        );
+      }
+    }
+  });
+
   test("stringifies objects with unquoted keys", () => {
     expect(JSON5.stringify({ a: 1, b: "two" })).toEqual("{a:1,b:'two'}");
   });

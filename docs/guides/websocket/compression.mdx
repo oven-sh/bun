@@ -4,7 +4,7 @@ sidebarTitle: Enable compression
 mode: center
 ---
 
-Set the `perMessageDeflate` parameter to enable the [permessage-deflate](https://tools.ietf.org/html/rfc7692) WebSocket extension. Bun then negotiates compression with clients that support it. Messages sent with `ws.send()` are still uncompressed unless you opt in per message (see below).
+Set the `perMessageDeflate` parameter to enable the [permessage-deflate](https://tools.ietf.org/html/rfc7692) WebSocket extension. Bun then negotiates compression with clients that support it. Messages sent with `ws.send()` and `ws.publish()` are still uncompressed unless you opt in per message (see below). Messages sent with `server.publish()` are compressed unless you opt out per message.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({
@@ -18,7 +18,7 @@ Bun.serve({
 
 ---
 
-To enable compression for individual messages, pass `true` as the second parameter to `ws.send()`. This requires `perMessageDeflate` to be enabled; otherwise Bun sends the message uncompressed.
+To enable compression for individual messages, pass `true` as the last parameter to `ws.send()` or `ws.publish()`. This requires `perMessageDeflate` to be enabled; otherwise Bun sends the message uncompressed.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({
@@ -28,7 +28,32 @@ Bun.serve({
     async message(ws, message) {
       // send a compressed message
       ws.send(message, true);
+      // publish a compressed message to a topic
+      ws.publish("chat", message, true);
     },
   },
 });
+```
+
+---
+
+`server.publish()` compresses by default. Bun deflates the message once for each subscriber that negotiated the extension. Pass `false` as the third parameter to publish a message uncompressed. Short messages grow when deflated, so pass `false` for those.
+
+```ts server.ts icon="/icons/typescript.svg"
+const server = Bun.serve({
+  // ...
+  websocket: {
+    perMessageDeflate: true,
+    open(ws) {
+      ws.subscribe("chat");
+    },
+    message() {},
+  },
+});
+
+// compressed for subscribers that negotiated the extension
+server.publish("chat", JSON.stringify({ type: "snapshot", users: ["alice", "bob", "carol"] }));
+
+// uncompressed for every subscriber
+server.publish("chat", "ping", false);
 ```

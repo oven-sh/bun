@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
-import { cp, exists, mkdir, rm } from "fs/promises";
+import { cp, exists, mkdir, realpath, rename, rm } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
@@ -347,6 +347,201 @@ test.concurrent("star dep follows a same-name workspace being added and removed"
   expect(await exited).toBe(0);
   expect((await installed()).version).toBe("2.0.0");
 });
+
+// peer-deps-fixed has a peer on no-deps@^1.0.0, which links to a workspace named no-deps. That
+// link goes through the root's `workspaces` edge to the workspace. Once a later install drops the
+// edge, the peer resolves from the registry again, the way it does with no lockfile. It used to
+// stay linked: the workspace stayed in bun.lock through an edge bun.lock does not record, and the
+// next install could not load the file (`error: Duplicate package path`), installed a different
+// no-deps than the one that wrote it, or failed on the missing folder.
+describe.each(["hoisted", "isolated"] as const)(
+  "a range linked to a workspace re-resolves once the root drops that workspace (%s)",
+  linker => {
+    test.concurrent.each([
+      {
+        history: "a root dependency takes the workspace's name",
+        root: { workspaces: ["packages/*"], devDependencies: { "no-deps": "1.0.0" } },
+        workspaces: ["", "packages/app"],
+        packages: { "no-deps": "no-deps@1.0.0" },
+        peer: "1.0.0",
+      },
+      {
+        history: "a root alias takes the registry package of the workspace's name",
+        root: { workspaces: ["packages/*"], devDependencies: { "aliased": "npm:no-deps@1.0.0" } },
+        workspaces: ["", "packages/app"],
+        packages: { "aliased": "no-deps@1.0.0", "no-deps": "no-deps@1.0.0" },
+        peer: "1.0.0",
+      },
+      {
+        history: 'the workspace leaves "workspaces"',
+        root: { workspaces: ["packages/app"] },
+        workspaces: ["", "packages/app"],
+        packages: { "no-deps": "no-deps@1.1.0" },
+        peer: "1.1.0",
+      },
+      {
+        history: "the workspace is deleted",
+        root: { workspaces: ["packages/*"] },
+        change: "delete",
+        workspaces: ["", "packages/app"],
+        packages: { "no-deps": "no-deps@1.1.0" },
+        peer: "1.1.0",
+      },
+      {
+        // same name, new package: the peer follows the root's edge to the new folder
+        history: "the workspace moves to another folder",
+        root: { workspaces: ["packages/*", "libs/*"] },
+        change: "move",
+        workspaces: ["", "libs/no-deps", "packages/app"],
+        packages: { "a-dep": "a-dep@1.0.1", "no-deps": "no-deps@workspace:libs/no-deps" },
+        peer: "1.5.0",
+      },
+    ])("$history", async ({ root, change, workspaces, packages, peer: peerVersion }) => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const lockfile = () => file(join(packageDir, "bun.lock")).text();
+      const resolved = async () => {
+        const lock = Bun.JSONC.parse(await lockfile()) as {
+          workspaces: Record<string, unknown>;
+          packages: Record<string, [string, ...unknown[]]>;
+        };
+        return {
+          workspaces: Object.keys(lock.workspaces),
+          packages: Object.fromEntries(Object.entries(lock.packages).map(([key, [id]]) => [key, id])),
+        };
+      };
+      // the no-deps that peer-deps-fixed loads
+      const peer = async () => {
+        const installs = [join(packageDir, "packages", "app"), packageDir].map(dir =>
+          join(dir, "node_modules", "peer-deps-fixed"),
+        );
+        const plugin = (await exists(installs[0])) ? installs[0] : installs[1];
+        return (await file(join(await realpath(plugin), "..", "no-deps", "package.json")).json()).version;
+      };
+      const wipeNodeModules = () =>
+        Promise.all(
+          [packageDir, join(packageDir, "packages", "app")].map(dir =>
+            rm(join(dir, "node_modules"), { recursive: true, force: true }),
+          ),
+        );
+
+      await Promise.all([
+        verdaccio.writeBunfig(packageDir, { linker }),
+        write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] })),
+        write(
+          join(packageDir, "packages", "no-deps", "package.json"),
+          JSON.stringify({ name: "no-deps", version: "1.5.0", dependencies: { "a-dep": "1.0.1" } }),
+        ),
+        write(
+          join(packageDir, "packages", "app", "package.json"),
+          JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "peer-deps-fixed": "1.0.0" } }),
+        ),
+      ]);
+      await runBunInstall(env, packageDir);
+      expect(await resolved()).toEqual({
+        workspaces: ["", "packages/app", "packages/no-deps"],
+        packages: {
+          "a-dep": "a-dep@1.0.1",
+          "app": "app@workspace:packages/app",
+          "no-deps": "no-deps@workspace:packages/no-deps",
+          "peer-deps-fixed": "peer-deps-fixed@1.0.0",
+        },
+      });
+      expect(await peer()).toBe("1.5.0");
+
+      const folder = join(packageDir, "packages", "no-deps");
+      if (change === "delete") await rm(folder, { recursive: true });
+      if (change === "move") {
+        await mkdir(join(packageDir, "libs"));
+        await rename(folder, join(packageDir, "libs", "no-deps"));
+      }
+      await write(join(packageDir, "package.json"), JSON.stringify({ name: "root", ...root }));
+      await runBunInstall(env, packageDir);
+      const written = await lockfile();
+      expect(await resolved()).toEqual({
+        workspaces,
+        packages: {
+          "app": "app@workspace:packages/app",
+          "peer-deps-fixed": "peer-deps-fixed@1.0.0",
+          ...packages,
+        },
+      });
+      expect(await peer()).toBe(peerVersion);
+
+      // bun.lock installs what the install that wrote it installed
+      await wipeNodeModules();
+      await runBunInstall(env, packageDir, { frozenLockfile: true });
+      expect(await peer()).toBe(peerVersion);
+      const again = await runBunInstall(env, packageDir, { savesLockfile: false });
+      expect(again.err).not.toContain("Saved lockfile");
+      expect(await lockfile()).toBe(written);
+
+      // and it is the bun.lock an install with no lockfile writes
+      await Promise.all([wipeNodeModules(), rm(join(packageDir, "bun.lock"))]);
+      await runBunInstall(env, packageDir);
+      expect(await lockfile()).toBe(written);
+    });
+  },
+);
+
+// Only the dropped workspace depends on `plugin`, so the new root does not reach `plugin` and its
+// range must not resolve again: the registry does not have the workspace's name, and the 404
+// would fail an install that needs neither package.
+test.concurrent.each(["dependencies", "peerDependencies"] as const)(
+  "a range of a package only the dropped workspace reached does not resolve again (%s)",
+  async group => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const plugin = { name: "plugin", version: "1.0.0", [group]: { "private-host": "^1" } };
+    const tarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify(plugin) },
+      { compress: "gzip" },
+    ).bytes();
+    const requested: string[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/plugin-1.0.0.tgz") return new Response(tarball);
+        requested.push(pathname);
+        if (pathname !== "/plugin") return new Response("not found", { status: 404 });
+        const dist = { tarball: new URL("/plugin-1.0.0.tgz", registry.url).href };
+        return Response.json({
+          name: "plugin",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { ...plugin, dist } },
+        });
+      },
+    });
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({ install: { cache: join(packageDir, ".bun-cache"), registry: registry.url.href } }),
+      ),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] })),
+      write(
+        join(packageDir, "packages", "private-host", "package.json"),
+        JSON.stringify({ name: "private-host", version: "1.5.0", dependencies: { plugin: "1.0.0" } }),
+      ),
+      write(join(packageDir, "packages", "app", "package.json"), JSON.stringify({ name: "app", version: "1.0.0" })),
+    ]);
+    await runBunInstall(env, packageDir);
+    expect(requested).toEqual(["/plugin"]);
+
+    await write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/app"] }));
+    await runBunInstall(env, packageDir);
+    expect(requested).toEqual(["/plugin"]);
+    const lock = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as {
+      workspaces: Record<string, unknown>;
+      packages: Record<string, unknown>;
+    };
+    expect({ workspaces: Object.keys(lock.workspaces), packages: Object.keys(lock.packages) }).toEqual({
+      workspaces: ["", "packages/app"],
+      packages: ["app"],
+    });
+    await runBunInstall(env, packageDir, { frozenLockfile: true });
+  },
+);
 
 // The root both lists the workspace and depends on it by `*`; a prerelease version is not
 // satisfied by `*`, but `*` links to a same-name workspace regardless of its version.

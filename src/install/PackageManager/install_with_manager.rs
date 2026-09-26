@@ -591,6 +591,12 @@ pub fn install_with_manager(
                         }
                     }
 
+                    reresolve_ranges_linked_to_dropped_workspaces(
+                        manager,
+                        root.dependencies,
+                        &old_resolutions,
+                    );
+
                     if manager.summary.update > 0 {
                         root.scripts = Default::default();
                     }
@@ -1540,6 +1546,108 @@ fn report_lockfile_load_error(
         Global::crash();
     }
     Ok(())
+}
+
+/// A range of a non-workspace package links to a workspace only through the root's edge to it
+/// (`root_workspace_package_id`). Ranges linked to a workspace whose root edge the differ dropped
+/// resolve again, as they do with no lockfile: bun.lock cannot record the link without the edge.
+fn reresolve_ranges_linked_to_dropped_workspaces(
+    manager: &mut PackageManager,
+    previous_root_dependencies: lockfile::DependencySlice,
+    previous_root_resolutions: &[PackageID],
+) {
+    let rows: Vec<DependencyID> = {
+        let lockfile: &Lockfile = &manager.lockfile;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let root_dependencies = lockfile.packages.items_dependencies()[0].get(dependencies);
+        let workspace_path = |dep: &Dependency| -> Option<SemverString> {
+            (dep.version.tag == DependencyVersionTag::Workspace).then(|| *dep.version.workspace())
+        };
+
+        let mut names: Vec<PackageNameHash> =
+            root_dependencies.iter().map(|dep| dep.name_hash).collect();
+        index_sort::sort_slice_unstable_by(&mut names, |a, b| a.cmp(b));
+        let mut kept: Vec<(PackageNameHash, Option<SemverString>)> = root_dependencies
+            .iter()
+            .filter(|dep| dep.behavior.is_workspace())
+            .map(|dep| (dep.name_hash, workspace_path(dep)))
+            .collect();
+        index_sort::sort_slice_unstable_by(&mut kept, |a, b| a.0.cmp(&b.0));
+
+        // A workspace that moved keeps its name and gets a new package, so its path decides too.
+        let mut dropped = DynamicBitSet::init_empty(pkg_resolutions.len()).unwrap_or_oom();
+        let mut survivors: Vec<PackageID> = Vec::new();
+        for (previous, &resolved) in previous_root_dependencies
+            .get(dependencies)
+            .iter()
+            .zip(previous_root_resolutions)
+        {
+            if (resolved as usize) >= pkg_resolutions.len() {
+                continue;
+            }
+            let is_dropped = previous.behavior.is_workspace()
+                && kept
+                    .binary_search_by(|row| row.0.cmp(&previous.name_hash))
+                    .map_or(true, |i| match (kept[i].1, workspace_path(previous)) {
+                        (Some(now), Some(before)) => !now.eql(before, buf, buf),
+                        (now, before) => now.is_some() != before.is_some(),
+                    });
+            if is_dropped {
+                dropped.set(resolved as usize);
+            } else if names.binary_search(&previous.name_hash).is_ok() {
+                survivors.push(resolved);
+            }
+        }
+        if dropped.count() == 0 {
+            return;
+        }
+
+        // Only owners the new root still reaches: `clean` discards the rest, and a range of theirs
+        // on a workspace name the registry does not have would fail the install.
+        let reached = reachable::packages_from(
+            lockfile,
+            resolutions,
+            &survivors,
+            true,
+            reachable::Options::all(0),
+        );
+
+        // Rows of the root and of workspaces link by path, with or without the root's edge.
+        lockfile
+            .packages
+            .items_dependencies()
+            .iter()
+            .zip(pkg_resolutions)
+            .enumerate()
+            .filter(|&(owner, (_, resolution))| {
+                reached.is_set(owner)
+                    && !matches!(
+                        resolution.tag,
+                        ResolutionTag::Root | ResolutionTag::Workspace
+                    )
+            })
+            .flat_map(|(_, (owned, _))| owned.begin()..owned.end())
+            .filter(|&row| {
+                dropped.is_set_allow_out_of_bound(resolutions[row as usize] as usize, false)
+            })
+            .collect()
+    };
+
+    for row in rows {
+        if !manager.lockfile.untag_workspace_link(row) {
+            continue;
+        }
+        manager.lockfile.buffers.resolutions[row as usize] = invalid_package_id;
+        let dependency = manager.lockfile.buffers.dependencies[row as usize].clone();
+        if let Err(err) =
+            enqueue_dependency_with_main(manager, row, &dependency, invalid_package_id, false)
+        {
+            add_dependency_error(manager, &dependency, err);
+        }
+    }
 }
 
 /// Returns the rows the plan re-resolved so the overrides/catalogs invalidation loops that follow leave them pinned; only tracked when those loops will run.

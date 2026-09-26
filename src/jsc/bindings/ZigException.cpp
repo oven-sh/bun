@@ -466,20 +466,16 @@ static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, J
     return {};
 }
 
+// An Error prints the stack it captured at construction, matching `error.stack` and Node.
 __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
-    JSC::ErrorInstance* err, const Vector<JSC::StackFrame>* stackTrace,
-    JSC::JSValue val, PopulateStackTraceFlags flags)
+    JSC::ErrorInstance* err, JSC::JSValue val, PopulateStackTraceFlags flags)
 {
     JSC::JSObject* obj = dynamicDowncast<JSC::JSObject>(val);
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     bool getFromSourceURL = false;
-    if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(vm, *stackTrace, except.stack, flags);
-        RETURN_IF_EXCEPTION(scope, );
-
-    } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
+    if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, flags);
         RETURN_IF_EXCEPTION(scope, );
 
@@ -836,26 +832,25 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
         return;
     }
 
+    // The cell's throw-site stack is used only for a thrown value with no frames of its own.
+    JSC::Exception* jscException = nullptr;
     if (value.classInfoOrNull() == JSC::Exception::info()) {
-        auto* jscException = uncheckedDowncast<JSC::Exception>(value);
-        JSValue unwrapped = jscException->value();
-
-        if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(unwrapped)) {
-            fromErrorInstance(*exception, global, error, &jscException->stack(), unwrapped, PopulateStackTraceFlags::OnlyPosition);
-            return;
-        }
-
-        if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), exception->stack, PopulateStackTraceFlags::OnlyPosition);
-        }
-
-        exceptionFromString(*exception, unwrapped, global);
-        return;
+        jscException = uncheckedDowncast<JSC::Exception>(value);
+        value = jscException->value();
     }
 
     if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
-        fromErrorInstance(*exception, global, error, nullptr, value, PopulateStackTraceFlags::OnlyPosition);
+        fromErrorInstance(*exception, global, error, value, PopulateStackTraceFlags::OnlyPosition);
+        if (exception->stack.frames_len == 0 && jscException && jscException->stack().size() > 0) {
+            populateStackTrace(global->vm(), jscException->stack(), exception->stack, PopulateStackTraceFlags::OnlyPosition);
+            exception->stack.frames_from_throw_site = true;
+        }
         return;
+    }
+
+    if (jscException && jscException->stack().size() > 0) {
+        populateStackTrace(global->vm(), jscException->stack(), exception->stack, PopulateStackTraceFlags::OnlyPosition);
+        exception->stack.frames_from_throw_site = true;
     }
 
     exceptionFromString(*exception, value, global);
@@ -868,22 +863,29 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         return;
     }
 
+    // jsc_stack_frame_index indexes the vector JSC__JSValue__toZigException filled the frames from.
+    JSC::Exception* jscException = nullptr;
     if (value.classInfoOrNull() == JSC::Exception::info()) {
-        auto* jscException = uncheckedDowncast<JSC::Exception>(value);
-        JSValue unwrapped = jscException->value();
+        jscException = uncheckedDowncast<JSC::Exception>(value);
+        value = jscException->value();
+    }
 
+    if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
+        if (exception->stack.frames_from_throw_site) {
+            if (jscException) {
+                populateStackTrace(global->vm(), jscException->stack(), exception->stack, PopulateStackTraceFlags::OnlySourceLines);
+            }
+        } else if (error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
+            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, PopulateStackTraceFlags::OnlySourceLines);
+        }
+        return;
+    }
+
+    if (jscException) {
         if (jscException->stack().size() > 0) {
             populateStackTrace(global->vm(), jscException->stack(), exception->stack, PopulateStackTraceFlags::OnlySourceLines);
         }
 
-        exceptionFromString(*exception, unwrapped, global);
-        return;
-    }
-
-    if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
-        if (error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
-            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, PopulateStackTraceFlags::OnlySourceLines);
-        }
-        return;
+        exceptionFromString(*exception, value, global);
     }
 }

@@ -606,12 +606,14 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         rel: Vec<u8>,
     }
 
-    /// Open `abs` as the directory at `depth`. `false` when it cannot be opened.
-    fn enter(levels: &mut Vec<Level>, depth: &mut usize, abs: &ZStr, rel: &[u8]) -> bool {
-        let Ok(dfd) = sys::open(abs, sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC, 0)
-        else {
-            return false;
-        };
+    /// Open `abs` as the directory at `depth`.
+    fn enter(
+        levels: &mut Vec<Level>,
+        depth: &mut usize,
+        abs: &ZStr,
+        rel: &[u8],
+    ) -> sys::Result<()> {
+        let dfd = sys::open(abs, sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC, 0)?;
         let it = sys::dir_iterator::iterate(dfd);
         match levels.get_mut(*depth) {
             Some(level) => *level.it = it,
@@ -629,12 +631,12 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         level.rel.clear();
         level.rel.extend_from_slice(rel);
         *depth += 1;
-        true
+        Ok(())
     }
 
     let mut levels: Vec<Level> = Vec::new();
     let mut depth: usize = 0;
-    if !enter(&mut levels, &mut depth, abs_dir, rel_dir) {
+    if enter(&mut levels, &mut depth, abs_dir, rel_dir).is_err() {
         return;
     }
     let mut abs_buf = path::path_buffer_pool::get();
@@ -675,7 +677,8 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         };
         cb(child_abs, child_rel, child_is_file);
         if !child_is_file {
-            enter(&mut levels, &mut depth, child_abs, child_rel);
+            // Best-effort: a subdirectory that cannot be opened ends its branch.
+            let _ = enter(&mut levels, &mut depth, child_abs, child_rel);
         }
     }
 }

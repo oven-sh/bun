@@ -7059,8 +7059,12 @@ impl H2FrameParser {
             }
         }
 
-        // too much memory being use
-        if this.is_over_session_memory_limit() {
+        // Only a client opens a stream here. A server gets here for a stream that is already
+        // open (respond(), additionalHeaders()): node's Http2Stream::SubmitResponse has no memory
+        // check, and a refusal here puts no frame on the wire, so the peer would wait forever.
+        // can_open_stream() refuses a server's new inbound streams.
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L2405-L2424
+        if !this.is_server.get() && this.is_over_session_memory_limit() {
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::ENHANCE_YOUR_CALM.0;
             this.rejected_streams.set(this.rejected_streams.get() + 1);

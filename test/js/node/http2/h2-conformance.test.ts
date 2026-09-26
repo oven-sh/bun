@@ -1597,6 +1597,53 @@ describe("inbound stream lifecycle", () => {
     },
   );
 
+  // node applies maxSessionMemory to new streams only (Http2Session::OnBeginHeadersCallback).
+  // respond() on a stream that is already open is never refused (Http2Stream::SubmitResponse has
+  // no memory check). A refusal there puts no frame on the wire, so the peer waits forever.
+  test("answers a stream that was open before queued response data exhausted maxSessionMemory", async () => {
+    const server = http2.createServer({ maxSessionMemory: 1 });
+    const streams: any[] = [];
+    const streamError = Promise.withResolvers<never>();
+    server.on("stream", (stream: any) => {
+      stream.on("error", streamError.reject);
+      streams.push(stream);
+      if (streams.length < 2) return;
+      const [first, second] = streams;
+      first.respond({ ":status": 200 });
+      first.end(Buffer.alloc(1 << 22, "a"));
+      second.respond({ ":status": 200 });
+      second.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")),
+          encodeFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET")),
+        ]),
+      );
+      const reply = await Promise.race([
+        c.waitFor(f => (f.type === FrameType.HEADERS || f.type === FrameType.RST_STREAM) && f.streamId === 3),
+        streamError.promise,
+      ]);
+      expect(reply.type).toBe(FrameType.HEADERS);
+
+      // Both bodies wait for flow-control credit. Grant it: each stream ends with its whole body.
+      await drainFirstStream(c);
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 3 && (f.flags & 0x1) === 1);
+      const bodyBytes = (streamId: number) =>
+        c.frames.filter(f => f.type === FrameType.DATA && f.streamId === streamId).reduce((n, f) => n + f.length, 0);
+      expect({ first: bodyBytes(1), second: bodyBytes(3) }).toEqual({ first: 1 << 22, second: 2 });
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
   /** A maxSessionMemory:1 server whose first stream queues enough response data that the
    *  next inbound HEADERS is refused. Streams that do reach JS are recorded in `seen`. */
   async function exhaustedSession() {

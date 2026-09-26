@@ -18,8 +18,7 @@ test.concurrent("concurrent order", async () => {
   }).toMatchInlineSnapshot(`
     {
       "exitCode": 0,
-      "stderr": 
-    "test/js/bun/test/concurrent.fixture.ts:
+      "stderr": "test/js/bun/test/concurrent.fixture.ts:
     (pass) test 1
     (pass) test 2
     (pass) test 3
@@ -31,10 +30,8 @@ test.concurrent("concurrent order", async () => {
 
      8 pass
      0 fail
-    Ran 8 tests across 1 file."
-    ,
-      "stdout": 
-    "bun test <version> (<revision>)
+    Ran 8 tests across 1 file.",
+      "stdout": "bun test <version> (<revision>)
     [0] start test 1
     [1] end test 1
     --- concurrent boundary ---
@@ -52,8 +49,7 @@ test.concurrent("concurrent order", async () => {
     [3] end before test 7
     [3] start test 7
     [4] end test 7
-    [5] end test 8"
-    ,
+    [5] end test 8",
     }
   `);
 });

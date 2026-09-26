@@ -128,6 +128,36 @@ devTest("image import in JS", {
     // await dev.fetch(img1).expect404();
   },
 });
+devTest("html references a json file that is cached as a module", {
+  // "manifest.json" is bundled as a module first. It is not in the asset
+  // store, so a later HTML reference to it must not look up an asset URL.
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <script type="module" src="script.ts"></script>
+      </body></html>
+    `,
+    "script.ts": `
+      import manifest from "./manifest.json";
+      console.log(manifest.name);
+    `,
+    "manifest.json": `{ "name": "app" }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("app");
+
+    await c.expectReload(async () => {
+      await dev.patch("index.html", {
+        find: "<head></head>",
+        replace: '<head><link rel="manifest" href="./manifest.json"></head>',
+      });
+    });
+    await c.expectMessage("app");
+
+    await dev.fetch("/").expect.toInclude("<script");
+  },
+});
 devTest("import then create", {
   files: {
     "index.html": `

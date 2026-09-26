@@ -579,10 +579,13 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
     /// (Re-)insert the timer's slot into the heap at `now + interval`, taking
     /// the heap's ref if it is not already held. Called from `schedule()`,
     /// `do_refresh()`, and `convert_to_interval()`.
-    fn reschedule(this: ThisPtr<Self>, timer: JSValue, global: &JSGlobalObject) {
+    ///
+    /// Returns whether the slot is linked. A timer that stopped itself the way
+    /// Node allows (`_repeat = null`, `_idleTimeout = -1`) stays out of the heap.
+    fn reschedule(this: ThisPtr<Self>, timer: JSValue, global: &JSGlobalObject) -> bool {
         let internals = this.internals();
         if internals.flags.get().kind() == Kind::SetImmediate {
-            return;
+            return false;
         }
 
         let idle_timeout =
@@ -591,7 +594,7 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
 
         // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
         if !this.should_reschedule_timer(repeat, idle_timeout) {
-            return;
+            return false;
         }
 
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
@@ -619,6 +622,7 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
         if internals.flags.get().has_js_ref() {
             this.set_enable_keeping_event_loop_alive(true);
         }
+        true
     }
 
     /// `Drop` body (the refcount reached zero): unlink `self` from every
@@ -754,10 +758,13 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
             return Ok(this_value);
         }
 
-        internals
-            .this_value
-            .with_mut(|r| r.set_strong(this_value, global_object));
-        Self::reschedule(this, this_value, global_object);
+        // Only a timer in the heap pins its wrapper: the fire or the cancel
+        // that takes it out lets go again, and a timer that stays out has neither.
+        if Self::reschedule(this, this_value, global_object) {
+            internals
+                .this_value
+                .with_mut(|r| r.set_strong(this_value, global_object));
+        }
 
         Ok(this_value)
     }

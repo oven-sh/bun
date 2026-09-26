@@ -165,3 +165,42 @@ it.concurrent("an interval that stops itself via _repeat = null / _idleTimeout =
   expect(stdout.trim()).toBe("200 collected");
   expect(exitCode).toBe(0);
 });
+
+it.concurrent("refresh() on an interval that stopped itself does not start it or keep it alive", async () => {
+  const code = /* js */ `
+    const { heapStats } = require("bun:jsc");
+    const N = 200;
+    let fired = 0;
+    let timers = [];
+    await new Promise(resolve => {
+      for (let i = 0; i < N; i++) {
+        timers.push(
+          setInterval(function () {
+            if (i % 2) this._repeat = null;
+            else this._idleTimeout = -1;
+            if (++fired === N) resolve();
+          }, 1),
+        );
+      }
+    });
+    // Every interval has fired once and has stopped.
+    await new Promise(r => setTimeout(r, 10));
+    for (const timer of timers) timer.refresh();
+    timers = undefined;
+    await new Promise(r => setTimeout(r, 10));
+    Bun.gc(true);
+    await new Promise(r => setTimeout(r, 10));
+    Bun.gc(true);
+    const left = heapStats().objectTypeCounts.Timeout ?? 0;
+    console.log(fired, left < N / 2 ? "collected" : "leaked " + left);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("200 collected");
+  expect(exitCode).toBe(0);
+});

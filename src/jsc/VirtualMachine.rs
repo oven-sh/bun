@@ -455,6 +455,7 @@ unsafe extern "C" {
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
     safe fn Bun__Process__isExiting(global: &JSGlobalObject) -> bool;
+    safe fn Bun__Process__hasExitCode(global: &JSGlobalObject) -> bool;
     safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -2157,8 +2158,10 @@ impl VirtualMachine {
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
                 self.is_handling_uncaught_exception = false;
+                self.fail_exit_code();
+                let code = self.exit_handler.exit_code;
                 // SAFETY: see above.
-                unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+                unsafe { (hooks.process_exit)(global_object.as_ptr(), code) };
                 panic!("made it past process.exit()");
             }
             // TODO maybe we want a separate code path for uncaught exceptions
@@ -4441,12 +4444,17 @@ impl VirtualMachine {
         false
     }
 
-    /// Exit code 1, unless 'exit' is already being emitted (Node's `process._exiting` check).
+    /// Exit code 1, unless 'exit' is being emitted: then the code in effect stands, as in Node.
     fn fail_exit_code(&mut self) {
         // The VM's own global: the reporting global may be a node:vm context's.
-        if !Bun__Process__isExiting(self.global()) {
-            self.exit_handler.exit_code = 1;
+        let global = self.global();
+        // With no code chosen a worker exits 0 and the main thread 1.
+        if Bun__Process__isExiting(global)
+            && (!self.is_main_thread() || Bun__Process__hasExitCode(global))
+        {
+            return;
         }
+        self.exit_handler.exit_code = 1;
     }
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.

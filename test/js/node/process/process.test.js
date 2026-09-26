@@ -2690,6 +2690,43 @@ describe("process.exitCode", () => {
       6,
     );
   });
+
+  // Node's fatal-exception handler leaves process.exitCode alone once 'exit' is
+  // being emitted (process._exiting), and the process then exits with
+  // process.exitCode, or with 1 when that is still undefined.
+  describe.concurrent("an 'exit' listener that throws does not replace the exit code in effect", () => {
+    const listener = `process.on("exit", code => { console.log("exit", code, process.exitCode); throw new Error("cleanup failed"); });`;
+    it.each([
+      ["process.exitCode = 4", `process.exitCode = 4; ${listener}`, "exit 4 4\n", 4],
+      ["process.exitCode = 0", `process.exitCode = 0; ${listener}`, "exit 0 0\n", 0],
+      ["no exit code", listener, "exit 0 undefined\n", 1],
+      [
+        "process.exitCode set by the listener",
+        `process.on("exit", () => { process.exitCode = 9; throw new Error("cleanup failed"); });`,
+        "",
+        9,
+      ],
+      ["process.exit(7)", `${listener} process.exit(7);`, "exit 7 7\n", 7],
+      ["process.exit(0)", `${listener} process.exit(0);`, "exit 0 0\n", 0],
+      ["process.exit()", `${listener} process.exit();`, "exit 0 undefined\n", 1],
+      [
+        "process.exitCode = 4, then process.exit()",
+        `process.exitCode = 4; ${listener} process.exit();`,
+        "exit 4 4\n",
+        4,
+      ],
+      [
+        "an unhandled rejection, then process.exitCode set by the listener",
+        `process.on("exit", code => { console.log("exit", code, process.exitCode); process.exitCode = 98; throw new Error("cleanup failed"); });
+         Promise.reject(new Error("oops"));`,
+        "exit 1 1\n",
+        98,
+      ],
+      ["an uncaught exception", `${listener} setTimeout(() => { throw new Error("boom"); }, 1);`, "exit 1 1\n", 1],
+    ])("%s", async (_label, script, stdout, code) => {
+      await runInlineFixture(script, stdout, code);
+    });
+  });
 });
 
 it("process._exiting", () => {

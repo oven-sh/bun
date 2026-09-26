@@ -889,6 +889,12 @@ extern "C" bool Bun__Process__isExiting(Zig::GlobalObject* globalObject)
     return globalObject->hasProcessObject() && globalObject->processObject()->m_isExiting;
 }
 
+// `process.exitCode` is not undefined.
+extern "C" bool Bun__Process__hasExitCode(Zig::GlobalObject* globalObject)
+{
+    return globalObject->hasProcessObject() && globalObject->processObject()->m_isExitCodeObservable;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     double now = static_cast<double>(Bun__readOriginTimer(bunVM(lexicalGlobalObject)));

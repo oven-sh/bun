@@ -27,9 +27,6 @@ pub(crate) type SpawnOptionsStdio = process::WindowsStdio;
 // re-exported through `bun_sys`.
 use sys::Stdio as FdStdio;
 
-// `const log = bun.sys.syslog;`
-bun_output::define_scoped_log!(log, SYS, visible);
-
 /// Payload of `Stdio::Capture`.
 #[derive(Clone, Copy)]
 pub(crate) struct Capture {

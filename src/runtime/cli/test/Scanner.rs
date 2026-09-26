@@ -33,8 +33,7 @@ pub struct Scanner<'a> {
     pub(crate) open_dir_buf: PathBuffer,
     pub(crate) options: &'a BundleOptions<'a>,
     pub(crate) search_count: usize,
-    /// Test files selected so far, counting a file once per argument that selects it.
-    /// `test_files.len()` cannot serve: a file an earlier argument listed is not pushed again.
+    /// Matches per argument. Not `test_files.len()`: a file an earlier argument listed is not pushed again.
     matched: usize,
     /// Set by `next`. False after `read_dir_with_name` means the listing came from the cache.
     iterator_invoked: bool,
@@ -133,8 +132,6 @@ impl<'a> Scanner<'a> {
         Ok(core::mem::take(&mut self.test_files).into_boxed_slice())
     }
 
-    /// Count `path` as a match, and append it to `test_files` unless an earlier
-    /// scan already found it.
     fn push_test_file(&mut self, path: Interned) -> Result<(), AllocError> {
         self.matched += 1;
         if self
@@ -148,8 +145,7 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
-    /// Returns how many test files `path_literal` selects, including files an
-    /// earlier argument already listed.
+    /// Returns how many test files `path_literal` selects, counting files an earlier argument listed.
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<usize, ScanError> {
         let matched_before = self.matched;
         let mut scan_dir_buf = bun_paths::path_buffer_pool::get();

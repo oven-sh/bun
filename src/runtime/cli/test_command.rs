@@ -2034,8 +2034,6 @@ impl TestCommand {
             }
             false
         };
-        // Path arguments that select no test file. The other arguments still
-        // run. The exit code is 1 unless --pass-with-no-tests is set.
         let mut unmatched_path_args: Vec<&'static [u8]> = Vec::new();
         if has_relative_path {
             // One of the files is a filepath. Instead of treating the
@@ -2620,8 +2618,6 @@ impl TestCommand {
 
                 reporter.print_summary();
 
-                // Repeat the scan-time lines next to the summary, where the
-                // exit code is decided.
                 if had_unmatched_path_arg {
                     pretty_error!("\n");
                     for arg in &unmatched_path_args {

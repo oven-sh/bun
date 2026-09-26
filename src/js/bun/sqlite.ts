@@ -361,6 +361,7 @@ class Statement<ReturnType = unknown, ParamsType extends SqliteTypes.SQLQueryBin
 }
 
 const cachedCount = Symbol.for("Bun.Database.cache.count");
+const sqliteTypeSymbol = Symbol.for("sqlite-type");
 
 class Database implements SqliteTypes.Database {
   declare exec: Database["run"];
@@ -456,6 +457,14 @@ class Database implements SqliteTypes.Database {
 
   get inTransaction() {
     return SQL.isInTransaction(this.#handle);
+  }
+
+  // Mark the Database prototype with a symbol to identify it as a bun-specific sqlite database.
+  // This is useful for the package author to detect which sqlite implementation is being used.
+  // Reference:
+  //   https://github.com/oven-sh/bun/pull/22109
+  get [sqliteTypeSymbol]() {
+    return "bun:sqlite";
   }
 
   static open(filename, options) {

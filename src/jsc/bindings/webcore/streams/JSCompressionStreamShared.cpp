@@ -191,13 +191,13 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecStepResult step;
-    EncodedJSValue junkError {};
+    CodecStepEnd end = CodecStepEnd::Done;
     if (void* sinkPtr = stream->m_nativeSinkPtr) {
-        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, stream->m_nativeSinkId, sinkPtr, &step.more, &junkError));
+        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, stream->m_nativeSinkId, sinkPtr, &end));
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
     } else {
-        JSValue out = JSValue::decode(CompressionStreamCoder__transform(coder, globalObject, input, inputLen, finish, &step.more, &junkError));
+        JSValue out = JSValue::decode(CompressionStreamCoder__transform(coder, globalObject, input, inputLen, finish, &end));
         RETURN_IF_EXCEPTION(scope, step);
         auto* view = dynamicDowncast<JSArrayBufferView>(out);
         if (view && view->length()) {
@@ -205,10 +205,12 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
             RETURN_IF_EXCEPTION(scope, step);
         }
     }
-    // Output decoded ahead of trailing junk is delivered first: the spec enqueues, then throws.
-    if (junkError) [[unlikely]] {
-        transformStreamKeepQueuedOutputReadable(vm, stream, JSValue::decode(junkError));
-        throwException(globalObject, scope, JSValue::decode(junkError));
+    step.more = end == CodecStepEnd::More;
+    // The spec order for trailing junk: enqueue what was decoded, then throw.
+    if (end == CodecStepEnd::TrailingJunk) [[unlikely]] {
+        JSValue junkError = JSValue::decode(CompressionStreamCoder__trailingJunkError(globalObject));
+        transformStreamKeepQueuedOutputReadable(vm, stream, junkError);
+        throwException(globalObject, scope, junkError);
     }
     return step;
 }

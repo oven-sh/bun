@@ -152,6 +152,13 @@ enum class CompressionFormat : uint8_t {
     Zstd = 4,
 };
 
+// How one step of the coder ended. Matches the `StepEnd` enum in CompressionStreamCoder.rs.
+enum class CodecStepEnd : uint8_t {
+    Done = 0,
+    More = 1, // the coder kept the tail of the chunk: step it again, with no input, before the next chunk
+    TrailingJunk = 2, // the output came ahead of trailing junk: deliver it, then throw the junk error
+};
+
 // JSReadableStream Bun-mode members
 
 // Replaces the `$start` thunk. Tells materializeIfNeeded() what to do.

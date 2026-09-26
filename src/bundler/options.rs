@@ -2283,7 +2283,7 @@ pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
         // on it under Windows (matches `write_replacing_slashes_on_windows`).
         let sep = rest
             .iter()
-            .position(|&b| b == b'/' || (cfg!(windows) && b == b'\\'));
+            .position(|&b| b == b'/' || (bun_core::host::is_windows() && b == b'\\'));
         let seg = sep.map_or(rest, |i| &rest[..i]);
         PathTemplate::write_replacing_slashes_on_windows(
             writer,
@@ -2392,8 +2392,12 @@ impl PathTemplate {
         w: &mut W,
         slice: &[u8],
     ) -> bun_io::Result<()> {
-        #[cfg(windows)]
+        #[cfg(any(windows, bun_portable))]
         {
+            #[cfg(bun_portable)]
+            if !bun_core::host::is_windows() {
+                return w.write_all(slice);
+            }
             let mut remain = slice;
             while let Some(i) = strings::index_of_char(remain, b'/') {
                 let i = i as usize;
@@ -2403,7 +2407,7 @@ impl PathTemplate {
             }
             w.write_all(remain)
         }
-        #[cfg(not(windows))]
+        #[cfg(all(not(windows), not(bun_portable)))]
         {
             w.write_all(slice)
         }

@@ -272,8 +272,11 @@ impl Error {
         #[cfg(windows)]
         let js_errno = crate::windows::libuv::e_discriminant_to_uv(self.errno)
             .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg());
-        #[cfg(not(windows))]
+        #[cfg(all(not(windows), not(bun_portable)))]
         let js_errno = c_int::from(self.errno).wrapping_neg();
+        // The portable image has the errno of Linux inside; JavaScript sees the one of the host.
+        #[cfg(bun_portable)]
+        let js_errno = bun_errno::host::js_errno(self.errno);
 
         let mut err = SystemError {
             errno: js_errno,

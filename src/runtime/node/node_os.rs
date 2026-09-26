@@ -1471,8 +1471,8 @@ mod _impl {
 
         result.put(global_this, b"homedir", home.into_js(global_this)?);
 
-        #[cfg(windows)]
-        {
+        #[cfg(any(windows, bun_portable))]
+        if bun_core::host::is_windows() {
             result.put(
                 global_this,
                 b"username",
@@ -1484,6 +1484,7 @@ mod _impl {
             result.put(global_this, b"uid", JSValue::js_number(-1.0));
             result.put(global_this, b"gid", JSValue::js_number(-1.0));
             result.put(global_this, b"shell", JSValue::NULL);
+            return Ok(result);
         }
         #[cfg(not(windows))]
         {

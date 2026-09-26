@@ -213,6 +213,10 @@ static JSValue constructArch(VM& vm, JSObject* processObject)
 #endif
 }
 
+#if defined(BUN_PORTABLE)
+extern "C" int Bun__signalFromHost(int signal);
+#endif
+
 static JSValue constructPlatform(VM& vm, JSObject* processObject)
 {
     return JSC::jsString(vm, makeAtomString(Bun::hostPlatformName()));
@@ -4867,6 +4871,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObje
     if (signalValue.isNumber()) {
         signal = signalValue.toInt32(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+#if defined(BUN_PORTABLE)
+        // A number is the one of the host (os.constants.signals); the image has the numbers of Linux.
+        signal = Bun__signalFromHost(signal);
+        if (signal < 0)
+            return Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, signalValue);
+#endif
     } else if (signalValue.isString()) {
         loadSignalNumberMap();
         auto signalName = signalValue.toWTFString(globalObject);

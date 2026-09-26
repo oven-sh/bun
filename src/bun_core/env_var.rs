@@ -745,7 +745,16 @@ macro_rules! platform_specific_new {
 
             /// Retrieve the key of the environment variable for the current platform, if any.
             pub(crate) fn platform_key() -> Option<&'static ZStr> {
-                #[cfg(unix)]
+                // The portable image: the name that the host has for the variable.
+                #[cfg(bun_portable)]
+                {
+                    return if $crate::host::is_windows() {
+                        $crate::env_var::__key_opt!($windows)
+                    } else {
+                        $crate::env_var::__key_opt!($posix)
+                    };
+                }
+                #[cfg(all(unix, not(bun_portable)))]
                 { return $crate::env_var::__key_opt!($posix); }
                 #[cfg(windows)]
                 { return $crate::env_var::__key_opt!($windows); }
@@ -771,6 +780,12 @@ macro_rules! platform_specific_new {
             /// Retrieve the value of the environment variable, loading it if necessary.
             /// Fails if the current platform is unsupported.
             pub fn get() -> Option<K::ValueType> {
+                // Code that is compiled for one platform asks for its variables; in the portable
+                // image the host may be a platform that does not have them.
+                #[cfg(bun_portable)]
+                if platform_key().is_none() {
+                    return DEFAULT;
+                }
                 assert_platform_supported();
 
                 let cached_result = CACHE.get_cached();

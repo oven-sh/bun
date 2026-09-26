@@ -71,7 +71,7 @@ impl PluginRunner {
             return b"";
         };
         let colon = colon as usize;
-        if cfg!(windows)
+        if bun_core::host::is_windows()
             && colon == 1
             && specifier.len() > 3
             && bun_paths::resolve_path::is_sep_any(specifier[2])

@@ -2731,6 +2731,12 @@ impl RunCommand {
             #[cfg(windows)]
             let resolved: &[u8] =
                 paths::resolve_path::normalize_string::<false, paths::platform::Windows>(resolved);
+            #[cfg(bun_portable)]
+            let resolved: &[u8] = if bun_core::host::is_windows() {
+                paths::resolve_path::normalize_string::<false, paths::platform::Windows>(resolved)
+            } else {
+                resolved
+            };
             if resolved.len() >= MAX_PATH_BYTES {
                 return false;
             }

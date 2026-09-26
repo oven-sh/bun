@@ -155,6 +155,11 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 
     #[cfg(not(windows))]
     {
+        #[cfg(bun_portable)]
+        if bun_core::host::is_windows() {
+            return windows_host::which(buf, path, cwd, bin);
+        }
+
         if bin.is_empty() {
             return None;
         }
@@ -174,7 +179,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 
         // Strip trailing SEP bytes from cwd, keeping a bare "/".
         let mut cwd_trimmed = cwd;
-        while cwd_trimmed.len() > 1 && cwd_trimmed.last() == Some(&sep()) {
+        while cwd_trimmed.len() > 1 && cwd_trimmed[cwd_trimmed.len() - 1] == sep() {
             cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
         }
 
@@ -209,6 +214,141 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         }
 
         None
+    }
+}
+
+/// `which()` where the host of the portable image is Windows: the search of `which_win`, with the paths that
+/// the image gives to its C library instead of wide ones.
+#[cfg(bun_portable)]
+mod windows_host {
+    use super::{MAX_PATH_BYTES, PathBuffer, ZStr, ends_with_extension, is_absolute, strings};
+
+    const EXTENSIONS: [&[u8]; 3] = [b"exe", b"cmd", b"bat"];
+    /// Probed in a last pass over `$PATH`, as on Windows.
+    const COM_EXTENSION: [&[u8]; 1] = [b"com"];
+    const ALL_EXTENSIONS: [&[u8]; 4] = [b"exe", b"cmd", b"bat", b"com"];
+    const LONGEST_EXTENSION: usize = ".exe".len();
+
+    /// libuv's `name_has_ext`: a `.` in the last component with something after it.
+    fn has_extension(bin: &[u8]) -> bool {
+        let name_start = strings::last_index_of_any(bin, b"/\\:").map_or(0, |i| i + 1);
+        let name = &bin[name_start..];
+        match strings::index_of_char_usize(name, b'.') {
+            Some(dot) => dot + 1 < name.len(),
+            None => false,
+        }
+    }
+
+    fn is_file(path: &ZStr) -> bool {
+        match bun_sys::stat(path) {
+            Ok(stat) => !bun_sys::S::ISDIR(stat.st_mode as _),
+            Err(_) => false,
+        }
+    }
+
+    /// Stats `buf[..len]` as spelled, then with each of `extensions` appended: the length of what exists.
+    /// `buf` has room for the longest extension and the NUL after `len`.
+    fn search_bin(
+        buf: &mut PathBuffer,
+        len: usize,
+        try_as_spelled: bool,
+        extensions: &[&[u8]],
+    ) -> Option<usize> {
+        if try_as_spelled {
+            buf[len] = 0;
+            if is_file(ZStr::from_buf(&buf[..], len)) {
+                return Some(len);
+            }
+        }
+        for ext in extensions {
+            let end = len + 1 + ext.len();
+            buf[len] = b'.';
+            buf[len + 1..end].copy_from_slice(ext);
+            buf[end] = 0;
+            if is_file(ZStr::from_buf(&buf[..], end)) {
+                return Some(end);
+            }
+        }
+        None
+    }
+
+    /// `dir\bin` with the separators of Windows, then [`search_bin`].
+    fn search_bin_in_dir(
+        buf: &mut PathBuffer,
+        dir: &[u8],
+        bin: &[u8],
+        try_as_spelled: bool,
+        extensions: &[&[u8]],
+    ) -> Option<usize> {
+        let dir = strings::trim_right(dir, b"/\\");
+        if dir.is_empty() {
+            return None;
+        }
+        let len = dir.len() + 1 + bin.len();
+        if len + LONGEST_EXTENSION + 1 > MAX_PATH_BYTES {
+            return None;
+        }
+        buf[..dir.len()].copy_from_slice(dir);
+        buf[dir.len()] = b'\\';
+        buf[dir.len() + 1..len].copy_from_slice(bin);
+        bun_paths::resolve_path::slashes_to_windows_in_place(&mut buf[..len]);
+        search_bin(buf, len, try_as_spelled, extensions)
+    }
+
+    pub(super) fn which<'a>(
+        buf: &'a mut PathBuffer,
+        path: &[u8],
+        cwd: &[u8],
+        bin: &[u8],
+    ) -> Option<&'a ZStr> {
+        if bin.is_empty() {
+            return None;
+        }
+
+        let spells_executable_extension = ends_with_extension(bin);
+        let has_dir = strings::contains_any(bin, b"/\\");
+        // `bun run` puts the package dir on `$PATH`, so a bare `x.ts` must not match.
+        let try_as_spelled = spells_executable_extension || (has_dir && has_extension(bin));
+        let extensions: &[&[u8]] = if spells_executable_extension {
+            &[]
+        } else {
+            &ALL_EXTENSIONS
+        };
+
+        let found: usize = if is_absolute(bin) {
+            if bin.len() + LONGEST_EXTENSION + 1 > MAX_PATH_BYTES {
+                return None;
+            }
+            buf[..bin.len()].copy_from_slice(bin);
+            search_bin(buf, bin.len(), try_as_spelled, extensions)?
+        } else if has_dir {
+            // Do not lookup paths with slashes in $PATH
+            search_bin_in_dir(
+                buf,
+                cwd,
+                strings::without_prefix_comptime(bin, b"./"),
+                try_as_spelled,
+                extensions,
+            )?
+        } else {
+            // `.com` gets its own pass once every directory failed `.exe`/`.cmd`/`.bat`.
+            let passes: &[(bool, &[&[u8]])] = if spells_executable_extension {
+                &[(true, &[])]
+            } else {
+                &[(false, &EXTENSIONS), (false, &COM_EXTENSION)]
+            };
+            let mut found = None;
+            'passes: for &(as_spelled, extensions) in passes {
+                for segment in strings::tokenize(path, b";") {
+                    found = search_bin_in_dir(buf, segment, bin, as_spelled, extensions);
+                    if found.is_some() {
+                        break 'passes;
+                    }
+                }
+            }
+            found?
+        };
+        Some(ZStr::from_buf(&buf[..], found))
     }
 }
 

@@ -1181,6 +1181,7 @@ impl Platform {
 
     bun_core::host_fn!(
         /// The platform of the OS that runs this process: `AUTO`, which the portable image does not have.
+        #[inline(always)]
         pub fn auto() -> Platform {
             if bun_core::host::is_windows() {
                 Platform::Windows
@@ -1754,14 +1755,13 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     buf: &'a mut [u8],
     _parts: &[&[u8]],
 ) -> &'a [u8] {
-    let platform = P::platform();
-    if platform == Platform::Windows
-        || (bun_core::host::is_windows() && platform == Platform::Loose)
+    if P::platform() == Platform::Windows
+        || (bun_core::host::is_windows() && P::platform() == Platform::Loose)
     {
         return join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, buf, _parts);
     }
 
-    if platform == Platform::Nt {
+    if P::platform() == Platform::Nt {
         let end_path = join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, &mut buf[4..], _parts);
         let end_len = end_path.len();
         buf[0..4].copy_from_slice(b"\\\\?\\");
@@ -2199,29 +2199,57 @@ fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
 pub struct PosixToWinNormalizer {
     #[cfg(windows)]
     _raw_bytes: crate::path_buffer_pool::Guard,
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(bun_portable)))]
     _raw_bytes: (),
+    /// The portable image: the pooled buffer, taken when the host is Windows and a path is resolved.
+    #[cfg(bun_portable)]
+    _raw_bytes: Option<crate::path_buffer_pool::Guard>,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 type PosixToWinBuf = PathBuffer;
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(bun_portable)))]
 type PosixToWinBuf = ();
 
 impl PosixToWinNormalizer {
+    #[cfg(not(bun_portable))]
+    #[inline]
+    fn buf(&mut self) -> &mut PosixToWinBuf {
+        &mut self._raw_bytes
+    }
+
+    #[cfg(bun_portable)]
+    #[inline]
+    fn buf(&mut self) -> &mut PosixToWinBuf {
+        self._raw_bytes
+            .get_or_insert_with(crate::path_buffer_pool::get)
+    }
+
     #[inline]
     pub fn resolve<'a>(&'a mut self, source_dir: &[u8], maybe_posix_path: &'a [u8]) -> &'a [u8] {
-        Self::resolve_with_external_buf(&mut self._raw_bytes, source_dir, maybe_posix_path)
+        #[cfg(bun_portable)]
+        if !bun_core::host::is_windows() {
+            return maybe_posix_path;
+        }
+        Self::resolve_with_external_buf(self.buf(), source_dir, maybe_posix_path)
     }
 
     #[inline]
     pub fn resolve_z<'a>(&'a mut self, source_dir: &[u8], maybe_posix_path: &'a ZStr) -> &'a ZStr {
-        Self::resolve_with_external_buf_z(&mut self._raw_bytes, source_dir, maybe_posix_path)
+        #[cfg(bun_portable)]
+        if !bun_core::host::is_windows() {
+            return maybe_posix_path;
+        }
+        Self::resolve_with_external_buf_z(self.buf(), source_dir, maybe_posix_path)
     }
 
     #[inline]
     pub fn resolve_cwd<'a>(&'a mut self, maybe_posix_path: &'a [u8]) -> crate::Result<&'a [u8]> {
-        Self::resolve_cwd_with_external_buf(&mut self._raw_bytes, maybe_posix_path)
+        #[cfg(bun_portable)]
+        if !bun_core::host::is_windows() {
+            return Ok(maybe_posix_path);
+        }
+        Self::resolve_cwd_with_external_buf(self.buf(), maybe_posix_path)
     }
 
     // underlying implementation:
@@ -2232,8 +2260,8 @@ impl PosixToWinNormalizer {
         maybe_posix_path: &'a [u8],
     ) -> &'a [u8] {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
-        #[cfg(windows)]
-        {
+        #[cfg(any(windows, bun_portable))]
+        if bun_core::host::is_windows() {
             let root = windows_filesystem_root(maybe_posix_path);
             if root.len() == 1 {
                 debug_assert!(is_sep_any(root[0]));
@@ -2274,8 +2302,8 @@ impl PosixToWinNormalizer {
         maybe_posix_path: &'a ZStr,
     ) -> &'a ZStr {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path.as_bytes()));
-        #[cfg(windows)]
-        {
+        #[cfg(any(windows, bun_portable))]
+        if bun_core::host::is_windows() {
             let mp = maybe_posix_path.as_bytes();
             let root = windows_filesystem_root(mp);
             if root.len() == 1 {
@@ -2315,8 +2343,8 @@ impl PosixToWinNormalizer {
     ) -> crate::Result<&'a [u8]> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
-        #[cfg(windows)]
-        {
+        #[cfg(any(windows, bun_portable))]
+        if bun_core::host::is_windows() {
             let root = windows_filesystem_root(maybe_posix_path);
             if root.len() == 1 {
                 debug_assert!(is_sep_any(root[0]));
@@ -2363,8 +2391,8 @@ impl PosixToWinNormalizer {
     ) -> crate::Result<&'a mut ZStr> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
-        #[cfg(windows)]
-        {
+        #[cfg(any(windows, bun_portable))]
+        if bun_core::host::is_windows() {
             let root = windows_filesystem_root(maybe_posix_path);
             if root.len() == 1 {
                 debug_assert!(is_sep_any(root[0]));

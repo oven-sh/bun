@@ -902,14 +902,21 @@ pub mod bv2_impl {
                     if self.map.is_empty() {
                         return None;
                     }
-                    #[cfg(not(windows))]
+                    #[cfg(all(not(windows), not(bun_portable)))]
                     {
                         self.map
                             .get_key_value(specifier)
                             .map(|(key, value)| (key.as_ref(), value.as_ref()))
                     }
-                    #[cfg(windows)]
+                    #[cfg(any(windows, bun_portable))]
                     {
+                        #[cfg(bun_portable)]
+                        if !bun_core::host::is_windows() {
+                            return self
+                                .map
+                                .get_key_value(specifier)
+                                .map(|(key, value)| (key.as_ref(), value.as_ref()));
+                        }
                         let mut buf = bun_paths::path_buffer_pool::get();
                         if specifier.len() > buf.len() {
                             return None;
@@ -1018,7 +1025,7 @@ pub mod bv2_impl {
                             effective_source_dir, &mut **buf, &[specifier]
                         )?
                         .len();
-                        if cfg!(windows) {
+                        if bun_core::host::is_windows() {
                             bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
                                 &mut buf[0..joined_len],
                             );
@@ -5722,7 +5729,7 @@ pub mod bv2_impl {
         fn should_add_watcher(&self, path: &[u8]) -> bool {
             if self.dev_server.is_some() {
                 strings::index_of(path, b"/node_modules/").is_none()
-                    && (if cfg!(windows) {
+                    && (if bun_core::host::is_windows() {
                         strings::index_of(path, b"\\node_modules\\").is_none()
                     } else {
                         true
@@ -6884,6 +6891,9 @@ pub mod bv2_impl {
                                     } else {
                                         #[cfg(windows)]
                                         let mut buf = bun_paths::path_buffer_pool::get();
+                                        #[cfg(bun_portable)]
+                                        let mut buf = bun_core::host::is_windows()
+                                            .then(bun_paths::path_buffer_pool::get);
                                         let specifier_to_use: &[u8] = if loader == Loader::Html
                                             && import_record.path.text.starts_with(
                                                 Fs::FileSystem::instance().top_level_dir,
@@ -6897,9 +6907,19 @@ pub mod bv2_impl {
                                                     &mut *buf,
                                                 )
                                             }
-                                            #[cfg(not(windows))]
+                                            #[cfg(all(not(windows), not(bun_portable)))]
                                             {
                                                 specifier_to_use
+                                            }
+                                            #[cfg(bun_portable)]
+                                            match buf.as_mut() {
+                                                Some(buf) => {
+                                                    &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
+                                                        specifier_to_use,
+                                                        &mut **buf,
+                                                    )
+                                                }
+                                                None => specifier_to_use,
                                             }
                                         } else {
                                             import_record.path.text

@@ -186,7 +186,7 @@ mod bun_paths {
         }};
     }
     pub(super) use __resolver_path_literal as path_literal;
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(super) fn windows_filesystem_root(p: &[u8]) -> &[u8] {
         ::bun_paths::resolve_path::windows_filesystem_root(p)
     }
@@ -400,7 +400,7 @@ pub struct Bufs {
     pub(crate) path_in_global_disk_cache: PathBuffer,
     pub(crate) abs_to_rel: PathBuffer,
 
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
 }
 // `Bufs` is modeled as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
@@ -2450,7 +2450,7 @@ impl<'a> Resolver<'a> {
         if cfg!(debug_assertions) {
             if path.len() > 1
                 && strings::char_is_any_slash(path[path.len() - 1])
-                && !if cfg!(windows) {
+                && !if bun_core::host::is_windows() {
                     path.len() == 3 && path[1] == b':'
                 } else {
                     path.len() == 1
@@ -2850,7 +2850,7 @@ impl<'a> Resolver<'a> {
             .and_then(|env| env.get(b"NODE_PATH"))
             .unwrap_or(b"");
         if !node_path.is_empty() {
-            let delim = if cfg!(windows) { b';' } else { b':' };
+            let delim = bun_paths::delimiter();
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
                 let Some(abs_path) = self
                     .fs_ref()
@@ -4206,8 +4206,8 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
-        #[cfg(windows)]
-        {
+        #[cfg(any(windows, bun_portable))]
+        if bun_core::host::is_windows() {
             let win32_normalized_dir_info_cache_buf = bufs!(win32_normalized_dir_info_cache);
             input_path = self
                 .fs_ref()
@@ -4303,10 +4303,16 @@ impl<'a> Resolver<'a> {
         let root_path = strings::without_trailing_slash_windows_path(
             ResolvePath::windows_filesystem_root(path),
         );
-        #[cfg(not(windows))]
+        #[cfg(all(not(windows), not(bun_portable)))]
         // we cannot just use "/"
         // we will write to the buffer past the ptr len so it must be a non-const buffer
         let root_path = &path[0..1];
+        #[cfg(bun_portable)]
+        let root_path = if bun_core::host::is_windows() {
+            strings::without_trailing_slash_windows_path(ResolvePath::windows_filesystem_root(path))
+        } else {
+            &path[0..1]
+        };
         Self::assert_valid_cache_key(root_path);
 
         // NOTE: hold RealFS as a raw `*mut` so the entries-mutex/close-dirs
@@ -6764,13 +6770,21 @@ fn primary_side_effects(
 
 #[inline]
 fn is_dot_slash(path: &[u8]) -> bool {
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(bun_portable)))]
     {
         path == b"./"
     }
     #[cfg(windows)]
     {
         path.len() == 2 && path[0] == b'.' && strings::char_is_any_slash(path[1])
+    }
+    #[cfg(bun_portable)]
+    {
+        if bun_core::host::is_windows() {
+            path.len() == 2 && path[0] == b'.' && strings::char_is_any_slash(path[1])
+        } else {
+            path == b"./"
+        }
     }
 }
 
@@ -6823,8 +6837,8 @@ impl Dirname {
         }
 
         let root: &[u8] = {
-            #[cfg(windows)]
-            {
+            #[cfg(any(windows, bun_portable))]
+            let windows_root = || {
                 let root = ResolvePath::windows_filesystem_root(path);
                 // Preserve the trailing slash for UNC paths.
                 // Going from `\\server\share\folder` should end up
@@ -6834,10 +6848,22 @@ impl Dirname {
                 } else {
                     root
                 }
+            };
+            #[cfg(windows)]
+            {
+                windows_root()
             }
-            #[cfg(not(windows))]
+            #[cfg(all(not(windows), not(bun_portable)))]
             {
                 b"/"
+            }
+            #[cfg(bun_portable)]
+            {
+                if bun_core::host::is_windows() {
+                    windows_root()
+                } else {
+                    b"/"
+                }
             }
         };
 

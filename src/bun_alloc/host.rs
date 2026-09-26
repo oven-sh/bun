@@ -130,27 +130,28 @@ macro_rules! host_fn {
     ($(#[$attr:meta])* $visibility:vis fn $name:ident($($parameters:tt)*) -> $type:ty $body:block) => {
         $(#[$attr])*
         #[cfg(not(bun_portable))]
-        #[inline(always)]
         $visibility const fn $name($($parameters)*) -> $type $body
         $(#[$attr])*
         #[cfg(bun_portable)]
-        #[inline(always)]
         $visibility fn $name($($parameters)*) -> $type $body
     };
 }
 
 host_fn!(
     /// Paths have drive letters and `\`, the names of environment variables ignore case, lines end in `\r\n`.
+    #[inline(always)]
     pub fn is_windows() -> bool {
         code() == WINDOWS
     }
 );
 host_fn!(
+    #[inline(always)]
     pub fn is_mac() -> bool {
         code() == MAC
     }
 );
 host_fn!(
+    #[inline(always)]
     pub fn is_linux() -> bool {
         code() == LINUX
     }

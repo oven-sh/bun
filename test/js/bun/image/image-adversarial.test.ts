@@ -1195,42 +1195,44 @@ describe("hostile option objects", () => {
     // through system malloc so ASAN sees the free; stock bun rejects with
     // ERR_IMAGE_UNKNOWN_FORMAT instead. Windows is left alone: bmalloc's
     // SystemHeap is unimplemented there and `Malloc=1` would RELEASE_BASSERT.
-    using dir = tempDir("image-oversize-transfer", {
-      "repro.ts": `
-        import zlib from "node:zlib";
-        const be32 = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
-        const chunk = (t: string, d: Buffer) =>
-          Buffer.concat([be32(d.length), Buffer.from(t), d,
-            be32(zlib.crc32(Buffer.concat([Buffer.from(t), d])) >>> 0)]);
-        const w = 64, h = 64, stride = w * 4 + 1;
-        // Noise, so the IDAT does not compress below fastSizeLimit: the input
-        // has to stay an OversizeTypedArray to reach the pin at all.
-        const rows = Buffer.alloc(stride * h);
-        crypto.getRandomValues(rows);
-        for (let y = 0; y < h; y++) rows[y * stride] = 0; // filter byte: none
-        const png = Buffer.concat([
-          Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-          chunk("IHDR", Buffer.concat([be32(w), be32(h), Buffer.from([8, 6, 0, 0, 0])])),
-          chunk("IDAT", zlib.deflateSync(rows)),
-          chunk("IEND", Buffer.alloc(0)),
-        ]);
-        const want = Bun.hash(await new Bun.Image(new Uint8Array(png)).bytes());
-        const input = new Uint8Array(png);           // OversizeTypedArray: no ArrayBuffer yet
-        const decode = new Bun.Image(input).bytes(); // borrows input's storage for the pool
-        input.buffer.transfer(0);                    // storage moves to an unreferenced owner
-        Bun.gc(true);                                // ... which this collection sweeps
-        for (let k = 0; k < 8; k++) new Uint8Array(png.length).fill(0xee); // reuse the block
-        const decoded = await decode.then(
-          r => (Bun.hash(r) === want ? "same" : "different"),
-          e => "rejected:" + (e.code ?? e.message),
-        );
-        console.log(JSON.stringify({ pngBytes: png.length, byteLength: input.byteLength, decoded }));
-      `,
-    });
+    const script = `
+      import zlib from "node:zlib";
+      const be32 = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
+      const chunk = (t, d) =>
+        Buffer.concat([be32(d.length), Buffer.from(t), d,
+          be32(zlib.crc32(Buffer.concat([Buffer.from(t), d])) >>> 0)]);
+      const w = 32, h = 32, stride = w * 4 + 1;
+      // Noise, so the IDAT does not compress below fastSizeLimit: the input
+      // has to stay an OversizeTypedArray to reach the pin at all.
+      const rows = Buffer.alloc(stride * h);
+      crypto.getRandomValues(rows);
+      for (let y = 0; y < h; y++) rows[y * stride] = 0; // filter byte: none
+      const png = Buffer.concat([
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        chunk("IHDR", Buffer.concat([be32(w), be32(h), Buffer.from([8, 6, 0, 0, 0])])),
+        chunk("IDAT", zlib.deflateSync(rows)),
+        chunk("IEND", Buffer.alloc(0)),
+      ]);
+      const want = Bun.hash(await new Bun.Image(new Uint8Array(png)).bytes());
+      const input = new Uint8Array(png);           // OversizeTypedArray: no ArrayBuffer yet
+      const decode = new Bun.Image(input).bytes(); // borrows input's storage for the pool
+      input.buffer.transfer(0);                    // storage moves to an unreferenced owner
+      Bun.gc(true);                                // ... which this collection sweeps
+      for (let k = 0; k < 8; k++) new Uint8Array(png.length).fill(0xee); // reuse the block
+      const decoded = await decode.then(
+        r => (Bun.hash(r) === want ? "same" : "different"),
+        e => "rejected:" + (e.code ?? e.message),
+      );
+      console.log(JSON.stringify({ pngBytes: png.length, byteLength: input.byteLength, decoded }));
+    `;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "repro.ts"],
-      env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
-      cwd: String(dir),
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        ...(isWindows ? {} : { Malloc: "1" }),
+        // symbolize=0: symbolizing a failure report outlasts the test timeout.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+      },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1242,8 +1244,7 @@ describe("hostile option objects", () => {
       decoded: "same",
     });
     expect(exitCode).toBe(0);
-    // A spawned child that decodes twice: a few seconds on a loaded ASAN lane.
-  }, 30_000);
+  });
 
   test("SharedArrayBuffer input is refused (cross-thread mutation surface)", () => {
     const sab = new SharedArrayBuffer(tinyPng.byteLength);

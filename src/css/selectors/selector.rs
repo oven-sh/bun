@@ -128,25 +128,14 @@ fn downlevel_component<'bump>(
             let mut necessary_prefixes = downlevel_selectors(bump, selectors, targets);
 
             // Convert :is to :-webkit-any/:-moz-any if needed.
-            // All selectors must be simple, no combinators are supported.
-            if targets.should_compile_same(Feature::IsSelector)
-                && !should_unwrap_is(selectors)
-                && 'brk: {
-                    for selector in selectors.iter() {
-                        if selector.has_combinator() {
-                            break 'brk false;
-                        }
-                    }
-                    break 'brk true;
-                }
-            {
-                necessary_prefixes.insert(
-                    targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo),
-                );
-            } else {
-                necessary_prefixes.insert(VendorPrefix::NONE);
+            let prefixes = is_prefixes(selectors, targets);
+            if prefixes != VendorPrefix::NONE {
+                *component = Component::Any {
+                    vendor_prefix: prefixes,
+                    selectors: core::mem::take(selectors),
+                };
             }
-
+            necessary_prefixes.insert(prefixes);
             necessary_prefixes
         }
         Component::Negation(selectors) => {
@@ -156,30 +145,39 @@ fn downlevel_component<'bump>(
             // We need to use :is() / :-webkit-any() rather than :not(.a):not(.b) to ensure the specificity is equivalent.
             // https://drafts.csswg.org/selectors/#specificity-rules
             if selectors.len() > 1 && targets.should_compile_same(Feature::NotSelectorList) {
-                let is: Selector = Selector::from_component(Component::Is({
-                    // `Component::Is` carries `Box<[Selector]>` (heap, not arena);
-                    // could re-thread `&'bump [Selector]` once the arena lifetime is plumbed.
-                    let mut new_selectors: Vec<Selector> = Vec::with_capacity(selectors.len());
-                    for sel in selectors.iter() {
-                        new_selectors.push(sel.deep_clone());
-                    }
-                    new_selectors.into_boxed_slice()
-                }));
-                *component = Component::Negation(vec![is].into_boxed_slice());
-
-                if targets.should_compile_same(Feature::IsSelector) {
-                    necessary_prefixes.insert(
-                        targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo),
-                    );
-                } else {
-                    necessary_prefixes.insert(VendorPrefix::NONE);
+                // `Component::Is` carries `Box<[Selector]>` (heap, not arena);
+                // could re-thread `&'bump [Selector]` once the arena lifetime is plumbed.
+                let mut new_selectors: Vec<Selector> = Vec::with_capacity(selectors.len());
+                for sel in selectors.iter() {
+                    new_selectors.push(sel.deep_clone());
                 }
+                let new_selectors = new_selectors.into_boxed_slice();
+                let prefixes = is_prefixes(&new_selectors, targets);
+                necessary_prefixes.insert(prefixes);
+                let is = if prefixes != VendorPrefix::NONE {
+                    Component::Any {
+                        vendor_prefix: prefixes,
+                        selectors: new_selectors,
+                    }
+                } else {
+                    Component::Is(new_selectors)
+                };
+                *component =
+                    Component::Negation(vec![Selector::from_component(is)].into_boxed_slice());
             }
 
             necessary_prefixes
         }
         Component::Where(s) | Component::Has(s) => downlevel_selectors(bump, s, targets),
-        Component::Any { selectors, .. } => downlevel_selectors(bump, selectors, targets),
+        Component::Any {
+            vendor_prefix,
+            selectors,
+        } => {
+            let mut necessary_prefixes = downlevel_selectors(bump, selectors, targets);
+            *vendor_prefix = any_prefixes(*vendor_prefix, selectors, targets);
+            necessary_prefixes.insert(*vendor_prefix);
+            necessary_prefixes
+        }
         _ => VendorPrefix::empty(),
     }
 }
@@ -222,10 +220,12 @@ fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) ->
     selectors.into_boxed_slice()
 }
 
-/// Returns the vendor prefix (if any) used in the given selector list.
-/// If multiple vendor prefixes are seen, this is invalid, and an empty result is returned.
+/// Returns the vendor prefixes used in the given selector list.
+/// If two components use different explicit vendor prefixes, this is invalid, and an empty result is returned.
 pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     let mut prefix = VendorPrefix::empty();
+    // The prefixes that every explicitly prefixed component seen so far has.
+    let mut explicit = VendorPrefix::all();
     for selector in selectors.v.slice() {
         for component in selector.components.iter() {
             let component: &Component = component;
@@ -246,19 +246,252 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
             };
 
             if !p.is_empty() {
-                // Allow none to be mixed with a prefix.
-                let mut prefix_without_none = prefix;
-                prefix_without_none.remove(VendorPrefix::NONE);
-                if prefix_without_none.is_empty() || prefix_without_none == p {
-                    prefix.insert(p);
-                } else {
-                    return VendorPrefix::empty();
+                // Allow none to be mixed with a prefix. A component that an
+                // equivalent rule was merged into has every prefix of the two.
+                if !p.contains(VendorPrefix::NONE) {
+                    explicit &= p;
+                    if explicit.is_empty() {
+                        return VendorPrefix::empty();
+                    }
                 }
+                prefix.insert(p);
             }
         }
     }
 
     prefix
+}
+
+/// The vendor prefix passes that `StyleRule::to_css` prints these selectors in:
+/// each prefix a component has besides the one it is written with (added by
+/// `downlevel_selectors` or `merge_prefixes`), plus one pass as written.
+pub(crate) fn prefix_passes(selectors: &[Selector]) -> VendorPrefix {
+    let mut sets = Vec::new();
+    prefix_sets(selectors, &mut sets);
+    passes_for(&sets)
+}
+
+/// `prefix_passes` for a nested rule printed with its parent rules substituted
+/// for `&`: the parents' components print in the same passes as its own.
+pub(crate) fn nested_prefix_passes(
+    selectors: &[Selector],
+    mut parent: Option<&StyleContext>,
+) -> VendorPrefix {
+    let mut sets = Vec::new();
+    prefix_sets(selectors, &mut sets);
+    while let Some(context) = parent {
+        prefix_sets(context.selectors.v.slice(), &mut sets);
+        parent = context.parent;
+    }
+    passes_for(&sets)
+}
+
+/// The prefix set of each prefixable component, in the order `is_equivalent` and
+/// `merge_prefixes` pair components up. An `:is()` counts as unprefixed.
+fn prefix_sets(selectors: &[Selector], sets: &mut Vec<VendorPrefix>) {
+    for selector in selectors {
+        for component in selector.components.iter() {
+            match component {
+                Component::NonTsPseudoClass(pc) => {
+                    let prefixes = pc.get_prefix();
+                    if !prefixes.is_empty() {
+                        sets.push(prefixes);
+                    }
+                }
+                Component::PseudoElement(pe) => {
+                    let prefixes = pe.get_prefix();
+                    if !prefixes.is_empty() {
+                        sets.push(prefixes);
+                    }
+                }
+                Component::Any {
+                    vendor_prefix,
+                    selectors,
+                } => {
+                    sets.push(*vendor_prefix);
+                    prefix_sets(selectors, sets);
+                }
+                Component::Is(selectors) => {
+                    sets.push(VendorPrefix::NONE);
+                    prefix_sets(selectors, sets);
+                }
+                Component::Where(selectors)
+                | Component::Has(selectors)
+                | Component::Negation(selectors) => prefix_sets(selectors, sets),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// `prefix_passes` for components with the given sets of prefixes.
+fn passes_for(sets: &[VendorPrefix]) -> VendorPrefix {
+    let mut passes = VendorPrefix::NONE;
+    for &prefixes in sets {
+        passes.insert(prefixes.difference(prefixes.canonical()));
+    }
+    passes
+}
+
+/// The prefixes that components with the given sets of prefixes print with, for
+/// each of their `passes_for`.
+fn printed_variants(sets: &[VendorPrefix]) -> Vec<Vec<VendorPrefix>> {
+    let passes = passes_for(sets);
+    VendorPrefix::FIELDS
+        .iter()
+        .filter(|pass| passes.contains(**pass))
+        .map(|&pass| {
+            sets.iter()
+                .map(|&prefixes| {
+                    if prefixes.contains(pass) {
+                        pass
+                    } else {
+                        prefixes.canonical()
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// ORs the prefix set of each prefixable component of `src` into its pair in
+/// `dst` (the two are `is_equivalent`) if the result prints exactly the variants
+/// that `dst` and `src` print, else returns false and leaves `dst` alone (as for
+/// `.a:-moz-read-only::placeholder` and `.a:read-only::-moz-placeholder`). With
+/// browser targets, a rule without explicit prefixes absorbs any equivalent rule,
+/// and `Targets::prefixes` then keeps only the prefixes the targets need.
+pub(crate) fn merge_prefixes(dst: &mut [Selector], src: &[Selector], targets: &Targets) -> bool {
+    let mut dst_sets = Vec::new();
+    let mut src_sets = Vec::new();
+    prefix_sets(dst, &mut dst_sets);
+    prefix_sets(src, &mut src_sets);
+    if dst_sets.len() != src_sets.len() {
+        return false;
+    }
+    let unprefixed = |sets: &[VendorPrefix]| {
+        sets.iter()
+            .all(|prefixes| prefixes.contains(VendorPrefix::NONE))
+    };
+    if !(targets.should_compile_selectors() && (unprefixed(&dst_sets) || unprefixed(&src_sets))) {
+        let merged_sets: Vec<VendorPrefix> = dst_sets
+            .iter()
+            .zip(&src_sets)
+            .map(|(a, b)| *a | *b)
+            .collect();
+        let merged = printed_variants(&merged_sets);
+        let (dst_variants, src_variants) =
+            (printed_variants(&dst_sets), printed_variants(&src_sets));
+        if !merged
+            .iter()
+            .all(|variant| dst_variants.contains(variant) || src_variants.contains(variant))
+            || !dst_variants
+                .iter()
+                .chain(&src_variants)
+                .all(|variant| merged.contains(variant))
+        {
+            return false;
+        }
+    }
+    merge_prefix_sets(dst, src, targets);
+    true
+}
+
+fn merge_prefix_sets(dst: &mut [Selector], src: &[Selector], targets: &Targets) {
+    for (dst_selector, src_selector) in dst.iter_mut().zip(src.iter()) {
+        let pairs = dst_selector
+            .components
+            .iter_mut()
+            .zip(src_selector.components.iter());
+        for (dst_component, src_component) in pairs {
+            let replacement = match (&mut *dst_component, src_component) {
+                (Component::NonTsPseudoClass(a), Component::NonTsPseudoClass(b)) => {
+                    let b = b.get_prefix();
+                    if let Some((a, feature)) = a.prefix_mut() {
+                        *a = targets.prefixes(*a | b, feature);
+                    }
+                    None
+                }
+                (Component::PseudoElement(a), Component::PseudoElement(b)) => {
+                    let b = b.get_prefix();
+                    if let Some((a, feature)) = a.prefix_mut() {
+                        *a = targets.prefixes(*a | b, feature);
+                    }
+                    None
+                }
+                (
+                    Component::Any {
+                        vendor_prefix: a,
+                        selectors: a_selectors,
+                    },
+                    Component::Any {
+                        vendor_prefix: b,
+                        selectors: b_selectors,
+                    },
+                ) => {
+                    merge_prefix_sets(a_selectors, b_selectors, targets);
+                    *a = any_prefixes(*a | *b, a_selectors, targets);
+                    None
+                }
+                (
+                    Component::Any {
+                        vendor_prefix: a,
+                        selectors: a_selectors,
+                    },
+                    Component::Is(b_selectors),
+                ) => {
+                    merge_prefix_sets(a_selectors, b_selectors, targets);
+                    *a = any_prefixes(*a | VendorPrefix::NONE, a_selectors, targets);
+                    None
+                }
+                (
+                    Component::Is(a_selectors),
+                    Component::Any {
+                        vendor_prefix: b,
+                        selectors: b_selectors,
+                    },
+                ) => {
+                    merge_prefix_sets(a_selectors, b_selectors, targets);
+                    let selectors = core::mem::take(a_selectors);
+                    Some(Component::Any {
+                        vendor_prefix: any_prefixes(*b | VendorPrefix::NONE, &selectors, targets),
+                        selectors,
+                    })
+                }
+                (Component::Is(a_selectors), Component::Is(b_selectors)) => {
+                    merge_prefix_sets(a_selectors, b_selectors, targets);
+                    None
+                }
+                _ => None,
+            };
+            if let Some(replacement) = replacement {
+                *dst_component = replacement;
+            }
+        }
+    }
+}
+
+/// Returns the vendor prefixes that an unprefixed `:is()` with the given
+/// arguments needs for the browser targets, as `:-webkit-any()` / `:-moz-any()`.
+fn is_prefixes(selectors: &[Selector], targets: &Targets) -> VendorPrefix {
+    // All selectors must be simple, no combinators are supported.
+    if targets.should_compile_same(Feature::IsSelector)
+        && !should_unwrap_is(selectors)
+        && !selectors.iter().any(|selector| selector.has_combinator())
+    {
+        targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo)
+    } else {
+        VendorPrefix::NONE
+    }
+}
+
+/// `Targets::prefixes` for `:is()` / `:-webkit-any()`: with browser targets, a
+/// set with an unprefixed variant becomes exactly what the targets need.
+fn any_prefixes(prefixes: VendorPrefix, selectors: &[Selector], targets: &Targets) -> VendorPrefix {
+    if prefixes.contains(VendorPrefix::NONE) && targets.should_compile_selectors() {
+        is_prefixes(selectors, targets)
+    } else {
+        prefixes
+    }
 }
 
 pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
@@ -572,6 +805,18 @@ fn is_selector_unused(
 pub(crate) mod serialize {
     use super::*;
 
+    /// The prefix to print a component with: the current pass if the component
+    /// has that prefix, else the one it is written with (lightningcss prints it
+    /// unprefixed instead, which adds selectors the source never had).
+    fn pass_prefix(dest: &Printer, prefixes: VendorPrefix) -> VendorPrefix {
+        let pass = dest.vendor_prefix & prefixes;
+        if pass.is_empty() {
+            prefixes.canonical()
+        } else {
+            pass
+        }
+    }
+
     pub(crate) fn serialize_selector_list(
         list: &[parser::Selector],
         dest: &mut Printer,
@@ -866,20 +1111,14 @@ pub(crate) mod serialize {
                             return serialize_selector(&selectors[0], dest, context, false);
                         }
 
-                        let vp = dest.vendor_prefix;
-                        if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
-                            dest.write_char(b':')?;
-                            vp.to_css(dest)?;
-                            dest.write_str(b"any(")?;
-                        } else {
-                            dest.write_str(b":is(")?;
-                        }
+                        // One that needs `:-webkit-any()` is a `Component::Any` by now.
+                        dest.write_str(b":is(")?;
                     }
                     Component::Negation(_) => {
                         dest.write_str(b":not(")?;
                     }
                     Component::Any { vendor_prefix, .. } => {
-                        let vp = dest.vendor_prefix.or(*vendor_prefix);
+                        let vp = pass_prefix(dest, *vendor_prefix);
                         if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
                             dest.write_char(b':')?;
                             vp.to_css(dest)?;
@@ -999,13 +1238,7 @@ pub(crate) mod serialize {
             val: &'static [u8],
         ) -> Result<(), PrintErr> {
             d.write_char(b':')?;
-            // If the printer has a vendor prefix override, use that.
-            let vp = if !d.vendor_prefix.is_empty() {
-                (d.vendor_prefix | prefix).or_none()
-            } else {
-                prefix
-            };
-            vp.to_css(d)?;
+            pass_prefix(d, prefix).to_css(d)?;
             d.write_str(val)
         }
 
@@ -1050,11 +1283,7 @@ pub(crate) mod serialize {
             // https://fullscreen.spec.whatwg.org/#:fullscreen-pseudo-class
             PseudoClass::Fullscreen(prefix) => {
                 dest.write_char(b':')?;
-                let vp = if !dest.vendor_prefix.is_empty() {
-                    (dest.vendor_prefix & *prefix).or_none()
-                } else {
-                    *prefix
-                };
+                let vp = pass_prefix(dest, *prefix);
                 vp.to_css(dest)?;
                 if vp.contains(VendorPrefix::WEBKIT) || vp.contains(VendorPrefix::MOZ) {
                     dest.write_str(b"full-screen")?;
@@ -1156,19 +1385,8 @@ pub(crate) mod serialize {
     ) -> Result<(), PrintErr> {
         fn write_prefix(d: &mut Printer, prefix: VendorPrefix) -> Result<VendorPrefix, PrintErr> {
             d.write_str(b"::")?;
-            // If the printer has a vendor prefix override, use that.
-            let vp = if !d.vendor_prefix.is_empty() {
-                (d.vendor_prefix & prefix).or_none()
-            } else {
-                prefix
-            };
+            let vp = pass_prefix(d, prefix);
             vp.to_css(d)?;
-            bun_core::scoped_log!(
-                CSS_SELECTORS,
-                "VENDOR PREFIX {} OVERRIDE {}",
-                vp.as_bits(),
-                d.vendor_prefix.as_bits()
-            );
             Ok(vp)
         }
 

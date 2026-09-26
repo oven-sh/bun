@@ -52,6 +52,20 @@ const knownOriginDeviations = new Map([
   ["blob:wss://example.org/", "wss://example.org"],
 ]);
 
+// Inputs that parse since https://github.com/whatwg/url/pull/914 (an all-ASCII host passes through even when an xn--
+// label fails Unicode ToASCII) and that bun still rejects. The test asserts the rejection, so the fix shows up here
+// and the list goes away.
+const knownParseDeviations = new Set([
+  "http://a.b.c.xn--pokxncvks",
+  "http://10.0.0.xn--pokxncvks",
+  "http://a.b.c.XN--pokxncvks",
+  "http://a.b.c.Xn--pokxncvks",
+  "http://10.0.0.XN--pokxncvks",
+  "http://10.0.0.xN--pokxncvks",
+  "file://xn--/p",
+  "https://xn--/",
+]);
+
 const componentKeys = [
   "href",
   "protocol",
@@ -84,7 +98,7 @@ function check(entry: Entry): Mismatch | null {
     actual,
   });
 
-  if (entry.failure) {
+  if (entry.failure || knownParseDeviations.has(entry.input)) {
     let thrown: unknown = null;
     try {
       construct(entry);

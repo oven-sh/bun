@@ -1166,7 +1166,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
+                        if let Some(headers__) = FetchHeaders::cast_as_init(headers_value) {
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                             if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
                                 break 'brk None;
@@ -1195,7 +1195,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
+                        if let Some(headers__) = FetchHeaders::cast_as_init(headers_value) {
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                             if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
                                 break 'brk None;

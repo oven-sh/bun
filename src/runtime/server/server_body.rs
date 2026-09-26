@@ -1195,8 +1195,8 @@ fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 }
 
 #[inline]
-fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut FetchHeaders> {
-    FetchHeaders::cast_(value, global.vm()).map(|p| p.as_ptr())
+fn fetch_headers_from_js(value: JSValue) -> Option<*mut FetchHeaders> {
+    FetchHeaders::cast_as_init(value).map(|p| p.as_ptr())
 }
 
 /// Per-process latch for the dev-mode idle-timeout warning. The
@@ -1720,17 +1720,18 @@ where
                         }
 
                         let fetch_headers_to_use: *mut FetchHeaders =
-                            match fetch_headers_from_js(headers_value, global) {
+                            match fetch_headers_from_js(headers_value) {
                                 Some(h) => h,
                                 None => 'brk: {
                                     if headers_value.is_object() {
-                                        if let Some(fetch_headers) =
+                                        // `None` is an empty HeadersInit: no header to add.
+                                        let Some(fetch_headers) =
                                             FetchHeaders::create_from_js(global, headers_value)?
-                                        {
-                                            fetch_headers_to_deref
-                                                .set(Some(fetch_headers.as_ptr()));
-                                            break 'brk fetch_headers.as_ptr();
-                                        }
+                                        else {
+                                            break 'getter;
+                                        };
+                                        fetch_headers_to_deref.set(Some(fetch_headers.as_ptr()));
+                                        break 'brk fetch_headers.as_ptr();
                                     }
                                     return Err(global.throw_invalid_arguments(format_args!(
                                         "upgrade options.headers must be a Headers or an object"
@@ -1930,16 +1931,18 @@ where
                         break 'getter;
                     }
                     use jsc::HTTPHeaderName;
-                    let fh: *mut FetchHeaders = match fetch_headers_from_js(headers_value, global) {
+                    let fh: *mut FetchHeaders = match fetch_headers_from_js(headers_value) {
                         Some(h) => h,
                         None => 'brk: {
                             if headers_value.is_object() {
-                                if let Some(created) =
+                                // `None` is an empty HeadersInit: no header to add.
+                                let Some(created) =
                                     FetchHeaders::create_from_js(global, headers_value)?
-                                {
-                                    *fetch_headers_to_deref = Some(created.as_ptr());
-                                    break 'brk created.as_ptr();
-                                }
+                                else {
+                                    break 'getter;
+                                };
+                                *fetch_headers_to_deref = Some(created.as_ptr());
+                                break 'brk created.as_ptr();
                             }
                             return Err(global.throw_invalid_arguments(format_args!(
                                 "upgrade options.headers must be a Headers or an object"

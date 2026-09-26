@@ -38,6 +38,8 @@ public:
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
     static FetchHeaders* toWrapped(JSC::VM&, JSC::JSValue);
+    // toWrapped() for a HeadersInit: null unless Symbol.iterator is still Headers.prototype.entries, which Web IDL converts through.
+    static FetchHeaders* toWrappedAsInit(JSC::JSValue);
     static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;

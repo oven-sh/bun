@@ -16,6 +16,9 @@
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
+// Lets the `::bun_ptr::` paths the ref-count derives emit resolve in-crate.
+extern crate self as bun_ptr;
+
 // `bun.ptr.CowSlice(T)` / `CowSliceZ` — the lifetime-free struct port (owns or
 // borrows a raw slice with `init_owned`/`borrow_subslice`/`length`). Callers
 // that need the struct-shaped API (e.g. `pack_command::Pattern`) reach for

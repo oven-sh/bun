@@ -843,6 +843,7 @@ mod tests {
 
     // ── ThreadSafeRefCount (atomic, cross-thread) ─────────────────────────
 
+    #[derive(crate::ThreadSafeRefCounted)]
     struct Shared {
         ref_count: ThreadSafeRefCount<Shared>,
         payload: Box<u32>,
@@ -854,12 +855,12 @@ mod tests {
         }
     }
 
-    impl ThreadSafeRefCounted for Shared {
-        unsafe fn get_ref_count(this: *mut Self) -> *mut ThreadSafeRefCount<Self> {
-            // SAFETY: caller contract — pure field projection, no read.
-            unsafe { &raw mut (*this).ref_count }
-        }
-    }
+    // SAFETY: the count is atomic and `payload` is only ever read, so `&Shared`
+    // may be used from any thread and the last thread out may run the
+    // destructor. This is what makes `RefPtr<Shared>: Send + Sync`.
+    unsafe impl Send for Shared {}
+    // SAFETY: as above.
+    unsafe impl Sync for Shared {}
 
     /// `*mut Shared` is not `Send`; the refcount is what makes sharing it sound.
     #[derive(Clone, Copy)]
@@ -898,6 +899,38 @@ mod tests {
         assert_eq!(drops(), before);
         // SAFETY: the initial ref; last one out runs `destructor`.
         unsafe { ThreadSafeRefCount::<Shared>::deref(s) };
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn ref_ptr_clones_cross_threads_and_the_last_one_destroys() {
+        let _serial = serial();
+        let before = drops();
+        let main_ref = RefPtr::new(Shared {
+            ref_count: ThreadSafeRefCount::init(),
+            payload: Box::new(5),
+        });
+
+        // Clone through a shared `&RefPtr` on other threads (`Sync`), hand back (`Send`).
+        let clones: Vec<RefPtr<Shared>> = std::thread::scope(|scope| {
+            let shared = &main_ref;
+            let workers: Vec<_> = (0..4)
+                .map(|_| scope.spawn(move || shared.clone()))
+                .collect();
+            workers.into_iter().map(|w| w.join().unwrap()).collect()
+        });
+        assert_eq!(main_ref.ref_count.get(), 5);
+        assert_eq!(drops(), before);
+
+        // Release all five refs on concurrent threads: only the count orders the destructor.
+        let workers: Vec<_> = clones
+            .into_iter()
+            .chain(core::iter::once(main_ref))
+            .map(|theirs| std::thread::spawn(move || *theirs.payload))
+            .collect();
+        for worker in workers {
+            assert_eq!(worker.join().unwrap(), 5);
+        }
         assert_eq!(drops(), before + 1);
     }
 

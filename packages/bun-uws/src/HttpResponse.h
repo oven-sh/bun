@@ -92,6 +92,27 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
+    /* Writes the headers uWS owns, once the caller's are out and before the
+     * header section ends. Every HTTP/1 response path goes through here, so
+     * they are decided in one place: Date (unless the caller wrote one) and,
+     * with chunked, the Transfer-Encoding: chunked that frames the body
+     * (unless the caller wrote one). */
+    void writeOwnedHeaders(bool chunked) {
+        writeMark();
+        if (chunked && !(getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+            writeHeader("Transfer-Encoding", "chunked");
+        }
+    }
+
+    /* Ends the header section: the owned headers, then the blank line. The
+     * Content-Length end path in internalEnd() is the one caller that writes
+     * the blank line itself, together with its last header line, so an
+     * uncorked end stays one send() for both. */
+    void terminateHeaders(bool chunked = false) {
+        writeOwnedHeaders(chunked);
+        Super::write("\r\n", 2);
+    }
+
     /* Shutdown+close when the connection is marked to close (Connection:
      * close, peer FIN, close-when-idle), the response is complete and every
      * outgoing byte has been flushed. Returns true when the socket was closed. */
@@ -152,8 +173,7 @@ public:
      * handshake batches with the first frames written from open(). */
     void endUpgradeHandshake() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        writeMark();
-        Super::write("\r\n", 2);
+        terminateHeaders();
         httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
         httpResponseData->markDone(this);
     }
@@ -209,11 +229,7 @@ public:
             /* Trailers-only end with no body chunk: write() below would early-return on
              * empty data, so terminate the header section and enter chunked mode here. */
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED) && data.empty()) [[unlikely]] {
-                writeMark();
-                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                    writeHeader("Transfer-Encoding", "chunked");
-                }
-                Super::write("\r\n", 2);
+                terminateHeaders(true);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
 
@@ -265,8 +281,7 @@ public:
                  * header bytes into the body. The connection close delimits
                  * the message instead. */
                 if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
-                    /* Write mark, this propagates to WebSockets too */
-                    writeMark();
+                    writeOwnedHeaders(false);
 
                     /* WebSocket upgrades does not allow content-length */
                     if (allowContentLength) {
@@ -601,8 +616,7 @@ public:
             !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER
                 | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_NO_BODY_STATUS))) {
             writeStatus(HTTP_200_OK);
-            writeMark();
-            Super::write("\r\n", 2);
+            terminateHeaders(true);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
@@ -630,13 +644,7 @@ public:
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
-            /* Write mark on first call to write */
-            writeMark();
-
-            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                writeHeader("Transfer-Encoding", "chunked");
-            }
-            Super::write("\r\n", 2);
+            terminateHeaders(true);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
 
@@ -656,19 +664,12 @@ public:
          * header the user removed; their body is raw, so take the else path. */
         if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED | HttpResponseData<SSL>::HTTP_NO_BODY_STATUS))) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-                /* Write mark on first call to write */
-                writeMark();
-
-                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                    writeHeader("Transfer-Encoding", "chunked");
-                }
-                Super::write("\r\n", 2);
+                terminateHeaders(true);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
 
          } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-            writeMark();
-            Super::write("\r\n", 2);
+            terminateHeaders();
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
         if (flushImmediately) {
@@ -729,21 +730,14 @@ public:
          * write raw bytes with no chunk framing, like the else path. */
         if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED))) {
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-                /* Write mark on first call to write */
-                writeMark();
-
-                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                    writeHeader("Transfer-Encoding", "chunked");
-                }
-                Super::write("\r\n", 2);
+                terminateHeaders(true);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
 
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-            writeMark();
-            Super::write("\r\n", 2);
+            terminateHeaders();
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
         size_t total_written = 0;
@@ -798,18 +792,13 @@ public:
             writeStatus(HTTP_200_OK);
             if (chunked) {
                 if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-                    writeMark();
-                    if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                        writeHeader("Transfer-Encoding", "chunked");
-                    }
-                    Super::write("\r\n", 2);
+                    terminateHeaders(true);
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
                 }
                 writeUnsignedHex((unsigned int) data.length());
                 Super::write("\r\n", 2);
             } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
-                writeMark();
-                Super::write("\r\n", 2);
+                terminateHeaders();
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
         }

@@ -1566,21 +1566,13 @@ __attribute__((callback (corker, ctx)))
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->writeMark();
-      auto pair = uwsRes->getSendBuffer(2);
-      char *ptr = pair.first;
-      ptr[0] = '\r';
-      ptr[1] = '\n';
+      uwsRes->terminateHeaders();
       uwsRes->uncork();
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->writeMark();
-      auto pair = uwsRes->getSendBuffer(2);
-      char *ptr = pair.first;
-      ptr[0] = '\r';
-      ptr[1] = '\n';
+      uwsRes->terminateHeaders();
       uwsRes->uncork();
     }
   }

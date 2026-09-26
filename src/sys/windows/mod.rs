@@ -981,6 +981,11 @@ const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
 
 // Copy-paste of the standard library function except without unreachable.
 pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys::Result<()> {
+    // Empty name: ENOENT, as in `nt_root_directory` (NT would delete `options.dir` itself).
+    if sub_path_w.is_empty() {
+        return bun_sys::Result::errno(E::NOENT, bun_sys::Tag::open);
+    }
+
     let create_options_flags: ULONG = if options.remove_dir {
         FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT
     } else {
@@ -1000,14 +1005,6 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         // The Windows API makes this mutable, but it will not mutate here.
         Buffer: sub_path_w.as_ptr().cast_mut().cast::<u16>(),
     };
-
-    // Guard len ≥ 2: in practice callers pass converted NT paths (always
-    // ≥ 2 elems), but make the contract explicit rather than rely on the
-    // bounds check panicking.
-    if sub_path_w.len() >= 2 && sub_path_w[0] == b'.' as u16 && sub_path_w[1] == 0 {
-        // Windows does not recognize this, but it does work with empty string.
-        nt_name.Length = 0;
-    }
 
     let mut attr = OBJECT_ATTRIBUTES {
         Length: size_of::<OBJECT_ATTRIBUTES>() as u32,
@@ -1796,6 +1793,11 @@ pub fn move_opened_file_at(
     // Bun's minimum supported Windows version is >= win10_rs5.
 
     debug_assert!(!new_file_name.contains(&(b'/' as u16))); // Call moveOpenedFileAtLoose
+
+    // Empty destination: ENOENT as POSIX renameat(); NT's INFO_LENGTH_MISMATCH has no errno.
+    if new_file_name.is_empty() {
+        return bun_sys::Result::errno(E::NOENT, bun_sys::Tag::NtSetInformationFile);
+    }
 
     // The FileName tail here is UTF-16, so the correct cap is
     // `PATH_MAX_WIDE * 2` bytes — sizing against the UTF-8 worst case

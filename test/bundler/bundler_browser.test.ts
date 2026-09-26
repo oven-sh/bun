@@ -82,6 +82,70 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  itBundled("browser/NodeBufferIndexOfEmptyAndEnd#43655", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "node:buffer";
+        const b = Buffer.from("abcabc");
+        // An empty value returns the byteOffset, like String#indexOf.
+        console.log(b.indexOf(""), b.lastIndexOf(""), b.includes(""));
+        // Empty value with an explicit offset returns the clamped offset (Node parity).
+        console.log(b.indexOf("", 3), b.lastIndexOf("", 3));
+        // A Uint8Array value that is not a Buffer is accepted.
+        console.log(b.indexOf(new Uint8Array([98])));
+        // ...including on the UTF-16 search path, where the value is read two
+        // bytes at a time. A plain Uint8Array has no readUInt16BE.
+        const u16 = Buffer.from("abc", "ucs2");
+        console.log(u16.indexOf(new Uint8Array([0x62, 0x00]), 0, "ucs2"));
+        console.log(u16.includes(new Uint8Array([0x63, 0x00]), 0, "ucs2"));
+        // Scope note: lastIndexOf(val, undefined, "utf16le") returns 5 where
+        // Node returns 10. That is pre-existing on main (reproducible without
+        // this change, with a plain Buffer value) and is left alone here.
+        // The end argument bounds the search range (Node v26; local Node v25
+        // lacks it, so expectations come from the issue #43655 table).
+        console.log(b.indexOf("c", 0, 2), b.lastIndexOf("c", undefined, 4));
+        console.log(b.lastIndexOf("a", 5, 4));
+        // Thrown errors carry code + message.
+        try {
+          b.indexOf({});
+        } catch (e) {
+          console.log(e.code, e.message);
+        }
+        try {
+          b.indexOf("a", 0, "nope");
+        } catch (e) {
+          console.log(e.code, e.message);
+        }
+        try {
+          b.indexOf("a", 0, "");
+        } catch (e) {
+          // "" is not a known encoding in Node (Buffer.isEncoding("") === false).
+          console.log(e.code, e.message);
+        }
+        // Scope note: base64url is not in this polyfill's Buffer.isEncoding
+        // list (pre-existing gap, out of scope for #43655).
+      `,
+    },
+    target: "browser",
+    run: {
+      // The values that Node.js prints for the same code (end-arg lines: v26 oracle).
+      stdout: `
+        0 6 true
+        3 3
+        1
+        2
+        true
+        -1 2
+        3
+        ERR_INVALID_ARG_TYPE The "value" argument must be one of type number or string or an instance of Buffer or Uint8Array. Received an instance of Object
+        ERR_UNKNOWN_ENCODING Unknown encoding: nope
+        ERR_UNKNOWN_ENCODING Unknown encoding:\x20
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+    },
+  });
   itBundled("browser/NodeFS", {
     files: {
       "/entry.js": /* js */ `

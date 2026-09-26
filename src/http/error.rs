@@ -371,7 +371,8 @@ impl From<bun_picohttp::ParseResponseError> for Error {
     fn from(e: bun_picohttp::ParseResponseError) -> Self {
         match e {
             bun_picohttp::ParseResponseError::ShortRead => Error::ShortRead,
-            _ => Error::Picohttp(e),
+            bun_picohttp::ParseResponseError::TooManyHeaders => Error::ResponseHeadersTooLarge,
+            bun_picohttp::ParseResponseError::MalformedHttpResponse => Error::Picohttp(e),
         }
     }
 }

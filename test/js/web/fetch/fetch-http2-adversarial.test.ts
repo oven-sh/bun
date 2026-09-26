@@ -583,6 +583,36 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
       },
     );
   });
+
+  // MAX_RESPONSE_HEADERS in src/http/lib.rs is the field-count limit of every protocol.
+  async function fetchSetCookies(cookies: string[]) {
+    const block = Buffer.concat([hpackStatus200, ...cookies.map(cookie => hpackLit("set-cookie", cookie))]);
+    let outcome: unknown;
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          // The block is larger than one frame: HEADERS, then CONTINUATION with END_HEADERS.
+          socket.write(
+            Buffer.concat([frame(1, 0x1, id, block.subarray(0, 16384)), frame(9, 0x4, id, block.subarray(16384))]),
+          );
+        },
+      },
+      async url => {
+        outcome = await fetch(url, h2).then(r => ({ status: r.status, cookies: r.headers.getSetCookie() }), errcode);
+      },
+    );
+    return outcome;
+  }
+  const makeCookies = (count: number) => Array.from({ length: count }, (_, i) => `c${i}=v${i}`);
+
+  test("a response with 1000 header fields resolves with every field", async () => {
+    const cookies = makeCookies(1000);
+    expect(await fetchSetCookies(cookies)).toEqual({ status: 200, cookies });
+  });
+
+  test("a response with 1001 header fields rejects with ResponseHeadersTooLarge", async () => {
+    expect(await fetchSetCookies(makeCookies(1001))).toBe("ResponseHeadersTooLarge");
+  });
 });
 
 // ─── session-key regressions ─────────────────────────────────────────────────

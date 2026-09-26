@@ -731,7 +731,10 @@ where
 
         match parsed {
             Ok(done) => done,
-            Err(picohttp::ParseResponseError::MalformedHttpResponse) => HeadParse::Invalid,
+            Err(
+                picohttp::ParseResponseError::MalformedHttpResponse
+                | picohttp::ParseResponseError::TooManyHeaders,
+            ) => HeadParse::Invalid,
             Err(picohttp::ParseResponseError::ShortRead) => {
                 if !buffered {
                     self.body.with_mut(|b| b.extend_from_slice(data));

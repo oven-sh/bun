@@ -1274,4 +1274,30 @@ DataPointer hkdf(const Digest& md,
     const Buffer<const unsigned char>& salt,
     size_t length);
 
+// ============================================================================
+// KEM (Key Encapsulation Mechanism)
+
+// Mirrors Node's ncrypto::KEM. BoringSSL implements EVP_PKEY_encapsulate and
+// EVP_PKEY_decapsulate only for KEM key types (ML-KEM-768/1024); for every
+// other key type the init call fails with
+// EVP_R_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE.
+class KEM final {
+public:
+    struct EncapsulateResult {
+        DataPointer ciphertext;
+        DataPointer shared_key;
+
+        EncapsulateResult(DataPointer&& ciphertext, DataPointer&& shared_key)
+            : ciphertext(std::move(ciphertext))
+            , shared_key(std::move(shared_key))
+        {
+        }
+    };
+
+    static std::optional<EncapsulateResult> Encapsulate(
+        const EVPKeyPointer& public_key);
+    static DataPointer Decapsulate(const EVPKeyPointer& private_key,
+        const Buffer<const void>& ciphertext);
+};
+
 } // namespace ncrypto

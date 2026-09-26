@@ -17,7 +17,7 @@ const { Query, SQLQueryFlags } = require("internal/sql/query");
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");
-const { SQLHelper, parseOptions } = require("internal/sql/shared");
+const { SQLHelper, parseOptions, validateTimeoutSeconds } = require("internal/sql/shared");
 
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
 const { validateAbortSignal } = require("internal/validators");
@@ -485,13 +485,12 @@ const SQL = function SQL(
       ) {
         return Promise.$resolve(undefined);
       }
-      state.connectionState &= ~ReservedConnectionState.acceptQueries;
       let timeout = options?.timeout;
       if (timeout) {
-        timeout = Number(timeout);
-        if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
-          throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
-        }
+        timeout = validateTimeoutSeconds("options.timeout", timeout);
+      }
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      if (timeout) {
         if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
           // race all queries vs timeout
@@ -768,15 +767,13 @@ const SQL = function SQL(
       ) {
         return Promise.$resolve(undefined);
       }
-      state.connectionState &= ~ReservedConnectionState.acceptQueries;
-      const transactionQueries = state.queries;
       let timeout = options?.timeout;
       if (timeout) {
-        timeout = Number(timeout);
-        if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
-          throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
-        }
-
+        timeout = validateTimeoutSeconds("options.timeout", timeout);
+      }
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      const transactionQueries = state.queries;
+      if (timeout) {
         if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
           // race all queries vs timeout

@@ -241,22 +241,20 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             }
         }
 
+        // `protocols` / `protocol`: (DOMString or sequence<DOMString>), like the positional argument.
         auto protocolsValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "protocols"_s)));
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (protocolsValue) {
-            if (!protocolsValue.isUndefinedOrNull()) {
-                protocols = convert<IDLSequence<IDLDOMString>>(*lexicalGlobalObject, protocolsValue);
-                RETURN_IF_EXCEPTION(throwScope, {});
-            }
-        } else {
-            auto protocolValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "protocol"_s)));
+        if (protocolsValue.isUndefinedOrNull()) {
+            protocolsValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "protocol"_s)));
             RETURN_IF_EXCEPTION(throwScope, {});
-            if (protocolValue) {
-                if (!protocolValue.isUndefinedOrNull()) {
-                    protocols = Vector<String> { convert<IDLDOMString>(*lexicalGlobalObject, protocolValue) };
-                    RETURN_IF_EXCEPTION(throwScope, {});
-                }
+        }
+        if (!protocolsValue.isUndefinedOrNull()) {
+            if (protocolsValue.isObject()) {
+                protocols = convert<IDLSequence<IDLDOMString>>(*lexicalGlobalObject, protocolsValue);
+            } else {
+                protocols = Vector<String> { convert<IDLDOMString>(*lexicalGlobalObject, protocolsValue) };
             }
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         // Parse TLS options using the native SSLConfig parser for full TLS option support

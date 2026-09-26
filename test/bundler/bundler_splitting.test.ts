@@ -647,18 +647,36 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/main.js", stdout: "route ready\npanel ready" },
   });
-  itBundled("splitting/FileThatImportsEntryStaysInEntryChunk", {
+  itBundled("splitting/CommonJSEntrySetupRunsBeforeSharedCode", {
     files: {
+      ...setupBeforeShared(""),
       "/index.js": /* js */ `
-        import { helper } from "./helper.js";
-        import { shared } from "./shared.js";
-        export function name() { return "index"; }
-        console.log(helper(), shared);
-        import("./lazy.js");
+        require("./setup.js");
+        const { Store } = require("./store.js");
+        console.log("index", new Store().name);
+        import("./settings.js");
+        module.exports = {};
       `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "index app\nsettings app" },
+  });
+  itBundled("splitting/OnlyFilesThatLeadBackToEntryStayInEntryChunk", {
+    files: {
+      ...setupBeforeShared(""),
+      "/index.js": /* js */ `
+        import "./setup.js";
+        import { Store } from "./store.js";
+        import { outer } from "./outer.js";
+        export function name() { return "index"; }
+        console.log(outer(), new Store().name);
+        import("./settings.js");
+      `,
+      "/outer.js": `import { helper } from "./helper.js"; export const outer = () => "outer " + helper();`,
       "/helper.js": `import { name } from "./index.js"; export const helper = () => "helper of " + name();`,
-      "/shared.js": `export const shared = "shared";`,
-      "/lazy.js": `import { shared } from "./shared.js"; console.log("lazy", shared);`,
     },
     entryPoints: ["/index.js"],
     splitting: true,
@@ -666,10 +684,56 @@ describe("bundler", () => {
     format: "esm",
     onAfterBundle(api) {
       api.expectFile("/out/index.js").toContain("helper of");
+      api.expectFile("/out/index.js").toContain("outer ");
+      api.expectFile("/out/index.js").not.toContain("globalThis.APP");
       for (const file of jsFilesIn(api))
         api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/index\.js"/);
     },
-    run: { file: "/out/index.js", stdout: "helper of index shared\nlazy shared" },
+    run: { file: "/out/index.js", stdout: "outer helper of index app\nsettings app" },
+  });
+  itBundled("splitting/EntryFilesRunAfterChunkSharedWithOtherEntry", {
+    files: {
+      "/app.js": /* js */ `
+        import "./polyfill.js";
+        import "./config.js";
+        import "./boot.js";
+        import { Store } from "./store.js";
+        console.log("app", new Store().n);
+        import("./route.js");
+      `,
+      "/admin.js": `import "./config.js"; console.log("admin");`,
+      "/polyfill.js": `console.log("polyfill");`,
+      "/config.js": `console.log("config"); globalThis.CONFIG = { v: 1 };`,
+      "/boot.js": `console.log("boot", globalThis.CONFIG.v);`,
+      "/store.js": `console.log("store"); export class Store { n = 1 }`,
+      "/route.js": `import { Store } from "./store.js"; console.log("route", new Store().n);`,
+    },
+    entryPoints: ["/app.js", "/admin.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/app.js", stdout: "config\npolyfill\nboot 1\nstore\napp 1\nroute 1" },
+  });
+  itBundled("splitting/EntryFilesStayWhenSharedCodeOnlyDeclares", {
+    files: {
+      "/src/api/index.js": /* js */ `
+        import { dir } from "./templates.js";
+        import { util } from "./util.js";
+        console.log(dir, util());
+        import("./route.js");
+      `,
+      "/src/api/templates.js": `export const dir = import.meta.dir.replaceAll("\\\\", "/").split("/").slice(-2).join("/");`,
+      "/src/api/util.js": `export function util() { return "util"; }`,
+      "/src/api/route.js": `import { util } from "./util.js"; console.log("route", util());`,
+      "/src/jobs/index.js": `console.log("jobs");`,
+    },
+    entryPoints: ["/src/api/index.js", "/src/jobs/index.js"],
+    outputPaths: ["/out/api/index.js", "/out/jobs/index.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/api/index.js", stdout: "out/api util\nroute util" },
   });
 
   itFolds("splitting/FoldsSharedIntoEntry", {
@@ -4022,6 +4086,38 @@ describe("bundler", () => {
       { file: "/test.js", stdout: "load []\nnav 6 6\nr0:a1a2a3a4a5a6\nagain []" },
       { file: "/no-document.js", stdout: "r0:a1a2a3a4a5a6 leaf" },
     ],
+  });
+  itBundled("splitting/ModulePreloadFromChunkThatRunsBeforeEntry", {
+    files: {
+      "/index.js": /* js */ `
+        import "./boot.js";
+        import { util } from "./util.js";
+        console.log("index", util);
+        export const later = [() => import("./route.js"), () => import("./other.js")];
+      `,
+      "/boot.js": `globalThis.devtools = import("./devtools.js");`,
+      "/util.js": `console.log("util"); export const util = "util";`,
+      "/route.js": `import { util } from "./util.js"; console.log("route", util);`,
+      "/devtools.js": `import { dep } from "./dep.js"; console.log("devtools", dep);`,
+      "/other.js": `import { dep } from "./dep.js"; console.log("other", dep);`,
+      "/dep.js": `export const dep = "dep";`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        await import("./out/index.js");
+        console.log(JSON.stringify(links.map(link => link.replace(/-\\w{8}\\.js$/, ".js"))));
+        await devtools;
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").not.toContain("globalThis.devtools");
+    },
+    run: { file: "/test.js", stdout: 'util\nindex util\n["modulepreload index.js"]\ndevtools dep' },
   });
   itBundled("splitting/ModulePreloadSyntaxShapes", {
     files: {

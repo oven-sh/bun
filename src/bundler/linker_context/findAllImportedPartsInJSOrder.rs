@@ -837,6 +837,8 @@ fn reached_chunks_in_order(
 
     let mut reached: Vec<u32> = Vec::new();
     let mut reached_set = AutoBitSet::init_empty(chunks_len)?;
+    // Holds files of a pinned entry point's chunk, which ran after every chunk that it imports.
+    let mut last = AutoBitSet::init_empty(chunks_len)?;
     let mut visited = AutoBitSet::init_empty(c.graph.files.len())?;
     let mut stack: Vec<Frame> = Vec::new();
 
@@ -847,10 +849,16 @@ fn reached_chunks_in_order(
                 Frame::Leave(source_index) => {
                     // Post-order: when the unbundled program would have run this file.
                     let other = chunk_of_file[source_index as usize];
-                    if other != u32::MAX
-                        && other != chunk_index
-                        && !reached_set.is_set(other as usize)
+                    if other == u32::MAX || other == chunk_index {
+                        continue;
+                    }
+                    if c.left_entry_chunk
+                        .as_ref()
+                        .is_some_and(|left| left.is_set(source_index as usize))
                     {
+                        last.set(other as usize);
+                    }
+                    if !reached_set.is_set(other as usize) {
                         reached_set.set(other as usize);
                         reached.push(other);
                     }
@@ -894,5 +902,6 @@ fn reached_chunks_in_order(
             stack[mark..].reverse();
         }
     }
+    reached.sort_by_key(|&other| last.is_set(other as usize));
     Ok(reached)
 }

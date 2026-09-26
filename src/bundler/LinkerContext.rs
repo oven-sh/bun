@@ -139,6 +139,8 @@ pub struct LinkerContext<'a> {
     /// `merge_small_chunks` proved to be no-ops where it moved them: a chunk
     /// their chunk imports makes the same calls first.
     pub(crate) inits_already_done: Option<AutoBitSet>,
+    /// Files that `merge_small_chunks` moved out of the chunk of a pinned entry point.
+    pub(crate) left_entry_chunk: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
 }
@@ -180,6 +182,7 @@ impl<'a> Default for LinkerContext<'a> {
             renamer_rows: None,
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
+            left_entry_chunk: None,
             entry_point_part_indices: Vec::new(),
         }
     }
@@ -567,6 +570,7 @@ impl<'a> LinkerContext<'a> {
         });
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
+        self.left_entry_chunk = None;
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.

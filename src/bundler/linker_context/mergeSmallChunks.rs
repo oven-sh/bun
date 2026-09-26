@@ -868,6 +868,32 @@ pub(crate) fn merge_small_chunks(
             }
         }
     }
+    // No chunk may import a pinned chunk: a file that leads back to the entry point's file stays with it.
+    let mut stays_with_entry = AutoBitSet::init_empty(files_len)?;
+    let mut iter = entry_file_imported.iterator::<true, true>();
+    while let Some(entry_id) = iter.next() {
+        stays_with_entry.set(entry_source_indices[entry_id] as usize);
+    }
+    let mut grew = entry_file_imported.find_first_set().is_some();
+    while core::mem::take(&mut grew) {
+        for source_index in this.graph.reachable_files.iter() {
+            let source_index = source_index.get();
+            if !is_live_js(source_index)
+                || stays_with_entry.is_set(source_index as usize)
+                || !file_entry_bits[source_index as usize].subset_of(&entry_file_imported)
+            {
+                continue;
+            }
+            let mut leads_back = false;
+            this.for_each_file_loaded_by(source_index, |other| {
+                leads_back |= stays_with_entry.is_set(other as usize);
+            });
+            if leads_back {
+                stays_with_entry.set(source_index as usize);
+                grew = true;
+            }
+        }
+    }
     // A self-`import()` cannot be the load that comes first.
     for (entry_id, importers) in importer_bits.iter_mut().enumerate() {
         importers.unset(entry_id);
@@ -1052,11 +1078,30 @@ pub(crate) fn merge_small_chunks(
         } else {
             sources[source_index as usize].contents().len() as u64
         };
+        let pin = match (bits.count() == 1)
+            .then(|| bits.find_first_set().expect("one bit set"))
+            .filter(|&entry_id| pin_entry_chunk(entry_id))
+        {
+            None => Pin::None,
+            Some(entry_id)
+                if entry_source_indices[entry_id] != source_index
+                    && is_live_js(entry_source_indices[entry_id])
+                    && !stays_with_entry.is_set(source_index as usize) =>
+            {
+                Pin::BesideEntry
+            }
+            Some(_) => Pin::Entry,
+        };
         // Loading a file earlier than before is only unobservable when none
         // of its live parts run anything at the top level.
         let wrapped = flags[source_index as usize].wrap != WrapKind::None;
         inits.clear();
-        let pure = fold_pure && this.loading_file_side_effects(source_index, Some(&mut inits));
+        let pure = if fold_pure {
+            this.loading_file_side_effects(source_index, Some(&mut inits))
+        } else {
+            // Rule 1 only asks whether a parent runs anything.
+            pin == Pin::None && this.loading_file_side_effects(source_index, None)
+        };
         if fold_pure && !pure {
             inits.clear();
             this.top_level_inits(source_index, &mut inits);
@@ -1072,21 +1117,6 @@ pub(crate) fn merge_small_chunks(
         }
         inits.sort_unstable();
         inits.dedup();
-        // No chunk may import a pinned chunk: files that import the entry point's file stay with it.
-        let pin = match (bits.count() == 1)
-            .then(|| bits.find_first_set().expect("one bit set"))
-            .filter(|&entry_id| pin_entry_chunk(entry_id))
-        {
-            None => Pin::None,
-            Some(entry_id)
-                if entry_source_indices[entry_id] != source_index
-                    && is_live_js(entry_source_indices[entry_id])
-                    && !entry_file_imported.is_set(entry_id) =>
-            {
-                Pin::BesideEntry
-            }
-            Some(_) => Pin::Entry,
-        };
         let key = bits.bytes(entry_points_len);
         let entry = groups.entry(if pin == Pin::BesideEntry {
             let longer = temp.alloc_slice_fill_copy(key.len() + 1, 0u8);
@@ -1239,10 +1269,16 @@ pub(crate) fn merge_small_chunks(
         let Some(target_platform) = groups.values()[target_index].target else {
             continue;
         };
+        // A parent that only declares can run before the entry point's other files.
+        let parent_runs = unpinned().any(|i| {
+            let group = &groups.values()[i];
+            !group.pure || !group.needs_init.is_empty()
+        });
         for &member in members {
             let group = &groups.values()[member];
             if member == target_index
                 || group.pin == Pin::Entry
+                || (group.pin == Pin::BesideEntry && !parent_runs)
                 || group.target != Some(target_platform)
             {
                 continue;
@@ -1258,7 +1294,7 @@ pub(crate) fn merge_small_chunks(
             folded_same += 1;
         }
     }
-    // The parent runs before a pinned entry point's chunk, so `BesideEntry` went there. Without a parent it stays.
+    // The parent runs before a pinned entry point's chunk, so `BesideEntry` went there. Otherwise it stays.
     for group_index in 0..groups.count() {
         let group = &groups.values()[group_index];
         if group.pin == Pin::BesideEntry && group.merged_into.is_none() {
@@ -1678,14 +1714,19 @@ fn rekey_files(
     groups: &[Group],
 ) -> crate::Result<()> {
     let file_entry_bits = this.graph.files.items_entry_bits_mut();
+    let mut left_entry_chunk = AutoBitSet::init_empty(group_of_file.len())?;
     for (source_index, &group_index) in group_of_file.iter().enumerate() {
         if group_index == usize::MAX {
             continue;
         }
-        let bits = &groups[resolve(groups, group_index)].bits;
-        if !file_entry_bits[source_index].eql(bits) {
-            file_entry_bits[source_index] = bits.clone()?;
+        let group = &groups[resolve(groups, group_index)];
+        if groups[group_index].pin == Pin::BesideEntry && group.pin != Pin::Entry {
+            left_entry_chunk.set(source_index);
+        }
+        if !file_entry_bits[source_index].eql(&group.bits) {
+            file_entry_bits[source_index] = group.bits.clone()?;
         }
     }
+    this.left_entry_chunk = Some(left_entry_chunk);
     Ok(())
 }

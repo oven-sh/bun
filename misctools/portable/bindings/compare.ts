@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 type Facts = {
   types: Record<
     string,
-    { size: number; align: number; fields: Record<string, { offset: number; size: number | null }> }
+    { partial?: boolean; size: number; align: number; fields: Record<string, { offset: number; size: number | null }> }
   >;
   constants: Record<string, string>;
   system?: string;
@@ -22,6 +22,7 @@ const headers: Facts = JSON.parse(readFileSync(headersPath, "utf8"));
 
 const differences: string[] = [];
 const notCompared: string[] = [];
+const partial: string[] = [];
 let same = 0;
 for (const [name, ours] of Object.entries(image.types)) {
   const theirs = headers.types[name];
@@ -29,12 +30,22 @@ for (const [name, ours] of Object.entries(image.types)) {
     notCompared.push(`type ${name}: not in the headers`);
     continue;
   }
-  if (ours.size !== theirs.size)
-    differences.push(`type ${name}: size ${ours.size} in the image, ${theirs.size} in the headers`);
-  else same++;
-  if (ours.align !== theirs.align)
-    differences.push(`type ${name}: alignment ${ours.align} in the image, ${theirs.align} in the headers`);
-  else same++;
+  if (ours.partial) {
+    // The binding has the first fields of the structure: every one of them is compared below, and the
+    // structure of the headers has to hold them.
+    if (ours.size > theirs.size)
+      differences.push(
+        `type ${name}: the binding is a view of ${ours.size} bytes, the structure of the headers has ${theirs.size}`,
+      );
+    else partial.push(`type ${name}: ${ours.size} of ${theirs.size} bytes`);
+  } else {
+    if (ours.size !== theirs.size)
+      differences.push(`type ${name}: size ${ours.size} in the image, ${theirs.size} in the headers`);
+    else same++;
+    if (ours.align !== theirs.align)
+      differences.push(`type ${name}: alignment ${ours.align} in the image, ${theirs.align} in the headers`);
+    else same++;
+  }
   for (const [field, ourField] of Object.entries(ours.fields)) {
     const theirField = theirs.fields[field];
     if (!theirField) {
@@ -73,6 +84,7 @@ if (headers.system && headers.system !== "win32")
     `NOTE: the headers are the ones of ${headers.system}, not of Windows: this comparison checks the tools only`,
   );
 for (const line of notCompared) console.log(`not compared  ${line}`);
+for (const line of partial) console.log(`partial view  ${line}`);
 for (const line of differences) console.log(`DIFFERENT     ${line}`);
 console.log(`${same} facts are the same, ${differences.length} differ, ${notCompared.length} could not be compared`);
 process.exit(differences.length ? 1 : 0);

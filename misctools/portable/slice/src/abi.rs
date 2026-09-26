@@ -6,10 +6,18 @@
 //! on a machine that has no Windows: arguments beyond the fourth, which Windows passes on the stack,
 //! floating point arguments, which Windows numbers by position, a structure that is larger than a
 //! register, and a function of the image that the host calls back.
+//!
+//! The host also calls a function of the image on threads that it makes itself, as libuv's pool and the
+//! pool of Windows do: threads that have no thread pointer of the image until the function they enter
+//! adopts them (`bun_windows_sys::host_thread`).
 
+use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
+use core::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Mutex;
 
 use bun_windows_sys::host_imports::{self, Unbound};
+use bun_windows_sys::host_thread;
 
 use crate::json::Report;
 
@@ -23,8 +31,17 @@ struct Pair {
 #[bun_portable_macros::win_abi]
 type Callback = unsafe extern "C" fn(*mut c_void, i32, i64, u32, i16, i64, f64) -> i64;
 
+#[bun_portable_macros::win_abi]
+type ThreadCallback = unsafe extern "C" fn(*mut c_void, i64, i64) -> i64;
+
 #[bun_portable_macros::imports(library = "bun_host_test")]
 unsafe extern "C" {
+    fn test_threads(
+        callback: ThreadCallback,
+        context: *mut c_void,
+        threads: i64,
+        calls: i64,
+    ) -> i64;
     fn test_sum6(a: i32, b: i64, c: u32, d: *mut c_void, e: i16, f: i64) -> i64;
     safe fn test_mixed(x: f64, y: i32, z: f64, w: f32, v: i64) -> f64;
     safe fn test_pair_by_value(pair: Pair, add: i64) -> Pair;
@@ -48,6 +65,53 @@ unsafe extern "C" fn on_callback(
     let seen = unsafe { &mut *context.cast::<i64>() };
     *seen += 1;
     i64::from(a) + b + i64::from(c) + i64::from(d) + e + (f * 2.0) as i64
+}
+
+/// What the threads of the host and the thread that waits for them share.
+struct Shared {
+    calls: Mutex<i64>,
+    thread_locals_dropped: AtomicI64,
+}
+
+/// A thread-local with a destructor: it runs when the thread that has it ends.
+struct CountsItsDrop(*const Shared);
+
+impl Drop for CountsItsDrop {
+    fn drop(&mut self) {
+        // SAFETY: `run` keeps the `Shared` until every thread of the host has ended.
+        unsafe { &*self.0 }
+            .thread_locals_dropped
+            .fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+thread_local! {
+    static CALLS_ON_THIS_THREAD: Cell<i64> = const { Cell::new(0) };
+    static ENDS_WITH_THE_THREAD: RefCell<Option<CountsItsDrop>> = const { RefCell::new(None) };
+}
+
+/// What a thread of the host calls: the thread is not one of the image. It uses what a thread pointer
+/// is needed for: thread-locals, the allocator, a lock.
+#[bun_portable_macros::win_abi]
+unsafe extern "C" fn on_thread_of_the_host(context: *mut c_void, thread: i64, call: i64) -> i64 {
+    // SAFETY: `context` is the `Shared` of `run`, which outlives the threads.
+    let shared = unsafe { &*context.cast::<Shared>() };
+    let calls_before = CALLS_ON_THIS_THREAD.with(|calls| calls.replace(calls.get() + 1));
+    if calls_before != call {
+        return -1_000_000;
+    }
+    if call == 0 {
+        ENDS_WITH_THE_THREAD.with(|slot| *slot.borrow_mut() = Some(CountsItsDrop(shared)));
+    }
+    let block = vec![call as u8; 64 + ((thread * 37 + call * 11) % 5000) as usize];
+    if block[block.len() - 1] != call as u8 {
+        return -2_000_000;
+    }
+    let Ok(mut calls) = shared.calls.lock() else {
+        return -3_000_000;
+    };
+    *calls += 1;
+    thread * 100 + call
 }
 
 pub fn run() -> bool {
@@ -97,6 +161,37 @@ pub fn run() -> bool {
         &mut report,
         "a function of the image, called by the host",
         result == expected && calls == 1,
+    );
+
+    const THREADS: i64 = 8;
+    const CALLS: i64 = 50;
+    let shared = Shared {
+        calls: Mutex::new(0),
+        thread_locals_dropped: AtomicI64::new(0),
+    };
+    let (_, adopted_before) = host_thread::adopted();
+    // SAFETY: `on_thread_of_the_host` has the signature the host calls, and `shared` outlives the
+    // call, which returns when every thread has ended.
+    let sum = unsafe {
+        test_threads(
+            on_thread_of_the_host,
+            (&raw const shared).cast_mut().cast(),
+            THREADS,
+            CALLS,
+        )
+    };
+    let (adopted_now, adopted_ever) = host_thread::adopted();
+    let expected =
+        100 * CALLS * (THREADS * (THREADS - 1) / 2) + THREADS * (CALLS * (CALLS - 1) / 2);
+    let calls = shared.calls.lock().map_or(-1, |calls| *calls);
+    check(
+        &mut report,
+        "a function of the image, called by threads of the host",
+        sum == expected
+            && calls == THREADS * CALLS
+            && adopted_now == 0
+            && adopted_ever - adopted_before == THREADS as u64
+            && shared.thread_locals_dropped.load(Ordering::SeqCst) == THREADS,
     );
 
     report.begin("imports of this test");

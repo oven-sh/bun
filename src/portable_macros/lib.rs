@@ -40,6 +40,10 @@ pub fn imports(args: TokenStream, item: TokenStream) -> TokenStream {
 /// pointer to such a function: every `extern "C" fn` and `extern "system" fn` in it is `extern "win64" fn`
 /// on x86-64. On arm64 the two conventions agree for functions that are not variadic, and nothing changes.
 ///
+/// A function with a body is one that the host OS enters, on a thread of the image or on one of its own.
+/// Its body begins with `bun_windows_sys::host_thread::enter()`, which gives a thread that has none the
+/// thread pointer of the image: the body that was written follows it, as it was written.
+///
 /// `extern` blocks inside the item are left alone: what they declare is linked into the image.
 ///
 /// On a module that is a file of its own the attribute is written in the file, `#![cfg_attr(bun_portable,
@@ -240,16 +244,31 @@ fn per_architecture(item: Tokens) -> Tokens {
     }
 }
 
-/// Replaces the ABI of every `extern ".." fn` whose ABI is the platform's C convention.
+/// Replaces the ABI of every `extern ".." fn` whose ABI is the platform's C convention, and writes the
+/// check of the thread pointer at the start of the body of each such function.
 fn with_windows_abi(stream: Tokens) -> Tokens {
     let mut out = Tokens::new();
     let mut tokens = stream.into_iter().peekable();
+    // An `extern ".." fn name` was rewritten and its body has not come yet.
+    let mut body_is_due = false;
     while let Some(token) = tokens.next() {
         match token {
             TokenTree::Group(group) => {
-                let mut rewritten = Group::new(group.delimiter(), with_windows_abi(group.stream()));
+                let mut stream = with_windows_abi(group.stream());
+                if body_is_due && group.delimiter() == Delimiter::Brace {
+                    body_is_due = false;
+                    let mut body = quote!(::bun_windows_sys::host_thread::enter(););
+                    body.extend(stream);
+                    stream = body;
+                }
+                let mut rewritten = Group::new(group.delimiter(), stream);
                 rewritten.set_span(group.span());
                 out.extend([TokenTree::Group(rewritten)]);
+            }
+            // A declaration without a body.
+            TokenTree::Punct(ref punct) if body_is_due && punct.as_char() == ';' => {
+                body_is_due = false;
+                out.extend([token]);
             }
             TokenTree::Ident(ref keyword) if keyword == "extern" => {
                 let span = keyword.span();
@@ -257,6 +276,9 @@ fn with_windows_abi(stream: Tokens) -> Tokens {
                 match tokens.peek() {
                     Some(TokenTree::Ident(next)) if next == "fn" => {
                         out.extend([abi_literal("win64", span)]);
+                        let keyword = tokens.next().expect("peeked");
+                        body_is_due = matches!(tokens.peek(), Some(TokenTree::Ident(_)));
+                        out.extend([keyword]);
                     }
                     Some(TokenTree::Literal(abi)) => {
                         let replacement = match abi.to_string().as_str() {
@@ -270,6 +292,10 @@ fn with_windows_abi(stream: Tokens) -> Tokens {
                         match replacement {
                             Some(name) if declares_function => {
                                 out.extend([abi_literal(name, abi.span())]);
+                                // `fn name` is a function, `fn(` the type of a pointer to one.
+                                let keyword = tokens.next().expect("peeked");
+                                body_is_due = matches!(tokens.peek(), Some(TokenTree::Ident(_)));
+                                out.extend([keyword]);
                             }
                             _ => out.extend([abi]),
                         }

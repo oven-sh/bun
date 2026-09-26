@@ -15,6 +15,10 @@
 // of each of its fields, and the value of a constant that is an integer. compare.ts compares the two
 // outputs.
 //
+// Where a binding is, on purpose, not the declaration of the header, this file says how the two are
+// compared: `cTypeNames` (another name), `partialViews` (the first fields only), `unionFields` (one
+// field for an anonymous union).
+//
 // What is read: every `pub` structure, union and constant of the three binding files that the image
 // has (an item under a `cfg` that the image does not meet is not in the image, and is left out).
 // A field that is not `pub` cannot be named from the program of the image; its structure's size
@@ -40,6 +44,19 @@ const cTypeNames: Record<string, string> = {
   "bun_libuv_sys::Timer": "uv_timer_t",
   "bun_libuv_sys::Process": "uv_process_t",
   "bun_libuv_sys::fs_t": "uv_fs_t",
+  // wincontypes.h: the structure is WINDOW_BUFFER_SIZE_RECORD; WINDOW_BUFFER_SIZE_EVENT is the number
+  // of the event, an `int` to `sizeof`.
+  "bun_windows_sys::WINDOW_BUFFER_SIZE_EVENT": "WINDOW_BUFFER_SIZE_RECORD",
+};
+/** A binding that declares the fields bun reads and stops: its size and alignment are not the structure's. */
+const partialViews = new Set(["bun_windows_sys::TEB", "bun_windows_sys::PEB"]);
+/**
+ * A field of a binding that stands for an anonymous union of the header, named as one member of it.
+ * Its size is the union's: what lies between the member and the field after it.
+ */
+const unionFields: Record<string, { after: string }> = {
+  // union { NTSTATUS Status; PVOID Pointer; }; ULONG_PTR Information;
+  "bun_windows_sys::IO_STATUS_BLOCK.Status": { after: "Information" },
 };
 /** `loop` and `type` are keywords of Rust. */
 const cFieldNames: Record<string, string> = { loop_: "loop", type_: "type" };
@@ -66,12 +83,13 @@ const integerTypes = new Set([
 ]);
 const unsignedTypes = new Set(["u8", "u16", "u32", "u64", "usize", "c_uint", "c_ushort", "c_uchar", "c_ulonglong"]);
 
-export type Field = { name: string; cName: string; public: boolean };
+export type Field = { name: string; cName: string; public: boolean; unionBefore?: string };
 export type Type = {
   kind: "struct" | "union";
   rust: string;
   c: string;
   packed: boolean;
+  partial: boolean;
   fields: Field[];
   file: string;
   line: number;
@@ -89,6 +107,8 @@ function inImage(condition: string): boolean | undefined {
     'target_pointer_width="64"': true,
     "debug_assertions": false,
     "bun_portable": true,
+    "not(bun_portable)": false,
+    'all(any(windows,bun_portable),target_pointer_width="64")': true,
   };
   if (text in known) return known[text];
   if (/^all\(windows,/.test(text)) return false;
@@ -106,8 +126,14 @@ function scan(source: { file: string; path: string }) {
 
   const attributesAbove = (at: number) => {
     const out: string[] = [];
-    for (let i = at - 1; i >= 0 && /^\s*(#\[|\/\/)/.test(lines[i]); i--)
-      if (lines[i].trim().startsWith("#[")) out.push(lines[i].trim());
+    for (let i = at - 1; i >= 0 && /^\s*(#\[|\/\/)/.test(lines[i]); i--) {
+      const attribute = lines[i].trim();
+      if (!attribute.startsWith("#[")) continue;
+      // What the image has of an attribute that depends on it.
+      const forImage = /^#\[cfg_attr\(bun_portable, (.*)\)\]$/.exec(attribute);
+      if (forImage) out.push(`#[${forImage[1]}]`);
+      else if (!/^#\[cfg_attr\(not\(bun_portable\),/.test(attribute)) out.push(attribute);
+    }
     return out;
   };
   const excluded = (attributes: string[]) => {
@@ -150,13 +176,19 @@ function scan(source: { file: string; path: string }) {
       for (let k = i + 1; k < lines.length && lines[k].trim() !== "}"; k++) {
         const field = /^\s*(pub(?:\([a-z]+\))? )?([a-zA-Z_][A-Za-z_0-9]*): /.exec(lines[k]);
         if (!field || /^\s*(\/\/|#\[)/.test(lines[k])) continue;
-        fields.push({ name: field[2], cName: cFieldNames[field[2]] ?? field[2], public: field[1] === "pub " });
+        fields.push({
+          name: field[2],
+          cName: cFieldNames[field[2]] ?? field[2],
+          public: field[1] === "pub ",
+          unionBefore: unionFields[`${rust}.${field[2]}`]?.after,
+        });
       }
       types.push({
         kind: type[1] as "struct" | "union",
         rust,
         c: cTypeNames[rust] ?? type[2],
         packed: repr!.includes("packed"),
+        partial: partialViews.has(rust),
         fields,
         file: source.file,
         line: i + 1,
@@ -259,6 +291,8 @@ static void comma(void) {
 }
 #define TYPE_BEGIN(name) comma(); printf("\\n\\"" #name "\\":{\\"size\\":%zu,\\"align\\":%zu,\\"fields\\":{", sizeof(name), _Alignof(name)); first = 1;
 #define FIELD(type, name) comma(); printf("\\"" #name "\\":{\\"offset\\":%zu,\\"size\\":%zu}", offsetof(type, name), sizeof(((type *)0)->name));
+/* A member of an anonymous union that the binding has as one field: the size is the union's. */
+#define FIELD_OF_UNION(type, name, after) comma(); printf("\\"" #name "\\":{\\"offset\\":%zu,\\"size\\":%zu}", offsetof(type, name), offsetof(type, after) - offsetof(type, name));
 #define TYPE_END printf("}}"); first = 0;
 #define CONSTANT_SIGNED(name) comma(); printf("\\n\\"" #name "\\":\\"%lld\\"", (long long)(name));
 #define CONSTANT_UNSIGNED(name) comma(); printf("\\n\\"" #name "\\":\\"%llu\\"", (unsigned long long)(name));
@@ -271,7 +305,11 @@ int main(void) {
     out.push(`  TYPE_BEGIN(${type.c})`);
     for (const field of type.fields) {
       out.push(`#ifndef SKIP_FIELD_${type.c}_${field.cName}`);
-      out.push(`  FIELD(${type.c}, ${field.cName})`);
+      out.push(
+        field.unionBefore
+          ? `  FIELD_OF_UNION(${type.c}, ${field.cName}, ${field.unionBefore})`
+          : `  FIELD(${type.c}, ${field.cName})`,
+      );
       out.push(`#endif`);
     }
     out.push(`  TYPE_END`);
@@ -313,7 +351,7 @@ pub fn types(report: &mut Report) {
     out.push(`    {`);
     out.push(`        type T = ${type.rust};`);
     out.push(
-      `        let _ = write!(out, "${index ? "," : ""}\\n\\"${type.c}\\":{{\\"size\\":{},\\"align\\":{},\\"fields\\":{{", size_of::<T>(), align_of::<T>());`,
+      `        let _ = write!(out, "${index ? "," : ""}\\n\\"${type.c}\\":{{${type.partial ? '\\"partial\\":true,' : ""}\\"size\\":{},\\"align\\":{},\\"fields\\":{{", size_of::<T>(), align_of::<T>());`,
     );
     let first = true;
     for (const field of type.fields) {

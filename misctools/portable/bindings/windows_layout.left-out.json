@@ -3,115 +3,115 @@
   "name": "bun_windows_sys::GetFinalPathNameByHandleFormat",
   "why": "not #[repr(C)]",
   "file": "src/windows_sys/externs.rs",
-  "line": 529
+  "line": 541
  },
  {
   "name": "bun_windows_sys::CONTEXT",
   "why": "cfg(all(windows, target_arch = \"x86_64\"))",
   "file": "src/windows_sys/externs.rs",
-  "line": 568
+  "line": 583
  },
  {
   "name": "bun_windows_sys::CONTEXT",
   "why": "cfg(all(windows, target_arch = \"aarch64\"))",
   "file": "src/windows_sys/externs.rs",
-  "line": 628
+  "line": 643
  },
  {
   "name": "bun_windows_sys::INVALID_HANDLE_VALUE",
   "why": "HANDLE is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 48
+  "line": 55
  },
  {
   "name": "bun_windows_sys::DELETE",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 307
+  "line": 316
  },
  {
   "name": "bun_windows_sys::READ_CONTROL",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 308
+  "line": 317
  },
  {
   "name": "bun_windows_sys::SYNCHRONIZE",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 309
+  "line": 318
  },
  {
   "name": "bun_windows_sys::STANDARD_RIGHTS_READ",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 310
+  "line": 319
  },
  {
   "name": "bun_windows_sys::GENERIC_READ",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 311
+  "line": 320
  },
  {
   "name": "bun_windows_sys::GENERIC_WRITE",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 312
+  "line": 321
  },
  {
   "name": "bun_windows_sys::FILE_READ_DATA",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 315
+  "line": 324
  },
  {
   "name": "bun_windows_sys::FILE_LIST_DIRECTORY",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 316
+  "line": 325
  },
  {
   "name": "bun_windows_sys::FILE_APPEND_DATA",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 317
+  "line": 326
  },
  {
   "name": "bun_windows_sys::FILE_READ_EA",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 318
+  "line": 327
  },
  {
   "name": "bun_windows_sys::FILE_TRAVERSE",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 319
+  "line": 328
  },
  {
   "name": "bun_windows_sys::FILE_READ_ATTRIBUTES",
   "why": "ACCESS_MASK is not an integer type",
   "file": "src/windows_sys/externs.rs",
-  "line": 320
+  "line": 329
  },
  {
   "name": "bun_libuv_sys::UV_TTY",
   "why": "HandleType is not an integer type",
   "file": "src/libuv_sys/libuv.rs",
-  "line": 254
+  "line": 260
  },
  {
   "name": "bun_libuv_sys::UV_NAMED_PIPE",
   "why": "HandleType is not an integer type",
   "file": "src/libuv_sys/libuv.rs",
-  "line": 255
+  "line": 261
  },
  {
   "name": "bun_libuv_sys::UV_UNKNOWN_HANDLE",
   "why": "HandleType is not an integer type",
   "file": "src/libuv_sys/libuv.rs",
-  "line": 256
+  "line": 262
  },
  {
   "name": "bun_sys::windows::SRWLOCK",
@@ -135,13 +135,13 @@
   "name": "bun_sys::windows::UpdateStdioModeFlagsOpts",
   "why": "not #[repr(C)]",
   "file": "src/sys/windows/mod.rs",
-  "line": 1467
+  "line": 1471
  },
  {
   "name": "bun_sys::windows::StdinModeGuard",
   "why": "not #[repr(C)]",
   "file": "src/sys/windows/mod.rs",
-  "line": 1492
+  "line": 1496
  },
  {
   "name": "bun_sys::windows::SRWLOCK_INIT",
@@ -154,17 +154,5 @@
   "why": "CONDITION_VARIABLE is not an integer type",
   "file": "src/sys/windows/mod.rs",
   "line": 264
- },
- {
-  "name": "bun_sys::windows::disposition::ExceptionContinueExecution",
-  "why": "c_long is not an integer type",
-  "file": "src/sys/windows/mod.rs",
-  "line": 1150
- },
- {
-  "name": "bun_sys::windows::disposition::ExceptionContinueSearch",
-  "why": "c_long is not an integer type",
-  "file": "src/sys/windows/mod.rs",
-  "line": 1151
  }
 ]

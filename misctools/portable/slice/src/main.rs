@@ -122,9 +122,9 @@ fn run_steps(directory: &[u8]) -> bool {
 
     report.begin("host");
     #[cfg(bun_portable)]
-    report.string("os", bun_core::host::os().name_string().as_bytes());
+    report.string("os", bun_core::host::name().as_bytes());
     #[cfg(not(bun_portable))]
-    report.string("os", bun_core::env::OS.name_string().as_bytes());
+    report.string("os", bun_core::Global::os_name.as_bytes());
     report.string(
         "path_flavour",
         if windows_paths { b"windows" } else { b"posix" },

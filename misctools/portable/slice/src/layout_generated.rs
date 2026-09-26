@@ -113,7 +113,7 @@ pub fn types(report: &mut Report) {
     }
     {
         type T = bun_windows_sys::WINDOW_BUFFER_SIZE_EVENT;
-        let _ = write!(out, ",\n\"WINDOW_BUFFER_SIZE_EVENT\":{{\"size\":{},\"align\":{},\"fields\":{{", size_of::<T>(), align_of::<T>());
+        let _ = write!(out, ",\n\"WINDOW_BUFFER_SIZE_RECORD\":{{\"size\":{},\"align\":{},\"fields\":{{", size_of::<T>(), align_of::<T>());
         let _ = write!(out, "\"dwSize\":{{\"offset\":{},\"size\":{}}}", offset_of!(T, dwSize), size_of_field(|value: &T| &value.dwSize));
         out.extend_from_slice(b"}}");
     }
@@ -526,7 +526,7 @@ pub fn types(report: &mut Report) {
     }
     {
         type T = bun_windows_sys::PEB;
-        let _ = write!(out, ",\n\"PEB\":{{\"size\":{},\"align\":{},\"fields\":{{", size_of::<T>(), align_of::<T>());
+        let _ = write!(out, ",\n\"PEB\":{{\"partial\":true,\"size\":{},\"align\":{},\"fields\":{{", size_of::<T>(), align_of::<T>());
         let _ = write!(out, "\"BeingDebugged\":{{\"offset\":{},\"size\":{}}}", offset_of!(T, BeingDebugged), size_of_field(|value: &T| &value.BeingDebugged));
         let _ = write!(out, ",\"Ldr\":{{\"offset\":{},\"size\":{}}}", offset_of!(T, Ldr), size_of_field(|value: &T| &value.Ldr));
         let _ = write!(out, ",\"ProcessParameters\":{{\"offset\":{},\"size\":{}}}", offset_of!(T, ProcessParameters), size_of_field(|value: &T| &value.ProcessParameters));
@@ -534,7 +534,7 @@ pub fn types(report: &mut Report) {
     }
     {
         type T = bun_windows_sys::TEB;
-        let _ = write!(out, ",\n\"TEB\":{{\"size\":{},\"align\":{},\"fields\":{{", size_of::<T>(), align_of::<T>());
+        let _ = write!(out, ",\n\"TEB\":{{\"partial\":true,\"size\":{},\"align\":{},\"fields\":{{", size_of::<T>(), align_of::<T>());
         let _ = write!(out, "\"EnvironmentPointer\":{{\"offset\":{},\"size\":{}}}", offset_of!(T, EnvironmentPointer), size_of_field(|value: &T| &value.EnvironmentPointer));
         let _ = write!(out, ",\"ActiveRpcHandle\":{{\"offset\":{},\"size\":{}}}", offset_of!(T, ActiveRpcHandle), size_of_field(|value: &T| &value.ActiveRpcHandle));
         let _ = write!(out, ",\"ThreadLocalStoragePointer\":{{\"offset\":{},\"size\":{}}}", offset_of!(T, ThreadLocalStoragePointer), size_of_field(|value: &T| &value.ThreadLocalStoragePointer));
@@ -1551,6 +1551,8 @@ pub fn constants(report: &mut Report) {
     let _ = write!(out, ",\n\"EXCEPTION_CONTINUE_EXECUTION\":\"{}\"", bun_sys::windows::EXCEPTION_CONTINUE_EXECUTION as i64);
     let _ = write!(out, ",\n\"EXCEPTION_CONTINUE_SEARCH\":\"{}\"", bun_sys::windows::EXCEPTION_CONTINUE_SEARCH as i64);
     let _ = write!(out, ",\n\"MS_VC_EXCEPTION\":\"{}\"", bun_sys::windows::MS_VC_EXCEPTION as u64);
+    let _ = write!(out, ",\n\"ExceptionContinueExecution\":\"{}\"", bun_sys::windows::disposition::ExceptionContinueExecution as i64);
+    let _ = write!(out, ",\n\"ExceptionContinueSearch\":\"{}\"", bun_sys::windows::disposition::ExceptionContinueSearch as i64);
     let _ = write!(out, ",\n\"EXCEPTION_UNWIND\":\"{}\"", bun_sys::windows::EXCEPTION_UNWIND as u64);
     let _ = write!(out, ",\n\"EXCEPTION_ACCESS_VIOLATION\":\"{}\"", bun_sys::windows::EXCEPTION_ACCESS_VIOLATION as u64);
     let _ = write!(out, ",\n\"EXCEPTION_DATATYPE_MISALIGNMENT\":\"{}\"", bun_sys::windows::EXCEPTION_DATATYPE_MISALIGNMENT as u64);

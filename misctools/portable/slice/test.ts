@@ -5,7 +5,8 @@
 //   direct        the kernel runs the image
 //   hosted        the Linux test host (../host/host_posix.c) maps the image and serves its requests
 //   abi           hosted: the image calls functions of the host that have the calling convention of
-//                 Windows x64, through its import table, and the host calls a function of the image
+//                 Windows x64, through its import table, and the host calls a function of the image,
+//                 also on threads that the host made
 //   abi, direct   there is no host to resolve anything: the first call has to stop the image
 //   as win32      BUN_PORTABLE_HOST_INTERFACE=win32 makes bun call the functions of Windows, on Linux:
 //                 the image takes bun's code for Windows, and its first call of Windows has to stop it
@@ -77,7 +78,7 @@ check("abi, hosted", () => {
     .filter(Boolean)
     .map(line => JSON.parse(line));
   const checks = lines.filter(line => "as_expected" in line);
-  return r.code === 0 && checks.length === 4 && checks.every(line => line.as_expected === true)
+  return r.code === 0 && checks.length === 5 && checks.every(line => line.as_expected === true)
     ? undefined
     : `exit code ${r.code}: ${r.out}`;
 });

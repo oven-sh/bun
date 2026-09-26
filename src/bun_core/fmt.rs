@@ -297,6 +297,31 @@ pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
     RedactedNpmUrlFormatter { url: str }
 }
 
+/// [`redacted_npm_url`] for a value that only exists as a `Display` impl: a
+/// lockfile resolution or a dependency specifier, which is the tarball or git
+/// URL written in package.json when the package came from one. Anything that
+/// does not contain a URL (a version, a path, a `github:` specifier) is written
+/// unchanged: the token and UUID masks are meant for URLs, and a version whose
+/// pre-release tag happens to look like one must not be masked.
+pub struct Redacted<T>(T);
+
+impl<T: Display> Display for Redacted<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // Rendered in full first: the inner impl may write in pieces, and the
+        // password scan is anchored at the start of the whole value.
+        let mut text = String::new();
+        write!(text, "{}", self.0)?;
+        if !strings::contains(text.as_bytes(), b"://") {
+            return f.write_str(&text);
+        }
+        redacted_npm_url(text.as_bytes()).fmt(f)
+    }
+}
+
+pub fn redacted<T: Display>(value: T) -> Redacted<T> {
+    Redacted(value)
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // RedactedSourceFormatter
 // ───────────────────────────────────────────────────────────────────────────

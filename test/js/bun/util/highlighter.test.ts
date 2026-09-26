@@ -63,6 +63,20 @@ test("redacting highlighter still redacts values", () => {
   expect(out).toContain("*");
 });
 
+// The password of a URL is masked whatever the scheme is: dependency
+// specifiers are `git+https://` and `git+ssh://` URLs as often as `https://`.
+test.each([
+  ["https://user:hunter2@host/repo.git", "https://user:*******@host/repo.git"],
+  ["git+https://user:hunter2@host/repo.git", "git+https://user:*******@host/repo.git"],
+  ["git+ssh://user:hunter2@host:22/repo.git", "git+ssh://user:*******@host:22/repo.git"],
+  // scp-like: the `:` after the host is a path separator, not a password.
+  ["git+ssh://git@host:org/repo.git", "git+ssh://git@host:org/repo.git"],
+  // No scheme, so nothing is treated as a URL.
+  ["user:hunter2@host/repo.git", "user:hunter2@host/repo.git"],
+])("redacting highlighter masks the password in %p", (input, expected) => {
+  expect(highlighterRedacted(`x = "${input}"`)).toContain(`"${expected}"`);
+});
+
 // End-to-end: an error in bunfig.toml whose source line ends with an
 // unterminated template interpolation is printed through the redacting syntax
 // highlighter. This used to panic while printing the error message.

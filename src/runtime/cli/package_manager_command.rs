@@ -679,8 +679,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     let name = dependencies[dependency_id as usize]
                         .name
                         .slice(string_bytes);
-                    let resolution =
-                        resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto);
+                    let resolution = bun_fmt::redacted(
+                        resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
+                    );
 
                     if index < sorted_dependencies.len() - 1 {
                         bun_core::prettyln!(
@@ -838,7 +839,7 @@ fn print_node_modules_folder_structure(
                 &mut resolution_buf,
                 format_args!(
                     "{}",
-                    resolutions[id as usize].fmt(string_bytes, PathSep::Auto)
+                    bun_fmt::redacted(resolutions[id as usize].fmt(string_bytes, PathSep::Auto))
                 ),
             );
             if let Some(j) = strings::index_of(path, b"node_modules") {
@@ -964,7 +965,9 @@ fn print_node_modules_folder_structure(
             &mut resolution_buf,
             format_args!(
                 "{}",
-                resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto)
+                bun_fmt::redacted(
+                    resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto)
+                )
             ),
         );
         bun_core::prettyln!(
@@ -1036,7 +1039,8 @@ fn print_trusted_dependencies_flat(
     for (index, &dep_id) in trusted.iter().enumerate() {
         let package_id = resolutions_buf[dep_id as usize];
         let name = dependencies[dep_id as usize].name.slice(string_bytes);
-        let resolution = resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto);
+        let resolution =
+            bun_fmt::redacted(resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto));
         if index + 1 < trusted.len() {
             bun_core::prettyln!(
                 "<d>├──<r> {}<r><d>@{}<r>\n",

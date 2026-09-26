@@ -1,9 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import type { AddressInfo } from "node:net";
+import { connect, createServer } from "node:net";
 
 // connect_finish must tear down a still-live previous native socket before
 // reusing the wrapper, not alias two native sockets onto one ext slot.
-describe.concurrent("socket.connect() on an already-connected socket", () => {
+describe.concurrent("socket.connect() re-entry", () => {
   it("does not crash and emits connect for the new connection", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -99,27 +101,36 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
     });
   });
 
-  it("does not crash when reconnecting while the first connect is still in flight", async () => {
+  // libuv's uv_tcp_connect returns UV_EALREADY while the handle's connect_req
+  // is in flight, and internalConnect destroys the socket with that error.
+  // The first attempt is torn down, no 'connect' fires, and the server sees at
+  // most the one connection the first attempt opened.
+  async function connectWhileConnecting(extraConnects: string) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           const { createServer, connect } = require("node:net");
-          const srv = createServer(c => c.on("error", () => {})).listen(0, "127.0.0.1", () => {
+          const { getSystemErrorName } = require("node:util");
+          const events = [];
+          let connections = 0;
+          const srv = createServer(c => { connections++; c.on("error", () => {}); });
+          srv.listen(0, "127.0.0.1", () => {
             const port = srv.address().port;
             const s = connect(port, "127.0.0.1");
-            // Second connect while the first is still connecting.
-            s.connect(port, "127.0.0.1");
-            s.once("connect", () => {
-              process.stdout.write("connect");
+            ${extraConnects}
+            s.on("connect", () => {
+              events.push("connect");
               s.destroy();
-              srv.close();
             });
-            s.once("error", e => {
-              process.stdout.write("err:" + e.code);
-              s.destroy();
-              srv.close();
+            s.on("error", e => events.push("error:" + e.code + ":" + getSystemErrorName(e.errno) + ":" + e.syscall));
+            s.on("close", hadError => {
+              events.push("close:" + hadError);
+              setImmediate(() => {
+                srv.close();
+                process.stdout.write(JSON.stringify({ events, connections }));
+              });
             });
           });
         `,
@@ -129,10 +140,60 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Node emits EALREADY here; Bun drops the first in-flight connect and
-    // completes the second. Either is acceptable so long as the process
-    // exits cleanly.
-    expect(["connect", "err:EALREADY"]).toContain(stdout);
-    expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  const EALREADY = "error:EALREADY:EALREADY:connect";
+
+  it("while the first connect is still in flight fails with EALREADY and no connect", async () => {
+    const { events, connections } = await connectWhileConnecting(`s.connect(port, "127.0.0.1");`);
+    expect(events).toEqual([EALREADY, "close:true"]);
+    expect(connections).toBeLessThanOrEqual(1);
+  });
+
+  it("a third connect() is dropped once the EALREADY destroy cleared connecting", async () => {
+    const { events, connections } = await connectWhileConnecting(
+      `s.connect(port, "127.0.0.1"); s.connect(port, "127.0.0.1");`,
+    );
+    expect(events).toEqual([EALREADY, "close:true"]);
+    expect(connections).toBeLessThanOrEqual(1);
+  });
+
+  it("a lookup callback that fires twice fails the second connect with EALREADY", async () => {
+    let connections = 0;
+    const server = createServer(c => {
+      connections++;
+      c.on("error", () => {});
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const events: string[] = [];
+      await new Promise<void>(resolve => {
+        const c = connect({
+          host: "example.invalid",
+          port,
+          autoSelectFamily: false,
+          lookup(_host, _opts, cb) {
+            cb(null, "127.0.0.1", 4);
+            cb(null, "127.0.0.1", 4);
+          },
+        });
+        c.on("connect", () => {
+          events.push("connect");
+          c.destroy();
+        });
+        c.on("error", (e: NodeJS.ErrnoException) => events.push("error:" + e.code + ":" + e.syscall));
+        c.on("close", hadError => {
+          events.push("close:" + hadError);
+          resolve();
+        });
+      });
+      expect(events).toEqual(["error:EALREADY:connect", "close:true"]);
+      expect(connections).toBeLessThanOrEqual(1);
+    } finally {
+      server.close();
+    }
   });
 });

@@ -3111,6 +3111,63 @@ it.each([undefined, "throw", "strict"])(
   },
 );
 
+// With no 'unhandledRejection' listener and no --unhandled-rejections flag,
+// node raises the rejection as an uncaught exception (origin
+// "unhandledRejection"). A listener or capture callback that takes it keeps
+// the process alive with exit code 0; with neither, 'exit' listeners see 1.
+it.each([
+  {
+    name: "an 'uncaughtException' listener",
+    setup: `process.on("uncaughtExceptionMonitor", (e, origin) => console.log("monitor", e.message, origin));
+            process.on("uncaughtException", (e, origin) => console.log("uncaughtException", e.message, origin));`,
+    stdout: [
+      "monitor oops unhandledRejection",
+      "uncaughtException oops unhandledRejection",
+      "immediate",
+      "exit 0 undefined",
+    ],
+    stderr: "",
+    exitCode: 0,
+  },
+  {
+    name: "the uncaught exception capture callback",
+    setup: `process.setUncaughtExceptionCaptureCallback(e => console.log("captured", e.message));`,
+    stdout: ["captured oops", "immediate", "exit 0 undefined"],
+    stderr: "",
+    exitCode: 0,
+  },
+  {
+    name: "the fatal path when nothing listens",
+    setup: "",
+    stdout: ["exit 1 1"],
+    stderr: expect.stringContaining("oops"),
+    exitCode: 1,
+  },
+])(
+  "a default-mode unhandled rejection reaches $name",
+  async ({ setup, stdout: lines, stderr: errors, exitCode: code }) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${setup}
+       process.on("exit", code => console.log("exit", code, process.exitCode));
+       setImmediate(() => console.log("immediate"));
+       Promise.reject(new Error("oops"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+      stdout: lines,
+      stderr: errors,
+      exitCode: code,
+    });
+  },
+);
+
 it("a throwing Bun.spawn ipc handler keeps the parent alive", async () => {
   using dir = tempDir("spawn-ipc-throw", {
     "parent.js": `

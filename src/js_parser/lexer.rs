@@ -419,7 +419,7 @@ impl<'a> Lexer<'a> {
 
     // deinit → Drop (see impl Drop below)
 
-    fn decode_escape_sequences(
+    pub fn decode_escape_sequences(
         &mut self,
         start: usize,
         text: &[u8],

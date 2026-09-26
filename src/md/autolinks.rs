@@ -190,10 +190,17 @@ pub(crate) fn find_permissive_autolink(
     Some(al)
 }
 
-/// A permissive autolink with plain boundaries. The walk gets one that ends in `*`, `_` or `~`: it can cut it.
+/// A permissive autolink with plain boundaries. One with `*`, `_` or `~` in its trailing punctuation is for the walk.
 pub(crate) fn find_strict_permissive_autolink(content: &[u8], pos: usize) -> AutolinkResult {
-    scan_permissive_autolink(content, pos, None, content.len())
-        .filter(|al| !EMPH_DELIMS.contains(content[al.end - 1]))
+    let al = scan_permissive_autolink(content, pos, None, content.len())?;
+    let mut end = al.end;
+    while end > pos && !helpers::is_alpha_num(content[end - 1]) {
+        if EMPH_DELIMS.contains(content[end - 1]) {
+            return None;
+        }
+        end -= 1;
+    }
+    Some(al)
 }
 
 /// Where to cut a link that ends at `end` so that it covers only whole pairs of `runs`; `None` if it does.

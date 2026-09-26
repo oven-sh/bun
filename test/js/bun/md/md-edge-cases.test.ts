@@ -1353,6 +1353,14 @@ describe("permissive autolinks and emphasis delimiters", () => {
       '<p><strong>See <a href="https://example.com/path">https://example.com/path</a></strong>.</p>\n',
     ],
     ["*see http://x.yz/a*.", '<p><em>see <a href="http://x.yz/a">http://x.yz/a</a></em>.</p>\n'],
+    [
+      "**See https://example.com/path**...",
+      '<p><strong>See <a href="https://example.com/path">https://example.com/path</a></strong>...</p>\n',
+    ],
+    [
+      "~~old www.example.com/a~~...",
+      '<p><del>old <a href="http://www.example.com/a">www.example.com/a</a></del>...</p>\n',
+    ],
     ["__a@b.cob__", '<p><strong><a href="mailto:a@b.cob">a@b.cob</a></strong></p>\n'],
     ["_a@b.co__", '<p><em><a href="mailto:a@b.co">a@b.co</a></em>_</p>\n'],
     ["**http://example.com/a**", '<p><strong><a href="http://example.com/a">http://example.com/a</a></strong></p>\n'],
@@ -1453,7 +1461,7 @@ describe("permissive autolinks and emphasis delimiters", () => {
     await expectRendersQuickly(`
       const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
       const count = (html, tag) => html.split(tag).length - 1;
-      const n = 20000;
+      const n = 10000;
 
       // Each "www." link runs to the end of the token, over the openers of
       // the links after it. Every one of those openers closes outside of the

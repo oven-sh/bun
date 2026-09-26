@@ -403,9 +403,7 @@ impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// Basename of the directory that holds the `node` and `bun` shims:
-    /// `bun-node-<sha>`, `bun-node-debug` for debug builds, `bun-node` when no
-    /// sha is known. ASCII-only: the Windows arm widens it byte-by-byte.
+    /// Basename of the shared `node` / `bun` shim directory (ASCII-only).
     pub const BUN_NODE_DIR_NAME: &'static str = if bun_core::env::IS_DEBUG {
         "bun-node-debug"
     } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
@@ -414,12 +412,7 @@ impl RunCommand {
         const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
     };
 
-    /// `/tmp/bun-node-<sha>` (or debug variant). Windows picks the directory
-    /// at runtime (see `windows_node_shim`), so this constant is POSIX-only.
-    ///
-    /// NOTE: the SHA alone does not uniquely identify a binary — two local
-    /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
-    /// therefore re-points a stale link on EEXIST instead of trusting it.
+    /// `/tmp/bun-node-<sha>`. Windows picks its directory at runtime in `windows_node_shim`.
     #[cfg(not(windows))]
     pub const BUN_NODE_DIR: &'static str = {
         use const_format::concatcp;
@@ -646,9 +639,6 @@ impl RunCommand {
                 path.push(bun_paths::DELIMITER);
             }
 
-            // The reason for the extra delim is because we are going to append the system PATH
-            // later on. this is done by the caller, and explains why we are adding bun_node_dir
-            // to the end of the path slice rather than the start.
             path.extend_from_slice(&shim.dir);
             path.push(bun_paths::DELIMITER);
             if optional_bun_path.is_empty() {
@@ -658,8 +648,7 @@ impl RunCommand {
         }
     }
 
-    /// The one-line warning both callers print when no `node` shim could be
-    /// created. The script still runs. It fails only if it spawns `node`.
+    /// Printed when no `node` shim could be created. The script still runs.
     pub fn warn_node_shim_failed(err: &crate::Error) {
         bun_core::pretty_errorln!(
             "<r><yellow>warn<r>: could not create the <b>node<r> alias for bun: {}. Scripts that run <b>node<r> will not find it.",
@@ -669,14 +658,13 @@ impl RunCommand {
 }
 
 /// Where the Windows `node.exe` and `bun.exe` shims for the running bun live.
-/// Built once per process by `RunCommand::windows_node_shim`.
 #[cfg(windows)]
 pub struct WindowsNodeShim {
-    /// UTF-8 directory that holds both shims, no trailing separator.
+    /// UTF-8, no trailing separator.
     pub dir: Box<[u8]>,
     /// UTF-8 `<dir>\node.exe`.
     pub node_exe: bun_core::ZBox,
-    /// UTF-8 path of the running `bun.exe`, the link target.
+    /// UTF-8 path of the running `bun.exe`.
     pub bun_exe: bun_core::ZBox,
 }
 
@@ -684,34 +672,23 @@ pub struct WindowsNodeShim {
 static WINDOWS_NODE_SHIM: std::sync::OnceLock<Result<WindowsNodeShim, crate::Error>> =
     std::sync::OnceLock::new();
 
-/// How `link_windows_node_shims` materializes a shim.
 #[cfg(windows)]
 #[derive(Clone, Copy)]
 enum ShimKind {
-    /// A hard link to the running image. Kept when the existing file has the
-    /// same volume serial and file index as the image.
+    /// Identity: volume serial + file index.
     HardLink,
-    /// A copy of the running image. Kept when the existing file has the same
-    /// size and last-write time as the image (`CopyFileW` preserves both).
+    /// Identity: size + last-write time (`CopyFileW` preserves both).
     Copy,
 }
 
 #[cfg(windows)]
 impl RunCommand {
-    /// Directory name of the shims beside `bun.exe`. Stable across upgrades:
-    /// the directory belongs to one install, and a stale link in it is
-    /// replaced by the identity check in `link_windows_node_shims`.
+    /// Not sha-keyed: the directory belongs to one install and stale links are relinked.
     const BESIDE_EXE_DIR_NAME: &'static str = "bun-node";
 
-    /// Creates `node.exe` and `bun.exe` hard links to the running bun, once per
-    /// process, and returns where they are. The PATH entry and the `NODE` /
-    /// `npm_node_execpath` values both come from this one result.
-    ///
-    /// A hard link cannot cross volumes, so the first candidate is a directory
-    /// beside `bun.exe` itself: it is on the same volume by construction. When
-    /// that directory is not writable (a `Program Files` install), the shims
-    /// go under `%TEMP%\bun-node-<sha>`: as hard links when `%TEMP%` is on the
-    /// same volume, as copies of `bun.exe` when it is not.
+    /// Plants the `node.exe` / `bun.exe` shims once per process and returns where.
+    /// A hard link cannot cross volumes, so `<dir of bun.exe>\bun-node` comes first,
+    /// then `%TEMP%\bun-node-<sha>` as hard links, then as copies.
     pub fn windows_node_shim() -> Result<&'static WindowsNodeShim, crate::Error> {
         match WINDOWS_NODE_SHIM.get_or_init(Self::plant_windows_node_shim) {
             Ok(shim) => Ok(shim),
@@ -731,9 +708,7 @@ impl RunCommand {
 
         let mut buf = bun_paths::w_path_buffer_pool::get();
 
-        // Running as one of the shims (a nested `--bun`, or a script that
-        // spawned the `bun.exe` shim): plant into the directory we run from.
-        // `<shim dir>\bun-node` would nest one more level per hop.
+        // Running as a shim already (nested `--bun`): reuse its directory.
         buf[..exe_dir.len()].copy_from_slice(exe_dir);
         let len = if Self::ends_with_dir_name(exe_dir, Self::BESIDE_EXE_DIR_NAME) {
             exe_dir.len()
@@ -751,8 +726,7 @@ impl RunCommand {
             Err(e) => e,
         };
 
-        // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs, the
-        // trailing NUL included, into `buf`.
+        // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs into `buf`.
         let temp_len = unsafe { win::GetTempPathW(buf.len() as u32, buf.as_mut_ptr()) } as usize;
         if temp_len == 0 || temp_len >= buf.len() {
             return Err(beside_exe_err);
@@ -792,8 +766,7 @@ impl RunCommand {
                 .all(|(&a, b)| a < 0x80 && (a as u8).eq_ignore_ascii_case(&b))
     }
 
-    /// Appends `\<name>` to the directory in `buf[..dir_len]` and returns the
-    /// new length. Keeps room for the longest shim file name and its NUL.
+    /// Appends `\<name>` to `buf[..dir_len]`, keeping room for `SHIM_NAME_ROOM`.
     fn append_dir_name(buf: &mut [u16], dir_len: usize, name: &str) -> Result<usize, crate::Error> {
         let len = dir_len + 1 + name.len();
         if len + Self::SHIM_NAME_ROOM > buf.len() {
@@ -810,10 +783,7 @@ impl RunCommand {
     /// `\node.exe.<pid>.tmp\0` at its longest.
     const SHIM_NAME_ROOM: usize = b"\\node.exe.".len() + 10 + b".tmp\0".len();
 
-    /// Plants `node.exe` and `bun.exe` inside the directory `buf[..dir_len]`.
-    /// A shim that already exists and matches the image is kept. One that
-    /// does not match is removed and made again, once. On the first failure
-    /// that is not EEXIST the directory is created and the shim retried once.
+    /// Plants both shims in `buf[..dir_len]`: keeps a matching one, replaces a stale one once.
     fn link_windows_node_shims(
         buf: &mut [u16],
         dir_len: usize,
@@ -844,9 +814,7 @@ impl RunCommand {
                 match result {
                     Ok(()) => break,
                     Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                        // Two local builds at the same commit, or an upgrade
-                        // in place, leave a link at a different image here.
-                        // Reusing it would run the wrong binary as `node`.
+                        // An upgrade in place leaves a link at the old image here.
                         if replaced
                             || Self::shim_matches(buf, dest_len, image_stat, kind).unwrap_or(false)
                         {
@@ -876,9 +844,7 @@ impl RunCommand {
         Ok(())
     }
 
-    /// Whether the file at `buf[..dest_len]` is the running image, by the
-    /// identity `kind` preserves. `None` when there is no file there. With no
-    /// `image_stat` the existing file is trusted.
+    /// `None` when no file is at `buf[..dest_len]`. Without `image_stat`, trusts it.
     fn shim_matches(
         buf: &[u16],
         dest_len: usize,
@@ -910,9 +876,7 @@ impl RunCommand {
         })
     }
 
-    /// `CopyFileW(image, <dest>.<pid>.tmp)`, then a rename over `<dest>`, so
-    /// that a copy that is killed halfway leaves no half-written `node.exe`
-    /// behind for the next run to trust.
+    /// Copies to `<dest>.<pid>.tmp` and renames, so a killed copy leaves no half `node.exe`.
     fn copy_windows_node_shim(
         buf: &mut [u16],
         dest_len: usize,

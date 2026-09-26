@@ -1748,9 +1748,7 @@ impl RunCommand {
     #[cfg(not(windows))]
     pub(crate) const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
 
-    /// Returns the path of the fake `node` shim that points back at the
-    /// running `bun` binary. On Windows this is the `node.exe` that
-    /// `create_fake_temporary_node_executable` planted, so call it after that.
+    /// Path of the fake `node` shim. On Windows, call after `create_fake_temporary_node_executable`.
     pub(crate) fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {

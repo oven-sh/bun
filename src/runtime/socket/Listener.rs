@@ -845,8 +845,6 @@ impl Listener {
                 // SAFETY: the pipe context is live while `this.listener` holds it.
                 unsafe { pipe.as_ref() }.ctx.set(Some(ctx));
             }
-            #[cfg(not(windows))]
-            ListenerType::NamedPipe(_) => {}
             ListenerType::None => {}
         }
         Ok(JSValue::UNDEFINED)

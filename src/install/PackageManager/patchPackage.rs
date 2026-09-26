@@ -16,6 +16,7 @@ use crate::isolated_install::FileCopier;
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::tree;
 use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
+use crate::package_installer::alias_is_safe_install_target;
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::options::{LogLevel, PatchFeatures};
 use crate::package_manager_real::package_manager_directories::{
@@ -254,12 +255,12 @@ pub fn do_patch_commit(
         }
         PatchArgKind::NameAndVersion => 'brk: {
             let (name, version) = Dependency::split_name_and_maybe_version(argument);
-            let (pkg_id, node_modules_relative_path) =
+            let (pkg_id, node_modules_relative_path, folder_name) =
                 pkg_info_for_name_and_version(&lockfile, &mut iterator, argument, name, version);
 
             let changes_dir = resolve_path::join_z_buf::<platform::Auto>(
                 &mut pathbuf[..],
-                &[&node_modules_relative_path, name],
+                &[&node_modules_relative_path, &folder_name],
             )
             .as_bytes()
             .to_vec();
@@ -879,7 +880,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(
                     &manager.lockfile,
                 );
-                let (pkg_id, folder_relative_path) = pkg_info_for_name_and_version(
+                let (pkg_id, folder_relative_path, folder_name) = pkg_info_for_name_and_version(
                     &manager.lockfile,
                     &mut iterator,
                     pkg_maybe_version_to_patch,
@@ -896,7 +897,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     write!(
                         &mut name_and_version,
                         "{}@{}",
-                        bstr::BStr::new(name),
+                        bstr::BStr::new(&pkg_name),
                         pkg.resolution.fmt(strbuf, PathSep::Posix)
                     )
                     .expect("unreachable");
@@ -926,7 +927,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 let cache_dir_subpath = cache_result.cache_dir_subpath;
 
                 let module_folder_ =
-                    resolve_path::join::<platform::Auto>(&[&folder_relative_path, name]);
+                    resolve_path::join::<platform::Auto>(&[&folder_relative_path, &folder_name]);
                 #[cfg(windows)]
                 let buf =
                     resolve_path::path_to_posix_buf::<u8>(module_folder_, &mut win_normalizer[..])
@@ -1220,18 +1221,14 @@ type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::Nod
 fn node_modules_folder_for_dependency_ids(
     iterator: &mut NodeModulesIterator<'_>,
     ids: &[IdPair],
-) -> Option<Vec<u8>> {
+) -> Option<(IdPair, Vec<u8>)> {
     loop {
         let node_modules = iterator.next(None)?;
-        let mut found = false;
-        for id in ids {
-            if node_modules.dependencies.contains(&id.0) {
-                found = true;
-                break;
-            }
-        }
-        if found {
-            return Some(node_modules.relative_path.as_bytes().to_vec());
+        if let Some(&id) = ids
+            .iter()
+            .find(|id| node_modules.dependencies.contains(&id.0))
+        {
+            return Some((id, node_modules.relative_path.as_bytes().to_vec()));
         }
     }
 }
@@ -1251,14 +1248,16 @@ fn node_modules_folder_for_dependency_id(
 
 type IdPair = (DependencyID, PackageID);
 
+/// Returns the package, the node_modules folder that holds it, and the name of its folder there.
 fn pkg_info_for_name_and_version(
     lockfile: &Lockfile,
     iterator: &mut NodeModulesIterator<'_>,
     pkg_maybe_version_to_patch: &[u8],
     name: &[u8],
     version: Option<&[u8]>,
-) -> (PackageID, Vec<u8>) {
+) -> (PackageID, Vec<u8>, Vec<u8>) {
     let mut pairs: Vec<IdPair> = Vec::with_capacity(8);
+    let mut aliased: Vec<IdPair> = Vec::new();
 
     let name_hash = string_hash(name);
 
@@ -1266,23 +1265,46 @@ fn pkg_info_for_name_and_version(
 
     let mut resolution_label = Vec::new();
     let dependencies = lockfile.buffers.dependencies.as_slice();
+    let pkg_name_hashes = lockfile.packages.items_name_hash();
+    // The name becomes a path that `bun patch` deletes and writes, the same as an install.
+    let folder_name = |dep_id: DependencyID| {
+        let folder_name = dependencies[dep_id as usize].name.slice(strbuf);
+        if !alias_is_safe_install_target(folder_name) {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: refusing to patch dependency with unsafe name {}",
+                bun_fmt::quote(folder_name),
+            );
+            Global::crash();
+        }
+        folder_name.to_vec()
+    };
 
-    for (dep_id, dep) in dependencies.iter().enumerate() {
-        if dep.name_hash != name_hash {
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    for (dep_id, (dep, &pkg_id)) in dependencies.iter().zip(resolutions).enumerate() {
+        // `invalid_package_id` and any other id past the end: the dependency did not resolve.
+        let Some(&pkg_name_hash) = pkg_name_hashes.get(pkg_id as usize) else {
             continue;
-        }
-        let pkg_id = lockfile.buffers.resolutions.as_slice()[dep_id];
-        if pkg_id == invalid_package_id {
+        };
+        let matches = if dep.name_hash == name_hash {
+            &mut pairs
+        } else if pkg_name_hash == name_hash {
+            &mut aliased
+        } else {
             continue;
-        }
+        };
         let pkg = *lockfile.packages.get(pkg_id as usize);
         if let Some(v) = version {
             if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == v {
-                pairs.push((dep_id as DependencyID, pkg_id));
+                matches.push((dep_id as DependencyID, pkg_id));
             }
         } else {
-            pairs.push((dep_id as DependencyID, pkg_id));
+            matches.push((dep_id as DependencyID, pkg_id));
         }
+    }
+
+    // Not a union: an alias of another version must not make a dependency's name ambiguous.
+    if pairs.is_empty() {
+        pairs = aliased;
     }
 
     if pairs.is_empty() {
@@ -1307,14 +1329,15 @@ fn pkg_info_for_name_and_version(
                     Global::crash();
                 }
             };
-            return (pkg_id, folder);
+            return (pkg_id, folder, folder_name(dep_id));
         }
 
         // we found multiple dependents of the supplied pkg + version
         // the final package in the node_modules might be hoisted
         // so we are going to try looking for each dep id in node_modules
-        let (_, pkg_id) = pairs[0];
-        let folder = match node_modules_folder_for_dependency_ids(iterator, &pairs) {
+        let ((dep_id, pkg_id), folder) = match node_modules_folder_for_dependency_ids(
+            iterator, &pairs,
+        ) {
             Some(f) => f,
             None => {
                 bun_core::pretty_error!(
@@ -1325,7 +1348,7 @@ fn pkg_info_for_name_and_version(
             }
         };
 
-        return (pkg_id, folder);
+        return (pkg_id, folder, folder_name(dep_id));
     }
 
     // Otherwise the user did not supply a version, just the pkg name
@@ -1343,7 +1366,7 @@ fn pkg_info_for_name_and_version(
                 Global::crash();
             }
         };
-        return (pkg_id, folder);
+        return (pkg_id, folder, folder_name(dep_id));
     }
 
     // Otherwise we have multiple matches
@@ -1366,7 +1389,7 @@ fn pkg_info_for_name_and_version(
     // Disambiguate case a) from b)
     if count as usize == pairs.len() {
         // It may be hoisted, so we'll try the first one that matches
-        let folder = match node_modules_folder_for_dependency_ids(iterator, &pairs) {
+        let ((dep_id, _), folder) = match node_modules_folder_for_dependency_ids(iterator, &pairs) {
             Some(f) => f,
             None => {
                 bun_core::pretty_error!(
@@ -1376,7 +1399,7 @@ fn pkg_info_for_name_and_version(
                 Global::crash();
             }
         };
-        return (pkg_id, folder);
+        return (pkg_id, folder, folder_name(dep_id));
     }
 
     bun_core::pretty_errorln!(

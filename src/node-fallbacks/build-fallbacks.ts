@@ -17,13 +17,6 @@ for (const name of allFiles) {
 
 for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
   const name = allFiles[fileIndex];
-  const mod = basename(name, extname(name)).replaceAll(".", "/");
-  const file = allFiles.find(f => f.startsWith(mod));
-  const externals = [...builtins];
-  const i = externals.indexOf(name);
-  if (i !== -1) {
-    externals.splice(i, 1);
-  }
 
   // Build all files at once with specific options
   const externalModules = builtins
@@ -31,23 +24,50 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
     .flatMap(b => [`--external:node:${b}`, `--external:${b}`])
     .join(" ");
 
+  // A source that sets `module.exports` stays CommonJS, so `require()` of the polyfill returns that value.
+  const format = /^module\.exports\s*=/m.test(fs.readFileSync(name, "utf8")) ? "cjs" : "esm";
+
+  // Free `process` / `Buffer` in the npm packages: rename, then import from the sibling polyfill.
+  const injectedGlobals = [
+    {
+      defines: ["process", "global.process"],
+      id: "__bun_process",
+      skip: ["process.js"],
+      esm: 'import __bun_process from "process";',
+      cjs: 'var __bun_process = require("process").default;',
+    },
+    {
+      defines: ["Buffer", "global.Buffer"],
+      id: "__bun_Buffer",
+      // assert.js: only npm util's never-called isBuffer() names Buffer; the import would cost 31 KB.
+      skip: ["buffer.js", "assert.js"],
+      esm: 'import { Buffer as __bun_Buffer } from "buffer";',
+      cjs: 'var __bun_Buffer = require("buffer").Buffer;',
+    },
+  ].filter(g => !g.skip.includes(name));
+  const defineGlobals = injectedGlobals.flatMap(g => g.defines.map(d => `--define=${d}:${g.id}`)).join(" ");
+
   // Create the build command with all the specified options
   const buildCommand =
-    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
+    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis ${{ raw: defineGlobals }} --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${format} --target=node ${{ raw: externalModules }}`.text();
 
   commands.push(
-    buildCommand.then(async text => {
+    buildCommand.then(async () => {
       // This is very brittle. But that should be okay for our usecase
       let outfile = fs
         .readFileSync(`${outdir}/${name}`, "utf8")
         .replaceAll("__require(", "require(")
         .replaceAll("import.meta.url", "''")
         .replaceAll("createRequire", "")
-        .replaceAll("global.process", "require('process')")
         .trim();
 
       while (outfile.startsWith("import{")) {
         outfile = outfile.slice(outfile.indexOf(";") + 1);
+      }
+
+      for (const { id, esm, cjs } of injectedGlobals) {
+        if (!outfile.includes(id)) continue;
+        outfile = (format === "cjs" ? cjs : esm) + outfile;
       }
 
       if (outfile.includes('"node:module"')) {

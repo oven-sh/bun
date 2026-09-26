@@ -1,3 +1,8 @@
+# Check out every detected-text file with LF, even under core.autocrlf=true
+# (the Git for Windows installer default). Files whose exact bytes matter must
+# opt out with `-text`, like the entries below.
+* text=auto eol=lf
+
 *.css text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.js text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.jsx text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
@@ -18,6 +23,8 @@
 *.mdx text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.mjs text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.mts text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
+*.cjs text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
+*.cts text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 
 # Patch files are line-ending-sensitive — `git apply` rejects CRLF as corrupt.
 *.patch text eol=lf
@@ -30,6 +37,14 @@ test/js/bun/resolve/xml/xml-utf16le-bom.xml -text
 test/js/bun/resolve/xml/xml-utf16be-bom.xml -text
 test/js/bun/resolve/xml/xml-utf8-bom.xml -text
 test/js/bun/resolve/xml/xml-latin1.xml -text
+
+# Committed with CRLF. `-text` keeps their bytes exactly as committed, in both
+# directions, so `git add --renormalize` cannot rewrite them.
+packages/bun-release/.gitignore -text
+src/runtime/cli/uninstall.ps1 -text
+src/windows-app-info.rc -text
+test/js/bun/io/hello-world.txt -text
+test/js/bun/resolve/toml/toml-fixture.toml.txt -text
 
 .vscode/launch.json linguist-generated
 fixture.*.c linguist-generated

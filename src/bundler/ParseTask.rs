@@ -2666,8 +2666,7 @@ pub mod parse_worker {
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
-        // A "use client" file in the browser graph is plain client code and never
-        // reaches the boundary gate in `on_parse_task_complete`; the other cases do.
+        // "use client" in the browser graph is plain client code; the other cases need a boundary.
         let directive_without_framework = framework_server_components.is_none()
             && match use_directive {
                 UseDirective::None => false,

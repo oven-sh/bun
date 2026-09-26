@@ -7720,8 +7720,7 @@ pub mod bv2_impl {
                     // `result.ast` is moved into `graph.ast` and `result.source` was
                     // swapped earlier, so snapshot the data the use-directive block
                     // needs *before* the move. Only paid for files that hit the SCB gate.
-                    // Without a framework the only directive ParseTask lets through is
-                    // "use client" in the browser graph, which is plain client code.
+                    // Without a framework ParseTask only lets "use client" through in the browser graph.
                     let separate_ssr_graph = this
                         .framework
                         .as_ref()

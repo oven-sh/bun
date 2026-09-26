@@ -642,6 +642,31 @@ describe("Transfer-Encoding without chunked on a CONNECT or Upgrade request", ()
 // Value lengths landing parseTrailerFields' 8-byte field-value scan on the
 // alignments where its last load reaches past the terminating CRLF CRLF: that
 // read leaves the heap allocation without the section's post-padding (ASAN).
+// llhttp sets F_CONNECTION_CLOSE from either field, so nothing behind this request is served.
+test.each(["Connection", "Proxy-Connection"])("%s: close ends the connection after the response", async field => {
+  const urls: string[] = [];
+  const server = createServer((req, res) => {
+    urls.push(req.url!);
+    res.end("ok");
+  });
+  server.on("clientError", (_err, socket) => socket.destroy());
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    let received = "";
+    socket.on("data", chunk => (received += chunk));
+    socket.write(`GET /a HTTP/1.1\r\nHost: x\r\n${field}: close\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n`);
+    await once(socket, "close");
+    expect({ urls, head: received.split("\r\n").filter(line => /^(HTTP|Connection)/.test(line)) }).toEqual({
+      urls: ["/a"],
+      head: ["HTTP/1.1 200 OK", "Connection: close"],
+    });
+  } finally {
+    server.close();
+  }
+});
+
 test("chunked request trailers parse at every field-value scan boundary", async () => {
   const seen: { trailers: Record<string, string | string[] | undefined>; raw: string[] }[] = [];
   await using server = createServer((req, res) => {

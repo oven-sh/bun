@@ -568,6 +568,60 @@ test("closeAllConnections() after close() force-drains the withheld callback", a
 // takes it off the list closeIdleConnections()/closeAllConnections() walk. After
 // close() those two must reap a plain keep-alive socket but leave an upgraded
 // one alone, while 'close' itself still waits for the upgraded socket to end.
+test("closeAllConnections() on a listening server destroys the connections and keeps the listener", async () => {
+  const events: string[] = [];
+  const server = createServer((req, res) => res.end("ok"));
+  server.on("close", () => events.push("server close"));
+  server.on("upgrade", (_req, socket) => {
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+    socket.on("data", chunk => socket.write("echo " + chunk));
+    socket.on("end", () => socket.end());
+  });
+  server.keepAliveTimeout = 60000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  async function open(head: string, until: string) {
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    let received = "";
+    socket.on("data", chunk => (received += chunk));
+    socket.write(head);
+    while (!received.includes(until)) await once(socket, "data");
+    return socket;
+  }
+
+  const get = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+  const keepAlive = await open(get, "ok");
+  const upgraded = await open("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n", "\r\n\r\n");
+  try {
+    const keepAliveClosed = once(keepAlive, "close");
+    server.closeAllConnections();
+    await keepAliveClosed;
+    expect({ listening: server.listening, port: (server.address() as AddressInfo | null)?.port }).toEqual({
+      listening: true,
+      port,
+    });
+
+    upgraded.write("ping");
+    expect(String((await once(upgraded, "data"))[0])).toBe("echo ping");
+    (await open(get, "ok")).destroy();
+    expect(events).toEqual([]);
+
+    upgraded.destroy();
+    const closed = Promise.withResolvers<Error | undefined>();
+    server.close(closed.resolve);
+    expect(await closed.promise).toBeUndefined();
+    expect(events).toEqual(["server close"]);
+  } finally {
+    keepAlive.destroy();
+    upgraded.destroy();
+    server.closeAllConnections();
+    if (server.listening) server.close();
+  }
+});
+
 test("closeIdleConnections()/closeAllConnections() after close() leave an upgraded socket open", async () => {
   const inHandler = Promise.withResolvers<void>();
   let releaseResponse!: () => void;

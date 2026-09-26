@@ -404,9 +404,7 @@ function connectionListenerHTTP1(server, socket, options) {
   // Node's per-connection state.requestsCount, behind server.maxRequestsPerSocket.
   let requestsCount = 0;
 
-  // Like node:_http_common: the parser hands fields to kOnHeaders when its 32-field buffer is
-  // full, and all trailers. After the first such flush on a connection, kOnHeadersComplete
-  // gets no headers and no url for any later message.
+  // Like node:_http_common: after the parser's first kOnHeaders flush (32 fields, or trailers), kOnHeadersComplete gets no headers and no url.
   let flushedHeaders = [];
   let flushedUrl = "";
   parser[kOnHeaders] = function onHttp1Headers(headers, url) {

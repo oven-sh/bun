@@ -327,13 +327,20 @@ struct HttpResponseData;
             return false;
         }
 
+        /* llhttp gives Connection and Proxy-Connection the same header state. */
+        static bool isConnectionField(const Header &h)
+        {
+            return (h.key.length() == 10 && !strncasecmp(h.key.data(), "connection", 10))
+                || (h.key.length() == 16 && !strncasecmp(h.key.data(), "proxy-connection", 16));
+        }
+
         bool hasConnectionToken(std::string_view lowerToken)
         {
-            if (!bf.mightHave("connection")) {
+            if (!bf.mightHave("connection") && !bf.mightHave("proxy-connection")) {
                 return false;
             }
             for (Header *h = headers; (++h)->key.length();) {
-                if (h->key.length() == 10 && !strncasecmp(h->key.data(), "connection", 10) && fieldHasToken(*h, lowerToken)) {
+                if (isConnectionField(*h) && fieldHasToken(*h, lowerToken)) {
                     return true;
                 }
             }
@@ -350,8 +357,7 @@ struct HttpResponseData;
             for (Header *h = headers; (++h)->key.length();) {
                 if (h->key.length() == 7 && !strncasecmp(h->key.data(), "upgrade", 7)) {
                     hasUpgradeValue = hasUpgradeValue || h->value.length();
-                } else if ((h->key.length() == 10 && !strncasecmp(h->key.data(), "connection", 10))
-                    || (h->key.length() == 16 && !strncasecmp(h->key.data(), "proxy-connection", 16))) {
+                } else if (isConnectionField(*h)) {
                     hasConnectionUpgrade = hasConnectionUpgrade || fieldHasToken(*h, "upgrade");
                 }
             }

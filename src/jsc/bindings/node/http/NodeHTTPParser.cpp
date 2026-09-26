@@ -663,8 +663,7 @@ int HTTPParser::trackHeader(size_t len)
     return 0;
 }
 
-// Requests only: a response with too many fields is still truncated by node:_http_common.
-// https://github.com/nodejs/node/blob/v26.8.0/src/node_http_parser.cc#L1042-L1071
+// Requests only, node:_http_common truncates a response: https://github.com/nodejs/node/blob/v26.8.0/src/node_http_parser.cc#L1042-L1071
 int HTTPParser::trackHeaderPair()
 {
     if (m_parserData.type != HTTP_REQUEST) {

@@ -818,8 +818,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetAppFlags, (JSGlobalObject * globalObject, Call
     return JSValue::encode(jsUndefined());
 }
 
-// Safe to call on a listening server: server.maxHeadersCount is assignable at any time,
-// like Node's. 0 means the option is not set.
+// Also called on a listening server. 0 means the option is not set.
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetMaxHeadersCount, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

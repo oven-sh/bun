@@ -5649,14 +5649,10 @@ describe("HTTP server transport shutdown", () => {
     async firstToDrain => {
       const firstClose = Promise.withResolvers<Error | undefined>();
       const finalClose = Promise.withResolvers<Error | undefined>();
-      const firstClientError = Promise.withResolvers<void>();
       const events: string[] = [];
-      const server = createHttpsServer(tlsCert);
+      // The response never ends, so its connection stays open until the client destroys it.
+      const server = createHttpsServer(tlsCert, (_req, res) => void res.write("answer"));
       server.on("close", () => events.push("server close"));
-      server.on("clientError", (error: NodeJS.ErrnoException, socket) => {
-        socket.destroy();
-        if (error.code?.startsWith("HPE_")) firstClientError.resolve();
-      });
 
       const startHeldHandshake = async (port: number) => {
         const raw = connect(port, "127.0.0.1");
@@ -5674,16 +5670,19 @@ describe("HTTP server transport shutdown", () => {
         raw.on("close", () => wire.push(null));
         const client = tlsConnect({ socket: wire, rejectUnauthorized: false });
         client.on("error", () => {});
-        for (const start = Date.now(); held.length === 0 && Date.now() - start < 10_000; ) {
-          await new Promise<void>(resolve => setTimeout(resolve, 5));
-        }
-        expect(held.length).toBeGreaterThan(0);
+        await once(raw, "data");
         return {
           client,
           raw,
           release() {
             hold = false;
             for (const chunk of held) wire.push(chunk);
+          },
+          async destroy() {
+            const closed = once(raw, "close");
+            client.destroy();
+            raw.destroy();
+            await closed;
           },
         };
       };
@@ -5705,25 +5704,25 @@ describe("HTTP server transport shutdown", () => {
           events.push("final close callback");
           finalClose.resolve(error);
         });
-        if (firstToDrain === "first") {
-          first.release();
-          first.client.write("NOT A VALID REQUEST LINE\r\n\r\n");
-          await firstClientError.promise;
-          await new Promise<void>(resolve => setImmediate(resolve));
-          expect(events).toEqual([]);
-          final.client.destroy();
-          final.raw.destroy();
-        } else {
-          final.client.destroy();
-          final.raw.destroy();
-          await new Promise<void>(resolve => setTimeout(resolve, 25));
-          expect(events).toEqual([]);
-          first.release();
-          first.client.write("NOT A VALID REQUEST LINE\r\n\r\n");
-          await firstClientError.promise;
-        }
+        const [early, late] = firstToDrain === "first" ? [first, final] : [final, first];
+        early.release();
+        const [earlyServerSocket] = await once(server, "secureConnection");
+        const earlyServerSocketClosed = once(earlyServerSocket, "close");
+        await early.destroy();
+        await earlyServerSocketClosed;
+        // The server knows only the held handshake now. Its answer needs more reads, so a 'close' event for the early listener alone comes before it.
+        late.release();
+        late.client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        await once(late.client, "data");
+        events.push("the other connection is answered");
+        await late.destroy();
         expect(await Promise.all([firstClose.promise, finalClose.promise])).toEqual([undefined, undefined]);
-        expect(events).toEqual(["server close", "first close callback", "final close callback"]);
+        expect(events).toEqual([
+          "the other connection is answered",
+          "server close",
+          "first close callback",
+          "final close callback",
+        ]);
       } finally {
         first.client.destroy();
         first.raw.destroy();

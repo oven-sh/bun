@@ -496,17 +496,7 @@ Server.prototype.unref = function () {
 
 Server.prototype.closeAllConnections = function () {
   http1Fallback?.closeAllHttp1Connections(this);
-  const server = this[serverSymbol];
-  if (server) {
-    const generation = this[kListenerGeneration];
-    if (generation) this[kPendingCloseGenerations].add(generation);
-    this[serverSymbol] = undefined;
-    this[kPendingDrainClose] = true;
-    clearInterval(this[kConnectionsCheckingInterval]);
-    server.stop(true);
-    return;
-  }
-  // close() already dropped the native handle; destroy what is still tracked.
+  // Like Node, the listener and the sockets handed to 'connect' and 'upgrade' listeners stay.
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
     for (const socket of $Array.from(tracked) as NodeHTTPServerSocket[]) {
@@ -1205,9 +1195,7 @@ function defineHttpAllowHalfOpen(server: Server) {
   });
 }
 
-// Node's connectionListener: parser.maxHeaderPairs = server.maxHeadersCount << 1, enforced
-// while that is > 0. Same int32 arithmetic, as a field count. 0 means no limit is set.
-// https://github.com/nodejs/node/blob/v26.5.1/lib/_http_server.js#L795-L797
+// Node's int32 `maxHeadersCount << 1`, as a field count; 0 is no limit: https://github.com/nodejs/node/blob/v26.5.1/lib/_http_server.js#L795-L797
 function nativeMaxHeadersCount(maxHeadersCount) {
   if (typeof maxHeadersCount !== "number") return 0;
   const maxHeaderPairs = maxHeadersCount << 1;
@@ -1218,8 +1206,7 @@ function maxHeadersCountGet(this: Server) {
   return this[kMaxHeadersCount];
 }
 
-// Node reads `server.maxHeadersCount` for every new connection, so assigning it after
-// listen() has to reach the native parser too.
+// Node reads `server.maxHeadersCount` for every new connection, so a value assigned after listen() goes to the native parser.
 function maxHeadersCountSet(this: Server, value) {
   this[kMaxHeadersCount] = value;
   const handle = this[serverSymbol];

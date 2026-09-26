@@ -6,5 +6,5 @@ const { expect } = createTest(import.meta.path);
 const { kConnectionsCheckingInterval } = require("_http_server");
 const server = http.createServer();
 await once(server.listen(0), "listening");
-server.closeAllConnections();
+server.close();
 expect(server[kConnectionsCheckingInterval]._destroyed).toBe(true);

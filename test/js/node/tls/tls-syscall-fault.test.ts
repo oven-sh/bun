@@ -2,6 +2,7 @@ import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
+import https from "node:https";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -255,6 +256,55 @@ describe.skipIf(skip)("node:tls close_notify / shutdown under faults", () => {
     // still reach 'close' without hanging.
     expect(p.client.destroyed).toBe(true);
   });
+});
+
+describe.skipIf(skip)("node:https server under injected syscall faults", () => {
+  // Every send() takes at most 16 KB, so the flush of a ciphertext batch
+  // (128 KB) is partial: its tail waits in the loop's spill slot while the
+  // plaintext already counts as written, and the send buffer is empty before
+  // the response is out. The handler takes the end() callback as "response
+  // sent" and exits, which is the one thing that discards the spill slot.
+  test.concurrent.each([
+    ["the batch tail is all that end() leaves behind", 64 * 1024],
+    ["the last flush of the send buffer leaves the batch tail", 256 * 1024],
+  ])(
+    "the end() callback waits for the batch tail in userspace: %s",
+    async (_name, size) => {
+      const fixture = /* js */ `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const options = { key: process.env.KEY, cert: process.env.CERT };
+        const server = require("node:https").createServer(options, (req, res) => {
+          fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1 });
+          res.end(Buffer.alloc(${size}, "a"), () => process.exit(0));
+        });
+        server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, KEY: certs.key, CERT: certs.cert },
+        stderr: "inherit",
+        stdout: "pipe",
+      });
+      let portLine = "";
+      for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+        portLine += chunk;
+        if (portLine.includes("\n")) break;
+      }
+
+      const received = Promise.withResolvers<number>();
+      let bytes = 0;
+      https
+        .get({ port: Number(portLine), host: "127.0.0.1", ca: certs.cert, agent: false }, res => {
+          res.on("data", chunk => (bytes += chunk.length));
+          res.on("close", () => received.resolve(bytes));
+        })
+        .on("error", () => received.resolve(bytes));
+      expect(await received.promise).toBe(size);
+      expect(await proc.exited).toBe(0);
+    },
+    // Only fault-injection (debug/ASAN) builds run this, and there the child took 3.3 to 6.5 s to load node:https and answer.
+    30_000,
+  );
 });
 
 describe.skipIf(skip)("node:tls seeded syscall fuzz", () => {

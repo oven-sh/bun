@@ -732,6 +732,19 @@ pub fn exit(code: u32) -> ! {
     }
 }
 
+/// Runs the exit callbacks, then ends the process by `sig` (which must be at
+/// `SIG_DFL`), so the parent sees a signal death. Where the signal does not
+/// kill (PID 1, Windows), the exit code is `128 + sig`.
+pub fn exit_by_signal(sig: c_int) -> ! {
+    #[cfg(unix)]
+    {
+        IS_EXITING.store(true, Ordering::Relaxed);
+        Bun__onExit();
+        let _ = libc_raise(sig);
+    }
+    exit(128 + sig as u32)
+}
+
 pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
     raise_ignoring_panic_handler_raw(sig as c_int)
 }

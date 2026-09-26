@@ -1,16 +1,24 @@
-import { expect, test } from "bun:test";
+import { blackholeListener, type Blackhole } from "blackhole";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+
+// The connect to `url` returns EINPROGRESS and never completes, so each fetch
+// below is still connecting when its signal fires.
+let blackhole: Blackhole;
+let url: string;
+
+beforeAll(async () => {
+  blackhole = await blackholeListener();
+  url = `http://${blackhole.hostname}:${blackhole.port}/`;
+});
+
+afterAll(() => {
+  blackhole?.[Symbol.dispose]();
+});
 
 test.concurrent("fetch aborts when connect() returns EINPROGRESS but never completes", async () => {
-  // Use TEST-NET-1 (192.0.2.0/24) from RFC 5737
-  // These IPs are reserved for documentation and testing.
-  // Connecting to them will cause connect() to return EINPROGRESS
-  // but the connection will never complete because there's no route.
-  const nonRoutableIP = "192.0.2.1";
-  const port = 80;
-
   const start = performance.now();
   try {
-    await fetch(`http://${nonRoutableIP}:${port}/`, {
+    await fetch(url, {
       signal: AbortSignal.timeout(50),
     });
     expect.unreachable("Fetch should have aborted");
@@ -22,11 +30,8 @@ test.concurrent("fetch aborts when connect() returns EINPROGRESS but never compl
 });
 
 test.concurrent("fetch aborts immediately during EINPROGRESS connect", async () => {
-  const nonRoutableIP = "192.0.2.1";
-  const port = 80;
-
   // Start the fetch
-  const fetchPromise = fetch(`http://${nonRoutableIP}:${port}/`, {
+  const fetchPromise = fetch(url, {
     signal: AbortSignal.timeout(1),
   });
 
@@ -42,12 +47,9 @@ test.concurrent("fetch aborts immediately during EINPROGRESS connect", async () 
 });
 
 test.concurrent("pre-aborted signal prevents connection attempt", async () => {
-  const nonRoutableIP = "192.0.2.1";
-  const port = 80;
-
   const start = performance.now();
   try {
-    await fetch(`http://${nonRoutableIP}:${port}/`, {
+    await fetch(url, {
       signal: AbortSignal.abort(),
     });
     expect.unreachable("Fetch should have aborted");

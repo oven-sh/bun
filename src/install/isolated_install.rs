@@ -1664,6 +1664,23 @@ pub(crate) fn install_isolated_packages(
             );
             let mut owned = joined.to_vec();
             owned.push(0);
+
+            // The keys above fold in each package's current integrity, so a
+            // URL/local tarball a global-store entry holds must keep that hash
+            // for the rest of the run.
+            for (idx, &entry_hash) in entry_hashes.iter().enumerate() {
+                if entry_hash == 0 {
+                    continue;
+                }
+                let pkg_id = node_pkg_ids[entry_node_ids[idx].get() as usize];
+                if pkg_resolutions[pkg_id as usize]
+                    .tag
+                    .is_tarball_cache_keyed_by_url()
+                {
+                    manager.integrity_pinned_packages.put(pkg_id, ())?;
+                }
+            }
+
             break 'global_store_path Some(owned);
         }
     } else {
@@ -2217,7 +2234,14 @@ pub(crate) fn install_isolated_packages(
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
+                    // Global-store packages are pinned, so this is false for them.
+                    let refresh_tarball =
+                        installer
+                            .manager()
+                            .should_refresh_tarball(dep_id, pkg_id, pkg_res_tag);
+
                     let needs_install = installer.manager().options.enable.force_install()
+                        || refresh_tarball
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and
@@ -2368,21 +2392,47 @@ pub(crate) fn install_isolated_packages(
                         installer.manager_mut().get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit
 
-                    let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
-                    {
-                        install::PreinstallState::Done => false,
-                        _ => {
-                            let exists = package_manager::directories::is_package_in_cache_at(
-                                cache_dir,
-                                cache_subpath_z,
-                                pkg_res_tag,
-                            );
-                            if exists {
+                    let preinstall_state = installer.manager().get_preinstall_state(pkg_id);
+                    // A fetch that already finished this run is installed from
+                    // that extraction: never enqueued again, tag not checked.
+                    // Mirrors `PackageInstall::package_missing_from_cache`.
+                    let tarball_fetched_this_run = pkg_res_tag.is_tarball_cache_keyed_by_url() && {
+                        let url = if pkg_res_tag == ResolutionTag::RemoteTarball {
+                            pkg_res.remote_tarball().slice(string_buf)
+                        } else {
+                            pkg_res.local_tarball().slice(string_buf)
+                        };
+                        installer.manager().tarball_fetch_drained_this_run(url)
+                    };
+                    let force_refresh_tarball = refresh_tarball
+                        && preinstall_state != install::PreinstallState::Done
+                        && !tarball_fetched_this_run;
+                    let missing_from_cache = if force_refresh_tarball {
+                        true
+                    } else {
+                        match preinstall_state {
+                            install::PreinstallState::Done => false,
+                            _ if tarball_fetched_this_run => {
                                 installer
                                     .manager_mut()
                                     .set_preinstall_state(pkg_id, install::PreinstallState::Done);
+                                false
                             }
-                            !exists
+                            _ => {
+                                let exists = package_manager::directories::is_package_in_cache_at(
+                                    cache_dir,
+                                    cache_subpath_z,
+                                    pkg_res_tag,
+                                    &installer.manager().cache_pin(pkg_id),
+                                );
+                                if exists {
+                                    installer.manager_mut().set_preinstall_state(
+                                        pkg_id,
+                                        install::PreinstallState::Done,
+                                    );
+                                }
+                                !exists
+                            }
                         }
                     };
 

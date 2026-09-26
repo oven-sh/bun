@@ -46,6 +46,7 @@ use crate::package_manager_real::{
 };
 
 use super::security_scanner;
+use crate::package_manager_real::directories;
 
 pub fn install_with_manager(
     manager: &mut PackageManager,
@@ -685,6 +686,11 @@ pub fn install_with_manager(
         }
     };
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
+    // The planned scope holds pre-clean package ids. The install phase asks the
+    // scope again, so walk the cleaned lockfile.
+    if manager.named_update_reachable.is_some() {
+        crate::update_scope::plan_named(manager);
+    }
     if manager.subcommand == Subcommand::Update && !manager.options.dry_run {
         Output::flush();
         crate::update_transitive::warn_orphaned_patches(manager);
@@ -735,6 +741,13 @@ pub fn install_with_manager(
         // (before `manager` is returned to the caller) and is the sole access
         // to `*mgr_for_root_scripts_cleanup` at that instant.
         unsafe { (*mgr_for_root_scripts_cleanup).root_lifecycle_scripts = None };
+    };
+    let mgr_for_displaced_trees: *mut PackageManager = manager;
+    scopeguard::defer! {
+        // SAFETY: same provenance root as above. Runs on every exit after the
+        // tasks ran, so a failed or `--lockfile-only` run also removes the
+        // cache trees its extractions swapped out.
+        unsafe { directories::delete_displaced_cache_trees(&mut *mgr_for_displaced_trees) };
     };
 
     if let Some(root_scripts) = &manager.root_lifecycle_scripts {

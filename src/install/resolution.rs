@@ -1014,6 +1014,12 @@ impl Tag {
         self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
     }
 
+    /// Tarballs whose cache folder is keyed by URL/path hash, not content
+    /// (`cached_tarball_folder_name`), so the same key can hide new bytes.
+    pub(crate) fn is_tarball_cache_keyed_by_url(self) -> bool {
+        self == Tag::RemoteTarball || self == Tag::LocalTarball
+    }
+
     pub(crate) fn can_enqueue_install_task(self) -> bool {
         self == Tag::Npm
             || self == Tag::LocalTarball

@@ -1673,7 +1673,7 @@ impl VirtualMachine {
         err: JSValue,
         origin: UncaughtExceptionOrigin,
     ) -> bool {
-        self.uncaught_exception_impl(global_object, err, origin, false)
+        self.uncaught_exception_impl(global_object, err, err, origin, false)
     }
 
     pub fn uncaught_exception_fatal(
@@ -1682,13 +1682,16 @@ impl VirtualMachine {
         err: JSValue,
         origin: UncaughtExceptionOrigin,
     ) -> bool {
-        self.uncaught_exception_impl(global_object, err, origin, true)
+        self.uncaught_exception_impl(global_object, err, err, origin, true)
     }
 
+    /// `err` is what the listeners receive. `report` is what is printed, or handed to a worker's
+    /// parent, when none of them takes it.
     fn uncaught_exception_impl(
         &mut self,
         global_object: &JSGlobalObject,
         err: JSValue,
+        report: JSValue,
         origin: UncaughtExceptionOrigin,
         fatal_exit: bool,
     ) -> bool {
@@ -1700,7 +1703,7 @@ impl VirtualMachine {
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
-            (self.on_unhandled_rejection)(self, global_object, err);
+            (self.on_unhandled_rejection)(self, global_object, report);
             return true;
         }
 
@@ -1713,10 +1716,10 @@ impl VirtualMachine {
                 // normal path; process_exit() RETURNS on a worker, so the
                 // main-thread process_exit(7)+panic below would crash.
                 self.exit_handler.exit_code = 1;
-                (self.on_unhandled_rejection)(self, global_object, err);
+                (self.on_unhandled_rejection)(self, global_object, report);
                 return false;
             }
-            self.run_error_handler(err, None);
+            self.run_error_handler(report, None);
             // SAFETY: `global_object` is the live VM global; `process_exit` is
             // `bun_runtime::node::process::exit` (main-thread `noreturn`).
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
@@ -1730,8 +1733,8 @@ impl VirtualMachine {
             origin as c_int,
             &raw mut substitute,
         ) > 0;
-        let err = if substitute.is_empty() {
-            err
+        let report = if substitute.is_empty() {
+            report
         } else {
             substitute
         };
@@ -1742,7 +1745,7 @@ impl VirtualMachine {
             // process_exit() RETURNS on a worker, so the panic would fire; a
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
             if self.exit_on_uncaught_exception && self.is_main_thread() {
-                self.run_error_handler(err, None);
+                self.run_error_handler(report, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
@@ -1759,7 +1762,7 @@ impl VirtualMachine {
             {
                 self.unhandled_error_counter += 1;
                 self.exit_handler.exit_code = 1;
-                (self.on_unhandled_rejection)(self, global_object, err);
+                (self.on_unhandled_rejection)(self, global_object, report);
                 bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
                 bun_core::pretty_errorln!(
                     "<r>\n<d>{}<r>",
@@ -1774,7 +1777,7 @@ impl VirtualMachine {
             // --abort-on-uncaught-exception already handled in Bun__handleUncaughtException.
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
-            (self.on_unhandled_rejection)(self, global_object, err);
+            (self.on_unhandled_rejection)(self, global_object, report);
         }
         // Note: this reset must cover BOTH the FFI call and the
         // `onUnhandledRejection` callback above. The flag must stay raised
@@ -3873,11 +3876,16 @@ impl VirtualMachine {
                     return;
                 }
                 if self.hot_reload == HotReload::None {
+                    // The listeners get node's wrapper for a reason that is not an error. The
+                    // report shows the reason itself: a ResolveMessage, a BuildMessage or a plain
+                    // value says more than the wrapper's "[object Object]".
                     let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                    if self.uncaught_exception_fatal(
+                    if self.uncaught_exception_impl(
                         global_object,
                         wrapped,
+                        reason,
                         UncaughtExceptionOrigin::Rejection,
+                        true,
                     ) {
                         drain(self);
                         return;

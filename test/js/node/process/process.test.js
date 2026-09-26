@@ -3115,11 +3115,14 @@ it.each([undefined, "throw", "strict"])(
 // node raises the rejection as an uncaught exception (origin
 // "unhandledRejection"). A listener or capture callback that takes it keeps
 // the process alive with exit code 0; with neither, 'exit' listeners see 1.
+// A reason that is not an error reaches the listeners inside node's
+// ERR_UNHANDLED_REJECTION wrapper, and the report prints the reason itself.
 it.each([
   {
     name: "an 'uncaughtException' listener",
     setup: `process.on("uncaughtExceptionMonitor", (e, origin) => console.log("monitor", e.message, origin));
             process.on("uncaughtException", (e, origin) => console.log("uncaughtException", e.message, origin));`,
+    reason: `new Error("oops")`,
     stdout: [
       "monitor oops unhandledRejection",
       "uncaughtException oops unhandledRejection",
@@ -3132,20 +3135,38 @@ it.each([
   {
     name: "the uncaught exception capture callback",
     setup: `process.setUncaughtExceptionCaptureCallback(e => console.log("captured", e.message));`,
+    reason: `new Error("oops")`,
     stdout: ["captured oops", "immediate", "exit 0 undefined"],
+    stderr: "",
+    exitCode: 0,
+  },
+  {
+    name: "an 'uncaughtException' listener as node's wrapper when the reason is not an error",
+    setup: `process.on("uncaughtException", (e, origin) => console.log(e.name, e.code, origin));`,
+    reason: `{ plain: "object" }`,
+    stdout: ["UnhandledPromiseRejection ERR_UNHANDLED_REJECTION unhandledRejection", "immediate", "exit 0 undefined"],
     stderr: "",
     exitCode: 0,
   },
   {
     name: "the fatal path when nothing listens",
     setup: "",
+    reason: `new Error("oops")`,
     stdout: ["exit 1 1"],
     stderr: expect.stringContaining("oops"),
     exitCode: 1,
   },
+  {
+    name: "the fatal path, which prints a reason that is not an error as it is",
+    setup: "",
+    reason: `{ plain: "object" }`,
+    stdout: ["exit 1 1"],
+    stderr: expect.stringMatching(/^error\n\{\n  plain: "object",\n\}\n\nBun v/),
+    exitCode: 1,
+  },
 ])(
   "a default-mode unhandled rejection reaches $name",
-  async ({ setup, stdout: lines, stderr: errors, exitCode: code }) => {
+  async ({ setup, reason, stdout: lines, stderr: errors, exitCode: code }) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -3153,7 +3174,7 @@ it.each([
         `${setup}
        process.on("exit", code => console.log("exit", code, process.exitCode));
        setImmediate(() => console.log("immediate"));
-       Promise.reject(new Error("oops"));`,
+       Promise.reject(${reason});`,
       ],
       env: bunEnv,
       stdout: "pipe",

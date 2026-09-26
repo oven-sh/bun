@@ -2242,10 +2242,10 @@ impl Package<u64> {
             if let Some(bin) = json.as_property(b"bin") {
                 if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
                     for (k, v, _) in rows {
-                        string_builder.count(k);
                         let Some(v) = v else {
-                            break 'bin;
+                            continue;
                         };
+                        string_builder.count(k);
                         string_builder.count(v);
                     }
                     break 'bin;
@@ -2657,15 +2657,13 @@ impl Package<u64> {
 
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
-                if let Some(mut rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
-                    match rows.len() {
-                        0 => {}
-                        1 => {
-                            let (bin_name, value, _) = rows.next().expect("checked: one property");
-                            let Some(value) = value else {
-                                break 'bin;
-                            };
-
+                if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
+                    // npm (normalize-package-bin) skips an entry whose value is not a string.
+                    let entries: Vec<(&[u8], &[u8])> =
+                        rows.filter_map(|(k, v, _)| Some((k, v?))).collect();
+                    match entries.as_slice() {
+                        [] => {}
+                        [(bin_name, value)] => {
                             self.bin = Bin {
                                 tag: bin::Tag::NamedFile,
                                 value: bin::Value::init_named_file([
@@ -2675,9 +2673,9 @@ impl Package<u64> {
                                 ..Default::default()
                             };
                         }
-                        n => {
+                        entries => {
                             let current_len = lockfile.buffers.extern_strings.len();
-                            let count = n * 2;
+                            let count = entries.len() * 2;
                             lockfile.buffers.extern_strings.reserve_exact(count);
                             let extern_strings = bun_core::vec::grow_default(
                                 &mut lockfile.buffers.extern_strings,
@@ -2685,12 +2683,9 @@ impl Package<u64> {
                             );
 
                             let mut i: usize = 0;
-                            for (k, v, _) in rows {
+                            for (k, v) in entries {
                                 extern_strings[i] = string_builder.append::<ExternalString>(k);
                                 i += 1;
-                                let Some(v) = v else {
-                                    break 'bin;
-                                };
                                 extern_strings[i] = string_builder.append::<ExternalString>(v);
                                 i += 1;
                             }

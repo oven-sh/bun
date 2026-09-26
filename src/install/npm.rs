@@ -933,8 +933,9 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
+        // - v0.0.8: a bin object keeps its string entries when another entry is not a string
         const HEADER_BYTES: &'static str =
-            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
+            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.8\n");
 
         // Field order is hardcoded (descending alignment). Re-verify if the
         // layout changes.
@@ -2167,22 +2168,19 @@ impl PackageManifest {
                     if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
                         match bin {
                             JSON::E::JsonValue::Object(obj) => {
-                                let bin_props = obj.get().properties();
-                                match bin_props.len() {
-                                    0 => break 'bin,
-                                    1 => {}
-                                    _ => {
-                                        extern_string_count_bin += bin_props.len() * 2;
-                                    }
-                                }
-
-                                for bin_prop in bin_props {
-                                    string_builder.count(bin_prop.key.slice());
+                                let mut entries: usize = 0;
+                                for bin_prop in obj.get().properties() {
                                     let Some(v) = bin_prop.value.as_str() else {
-                                        break 'bin;
+                                        continue;
                                     };
+                                    string_builder.count(bin_prop.key.slice());
                                     string_builder.count(v);
+                                    entries += 1;
                                 }
+                                if entries > 1 {
+                                    extern_string_count_bin += entries * 2;
+                                }
+                                break 'bin;
                             }
                             JSON::E::JsonValue::String(str_) => {
                                 // The build pass reads `directories.bin` when `bin` is empty.
@@ -2438,15 +2436,16 @@ impl PackageManifest {
                     if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
                         match bin {
                             JSON::E::JsonValue::Object(obj) => {
-                                let bin_props = obj.get().properties();
-                                match bin_props.len() {
-                                    0 => {}
-                                    1 => {
-                                        let bin_name = bin_props[0].key.slice();
-                                        let Some(value) = bin_props[0].value.as_str() else {
-                                            break 'bin;
-                                        };
-
+                                // npm (normalize-package-bin) skips an entry whose value is not a string.
+                                let entries: Vec<(&[u8], &[u8])> = obj
+                                    .get()
+                                    .properties()
+                                    .iter()
+                                    .filter_map(|p| Some((p.key.slice(), p.value.as_str()?)))
+                                    .collect();
+                                match entries.as_slice() {
+                                    [] => {}
+                                    [(bin_name, value)] => {
                                         package_version.bin = Bin {
                                             tag: bin::Tag::NamedFile,
                                             _padding_tag: [0; 3],
@@ -2456,31 +2455,30 @@ impl PackageManifest {
                                             ]),
                                         };
                                     }
-                                    _ => {
+                                    entries => {
                                         let group_start = extern_strings_bin_entries_cursor;
-                                        let group_len = bin_props.len() * 2;
+                                        let group_len = entries.len() * 2;
 
                                         let mut is_identical = match &prev_extern_bin_group {
                                             Some(r) => r.len() == group_len,
                                             None => false,
                                         };
-                                        let mut group_i: u32 = 0;
-
                                         // The boxed slice is fully initialised
                                         // (`vec![Default; n].into_boxed_slice()` in the counting
                                         // pass) and `ExternalString: Copy`, so plain absolute
                                         // indexing at `group_start + group_i` works — no
                                         // `from_raw_parts`/`.add()` needed, and the `prev` read
                                         // at a disjoint index needs no split.
-                                        for bin_prop in bin_props {
-                                            let k = bin_prop.key.slice();
-                                            let cur = string_builder.append::<ExternalString>(k);
-                                            all_extern_strings_bin_entries
-                                                [group_start + group_i as usize] = cur;
+                                        for (group_i, s) in
+                                            entries.iter().flat_map(|(k, v)| [*k, *v]).enumerate()
+                                        {
+                                            let cur = string_builder.append::<ExternalString>(s);
+                                            all_extern_strings_bin_entries[group_start + group_i] =
+                                                cur;
                                             if is_identical {
                                                 let prev = prev_extern_bin_group.as_ref().unwrap();
                                                 let prev_item = all_extern_strings_bin_entries
-                                                    [prev.start + group_i as usize];
+                                                    [prev.start + group_i];
                                                 is_identical = cur.hash == prev_item.hash;
                                                 if cfg!(debug_assertions) && is_identical {
                                                     let first =
@@ -2496,34 +2494,6 @@ impl PackageManifest {
                                                     }
                                                 }
                                             }
-                                            group_i += 1;
-
-                                            let Some(v) = bin_prop.value.as_str() else {
-                                                break 'bin;
-                                            };
-                                            let cur = string_builder.append::<ExternalString>(v);
-                                            all_extern_strings_bin_entries
-                                                [group_start + group_i as usize] = cur;
-                                            if is_identical {
-                                                let prev = prev_extern_bin_group.as_ref().unwrap();
-                                                let prev_item = all_extern_strings_bin_entries
-                                                    [prev.start + group_i as usize];
-                                                is_identical = cur.hash == prev_item.hash;
-                                                if cfg!(debug_assertions) && is_identical {
-                                                    let first =
-                                                        cur.slice(string_builder.allocated_slice());
-                                                    let second = prev_item
-                                                        .slice(string_builder.allocated_slice());
-                                                    if !strings::eql_long(first, second, true) {
-                                                        Output::panic(format_args!(
-                                                            "Bin group is not identical: {} != {}",
-                                                            bstr::BStr::new(first),
-                                                            bstr::BStr::new(second),
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                            group_i += 1;
                                         }
 
                                         let final_range = if is_identical {

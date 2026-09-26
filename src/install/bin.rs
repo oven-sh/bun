@@ -210,7 +210,6 @@ impl Bin {
             ExprData::EObject(o) => {
                 let props = o.properties.slice();
                 return Self::parse_append_object(
-                    props.len(),
                     props.iter().map(|prop| {
                         (
                             prop.key.as_ref().and_then(Expr::as_utf8_string_literal),
@@ -224,7 +223,6 @@ impl Bin {
             ExprData::EObjectJSON(o) => {
                 let rows = o.get().properties();
                 return Self::parse_append_object(
-                    rows.len(),
                     rows.iter()
                         .map(|row| (Some(row.key.slice()), row.value.as_str())),
                     buf,
@@ -248,17 +246,15 @@ impl Bin {
     }
 
     fn parse_append_object<'a>(
-        len: usize,
-        mut pairs: impl Iterator<Item = (Option<&'a [u8]>, Option<&'a [u8]>)>,
+        pairs: impl Iterator<Item = (Option<&'a [u8]>, Option<&'a [u8]>)>,
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
-        match len {
-            0 => {}
-            1 => {
-                let Some((Some(bin_name), Some(value))) = pairs.next() else {
-                    return Ok(Bin::default());
-                };
+        // npm (normalize-package-bin) skips an entry whose value is not a string.
+        let entries: Vec<(&[u8], &[u8])> = pairs.filter_map(|(k, v)| Some((k?, v?))).collect();
+        match entries.as_slice() {
+            [] => {}
+            [(bin_name, value)] => {
                 return Ok(Bin {
                     tag: Tag::NamedFile,
                     _padding_tag: [0; 3],
@@ -267,25 +263,16 @@ impl Bin {
                     },
                 });
             }
-            _ => {
+            entries => {
                 let current_len = extern_strings.len();
-                let num_props: usize = len * 2;
+                let num_props: usize = entries.len() * 2;
                 extern_strings
-                    .try_reserve_exact(
-                        (current_len + num_props).saturating_sub(extern_strings.len()),
-                    )
+                    .try_reserve_exact(num_props)
                     .map_err(|_| AllocError)?;
-                let mut i: usize = 0;
-                for (key_str, value_str) in pairs {
-                    let (Some(key_str), Some(value_str)) = (key_str, value_str) else {
-                        return Ok(Bin::default());
-                    };
+                for (key_str, value_str) in entries {
                     extern_strings.push(buf.append_external(key_str)?);
-                    i += 1;
                     extern_strings.push(buf.append_external(value_str)?);
-                    i += 1;
                 }
-                debug_assert!(i == num_props);
                 let new = &extern_strings[current_len..current_len + num_props];
                 return Ok(Bin {
                     tag: Tag::Map,

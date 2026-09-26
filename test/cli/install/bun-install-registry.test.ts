@@ -3659,6 +3659,79 @@ describe("binaries", () => {
     expectBins();
   });
 
+  test("bin entries whose value is not a string are skipped, the others are linked", async () => {
+    // npm (normalize-package-bin) drops an entry whose value is not a string and keeps the rest.
+    const script = (name: string) => `#!/usr/bin/env node\nconsole.log("${name}")`;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "one-valid": "./one-valid",
+            "two-valid": "./two-valid",
+            "none-valid": "./none-valid",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "one-valid", "package.json"),
+        JSON.stringify({
+          name: "one-valid",
+          version: "1.0.0",
+          bin: { "one-valid-1": "one-valid-1.js", "one-valid-2": 5 },
+        }),
+      ),
+      write(join(packageDir, "one-valid", "one-valid-1.js"), script("one-valid-1")),
+      write(
+        join(packageDir, "two-valid", "package.json"),
+        JSON.stringify({
+          name: "two-valid",
+          version: "1.0.0",
+          bin: { "two-valid-1": "two-valid-1.js", "two-valid-2": { nested: true }, "two-valid-3": "two-valid-3.js" },
+        }),
+      ),
+      write(join(packageDir, "two-valid", "two-valid-1.js"), script("two-valid-1")),
+      write(join(packageDir, "two-valid", "two-valid-3.js"), script("two-valid-3")),
+      write(
+        join(packageDir, "none-valid", "package.json"),
+        JSON.stringify({
+          name: "none-valid",
+          version: "1.0.0",
+          bin: { "none-valid-1": null, "none-valid-2": 5 },
+        }),
+      ),
+    ]);
+
+    const expectBins = async () => {
+      const bin = (name: string) => join(packageDir, "node_modules", ".bin", name);
+      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toHaveBins([
+        "one-valid-1",
+        "two-valid-1",
+        "two-valid-3",
+      ]);
+      expect(bin("one-valid-1")).toBeValidBin(join("..", "one-valid", "one-valid-1.js"));
+      expect(bin("two-valid-1")).toBeValidBin(join("..", "two-valid", "two-valid-1.js"));
+      expect(bin("two-valid-3")).toBeValidBin(join("..", "two-valid", "two-valid-3.js"));
+    };
+
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    await expectBins();
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain(
+      `"one-valid": ["one-valid@file:one-valid", { "bin": { "one-valid-1": "one-valid-1.js" } }]`,
+    );
+    expect(lockfile).toContain(
+      `"two-valid": ["two-valid@file:two-valid", { "bin": { "two-valid-1": "two-valid-1.js", "two-valid-3": "two-valid-3.js" } }]`,
+    );
+    expect(lockfile).toContain(`"none-valid": ["none-valid@file:none-valid", {}]`);
+
+    await rm(join(packageDir, "node_modules", ".bin"), { recursive: true, force: true });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    await expectBins();
+  });
+
   test("root resolution bins", async () => {
     // As of writing this test, the only way to get a root resolution
     // is to migrate a package-lock.json with a root resolution. For now,

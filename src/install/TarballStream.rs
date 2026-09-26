@@ -36,6 +36,7 @@ use bun_threading::{Mutex, thread_pool};
 
 use crate::NetworkTask;
 use crate::bun_fs::FileSystem;
+use crate::extract_tarball;
 use crate::integrity::{self, Integrity};
 use crate::package_manager_real::PackageManager;
 
@@ -1174,25 +1175,26 @@ impl TarballStream {
                 }
             }
 
-            if tarball.resolution.tag == ResolutionTag::Github {
-                'insert_tag: {
-                    if self.resolved_github_dirname.is_empty() {
-                        break 'insert_tag;
+            let integrity = match tarball.resolution.tag {
+                ResolutionTag::Github
+                | ResolutionTag::RemoteTarball
+                | ResolutionTag::LocalTarball => {
+                    if tarball.integrity.tag.is_supported() {
+                        tarball.integrity
+                    } else {
+                        self.hasher.final_()
                     }
-                    if bun_sys::File::openat(
-                        self.dest.unwrap(),
-                        bun_core::zstr!(".bun-tag"),
-                        O::WRONLY
-                            | O::CREAT
-                            | O::TRUNC
-                            | if cfg!(windows) { 0 } else { O::NOFOLLOW },
-                        0o664,
-                    )
-                    .and_then(|f| f.write_all(self.resolved_github_dirname))
-                    .is_err()
-                    {
-                        let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));
+                }
+                _ => Integrity::default(),
+            };
+
+            if let Some(dest) = self.dest {
+                if tarball.resolution.tag == ResolutionTag::Github {
+                    if !self.resolved_github_dirname.is_empty() {
+                        extract_tarball::write_bun_tag(dest, self.resolved_github_dirname);
                     }
+                } else {
+                    tarball.write_tarball_bun_tag(dest, &integrity);
                 }
             }
 
@@ -1203,12 +1205,13 @@ impl TarballStream {
 
             let (name, basename) = tarball.name_and_basename();
 
-            let mut result = match tarball.move_to_cache_directory(
+            let result = match tarball.move_to_cache_directory(
                 &mut (*task).log,
                 self.tmpname.as_zstr(),
                 name,
                 basename,
                 self.resolved_github_dirname,
+                &integrity,
             ) {
                 Ok(r) => r,
                 Err(err) => {
@@ -1217,19 +1220,6 @@ impl TarballStream {
                     return;
                 }
             };
-
-            match tarball.resolution.tag {
-                ResolutionTag::Github
-                | ResolutionTag::RemoteTarball
-                | ResolutionTag::LocalTarball => {
-                    if tarball.integrity.tag.is_supported() {
-                        result.integrity = tarball.integrity;
-                    } else {
-                        result.integrity = self.hasher.final_();
-                    }
-                }
-                _ => {}
-            }
 
             if PackageManager::verbose_install() {
                 bun_core::pretty_errorln!(

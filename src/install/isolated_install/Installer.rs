@@ -351,6 +351,15 @@ impl<'a> Installer<'a> {
                     ),
                 );
             }
+            TaskError::UnsafeFolderPath => {
+                Output::err_generic(
+                    "refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
+                    (
+                        bstr::BStr::new(pkg_name.slice(string_buf)),
+                        bstr::BStr::new(pkg_res.folder().slice(string_buf)),
+                    ),
+                );
+            }
             TaskError::SymlinkDependencies(symlink_err) => {
                 Output::err(
                     symlink_err.clone(),
@@ -692,6 +701,8 @@ pub struct DownloadError {
 
 pub enum TaskError {
     LinkPackage(sys::Error),
+    /// Only a `ResolutionTag::Folder` entry fails with this.
+    UnsafeFolderPath,
     SymlinkDependencies(sys::Error),
     RunScripts(crate::Error),
     Binaries(crate::Error),
@@ -901,6 +912,13 @@ impl Task {
                                 ResolutionTag::Root => b".",
                                 _ => unreachable!(),
                             };
+                            // A lockfile can carry a path that the resolver refuses.
+                            if pkg_res.tag == ResolutionTag::Folder
+                                && bin::bin_target_escapes_package_dir(path)
+                                && !lockfile.is_trusted_folder_package(pkg_id)
+                            {
+                                return Ok(Yield::failure(TaskError::UnsafeFolderPath));
+                            }
                             // the folder does not exist in the cache. xdev is per folder dependency
                             let folder_dir = match bun_sys::open_dir_for_iteration(Fd::cwd(), path)
                             {

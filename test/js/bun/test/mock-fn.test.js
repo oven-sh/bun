@@ -480,6 +480,97 @@ describe("mock()", () => {
     expect(fn).toHaveBeenLastCalledWith(43);
     expect(fn).toHaveBeenCalledWith(43);
   });
+  // The "incomplete" entry is settled in place after the implementation
+  // returns, so a mockClear() during the call does not leave it stale.
+  test("the results entry settles when the implementation calls mockClear()", () => {
+    const fn = jest.fn();
+    fn.mockReturnValueOnce(1)
+      .mockReturnValueOnce(2)
+      .mockImplementation(() => {
+        fn.mockClear();
+        return 3;
+      });
+    fn();
+    fn();
+    const captured = fn.mock.results;
+    expect(fn()).toBe(3);
+    expect(captured).toEqual([
+      { type: "return", value: 1 },
+      { type: "return", value: 2 },
+      { type: "return", value: 3 },
+    ]);
+    expect(fn.mock.results).toEqual([]);
+  });
+  test("the results entry settles when the implementation calls mockClear() and throws", () => {
+    const instance = new Error("foo");
+    const fn = jest.fn(() => {
+      fn.mockClear();
+      throw instance;
+    });
+    const captured = fn.mock.results;
+    expect(() => fn()).toThrow("foo");
+    expect(captured).toEqual([{ type: "throw", value: instance }]);
+    expect(fn.mock.results).toEqual([]);
+  });
+  test("a nested call after mockClear() keeps its own results entry", () => {
+    let nested = false;
+    const fn = jest.fn(() => {
+      if (nested) return 3;
+      nested = true;
+      fn.mockClear();
+      fn();
+      return 4;
+    });
+    const captured = fn.mock.results;
+    expect(fn()).toBe(4);
+    expect(captured).toEqual([{ type: "return", value: 4 }]);
+    expect(fn.mock.results).toEqual([{ type: "return", value: 3 }]);
+  });
+  test("mock.results is empty after the implementation calls mockClear() and reads it", () => {
+    let armed = false;
+    const fn = jest.fn(() => {
+      if (armed) {
+        fn.mockClear();
+        void fn.mock.results;
+      }
+      return 1;
+    });
+    fn();
+    fn();
+    armed = true;
+    fn();
+    expect(fn.mock.results).toEqual([]);
+    expect(fn).not.toHaveReturned();
+    armed = false;
+    fn();
+    expect(fn.mock.results).toEqual([{ type: "return", value: 1 }]);
+    expect(fn).toHaveReturned();
+  });
+  if (isBun) {
+    // The entry is reachable during the call, so a reshaped entry is settled
+    // like CreateDataProperty instead of a slot write.
+    test("the results entry settles safely when the implementation redefines its properties", () => {
+      const fn = jest.fn(() => {
+        const entry = fn.mock.results.at(-1);
+        Object.defineProperty(entry, "type", { get: () => "custom", configurable: false });
+        return 1;
+      });
+      expect(fn()).toBe(1);
+      const entry = fn.mock.results[0];
+      for (let i = 0; i < 1000; i++) {
+        expect(entry.type).toBe("custom");
+      }
+      expect(entry.value).toBe(1);
+    });
+    test("the results entry stays incomplete when the implementation freezes it", () => {
+      const fn = jest.fn(() => {
+        Object.freeze(fn.mock.results.at(-1));
+        return 1;
+      });
+      expect(fn()).toBe(1);
+      expect(fn.mock.results).toEqual([{ type: "incomplete", value: undefined }]);
+    });
+  }
   test("multiple calls work", () => {
     const fn = jest.fn(f => f);
     expect(fn(43)).toBe(43);

@@ -876,8 +876,11 @@ void us_socket_resume(struct us_socket_t *s) {
     if (us_poll_change(&s->p, s->group->loop, events) != 0) {
         /* The dispatcher parked this socket while it was paused (loop.c) and the
          * kernel refused to take it back: nothing would ever deliver its tail,
-         * end or close again, so fail it now like a failed first registration. */
+         * end or close again, so fail it like a failed first registration. The
+         * loop does that, not this call: an owner resumes from the middle of its
+         * own work (uWS ending a response, a body read in JS), and the close
+         * handler frees the state that work still uses. */
         int err = LIBUS_ERR;
-        us_internal_socket_close_raw(s, err > 2 ? err : LIBUS_ECONNRESET, NULL);
+        us_internal_loop_close_unresumable_socket(s->group->loop, s, err > 2 ? err : LIBUS_ECONNRESET);
     }
 }

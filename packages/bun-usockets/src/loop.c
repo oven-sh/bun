@@ -163,6 +163,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 
     us_free(loop->data.recv_buf);
     us_free(loop->data.send_buf);
+    us_free(loop->data.unresumable_sockets);
 
 #ifdef LIBUS_USE_LIBUV
     us_timer_close(loop->data.sweep_timer, 0);
@@ -397,8 +398,49 @@ int us_internal_handle_dns_results(struct us_loop_t *loop) {
     return s != NULL;
 }
 
+/* The wakeup makes the loop reach us_internal_loop_post without waiting for I/O:
+ * no event can arrive for a socket the kernel does not poll. */
+void us_internal_loop_close_unresumable_socket(struct us_loop_t *loop, struct us_socket_t *s, int code) {
+    struct us_internal_loop_data_t *data = &loop->data;
+    struct us_internal_unresumable_socket_t *sockets = us_realloc(data->unresumable_sockets,
+        sizeof(*sockets) * ((size_t) data->num_unresumable_sockets + 1));
+    if (!sockets) Bun__outOfMemory();
+    sockets[data->num_unresumable_sockets].socket = s;
+    sockets[data->num_unresumable_sockets].code = code;
+    data->unresumable_sockets = sockets;
+    data->num_unresumable_sockets++;
+    us_wakeup_loop(loop);
+}
+
+static void us_internal_close_unresumable_sockets(struct us_loop_t *loop) {
+    struct us_internal_loop_data_t *data = &loop->data;
+    /* One entry at a time: a close handler can list another socket, and can
+     * close one that is still listed. */
+    while (data->num_unresumable_sockets) {
+        struct us_internal_unresumable_socket_t entry = data->unresumable_sockets[--data->num_unresumable_sockets];
+        struct us_socket_t *s = us_internal_socket_follow_adopted(entry.socket);
+        if (s && !us_socket_is_closed(s)) {
+            us_internal_socket_close_raw(s, entry.code, NULL);
+        }
+    }
+}
+
 /* Note: Properly takes the linked list and timeout sweep into account */
 void us_internal_free_closed_sockets(struct us_loop_t *loop) {
+    /* Every address the free below invalidates leaves the unresumable list:
+     * a socket that closed on its own (nothing left to close), and the old
+     * allocation of one us_socket_adopt() moved (follow it). The walk in
+     * us_internal_loop_post runs first, but teardown calls this on its own. */
+    struct us_internal_loop_data_t *data = &loop->data;
+    for (int i = 0; i < data->num_unresumable_sockets; ) {
+        struct us_socket_t *s = us_internal_socket_follow_adopted(data->unresumable_sockets[i].socket);
+        if (!s || us_socket_is_closed(s)) {
+            data->unresumable_sockets[i] = data->unresumable_sockets[--data->num_unresumable_sockets];
+        } else {
+            data->unresumable_sockets[i++].socket = s;
+        }
+    }
+
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
         struct us_socket_t *next = s->next;
@@ -451,6 +493,10 @@ void us_internal_loop_post(struct us_loop_t *loop) {
     if (loop->data.quic_head) us_quic_loop_process(loop);
 #endif
     if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
+    /* At every depth, unlike the free below: a tick that a callback started can
+     * be the one waiting for this close, and its own dispatch closes sockets at
+     * that depth too. */
+    us_internal_close_unresumable_sockets(loop);
     /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
      * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
      * closed sockets: the outer tick's dispatch is mid-iteration and may still

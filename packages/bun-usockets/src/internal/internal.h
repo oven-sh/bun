@@ -182,6 +182,8 @@ long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
 #endif
 void us_internal_free_closed_sockets(us_loop_r loop);
+/* Close `s` with `code` from us_internal_loop_post, not from the caller's stack. */
+void us_internal_loop_close_unresumable_socket(struct us_loop_t *loop, struct us_socket_t *s, int code);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 /* Unlink the group from the loop iff every list/count is now zero. */

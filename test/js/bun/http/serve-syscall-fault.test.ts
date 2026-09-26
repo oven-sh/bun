@@ -1,6 +1,7 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs, isLinux, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
 
@@ -147,5 +148,80 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
     }
     expect(proc.signalCode).toBeNull();
     expect(proc.exitCode).toBe(0);
+  });
+});
+
+// us_socket_resume() fails a socket whose poll the kernel refuses to take back
+// (the dispatcher parks a paused socket whose peer hung up, so the resume is a
+// fresh EPOLL_CTL_ADD and can fail the way a first registration can). The
+// runtime resumes from inside its own work: the request-body hooks and the
+// response-end path. A close dispatched there destructs the uWS response and
+// frees the RequestContext that work still uses.
+//
+// epoll only: kqueue and libuv never park the fd, so their resume is a plain
+// filter/poll change with nothing for the hook to fail. Each case runs in a
+// subprocess so a use-after-free surfaces as a non-zero exit.
+describe.skipIf(skip || !isLinux)("Bun.serve: a request-socket resume that fails the socket", () => {
+  // The unix socket lives in a directory of the test, so a fixture that
+  // crashes, which is the failure these cases catch, leaves nothing behind.
+  async function spawnFixture(args: (socket: string) => string[]) {
+    using dir = tempDir("serve-resume-fault", {});
+    const socket = join(String(dir), "s.sock");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args(socket)],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1", SERVE_RESUME_FAULT_SOCKET: socket },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  async function run(mode: string, expected: string[]) {
+    const { stdout, stderr, exitCode, signalCode } = await spawnFixture(socket => [
+      join(import.meta.dir, "serve-resume-fault-fixture.ts"),
+      mode,
+      socket,
+    ]);
+    expect({
+      stdout: stdout.trim().split("\n"),
+      signalCode,
+      exitCode,
+      // Only populated when the assertion is about to fail, so the diff shows why.
+      stderrTail: exitCode === 0 ? "" : stderr.slice(-3000),
+    }).toEqual({ stdout: expected, signalCode: null, exitCode: 0, stderrTail: "" });
+  }
+
+  // Each ping is a connection of its own. The one after the handler fails if
+  // the resume did not consume the injected failure.
+  const ping = "HTTP/1.1 200 OK, pong";
+  // The body the handler waits for can no longer arrive, so the read rejects
+  // like any other connection that dies mid-body.
+  const bodyFails = [`before: ${ping}`, "abort", "body: rejected AbortError", `after: ${ping}`, "done"];
+
+  // Not concurrent: each case starts a debug + ASAN binary, and four at once push each other past the default timeout.
+  test("req.arrayBuffer() rejects and the server stays up", () => run("body-buffered", bodyFails));
+
+  test("req.text() on a materialized body rejects and the server stays up", () => run("body-stream", bodyFails));
+
+  // The handler answered, so the request is complete: ending it must not
+  // deliver an abort, and the connection closes with the response.
+  test("a response that ends while the body is paused completes", () =>
+    run("response-ends", [`before: ${ping}`, `after: ${ping}`, "done"]));
+
+  // The fixture is a test file of its own: expect().rejects is what waits on
+  // the loop from inside a dispatch. The close has to come from that inner
+  // tick, so a fixture that never finishes is the failure here.
+  test("a dispatch that waits on the loop for the failed socket gets its close", async () => {
+    const { stderr, exitCode, signalCode } = await spawnFixture(() => [
+      "test",
+      join(import.meta.dir, "serve-resume-fault-nested-fixture.ts"),
+    ]);
+    expect({
+      passed: stderr.includes(" 1 pass") && stderr.includes(" 0 fail"),
+      signalCode,
+      exitCode,
+      stderrTail: exitCode === 0 ? "" : stderr.slice(-3000),
+    }).toEqual({ passed: true, signalCode: null, exitCode: 0, stderrTail: "" });
   });
 });

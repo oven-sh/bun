@@ -64,6 +64,9 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    pub(crate) num_unresumable_sockets: c_int,
+    /// `us_internal_unresumable_socket_t *` — owned and walked by `loop.c` only.
+    pub(crate) unresumable_sockets: *mut c_void,
 }
 
 impl InternalLoopData {

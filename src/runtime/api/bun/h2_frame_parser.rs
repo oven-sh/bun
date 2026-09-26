@@ -864,6 +864,9 @@ type H2FrameParserHiveAllocator = HiveArrayFallback<H2FrameParser, 256>;
 // a tiny flush of their own.
 const H2_CORK_BUFFER_SIZE: usize = 16384;
 
+/// onWrite dispatches one flush() repeats for JS that submits under them, before it yields.
+const MAX_FLUSH_REDISPATCHES: u32 = 64;
+
 thread_local! {
     // Boxed so only a pointer lives in static TLS — a 16 KB buffer would otherwise
     // dominate PT_TLS MemSiz on every thread (see test/js/bun/binary/tls-segment-size).
@@ -1144,8 +1147,16 @@ pub(crate) struct H2FrameParser {
     hpack: JsCell<Option<lshpack::HpackHandle>>,
 
     has_nonnative_backpressure: Cell<bool>,
-    /// True while flush() has bytes out in an onWrite dispatch to a JS-backed socket.
-    js_socket_flushing: Cell<bool>,
+    /// Bytes flush() has out in an onWrite dispatch to a JS-backed socket. 0 outside one.
+    js_socket_in_flight: Cell<usize>,
+    /// A flush() bailed under that dispatch, which repeats it once it returns.
+    flush_skipped_in_dispatch: Cell<bool>,
+    /// `request()` wrote frames for a JS transport and no flush ran since: `_write` queues.
+    unflushed_submit: Cell<bool>,
+    /// Bytes of `write_buffer` held back by `unflushed_submit`, not refused by the transport.
+    held_bytes: Cell<usize>,
+    /// A `flush_after_yield()` task is queued.
+    yield_flush_queued: Cell<bool>,
     /// A native write returned a terminal result (socket closed, shut down, or the kernel
     /// rejected the send). Latched once; the deferred tick closes the transport.
     transport_write_fatal: Cell<bool>,
@@ -2678,7 +2689,8 @@ impl H2FrameParser {
         // onWrite re-enters JS; a synchronous transport (duplexPair) can re-enter flush():
         // bail so in-flight bytes are not sent twice (through any arm — a connect callback
         // inside the dispatch may have attached a native socket).
-        if self.js_socket_flushing.get() {
+        if self.js_socket_in_flight.get() != 0 {
+            self.flush_skipped_in_dispatch.set(true);
             return 0;
         }
         if !self.tx_tracker.get().at_boundary() {
@@ -2690,6 +2702,7 @@ impl H2FrameParser {
         // Keep `self` alive across the re-entrant JS calls below.
         let _keepalive = self.keepalive();
 
+        self.settle_unflushed_submit();
         let mut written = self.uncork();
         written += match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
@@ -2701,9 +2714,13 @@ impl H2FrameParser {
             BunSocket::None => {
                 // consider that backpressure is gone and flush data queue
                 self.has_nonnative_backpressure.set(false);
-                let offset = self.write_buffer_offset.get();
-                let bytes_len = self.write_buffer.get().slice()[offset..].len();
-                if bytes_len > 0 {
+                let mut redispatches: u32 = 0;
+                loop {
+                    let offset = self.write_buffer_offset.get();
+                    let bytes_len = self.write_buffer.get().slice()[offset..].len();
+                    if bytes_len == 0 {
+                        break;
+                    }
                     let global = self.handlers.get().global();
                     // A failed conversion means the VM is terminating (or OOM): report
                     // nothing flushed instead of calling JS with an empty value.
@@ -2715,9 +2732,10 @@ impl H2FrameParser {
                     else {
                         return 0;
                     };
-                    self.js_socket_flushing.set(true);
+                    self.flush_skipped_in_dispatch.set(false);
+                    self.js_socket_in_flight.set(bytes_len);
                     let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
-                    self.js_socket_flushing.set(false);
+                    self.js_socket_in_flight.set(0);
 
                     // Same contract as _write: -1 dropped, 0 queued by the socket, else sent.
                     let code = if result.is_number() {
@@ -2752,9 +2770,34 @@ impl H2FrameParser {
                         self.has_nonnative_backpressure.set(true);
                         return bytes_len;
                     }
+                    // JS under the dispatch submitted a request or had a flush() bail: due now.
+                    if !self.unflushed_submit.get() && !self.flush_skipped_in_dispatch.get() {
+                        break;
+                    }
+                    if !matches!(self.native_socket.get(), BunSocket::None) {
+                        // The dispatch attached a native socket: its arm takes over.
+                        return bytes_len + self.flush();
+                    }
+                    if redispatches == MAX_FLUSH_REDISPATCHES {
+                        self.flush_after_yield();
+                        return bytes_len;
+                    }
+                    redispatches += 1;
+                    self.settle_unflushed_submit();
+                    self.uncork();
+                    if self.write_buffer_offset.get() < self.write_buffer.get().slice().len() {
+                        // Queued behind the dispatched bytes, not refused by the transport.
+                        self.has_nonnative_backpressure.set(false);
+                    }
                 }
 
-                return self.flush_stream_queue();
+                let queued = self.outbound_queue_size.get() > 0;
+                let flushed = self.flush_stream_queue();
+                if queued {
+                    // The queue serialized into the cork, and this flush can be its only tick.
+                    self.uncork();
+                }
+                return flushed;
             }
         };
         // if no backpressure flush data queue
@@ -2775,10 +2818,17 @@ impl H2FrameParser {
             }
             BunSocket::None => {
                 let global = self.global();
-                if self.has_nonnative_backpressure.get() {
+                let unflushed_submit = self.unflushed_submit.get();
+                if unflushed_submit || self.has_nonnative_backpressure.get() {
                     // we should not invoke JS when we have backpressure is cheaper to keep it queued here
                     let _ = self.write_buffer.with_mut(|wb| wb.write(bytes));
                     global.vm().deprecated_report_extra_memory(bytes.len());
+                    if unflushed_submit {
+                        // No 'drain' follows a write the transport never saw: the tick flushes.
+                        self.held_bytes.set(self.held_bytes.get() + bytes.len());
+                        self.has_nonnative_backpressure.set(true);
+                        self.register_auto_flush();
+                    }
                     return false;
                 }
                 // fallback to onWrite non-native callback
@@ -2825,6 +2875,38 @@ impl H2FrameParser {
 
     fn has_backpressure(&self) -> bool {
         self.write_buffer.get().len_u32() > 0 || self.has_nonnative_backpressure.get()
+    }
+
+    /// A flush takes over what `unflushed_submit` held back, and the registration it kept.
+    fn settle_unflushed_submit(&self) {
+        self.held_bytes.set(0);
+        // A registration the cork slot still pairs with is released by uncork().
+        if self.unflushed_submit.replace(false) && Self::corked() != Some(self.as_ctx_ptr()) {
+            self.unregister_auto_flush();
+        }
+    }
+
+    /// Continues a flush on the next event loop iteration, after timers and I/O had a turn.
+    fn flush_after_yield(&self) {
+        if self.yield_flush_queued.replace(true) {
+            return;
+        }
+        fn run(parser: *mut RefPtr<H2FrameParser>) -> bun_event_loop::JsResult<()> {
+            // SAFETY: `parser` is the `heap::into_raw` below, and ManagedTask runs it once.
+            let parser = unsafe { bun_core::heap::take(parser) };
+            parser.yield_flush_queued.set(false);
+            let _ = parser.flush();
+            Ok(())
+        }
+        // `new_owned`: a task that never runs (VM teardown) still drops the ref.
+        let task = bun_jsc::ManagedTask::ManagedTask::new_owned(
+            bun_core::heap::into_raw(Box::new(self.ref_guard())),
+            run,
+        );
+        self.global_this
+            .bun_vm()
+            .event_loop_mut()
+            .enqueue_task_after_yield(task);
     }
 
     /// Whether a write to this session's transport synchronously runs user JS: a JS-backed
@@ -2927,6 +3009,10 @@ impl H2FrameParser {
         // A write that drains the buffer must not cancel the deferred tick a pending session
         // error is waiting on; on_auto_flush releases the registration once it has reported it.
         if self.pending_header_compression_error.get() {
+            return;
+        }
+        // Nor the tick held bytes wait on: a cork handover uncorks without a flush.
+        if self.unflushed_submit.get() {
             return;
         }
         debug_assert!(self.auto_flusher.get().registered.get());
@@ -3579,7 +3665,10 @@ impl H2FrameParser {
             // Outbound-ACK-flood counter: only reset when the transport actually
             // drained (nghttp2 decrements per-send). Resetting per receive() lets
             // a peer that never reads keep it under the limit forever.
-            if self.write_buffer.get().slice()[self.write_buffer_offset.get()..].is_empty() {
+            // A read under an onWrite dispatch sees the bytes in flight as drained.
+            if self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len()
+                <= self.js_socket_in_flight.get()
+            {
                 engine.note_outbound_drained();
             }
             // Apply any receive-window growth setLocalWindowSize() accumulated while a dispatch
@@ -5104,7 +5193,7 @@ impl H2FrameParser {
     // get memory usage in bytes
     fn get_session_memory_usage_bytes(&self) -> usize {
         let stream_count = self.streams.get().len();
-        self.write_buffer.get().len_u32() as usize
+        (self.write_buffer.get().len_u32() as usize).saturating_sub(self.held_bytes.get())
             + self.queued_data_size.get() as usize
             + stream_count * core::mem::size_of::<Stream>()
     }
@@ -7143,6 +7232,9 @@ impl H2FrameParser {
         };
         let headers_frame_max_payload = available_payload - padding_overhead;
 
+        if matches!(this.native_socket.get(), BunSocket::None) {
+            this.unflushed_submit.set(true);
+        }
         let mut writer = this.to_writer();
 
         // Check if we need CONTINUATION frames
@@ -7490,7 +7582,11 @@ impl H2FrameParser {
             streams: JsCell::new(BunHashMap::default()),
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
-            js_socket_flushing: Cell::new(false),
+            js_socket_in_flight: Cell::new(0),
+            flush_skipped_in_dispatch: Cell::new(false),
+            unflushed_submit: Cell::new(false),
+            held_bytes: Cell::new(0),
+            yield_flush_queued: Cell::new(false),
             transport_write_fatal: Cell::new(false),
             pending_header_compression_error: Cell::new(false),
             frames_sent_legacy: Cell::new(0),
@@ -7729,6 +7825,8 @@ impl H2FrameParser {
     /// this function can be called multiple times, it will erase stream info
     pub(crate) fn detach(&self) {
         self.uncork();
+        self.unflushed_submit.set(false);
+        self.held_bytes.set(0);
         self.unregister_auto_flush();
         self.detach_native_socket();
 
@@ -7763,6 +7861,7 @@ impl H2FrameParser {
             Self::set_corked(None);
         }
         // Removes the deferred task (its ctx is `self`) and releases the ref it holds.
+        self.unflushed_submit.set(false);
         self.unregister_auto_flush();
         let stranded = self.native_keepalives.replace(0);
         for _ in 0..stranded {

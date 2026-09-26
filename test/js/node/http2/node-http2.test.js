@@ -4149,7 +4149,7 @@ describe.concurrent(
     // DATA bytes seen reach a target. onWrite runs inside the Duplex write, i.e. mid-send.
     function wireDuplex(onWrite = () => {}) {
       const PREFACE = Buffer.from("PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n");
-      let pending = Buffer.alloc(0), dataBytes = 0, headersLen = -1, prefaceSeen = false;
+      let pending = Buffer.alloc(0), dataBytes = 0, prefaceSeen = false;
       const data = [], waiters = [];
       const settle = () => {
         for (const w of waiters.splice(0)) (dataBytes >= w.n ? w.resolve() : waiters.push(w));
@@ -4168,7 +4168,6 @@ describe.concurrent(
             const len = pending.readUIntBE(0, 3);
             if (pending.length < 9 + len) break;
             const type = pending[3];
-            if (type === 1 && headersLen < 0) headersLen = len;
             if (type === 0) { data.push(Buffer.from(pending.subarray(9, 9 + len))); dataBytes += len; }
             pending = pending.subarray(9 + len);
           }
@@ -4178,7 +4177,6 @@ describe.concurrent(
       });
       duplex.dataSeen = n => new Promise(resolve => { waiters.push({ n, resolve }); settle(); });
       duplex.data = () => Buffer.concat(data);
-      duplex.headersLen = () => headersLen;
       return duplex;
     }
     async function connect(duplex) {
@@ -4208,61 +4206,43 @@ describe.concurrent(
       return JSON.parse(stdout.trim());
     }
 
-    // A single-frame write (<= 16374 bytes) corked behind HEADERS straddles the 16 KiB cork;
-    // the mid-write cork flush is what runs the Duplex.
-    it.each(["transfer", "resize0"])("single DATA frame straddling the cork flush (%s)", async mode => {
-      const result = await run(/* js */ `
-      const holder = { src: payload(16374, ${mode === "resize0"}) };
+    // Writes one DATA frame of `fill` bytes on another stream, which stays in the cork, and then
+    // the payload under test on its own stream in the same tick. The corked bytes cannot be the
+    // request's own HEADERS: what a session writes in the tick of a request() waits for its
+    // flush, so the Duplex would run after the send and not in the middle of it.
+    const straddle = (size, fill, resizable, mode) => /* js */ `
+      const holder = { src: payload(${size}, ${resizable}) };
       const snap = Buffer.from(holder.src);
       let armed = false, fired = 0;
       const duplex = wireDuplex(() => { if (armed && !fired++) yank(holder, ${JSON.stringify(mode)}); });
       const session = await connect(duplex);
-      const req = session.request(
-        { ":method": "POST", ":path": "/", "x-pad": Buffer.alloc(15000, "p").toString() },
-        { endStream: false },
-      );
+      const filler = session.request({ ":method": "POST", ":path": "/fill" }, { endStream: false });
+      filler.on("error", die("filler stream error"));
+      const req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
       req.on("error", die("stream error"));
+      // Both HEADERS frames leave with this tick's flush.
+      await new Promise(r => setImmediate(r));
+      filler.write(Buffer.alloc(${fill}, "f"));
       armed = true;
       req.write(holder.src);
-      await duplex.dataSeen(16374);
-      console.log(JSON.stringify({ fired: fired > 0, foreign: foreign(duplex.data(), snap) }));
+      const firedDuringWrite = fired > 0;
+      await duplex.dataSeen(${fill} + ${size});
+      console.log(JSON.stringify({ firedDuringWrite, foreign: foreign(duplex.data().subarray(${fill}), snap) }));
       process.exit(0);
-    `);
-      expect(result).toEqual({ fired: true, foreign: 0 });
+    `;
+
+    // A single-frame write (<= 16374 bytes) corked behind 15 KB straddles the 16 KiB cork;
+    // the mid-write cork flush is what runs the Duplex.
+    it.each(["transfer", "resize0"])("single DATA frame straddling the cork flush (%s)", async mode => {
+      const result = await run(straddle(16374, 15000, mode === "resize0", mode));
+      expect(result).toEqual({ firedDuringWrite: true, foreign: 0 });
     });
 
-    // HEADERS sized so the cork sits within 8 bytes of full: the 9-byte DATA frame header is
-    // what straddles, so the Duplex runs before the payload itself is written at all. The
-    // header value uses a character HPACK will not huffman-encode, so the block length tracks
-    // N byte for byte; the sweep keeps the case on target if the fixed overhead ever shifts.
+    // The cork holds 9 + 16370 = 16379 of its 16384 bytes, so the 9-byte DATA frame header is
+    // what straddles.
     it("DATA frame header straddling the cork flush", async () => {
-      const result = await run(/* js */ `
-      const results = [];
-      for (let n = 16344; n <= 16352; n++) {
-        const holder = { src: payload(8000, false) };
-        const snap = Buffer.from(holder.src);
-        let armed = false, fired = 0;
-        const duplex = wireDuplex(() => { if (armed && !fired++) yank(holder, "transfer"); });
-        const session = await connect(duplex);
-        const req = session.request(
-          { ":method": "POST", ":path": "/", "x-pad": Buffer.alloc(n, "\\\\").toString() },
-          { endStream: false },
-        );
-        req.on("error", die("stream error"));
-        armed = true;
-        req.write(holder.src);
-        await duplex.dataSeen(8000);
-        const corkOffset = 9 + duplex.headersLen();
-        results.push({ inWindow: corkOffset >= 16376 && corkOffset <= 16383, fired: fired > 0, foreign: foreign(duplex.data(), snap) });
-      }
-      console.log(JSON.stringify({
-        hitWindow: results.some(r => r.inWindow),
-        allFired: results.every(r => r.fired),
-        foreign: results.reduce((a, r) => a + r.foreign, 0),
-      }));
-      process.exit(0);
-    `);
-      expect(result).toEqual({ hitWindow: true, allFired: true, foreign: 0 });
+      const result = await run(straddle(8000, 16370, false, "transfer"));
+      expect(result).toEqual({ firedDuringWrite: true, foreign: 0 });
     });
 
     // A write larger than the peer's window: the in-window part is batched and flushed (running
@@ -4292,8 +4272,9 @@ describe.concurrent(
       expect(result).toEqual({ fired: true, foreign: 0 });
     });
 
-    // Two sessions share the thread's cork slot. B's write first flushes A's corked HEADERS
-    // through A's Duplex, and it is A's transport JS that detaches B's payload.
+    // Two sessions share the thread's cork slot. B's write first flushes A's corked PING
+    // through A's Duplex, and it is A's transport JS that detaches B's payload. (A request's
+    // HEADERS are not flushed on handover: they wait for A's own flush.)
     it("another session's transport JS running on cork handover", async () => {
       const result = await run(/* js */ `
       const holder = { src: payload(8000, false) };
@@ -4305,16 +4286,16 @@ describe.concurrent(
       const reqB = sessionB.request({ ":method": "POST", ":path": "/" }, { endStream: false });
       reqB.on("error", die("stream B error"));
       await new Promise(r => setImmediate(r));
-      // Same tick: A corks its HEADERS, then B writes.
-      const reqA = sessionA.request({ ":method": "POST", ":path": "/" }, { endStream: false });
-      reqA.on("error", die("stream A error"));
+      // Same tick: A corks a PING, then B writes.
+      sessionA.ping(() => {});
       armed = true;
       reqB.write(holder.src);
+      const firedDuringWrite = fired > 0;
       await duplexB.dataSeen(8000);
-      console.log(JSON.stringify({ fired: fired > 0, foreign: foreign(duplexB.data(), snap) }));
+      console.log(JSON.stringify({ firedDuringWrite, foreign: foreign(duplexB.data(), snap) }));
       process.exit(0);
     `);
-      expect(result).toEqual({ fired: true, foreign: 0 });
+      expect(result).toEqual({ firedDuringWrite: true, foreign: 0 });
     });
 
     // Same handover, but B is a native TCP connection to a local h2c server: B's own writes
@@ -4351,9 +4332,8 @@ describe.concurrent(
       reqB.on("error", die("stream B error"));
       reqB.on("response", () => {});
       await streamOpened.promise;
-      // Same tick: A corks its HEADERS, then B writes.
-      const reqA = sessionA.request({ ":method": "POST", ":path": "/" }, { endStream: false });
-      reqA.on("error", die("stream A error"));
+      // Same tick: A corks a PING, then B writes.
+      sessionA.ping(() => {});
       armed = true;
       reqB.write(holder.src);
       const firedDuringWrite = fired > 0;
@@ -6273,6 +6253,301 @@ describe.concurrent("ServerHttp2Session.server", () => {
     } finally {
       session.destroy();
       clientSide.destroy();
+    }
+  });
+});
+
+describe.concurrent("a peer that answers from inside a user-supplied Duplex transport's _write", () => {
+  // node hands a session's frames to the transport from a scheduled write, never from inside
+  // request() or a stream write. Over a transport whose _write delivers the peer's answer before
+  // it returns, that is what lets the caller attach 'response' before the answer is dispatched.
+  // Frames that fit the session's 16 KiB cork already waited for the deferred flush. Frames that
+  // overflowed it went to the transport from inside the call, and the answer reached a stream
+  // nobody listened to yet.
+  const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const FRAME = { HEADERS: 1, SETTINGS: 4, PING: 6, CONTINUATION: 9 };
+  const END_HEADERS = 0x4;
+  const END_STREAM = 0x1;
+  const ACK = 0x1;
+  function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+    const header = Buffer.alloc(9);
+    header.writeUIntBE(payload.length, 0, 3);
+    header[3] = type;
+    header[4] = flags;
+    header.writeUInt32BE(streamId, 5);
+    return Buffer.concat([header, payload]);
+  }
+  // Larger than the cork once HPACK has encoded it.
+  const largeHeaderValue = Buffer.alloc(40000, "v").toString();
+
+  // Answers every complete request header block with ":status: 200" (0x88, HPACK static index 8)
+  // and END_STREAM, from inside _write. `onRequest` runs first, still inside _write.
+  function answeringTransport(onRequest) {
+    let buffered = Buffer.alloc(0);
+    let prefaceSeen = false;
+    return new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        buffered = Buffer.concat([buffered, chunk]);
+        if (!prefaceSeen) {
+          if (buffered.length < PREFACE.length) return callback();
+          buffered = buffered.subarray(PREFACE.length);
+          prefaceSeen = true;
+          this.push(frame(FRAME.SETTINGS, 0, 0));
+        }
+        while (buffered.length >= 9) {
+          const length = buffered.readUIntBE(0, 3);
+          if (buffered.length < 9 + length) break;
+          const type = buffered[3];
+          const flags = buffered[4];
+          const streamId = buffered.readUInt32BE(5) & 0x7fffffff;
+          buffered = buffered.subarray(9 + length);
+          if (type === FRAME.SETTINGS && !(flags & ACK)) this.push(frame(FRAME.SETTINGS, ACK, 0));
+          if ((type === FRAME.HEADERS || type === FRAME.CONTINUATION) && flags & END_HEADERS) {
+            onRequest(streamId, this);
+            this.push(frame(FRAME.HEADERS, END_HEADERS | END_STREAM, streamId, Buffer.from([0x88])));
+          }
+        }
+        callback();
+      },
+    });
+  }
+
+  // `errors` collects every session and stream error, and each test asserts that it is empty.
+  async function connect(onRequest, options) {
+    const errors = [];
+    const client = http2.connect("http://localhost", {
+      ...options,
+      createConnection: () => answeringTransport(onRequest),
+    });
+    await new Promise((resolve, reject) => {
+      client.once("remoteSettings", resolve);
+      client.once("error", reject);
+    });
+    client.on("error", err => errors.push(err.code ?? err.message));
+    // 'remoteSettings' fires inside the session's own write of the preface. Leave that write
+    // before making requests, so each test starts with nothing of the session on the stack.
+    await new Promise(resolve => setImmediate(resolve));
+    const request = (headers, requestOptions) => {
+      const req = client.request({ ":method": "POST", ":path": "/", ...headers }, requestOptions);
+      req.on("error", err => errors.push(err.code ?? err.message));
+      return req;
+    };
+    return { client, request, errors };
+  }
+
+  // An answer the client is ever going to dispatch has been dispatched once the peer has sent it
+  // and the event loop has turned: it is parsed inside the same _write that produced it. The
+  // answer is due on the first turn, so a run that needs MAX_TURNS has lost the request.
+  const MAX_TURNS = 1000;
+  async function answered(predicate, state) {
+    for (let turn = 0; !predicate(); turn++) {
+      if (turn === MAX_TURNS) throw new Error("the peer is still waiting: " + JSON.stringify(state()));
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await new Promise(resolve => setImmediate(resolve));
+  }
+
+  it("request() with a header block larger than the cork", async () => {
+    let during = "idle";
+    const seenDuring = [];
+    const { client, request, errors } = await connect(() => seenDuring.push(during));
+    try {
+      during = "request()";
+      const req = request({ "x-pad": largeHeaderValue }, { endStream: false });
+      during = "idle";
+      let status;
+      req.on("response", headers => {
+        status = headers[":status"];
+        req.end();
+      });
+      req.resume();
+
+      await answered(
+        () => seenDuring.length === 1,
+        () => ({ errors }),
+      );
+      expect({ status, seenDuring, errors }).toEqual({ status: 200, seenDuring: ["idle"], errors: [] });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("end(chunk) with a body larger than the cork, before 'response' is attached", async () => {
+    let during = "idle";
+    const seenDuring = [];
+    const { client, request, errors } = await connect(() => seenDuring.push(during));
+    try {
+      const req = request();
+      during = "end(chunk)";
+      req.end(Buffer.alloc(60000, "b"));
+      during = "idle";
+      let status;
+      req.on("response", headers => (status = headers[":status"]));
+      req.resume();
+
+      await answered(
+        () => seenDuring.length === 1,
+        () => ({ errors }),
+      );
+      expect({ status, seenDuring, errors }).toEqual({ status: 200, seenDuring: ["idle"], errors: [] });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // The cork slot is per thread. A second session that takes it uncorks the first one, which
+  // must neither write from inside the second session's call nor lose its deferred flush.
+  it.each([
+    ["its HEADERS are in the cork", {}],
+    ["its header block was larger than the cork", { "x-pad": largeHeaderValue }],
+  ])("another session takes the cork slot in the same tick, when %s", async (_, headers) => {
+    let during = "idle";
+    const seenDuring = [];
+    const { client, request, errors } = await connect(() => seenDuring.push(during));
+    const other = await connect(() => {});
+    try {
+      during = "request()";
+      const req = request(headers, { endStream: false });
+      during = "other.ping()";
+      other.client.ping(() => {});
+      during = "idle";
+      let status;
+      req.on("response", responseHeaders => (status = responseHeaders[":status"]));
+      // No resume() and no end(): each of them flushes the session, and the deferred flush
+      // is the one under test.
+
+      await answered(
+        () => seenDuring.length === 1,
+        () => ({ errors, otherErrors: other.errors }),
+      );
+      expect({ status, seenDuring, errors }).toEqual({ status: 200, seenDuring: ["idle"], errors: [] });
+    } finally {
+      client.destroy();
+      other.client.destroy();
+    }
+  });
+
+  it("more requests in one synchronous block than the cork holds", async () => {
+    const COUNT = 400;
+    let insideRequest = false;
+    let answers = 0;
+    const sentInsideRequest = [];
+    const { client, request, errors } = await connect(streamId => {
+      answers++;
+      if (insideRequest) sentInsideRequest.push(streamId);
+    });
+    try {
+      const pad = Buffer.alloc(64, "p").toString();
+      const unanswered = new Set();
+      for (let i = 0; i < COUNT; i++) {
+        insideRequest = true;
+        const req = request({ ":path": "/" + i, "x-pad": pad + i }, { endStream: false });
+        insideRequest = false;
+        unanswered.add(i);
+        req.on("response", () => {
+          unanswered.delete(i);
+          req.end();
+        });
+        req.resume();
+      }
+
+      await answered(
+        () => answers === COUNT,
+        () => ({ answers, errors }),
+      );
+      expect({ unanswered: [...unanswered], sentInsideRequest, errors }).toEqual({
+        unanswered: [],
+        sentInsideRequest: [],
+        errors: [],
+      });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // The transport has not refused what the session holds for its flush, so those bytes are not
+  // session memory: 40 blocks of about 35 KB stay under the 1 MiB limit only if they do not count.
+  it("header blocks held for the flush do not count against maxSessionMemory", async () => {
+    const COUNT = 40;
+    let answers = 0;
+    const { client, request, errors } = await connect(() => answers++, { maxSessionMemory: 1 });
+    try {
+      const statuses = [];
+      for (let i = 0; i < COUNT; i++) {
+        const req = request({ ":path": "/" + i, "x-pad": largeHeaderValue }, { endStream: false });
+        req.on("response", headers => statuses.push(headers[":status"]));
+      }
+
+      await answered(
+        () => answers === COUNT,
+        () => ({ answers, errors }),
+      );
+      expect({ statuses, errors }).toEqual({ statuses: Array(COUNT).fill(200), errors: [] });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // Every link is answered inside the write that carries it, and its handler makes the next
+  // one. A flush hands over a bounded number of links and then returns to the event loop. A
+  // microtask queued under the first link runs once it has returned, whatever else is running.
+  it("a chain of requests made from 'response' handlers returns to the event loop before it ends", async () => {
+    const LINKS = 140;
+    let completed = 0;
+    let completedWhenMicrotaskRan = -1;
+    const { client, request, errors } = await connect(() => {});
+    try {
+      const overCork = Buffer.alloc(20000, "v").toString();
+      const next = () => {
+        const req = request({ "x-pad": overCork }, { endStream: false });
+        req.on("response", () => {
+          if (completed === 0) queueMicrotask(() => (completedWhenMicrotaskRan = completed));
+          if (++completed < LINKS) next();
+        });
+      };
+      next();
+
+      await answered(
+        () => completed === LINKS,
+        () => ({ completed, errors }),
+      );
+      expect(completedWhenMicrotaskRan).toBeGreaterThan(0);
+      expect(completedWhenMicrotaskRan).toBeLessThan(LINKS);
+      expect(errors).toEqual([]);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // The session ACKs every PING and counts ACKs that a peer does not read (1000 is a flood).
+  // A peer that sends its PINGs from inside the write of held bytes is reading.
+  it("PINGs that arrive while held bytes are handed over are not an outbound flood", async () => {
+    const REQUESTS = 11;
+    const PINGS_PER_ANSWER = 100;
+    let answers = 0;
+    const { client, request, errors } = await connect((_streamId, transport) => {
+      answers++;
+      for (let i = 0; i < PINGS_PER_ANSWER; i++) transport.push(frame(FRAME.PING, 0, 0, Buffer.alloc(8, i)));
+    });
+    try {
+      const statuses = [];
+      for (let i = 0; i < REQUESTS; i++) {
+        const req = request({ ":path": "/" + i, "x-pad": largeHeaderValue }, { endStream: false });
+        req.on("response", headers => statuses.push(headers[":status"]));
+      }
+
+      await answered(
+        () => answers === REQUESTS,
+        () => ({ answers, errors }),
+      );
+      expect({ statuses, errors, destroyed: client.destroyed }).toEqual({
+        statuses: Array(REQUESTS).fill(200),
+        errors: [],
+        destroyed: false,
+      });
+    } finally {
+      client.destroy();
     }
   });
 });

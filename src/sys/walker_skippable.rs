@@ -84,10 +84,13 @@ impl Walker {
                         // d_type and return DT_UNKNOWN. Optionally resolve via
                         // fstatat so callers get accurate types for recursion.
                         // This only affects POSIX; Windows always provides types.
+                        // DT_LNK too: proot link2symlink entries lstat as regular files.
                         #[cfg(not(windows))]
-                        let kind: sys::EntryKind = if base.kind == sys::EntryKind::Unknown
-                            && self.resolve_unknown_entry_types
-                        {
+                        let kind: sys::EntryKind = if self.resolve_unknown_entry_types
+                            && matches!(
+                                base.kind,
+                                sys::EntryKind::Unknown | sys::EntryKind::SymLink
+                            ) {
                             let dir_fd = self.stack[top_idx].iter.dir();
                             match sys::lstatat(dir_fd, base.name.as_zstr()) {
                                 Ok(stat_buf) => sys::kind_from_mode(stat_buf.st_mode as sys::Mode),

@@ -171,6 +171,25 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("shared dependency imported with a query selects all importers", async () => {
+    using dir = tempDir("test-changed-query", {
+      "package.json": JSON.stringify({ name: "query", type: "module" }),
+      "shared.ts": `export const v = 1;\n`,
+      "plain.test.ts": `import { test, expect } from "bun:test";\nimport { v } from "./shared";\ntest("plain", () => expect(v).toBe(1));\n`,
+      "query.test.ts": `import { test, expect } from "bun:test";\nimport { v } from "./shared.ts?fresh";\ntest("query", () => expect(v).toBe(1));\n`,
+      "other.test.ts": `import { test, expect } from "bun:test";\ntest("other", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "shared.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["plain.test.ts", "query.test.ts", "other.test.ts"])).toEqual([
+      "plain.test.ts",
+      "query.test.ts",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("staged changes are picked up", async () => {
     using dir = tempDir("test-changed-staged", fixture);
     initRepo(String(dir));

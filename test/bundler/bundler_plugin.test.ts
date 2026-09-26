@@ -170,6 +170,26 @@ describe("bundler", () => {
     },
   });
 
+  // An import that no onResolve plugin handles resolves like it does without plugins.
+  itBundled("plugin/ResolveFallsThroughWithQuerySuffix", {
+    files: {
+      "index.ts": /* ts */ `
+        import text from "./a.txt?raw";
+        import source from "./lib.ts?raw";
+        import { value } from "./lib.ts?v=1";
+        console.log(JSON.stringify([text, source, value]));
+      `,
+      "a.txt": "hello",
+      "lib.ts": "export const value = 42;",
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: {
+      stdout: '["hello","export const value = 42;",42]',
+    },
+  });
+
   for (const value of [null, undefined, true, 1, "string", {} as never]) {
     const str = JSON.stringify(value) ?? "undefined";
     itBundled(`plugin/ResolveEntryPointReturns${str.charAt(0).toUpperCase() + str.slice(1)}`, {

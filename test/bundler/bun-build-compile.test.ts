@@ -3204,9 +3204,84 @@ describe("portable target", () => {
       "--outfile",
       "app",
     ]);
-    expect(stderr).toContain("is not a packed portable image");
+    expect(stderr).toContain(
+      `"app.js" is not the packed file of a portable bun, which 'bun-portable-x64-v${Bun.version.split("-")[0]}' is compiled with: the file does not end with the table of contents of a packed portable image`,
+    );
     expect(readdirSync(String(dir)).sort()).toEqual(["app.js"]);
     expect(exitCode).toBe(1);
+  });
+
+  // Files that end with a table of contents, and are not what it says. No image of bun is needed for them.
+  describe("a packed file that is not sound is refused", () => {
+    const imageOff = 0x10000;
+    const elf = Buffer.alloc(64);
+    elf.write("\x7fELF\x02\x01\x01", "latin1");
+    elf.writeUInt16LE(ELF_MACHINE.x86_64, 18);
+    function packed(change: Partial<Toc>, image: Buffer) {
+      const tocOff = imageOff + 64;
+      const file = Buffer.alloc(tocOff + 128);
+      image.copy(file, imageOff);
+      const toc: Toc = {
+        version: 1,
+        fileSize: file.length,
+        arch: ELF_MACHINE.x86_64,
+        headerSize: 0x800,
+        imageOff,
+        imageLen: 64,
+        codeOff: 0,
+        codeLen: 0,
+        sigOff: 0,
+        sigLen: 0,
+        stubLinuxOff: 0x1000,
+        stubLinuxLen: 512,
+        stubMacosOff: 0,
+        stubMacosLen: 0,
+        ...change,
+      };
+      encodeToc(toc).copy(file, tocOff);
+      return file;
+    }
+
+    test.concurrent.each([
+      [
+        "another version",
+        { version: 2 },
+        elf,
+        "the table of contents has version 2, this bun reads and writes version 1",
+      ],
+      ["a length of the file that it does not have", { fileSize: 1 }, elf, "names parts that are not in the file"],
+      ["an image behind the end", { imageLen: 4096 }, elf, "names parts that are not in the file"],
+      ["an image off its boundary", { imageOff: imageOff + 8 }, elf, "names parts that are not in the file"],
+      [
+        "a signature in the image",
+        { codeOff: imageOff, codeLen: 16, sigOff: imageOff + 16, sigLen: 16 },
+        elf,
+        "names parts",
+      ],
+      ["no ELF image", {}, Buffer.alloc(64), "the image is not an ELF file for the processor"],
+      [
+        "an image for another processor",
+        { arch: ELF_MACHINE.aarch64 },
+        elf,
+        "the image is not an ELF file for the processor",
+      ],
+    ])("%s", async (_name, change, image, message) => {
+      using dir = tempDir("compile-portable-unsound", {
+        "app.js": `console.log("never compiled");`,
+        "packed": packed(change, image),
+      });
+      const { stderr, exitCode } = await build(String(dir), [
+        "--target=bun-portable-x64",
+        "--compile-executable-path=packed",
+        "app.js",
+        "--outfile",
+        "app",
+      ]);
+      expect(stderr).toContain(`"packed" is not the packed file of a portable bun`);
+      expect(stderr).toContain(message);
+      expect(readdirSync(String(dir)).sort()).toEqual(["app.js", "packed"]);
+      expect(exitCode).toBe(1);
+    });
   });
 
   test("without an executable, the error names the package that was looked for and the option", async () => {
@@ -3474,15 +3549,22 @@ describe("portable target", () => {
       expect(inspect(readFileSync(path), { path }).checks.filter(check => !check.ok)).toEqual([]);
     });
 
-    test("Bun.build compiles for the target", async () => {
-      const outfile = join(String(dir), "api", "app");
+    test.each([false, true])("Bun.build compiles for the target, windows.hideConsole %p", async hideConsole => {
+      const outfile = join(String(dir), `api-${hideConsole}`, "app");
       const result = await Bun.build({
         entrypoints: [join(String(dir), "app.ts"), join(String(dir), "worker.ts")],
-        compile: { target: `bun-portable-${arch}` as any, executablePath: template, outfile },
+        compile: {
+          target: `bun-portable-${arch}` as any,
+          executablePath: template,
+          outfile,
+          windows: { hideConsole },
+        },
       });
       expect(result.success).toBe(true);
       expect(result.outputs.map(output => output.path)).toEqual([outfile]);
-      expect(inspect(readFileSync(outfile), { path: outfile }).checks.filter(check => !check.ok)).toEqual([]);
+      const file = readFileSync(outfile);
+      expect(inspect(file, { path: outfile }).checks.filter(check => !check.ok)).toEqual([]);
+      expect(file.readUInt16LE(decodeToc(file)!.headerSize + 4 + 20 + 68)).toBe(hideConsole ? 2 : 3);
       if (shells.length) {
         const { stdout, stderr, exitCode } = await run([shells[0], outfile, "one"]);
         expect(stderr).toBe("");
@@ -3506,6 +3588,40 @@ describe("portable target", () => {
       expect(readFileSync(join(String(dir), "cached", "app")).equals(appBytes)).toBe(true);
     });
 
+    test("a shell script that names another length of the image is refused", async () => {
+      const changed = Buffer.from(templateBytes);
+      const at = changed.indexOf(`image_len=${templateToc.imageLen}`) + "image_len=".length;
+      changed[at] = changed[at] === 0x39 ? 0x38 : 0x39;
+      writeFileSync(join(String(dir), "other-length"), changed);
+      const { stderr, exitCode } = await build(String(dir), [
+        `--target=bun-portable-${arch}`,
+        "--compile-executable-path=other-length",
+        "app.ts",
+        "--outfile",
+        "length/app",
+      ]);
+      expect(stderr).toContain("the shell script does not name the length of the image that the table of contents has");
+      expect(existsSync(join(String(dir), "length", "app"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+
+    test("--windows-hide-console of a file without a PE header is refused", async () => {
+      const changed = Buffer.from(templateBytes);
+      changed.fill(0, templateToc.headerSize, templateToc.headerSize + 4);
+      writeFileSync(join(String(dir), "no-pe-header"), changed);
+      const { stderr, exitCode } = await build(String(dir), [
+        `--target=bun-portable-${arch}`,
+        "--compile-executable-path=no-pe-header",
+        "--windows-hide-console",
+        "app.ts",
+        "--outfile",
+        "no-pe/app",
+      ]);
+      expect(stderr).toContain("there is no PE header where the table of contents says the shell script ends");
+      expect(existsSync(join(String(dir), "no-pe", "app"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+
     test("a template for another processor is refused", async () => {
       const { stderr, exitCode } = await build(String(dir), [
         `--target=bun-portable-${otherArch}`,
@@ -3514,7 +3630,10 @@ describe("portable target", () => {
         "--outfile",
         "other/app",
       ]);
-      expect(stderr).toContain("holds an image for another processor");
+      const named = `bun-portable-${otherArch === "arm64" ? "aarch64" : "x64"}-v${Bun.version.split("-")[0]}`;
+      expect(stderr).toContain(
+        `${JSON.stringify(template)} holds an image for ${arch}, '${named}' is for another processor`,
+      );
       expect(existsSync(join(String(dir), "other", "app"))).toBe(false);
       expect(exitCode).toBe(1);
     });

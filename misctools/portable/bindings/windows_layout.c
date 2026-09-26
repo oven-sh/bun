@@ -1,8 +1,12 @@
 // Written by misctools/portable/bindings/layout.ts from the bindings of bun. Do not edit.
 //
-// Prints, as JSON, what the headers of the Windows SDK and of libuv say about the structures and the
-// constants of bun's bindings: sizes, alignments, offsets, values. verify.ts compiles and runs it:
+// What the headers of the Windows SDK and of libuv say about the structures and the constants of
+// bun's bindings: sizes, alignments, offsets, values. verify.ts compiles it, in one of two forms:
 //   clang -I <libuv>/include -o windows_layout.exe windows_layout.c
+//       a program that prints the facts as JSON, for a Windows machine
+//   clang --target=x86_64-pc-windows-msvc -I <libuv>/include -DBUN_LAYOUT_TABLE -c windows_layout.c
+//       the facts as a table in the object file, bun_layout_facts, for a machine that has the
+//       headers and does not run programs for Windows. verify.ts --table reads the table.
 // Each fact is behind an #ifndef SKIP_..: a name that the headers do not have is left out by
 // defining its macro, which verify.ts does from the messages of the compiler.
 #ifdef _WIN32
@@ -15,6 +19,25 @@
 #include <stdio.h>
 #include <uv.h>
 
+#ifdef BUN_LAYOUT_TABLE
+#define BUN_LAYOUT_TYPE_LENGTH 45
+#define BUN_LAYOUT_FIELD_LENGTH 34
+struct bun_layout_fact {
+  char kind;
+  char type[BUN_LAYOUT_TYPE_LENGTH];
+  char field[BUN_LAYOUT_FIELD_LENGTH];
+  unsigned long long first, second;
+};
+#define FACTS_BEGIN const struct bun_layout_fact bun_layout_facts[] = {
+#define TYPE_BEGIN(name) {'T', #name, "", sizeof(name), _Alignof(name)},
+#define FIELD(type, name) {'F', #type, #name, offsetof(type, name), sizeof(((type *)0)->name)},
+#define FIELD_OF_UNION(type, name, after) {'F', #type, #name, offsetof(type, name), offsetof(type, after) - offsetof(type, name)},
+#define TYPE_END
+#define CONSTANTS_BEGIN
+#define CONSTANT_SIGNED(name) {'S', #name, "", (unsigned long long)(long long)(name), 0},
+#define CONSTANT_UNSIGNED(name) {'U', #name, "", (unsigned long long)(name), 0},
+#define FACTS_END {'E', "", "", sizeof(void *) * 8, 0}};
+#else
 static int first;
 static void comma(void) {
   if (!first) printf(",");
@@ -27,10 +50,12 @@ static void comma(void) {
 #define TYPE_END printf("}}"); first = 0;
 #define CONSTANT_SIGNED(name) comma(); printf("\n\"" #name "\":\"%lld\"", (long long)(name));
 #define CONSTANT_UNSIGNED(name) comma(); printf("\n\"" #name "\":\"%llu\"", (unsigned long long)(name));
+#define FACTS_BEGIN int main(void) { printf("{\"source\":\"headers\",\"pointer_bits\":%zu,\"types\":{", sizeof(void *) * 8); first = 1;
+#define CONSTANTS_BEGIN printf("\n},\"constants\":{"); first = 1;
+#define FACTS_END printf("\n}}\n"); return 0; }
+#endif
 
-int main(void) {
-  printf("{\"source\":\"headers\",\"pointer_bits\":%zu,\"types\":{", sizeof(void *) * 8);
-  first = 1;
+FACTS_BEGIN
 #ifndef SKIP_TYPE_COORD
   TYPE_BEGIN(COORD)
 #ifndef SKIP_FIELD_COORD_X
@@ -2755,8 +2780,7 @@ int main(void) {
 #endif
   TYPE_END
 #endif
-  printf("\n},\"constants\":{");
-  first = 1;
+  CONSTANTS_BEGIN
 #ifndef SKIP_CONSTANT_FALSE
   CONSTANT_SIGNED(FALSE)
 #endif
@@ -3525,6 +3549,4 @@ int main(void) {
 #ifndef SKIP_CONSTANT_JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE
   CONSTANT_UNSIGNED(JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE)
 #endif
-  printf("\n}}\n");
-  return 0;
-}
+FACTS_END

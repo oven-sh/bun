@@ -7,7 +7,9 @@
 //
 //   bun layout.ts        writes
 //     windows_layout.c                       for clang on Windows, with the headers of the Windows SDK
-//                                            and of libuv: see verify.ts, which compiles and runs it
+//                                            and of libuv: see verify.ts, which compiles and runs it,
+//                                            or, on a machine that compiles for Windows and cannot
+//                                            run it, compiles it to a table and reads the table
 //     ../slice/src/layout_generated.rs       the same for the image: `bun_fs_slice.img --layout`
 //   bun layout.ts --list prints what it found, as JSON
 //
@@ -267,11 +269,19 @@ export function collect() {
 
 function cProgram(types: Type[], constants: Constant[]): string {
   const out: string[] = [];
+  // The longest names, with the byte that ends a string; the numbers of a fact start at a multiple of 8.
+  const typeLength = Math.max(...types.map(type => type.c.length), ...constants.map(constant => constant.c.length)) + 1;
+  const fieldLength = Math.max(...types.flatMap(type => type.fields.map(field => field.cName.length))) + 1;
+  const padded = fieldLength + ((8 - ((1 + typeLength + fieldLength) % 8)) % 8);
   out.push(`// Written by misctools/portable/bindings/layout.ts from the bindings of bun. Do not edit.
 //
-// Prints, as JSON, what the headers of the Windows SDK and of libuv say about the structures and the
-// constants of bun's bindings: sizes, alignments, offsets, values. verify.ts compiles and runs it:
+// What the headers of the Windows SDK and of libuv say about the structures and the constants of
+// bun's bindings: sizes, alignments, offsets, values. verify.ts compiles it, in one of two forms:
 //   clang -I <libuv>/include -o windows_layout.exe windows_layout.c
+//       a program that prints the facts as JSON, for a Windows machine
+//   clang --target=x86_64-pc-windows-msvc -I <libuv>/include -DBUN_LAYOUT_TABLE -c windows_layout.c
+//       the facts as a table in the object file, bun_layout_facts, for a machine that has the
+//       headers and does not run programs for Windows. verify.ts --table reads the table.
 // Each fact is behind an #ifndef SKIP_..: a name that the headers do not have is left out by
 // defining its macro, which verify.ts does from the messages of the compiler.
 #ifdef _WIN32
@@ -284,6 +294,25 @@ function cProgram(types: Type[], constants: Constant[]): string {
 #include <stdio.h>
 #include <uv.h>
 
+#ifdef BUN_LAYOUT_TABLE
+#define BUN_LAYOUT_TYPE_LENGTH ${typeLength}
+#define BUN_LAYOUT_FIELD_LENGTH ${padded}
+struct bun_layout_fact {
+  char kind;
+  char type[BUN_LAYOUT_TYPE_LENGTH];
+  char field[BUN_LAYOUT_FIELD_LENGTH];
+  unsigned long long first, second;
+};
+#define FACTS_BEGIN const struct bun_layout_fact bun_layout_facts[] = {
+#define TYPE_BEGIN(name) {'T', #name, "", sizeof(name), _Alignof(name)},
+#define FIELD(type, name) {'F', #type, #name, offsetof(type, name), sizeof(((type *)0)->name)},
+#define FIELD_OF_UNION(type, name, after) {'F', #type, #name, offsetof(type, name), offsetof(type, after) - offsetof(type, name)},
+#define TYPE_END
+#define CONSTANTS_BEGIN
+#define CONSTANT_SIGNED(name) {'S', #name, "", (unsigned long long)(long long)(name), 0},
+#define CONSTANT_UNSIGNED(name) {'U', #name, "", (unsigned long long)(name), 0},
+#define FACTS_END {'E', "", "", sizeof(void *) * 8, 0}};
+#else
 static int first;
 static void comma(void) {
   if (!first) printf(",");
@@ -296,10 +325,12 @@ static void comma(void) {
 #define TYPE_END printf("}}"); first = 0;
 #define CONSTANT_SIGNED(name) comma(); printf("\\n\\"" #name "\\":\\"%lld\\"", (long long)(name));
 #define CONSTANT_UNSIGNED(name) comma(); printf("\\n\\"" #name "\\":\\"%llu\\"", (unsigned long long)(name));
+#define FACTS_BEGIN int main(void) { printf("{\\"source\\":\\"headers\\",\\"pointer_bits\\":%zu,\\"types\\":{", sizeof(void *) * 8); first = 1;
+#define CONSTANTS_BEGIN printf("\\n},\\"constants\\":{"); first = 1;
+#define FACTS_END printf("\\n}}\\n"); return 0; }
+#endif
 
-int main(void) {
-  printf("{\\"source\\":\\"headers\\",\\"pointer_bits\\":%zu,\\"types\\":{", sizeof(void *) * 8);
-  first = 1;`);
+FACTS_BEGIN`);
   for (const type of types) {
     out.push(`#ifndef SKIP_TYPE_${type.c}`);
     out.push(`  TYPE_BEGIN(${type.c})`);
@@ -315,16 +346,13 @@ int main(void) {
     out.push(`  TYPE_END`);
     out.push(`#endif`);
   }
-  out.push(`  printf("\\n},\\"constants\\":{");`);
-  out.push(`  first = 1;`);
+  out.push(`  CONSTANTS_BEGIN`);
   for (const constant of constants) {
     out.push(`#ifndef SKIP_CONSTANT_${constant.c}`);
     out.push(`  ${constant.unsigned ? "CONSTANT_UNSIGNED" : "CONSTANT_SIGNED"}(${constant.c})`);
     out.push(`#endif`);
   }
-  out.push(`  printf("\\n}}\\n");`);
-  out.push(`  return 0;`);
-  out.push(`}`);
+  out.push(`FACTS_END`);
   return out.join("\n") + "\n";
 }
 

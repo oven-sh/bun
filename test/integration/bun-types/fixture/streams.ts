@@ -68,6 +68,9 @@ Bun.file("./foo.csv")
   .pipeThrough(new TextDecoderStream())
   .pipeTo(
     new WritableStream({
+      start(controller) {
+        expectType(controller.signal).is<AbortSignal>();
+      },
       write(chunk) {
         expectType(chunk).is<string>();
       },

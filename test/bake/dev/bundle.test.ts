@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import { unlinkSync } from "node:fs";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -326,6 +327,189 @@ devTest("deleting imported file shows error then recovers", {
     await c.expectNoWebSocketActivity(async () => {
       await dev.delete("unrelated.ts");
     });
+  },
+});
+/** Expects the dev server's build failure page, and returns the failures that the page embeds. */
+async function expectBuildFailurePage(res: Response): Promise<string> {
+  const page = await res.text();
+  expect({ status: res.status, title: page.match(/<title>(.*?)<\/title>/)?.[1] }).toEqual({
+    status: 500,
+    title: "Bun - Build Failed",
+  });
+  // The page carries the serialized failures as base64.
+  return atob(page.match(/atob\("([^"]*)"\)/)![1]);
+}
+const startupScanNote = "The routes directory is read once, when the server starts.";
+const pageRoute = (text: string) => `
+  export default function (req, meta) {
+    return new Response(${JSON.stringify(text)});
+  }
+`;
+// A root is a file that a route or the framework config needs directly: a page,
+// a layout, a framework entry point. No importer reports a root that does not
+// exist. The bundle then finished without a failure, the route ran, and the
+// request got a 500 with "Failed to load bundled module 'routes/page.ts'. This
+// is not a dynamic import, and therefore is a bug in Bun's bundler."
+devTest("route whose page file is deleted before its first request", {
+  framework: minimalFramework,
+  files: { "routes/page.ts": pageRoute("page") },
+  async test(dev) {
+    unlinkSync(dev.join("routes/page.ts"));
+    // Each request bundles the failed route again. The first one finds the file
+    // in the directory listing of the startup scan and fails to read it. A
+    // later one fails in the resolver, like a file deleted while the server ran.
+    const failures: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const failure = await expectBuildFailurePage(await dev.fetch("/page"));
+      expect(failure).toContain("routes/page.ts");
+      expect(failure).toContain(startupScanNote);
+      failures.push(failure);
+    }
+    expect(failures.filter(failure => failure.includes("(entry point)"))).not.toBeEmpty();
+
+    await dev.write("routes/page.ts", pageRoute("page again"));
+    await dev.fetch("/page").equals("page again");
+  },
+});
+devTest("route whose page file is deleted comes back through the watch on its directory", {
+  framework: minimalFramework,
+  files: { "routes/page.ts": pageRoute("page") },
+  // Without this, every request bundles a failed route again, and the request
+  // below would bring the route back by itself.
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  async test(dev) {
+    unlinkSync(dev.join("routes/page.ts"));
+    expect(await expectBuildFailurePage(await dev.fetch("/page"))).toContain("routes/page.ts");
+    // Nothing else in routes/ was bundled, so only the failure watches it.
+    await dev.write("routes/page.ts", pageRoute("page again"));
+    await dev.fetch("/page").equals("page again");
+  },
+});
+// A failure reaches every HMR client and stays until the file is back. The
+// routes directory is scanned once, so the delete of a page can be intentional:
+// it is reported to a request for the route, and to nobody before that.
+devTest("deleted page is not reported until a request needs its route", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": pageRoute("index"),
+    "routes/unused.ts": pageRoute("unused"),
+  },
+  async test(dev) {
+    // A stand-in for a browser tab on another route: it listens for build errors.
+    const tab = new WebSocket(dev.baseUrl.replace("http", "ws") + "/_bun/hmr");
+    tab.binaryType = "arraybuffer";
+    try {
+      // The promise the test awaits now. A socket that errors or closes rejects it.
+      let awaited = Promise.withResolvers<void>();
+      let errorFrames = 0;
+      tab.onerror = () => awaited.reject(new Error("hmr socket errored"));
+      tab.onclose = event => awaited.reject(new Error(`hmr socket closed: ${event.code} ${event.reason}`));
+      tab.onmessage = event => {
+        const kind = String.fromCharCode(new Uint8Array(event.data as ArrayBuffer)[0]);
+        if (kind === "V") {
+          tab.send("se"); // subscribe to errors
+          awaited.resolve();
+        } else if (kind === "e") {
+          errorFrames++;
+        } else if (kind === "n") {
+          awaited.resolve();
+        }
+      };
+      await awaited.promise;
+      // Frames on one socket arrive in order: after this reply, nothing sent earlier is in flight.
+      // The server replies only when the url changes the route of the socket.
+      const drainTab = async (url: string) => {
+        awaited = Promise.withResolvers<void>();
+        tab.send("n" + url);
+        await awaited.promise;
+      };
+
+      // Bundling index.ts makes the watcher see routes/.
+      await dev.fetch("/").equals("index");
+      await dev.delete("routes/unused.ts");
+      await drainTab("/");
+      expect(errorFrames).toBe(0);
+      await dev.fetch("/").equals("index");
+
+      const failure = await expectBuildFailurePage(await dev.fetch("/unused"));
+      expect(failure).toContain("routes/unused.ts");
+      expect(failure).toContain(startupScanNote);
+      await drainTab("/unused");
+      expect(errorFrames).toBeGreaterThan(0);
+    } finally {
+      tab.close();
+    }
+  },
+});
+// A framework whose entry points are files of the test. The page answers the url of its client script.
+const localEntryPoints = {
+  "bun.app.ts": `
+    import { join } from "node:path";
+    const framework = ${JSON.stringify(minimalFramework)};
+    Object.assign(framework.fileSystemRouterTypes[0], {
+      serverEntryPoint: join(import.meta.dir, "server.ts"),
+      clientEntryPoint: join(import.meta.dir, "client.ts"),
+    });
+    export default { app: { framework } };
+  `,
+  "server.ts": `
+    export async function render(req, meta) {
+      return Response.json({ page: await meta.pageModule.default(req, meta).text(), script: meta.modules[0] });
+    }
+    export function registerClientReference(value) {
+      return value;
+    }
+  `,
+  "client.ts": `console.log("CLIENT_ENTRY_POINT");`,
+  "routes/index.ts": pageRoute("index"),
+};
+// The config names these files, so the note about the scan does not apply to them.
+async function expectEntryPointFailure(res: Response, file: string) {
+  const failure = await expectBuildFailurePage(res);
+  expect(failure).toContain(file);
+  expect(failure).not.toContain(startupScanNote);
+}
+// previously: a 200 client script without the entry point. In a debug build:
+// panic: assertion failed: self.current_chunk_len > 0
+devTest("framework client entry point that does not exist", {
+  files: localEntryPoints,
+  async test(dev) {
+    unlinkSync(dev.join("client.ts"));
+    for (let i = 0; i < 2; i++) {
+      await expectEntryPointFailure(await dev.fetch("/"), "client.ts");
+    }
+    await dev.write("client.ts", `console.log("client again");`);
+    expect(await dev.fetch("/").json()).toMatchObject({ page: "index" });
+  },
+});
+// The routes of a client entry point stay loaded when it fails. A failure frees
+// its code, and the next client script of such a route then had nothing in it.
+devTest("framework client entry point that is deleted after its route was served", {
+  files: localEntryPoints,
+  async test(dev) {
+    const { script } = await dev.fetch("/").json();
+    // The script was not requested yet, so the server builds it after the delete.
+    await dev.delete("client.ts", { errors: null });
+    expect(await dev.fetch("/").json()).toEqual({ page: "index", script });
+    const res = await dev.fetch(script);
+    expect({ status: res.status, hasEntryPoint: (await res.text()).includes("CLIENT_ENTRY_POINT") }).toEqual({
+      status: 200,
+      hasEntryPoint: true,
+    });
+  },
+});
+// Every request reports it, not only the one that bundled it.
+devTest("framework server entry point that does not exist", {
+  files: localEntryPoints,
+  // Without this, a failed route is bundled again on every request, and each bundle reports the file.
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  async test(dev) {
+    unlinkSync(dev.join("server.ts"));
+    for (let i = 0; i < 3; i++) {
+      await expectEntryPointFailure(await dev.fetch("/"), "server.ts");
+    }
+    await dev.write("server.ts", localEntryPoints["server.ts"]);
+    expect(await dev.fetch("/").json()).toMatchObject({ page: "index" });
   },
 });
 // Regression test: DirectoryWatchStore.Dep.source_file_path borrows the key

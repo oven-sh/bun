@@ -1,5 +1,6 @@
 import { CSRF, type CSRFAlgorithm } from "bun";
 import { describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
 describe("Bun.CSRF", () => {
   const secret = "this-is-my-super-secure-secret-key";
 
@@ -97,6 +98,40 @@ describe("Bun.CSRF", () => {
     // Ensure that expiration works properly
     await Bun.sleep(100);
     expect(CSRF.verify(token, { secret })).toBe(false);
+  });
+
+  // verify() checks the token age twice: against the expiresIn embedded in the
+  // token, and against its own maxAge (24 hours by default). 0 turns a check off.
+  test("expiresIn: 0 and maxAge: 0 each turn off one of the two expiry checks", () => {
+    const HOUR = 60 * 60 * 1000;
+    // A token is timestamp (8) | nonce (16) | expiresIn (8) | HMAC over those 32
+    // bytes. Sign one that was issued `age` ms ago, so that nothing has to sleep.
+    const tokenIssued = (age: number, expiresIn: number) => {
+      const payload = Buffer.alloc(32);
+      payload.writeBigUInt64BE(BigInt(Date.now() - age), 0);
+      crypto.getRandomValues(payload.subarray(8, 24));
+      payload.writeBigUInt64BE(BigInt(expiresIn), 24);
+      const signature = createHmac("sha256", secret).update(payload).digest();
+      return Buffer.concat([payload, signature]).toString("base64url");
+    };
+    expect(CSRF.verify(tokenIssued(0, 24 * HOUR), { secret })).toBe(true);
+    expect(CSRF.verify(tokenIssued(0, 24 * HOUR), { secret: "wrong-secret" })).toBe(false);
+
+    // expiresIn: 0 embeds no expiry. The default maxAge still rejects the token after 24 hours.
+    expect(Buffer.from(CSRF.generate(secret, { expiresIn: 0 }), "base64url").readBigUInt64BE(24)).toBe(0n);
+    const noExpiry = tokenIssued(25 * HOUR, 0);
+    expect(CSRF.verify(noExpiry, { secret })).toBe(false);
+    expect(CSRF.verify(noExpiry, { secret, maxAge: 48 * HOUR })).toBe(true);
+    expect(CSRF.verify(noExpiry, { secret, maxAge: 0 })).toBe(true);
+
+    // An expiresIn longer than 24 hours only helps when verify() gets a maxAge to match.
+    const twoDays = tokenIssued(25 * HOUR, 48 * HOUR);
+    expect(CSRF.verify(twoDays, { secret })).toBe(false);
+    expect(CSRF.verify(twoDays, { secret, maxAge: 48 * HOUR })).toBe(true);
+
+    // maxAge: 0 turns off only the verifier's check. The embedded expiresIn still applies.
+    expect(CSRF.verify(twoDays, { secret, maxAge: 0 })).toBe(true);
+    expect(CSRF.verify(tokenIssued(2 * HOUR, 1 * HOUR), { secret, maxAge: 0 })).toBe(false);
   });
 
   test("token format doesn't affect verification", () => {

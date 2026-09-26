@@ -2092,3 +2092,31 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// The preload runs a full collection at the start of every event loop iteration, so one
+// runs after the load promise rejects and before its BuildMessage is printed. Without a
+// root on that promise, an optimized ASAN build reports a read of the freed BuildMessage.
+// A debug build keeps the promise in a stack slot and passes either way.
+test("prints a test file's build error when a GC runs before it is reported", async () => {
+  using dir = tempDir("bun-test-build-error-gc", {
+    "gc.cjs": `(function loop() { Bun.gc(true); setImmediate(loop); })();`,
+    "broken.test.mjs": `
+      import { test } from "bun:test";
+      console.log(typeof module, typeof exports);
+      test("t", () => {});
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--preload", "./gc.cjs", "./broken.test.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("error: Cannot use import statement with CommonJS-only features");
+  expect(stderr).toContain(" 1 error");
+  expect(exitCode).toBe(1);
+});

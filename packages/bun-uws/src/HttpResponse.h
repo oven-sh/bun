@@ -110,7 +110,7 @@ public:
         return false;
     }
 
-    /* Called when a response completes on a corked socket. Returns true when the
+    /* Called when a response completes. Returns true when the
      * caller has to run the close gate now, false when onData runs it.
      *
      * The socket onData is parsing gets onData's uncork and close gate once the
@@ -128,7 +128,12 @@ public:
      * no later uncork or gate: true. */
     bool uncorkCompletedResponse() {
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
-        if (httpContext->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
+        const bool parsingThis = httpContext->getSocketContextData()->parsingSocket == (us_socket_t *) this;
+        if (!Super::isCorked()) {
+            /* A write larger than the cork buffer released the cork. The rest of this read can hold the body of a node:http request. */
+            return !(parsingThis && httpContext->isNodeHttp());
+        }
+        if (!parsingThis) {
             this->uncork();
             return true;
         }
@@ -300,7 +305,7 @@ public:
             httpResponseData->markDone(this);
 
             /* We need to check if we should close this socket here now */
-            if (!Super::isCorked() || uncorkCompletedResponse()) {
+            if (uncorkCompletedResponse()) {
                 if (closeIfDoneAndMarked(httpResponseData)) {
                     return true;
                 }
@@ -363,7 +368,7 @@ public:
                 httpResponseData->markDone(this);
 
                 /* We need to check if we should close this socket here now */
-                if (!Super::isCorked() || uncorkCompletedResponse()) {
+                if (uncorkCompletedResponse()) {
                     closeIfDoneAndMarked(httpResponseData);
                 }
             }

@@ -10,7 +10,7 @@ import assert from "node:assert";
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { connect } from "node:net";
+import { connect, createServer as createNetServer } from "node:net";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -154,6 +154,81 @@ test("req.complete stays false while a declared body is still arriving", async (
     await ended;
   });
   assert.deepStrictEqual(seen, { listener: false, nextTick: false, end: true });
+});
+
+// A write larger than the uWS cork buffer releases the cork, so the response that closes the connection is out before the body is parsed.
+for (const respond of ["write() and end()", "end(chunk)"]) {
+  test(`a Connection: close response by ${respond} does not drop the body that came with the head`, async () => {
+    const events: string[] = [];
+    const { promise: closed, resolve: onClose, reject } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => events.push(`end ${body}`));
+      req.on("close", () => {
+        events.push(`close ${req.complete}`);
+        onClose();
+      });
+      const chunk = Buffer.alloc(20 * 1024, "x");
+      if (respond === "end(chunk)") {
+        res.end(chunk);
+      } else {
+        res.write(chunk);
+        res.end();
+      }
+    });
+    await withServer(server, async port => {
+      send(port, "POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 5\r\n\r\nhello", reject).resume();
+      await closed;
+    });
+    assert.deepStrictEqual(events, ["end hello", "close true"]);
+  });
+}
+
+describe("a connection given to the server with emit('connection')", () => {
+  async function withForwarder(server: http.Server, run: (port: number) => Promise<void>) {
+    const forwarder = createNetServer(socket => server.emit("connection", socket));
+    forwarder.listen(0, "127.0.0.1");
+    await once(forwarder, "listening");
+    try {
+      await run((forwarder.address() as AddressInfo).port);
+    } finally {
+      forwarder.close();
+    }
+  }
+
+  test("a request that nobody reads ends and closes after its response", async () => {
+    const events: string[] = [];
+    const { promise: closed, resolve: onClose, reject } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      req.on("end", () => events.push("end"));
+      req.on("close", () => {
+        events.push("close");
+        onClose();
+      });
+      res.end("ok");
+    });
+    await withForwarder(server, async port => {
+      send(port, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", reject).resume();
+      await closed;
+    });
+    assert.deepStrictEqual(events, ["end", "close"]);
+  });
+
+  test("a body that nobody reads is dropped, not buffered", async () => {
+    const length = 4 * 1024 * 1024;
+    const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<number>();
+    const server = http.createServer((req, res) => {
+      req.on("end", () => onEnd(req.readableLength));
+      res.end("ok");
+    });
+    await withForwarder(server, async port => {
+      const socket = send(port, `POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${length}\r\n\r\n`, reject);
+      socket.resume();
+      socket.end(Buffer.alloc(length, "x"));
+      assert.strictEqual(await ended, 0);
+    });
+  });
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.

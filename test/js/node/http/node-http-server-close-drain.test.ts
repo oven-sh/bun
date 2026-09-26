@@ -164,6 +164,40 @@ test("server.close(cb) fires once an idle keep-alive connection is reaped", asyn
   }
 });
 
+// Empty lines before a request line start no message (RFC 9112 2.2), so the connection is still idle.
+test("server.close(cb) reaps an idle keep-alive connection that sent an empty line", async () => {
+  const server = createServer((req, res) => res.end("ok"));
+  server.keepAliveTimeout = 60000;
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  async function request(socket: ReturnType<typeof connect>, extra: string) {
+    let body = "";
+    socket.on("data", chunk => (body += chunk));
+    socket.on("error", () => {});
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\n" + extra + "\r\n");
+    while (!body.includes("ok")) await once(socket, "data");
+  }
+
+  const socket = connect(port, "127.0.0.1");
+  const barrier = connect(port, "127.0.0.1");
+  try {
+    await request(socket, "");
+    socket.write("\r\n");
+    // The empty line was written first, so the server has read it when it answers this.
+    await request(barrier, "Connection: close\r\n");
+
+    const closed = Promise.withResolvers<void>();
+    server.close(() => closed.resolve());
+    await closed.promise;
+  } finally {
+    socket.destroy();
+    barrier.destroy();
+    server.closeAllConnections();
+  }
+});
+
 // The response ended before the body did (an early 401 or 413). Once the body
 // is complete the connection is idle, like in Node.js, and close() reaps it.
 test.each(["from the request's 'end' listener", "a turn of the loop later"])(

@@ -1002,7 +1002,8 @@ int llhttp__internal__c_test_lenient_flags_20(
     llhttp__internal_t* state,
     const unsigned char* p,
     const unsigned char* endp) {
-  return (state->lenient_flags & 1024) == 1024;
+  /* Bun patch: header_value_relaxed does not consume NUL, so sending it back there never returns. */
+  return (state->lenient_flags & 1024) == 1024 && *p != 0;
 }
 
 int llhttp__internal__c_update_header_state_6(

@@ -469,6 +469,30 @@ test("subclasses of HTTPParser and ConnectionsList return instances of the subcl
   expect(parser.headersCompleted()).toBe(true);
 });
 
+// In a subprocess: llhttp 9.4.2 never returns from execute() here, and nothing in the process can interrupt that.
+test.concurrent.each(["REQUEST", "RESPONSE"])(
+  "a NUL in a header value is an error in relaxed mode (%s)",
+  async type => {
+    const head = type === "REQUEST" ? "POST / HTTP/1.1" : "HTTP/1.1 200 OK";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { HTTPParser } = process.binding("http_parser");
+       const parser = new HTTPParser();
+       parser.initialize(HTTPParser.${type}, {}, 0, HTTPParser.kLenientHeaderValueRelaxed);
+       console.log(parser.execute(Buffer.from(${JSON.stringify(head + "\r\nX: a\x01b\r\nY: a\0b\r\n\r\n")})).code);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "HPE_INVALID_HEADER_TOKEN\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
+
 describe("parserOnHeaders maxHeaderPairs clamp (nodejs/node#61285)", () => {
   test("only fills remaining capacity instead of pushing the whole batch", () => {
     const parser = parsers.alloc();

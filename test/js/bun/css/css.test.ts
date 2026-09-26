@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -8093,6 +8093,163 @@ describe("css tests", () => {
       const input = await Bun.file(join(__dirname, "unicode.css")).text();
       const output = await Bun.file(join(__dirname, "unicode_expected.css")).text();
       cssTest(input, output);
+    });
+  });
+
+  // A declaration can add rules after its style rule: `@supports` rules for color
+  // fallbacks and `:dir()` rules for logical properties. They copy the selectors of
+  // the style rule.
+  describe("rules added for a declaration keep the selectors of their style rule", () => {
+    // `:where()` needs Chrome 88, so each selector moves to a rule of its own
+    // and the original rule keeps no selector.
+    prefix_test(
+      ".x:where(a), .y:where(b) { box-shadow: 2s lch(83% 47 20) }",
+      indoc`
+        .x:where(a) {
+          box-shadow: 2s #ffbdbf;
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .x:where(a) {
+            box-shadow: 2s lab(83% 44.1656 16.0749);
+          }
+        }
+
+        .y:where(b) {
+          box-shadow: 2s #ffbdbf;
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .y:where(b) {
+            box-shadow: 2s lab(83% 44.1656 16.0749);
+          }
+        }
+      `,
+      { chrome: 87 << 16 },
+    );
+
+    // The declarations of `.b` equal those of `.a` after the fallback, so `.b`
+    // moves into the `.a` rule.
+    prefix_test(
+      ".a { box-shadow: 2s #ffbdbf } .b { box-shadow: 2s lch(83% 47 20) }",
+      indoc`
+        .a, .b {
+          box-shadow: 2s #ffbdbf;
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .b {
+            box-shadow: 2s lab(83% 44.1656 16.0749);
+          }
+        }
+      `,
+      { chrome: 87 << 16 },
+    );
+
+    prefix_test(
+      ".a { box-shadow: 2s #ffbdbf } .b, .y:where(b) { box-shadow: 2s lch(83% 47 20) }",
+      indoc`
+        .a, .b {
+          box-shadow: 2s #ffbdbf;
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .b {
+            box-shadow: 2s lab(83% 44.1656 16.0749);
+          }
+        }
+
+        .y:where(b) {
+          box-shadow: 2s #ffbdbf;
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .y:where(b) {
+            box-shadow: 2s lab(83% 44.1656 16.0749);
+          }
+        }
+      `,
+      { chrome: 87 << 16 },
+    );
+
+    prefix_test(
+      ".a { color: red } .b { color: red; border-start-start-radius: 2px; inset-inline: 1px 2px }",
+      indoc`
+        .a, .b {
+          color: red;
+        }
+
+        .b:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+          border-top-left-radius: 2px;
+          left: 1px;
+          right: 2px;
+        }
+
+        .b:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+          border-top-right-radius: 2px;
+          left: 2px;
+          right: 1px;
+        }
+      `,
+      { safari: 14 << 16 },
+    );
+
+    // `:focus-visible` needs Safari 15.4, so `.y:focus-visible` gets a rule of its
+    // own and `.b` moves into the `.a` rule. Both keep the same declarations.
+    prefix_test(
+      ".a { color: red } .b, .y:focus-visible { color: red; border-start-start-radius: 2px; inset-inline: 1px 2px }",
+      indoc`
+        .a, .b {
+          color: red;
+        }
+
+        .b:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+          border-top-left-radius: 2px;
+          left: 1px;
+          right: 2px;
+        }
+
+        .b:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+          border-top-right-radius: 2px;
+          left: 2px;
+          right: 1px;
+        }
+
+        .y:focus-visible {
+          color: red;
+        }
+
+        .y:focus-visible:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+          border-top-left-radius: 2px;
+          left: 1px;
+          right: 2px;
+        }
+
+        .y:focus-visible:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+          border-top-right-radius: 2px;
+          left: 2px;
+          right: 1px;
+        }
+      `,
+      { safari: 14 << 16 },
+    );
+
+    test("Bun.build parses its own output", async () => {
+      using dir = tempDir("css-added-rules", {
+        "in.css": `
+          .x:where(a), .y:is(a, b) { box-shadow: 2s lch(83% 47 20) }
+          .a { box-shadow: 2s #ffbdbf }
+          .b { box-shadow: 2s lch(83% 47 20) }
+        `,
+      });
+
+      const first = await Bun.build({ entrypoints: [join(String(dir), "in.css")], throw: false });
+      expect(first.logs.map(log => log.message)).toEqual([]);
+      await Bun.write(join(String(dir), "out.css"), await first.outputs[0].text());
+
+      const second = await Bun.build({ entrypoints: [join(String(dir), "out.css")], throw: false });
+      expect(second.logs.map(log => log.message)).toEqual([]);
+      expect(second.success).toBe(true);
     });
   });
 

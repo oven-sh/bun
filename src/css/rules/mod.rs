@@ -716,6 +716,16 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         None
     };
 
+    // Likewise, a selector merge below moves `sty.selectors` into the previous
+    // rule, but the rules staged by this rule's declarations copy them after
+    // the merge. Snapshot them first, or a merge would build those rules with
+    // no selector.
+    let staged_selectors: Option<SelectorList> = if context.handler_context.has_staged_rules() {
+        Some(sty.selectors.deep_clone())
+    } else {
+        None
+    };
+
     // Attempt to merge the new rule with the last rule we added.
     let mut merged = false;
     let mut sty_compat: Option<bool> = None;
@@ -761,18 +771,25 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     // re-minify re-runs the staging declarations and stages their rules
     // again, and the per-merge re-minify this replaces also ran before
     // collection, so the re-staged entries belong in this rule's extras.
-    if merge_state.pending_minify
-        && !(context.handler_context.supports.is_empty()
-            && context.handler_context.ltr.is_empty()
-            && context.handler_context.rtl.is_empty()
-            && context.handler_context.dark.is_empty())
-    {
+    if merge_state.pending_minify && context.handler_context.has_staged_rules() {
         flush_pending_style_merge(rules, merge_state, context);
     }
 
+    if merged && let Some(selectors) = staged_selectors {
+        sty.selectors = selectors;
+    }
+
     // Create additional rules for logical properties, @supports overrides, and incompatible selectors.
-    let supps = context.handler_context.get_supports_rules::<R>(sty);
-    let logical = context.handler_context.get_additional_rules::<R>(sty);
+    // This rule has no selector left when the partition above found none compatible. The
+    // incompatible rules below then carry the additional rules.
+    let (supps, logical) = if sty.selectors.v.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        (
+            context.handler_context.get_supports_rules::<R>(sty),
+            context.handler_context.get_additional_rules::<R>(sty),
+        )
+    };
 
     struct IncompatibleRuleEntry<R> {
         rule: style::StyleRule<R>,

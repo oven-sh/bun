@@ -95,14 +95,10 @@ pub(crate) struct PathWatcherManager {
     #[cfg(not(windows))]
     platform: UnsafeCell<Platform>,
 
-    /// inotify/kqueue fd. Written *before* the reader thread spawns and not
-    /// after (process-lifetime singleton, no teardown): on Linux and FreeBSD in
-    /// `Platform::init`, on macOS in `Kqueue::start` under `mutex` (FSEvents
-    /// owns its own thread, so the kqueue starts on the first file watch; a
-    /// failed start resets it to `INVALID` for a later retry, still under
-    /// `mutex`). Hoisted out of `UnsafeCell<Platform>` so reads are safe
-    /// `Cell::get()` instead of raw deref; thread-spawn happens-before makes the
-    /// cross-thread read sound.
+    /// inotify/kqueue fd. Written before the reader thread spawns (Linux and
+    /// FreeBSD: `Platform::init`; macOS: `Kqueue::start` under `mutex`, on the
+    /// first file watch) and not after. Hoisted out of `UnsafeCell<Platform>` so
+    /// reads are safe `Cell::get()` instead of raw deref.
     #[cfg(not(windows))]
     platform_fd: Cell<Fd>,
 
@@ -172,14 +168,10 @@ impl PathWatcherManager {
         &buf[..resolved_path.len() + 1]
     }
 
-    /// Remove `watcher` from the dedup map. Caller holds `mutex`.
-    ///
-    /// `detach()` calls this for the last handler. The inotify and kqueue readers
-    /// also call it when the watched root's inode is deleted or renamed away:
-    /// those backends follow the inode, so the watcher no longer describes the
-    /// path. The next `fs.watch(path)` then registers whatever is at the path
-    /// now instead of joining the dead watch (node has one handle per call and
-    /// never shares one). The watcher itself lives until its handlers detach.
+    /// Remove `watcher` from the dedup map. Caller holds `mutex`. Besides the
+    /// last `detach()`, the inotify and kqueue readers call this when the watched
+    /// root's inode is deleted or renamed away, so the next `fs.watch(path)`
+    /// registers the file now at that path instead of joining the dead watch.
     fn unlink_watcher_locked(&self, watcher: *mut PathWatcher) {
         // SAFETY: caller holds self.mutex; exclusive access to self.watchers
         // for the duration of this block (nothing here re-enters the map).
@@ -192,9 +184,8 @@ impl PathWatcherManager {
         }
     }
 
-    /// The reader thread's fd failed for good: report `err` to every watcher
-    /// with `close`, so each JS `FSWatcher` emits 'error' and closes. Takes
-    /// `mutex`.
+    /// The reader thread's fd failed for good: every JS `FSWatcher` gets
+    /// `err` and closes. Takes `mutex`.
     #[cfg(not(windows))]
     fn fail_all_watchers(&self, err: &sys::Error) {
         self.mutex.lock();
@@ -1115,8 +1106,7 @@ impl Linux {
                     }
                     let _ = handle_oom(touched.get_or_put(owner_watcher));
 
-                    // The watched root itself is gone from its path (see
-                    // `unlink_watcher_locked`).
+                    // The watched root left its path (see `unlink_watcher_locked`).
                     if owner_subpath.is_empty() && ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0
                     {
                         manager.unlink_watcher_locked(owner_watcher);
@@ -1219,11 +1209,9 @@ use bun_watcher::inotify_watcher::Event as InotifyEvent;
 /// PathWatcher itself is the FSEventsWatcher's opaque ctx — `fs_events.rs` calls
 /// back via `on_fs_event` below, and we fan out to the JS handlers.
 ///
-/// A file watch uses the kqueue backend below, as libuv does: the kernel posts an
-/// FSEvents content change for a file only when the writer closes it, while
-/// kqueue's NOTE_WRITE fires on every write(2). The kqueue fd and its reader
-/// thread start on the first file watch, so a process that only watches
-/// directories never creates them.
+/// A file watch uses the kqueue backend below, as libuv does: FSEvents reports a
+/// write to a file only when the writer closes it, kqueue's NOTE_WRITE on every
+/// write(2). The kqueue and its reader thread start on the first file watch.
 #[cfg(target_os = "macos")]
 #[derive(Default)]
 pub(crate) struct Darwin {
@@ -1453,11 +1441,9 @@ pub(crate) struct KqueueWatch {
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 impl PathWatcherManager {
-    /// The kqueue fd. Written in [`Kqueue::start`] *before* the reader thread is
-    /// spawned and not afterwards (the manager is a process-lifetime singleton
-    /// with no teardown), so reading it from either thread races with nothing.
-    /// On macOS the JS thread reads it under `mutex`, which
-    /// [`Kqueue::ensure_started`] also holds for the write.
+    /// The kqueue fd. Written in [`Kqueue::start`] before the reader thread is
+    /// spawned and not afterwards, so reading it from either thread races with
+    /// nothing.
     #[inline]
     fn kq_fd(&self) -> Fd {
         self.platform_fd.get()
@@ -1498,9 +1484,8 @@ impl Kqueue {
         Ok(manager)
     }
 
-    /// macOS: the kqueue and its reader thread are created by the first file
-    /// watch. Caller holds `manager.mutex`, which orders this write of
-    /// `platform_fd` before every later read on the JS thread.
+    /// macOS: the first file watch creates the kqueue and its reader thread.
+    /// Caller holds `manager.mutex`.
     #[cfg(target_os = "macos")]
     fn ensure_started(manager: &'static PathWatcherManager) -> sys::Result<()> {
         if manager.platform_fd.get() != Fd::INVALID {
@@ -1663,9 +1648,8 @@ impl Kqueue {
             let count = match sys::kevent(kq, &[], &mut events, None) {
                 Ok(n) => n,
                 Err(err) => {
-                    // `sys::kevent` retried EINTR; anything else (EBADF after the
-                    // kqueue fd was closed out from under us) is fatal. Surface it
-                    // to every watcher and exit, as the inotify reader does.
+                    // `sys::kevent` retried EINTR; anything else is fatal, as in
+                    // the inotify reader.
                     manager.fail_all_watchers(&sys::Error::from_code(err.get_errno(), Tag::kevent));
                     return;
                 }
@@ -1720,8 +1704,7 @@ impl Kqueue {
                 watcher.emit(event_type, rel, entry.is_file);
                 let _ = handle_oom(touched.get_or_put(entry.watcher));
 
-                // The watched root itself is gone from its path (see
-                // `unlink_watcher_locked`).
+                // The watched root left its path (see `unlink_watcher_locked`).
                 if entry.subpath.is_empty()
                     && kev.fflags & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE) != 0
                 {

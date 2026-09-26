@@ -1770,6 +1770,49 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("a throw in a listener fails the run once node:test registered a test, like node's test runner", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "node-exit-throw.test.ts",
+        `
+          import { test } from "node:test";
+          import assert from "node:assert";
+          process.on("exit", code => {
+            console.log("exit listener ran with", code);
+            assert.strictEqual(1, 2);
+          });
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).toContain("exit listener ran with 0");
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("Expected values to be strictly equal");
+      expect(exitCode).toBe(1);
+    });
+
+    test("a throw in a listener fails the run under BUN_TEST_DRAIN_EVENT_LOOP", async () => {
+      using dir = tempDir("bun-test-exit-listener-throw", {
+        "drain-throw.test.ts": `
+          import { test, expect } from "bun:test";
+          process.on("exit", code => {
+            console.log("exit listener ran with", code);
+            expect(1).toBe(2);
+          });
+          test("a passing test", () => {});
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "drain-throw.test.ts"],
+        env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("exit listener ran with 0");
+      expect(stderr).toContain("1 pass");
+      expect(stderr).toContain("Expected: 2");
+      expect(exitCode).toBe(1);
+    });
+
     test("run for a bun:test file under BUN_TEST_DRAIN_EVENT_LOOP, which the vendored node tests set", async () => {
       using dir = tempDir("bun-test-exit-listener", { "drain.test.ts": bunTestFile(1) });
       await using proc = Bun.spawn({

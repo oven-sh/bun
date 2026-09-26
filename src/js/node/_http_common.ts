@@ -351,6 +351,8 @@ export default {
   freeParser,
   methods,
   parsers,
+  parserOnHeaders,
+  MAX_HEADER_PAIRS,
   kIncomingMessage,
   kSkipPendingData,
   HTTPParser,

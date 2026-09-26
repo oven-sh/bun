@@ -50,6 +50,7 @@
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include "BunClientData.h"
+#include "ObjectBindings.h"
 #include "IsolatedModuleCache.h"
 #include <JavaScriptCore/Identifier.h>
 #include "ImportMetaObject.h"
@@ -449,20 +450,43 @@ JSValue createRequireCacheObject(JSC::JSGlobalObject* globalObject, JSC::JSMap* 
     return JSC::profiledCall(globalObject, ProfilingReason::API, createRequireCache, JSC::getCallData(createRequireCache), jsUndefined(), args);
 }
 
+JSC_DEFINE_CUSTOM_SETTER(jsRequireCacheSetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
+
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RELEASE_AND_RETURN(scope, Bun::defineOwnDataProperty(globalObject, thisObject, propertyName, JSValue::decode(value), 0));
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsRequireExtensionsGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     return JSValue::encode(thisObject->lazyRequireExtensionsObject());
 }
 
+JSC_DEFINE_CUSTOM_SETTER(jsRequireExtensionsSetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
+
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RELEASE_AND_RETURN(scope, Bun::defineOwnDataProperty(globalObject, thisObject, propertyName, JSValue::decode(value), 0));
+}
+
 static const HashTableValue RequireResolveFunctionPrototypeValues[] = {
     { "paths"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, requireResolvePathsFunction, 1 } },
 };
 
-// CustomValue with no setter: a writable data property to JS, and an assignment defines the value on the receiver.
 static const HashTableValue RequireFunctionPrototypeValues[] = {
-    { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomValue), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireCacheGetter, 0 } },
-    { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomValue), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireExtensionsGetter, 0 } },
+    { "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireCacheGetter, jsRequireCacheSetter } },
+    { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsRequireExtensionsGetter, jsRequireExtensionsSetter } },
 };
 
 Structure* RequireFunctionPrototype::createStructure(

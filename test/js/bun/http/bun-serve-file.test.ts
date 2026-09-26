@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles, tls } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1834,6 +1834,8 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
       "/slice-0-10": () => Bun.file(small).slice(0, 10),
       "/slice-5-15": () => Bun.file(small).slice(5, 15),
       "/slice-5": () => Bun.file(small).slice(5),
+      "/slice-0-neg-10": () => Bun.file(small).slice(0, -10),
+      "/slice-neg-10": () => Bun.file(small).slice(-10),
       "/stream": () => Bun.file(small).stream(),
       "/medium": () => Bun.file(medium),
       "/large": () => Bun.file(large),
@@ -1871,13 +1873,7 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
           return new Response(forms[pathname.slice("/async".length)]());
         }
         if (pathname.startsWith("/claimed/")) {
-          // The bytes of the pipe come after its read started, so the handler goes on inside that
-          // read. The read holds the read buffer of the event loop, and the server takes its own.
-          const cat = Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "pipe", stderr: "ignore" });
-          const echoed = cat.stdout.text();
-          cat.stdin.write("claimed");
-          cat.stdin.end();
-          await echoed;
+          await insidePipeRead();
           return new Response(forms[pathname.slice("/claimed".length)]());
         }
         if (pathname === "/fd/shared") return new Response(Bun.file(fd));
@@ -1894,6 +1890,24 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
       },
     });
   });
+
+  // Returns inside the read of a pipe: the bytes come after the read waits for
+  // them. That read holds the read buffer of the event loop.
+  let fifos = 0;
+  async function insidePipeRead() {
+    const fifo = join(String(dir), `fifo-${fifos++}`);
+    mkfifo(fifo);
+    // Read and write, so that open() does not wait for the other end.
+    const writer = openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK);
+    const reader = Bun.file(fifo).stream().getReader();
+    const read = reader.read();
+    setImmediate(() => writeSync(writer, "claimed"));
+    await read;
+    queueMicrotask(() => {
+      reader.cancel();
+      closeSync(writer);
+    });
+  }
 
   afterAll(async () => {
     server?.stop(true);
@@ -2010,7 +2024,7 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
   const noLength: Expected = { status: "HTTP/1.1 200 OK", contentLength: null, chunked: false, body: "" };
   const empty = exactly(Buffer.alloc(0));
 
-  describe.each(["/sync", "/async", "/claimed", "/function", "/static"])("%s", producer => {
+  describe.each(["/sync", "/async", "/function", "/static"])("%s", producer => {
     test.concurrent("GET sends the bytes with their length", async () => {
       const results = {
         whole: text(await wire(`${producer}/whole`)),
@@ -2038,6 +2052,17 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
         // A fetch handler does not ask for the window of the slice.
         "slice(0, 10)": { ...noLength, contentLength: producer === "/static" ? "10" : null },
         large: noLength,
+      });
+    });
+
+    // A negative index counts from the largest size that a Blob can have: https://github.com/oven-sh/bun/pull/41257
+    test.concurrent("a slice with a negative index sends the bytes that bytes() returns", async () => {
+      expect({
+        "slice(0, -10)": text(await wire(`${producer}/slice-0-neg-10`)),
+        "slice(-10)": text(await wire(`${producer}/slice-neg-10`)),
+      }).toEqual({
+        "slice(0, -10)": exactly(Buffer.from(await Bun.file(small).slice(0, -10).bytes())),
+        "slice(-10)": exactly(Buffer.from(await Bun.file(small).slice(-10).bytes())),
       });
     });
 
@@ -2088,6 +2113,23 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
         size: text(await wire(`${producer}/after-size`)),
         exists: text(await wire(`${producer}/after-exists`)),
       }).toEqual({ size: empty, exists: empty });
+    });
+  });
+
+  // The server takes a buffer of its own, because the read of the pipe holds the one of the event loop.
+  test.concurrent("a response that starts inside the read of a pipe", async () => {
+    expect({
+      whole: text(await wire("/claimed/whole")),
+      "several reads": text(await wire("/claimed/medium")),
+      "slice(5, 15)": text(await wire("/claimed/slice-5-15")),
+      "over the read buffer": text(await wire("/claimed/large")),
+      head: text(await wire("/claimed/whole", { method: "HEAD" })),
+    }).toEqual({
+      whole: exactly(smallBytes),
+      "several reads": exactly(mediumBytes),
+      "slice(5, 15)": exactly(smallBytes.subarray(5, 15)),
+      "over the read buffer": empty,
+      head: noLength,
     });
   });
 
@@ -2261,23 +2303,35 @@ describe.skipIf(!isLinux)("Bun.file() of a regular file whose stat size is 0", (
     }).toEqual({ head: noLength, get: exactly(smallBytes) });
   });
 
-  test.concurrent("over TLS", async () => {
+  test.concurrent("over TLS, with HTTP/1.1, HTTP/2 and HTTP/3", async () => {
     await using secure = Bun.serve({
       port: 0,
       tls,
+      http2: true,
+      http3: true,
       routes: { "/static": new Response(Bun.file(small)) },
       fetch: () => new Response(Bun.file(small)),
     });
     const results: Record<string, unknown> = {};
-    for (const path of ["/static", "/handler"]) {
-      const res = await fetch(new URL(path, secure.url), { tls: { rejectUnauthorized: false } });
-      results[path] = {
-        status: res.status,
-        contentLength: res.headers.get("content-length"),
-        body: await res.text(),
-      };
+    const expected: Record<string, unknown> = {};
+    for (const protocol of ["http1.1", "http2", "http3"]) {
+      for (const path of ["/static", "/handler"]) {
+        const res = await fetch(`https://127.0.0.1:${secure.port}${path}`, {
+          protocol,
+          tls: { rejectUnauthorized: false },
+        } as RequestInit);
+        results[`${protocol} ${path}`] = {
+          status: res.status,
+          contentLength: res.headers.get("content-length"),
+          body: await res.text(),
+        };
+        expected[`${protocol} ${path}`] = {
+          status: 200,
+          contentLength: String(smallBytes.length),
+          body: smallBytes.toString("latin1"),
+        };
+      }
     }
-    const expected = { status: 200, contentLength: String(smallBytes.length), body: smallBytes.toString("latin1") };
-    expect(results).toEqual({ "/static": expected, "/handler": expected });
+    expect(results).toEqual(expected);
   });
 });

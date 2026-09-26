@@ -436,7 +436,6 @@ struct us_udp_socket_t {
      * and use it to build a proper and full sockaddr_in or sockaddr_in6 for every received packet */
     uint16_t port;
     uint16_t closed : 1;
-    uint16_t connected : 1;
     uint16_t shared_fd : 1;
     struct us_udp_socket_t *next;
 };

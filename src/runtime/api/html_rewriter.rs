@@ -293,19 +293,11 @@ fn handler_result(outcome: HandlerOutcome) -> lol_html::HandlerResult {
     }
 }
 
-/// Build the [`lol_html::Settings`] handler vectors from `ctx`. The lifetime
+/// Build the [`lol_html::Settings`] that carry `ctx`'s handlers. The lifetime
 /// erasures below are sound because the consuming sink's `Rc` keeps `ctx` alive
 /// and `handler_callback` detaches each JS wrapper before its handler returns.
-fn build_settings(
-    ctx: &mut LOLHTMLContext,
-) -> (
-    Vec<(
-        std::borrow::Cow<'static, lol_html::Selector>,
-        lol_html::ElementContentHandlers<'static>,
-    )>,
-    Vec<lol_html::DocumentContentHandlers<'static>>,
-) {
-    let mut element_content_handlers = Vec::with_capacity(ctx.element_handlers.len());
+fn build_settings(ctx: &mut LOLHTMLContext) -> lol_html::Settings<'static, 'static> {
+    let mut settings = lol_html::Settings::new();
     for ElementHandlerEntry { selector, handler } in &mut ctx.element_handlers {
         let has_element = handler.on_element_callback.is_some();
         let has_comment = handler.on_comment_callback.is_some();
@@ -338,10 +330,10 @@ fn build_settings(
                 handler_result(ElementHandler::on_text(h, raw))
             });
         }
-        element_content_handlers.push((std::borrow::Cow::Owned(selector.clone()), handlers));
+        settings = settings
+            .append_element_content_handler((std::borrow::Cow::Owned(selector.clone()), handlers));
     }
 
-    let mut document_content_handlers = Vec::with_capacity(ctx.document_handlers.len());
     for handler in &mut ctx.document_handlers {
         let has_doc_type = handler.on_doc_type_callback.is_some();
         let has_comment = handler.on_comment_callback.is_some();
@@ -380,10 +372,10 @@ fn build_settings(
                 handler_result(DocumentHandler::on_end(h, raw))
             });
         }
-        document_content_handlers.push(handlers);
+        settings = settings.append_document_content_handler(handlers);
     }
 
-    (element_content_handlers, document_content_handlers)
+    settings
 }
 
 // ───────────────────────────── HTMLRewriter ──────────────────────────────
@@ -1083,23 +1075,18 @@ impl RewriterPipe {
 
         // The handler closures point into `Box`es owned by `(*pipe).context`,
         // which `pipe` keeps alive for the rewriter's whole lifetime.
-        let (element_content_handlers, document_content_handlers) =
-            build_settings(&mut this.context.borrow_mut());
+        let settings = build_settings(&mut this.context.borrow_mut())
+            .with_encoding(lol_html::AsciiCompatibleEncoding::utf_8())
+            // Default parsing-buffer preallocation: it only ever holds the
+            // unparsed tail of one write (a token split across chunks).
+            .with_memory_settings(
+                lol_html::MemorySettings::new().with_max_allowed_memory_usage(u32::MAX as usize),
+            )
+            .with_strict(false)
+            .with_enable_esi_tags(false)
+            .with_adjust_charset_on_meta_tag(false);
         this.rewriter.set(Some(Box::new(lol_html::HtmlRewriter::new(
-            lol_html::Settings {
-                element_content_handlers,
-                document_content_handlers,
-                encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
-                // Default parsing-buffer preallocation: it only ever holds the
-                // unparsed tail of one write (a token split across chunks).
-                memory_settings: lol_html::MemorySettings {
-                    max_allowed_memory_usage: u32::MAX as usize,
-                    ..lol_html::MemorySettings::new()
-                },
-                strict: false,
-                enable_esi_tags: false,
-                adjust_charset_on_meta_tag: false,
-            },
+            settings,
             // The pipe owns the `Box<LolRewriter>` that owns this sink, so the
             // back-reference to `output_buffer` cannot outlive its pointee.
             bun_bundler::HTMLScanner::OutputSink::Buffer(bun_ptr::BackRef::new(

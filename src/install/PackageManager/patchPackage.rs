@@ -581,15 +581,7 @@ pub fn do_patch_commit(
     }
 
     // rename to patches dir
-    if let Err(e) = sys::renameat_concurrently(
-        tmpdir,
-        tempfile_name,
-        Fd::cwd(),
-        path_in_patches_dir,
-        sys::RenameOptions {
-            move_fallback: true,
-        },
-    ) {
+    if let Err(e) = sys::move_file_z(tmpdir, tempfile_name, Fd::cwd(), path_in_patches_dir) {
         Output::err(e, "failed renaming patch file to patches dir", ());
         Global::crash();
     }

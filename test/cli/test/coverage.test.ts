@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
@@ -55,6 +55,73 @@ export class Y {
   expect(normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir)).toMatchSnapshot(
     "lcov-coverage-reporter-output",
   );
+});
+
+const lcovRerunFiles = {
+  "math.ts": `export const add = (a: number, b: number) => a + b;\n`,
+  "demo.test.ts": `
+import { expect, test } from "bun:test";
+import { add } from "./math";
+test("ok", () => expect(add(1, 1)).toBe(2));
+`,
+};
+
+// lcov.info is written to a temporary name in coverage/ and renamed over the
+// previous report. Nothing of the previous report stays under the temporary name.
+test("lcov reporter leaves only lcov.info in the coverage dir on repeated runs", async () => {
+  using dir = tempDir("cov-lcov-rerun", lcovRerunFiles);
+  for (let i = 0; i < 2; i++) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  }
+  expect(readdirSync(path.join(String(dir), "coverage"))).toEqual(["lcov.info"]);
+});
+
+// A rename does not replace a directory that has entries. The directory stays where it is.
+test("lcov reporter fails when lcov.info is a directory with entries, and leaves it in place", async () => {
+  using dir = tempDir("cov-lcov-is-dir", {
+    ...lcovRerunFiles,
+    "coverage/lcov.info/keep.txt": "keep",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    cwd: String(dir),
+    // This failure exits with Global::exit(1) and skips the VM teardown, so LeakSanitizer
+    // reports the live VM and aborts. Leak detection is not what this test asserts.
+    env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Failed to write lcov.info");
+  expect(readdirSync(path.join(String(dir), "coverage"))).toEqual(["lcov.info"]);
+  expect(readFileSync(path.join(String(dir), "coverage", "lcov.info", "keep.txt"), "utf8")).toBe("keep");
+  expect(exitCode).toBe(1);
+});
+
+test("lcov reporter replaces an empty directory at lcov.info", async () => {
+  using dir = tempDir("cov-lcov-is-empty-dir", lcovRerunFiles);
+  mkdirSync(path.join(String(dir), "coverage", "lcov.info"), { recursive: true });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(readdirSync(path.join(String(dir), "coverage"))).toEqual(["lcov.info"]);
+  expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf8")).toContain("SF:math.ts");
+  expect(exitCode).toBe(0);
 });
 
 test("coverage excludes node_modules directory", () => {

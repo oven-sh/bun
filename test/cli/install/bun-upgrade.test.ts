@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, isMusl, isWindows, tempDir, tls, tmpdirSync } from "harness";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { copyFile, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
@@ -102,11 +102,15 @@ function makeZipStored(entryName: string, data: Buffer, unixMode: number): Buffe
 // executable at the path `bun upgrade` verifies. On POSIX a shell script is
 // enough because `unzip` preserves the mode bits; on Windows the verify step
 // spawns `bun.exe` directly, so the archive has to carry a real PE image.
-async function writeFakeReleaseZip(outPath: string, version: string): Promise<void> {
+function releaseFolderName(): string {
   const os = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : "linux";
   const arch = process.arch === "arm64" ? "aarch64" : "x64";
   const abi = isMusl ? "-musl" : "";
-  const folder = `bun-${os}-${arch}${abi}`;
+  return `bun-${os}-${arch}${abi}`;
+}
+
+async function writeFakeReleaseZip(outPath: string, version: string): Promise<void> {
+  const folder = releaseFolderName();
   if (isWindows) {
     const exe = Buffer.from(await Bun.file(bunExe()).arrayBuffer());
     await writeFile(outPath, makeZipStored(`${folder}/bun.exe`, exe, 0o755));
@@ -296,6 +300,38 @@ it("completes against a locally-served release with the system temp dir held ope
   expect(stderr).toMatch(/Upgraded\.|already on the latest/);
   expect(exitCode).toBe(0);
 });
+
+// On Windows the fake release holds the real bun.exe, which does not report the served version.
+it.skipIf(isWindows)(
+  "moves the new executable out of the staging directory and leaves no executable there",
+  async () => {
+    const version = "9.9.9";
+    using cwd = tempDir("bun-upgrade-exe", {});
+    const execPath = join(String(cwd), basename(bunExe()));
+    const zipPath = join(String(cwd), "release.zip");
+    await Promise.all([copyFile(bunExe(), execPath), writeFakeReleaseZip(zipPath, version)]);
+    using stagingRoot = tempDir("bun-upgrade-staging-exe", {});
+
+    using server = startReleaseServer({ tagName: `bun-v${version}`, zipPath });
+
+    await using proc = Bun.spawn({
+      cmd: [execPath, "upgrade", "--stable"],
+      cwd: String(cwd),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, BUN_TMPDIR: String(stagingRoot) },
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Upgraded.");
+    expect(await Bun.file(execPath).text()).toStartWith("#!/bin/sh");
+    // The release was unpacked under BUN_TMPDIR, and the move left nothing in its folder.
+    expect(readdirSync(join(String(stagingRoot), version, releaseFolderName()))).toEqual([]);
+    expect(exitCode).toBe(0);
+  },
+);
 
 it("recreates the staging directory in the temp dir instead of reusing a pre-existing one", async () => {
   const tagName = "bun-v9.9.9";

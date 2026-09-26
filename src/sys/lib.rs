@@ -8912,21 +8912,13 @@ pub fn exists(path: &[u8]) -> bool {
     let z = ZStr::from_buf(&buf.0[..], path.len());
     exists_z(z)
 }
-/// `moveFileZ`. Routes through
-/// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
-/// delete-tree + rename); on EISDIR removes the dest dir and
-/// retries; on EXDEV falls back to the slow open+copy path. Only opens the
-/// source inside the EXDEV branch.
+/// `moveFileZ`: a plain rename. EISDIR removes an empty dest dir and retries, EXDEV takes the slow open+copy path.
 pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
+    match renameat(from_dir, filename, to_dir, destination) {
         Ok(()) => Ok(()),
         // allow over-writing an empty directory
         Err(e) if e.get_errno() == E::EISDIR => {
-            #[cfg(unix)]
-            // SAFETY: destination is NUL-terminated.
-            let _ = unsafe {
-                libc::unlinkat(to_dir.native(), destination.as_ptr(), libc::AT_REMOVEDIR)
-            };
+            let _ = rmdirat(to_dir, destination);
             renameat(from_dir, filename, to_dir, destination)
         }
         Err(e) if e.get_errno() == E::EXDEV => {

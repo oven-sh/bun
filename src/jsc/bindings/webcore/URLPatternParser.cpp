@@ -30,6 +30,7 @@
 #include "URLPatternCanonical.h"
 #include "URLPatternTokenizer.h"
 #include <ranges>
+#include <wtf/HexNumber.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebCore {
@@ -356,6 +357,70 @@ ASCIILiteral convertModifierToString(Modifier modifier)
     }
 }
 
+static bool mayContainBackreference(StringView regexp)
+{
+    for (unsigned index = 0; index + 1 < regexp.length(); ++index) {
+        if (regexp[index] != '\\')
+            continue;
+        ++index;
+        if (regexp[index] >= '1' && regexp[index] <= '9')
+            return true;
+    }
+    return false;
+}
+
+static size_t lastPartWithBackreference(const Vector<Part>& partList)
+{
+    for (size_t index = partList.size(); index--;) {
+        if (partList[index].type == PartType::Regexp && mayContainBackreference(partList[index].value))
+            return index;
+    }
+    return notFound;
+}
+
+// The spec's lazy `[^/]+?` for :a in "/:a-:b" retries at every later "-", O(n^k) for k groups. :b accepts whatever a later "-" would give :a, so stopping at the first "-" finds the same match and groups.
+static String generateSegmentWildcardRegexpForPart(const Vector<Part>& partList, size_t index, size_t lastBackreferenceIndex, const URLPatternStringOptions& options)
+{
+    auto wildcard = generateSegmentWildcardRegexp(options);
+
+    auto& part = partList[index];
+    if (part.modifier != Modifier::None)
+        return wildcard;
+
+    size_t nextIndex = index + 1;
+    StringView fixedText;
+    if (nextIndex < partList.size() && partList[nextIndex].type == PartType::FixedText && partList[nextIndex].modifier == Modifier::None)
+        fixedText = partList[nextIndex++].value;
+    if (nextIndex >= partList.size())
+        return wildcard;
+
+    auto& nextPart = partList[nextIndex];
+    if (nextPart.type != PartType::SegmentWildcard || nextPart.modifier != Modifier::None)
+        return wildcard;
+
+    // To stop at the first match of a longer separator takes a group inside a loop, and YARR gives up on such a loop after about a million iterations.
+    if (part.suffix.length() + fixedText.length() + nextPart.prefix.length() > 1)
+        return wildcard;
+    auto separator = makeString(part.suffix, fixedText, nextPart.prefix);
+
+    // With a backreference to :a or :b in a later regexp group, the rest can match after a later "-" only.
+    if (lastBackreferenceIndex != notFound && lastBackreferenceIndex > nextIndex)
+        return wildcard;
+
+    // `wildcard` is "[^d]+?" for the delimiter d. Without the quantifier it is the class of one segment character.
+    ASSERT(wildcard.endsWith("]+?"_s));
+    StringView wildcardView { wildcard };
+    auto segmentCharacter = wildcardView.left(wildcardView.length() - 2);
+    if (separator.isEmpty())
+        return segmentCharacter.toString();
+
+    if (!isASCII(separator[0]) || separator == options.delimiterCodepoint)
+        return wildcard;
+
+    // The separator goes in as \xHH so that it needs no escape that depends on the `v` flag.
+    return makeString(segmentCharacter, wildcardView.left(wildcardView.length() - 3), "\\x"_s, hex(static_cast<unsigned>(separator[0]), 2), "]*"_s);
+}
+
 // https://urlpattern.spec.whatwg.org/#generate-a-regular-expression-and-name-list
 std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& partList, const URLPatternStringOptions& options)
 {
@@ -363,8 +428,11 @@ std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& p
     result.append('^');
 
     Vector<String> nameList;
+    size_t lastBackreferenceIndex = lastPartWithBackreference(partList);
 
-    for (auto& part : partList) {
+    for (size_t index = 0; index < partList.size(); ++index) {
+        auto& part = partList[index];
+
         if (part.type == PartType::FixedText) {
             if (part.modifier == Modifier::None)
                 result.append(escapeRegexString(part.value));
@@ -381,7 +449,7 @@ std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& p
         String regexpValue;
 
         if (part.type == PartType::SegmentWildcard)
-            regexpValue = generateSegmentWildcardRegexp(options);
+            regexpValue = generateSegmentWildcardRegexpForPart(partList, index, lastBackreferenceIndex, options);
         else if (part.type == PartType::FullWildcard)
             regexpValue = ".*"_s;
         else

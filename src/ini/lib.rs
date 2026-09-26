@@ -1292,7 +1292,7 @@ mod draft {
             return;
         }
         if let Some(registry) = install.default_registry.as_mut() {
-            if !registry.has_credentials() {
+            if !registry.has_usable_credentials() {
                 for item in auth {
                     let matched = item.matches(if registry.url.is_empty() {
                         bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes()
@@ -1307,7 +1307,7 @@ mod draft {
         }
         if let Some(scoped) = install.scoped.as_mut() {
             for registry in scoped.scopes.values_mut() {
-                if registry.has_credentials() {
+                if registry.has_usable_credentials() {
                     continue;
                 }
                 for item in auth {

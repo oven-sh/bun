@@ -6,7 +6,6 @@ import {
   readableStreamToBytes,
   readableStreamToText,
 } from "bun";
-import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, it, test } from "bun:test";
 import {
   bunEnv,
@@ -33,6 +32,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import { positionDependentBytes, unixSockets } from "socketpair";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -2689,53 +2689,12 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
 // every byte. A sink that native code wires to the stream must get every byte
 // that was queued when the writer closed, and the read error behind them when
 // there is one. Each row queues its bytes on one end of a socketpair and
-// closes that end, in one turn of this thread.
-describe.skipIf(!isLinux && !isMacOS)("a native sink over a socket that hung up with bytes unread", () => {
-  const AF_UNIX = 1;
-  const SOCK_STREAM = 1;
-  const SOL_SOCKET = isLinux ? 1 : 0xffff;
-  const SO_SNDBUF = isLinux ? 7 : 0x1001;
-  const SO_RCVBUF = isLinux ? 8 : 0x1002;
-  const MSG_DONTWAIT = isLinux ? 0x40 : 0x80;
-
-  let libc;
-  function socketPair() {
-    libc ??= dlopen(libcPathForDlopen(), {
-      socketpair: { args: ["i32", "i32", "i32", "ptr"], returns: "i32" },
-      setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
-      send: { args: ["i32", "ptr", "usize", "i32"], returns: "i64" },
-    }).symbols;
-    const fds = new Int32Array(2);
-    if (libc.socketpair(AF_UNIX, SOCK_STREAM, 0, ptr(fds)) !== 0) throw new Error("socketpair() failed");
-    const [source, peer] = fds;
-    // A socket holds 208 KiB by default on Linux and 8 KiB on macOS. The kernel cuts the request to its limit.
-    const size = new Int32Array([1 << 20]);
-    libc.setsockopt(peer, SOL_SOCKET, SO_SNDBUF, ptr(size), 4);
-    libc.setsockopt(source, SOL_SOCKET, SO_RCVBUF, ptr(size), 4);
-    let peerIsOpen = true;
-    return {
-      source,
-      peer,
-      // Queues the bytes without blocking, then closes: the source holds the bytes and the hangup.
-      hangUp(bytes) {
-        const queued = Number(libc.send(peer, ptr(bytes), bytes.length, MSG_DONTWAIT));
-        closeSync(peer);
-        peerIsOpen = false;
-        return queued;
-      },
-      [Symbol.dispose]() {
-        if (peerIsOpen) closeSync(peer);
-        closeSync(source);
-      },
-    };
-  }
-
-  // The bytes depend on their position, so a delivery that comes twice or out of order does not compare equal.
-  // 251 is prime: no read size is a multiple of it. The element gives the rewriter's handler one call.
-  const unit = Buffer.from(
-    Array.from({ length: 251 }, (_, i) => "0123456789abcdefghijklmnopqrstuvwxyz".charCodeAt(i % 36)),
-  );
-  const html = length => Buffer.concat([Buffer.from("<p>"), Buffer.alloc(length - 3, unit)]);
+// closes that end, in one turn of this thread. A host whose limit for a socket
+// buffer is too low for the largest row skips them all.
+const sockets = isLinux || isMacOS ? unixSockets(libcPathForDlopen()) : undefined;
+describe.skipIf(!sockets?.holds(270_000))("a native sink over a socket that hung up with bytes unread", () => {
+  // The element gives the rewriter's handler one call.
+  const html = length => Buffer.concat([Buffer.from("<p>"), positionDependentBytes(length - 3)]);
 
   const sinks = {
     "Bun.write(file, stream)": async (stream, dir) => {
@@ -2767,7 +2726,7 @@ describe.skipIf(!isLinux && !isMacOS)("a native sink over a socket that hung up 
     ...Object.keys(sinks).map(sink => [sink, 270_000]),
   ])("%s gets all %d bytes of a source that hung up before it attached", async (sink, length) => {
     using dir = tempDir("native-sink-hung-up", {});
-    using pair = socketPair();
+    using pair = sockets.pair();
     const body = html(length);
     const queued = pair.hangUp(body);
     const received = await sinks[sink](Bun.file(pair.source).stream(), String(dir));
@@ -2784,8 +2743,8 @@ describe.skipIf(!isLinux && !isMacOS)("a native sink over a socket that hung up 
     "Bun.write(file, stream) gets all %d bytes when the callback of another reader handles the hangup",
     async length => {
       using dir = tempDir("native-sink-hung-up", {});
-      using outer = socketPair();
-      using inner = socketPair();
+      using outer = sockets.pair();
+      using inner = sockets.pair();
       const out = join(String(dir), "out.bin");
       const body = html(length);
       const written = Bun.write(out, Bun.file(inner.source).stream());
@@ -2812,7 +2771,7 @@ describe.skipIf(!isLinux && !isMacOS)("a native sink over a socket that hung up 
   // a sink that ends on them never sees it.
   it.skipIf(!isLinux).each(Object.keys(sinks))("%s rejects with the read error behind the bytes", async sink => {
     using dir = tempDir("native-sink-hung-up", {});
-    using pair = socketPair();
+    using pair = sockets.pair();
     writeSync(pair.source, "input that the peer never reads");
     const settled = sinks[sink](Bun.file(pair.source).stream(), String(dir)).then(
       () => null,

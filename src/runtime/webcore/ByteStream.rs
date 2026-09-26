@@ -5,6 +5,7 @@ use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 use bun_sys::Error as SysError;
 
+use crate::generated_classes::js_BytesInternalReadableStreamSource as js_source;
 use crate::webcore::streams::{self, BufferAction, IntoArray};
 use crate::webcore::{DrainResult, SinkHandle, blob, readable_stream};
 
@@ -24,6 +25,7 @@ pub struct ByteStream {
     pub(crate) buffer: JsCell<Vec<u8>>,
     pub(crate) has_received_last_chunk: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
+    pending_error: JsCell<PendingError>,
     pub(crate) done: Cell<bool>,
     /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by `pending_value`.
     // Raw fat slice ptr because the backing store is JS-heap-owned and rooted via
@@ -49,6 +51,7 @@ impl Default for ByteStream {
                 result: streams::Result::Done,
                 ..Default::default()
             }),
+            pending_error: JsCell::new(PendingError::None),
             done: Cell::new(false),
             pending_buffer: Cell::new(Self::empty_pending_buffer()),
             pending_value: JsCell::new(StrongOptional::empty()),
@@ -60,6 +63,17 @@ impl Default for ByteStream {
             buffer_action: JsCell::new(None),
         }
     }
+}
+
+/// The producer's terminal error, delivered while nothing could take it (no sink, no buffer
+/// action, no pending pull). [`ByteStream::take_pending_error`] hands it to the next reader.
+enum PendingError {
+    None,
+    System(Box<SysError>),
+    AbortReason(jsc::CommonAbortReason),
+    /// A JS value, in the wrapper's visited `pendingError` slot. Never a `Strong`: the error can
+    /// reference the Response that owns this stream, and a cycle through a root is never collected.
+    InWrapperSlot,
 }
 
 /// ReadableStream source backed by a ByteStream.
@@ -677,10 +691,7 @@ impl ByteStream {
                     buf.extend_from_slice(chunk);
                     self.buffer.set(buf);
                 }
-                streams::Result::Err(err) => {
-                    self.pending
-                        .with_mut(|p| p.result = streams::Result::Err(err));
-                }
+                streams::Result::Err(err) => self.set_pending_error(err),
                 streams::Result::Done => {}
                 _ => unreachable!(),
             }
@@ -707,8 +718,7 @@ impl ByteStream {
                     b.clear();
                     b.shrink_to_fit();
                 });
-                self.pending
-                    .with_mut(|p| p.result = streams::Result::Err(err));
+                self.set_pending_error(err);
             }
             streams::Result::Done => {}
             // We don't support the rest of these yet
@@ -716,6 +726,46 @@ impl ByteStream {
         }
 
         Ok(())
+    }
+
+    fn set_pending_error(&self, err: streams::StreamError) {
+        self.clear_pending_error();
+        let pending_error = match err {
+            streams::StreamError::Error(err) => PendingError::System(Box::new(err)),
+            streams::StreamError::AbortReason(reason) => PendingError::AbortReason(reason),
+            streams::StreamError::JSValue(value) => {
+                let source = self.parent_const();
+                // Every reader comes through the wrapper: once it is collected, nothing can take the error.
+                match source.this_jsvalue.try_get() {
+                    Some(wrapper) => {
+                        js_source::pending_error_set_cached(
+                            wrapper,
+                            source.global_this(),
+                            value.get().unwrap_or(JSValue::UNDEFINED),
+                        );
+                        PendingError::InWrapperSlot
+                    }
+                    None => PendingError::None,
+                }
+            }
+        };
+        self.pending_error.set(pending_error);
+    }
+
+    fn clear_pending_error(&self) {
+        if matches!(
+            self.pending_error.replace(PendingError::None),
+            PendingError::InWrapperSlot
+        ) {
+            let source = self.parent_const();
+            if let Some(wrapper) = source.this_jsvalue.try_get() {
+                js_source::pending_error_set_cached(
+                    wrapper,
+                    source.global_this(),
+                    JSValue::UNDEFINED,
+                );
+            }
+        }
     }
 
     fn set_value(&self, view: JSValue) {
@@ -774,10 +824,8 @@ impl ByteStream {
         if self.has_received_last_chunk.get() {
             // Surface a stored terminal error (set by `append(Err)` when no
             // reader was waiting) instead of silently reporting `Done`.
-            if matches!(self.pending.get().result, streams::Result::Err(_)) {
-                return self
-                    .pending
-                    .with_mut(|p| core::mem::replace(&mut p.result, streams::Result::Done));
+            if let Some(err) = self.take_pending_error() {
+                return streams::Result::Err(err);
             }
             return streams::Result::Done;
         }
@@ -908,18 +956,23 @@ impl ByteStream {
         drained
     }
 
-    /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`].
+    /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`]. A JS error comes back in
+    /// a `Strong` of its own: the wrapper's slot lets go of it here.
     pub fn take_pending_error(&self) -> Option<streams::StreamError> {
-        self.pending.with_mut(|p| {
-            if matches!(p.result, streams::Result::Err(_)) {
-                match core::mem::replace(&mut p.result, streams::Result::Done) {
-                    streams::Result::Err(e) => Some(e),
-                    _ => None,
-                }
-            } else {
-                None
+        match self.pending_error.replace(PendingError::None) {
+            PendingError::None => None,
+            PendingError::System(err) => Some(streams::StreamError::Error(*err)),
+            PendingError::AbortReason(reason) => Some(streams::StreamError::AbortReason(reason)),
+            PendingError::InWrapperSlot => {
+                let source = self.parent_const();
+                let wrapper = source.this_jsvalue.try_get()?;
+                let global = source.global_this();
+                let err =
+                    StrongOptional::create(js_source::pending_error_get_cached(wrapper)?, global);
+                js_source::pending_error_set_cached(wrapper, global, JSValue::UNDEFINED);
+                Some(streams::StreamError::JSValue(err))
             }
-        })
+        }
     }
 
     pub(crate) fn to_any_blob(&self) -> Option<blob::Any> {
@@ -930,6 +983,7 @@ impl ByteStream {
                 p.result.release();
                 p.result = streams::Result::Done;
             });
+            self.clear_pending_error();
             self.parent_const().is_closed.set(true);
             return Some(blob::Any::InternalBlob(blob::Internal {
                 bytes: buffer,
@@ -949,10 +1003,9 @@ impl ByteStream {
             return Err(cx.global().throw(format_args!("Cannot buffer value twice")));
         }
 
-        if let streams::Result::Err(err) = &self.pending.get().result {
+        if let Some(err) = self.take_pending_error() {
             let err_js = err.to_js(cx.global());
             err_js.ensure_still_alive();
-            self.pending.with_mut(|p| p.result = streams::Result::Done);
             self.done.set(true);
             self.buffer.with_mut(|b| {
                 b.clear();

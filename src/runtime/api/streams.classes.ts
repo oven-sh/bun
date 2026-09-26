@@ -89,7 +89,15 @@ function source(name) {
     // (`sink` backref). A chained transform needs both.
     // `closeAdapter`: the C++ JSNativeStreamSourceAdapter to notify from `on_close` (BunStreamSource.cpp sets it).
     // `lockedStream`: the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors. A Blob source never gets a native sink.
-    values: ["pendingPromise", "closeAdapter", "owner", "sinkOwner", ...(name !== "Blob" ? ["lockedStream"] : [])],
+    // `pendingError`: a JS error the producer delivered while nothing could take it (`ByteStream::take_pending_error`). Not a `Strong`: the error can reference the Response that owns the stream, and a cycle through a root is never collected.
+    values: [
+      "pendingPromise",
+      "closeAdapter",
+      "owner",
+      "sinkOwner",
+      ...(name !== "Blob" ? ["lockedStream"] : []),
+      ...(name === "Bytes" ? ["pendingError"] : []),
+    ],
   });
 }
 

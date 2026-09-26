@@ -1076,6 +1076,169 @@ describe("handlers that nothing else references stay alive", () => {
   });
 });
 
+// A handler's error reaches the output stream while nothing can take it: the
+// stream exists but nothing reads it, or its reader has a backlog. The stream's
+// native source used to keep that error in a Strong until the next read. A
+// Strong is a GC root, so an error that references its own Response closed a
+// cycle through a root: the Response, both streams, the transform and its
+// lol-html parser were never collected. The error now sits in a visited slot
+// of the source's wrapper.
+describe("a handler error that nothing has read yet", () => {
+  const N = 60;
+  const encoder = new TextEncoder();
+  const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+
+  // A rewrite of a streamed input. Its `p` handler fails, by default with an error that references the output Response.
+  const start = (
+    thrown = (response: Response): unknown => Object.assign(new Error("handler failed"), { response }),
+  ) => {
+    let controller!: ReadableStreamDefaultController;
+    let handled = Promise.withResolvers<void>();
+    const holder: { response?: Response } = {};
+    const response = new HTMLRewriter()
+      .on("b", { element: () => handled.resolve() })
+      .on("p", {
+        element() {
+          handled.resolve();
+          throw thrown(holder.response!);
+        },
+      })
+      .transform(new Response(new ReadableStream({ start: c => void (controller = c) })));
+    holder.response = response;
+    return {
+      response,
+      // Resolves once the handler for `html` ran and the native call that ran it has returned:
+      // the chunk's output, or the handler's error, is in the output stream.
+      async send(html: string) {
+        handled = Promise.withResolvers();
+        controller.enqueue(encoder.encode(html));
+        await handled.promise;
+        await turn();
+      },
+    };
+  };
+
+  // How the output is held when the handler fails. In both, the error finds no read to reject.
+  const failures = {
+    "an output stream that nothing reads": async () => {
+      const rewrite = start();
+      const body = rewrite.response.body!;
+      await rewrite.send("<p>fails</p>");
+      return { ...rewrite, body, reader: undefined };
+    },
+    // The first chunk fills the reader's queue, so the stream stops asking its source for more.
+    "an output stream whose reader has a backlog": async () => {
+      const rewrite = start();
+      const body = rewrite.response.body!;
+      const reader = body.getReader();
+      await rewrite.send("<b>first</b>");
+      await rewrite.send("<b>second</b>");
+      await rewrite.send("<p>fails</p>");
+      return { ...rewrite, body, reader };
+    },
+  };
+
+  const counts = async () => {
+    // A collected transform releases its pipe from a task, and the pipe holds more.
+    for (let round = 0; round < 3; round++) {
+      Bun.gc(true);
+      await turn();
+    }
+    const { objectTypeCounts, protectedObjectTypeCounts } = heapStats();
+    return {
+      responses: objectTypeCounts.Response ?? 0,
+      protectedErrors: protectedObjectTypeCounts.Error ?? 0,
+    };
+  };
+
+  test.each(Object.entries(failures))("does not pin its Response: %s", async (_, fail) => {
+    for (let i = 0; i < 10; i++) await fail();
+    const before = await counts();
+    for (let i = 0; i < N; i++) await fail();
+    const after = await counts();
+
+    // Unfixed: N protected errors, with N Responses behind them.
+    expect(after.protectedErrors - before.protectedErrors).toBeLessThan(N / 4);
+    expect(after.responses - before.responses).toBeLessThan(N / 4);
+  });
+
+  // The other half of a visited slot: the error has to stay alive until something takes it.
+  // These pass before the change too (a Strong cannot die): they guard the slot.
+  describe("is still the one its next reader gets, after a collection", () => {
+    // A full collection, then garbage in the cell sizes of what the handlers throw, so that
+    // an error collected by mistake is reused and cannot reach its reader by luck.
+    const churn = () => {
+      Bun.gc(true);
+      const junk: unknown[] = [];
+      for (let i = 0; i < 5_000; i++) {
+        junk.push(Object.assign(new Error("junk"), { response: junk }), ["junk", i].join(" "));
+      }
+    };
+    const describeError = (error: unknown, response: Response) => ({
+      isError: error instanceof Error,
+      message: (error as Error)?.message,
+      referencesItsResponse: (error as { response?: unknown })?.response === response,
+    });
+    const theHandlerError = { isError: true, message: "handler failed", referencesItsResponse: true };
+
+    test("text()", async () => {
+      const { response } = await failures["an output stream that nothing reads"]();
+      churn();
+      expect(describeError(await response.text().catch(error => error), response)).toEqual(theHandlerError);
+    });
+
+    test("Bun.readableStreamToBytes()", async () => {
+      const { response, body } = await failures["an output stream that nothing reads"]();
+      churn();
+      expect(describeError(await Bun.readableStreamToBytes(body).catch(error => error), response)).toEqual(
+        theHandlerError,
+      );
+    });
+
+    test("read(), after the chunk that was already queued", async () => {
+      const { response, reader } = await failures["an output stream whose reader has a backlog"]();
+      churn();
+      expect(new TextDecoder().decode((await reader!.read()).value)).toBe("<b>first</b>");
+      expect(describeError(await reader!.read().catch(error => error), response)).toEqual(theHandlerError);
+    });
+
+    test("a second rewriter that takes the stream", async () => {
+      const { response, body } = await failures["an output stream that nothing reads"]();
+      churn();
+      const second = new HTMLRewriter().on("b", { element() {} }).transform(new Response(body));
+      expect(describeError(await second.text().catch(error => error), response)).toEqual(theHandlerError);
+    });
+
+    // Script can throw anything. A weak handle, which only an object can have, would not do for the slot.
+    test("text(), when the handler threw a string", async () => {
+      const rewrite = start(() => ["a", "thrown", "string"].join(" "));
+      void rewrite.response.body;
+      await rewrite.send("<p>fails</p>");
+      churn();
+      expect(await rewrite.response.text().catch(error => error)).toBe("a thrown string");
+    });
+
+    // The upload looks for the error before it makes a request.
+    test("an S3 upload of the stream", async () => {
+      let requests = 0;
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () => (requests++, new Response(null, { status: 500 })),
+      });
+      const file = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        bucket: "test",
+        endpoint: server.url.href,
+      }).file("key");
+      const { response, body } = await failures["an output stream that nothing reads"]();
+      churn();
+      expect(describeError(await file.write(body).catch(error => error), response)).toEqual(theHandlerError);
+      expect(requests).toBe(0);
+    });
+  });
+});
+
 const withoutAsanWarning = (stderr: string) =>
   stderr
     .split("\n")

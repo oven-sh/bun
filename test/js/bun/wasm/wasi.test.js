@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
@@ -202,6 +202,143 @@ it("poll_oneoff waits on a clock subscription and reports the event", () => {
     userdata,
     errno: WASI_ESUCCESS,
     type: WASI_EVENTTYPE_CLOCK,
+  });
+});
+
+describe("poll_oneoff", () => {
+  const WASI_ESUCCESS = 0;
+  const WASI_EINVAL = 28;
+  const WASI_ENOSYS = 52;
+  const WASI_EVENTTYPE_CLOCK = 0;
+  const WASI_EVENTTYPE_FD_READ = 1;
+  const WASI_EVENTTYPE_FD_WRITE = 2;
+  const WASI_CLOCK_MONOTONIC = 1;
+  const WASI_STDIN_FILENO = 0;
+  const WASI_STDOUT_FILENO = 1;
+  const SUBSCRIPTION_SIZE = 48;
+  const EVENT_SIZE = 32;
+  const subscriptionPtr = 1024;
+  const eventPtr = 2048;
+  const neventsPtr = 4096;
+  const untouched = new Uint8Array(EVENT_SIZE).fill(0xaa);
+
+  const clock = (userdata, timeout, clockid = WASI_CLOCK_MONOTONIC) => ({
+    userdata,
+    type: WASI_EVENTTYPE_CLOCK,
+    clockid,
+    timeout,
+  });
+  const fdRead = (userdata, fd) => ({ userdata, type: WASI_EVENTTYPE_FD_READ, fd });
+  const fdWrite = (userdata, fd) => ({ userdata, type: WASI_EVENTTYPE_FD_WRITE, fd });
+
+  // One poll_oneoff call on a new WASI. The injected sleep() records the requested wait and returns at once, so a long
+  // timeout costs nothing.
+  function poll(subscriptions) {
+    const sleeps = [];
+    const wasi = new WASI({ sleep: ms => sleeps.push(ms) });
+    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+    const view = new DataView(wasi.memory.buffer);
+    const bytes = new Uint8Array(wasi.memory.buffer);
+
+    subscriptions.forEach((subscription, i) => {
+      // subscription: userdata u64 @0, type u8 @8, then clock { id u32 @16, timeout u64 (ns) @24, precision u64 @32,
+      // flags u16 @40 } or fd_readwrite { fd u32 @16 }
+      const at = subscriptionPtr + i * SUBSCRIPTION_SIZE;
+      view.setBigUint64(at, subscription.userdata, true);
+      view.setUint8(at + 8, subscription.type);
+      if (subscription.type === WASI_EVENTTYPE_CLOCK) {
+        view.setUint32(at + 16, subscription.clockid, true);
+        view.setBigUint64(at + 24, subscription.timeout, true);
+      } else {
+        view.setUint32(at + 16, subscription.fd, true);
+      }
+    });
+    // 0xaa shows each byte that poll_oneoff does not write: the nevents slot, and one spare record after the records
+    // of all the subscriptions.
+    bytes.fill(0xaa, neventsPtr, neventsPtr + 4);
+    bytes.fill(0xaa, eventPtr, eventPtr + (subscriptions.length + 1) * EVENT_SIZE);
+
+    const errno = wasi.wasiImport.poll_oneoff(subscriptionPtr, eventPtr, subscriptions.length, neventsPtr);
+    const nevents = view.getUint32(neventsPtr, true);
+    // event: userdata u64 @0, error u16 @8, type u8 @10, fd_readwrite { nbytes u64 @16, flags u16 @24 }
+    const events = Array.from({ length: Math.min(nevents, subscriptions.length) }, (_, i) => {
+      const at = eventPtr + i * EVENT_SIZE;
+      return {
+        userdata: view.getBigUint64(at, true),
+        error: view.getUint16(at + 8, true),
+        type: view.getUint8(at + 10),
+        nbytes: view.getBigUint64(at + 16, true),
+        flags: view.getUint16(at + 24, true),
+      };
+    });
+    const spare = eventPtr + subscriptions.length * EVENT_SIZE;
+    return { errno, sleeps, nevents, events, spare: bytes.slice(spare, spare + EVENT_SIZE) };
+  }
+
+  it("waits for the earliest clock and reports only that clock", () => {
+    // The shortest timeout is neither the first nor the last subscription.
+    const { errno, sleeps, events } = poll([
+      clock(0x1111n, 60_000_000_000n),
+      clock(0x2222n, 30_000_000_000n),
+      clock(0x3333n, 90_000_000_000n),
+    ]);
+    expect(errno).toBe(WASI_ESUCCESS);
+    expect(sleeps).toHaveLength(1);
+    expect(sleeps[0]).toBeGreaterThan(29_000);
+    expect(sleeps[0]).toBeLessThanOrEqual(30_000);
+    expect(events).toEqual([
+      { userdata: 0x2222n, error: WASI_ESUCCESS, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 },
+    ]);
+  });
+
+  it("reports the first of two clocks with the same timeout", () => {
+    const { errno, events } = poll([clock(0x1111n, 30_000_000_000n), clock(0x2222n, 30_000_000_000n)]);
+    expect(errno).toBe(WASI_ESUCCESS);
+    expect(events).toEqual([
+      { userdata: 0x1111n, error: WASI_ESUCCESS, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 },
+    ]);
+  });
+
+  it("writes one 32-byte event record per reported subscription", () => {
+    // A guest reads events[i] from out + 32 * i. fd polling is not implemented, so each fd subscription reports ENOSYS,
+    // and a clock id that does not exist reports EINVAL. Node polls the fds and ignores the clock id.
+    const { errno, events, spare } = poll([
+      fdRead(1n, WASI_STDIN_FILENO),
+      clock(2n, 0n),
+      fdWrite(3n, WASI_STDOUT_FILENO),
+      clock(4n, 0n, 1234),
+    ]);
+    expect(errno).toBe(WASI_ESUCCESS);
+    expect(events).toEqual([
+      { userdata: 1n, error: WASI_ENOSYS, type: WASI_EVENTTYPE_FD_READ, nbytes: 0n, flags: 0 },
+      { userdata: 2n, error: WASI_ESUCCESS, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 },
+      { userdata: 3n, error: WASI_ENOSYS, type: WASI_EVENTTYPE_FD_WRITE, nbytes: 0n, flags: 0 },
+      { userdata: 4n, error: WASI_EINVAL, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 },
+    ]);
+    expect(spare).toEqual(untouched);
+  });
+
+  it("reports an fd subscription next to the clock that fired", () => {
+    const { errno, sleeps, events } = poll([
+      clock(0x1111n, 60_000_000_000n),
+      fdWrite(0x2222n, WASI_STDOUT_FILENO),
+      clock(0x3333n, 30_000_000_000n),
+    ]);
+    expect(errno).toBe(WASI_ESUCCESS);
+    // The ENOSYS event of the fd subscription does not end the wait. Node returns at once with the ready fd only.
+    expect(sleeps).toHaveLength(1);
+    expect(sleeps[0]).toBeGreaterThan(29_000);
+    expect(sleeps[0]).toBeLessThanOrEqual(30_000);
+    expect(events).toEqual([
+      { userdata: 0x2222n, error: WASI_ENOSYS, type: WASI_EVENTTYPE_FD_WRITE, nbytes: 0n, flags: 0 },
+      { userdata: 0x3333n, error: WASI_ESUCCESS, type: WASI_EVENTTYPE_CLOCK, nbytes: 0n, flags: 0 },
+    ]);
+  });
+
+  it("returns EINVAL for zero subscriptions and writes nothing", () => {
+    const { errno, sleeps, nevents, spare } = poll([]);
+    expect({ errno, sleeps, nevents }).toEqual({ errno: WASI_EINVAL, sleeps: [], nevents: 0xaaaaaaaa });
+    expect(spare).toEqual(untouched);
   });
 });
 

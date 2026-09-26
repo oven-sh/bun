@@ -697,12 +697,7 @@ impl OverrideMap {
         expr: Expr,
     ) -> Result<(), Error> {
         if !expr.is_object() {
-            ctx.log.add_warning_fmt(
-                Some(ctx.source),
-                value_loc_of(ctx.source, expr.loc),
-                format_args!("\"overrides\" must be an object"),
-            );
-            return Ok(());
+            return Err(not_an_object(ctx, expr.loc));
         }
 
         self.map.ensure_unused_capacity(expr.property_count())?;
@@ -817,12 +812,7 @@ impl OverrideMap {
         expr: Expr,
     ) -> Result<(), Error> {
         if !expr.is_object() {
-            ctx.log.add_warning_fmt(
-                Some(ctx.source),
-                value_loc_of(ctx.source, expr.loc),
-                format_args!("\"resolutions\" must be an object with string values"),
-            );
-            return Ok(());
+            return Err(not_an_object(ctx, expr.loc));
         }
         self.map.ensure_unused_capacity(expr.property_count())?;
         expr.try_for_each_property(|k, key_loc, value_expr| {
@@ -968,6 +958,20 @@ fn clone_range(
         None,
     )
     .unwrap_or_default()
+}
+
+/// A non-object `"overrides"` / `"resolutions"` field is a typo that would otherwise install with no rules applied, so it fails the install.
+#[cold]
+fn not_an_object(ctx: &mut ParseContext<'_, '_>, loc: bun_ast::Loc) -> Error {
+    let name = ctx.field.json_name();
+    ctx.log.add_error_fmt(
+        ctx.source,
+        value_loc_of(ctx.source, loc),
+        format_args!(
+            "\"{name}\" expects a map of package names to versions, e.g.\n  \"{name}\": {{\n    \"react\": \"18.2.0\"\n  }}"
+        ),
+    );
+    Error::InvalidPackageJSON
 }
 
 fn warn_selector_error(

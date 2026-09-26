@@ -1,33 +1,73 @@
 process.exitCode = 1;
 const { AsyncLocalStorage } = require("async_hooks");
-const { Worker, isMainThread, parentPort } = require("worker_threads");
+const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
 
 const asyncLocalStorage = new AsyncLocalStorage();
+const workerStore = { test: "worker_threads" };
+const registrationStore = { test: "listener-registration" };
+
+function assertWorkerContext(event) {
+  if (asyncLocalStorage.getStore() !== workerStore) {
+    console.error(`FAIL: worker ${event} event lost context`);
+    process.exit(1);
+  }
+}
 
 if (isMainThread) {
-  asyncLocalStorage.run({ test: "worker_threads" }, () => {
-    const worker = new Worker(__filename);
+  let worker;
+  asyncLocalStorage.run(workerStore, () => {
+    worker = new Worker(__filename, { workerData: "message" });
+  });
 
-    worker.on("message", msg => {
-      if (asyncLocalStorage.getStore()?.test !== "worker_threads") {
-        console.error("FAIL: worker message event lost context");
-        process.exit(1);
-      }
+  asyncLocalStorage.run(registrationStore, () => {
+    worker.on("message", () => {
+      assertWorkerContext("message");
       worker.terminate();
     });
 
+    worker.on("error", error => {
+      console.error(`FAIL: message worker emitted error: ${error.message}`);
+      process.exit(1);
+    });
+
     worker.on("exit", () => {
-      if (asyncLocalStorage.getStore()?.test !== "worker_threads") {
-        console.error("FAIL: worker exit event lost context");
-        process.exit(1);
-      }
-      process.exit(0);
+      assertWorkerContext("exit");
+
+      let errorWorker;
+      asyncLocalStorage.run(workerStore, () => {
+        errorWorker = new Worker(__filename, { workerData: "error" });
+      });
+
+      let sawError = false;
+      asyncLocalStorage.run(registrationStore, () => {
+        errorWorker.on("error", error => {
+          assertWorkerContext("error");
+          if (error.message !== "worker error") {
+            console.error(`FAIL: unexpected worker error: ${error.message}`);
+            process.exit(1);
+          }
+          sawError = true;
+        });
+
+        errorWorker.on("exit", () => {
+          assertWorkerContext("error exit");
+          if (!sawError) {
+            console.error("FAIL: error worker exited without emitting error");
+            process.exit(1);
+          }
+          process.exit(0);
+        });
+      });
     });
 
     worker.postMessage("test");
   });
 } else {
-  parentPort.on("message", msg => {
-    parentPort.postMessage("response");
-  });
+  if (workerData === "error") {
+    throw new Error("worker error");
+  } else {
+    parentPort.on("message", () => {
+      parentPort.postMessage("response");
+    });
+  }
 }

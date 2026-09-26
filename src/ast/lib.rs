@@ -763,7 +763,7 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, None)
+        Self::init_or_null_impl(_source, r, None, false)
     }
 
     /// `init_or_null`, but computing the line/column through a
@@ -773,14 +773,16 @@ impl Location {
         _source: Option<&Source>,
         r: Range,
         tracker: &mut LineColumnTracker,
+        redact_sensitive_information: bool,
     ) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, Some(tracker))
+        Self::init_or_null_impl(_source, r, Some(tracker), redact_sensitive_information)
     }
 
     fn init_or_null_impl(
         _source: Option<&Source>,
         r: Range,
         tracker: Option<&mut LineColumnTracker>,
+        redact_sensitive_information: bool,
     ) -> Option<Location> {
         if let Some(source) = _source {
             if r.is_empty() {
@@ -798,7 +800,18 @@ impl Location {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
             };
-            let mut full_line = &source.contents[data.line_start..data.line_end];
+            // Mask before the window: it can cut away the key that marks a secret.
+            let masked: Cow<'_, [u8]> = if redact_sensitive_information {
+                alloc_print(format_args!(
+                    "{}",
+                    bun_core::fmt::redacted_source(
+                        &source.contents[data.line_start..data.line_end]
+                    )
+                ))
+            } else {
+                Cow::Borrowed(&source.contents[data.line_start..data.line_end])
+            };
+            let mut full_line: &[u8] = &masked;
             // Window a long line to ~120 bytes around the error. Bounds are
             // BYTE offsets; the gate keeps the original shape (no left trim for
             // an error in the last 80 bytes) so `write_format`'s caret aligns.
@@ -1473,11 +1486,22 @@ impl Log {
         r: Range,
         text: impl IntoText,
     ) -> Data {
+        self.tracked_range_data_with(source, r, text, false)
+    }
+
+    fn tracked_range_data_with(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        text: impl IntoText,
+        redact_sensitive_information: bool,
+    ) -> Data {
         let location = if source.is_some() {
             Location::init_or_null_tracked(
                 source,
                 r,
                 self.line_column_tracker.get_or_insert_default(),
+                redact_sensitive_information,
             )
         } else {
             Location::init_or_null(source, r)
@@ -1631,7 +1655,7 @@ impl Log {
             _ => {}
         }
         let data = self
-            .tracked_range_data(source, r, text)
+            .tracked_range_data_with(source, r, text, redact_sensitive_information)
             .clone_line_text(self.clone_line_text);
         self.add_msg(Msg {
             kind,
@@ -2120,13 +2144,14 @@ impl Log {
     #[cold]
     pub fn add_error_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {
         self.errors += 1;
-        let data = self.tracked_range_data(
+        let data = self.tracked_range_data_with(
             opts.source,
             Range {
                 loc: opts.loc,
                 len: opts.len,
             },
             text,
+            opts.redact_sensitive_information,
         );
         self.add_msg(Msg {
             kind: Kind::Err,

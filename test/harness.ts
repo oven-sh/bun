@@ -1924,6 +1924,7 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
+    this.users = {};
     // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
     // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
     // while the install client connects to 127.0.0.1 and every request is refused.
@@ -2022,12 +2023,10 @@ export class VerdaccioRegistry {
       files: {},
     },
   ) {
-    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
     await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
     const packageDir = tempDir("verdaccio-test-", opts.files ?? {});
     const packageJson = join(packageDir, "package.json");
     await this.writeBunfig(packageDir, opts.bunfigOpts);
-    this.users = {};
     return { packageDir: String(packageDir), packageJson };
   }
 

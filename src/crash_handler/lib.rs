@@ -1624,7 +1624,7 @@ mod draft {
     // in `reset_segfault_handler` on a double-remove).
 
     #[cfg(unix)]
-    pub fn reset_on_posix() {
+    fn reset_on_posix() {
         if Environment::ENABLE_ASAN {
             return;
         }

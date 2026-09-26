@@ -686,9 +686,7 @@ impl RunCommand {
     /// Not sha-keyed: the directory belongs to one install and stale links are relinked.
     const BESIDE_EXE_DIR_NAME: &'static str = "bun-node";
 
-    /// Plants the `node.exe` / `bun.exe` shims once per process and returns where.
-    /// A hard link cannot cross volumes, so `<dir of bun.exe>\bun-node` comes first,
-    /// then `%TEMP%\bun-node-<sha>` as hard links, then as copies.
+    /// Plants the shims once per process: beside `bun.exe` (same volume), else under `%TEMP%`.
     pub fn windows_node_shim() -> Result<&'static WindowsNodeShim, crate::Error> {
         match WINDOWS_NODE_SHIM.get_or_init(Self::plant_windows_node_shim) {
             Ok(shim) => Ok(shim),

@@ -120,7 +120,7 @@ impl File {
         openat_a(dir, path, flags, 0o666).map(Self::from_fd)
     }
     /// Windows wide-path variant of [`File::create`] (truncating, write-only).
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub fn create_w(dir: impl AsFd, path: &[u16]) -> Maybe<Self> {
         let dir = dir.as_fd();
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC;
@@ -276,35 +276,35 @@ impl File {
     /// Be careful about using this on Linux or macOS — calls `fstat()`
     /// internally there. On Windows it routes through `GetFileType`.
     pub fn kind(&self) -> Maybe<FileKind> {
-        #[cfg(windows)]
-        {
-            let rt = windows::GetFileType(self.handle.native());
-            if rt == windows::FILE_TYPE_UNKNOWN {
-                let err = windows::Win32Error::get();
-                if err != windows::Win32Error::SUCCESS {
-                    return Err(Error::from_win32(err, Tag::fstat));
+        bun_core::host_select! {
+            windows => {
+                let rt = windows::GetFileType(self.handle.native());
+                if rt == windows::FILE_TYPE_UNKNOWN {
+                    let err = windows::Win32Error::get();
+                    if err != windows::Win32Error::SUCCESS {
+                        return Err(Error::from_win32(err, Tag::fstat));
+                    }
                 }
+                Ok(match rt {
+                    windows::FILE_TYPE_CHAR => FileKind::CharacterDevice,
+                    windows::FILE_TYPE_REMOTE | windows::FILE_TYPE_DISK => FileKind::File,
+                    windows::FILE_TYPE_PIPE => FileKind::NamedPipe,
+                    windows::FILE_TYPE_UNKNOWN => FileKind::Unknown,
+                    _ => FileKind::File,
+                })
             }
-            Ok(match rt {
-                windows::FILE_TYPE_CHAR => FileKind::CharacterDevice,
-                windows::FILE_TYPE_REMOTE | windows::FILE_TYPE_DISK => FileKind::File,
-                windows::FILE_TYPE_PIPE => FileKind::NamedPipe,
-                windows::FILE_TYPE_UNKNOWN => FileKind::Unknown,
-                _ => FileKind::File,
-            })
-        }
-        #[cfg(not(windows))]
-        {
-            let st = self.stat()?;
-            // An unrecognized `st_mode & IFMT` falls back to `File`, not
-            // `Unknown`. `kind_from_mode` returns `Unknown` for that case, so
-            // post-process here.
-            let k = kind_from_mode(st.st_mode as Mode);
-            Ok(if matches!(k, FileKind::Unknown) {
-                FileKind::File
-            } else {
-                k
-            })
+            posix => {
+                let st = self.stat()?;
+                // An unrecognized `st_mode & IFMT` falls back to `File`, not
+                // `Unknown`. `kind_from_mode` returns `Unknown` for that case, so
+                // post-process here.
+                let k = kind_from_mode(st.st_mode as Mode);
+                Ok(if matches!(k, FileKind::Unknown) {
+                    FileKind::File
+                } else {
+                    k
+                })
+            }
         }
     }
     /// Close now. Equivalent to dropping `self` but the syscall result is

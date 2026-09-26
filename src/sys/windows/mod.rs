@@ -220,9 +220,9 @@ pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
 pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
 pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub use bun_paths::PathBuffer;
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub use bun_paths::WPathBuffer;
 
 pub use bun_windows_sys::HANDLE;
@@ -1323,7 +1323,7 @@ pub mod rescle {
         description: Option<&[u8]>,
         copyright: Option<&[u8]>,
     ) -> Result<(), RescleError> {
-        const _: () = assert!(cfg!(windows));
+        const _: () = assert!(cfg!(any(windows, bun_portable)));
 
         // Validate version string format if provided
         if let Some(v) = version {
@@ -1759,7 +1759,7 @@ pub(crate) fn spawn_watcher_child(
 /// broke when I just used it. Not sure. ... but this works!
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_void {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, bun_portable)))]
     {
         compile_error!("unreachable");
     }

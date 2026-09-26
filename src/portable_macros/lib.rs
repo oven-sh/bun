@@ -8,6 +8,7 @@
 //!   signatures that call through addresses the host resolved.
 //! - [`win_abi`]: what Windows calls, and the types of pointers to it, get the calling convention of Windows.
 //! - [`host_os`]: one of several definitions of a function, each for one host OS, and the function that picks.
+//! - [`flavor`]: one of several definitions of a type, each for one OS, under a name of its own.
 
 use proc_macro::TokenStream;
 use proc_macro2::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream as Tokens, TokenTree};
@@ -66,6 +67,51 @@ pub fn host_os(args: TokenStream, item: TokenStream) -> TokenStream {
     host_os::expand(args.into(), item.into())
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+/// On a type that has one definition for each OS, and on the `impl` blocks of such a type.
+///
+/// ```ignore
+/// #[cfg(any(windows, bun_portable))]
+/// #[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, State, Name))]
+/// impl State {
+///     fn next(&mut self) -> Option<Name> { .. }
+/// }
+/// ```
+///
+/// Every name in the list is `<name>__<os>` inside of the item: here `State__windows` and
+/// `Name__windows`. The portable image has the definitions for every OS next to each other that way, and
+/// the type that holds one of them, written by hand, has the name itself.
+#[proc_macro_attribute]
+pub fn flavor(args: TokenStream, item: TokenStream) -> TokenStream {
+    let mut names = Tokens::from(args).into_iter().filter_map(|token| match token {
+        TokenTree::Ident(ident) => Some(ident.to_string()),
+        _ => None,
+    });
+    let Some(os) = names.next() else {
+        return syn::Error::new(Span::call_site(), "expected `flavor(<os>, <name>, ..)`")
+            .into_compile_error()
+            .into();
+    };
+    let names: Vec<String> = names.collect();
+    renamed(item.into(), &os, &names).into()
+}
+
+fn renamed(stream: Tokens, os: &str, names: &[String]) -> Tokens {
+    stream
+        .into_iter()
+        .map(|token| match token {
+            TokenTree::Group(group) => {
+                let mut inner = Group::new(group.delimiter(), renamed(group.stream(), os, names));
+                inner.set_span(group.span());
+                TokenTree::Group(inner)
+            }
+            TokenTree::Ident(ident) if names.iter().any(|name| ident == name) => {
+                TokenTree::Ident(Ident::new(&format!("{ident}__{os}"), ident.span()))
+            }
+            other => other,
+        })
+        .collect()
 }
 
 /// The item for x86-64 with the calling convention of Windows, and as it is for every other processor.

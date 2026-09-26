@@ -31,7 +31,7 @@ const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     arr[SystemErrno::EBADF as usize] = "bad file descriptor";
     arr[SystemErrno::EBUSY as usize] = "resource busy or locked";
     arr[SystemErrno::ECANCELED as usize] = "operation canceled";
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     {
         arr[SystemErrno::ECHARSET as usize] = "invalid Unicode character";
     }
@@ -89,7 +89,7 @@ const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     arr[SystemErrno::ETIMEDOUT as usize] = "connection timed out";
     arr[SystemErrno::ETXTBSY as usize] = "text file is busy";
     arr[SystemErrno::EXDEV as usize] = "cross-device link not permitted";
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     {
         arr[SystemErrno::EOF as usize] = "end of file";
     }

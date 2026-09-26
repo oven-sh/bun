@@ -32,7 +32,7 @@ unsafe impl bun_core::ffi::Zeroable for PosixStat {}
 
 /// C's implicit integer → `uint64_t` conversion, i.e. what libuv does
 /// when copying platform `struct stat` fields into `uv_stat_t`.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(bun_portable)))]
 mod to_u64_impl {
     pub(super) trait ToU64: Copy {
         fn to_u64(self) -> u64;
@@ -59,7 +59,7 @@ mod to_u64_impl {
     impl_to_u64_signed!(i8, i16, i32, i64, isize);
     impl_to_u64_unsigned!(u8, u16, u32, u64, usize);
 }
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(bun_portable)))]
 #[inline]
 fn to_u64<T: to_u64_impl::ToU64>(value: T) -> u64 {
     to_u64_impl::ToU64::to_u64(value)
@@ -75,14 +75,14 @@ fn to_u64<T: to_u64_impl::ToU64>(value: T) -> u64 {
 // `unix` targets.
 #[inline]
 pub fn stat_atime(s: &Stat) -> Timespec {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(bun_portable)))]
     {
         Timespec {
             sec: s.st_atime,
             nsec: s.st_atime_nsec,
         }
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     {
         Timespec {
             sec: s.atim.sec as i64,
@@ -92,14 +92,14 @@ pub fn stat_atime(s: &Stat) -> Timespec {
 }
 #[inline]
 pub fn stat_mtime(s: &Stat) -> Timespec {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(bun_portable)))]
     {
         Timespec {
             sec: s.st_mtime,
             nsec: s.st_mtime_nsec,
         }
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     {
         Timespec {
             sec: s.mtim.sec as i64,
@@ -109,14 +109,14 @@ pub fn stat_mtime(s: &Stat) -> Timespec {
 }
 #[inline]
 pub fn stat_ctime(s: &Stat) -> Timespec {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(bun_portable)))]
     {
         Timespec {
             sec: s.st_ctime,
             nsec: s.st_ctime_nsec,
         }
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     {
         Timespec {
             sec: s.ctim.sec as i64,
@@ -130,7 +130,7 @@ pub fn stat_birthtime(s: &Stat) -> Timespec {
     // ctime arm like libuv's `uv__to_stat`; everything else reads the real
     // birthtime. Windows `Stat` is `uv_stat_t` and libuv fills `birthtim` from
     // NTFS CreationTime, so it must NOT fall into the ctime arm.
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     {
         Timespec {
             sec: s.birthtim.sec as i64,
@@ -153,6 +153,7 @@ pub fn stat_birthtime(s: &Stat) -> Timespec {
     }
     #[cfg(not(any(
         windows,
+        bun_portable,
         target_os = "macos",
         target_os = "ios",
         target_os = "freebsd",
@@ -173,7 +174,7 @@ impl PosixStat {
         let ctime_val = stat_ctime(stat_);
         let birthtime_val = stat_birthtime(stat_);
 
-        #[cfg(unix)]
+        #[cfg(all(unix, not(bun_portable)))]
         {
             PosixStat {
                 dev: to_u64(stat_.st_dev),
@@ -192,7 +193,7 @@ impl PosixStat {
                 birthtim: birthtime_val,
             }
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, bun_portable))]
         {
             // Windows `Stat` is libuv `uv_stat_t` — `st_*`-named u64 fields
             // (matches uv.h; see libuv.rs `uv_stat_t`).

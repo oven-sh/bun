@@ -25,8 +25,8 @@ pub fn no_definition_for_this_host(function: &'static str) -> ! {
     )
 }
 
-/// The block for the OS. A build for one OS compiles one block; the portable image compiles all of them
-/// and runs the one for its host.
+/// The block for the OS. A build for one OS compiles one block; the portable image compiles the ones
+/// for its hosts and runs the one for the host it is on.
 ///
 /// ```ignore
 /// bun_core::host_select! {
@@ -35,35 +35,90 @@ pub fn no_definition_for_this_host(function: &'static str) -> ! {
 /// }
 /// ```
 ///
-/// The sets of hosts: `windows` with `posix` (every host that is not Windows), and `linux`, `macos`,
-/// `windows`, in these orders.
+/// An arm is named as the `cfg` it stands for: `windows`, `posix` (`not(windows)`), `unix`, `linux`
+/// (Linux and Android), `macos`, `freebsd`. The portable image is compiled for Linux: it runs the arm
+/// `windows` on a Windows host and the arm `linux`, `posix` or `unix` on every other one, and has no
+/// use for the other arms.
 #[cfg(not(bun_portable))]
 #[macro_export]
 macro_rules! host_select {
-    (windows => $windows:block posix => $posix:block) => {{
+    ($($os:ident => $block:block)+) => {{
+        $( $crate::__host_select_arm! { $os $block } )+
+    }};
+}
+
+#[cfg(not(bun_portable))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __host_select_arm {
+    (windows $block:block) => {
         #[cfg(windows)]
-        $windows
+        $block
+    };
+    (posix $block:block) => {
         #[cfg(not(windows))]
-        $posix
-    }};
-    (linux => $linux:block macos => $macos:block windows => $windows:block) => {{
+        $block
+    };
+    (unix $block:block) => {
+        #[cfg(unix)]
+        $block
+    };
+    (linux $block:block) => {
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        $linux
+        $block
+    };
+    (macos $block:block) => {
         #[cfg(target_os = "macos")]
-        $macos
-        #[cfg(windows)]
-        $windows
-    }};
+        $block
+    };
+    (freebsd $block:block) => {
+        #[cfg(target_os = "freebsd")]
+        $block
+    };
 }
 
 #[cfg(bun_portable)]
 #[macro_export]
 macro_rules! host_select {
-    (windows => $windows:block posix => $posix:block) => {
-        if $crate::host::is_windows() $windows else $posix
+    ($($os:ident => $block:block)+) => {
+        $crate::__host_select_portable!([] [] $($os => $block)+)
     };
-    (linux => $linux:block macos => $macos:block windows => $windows:block) => {
-        if $crate::host::is_windows() $windows else if $crate::host::is_mac() $macos else $linux
+}
+
+#[cfg(bun_portable)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __host_select_portable {
+    ([$windows:block] [$other:block]) => {
+        if $crate::host::is_windows() $windows else $other
+    };
+    ([$windows:block] []) => {
+        if $crate::host::is_windows() $windows else {
+            $crate::host_dispatch::no_definition_for_this_host(concat!(file!(), ":", line!()))
+        }
+    };
+    ([] [$other:block]) => {
+        if $crate::host::is_windows() {
+            $crate::host_dispatch::no_definition_for_this_host(concat!(file!(), ":", line!()))
+        } else $other
+    };
+    ([] [$($other:block)?] windows => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$block] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [] linux => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$block] $($rest)*)
+    };
+    ([$($windows:block)?] [] posix => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$block] $($rest)*)
+    };
+    ([$($windows:block)?] [] unix => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$block] $($rest)*)
+    };
+    ([$($windows:block)?] [$($other:block)?] macos => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [$($other:block)?] freebsd => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($other)?] $($rest)*)
     };
 }
 

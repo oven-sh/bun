@@ -238,6 +238,8 @@ To update versions across all packages, change the version in the root package.j
 
 Then run `bun install` to update all packages.
 
+[`bun update`](/pm/cli/update) with no arguments also rewrites the catalog entries. `bun update --latest`, still with no package names, moves them past their ranges. `bun update <package>` leaves catalog entries as written, with or without `--latest`. To pick individual entries, use `bun update -i -r`; add `--latest` to also offer versions outside the current ranges.
+
 ## Adding to the catalog with `bun add`
 
 `bun add --catalog` adds the entry to the root catalog and writes `"catalog:"` to the current package; `--catalog=<name>` adds it to `catalogs.<name>` and writes `"catalog:<name>"`. Bun reuses an existing catalog entry unless you pass an explicit version. See [`bun add --catalog`](/pm/cli/add#--catalog).

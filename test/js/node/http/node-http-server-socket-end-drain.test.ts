@@ -245,12 +245,14 @@ describe.each(["http", "https"] as const)(
     const POST_HEAD = `POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${BODY.length}\r\n\r\n`;
 
     // What the listener saw. `buffered` is whether response bytes were still
-    // queued when it called req.socket.end(): these tests need that.
+    // queued after req.socket.end(): these tests need that. It is read one tick
+    // later, because in the turn of the writes writableLength counts every byte
+    // written, also the bytes that the socket has already sent.
     type Seen = { buffered: boolean; reqBytes: number; reqEnded: boolean };
 
     // Writes the response and calls req.socket.end(). res.end() follows when the
-    // request body has ended. Resolves `handled` when the listener has run and
-    // `closed` when the server side of the connection has closed.
+    // request body has ended. Resolves `handled` one tick after the listener has
+    // run and `closed` when the server side of the connection has closed.
     function respondThenEnd(seen: Seen, handled: () => void, closed: () => void): RequestListener {
       return (req, res) => {
         req.socket.once("close", closed);
@@ -261,9 +263,11 @@ describe.each(["http", "https"] as const)(
         });
         res.writeHead(200);
         for (let i = 0; i < CHUNKS; i++) res.write(CHUNK);
-        seen.buffered = res.writableLength > 0;
         req.socket.end();
-        handled();
+        process.nextTick(() => {
+          seen.buffered = res.writableLength > 0;
+          handled();
+        });
       };
     }
 

@@ -998,7 +998,7 @@ impl Linux {
                     if let Some(owners) = wd_map.get_mut(&wd) {
                         for o in owners.drain(..) {
                             // SAFETY: o.watcher live under manager.mutex; shared
-                            // access only — `emit` takes `&self`.
+                            // access only: `emit` takes `&self`.
                             let w = unsafe { &*o.watcher };
                             if o.subpath.as_bytes().is_empty() && (w.is_file || !w.recursive) {
                                 w.emit(
@@ -1635,7 +1635,7 @@ impl Kqueue {
                 }
                 // SAFETY: entry.watcher live under manager.mutex; PathWatcher is a
                 // separate heap allocation, disjoint from the `entries` borrow above.
-                // Shared access only — `emit` takes `&self`.
+                // Shared access only: `emit_record` takes `&self`.
                 let watcher = unsafe { &*entry.watcher };
                 let watcher_path: &[u8] = watcher.path.as_bytes();
 

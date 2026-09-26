@@ -3,7 +3,9 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 
 use crate::Error;
+use crate::Npm;
 use crate::bun_fs::FileSystem;
+use crate::lockfile_real::bun_lock::url_is_under_registry;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
 use bun_core::ZStr;
@@ -17,6 +19,7 @@ use bun_semver::{self as Semver, String as SemverString};
 #[cfg(windows)]
 use bun_sys::FdDirExt;
 use bun_sys::{self as sys, Dir, Fd, File};
+use bun_url::URL;
 
 use crate::bun_progress::Node as ProgressNode;
 
@@ -610,6 +613,9 @@ pub fn cached_github_folder_name_print_auto(
     ZStr::EMPTY
 }
 
+/// `<name>@<version>@@@<ver>` on the default registry, `@@<host>__<hash of the
+/// registry URL>@@@<ver>` on any other configured registry, and `@@<host>__<hash
+/// of tarball_url>@@@<ver>` for a tarball that is on neither (a lockfile URL).
 // TODO: normalize to alphanumeric
 pub fn cached_npm_package_folder_name_print<'a>(
     this: &PackageManager,
@@ -617,10 +623,16 @@ pub fn cached_npm_package_folder_name_print<'a>(
     name: &[u8],
     version: Semver::Version,
     patch_hash: Option<u64>,
+    tarball_url: &[u8],
 ) -> &'a ZStr {
     let scope = this.scope_for_package_name(name);
 
-    if scope.name.is_empty() && !this.options.did_override_default_scope {
+    // bun.lock stores a registry.npmjs.org URL as "" and rebuilds it under the
+    // configured registry, so both spellings have to name the registry's slot.
+    let from_registry = tarball_url.is_empty()
+        || url_is_under_registry(tarball_url, Npm::Registry::DEFAULT_URL.as_bytes())
+        || url_is_under_registry(tarball_url, scope.url.href());
+    if from_registry && scope.name.is_empty() && !this.options.did_override_default_scope {
         let include_version_number = true;
         return cached_npm_package_folder_print_basename(
             buf,
@@ -639,21 +651,22 @@ pub fn cached_npm_package_folder_name_print<'a>(
     // reshaped for borrowck — resume the cursor at the basename's
     // tail instead of holding the returned `&ZStr` across the re-borrow.
     let scope_url = scope.url.url();
+    let (hostname, hash) = if from_registry {
+        (scope_url.hostname, scope.url_hash)
+    } else {
+        (
+            URL::parse(tarball_url).hostname,
+            Semver::semver_string::Builder::string_hash(tarball_url),
+        )
+    };
     let mut w = ByteCursor {
         buf,
         at: spanned_len,
     };
-    let available = w.buf.len() - spanned_len;
-    if scope_url.hostname.len() > 32 || available < 64 {
-        let visible_hostname = &scope_url.hostname[..scope_url.hostname.len().min(12)];
-        w.put(b"@@");
-        w.put(visible_hostname);
-        w.put(b"__");
-        w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(scope_url.href));
-    } else {
-        w.put(b"@@");
-        w.put(scope_url.hostname);
-    }
+    w.put(b"@@");
+    w.put(&hostname[..hostname.len().min(32)]);
+    w.put(b"__");
+    w.put_u64_hex16::<true>(hash);
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
     w.finish_z()
@@ -682,6 +695,7 @@ pub fn cached_npm_package_folder_name(
     name: &[u8],
     version: Semver::Version,
     patch_hash: Option<u64>,
+    tarball_url: &[u8],
 ) -> &'static ZStr {
     cached_npm_package_folder_name_print(
         this,
@@ -689,6 +703,7 @@ pub fn cached_npm_package_folder_name(
         name,
         version,
         patch_hash,
+        tarball_url,
     )
 }
 
@@ -860,6 +875,7 @@ pub fn path_for_cached_npm_path<'a>(
     buf: &'a mut PathBuffer,
     package_name: &[u8],
     version: Semver::Version,
+    tarball_url: &[u8],
 ) -> Result<&'a mut [u8], Error> {
     let mut cache_path_buf = bun_paths::path_buffer_pool::get();
 
@@ -869,6 +885,7 @@ pub fn path_for_cached_npm_path<'a>(
         package_name,
         version,
         None,
+        tarball_url,
     );
     let cache_path_len = cache_path.as_bytes().len();
     // reshaped for borrowck — drop borrow before mutating buffer
@@ -928,8 +945,9 @@ pub fn path_for_resolution<'a>(
             // mutably (for `get_cache_directory`), so the `&this.lockfile`
             // borrow can't be held across it. Copy the name out first.
             let package_name = this.lockfile.str(&package_name_).to_vec();
+            let tarball_url = this.lockfile.str(&npm.url).to_vec();
 
-            path_for_cached_npm_path(this, buf, &package_name, npm.version)
+            path_for_cached_npm_path(this, buf, &package_name, npm.version, &tarball_url)
         }
         _ => Ok(&mut buf.0[..0]),
     }
@@ -958,7 +976,9 @@ pub fn compute_cache_dir_and_subpath<'a>(
     match resolution.tag {
         ResolutionTag::Npm => {
             let version = resolution.npm().version;
-            cache_dir_subpath = cached_npm_package_folder_name(manager, name, version, patch_hash);
+            let tarball_url = manager.lockfile.str(&resolution.npm().url);
+            cache_dir_subpath =
+                cached_npm_package_folder_name(manager, name, version, patch_hash, tarball_url);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Git => {

@@ -915,6 +915,117 @@ describe("Query Execution", () => {
     expect(result2).toHaveLength(1);
     expect(result2[0].id).toBe(2);
   });
+
+  // These tests `await` the cancelled query directly. A pending promise inside
+  // `expect().rejects` does not trip the test timeout, so a hang would stall the file.
+  function settle(promise: Promise<unknown>) {
+    return promise.then(
+      () => "resolved",
+      (error: Error & { code?: string }) => ({ code: error.code, message: error.message }),
+    );
+  }
+
+  test("cancel() before the query runs rejects when awaited", async () => {
+    const query = sql`SELECT 1 AS x`;
+    query.cancel();
+    expect(query.cancelled).toBe(true);
+
+    expect(await settle(query)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
+    // The connection stays usable.
+    expect(await sql`SELECT 2 AS x`).toEqual([{ x: 2 }]);
+  });
+
+  test("cancel() before the query runs settles a Promise.all batch", async () => {
+    const cancelled = sql`SELECT 1 AS x`;
+    cancelled.cancel();
+    const live = sql`SELECT 2 AS x`;
+
+    expect(await settle(Promise.all([cancelled, live]))).toEqual({
+      code: "ERR_SQLITE_QUERY_CANCELLED",
+      message: "Query cancelled",
+    });
+    expect(await live).toEqual([{ x: 2 }]);
+  });
+
+  test("cancel() before execute() rejects instead of running", async () => {
+    await sql`CREATE TABLE cancel_before_execute (id INTEGER)`;
+    const query = sql`INSERT INTO cancel_before_execute VALUES (1)`;
+    query.cancel();
+    query.execute();
+
+    expect(await settle(query)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
+    expect(await sql`SELECT count(*) AS n FROM cancel_before_execute`).toEqual([{ n: 0 }]);
+  });
+
+  // A query that never runs opens no connection, so the server does not need to exist.
+  test.each([
+    ["postgres://u:p@127.0.0.1:9/db", "ERR_POSTGRES_QUERY_CANCELLED"],
+    ["mysql://u:p@127.0.0.1:9/db", "ERR_MYSQL_QUERY_CANCELLED"],
+  ])("cancel() before the query runs rejects for %s", async (url, code) => {
+    await using remote = new SQL(url);
+    const query = remote`SELECT 1 AS x`;
+    query.cancel();
+
+    expect(await settle(query)).toEqual({ code, message: "Query cancelled" });
+  });
+
+  // Transaction queries use their own Query handler. Each test owns its database,
+  // because a transaction that hangs keeps its connection.
+  test("cancel() before the query runs rejects inside a transaction", async () => {
+    await using db = new SQL(":memory:");
+    const result = await db.begin(async tx => {
+      const query = tx`SELECT 1 AS x`;
+      query.cancel();
+      const outcome = await settle(query);
+      // The transaction stays usable.
+      return [outcome, await tx`SELECT 2 AS x`];
+    });
+
+    expect(result).toEqual([{ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" }, [{ x: 2 }]]);
+  });
+
+  test("a transaction that returns a query cancelled before it runs rolls back", async () => {
+    await using db = new SQL(":memory:");
+    await db`CREATE TABLE cancel_in_transaction (id INTEGER)`;
+    const transaction = db.begin(tx => {
+      const cancelled = tx`SELECT 1 AS x`;
+      cancelled.cancel();
+      return [tx`INSERT INTO cancel_in_transaction VALUES (1)`, cancelled];
+    });
+
+    expect(await settle(transaction)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
+    expect(await db`SELECT count(*) AS n FROM cancel_in_transaction`).toEqual([{ n: 0 }]);
+  });
+
+  test("a query cancelled before it runs leaves its transaction scope when it rejects", async () => {
+    await using db = new SQL(":memory:");
+    await db`CREATE TABLE cancel_then_close (id INTEGER)`;
+    const transaction = db.begin(async tx => {
+      await tx`INSERT INTO cancel_then_close VALUES (1)`;
+      const query = tx`SELECT 1 AS x`;
+      query.cancel();
+      await settle(query);
+      // close({ timeout }) waits on every query that is still in the scope. A rejected
+      // query that stays there ends that wait at once, and close() then skips the ROLLBACK.
+      await tx.close({ timeout: 1 });
+    });
+
+    expect(await settle(transaction)).toEqual({ code: "ERR_SQLITE_CONNECTION_CLOSED", message: "Connection closed" });
+    expect(await db`SELECT count(*) AS n FROM cancel_then_close`).toEqual([{ n: 0 }]);
+  });
+
+  test("a query that tx.close() cancels before it runs rejects when awaited", async () => {
+    await using db = new SQL(":memory:");
+    let lazy: Promise<unknown> | undefined;
+    await settle(
+      db.begin(async tx => {
+        lazy = tx`SELECT 1 AS x`; // created, not awaited: close() cancels it
+        await tx.close();
+      }),
+    );
+
+    expect(await settle(lazy!)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
+  });
 });
 
 // Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.

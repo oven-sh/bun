@@ -229,6 +229,7 @@ pub enum BorderSideWidth {
     /// A UA defined `thick` value.
     Thick,
     /// An explicit width.
+    #[css(non_negative)]
     Length(Length),
 }
 

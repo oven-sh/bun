@@ -17,23 +17,19 @@ impl<T> Size2D<T>
 where
     T: Clone + PartialEq,
 {
-    fn parse_val(input: &mut Parser) -> Result<T>
-    where
-        T: Parse,
-    {
-        // f32 → CSSNumberFns::parse, LengthPercentage → LengthPercentage::parse,
-        // else → T::parse — all unified under the `Parse` trait in Rust.
-        T::parse(input)
-    }
-
     pub(crate) fn parse(input: &mut Parser) -> Result<Size2D<T>>
     where
         T: Parse,
     {
-        let first = Self::parse_val(input)?;
-        let second = input
-            .try_parse(Self::parse_val)
-            .unwrap_or_else(|_| first.clone());
+        Self::parse_with(input, T::parse)
+    }
+
+    pub(crate) fn parse_with(
+        input: &mut Parser,
+        parse_fn: impl Fn(&mut Parser) -> Result<T>,
+    ) -> Result<Size2D<T>> {
+        let first = parse_fn(input)?;
+        let second = input.try_parse(&parse_fn).unwrap_or_else(|_| first.clone());
         Ok(Size2D {
             a: first,
             b: second,

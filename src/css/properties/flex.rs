@@ -5,7 +5,7 @@ use bun_alloc::ArenaVecExt as _;
 use crate::properties::{Property, PropertyId};
 use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyContent};
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
-use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
+use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns, parse_non_negative};
 use css::prefixes::Feature as PrefixFeature;
 use css::{PrintErr, Printer, VendorPrefix};
 
@@ -139,17 +139,20 @@ impl Flex {
         let mut shrink: Option<CSSNumber> = None;
         let mut basis: Option<LengthPercentageOrAuto> = None;
 
+        let parse_factor = |i: &mut css::Parser| parse_non_negative(i, CSSNumberFns::parse);
         loop {
             if grow.is_none() {
-                if let Ok(value) = input.try_parse(CSSNumberFns::parse) {
+                if let Ok(value) = input.try_parse(parse_factor) {
                     grow = Some(value);
-                    shrink = input.try_parse(CSSNumberFns::parse).ok();
+                    shrink = input.try_parse(parse_factor).ok();
                     continue;
                 }
             }
 
             if basis.is_none() {
-                if let Ok(value) = input.try_parse(LengthPercentageOrAuto::parse) {
+                if let Ok(value) =
+                    input.try_parse(|i| parse_non_negative(i, LengthPercentageOrAuto::parse))
+                {
                     basis = Some(value);
                     continue;
                 }

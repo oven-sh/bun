@@ -129,13 +129,10 @@ impl FallbackHandler {
                 return false;
             };
 
+            // Appended, not replaced: the declaration before it is its fallback.
             context.add_unparsed_fallbacks(arena, &mut unparsed);
-            if let Some(i) = *index {
-                dest[i] = Property::Unparsed(unparsed);
-            } else {
-                *index = Some(dest.len());
-                dest.push(Property::Unparsed(unparsed));
-            }
+            *index = Some(dest.len());
+            dest.push(Property::Unparsed(unparsed));
 
             return true;
         }

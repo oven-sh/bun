@@ -1755,3 +1755,77 @@ test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket l
   expect(body.length).toBe(data.length);
   expect(body.compare(data)).toBe(0);
 });
+
+// A Bun.file() route frames the body from the file size on each request.
+// A Transfer-Encoding or Content-Length header on the Response used to be
+// sent verbatim, next to or instead of the computed length (#43106).
+test("Bun.file() route drops Transfer-Encoding and Content-Length from the Response headers", async () => {
+  using dir = tempDir("serve-file-framing", { "a.txt": "file-body" });
+  const file = Bun.file(join(String(dir), "a.txt"));
+  const both = new Response(file, {
+    headers: { "Transfer-Encoding": "chunked", "Content-Length": "3", "X-Kept": "yes" },
+  });
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    routes: {
+      "/file-te": new Response(file, { headers: { "Transfer-Encoding": "chunked" } }),
+      "/file-cl": new Response(file, { headers: { "Content-Length": "3" } }),
+      "/file-both": both,
+    },
+    fetch: () => new Response("fallback"),
+  });
+
+  async function raw(pathname: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let wire = "";
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          s.write(`GET ${pathname} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+        },
+        data(_s, d) {
+          wire += Buffer.from(d).toString("latin1");
+        },
+        close() {
+          resolve(wire);
+        },
+        error(_s, e) {
+          reject(e);
+        },
+        connectError(_s, e) {
+          reject(e);
+        },
+      },
+    });
+    const captured = await promise;
+    const sep = captured.indexOf("\r\n\r\n");
+    const head = captured.slice(0, sep);
+    const body = captured.slice(sep + 4);
+    const framing = head
+      .split("\r\n")
+      .filter(l => /^(content-length|transfer-encoding|x-kept):/i.test(l))
+      .map(l => l.toLowerCase())
+      .sort();
+    return { status: head.split("\r\n")[0], framing, body };
+  }
+
+  expect({
+    te: await raw("/file-te"),
+    cl: await raw("/file-cl"),
+    both: await raw("/file-both"),
+  }).toEqual({
+    te: { status: "HTTP/1.1 200 OK", framing: ["content-length: 9"], body: "file-body" },
+    cl: { status: "HTTP/1.1 200 OK", framing: ["content-length: 9"], body: "file-body" },
+    both: { status: "HTTP/1.1 200 OK", framing: ["content-length: 9", "x-kept: yes"], body: "file-body" },
+  });
+
+  // The route takes a snapshot. The Response the user registered is unchanged.
+  expect({
+    te: both.headers.get("transfer-encoding"),
+    cl: both.headers.get("content-length"),
+    kept: both.headers.get("x-kept"),
+  }).toEqual({ te: "chunked", cl: "3", kept: "yes" });
+});

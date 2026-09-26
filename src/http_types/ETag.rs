@@ -258,6 +258,19 @@ impl Headers {
         None
     }
 
+    /// Remove every entry named `name` (ASCII case-insensitive).
+    pub fn remove(&mut self, name: &[u8]) {
+        let mut i = 0;
+        while i < self.entries.len() {
+            let name_ptr = self.entries.slice().items_name()[i];
+            if strings::eql_case_insensitive_ascii(self.as_str(name_ptr), name, true) {
+                self.entries.ordered_remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     // The only fallible calls are allocations — abort on OOM.
     pub fn append(&mut self, name: &[u8], value: &[u8]) {
         let mut offset: u32 = u32::try_from(self.buf.len()).unwrap();

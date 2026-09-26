@@ -6026,6 +6026,7 @@ fn from_opaque_file_id<const SIDE: bake::Side>(
 
 impl DevServer {
     /// Returns posix style path, suitible for URLs and reproducible hashes.
+    /// This is also the module id: the key the bundler registers the file under.
     /// The caller must provide a PathBuffer from the pool.
     pub(crate) fn relative_path<'a>(
         &self,
@@ -6043,23 +6044,17 @@ impl DevServer {
             return &path[self.root.len() + 1..];
         }
 
-        if path.len() + self.root.len() * 2 >= paths::MAX_PATH_BYTES {
+        // Each segment of an absolute `root` adds at most one "../" to `path`.
+        let root_segments =
+            strings::count_char(&self.root, b'/') + strings::count_char(&self.root, b'\\') + 1;
+        if !paths::is_absolute(&self.root)
+            || path.len() + root_segments * 3 + 2 > paths::MAX_PATH_BYTES
+            || self.root.len() + 2 > paths::MAX_PATH_BYTES
+        {
             return path;
         }
 
-        // `relative_platform_buf` with ALWAYS_COPY=true writes into
-        // `relative_path_buf[..len]` (same invariant `relative_buf_z` relies
-        // on); capture the length, drop the shared borrow, then re-slice
-        // mutably to convert separators in place.
-        let rel_len = bun_paths::resolve_path::relative_platform_buf::<
-            bun_paths::resolve_path::platform::Auto,
-            true,
-        >(&mut relative_path_buf[..], &self.root, path)
-        .len();
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-            &mut relative_path_buf[..rel_len],
-        );
-        &relative_path_buf[..rel_len]
+        bundler::pretty_relative_path(&mut relative_path_buf[..], &self.root, path)
     }
 
     /// Either of two conditions make this true:

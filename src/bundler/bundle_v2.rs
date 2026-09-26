@@ -18,7 +18,7 @@ pub use bv2_impl::dispatch;
 pub use bv2_impl::{
     CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
     EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
-    target_from_hashbang,
+    pretty_relative_path, target_from_hashbang,
 };
 pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
 // Flatten the impl-body module into this file's namespace so external callers
@@ -8120,6 +8120,18 @@ pub mod bv2_impl {
         None
     }
 
+    /// The `pretty` of a file path, which `DevServer::relative_path` needs as the module id.
+    pub fn pretty_relative_path<'a>(
+        buf: &'a mut [u8],
+        top_level_dir: &[u8],
+        path: &[u8],
+    ) -> &'a [u8] {
+        bun_paths::resolve_path::relative_platform_buf::<
+            bun_paths::resolve_path::platform::Loose,
+            true,
+        >(buf, top_level_dir, path)
+    }
+
     pub fn generic_path_with_pretty_initialized(
         path: &bun_paths::fs::Path<'static>,
         target: options::Target,
@@ -8142,10 +8154,7 @@ pub mod bv2_impl {
 
         if path.is_file() || is_node {
             let mut buf2 = bun_paths::path_buffer_pool::get();
-            let rel = bun_paths::resolve_path::relative_platform_buf::<
-                bun_paths::resolve_path::platform::Loose,
-                false,
-            >(&mut **buf2, top_level_dir, path.text);
+            let rel = pretty_relative_path(&mut **buf2, top_level_dir, path.text);
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             if target == options::Target::ServerComponentsSsr {
                 let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);

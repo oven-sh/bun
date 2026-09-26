@@ -1785,44 +1785,17 @@ pub fn init(
                             workspace_names.keys().len(),
                             workspace_names.values().len()
                         );
-                        for (path_, entry) in workspace_names
-                            .keys()
-                            .iter()
-                            .zip(workspace_names.values().iter())
-                        {
-                            let child_path: &[u8] = if bun_paths::is_absolute(path_) {
-                                child_cwd
-                            } else {
-                                resolve_path::relative_normalized::<platform::Auto, true>(
-                                    json_source.path.name().dir,
-                                    child_cwd,
-                                )
-                            };
-
+                        if let Some(entry) = workspace_names.member_in(&json_source, child_cwd) {
+                            // `set_top_level_dir` requires `'static`: intern in the DirnameStore.
+                            fs.set_top_level_dir(fs.dirname_store().append(parent)?);
+                            let _ = child_json.close();
                             #[cfg(windows)]
-                            let maybe_workspace_path = {
-                                parent_path_buf[..child_path.len()].copy_from_slice(child_path);
-                                resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
-                                    &mut parent_path_buf[..child_path.len()],
-                                );
-                                &parent_path_buf[..child_path.len()]
-                            };
-                            #[cfg(not(windows))]
-                            let maybe_workspace_path = child_path;
-
-                            if strings::eql_long(maybe_workspace_path, path_, true) {
-                                // Intern via the resolver's DirnameStore so the slice is
-                                // process-lifetime (`set_top_level_dir` requires `'static`).
-                                fs.set_top_level_dir(fs.dirname_store().append(parent)?);
-                                let _ = child_json.close();
-                                #[cfg(windows)]
-                                {
-                                    json_file.seek_to(0)?;
-                                }
-                                workspace_name_hash =
-                                    Some(Semver::string::Builder::string_hash(&entry.name));
-                                break 'root_package_json_file json_file;
+                            {
+                                json_file.seek_to(0)?;
                             }
+                            workspace_name_hash =
+                                Some(Semver::string::Builder::string_hash(&entry.name));
+                            break 'root_package_json_file json_file;
                         }
 
                         break;

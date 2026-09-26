@@ -82,6 +82,34 @@ impl WorkspaceMap {
         self.map.get(key)
     }
 
+    /// The member whose directory is `dir`, an absolute path. `source` is the root package.json.
+    pub(crate) fn member_in(&self, source: &bun_ast::Source, dir: &[u8]) -> Option<&Entry> {
+        let root_dir = package_json_dir(source);
+        #[cfg(windows)]
+        let mut posix_buf = path::path_buffer_pool::get();
+        for (member_path, entry) in self.keys().iter().zip(self.values()) {
+            let member_dir: &[u8] = if path::is_absolute(member_path) {
+                dir
+            } else {
+                resolve_path::relative_normalized::<path::platform::Auto, true>(root_dir, dir)
+            };
+            // The keys use `/` on every platform.
+            #[cfg(windows)]
+            let member_dir: &[u8] = {
+                let len = member_dir.len();
+                posix_buf.0[..len].copy_from_slice(member_dir);
+                resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                    &mut posix_buf.0[..len],
+                );
+                &posix_buf.0[..len]
+            };
+            if member_dir == &member_path[..] {
+                return Some(entry);
+            }
+        }
+        None
+    }
+
     fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
         // No `bun.sys.exists(key)` debug check here: `key` is
         // relative to the workspace root while `exists` resolves against process
@@ -225,10 +253,16 @@ fn process_workspace_name(
 }
 
 fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
-    strings::without_suffix_comptime(
-        abs_package_json_path,
-        const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
-    )
+    path::fs::Path::init(abs_package_json_path).dir_keeping_root()
+}
+
+/// Not `source.path.name().dir`: that is not absolute for a package.json in a filesystem root.
+pub(crate) fn package_json_dir(source: &bun_ast::Source) -> &[u8] {
+    let dir = source.path.dir_keeping_root();
+    if dir.is_empty() {
+        return bun_resolver::fs::FileSystem::instance().top_level_dir();
+    }
+    dir
 }
 
 fn relative_workspace_path<'b>(
@@ -269,7 +303,7 @@ impl WorkspaceMap {
         let mut filepath_buf_os = path::path_buffer_pool::get();
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
         let mut rel_path_buf = path::path_buffer_pool::get();
-        let root_dir: &[u8] = source.path.name().dir;
+        let root_dir: &[u8] = package_json_dir(source);
 
         let scratch = Arena::new();
 
@@ -305,11 +339,7 @@ impl WorkspaceMap {
             let processed = match abs_package_json_path {
                 Some(abs_package_json_path) => {
                     // skip root package.json
-                    if strings::eql_long(
-                        resolve_path::dirname::<path::platform::Auto>(abs_package_json_path),
-                        root_dir,
-                        true,
-                    ) {
+                    if workspace_dir_of(abs_package_json_path) == root_dir {
                         continue;
                     }
 
@@ -428,16 +458,12 @@ impl WorkspaceMap {
                     ))
                 };
 
-                let mut cwd = resolve_path::dirname::<path::platform::Auto>(source.path.text);
-                if cwd.is_empty() {
-                    cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
-                }
                 // GlobWalker::init_with_cwd is now an associated constructor
                 // returning `Result<Maybe<Self>>`; arena param dropped (heap-backed),
                 // ignore filter supplied as final arg.
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
-                    cwd,
+                    root_dir,
                     false,
                     false,
                     false,
@@ -531,7 +557,7 @@ impl WorkspaceMap {
                     let processed = match resolve_path::join_abs_string_buf_checked::<
                         path::platform::Auto,
                     >(
-                        cwd, filepath_buf, &[entry_dir, b"package.json"]
+                        root_dir, filepath_buf, &[entry_dir, b"package.json"]
                     ) {
                         Some(abs_package_json_path) => {
                             process_workspace_name(json_cache, abs_package_json_path, log)
@@ -622,6 +648,58 @@ impl WorkspaceMap {
 
         Ok(workspace_names.count() as u32)
     }
+}
+
+/// For `bun:internal-for-testing`. The package.json in `source` does not have to exist.
+pub(crate) fn parse_for_testing(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    json_cache: &mut WorkspacePackageJSONCache,
+) -> crate::Result<WorkspaceMap> {
+    crate::initialize_store();
+    let package_json = crate::bun_json::ParsedJson::parse_package_json(source, log)?;
+    let mut members = WorkspaceMap::init();
+    if let Some(workspaces) = package_json.root.as_property(b"workspaces") {
+        let value_loc = super::value_loc_of(source, workspaces.loc);
+        if let Some(names) = NamesArray::from_expr(&workspaces.expr, value_loc) {
+            members.process_names_array(
+                json_cache,
+                log,
+                names,
+                source,
+                workspaces.loc,
+                None,
+                MissingWorkspace::Error,
+            )?;
+        }
+    }
+    Ok(members)
+}
+
+/// The name of the member that [`parse_for_testing`] finds in the directory `dir`.
+pub fn member_in_for_testing(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    dir: &[u8],
+) -> crate::Result<Option<Box<[u8]>>> {
+    let members = parse_for_testing(source, log, &mut WorkspacePackageJSONCache::default())?;
+    Ok(members
+        .member_in(source, dir)
+        .map(|entry| entry.name.clone()))
+}
+
+/// The `(path, name)` of each member that [`parse_for_testing`] finds.
+pub fn members_for_testing(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+) -> crate::Result<Vec<(Box<[u8]>, Box<[u8]>)>> {
+    let members = parse_for_testing(source, log, &mut WorkspacePackageJSONCache::default())?;
+    Ok(members
+        .keys()
+        .iter()
+        .zip(members.values())
+        .map(|(path, entry)| (path.clone(), entry.name.clone()))
+        .collect())
 }
 
 const IGNORED_PATHS: &[&[u8]] = &[b"node_modules", b".git", b"CMakeFiles"];

@@ -149,6 +149,12 @@ export const install_test_helpers = $rust("install_binding.rs", "bun_install_js_
    * Returns the lockfile at the given path as an object.
    */
   parseLockfile: (cwd: string) => any;
+  /** The "workspaces" members of a package.json that does not have to exist, by their path from it. */
+  workspaceMembers: (packageJsonPath: string, packageJson: string) => { path: string; name: string }[];
+  /** The member in the directory `dir`: how `bun install` finds the workspace root above a member. */
+  workspaceMemberIn: (packageJsonPath: string, packageJson: string, dir: string) => string | null;
+  /** The spec that `$name` in "overrides" takes from the "dependencies" of a member. */
+  workspaceRef: (packageJsonPath: string, packageJson: string, name: string) => string | null;
 };
 
 export const jscInternals = $cpp("JSCTestingHelpers.cpp", "createJSCTestingHelpers");

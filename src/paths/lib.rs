@@ -952,6 +952,15 @@ pub mod fs {
             self.name().dir_with_trailing_slash()
         }
 
+        /// `name().dir`, or the root if that is not absolute: `/` for `/a.js`, `C:\` for `C:\a.js`.
+        pub fn dir_keeping_root(&self) -> &'a [u8] {
+            let dir = self.name().dir;
+            if crate::is_absolute(dir) {
+                return dir;
+            }
+            crate::dirname(self.text).unwrap_or_default()
+        }
+
         /// Directory used for display purposes, with trailing separator.
         #[inline]
         pub fn pretty_dir(&self) -> &'a [u8] {

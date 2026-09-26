@@ -1398,6 +1398,10 @@ impl Connection {
                 }
             }
         }
+        // RFC 9113 §8.1: an interim (1xx) block is not the response, so it cannot carry END_STREAM.
+        if informational && end_stream {
+            malformed = true;
+        }
         if malformed && !rejected {
             // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
             // against maxSessionInvalidFrames; exceeding it tears the session down with

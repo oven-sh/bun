@@ -537,7 +537,20 @@ it("native inspect.custom functions do not return the scope object of a bare cal
   expect(results).toEqual(classes.map(klass => [klass.name, "function", undefined, true]));
 
   const inspectURL = URL.prototype[util.inspect.custom];
-  expect(inspectURL.call(new URL("http://example.com/"), 2, {})).toContain("http://example.com/");
+  expect(inspectURL.call(new URL("http://example.com/"), 2, {})).toBe(`URL {
+  href: 'http://example.com/',
+  origin: 'http://example.com',
+  protocol: 'http:',
+  username: '',
+  password: '',
+  host: 'example.com',
+  hostname: 'example.com',
+  port: '',
+  pathname: '/',
+  search: '',
+  searchParams: URLSearchParams {},
+  hash: ''
+}`);
 });
 
 describe("Functions with names", () => {

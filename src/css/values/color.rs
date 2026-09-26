@@ -1928,11 +1928,16 @@ impl ComponentParser {
         F: Fn(&mut css::Parser, &mut ComponentParser) -> CssResult<C> + Copy,
     {
         if let CssColor::LightDark { light, dark } = from {
-            let state = input.state();
-            let light = self.parse_from::<T, C, F>(*light, input, func)?;
-            input.reset(&state);
-            let dark = self.parse_from::<T, C, F>(*dark, input, func)?;
-            return Ok(C::light_dark_owned(light, dark));
+            input.enter_light_dark_origin()?;
+            let result = (|| -> CssResult<C> {
+                let state = input.state();
+                let light = self.parse_from::<T, C, F>(*light, input, func)?;
+                input.reset(&state);
+                let dark = self.parse_from::<T, C, F>(*dark, input, func)?;
+                Ok(C::light_dark_owned(light, dark))
+            })();
+            input.exit_light_dark_origin();
+            return result;
         }
 
         let new_from = match T::try_from_css_color(&from) {

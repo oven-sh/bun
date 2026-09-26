@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { positionDependentBytes } from "socketpair";
 
 const [consumer, fifo, out, length] = process.argv.slice(2);
-const cmd = [process.execPath, join(import.meta.dir, "spawn-stdout-unread-at-hangup-child-fixture.ts"), fifo, length];
+const childFixture = join(import.meta.dir, "spawn-stdout-unread-at-hangup-child-fixture.ts");
+// The child gets the pid of this process, so that it ends when this process is gone.
+const cmd = [process.execPath, childFixture, fifo, length, String(process.pid)];
 let queued: number | undefined;
 // The child queues its bytes only after this open, and reports only after it hung up. The read blocks this
 // thread until then, so nothing polls the stdout socket before the hangup.

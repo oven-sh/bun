@@ -2753,11 +2753,15 @@ describe.skipIf(skipHungUpSockets)("a native sink over a socket that hung up wit
       const read = reader.read();
       writeSync(outer.peer, "x");
       await read;
-      // This runs inside the read loop of `outer`. `resolves` runs the event loop until the promise settles, so
-      // the wakeup of `inner` is handled from in here.
-      const queued = inner.hangUp(body);
-      await expect(written).resolves.toBe(body.length);
-      await reader.cancel();
+      let queued;
+      try {
+        // This runs inside the read loop of `outer`. `resolves` runs the event loop until the promise settles, so
+        // the wakeup of `inner` is handled from in here.
+        queued = inner.hangUp(body);
+        await expect(written).resolves.toBe(body.length);
+      } finally {
+        await reader.cancel();
+      }
       const received = readFileSync(out);
       expect({ queued, received: received.length, intact: received.equals(body) }).toEqual({
         queued: body.length,

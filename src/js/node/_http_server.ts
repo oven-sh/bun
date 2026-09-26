@@ -107,6 +107,11 @@ const ObjectKeys = Object.keys;
 const MathMin = Math.min;
 const MathFloor = Math.floor;
 const DateNow = Date.now;
+// Monotonic. Bound at load like DateNow, so a replaced `performance` global cannot break a response write.
+const performanceNow =
+  typeof performance === "object" && typeof performance.now === "function"
+    ? performance.now.bind(performance)
+    : DateNow;
 
 let cluster;
 
@@ -1356,6 +1361,10 @@ const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // the socket timer on every response; onSocketTimeoutTimerExpired reads it to
 // grant the remaining idle budget when the timer actually fires.
 const kKeepAliveIdleStart = Symbol("keepAliveIdleStart");
+// performanceNow() of the last response write, settled when the timer fires like kKeepAliveIdleStart.
+const kLastResponseWrite = Symbol("lastResponseWrite");
+// 'timeout' was emitted: the next response write re-arms the spent timer, like refresh() in Node.js.
+const kSocketTimeoutEmitted = Symbol("socketTimeoutEmitted");
 // HTTP/1.1 pipelining (responses queued behind an in-flight response):
 // - on the socket: array of queued ServerResponses, in arrival order
 // - on a queued response: { ops, bytes, needDrain, ended, isAncient } while it
@@ -1463,6 +1472,18 @@ function onSocketTimeoutTimerExpired(socket) {
       return;
     }
   }
+  // Not a new, shorter timer as above: the next _unrefTimer() would refresh the shorter interval.
+  const lastWrite = socket[kLastResponseWrite];
+  if (lastWrite !== undefined) {
+    socket[kLastResponseWrite] = undefined;
+    const sinceWrite = performanceNow() - lastWrite;
+    const timer = socket[kSocketTimeoutTimer];
+    if (sinceWrite < socket.timeout && timer !== undefined) {
+      timer.refresh();
+      if (sinceWrite > 0) timer._idleStart -= sinceWrite;
+      return;
+    }
+  }
   // A fired keep-alive idle timer is dead; drop the reference so the next
   // response-finish re-arms via setTimeout instead of trusting a fired
   // timer whose _idleTimeout still matches (a 'timeout' listener may keep
@@ -1507,6 +1528,8 @@ function getNodeHTTPServerSocket() {
     [kStreamingEnabled] = false;
     [kBoundOnAbort] = null;
     [kKeepAliveIdleStart] = undefined;
+    [kLastResponseWrite]: number | undefined = undefined;
+    [kSocketTimeoutEmitted] = false;
     [kBytesWritten] = 0;
     [kHandle];
     [kUpgradeIncoming]: import("node:http").IncomingMessage | undefined = undefined;
@@ -1740,6 +1763,7 @@ function getNodeHTTPServerSocket() {
         this._unrefTimer();
         return;
       }
+      this[kSocketTimeoutEmitted] = true;
       this.emit("timeout");
     }
     _unrefTimer() {
@@ -2684,6 +2708,7 @@ function advanceResponsePipeline(server, socket) {
           // Buffered 1xx bytes: route through the same AsyncSocket buffer the
           // response's own writeHead/end use so they precede the final response.
           handle.writeInformational(op[1], op[2]);
+          noteResponseWrite(res);
           if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
           lastWriteResult = res.write(op[1], op[2], op[3]);
@@ -3016,6 +3041,20 @@ Object.defineProperty(ServerResponse.prototype, "headersSent", {
   },
 });
 
+// Runs after the native write: a write that throws is no activity, as in Node.js.
+function noteResponseWrite(res, result = 0) {
+  // Nor is a write that only reached the backpressure buffer: a peer that stopped reading must still time out.
+  if (result < 0) return;
+  const socket = res[kSocket];
+  if (socket == null || !socket.timeout) return;
+  if (socket[kSocketTimeoutEmitted]) {
+    socket[kSocketTimeoutEmitted] = false;
+    socket._unrefTimer();
+  } else {
+    socket[kLastResponseWrite] = performanceNow();
+  }
+}
+
 ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
   if (!this[kHandle]) {
     // Standalone path: OutgoingMessage._writeRaw buffers to outputData while
@@ -3041,6 +3080,7 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
   // writeHead/end) so 1xx lines share ordering with the final response bytes;
   // socket.write() would land in the socket handle's separate stream buffer.
   this[kHandle].writeInformational(chunk, encoding);
+  noteResponseWrite(this);
   if (typeof callback === "function") process.nextTick(callback);
   return true;
 };
@@ -3143,6 +3183,7 @@ ServerResponse.prototype.writeContinue = function (cb) {
   const native = this.socket?.[kHandle]?.response;
   if (native) native.writeContinue();
   else this[kHandle]?.writeContinue?.();
+  noteResponseWrite(this);
   this._sent100 = true;
   cb?.();
 };
@@ -3286,6 +3327,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       handle.end(chunk, encoding, undefined, strictContentLength(this));
     }
   }
+  noteResponseWrite(this);
   this._header = " ";
   const req = this.req;
   if (!req._consuming && !req?._readableState?.resumeScheduled) {
@@ -3434,6 +3476,9 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   } else {
     result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
   }
+
+  // Node.js drops this write before the socket: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L983
+  if (this._hasBody) noteResponseWrite(this, result);
 
   if (result < 0) {
     if (callback) {
@@ -3593,6 +3638,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
     return OutgoingMessagePrototype._send.$apply(this, arguments);
   }
 
+  let result = 0;
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
@@ -3610,11 +3656,12 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
         releaseRenderedHeaders(renderedHeaders);
       }
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      handle.write(data, encoding, callback, strictContentLength(this));
+      result = handle.write(data, encoding, callback, strictContentLength(this));
     });
   } else {
-    handle.write(data, encoding, callback, strictContentLength(this));
+    result = handle.write(data, encoding, callback, strictContentLength(this));
   }
+  noteResponseWrite(this, result);
 };
 
 const kSnapshotStatusCode = Symbol("kSnapshotStatusCode");
@@ -3742,6 +3789,7 @@ ServerResponse.prototype.flushHeaders = function () {
       }
     }
     handle.flushHeaders();
+    noteResponseWrite(this);
   } else {
     // Standalone path: _storeHeader rendered this._header; _send('') pushes
     // it to the assigned socket like OutgoingMessage.flushHeaders does.
@@ -3803,6 +3851,7 @@ function callWriteHeadIfObservable(self, headerState, fromEnd?) {
 }
 
 function allowWritesToContinue() {
+  noteResponseWrite(this);
   this._callPendingCallbacks();
   this.emit("drain");
 }

@@ -245,8 +245,7 @@ function serializeArray(values: any[], type: ArrayType) {
 }
 
 function wrapPostgresError(error: Error | (PostgresErrorOptions & { message: string })) {
-  // A parameter's conversion can throw any value.
-  if (Error.isError(error) || !$isObject(error)) {
+  if (Error.isError(error)) {
     return error;
   }
   return new PostgresError(error.message, error);

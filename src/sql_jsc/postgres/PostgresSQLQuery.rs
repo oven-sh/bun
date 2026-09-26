@@ -674,7 +674,7 @@ impl PostgresSQLQuery {
                                         connection.advance_and_flush();
                                     }
                                     // Nothing was sent for this request, so no reply releases the ref.
-                                    connection.update_poll_ref();
+                                    connection.update_poll_ref_cold();
                                     return Err(match thrown {
                                         Some(thrown) => global_object.throw_value(thrown),
                                         None => throw_write_error(
@@ -841,16 +841,11 @@ impl PostgresSQLQuery {
             }
         }
 
-        // Replies go to the head of the queue, so wire order has to equal queue order.
-        connection
-            .requests
-            .with_mut(|q| match queued_by_conversion {
-                0 => q.push_back(queued),
-                behind => {
-                    debug_assert!(behind <= q.len(), "pending_requests exceeds the queue");
-                    q.insert(q.len().saturating_sub(behind), queued)
-                }
-            });
+        if queued_by_conversion == 0 {
+            connection.requests.with_mut(|q| q.push_back(queued));
+        } else {
+            connection.enqueue_ahead_of(queued, queued_by_conversion);
+        }
         if this.status.get() == Status::Pending {
             connection.note_request_pending();
         }

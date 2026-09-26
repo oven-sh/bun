@@ -351,6 +351,7 @@ impl PostgresSQLConnection {
     }
 
     /// Run `drain_internal` on the next tick, with or without bytes to send.
+    #[cold]
     fn dispatch_later(&self) {
         if !self.auto_flusher.get().registered && self.status.get() == Status::Connected {
             AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(
@@ -699,7 +700,14 @@ impl PostgresSQLConnection {
         self.js_value.with_mut(|r| r.finalize());
     }
 
+    /// `update_poll_ref`, out of line: for a path that a query takes only when something failed.
+    #[cold]
+    pub(crate) fn update_poll_ref_cold(&self) {
+        self.update_poll_ref();
+    }
+
     /// Keep the process alive only while a connected connection has something in flight.
+    #[inline(always)]
     pub(crate) fn update_poll_ref(&self) {
         if self.status.get() != Status::Connected {
             return;
@@ -729,20 +737,25 @@ impl PostgresSQLConnection {
             debug!("flushData: has backpressure");
             return;
         }
-        let encoding = self.is_encoding.get();
-        let buffer = self.write_buffer.get();
-        let mut chunk = buffer.remaining();
-        let mut sent = 0;
-        if encoding {
-            // The buffer ends in a partial message. Only the messages ahead of it can go out.
-            sent = self.sent_while_encoding.get();
-            chunk = &chunk[sent as usize..self.encode_start.get() as usize];
+        if self.is_encoding.get() {
+            return self.flush_ahead_of_encode();
         }
+
+        let chunk = self.write_buffer.get().remaining();
         if chunk.is_empty() {
             debug!("flushData: no data to flush");
             return;
         }
 
+        let wrote = self.send(chunk);
+        if wrote > 0 {
+            self.consume_write_buffer(wrote);
+        }
+    }
+
+    /// Write `chunk` to the socket. Returns how many bytes the socket took.
+    #[inline]
+    fn send(&self, chunk: &[u8]) -> u32 {
         let wrote = self.socket.get().write(chunk);
         self.update_flags(|f| {
             f.set(
@@ -751,15 +764,22 @@ impl PostgresSQLConnection {
             )
         });
         debug!("flushData: wrote {}/{} bytes", wrote, chunk.len());
-        if wrote > 0 {
-            SocketMonitor::write(&chunk[..usize::try_from(wrote).expect("int cast")]);
-            let wrote = u32::try_from(wrote).expect("int cast");
-            if encoding {
-                // The encoder holds offsets into the buffer. `encode_request` consumes afterwards.
-                self.sent_while_encoding.set(sent + wrote);
-                return;
-            }
-            self.consume_write_buffer(wrote);
+        if wrote <= 0 {
+            return 0;
+        }
+        SocketMonitor::write(&chunk[..wrote as usize]);
+        wrote as u32
+    }
+
+    /// The buffer ends in a partial message: send only the messages ahead of it.
+    #[cold]
+    fn flush_ahead_of_encode(&self) {
+        let sent = self.sent_while_encoding.get();
+        let buffer = self.write_buffer.get();
+        let chunk = &buffer.remaining()[sent as usize..self.encode_start.get() as usize];
+        if !chunk.is_empty() {
+            // The encoder holds offsets into the buffer. `encode_request` consumes afterwards.
+            self.sent_while_encoding.set(sent + self.send(chunk));
         }
     }
 
@@ -995,17 +1015,19 @@ impl PostgresSQLConnection {
             return;
         }
 
+        // advance() runs user JS, which can close the connection.
+        let _guard = self.ref_guard();
+        self.reject_stopped_requests();
         self.drain_internal();
     }
 
+    /// The caller holds a ref on the connection.
+    #[inline]
     fn drain_internal(&self) {
         debug!("drainInternal");
-        // advance() runs user JS, which can close the connection.
-        let _guard = self.ref_guard();
         let event_loop = self.event_loop();
         event_loop.enter();
 
-        self.reject_stopped_requests();
         self.flush_data();
 
         let flags = self.flags.get();
@@ -1015,10 +1037,10 @@ impl PostgresSQLConnection {
             // no backpressure yet so pipeline more if possible and flush again
             self.advance();
             self.flush_data();
+            // advance() can reject a request with nothing sent, so no reply releases the ref.
+            self.update_poll_ref_cold();
         }
         event_loop.exit();
-        // advance() can reject a request with nothing sent, so no reply releases the ref.
-        self.update_poll_ref();
     }
 
     pub(crate) fn on_data(&self, data: &[u8]) {
@@ -1495,8 +1517,16 @@ impl PostgresSQLConnection {
         self.dispatch_later();
     }
 
+    #[inline]
     fn reject_stopped_requests(&self) {
-        if self.stopped_requests.get().is_empty() || self.global().has_exception() {
+        if !self.stopped_requests.get().is_empty() {
+            self.reject_stopped_requests_now();
+        }
+    }
+
+    #[cold]
+    fn reject_stopped_requests_now(&self) {
+        if self.global().has_exception() {
             return;
         }
         for req in self.stopped_requests.with_mut(core::mem::take) {
@@ -1732,6 +1762,7 @@ impl PostgresSQLConnection {
         self.write_epoch.set(self.write_epoch.get().wrapping_add(1));
     }
 
+    #[inline]
     pub(crate) fn consume_write_buffer(&self, bytes: u32) {
         self.write_buffer.with_mut(|b| b.consume(bytes));
         self.bump_write_epoch();
@@ -1925,7 +1956,18 @@ impl PostgresSQLConnection {
         }
     }
 
+    /// Queue `request` ahead of the last `behind` requests, which its conversion queued.
+    #[cold]
+    pub(crate) fn enqueue_ahead_of(&self, request: RefPtr<PostgresSQLQuery>, behind: usize) {
+        // Replies go to the head of the queue, so wire order has to equal queue order.
+        self.requests.with_mut(|q| {
+            debug_assert!(behind <= q.len(), "pending_requests exceeds the queue");
+            q.insert(q.len().saturating_sub(behind), request)
+        });
+    }
+
     /// Encode the batch of the request at `offset`, which `advance()` took out of `pending_requests`.
+    #[inline(always)]
     fn encode_queued(
         &self,
         req: &PostgresSQLQuery,
@@ -1935,15 +1977,20 @@ impl PostgresSQLConnection {
         // A close() from inside a conversion must not count a Pending request twice.
         req.status.set(QueryStatus::Binding);
         let result = self.encode_request(self.global(), request);
-        // A reply handled during the conversion pops settled requests off the head of the queue.
         let is_req = |r: &RefPtr<PostgresSQLQuery>| core::ptr::eq(r.as_ptr(), req);
-        let requests = self.requests.get();
-        if !requests.get(*offset).is_some_and(is_req) {
-            if let Some(at) = requests.iter().take(*offset).position(is_req) {
-                *offset = at;
-            }
+        if !self.requests.get().get(*offset).is_some_and(is_req) {
+            self.find_again(req, offset);
         }
         result
+    }
+
+    /// A reply handled during the conversion popped settled requests off the head of the queue.
+    #[cold]
+    fn find_again(&self, req: &PostgresSQLQuery, offset: &mut usize) {
+        let is_req = |r: &RefPtr<PostgresSQLQuery>| core::ptr::eq(r.as_ptr(), req);
+        if let Some(at) = self.requests.get().iter().take(*offset).position(is_req) {
+            *offset = at;
+        }
     }
 
     /// Reject `req`. A non-JS error also fails `new_statement`, first parsed in the failed write.
@@ -1969,6 +2016,7 @@ impl PostgresSQLConnection {
     }
 
     /// Pop the requests at the head of the queue that have settled.
+    #[inline(always)]
     fn discard_finished_requests(&self) {
         while let Some(request) = self.current() {
             match request.status.get() {
@@ -2012,8 +2060,6 @@ impl PostgresSQLConnection {
             // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
             // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
             let req = ParentRef::from(self.requests.get()[offset].as_non_null());
-            // A conversion can close the connection, which drops the queue's ref.
-            let _req_ref = req.ref_guard();
             match req.status.get() {
                 QueryStatus::Pending => {
                     // Optimistically account for this request leaving Pending; the
@@ -2066,6 +2112,8 @@ impl PostgresSQLConnection {
                         defer_cleanup!(self);
                         return;
                     } else {
+                        // A conversion can close the connection, which drops the queue's ref.
+                        let _req_ref = req.ref_guard();
                         if let Some(statement) = req.statement_mut() {
                             match statement.status {
                                 StatementStatus::Failed => {

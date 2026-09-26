@@ -334,21 +334,26 @@ const scenarios: Record<string, () => Promise<unknown>> = {
 /** close() waits for every query, so it resolves only if the stopped query settles too. */
 async function stoppedByTimeout(db: SQL) {
   const pid = await backendPid(db);
+  let reached = false;
   const param = {
     toString() {
       conversions++;
+      reached = true;
       // Its parameter needs JS, which cannot run while the termination is pending.
       dispatched.push(db`select ${text("2")}::text as y`.execute());
       for (;;) {}
     },
   };
-  let thrown: unknown;
   let outer!: Promise<unknown>;
   (globalThis as any).run = () => (outer = db`select ${param}::text as x`).execute();
-  try {
-    vm.runInThisContext("run()", { timeout: 50 });
-  } catch (e: any) {
-    thrown = e?.code;
+  let thrown: unknown;
+  // On a slow machine the timeout can come before the conversion starts. That query stops nothing.
+  while (!reached) {
+    try {
+      vm.runInThisContext("run()", { timeout: 250 });
+    } catch (e: any) {
+      thrown = e?.code;
+    }
   }
   return {
     thrown,

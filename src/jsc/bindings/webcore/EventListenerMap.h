@@ -37,6 +37,7 @@
 #include <memory>
 #include <wtf/Assertions.h>
 #include <wtf/Forward.h>
+#include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Threading.h>
 #include <wtf/text/AtomString.h>
@@ -77,7 +78,23 @@ private:
         RELEASE_ASSERT(Thread::mayBeGCThread());
     }
 
+    size_t findEntryPosition(const AtomString& eventType) const;
+    void removeEntryAt(size_t position);
+
+    // Nearly every target has a handful of event types, so a linear scan of
+    // m_entries is the fast path. Past this many types m_entryPositions maps
+    // type -> position in m_entries so find/add/remove stop being O(types).
+    static constexpr unsigned maxEntriesForLinearSearch = 16;
+
+    // Keyed by the type's AtomStringImpl*: atoms compare by pointer and m_entries
+    // keeps them alive. The zero-key traits make nullAtom an ordinary key, which
+    // the linear scan also accepts. Callers do look it up: AtomString::fromUTF8
+    // returns it for invalid UTF-8.
+    using EntryPositionMap = HashMap<uintptr_t, unsigned, DefaultHash<uintptr_t>, WTF::UnsignedWithZeroKeyHashTraits<uintptr_t>>;
+    static uintptr_t positionKey(const AtomString& eventType) { return reinterpret_cast<uintptr_t>(eventType.impl()); }
+
     Vector<std::pair<AtomString, EventListenerVector>, 0, CrashOnOverflow, 4> m_entries;
+    EntryPositionMap m_entryPositions;
     Lock m_lock;
     uint32_t m_threadUID { 0 };
 };

@@ -14,6 +14,7 @@ import { readdir, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
+import type { ServiceName } from "./docker/index.ts";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -1149,6 +1150,28 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 }
+
+/**
+ * Whether `ensure(service)` from test/docker/index.ts can provide the given
+ * docker-compose service here. It resolves, in this order, from a
+ * `BUN_TEST_SERVICE_<service>` address, from the shard's docker coordinator
+ * (`BUN_DOCKER_COORDINATOR`), or by starting the container with a local docker
+ * daemon. Gate suites that talk to a service with this, not with
+ * `isDockerEnabled()`: the first two sources need no docker, and
+ * `isDockerEnabled()` throws on Linux CI when docker is missing, so it is only
+ * consulted once neither of them is configured. The coordinator runs on the
+ * Linux arm64 agents too, so a suite whose image exists for one architecture
+ * only adds its own arch condition next to this gate (see autobahn.test.ts).
+ * `describeWithContainer()` applies this gate itself.
+ */
+export function isDockerServiceEnabled(service: ServiceName): boolean {
+  // An empty value counts as unset, which is how ensure() reads it too.
+  if (process.env["BUN_TEST_SERVICE_" + service] || process.env.BUN_DOCKER_COORDINATOR) {
+    return true;
+  }
+  return isDockerEnabled();
+}
+
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);
   let error: unknown;
@@ -1223,7 +1246,7 @@ export async function describeWithContainer(
   }
 
   // Map mysql:8 and mysql:9 based on environment variables
-  let actualService = image;
+  let actualService = image as ServiceName;
   if (image === "mysql:8" || image === "mysql:9") {
     if (env.MYSQL_ROOT_PASSWORD === "bun") {
       actualService = "mysql_native_password"; // Has password "bun"
@@ -1234,10 +1257,7 @@ export async function describeWithContainer(
     }
   }
 
-  // Skip only when no env override, no coordinator, and docker is unavailable.
-  // isDockerEnabled() may throw when docker is required but absent, so the
-  // env-override and coordinator checks must short-circuit before it.
-  if (!process.env["BUN_TEST_SERVICE_" + actualService] && !process.env.BUN_DOCKER_COORDINATOR && !isDockerEnabled()) {
+  if (!isDockerServiceEnabled(actualService)) {
     describe.todo(label);
     return;
   }

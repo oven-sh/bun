@@ -5472,6 +5472,21 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(value)
     }
 
+    /// Cursor on the last hex digit of a `\uD8xx` escape. Does not advance.
+    fn peek_trail_surrogate_escape(&self) -> Option<u16> {
+        if Enc::wide(self.peek(1)) != 0x5C /* '\\' */ || Enc::wide(self.peek(2)) != 0x75
+        /* 'u' */
+        {
+            return None;
+        }
+        let mut value: u16 = 0;
+        for i in 0..Escape::LowerU as usize {
+            let digit = bun_core::fmt::hex_digit_value_u32(Enc::wide(self.peek(3 + i)))?;
+            value = value * 16 + u16::from(digit);
+        }
+        bun_core::strings::u16_is_trail(value).then_some(value)
+    }
+
     fn decode_hex_code_point(
         &mut self,
         escape: Escape,
@@ -5483,31 +5498,26 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Err(ParseError::UnexpectedCharacter);
         }
 
-        // JSON encodes supplementary code points as a `\uD8xx\uDCxx` surrogate
-        // pair; YAML 1.2 is a JSON superset. Lone surrogates remain an error.
         if (0xD800..=0xDFFF).contains(&cp) {
-            if !matches!(escape, Escape::LowerU)
-                || !bun_core::strings::u16_is_lead(cp as u16)
-                || Enc::wide(self.peek(1)) != 0x5C /* '\\' */
-                || Enc::wide(self.peek(2)) != 0x75
-            /* 'u' */
-            {
+            // `\U` names a Unicode character; a surrogate code point is not one.
+            if !matches!(escape, Escape::LowerU) {
                 return Err(ParseError::UnexpectedCharacter);
             }
-            self.inc(2);
-            let low = self.read_hex_digits(Escape::LowerU as u8)?;
-            if !bun_core::strings::u16_is_trail(low as u16) {
-                return Err(ParseError::UnexpectedCharacter);
+            // Like `JSON.parse`: combine a lead+trail pair, keep a lone surrogate.
+            if bun_core::strings::u16_is_lead(cp as u16) {
+                if let Some(trail) = self.peek_trail_surrogate_escape() {
+                    self.inc(2 + Escape::LowerU as usize);
+                    cp = bun_core::strings::u16_get_supplementary(cp as u16, trail);
+                }
             }
-            cp = bun_core::strings::u16_get_supplementary(cp as u16, low as u16);
         }
 
         match Enc::KIND {
             EncodingKind::Utf8 => {
-                let ch = char::from_u32(cp).ok_or(ParseError::UnexpectedCharacter)?;
+                // WTF-8; `wtf8_to_utf16_alloc` restores a lone surrogate for JS.
                 let mut buf = [0u8; 4];
-                let s = ch.encode_utf8(&mut buf);
-                for b in s.bytes() {
+                let len = bun_core::strings::encode_wtf8_rune(&mut buf, cp);
+                for &b in &buf[..len] {
                     text.push(Enc::ch(b));
                 }
             }

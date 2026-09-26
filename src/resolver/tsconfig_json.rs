@@ -161,8 +161,33 @@ pub struct TSConfigJSON {
 
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
-    /// `None` = unset (keeps native [[Define]] class-field semantics).
+    /// The explicit flag only; [`Self::use_define_for_class_fields_or_target_default`] applies the `target` default.
     pub use_define_for_class_fields: Option<bool>,
+    pub target: TSTarget,
+}
+
+/// `compilerOptions.target`, reduced to the ES2022 boundary that decides the `useDefineForClassFields` default.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TSTarget {
+    #[default]
+    Unspecified,
+    BelowES2022,
+    AtOrAboveES2022,
+}
+
+impl TSTarget {
+    /// Same name table as tsc and esbuild, case-insensitive.
+    fn parse(value: &[u8]) -> TSTarget {
+        let Some((lower, len)) = strings::ascii_lowercase_buf::<6>(value) else {
+            return TSTarget::Unspecified;
+        };
+        match &lower[..len] {
+            b"es3" | b"es5" | b"es6" | b"es2015" | b"es2016" | b"es2017" | b"es2018"
+            | b"es2019" | b"es2020" | b"es2021" => TSTarget::BelowES2022,
+            b"es2022" | b"es2023" | b"es2024" | b"es2025" | b"esnext" => TSTarget::AtOrAboveES2022,
+            _ => TSTarget::Unspecified,
+        }
+    }
 }
 
 impl Default for TSConfigJSON {
@@ -179,6 +204,7 @@ impl Default for TSConfigJSON {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: None,
+            target: TSTarget::Unspecified,
         }
     }
 }
@@ -224,6 +250,15 @@ impl TSConfigJSON {
 
     pub(crate) fn has_base_url(&self) -> bool {
         !self.base_url.is_empty()
+    }
+
+    /// `useDefineForClassFields` as tsc resolves it; `None` when neither the flag nor `target` is set.
+    pub fn use_define_for_class_fields_or_target_default(&self) -> Option<bool> {
+        self.use_define_for_class_fields.or(match self.target {
+            TSTarget::Unspecified => None,
+            TSTarget::BelowES2022 => Some(false),
+            TSTarget::AtOrAboveES2022 => Some(true),
+        })
     }
 
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
@@ -375,6 +410,7 @@ impl TSConfigJSON {
             let mut emit_decorator_metadata_v: Option<&bun_ast::E::JsonValue> = None;
             let mut experimental_decorators_v: Option<&bun_ast::E::JsonValue> = None;
             let mut use_define_for_class_fields_v: Option<&bun_ast::E::JsonValue> = None;
+            let mut target_v: Option<&bun_ast::E::JsonValue> = None;
             let mut jsx_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_fragment_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_v: Option<&bun_ast::E::JsonValue> = None;
@@ -398,6 +434,7 @@ impl TSConfigJSON {
                         b"useDefineForClassFields" if use_define_for_class_fields_v.is_none() => {
                             use_define_for_class_fields_v = Some(value)
                         }
+                        b"target" if target_v.is_none() => target_v = Some(value),
                         b"jsxFactory" if jsx_factory_v.is_none() => {
                             jsx_factory_v = Some((value, loc))
                         }
@@ -445,6 +482,11 @@ impl TSConfigJSON {
             // Parse "useDefineForClassFields"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = use_define_for_class_fields_v {
                 result.use_define_for_class_fields = Some(val);
+            }
+
+            // Parse "target"
+            if let Some(target) = target_v.and_then(|v| v.as_str()) {
+                result.target = TSTarget::parse(target);
             }
 
             // Parse "jsxFactory"

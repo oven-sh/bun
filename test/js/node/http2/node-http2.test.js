@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -5145,6 +5145,308 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
     server.close();
   }
 });
+
+// node's respond() reads endStream, waitForTrailers and sendDate from its options, each by
+// truthiness, and nothing else (lib/internal/http2/core.js). parent, weight, exclusive, silent
+// and signal are options of ClientHttp2Session.request(): a response that is given them goes out
+// as if they were absent. respondWithFile() and respondWithFD() do not read endStream either.
+describe("http2 response options", () => {
+  // Runs `respond(stream)` for each request on a fresh server and sends two requests, one after
+  // the other, over one client session. Resolves with what the client received for each, or with
+  // the first failure either side saw. The second response is decoded against the HPACK table
+  // the first one left behind, so it only arrives intact when the first respond() left the
+  // encoder in step with the wire.
+  async function requestTwice(respond) {
+    const { promise: failed, resolve: fail } = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("sessionError", err => fail(`server session error ${err.code}`));
+    server.on("stream", stream => {
+      stream.on("error", err => fail(`server stream error ${err.code}`));
+      try {
+        respond(stream);
+      } catch (err) {
+        fail(`threw ${err.code}`);
+      }
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", err => fail(`client session error ${err.code}`));
+    const get = () =>
+      new Promise(resolve => {
+        const req = client.request({ ":path": "/" });
+        const received = [];
+        req.setEncoding("utf8");
+        req.on("error", err => fail(`client stream error ${err.code}`));
+        req.on("response", headers => received.push(headers[":status"]));
+        req.on("data", chunk => received.push(chunk));
+        req.on("trailers", headers => received.push(`x-trailer=${headers["x-trailer"]}`));
+        req.on("end", () => resolve(received.join(" ")));
+        req.end();
+      });
+    try {
+      return await Promise.race([failed, (async () => [await get(), await get()])()]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  // Every shape at once: { name: result of requestTwice() }.
+  async function requestTwiceForEach(shapes, respond) {
+    const names = Object.keys(shapes);
+    const results = await Promise.all(names.map(name => requestTwice(stream => respond(stream, shapes[name]))));
+    return Object.fromEntries(names.map((name, i) => [name, results[i]]));
+  }
+
+  const everyShape = (shapes, result) => Object.fromEntries(Object.keys(shapes).map(name => [name, result]));
+
+  const requestOnlyOptions = {
+    "parent: -1": { parent: -1 },
+    "parent: 0": { parent: 0 },
+    "parent: 'x'": { parent: "x" },
+    "weight: 0": { weight: 0 },
+    "weight: 300": { weight: 300 },
+    "weight: 'x'": { weight: "x" },
+    "exclusive: 1": { exclusive: 1 },
+    "silent: 1": { silent: 1 },
+    "signal: {}": { signal: {} },
+    "signal: aborted": { signal: AbortSignal.abort() },
+  };
+
+  it("respond() ignores the options of request()", async () => {
+    const results = await requestTwiceForEach(requestOnlyOptions, (stream, options) => {
+      stream.respond({ ":status": 200 }, options);
+      stream.end("ok");
+    });
+    expect(results).toEqual(everyShape(requestOnlyOptions, ["200 ok", "200 ok"]));
+  });
+
+  it("respond() reads endStream and waitForTrailers by truthiness", async () => {
+    const shapes = {
+      "endStream: 0": { endStream: 0 },
+      "endStream: ''": { endStream: "" },
+      "endStream: 1": { endStream: 1 },
+      "waitForTrailers: 0": { waitForTrailers: 0 },
+      "waitForTrailers: 1": { waitForTrailers: 1 },
+      "endStream: 1, waitForTrailers: 1": { endStream: 1, waitForTrailers: 1 },
+      // node reads a copy of the options, so a key that is not own and enumerable does not count.
+      "inherited endStream: true": Object.create({ endStream: true }),
+    };
+    const results = await requestTwiceForEach(shapes, (stream, options) => {
+      stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "sent" }));
+      stream.respond({ ":status": 200 }, options);
+      if (!stream.writableEnded) stream.end("ok");
+    });
+    expect(results).toEqual({
+      "endStream: 0": ["200 ok", "200 ok"],
+      "endStream: ''": ["200 ok", "200 ok"],
+      "endStream: 1": ["200", "200"],
+      "waitForTrailers: 0": ["200 ok", "200 ok"],
+      "waitForTrailers: 1": ["200 ok x-trailer=sent", "200 ok x-trailer=sent"],
+      "endStream: 1, waitForTrailers: 1": ["200", "200"],
+      "inherited endStream: true": ["200 ok", "200 ok"],
+    });
+  });
+
+  it("respondWithFile() and respondWithFD() ignore them too, and endStream", async () => {
+    using dir = tempDir("http2-response-options", { "body.txt": "file body" });
+    const file = path.join(String(dir), "body.txt");
+    const shapes = {
+      "weight: 0": { weight: 0 },
+      "silent: 1": { silent: 1 },
+      "endStream: true": { endStream: true },
+      // bun gives statCheck the options as a third argument. node gives it { offset, length } or
+      // nothing, and reads its stream options before statCheck runs.
+      "statCheck sets endStream and weight": {
+        statCheck(stat, headers, options) {
+          options.endStream = true;
+          options.weight = 0;
+        },
+      },
+    };
+    const expected = everyShape(shapes, ["200 file body", "200 file body"]);
+
+    const withFile = await requestTwiceForEach(shapes, (stream, options) => {
+      stream.respondWithFile(file, { ":status": 200 }, options);
+    });
+    expect(withFile).toEqual(expected);
+
+    // respondWithFD() leaves the descriptor to its caller.
+    const fds = [];
+    try {
+      const withFD = await requestTwiceForEach(shapes, (stream, options) => {
+        const fd = fs.openSync(file, "r");
+        fds.push(fd);
+        stream.respondWithFD(fd, { ":status": 200 }, options);
+      });
+      expect(withFD).toEqual(expected);
+    } finally {
+      for (const fd of fds) fs.closeSync(fd);
+    }
+  });
+
+  it("respond(), respondWithFile(), respondWithFD() and pushStream() throw for options that are not an object", async () => {
+    const notObjects = {
+      "null": null,
+      "5": 5,
+      "'str'": "str",
+      "true": true,
+      "[]": [],
+    };
+    const received = {
+      "null": "Received null",
+      "5": "Received type number (5)",
+      "'str'": "Received type string ('str')",
+      "true": "Received type boolean (true)",
+      "[]": "Received an instance of Array",
+    };
+    const thrown = {};
+    const responses = await requestTwice(stream => {
+      for (const [name, options] of Object.entries(notObjects)) {
+        for (const [method, call] of [
+          ["respond", () => stream.respond({ ":status": 200 }, options)],
+          ["respondWithFile", () => stream.respondWithFile(import.meta.path, { ":status": 200 }, options)],
+          ["respondWithFD", () => stream.respondWithFD(0, { ":status": 200 }, options)],
+          ["pushStream", () => stream.pushStream({ ":path": "/pushed" }, options, () => {})],
+        ]) {
+          try {
+            call();
+            thrown[`${method}(headers, ${name})`] = "did not throw";
+          } catch (err) {
+            thrown[`${method}(headers, ${name})`] = `${err.name} ${err.code}: ${err.message}`;
+          }
+        }
+      }
+      // A rejected call sends nothing, so the stream can still answer.
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+
+    const expected = {};
+    for (const name of Object.keys(notObjects)) {
+      for (const method of ["respond", "respondWithFile", "respondWithFD", "pushStream"]) {
+        expected[`${method}(headers, ${name})`] =
+          `TypeError ERR_INVALID_ARG_TYPE: The "options" argument must be of type object. ${received[name]}`;
+      }
+    }
+    expect({ thrown, responses }).toEqual({ thrown: expected, responses: ["200 ok", "200 ok"] });
+  });
+
+  it("pushStream() does not count an inherited endStream", async () => {
+    const { promise: pushed, resolve } = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.on("error", err => resolve(`server stream error ${err.code}`));
+      stream.pushStream({ ":path": "/pushed" }, Object.create({ endStream: true }), (err, push) => {
+        if (err) return resolve(`push error ${err.code}`);
+        push.on("error", err => resolve(`pushed stream error ${err.code}`));
+        // pushStream() ends the pushed writable when it reads a truthy endStream.
+        if (push.writableEnded) return resolve("the pushed writable was already ended");
+        push.respond({ ":status": 200 });
+        push.end("pushed body");
+      });
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      client.on("error", err => resolve(`client session error ${err.code}`));
+      client.on("stream", push => {
+        const chunks = [];
+        push.setEncoding("utf8");
+        push.on("error", err => resolve(`client push error ${err.code}`));
+        push.on("data", chunk => chunks.push(chunk));
+        push.on("end", () => resolve(chunks.join("")));
+      });
+      const req = client.request({ ":path": "/" });
+      req.on("error", err => resolve(`client stream error ${err.code}`));
+      req.resume();
+      req.end();
+      expect(await pushed).toBe("pushed body");
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("a response HEADERS frame never carries a priority field", async () => {
+    const flagNames = flags =>
+      Object.entries({ END_STREAM: 0x1, END_HEADERS: 0x4, PADDED: 0x8, PRIORITY: 0x20 })
+        .filter(([, bit]) => (flags & bit) !== 0)
+        .map(([name]) => name)
+        .join(" | ");
+
+    // Sends one GET on stream 1 from a raw socket and resolves with the flags of the HEADERS frame
+    // the server answers it with.
+    async function responseHeadersFlags(options) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.on("error", reject);
+        try {
+          stream.respond({ ":status": 200 }, options);
+          if (!stream.writableEnded) stream.end("ok");
+        } catch (err) {
+          reject(err);
+        }
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const socket = net.connect(server.address().port, "127.0.0.1", () => {
+        socket.write(http2utils.kClientMagic);
+        socket.write(new http2utils.SettingsFrame(false).data);
+        // :method GET, :scheme http, :path /, :authority "x" (literal, name index 1), with
+        // END_HEADERS | END_STREAM.
+        const block = Buffer.from([0x82, 0x86, 0x84, 0x01, 0x01, 0x78]);
+        socket.write(new http2utils.HeadersFrame(1, block, 0, true, true).data);
+      });
+      socket.on("error", reject);
+      socket.on("close", () => reject(new Error("the socket closed before the response HEADERS frame")));
+      let buffered = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        buffered = Buffer.concat([buffered, chunk]);
+        while (buffered.length >= 9) {
+          const length = buffered.readUIntBE(0, 3);
+          if (buffered.length < 9 + length) break;
+          const type = buffered[3];
+          const flags = buffered[4];
+          const streamId = buffered.readUInt32BE(5) & 0x7fffffff;
+          buffered = buffered.subarray(9 + length);
+          if (streamId !== 1) continue;
+          if (type === 1) return resolve(flagNames(flags));
+          if (type === 3) return reject(new Error("the server reset the stream"));
+        }
+      });
+      try {
+        return await promise;
+      } finally {
+        socket.destroy();
+        server.close();
+      }
+    }
+
+    const shapes = {
+      "no options": undefined,
+      "weight: 16": { weight: 16 },
+      "exclusive: true": { exclusive: true },
+      "parent: 1": { parent: 1 },
+      "endStream: 1": { endStream: 1 },
+      // Not a node option: bun lets a single response override the session's paddingStrategy.
+      "paddingStrategy: PADDING_STRATEGY_MAX": { paddingStrategy: http2.constants.PADDING_STRATEGY_MAX },
+    };
+    const names = Object.keys(shapes);
+    const flags = await Promise.all(names.map(name => responseHeadersFlags(shapes[name])));
+    expect(Object.fromEntries(names.map((name, i) => [name, flags[i]]))).toEqual({
+      "no options": "END_HEADERS",
+      "weight: 16": "END_HEADERS",
+      "exclusive: true": "END_HEADERS",
+      "parent: 1": "END_HEADERS",
+      "endStream: 1": "END_STREAM | END_HEADERS",
+      "paddingStrategy: PADDING_STRATEGY_MAX": "END_HEADERS | PADDED",
+    });
+  });
+});
+
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

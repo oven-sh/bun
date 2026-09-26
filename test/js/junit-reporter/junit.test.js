@@ -429,6 +429,47 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(1);
   });
 
+  it("produces well-formed XML when test names or errors contain U+FFFE / U+FFFF", async () => {
+    await using tmpDir = tempDir("junit-nonchar", {
+      "package.json": "{}",
+      "nonchar.test.js":
+        'import { test } from "bun:test";\n' +
+        // U+FFFD next to U+FFFE: the first is a valid XML Char and must survive,
+        // the other two are the only BMP code points XML 1.0 excludes from Char.
+        'test("bom \\uFFFD\\uFFFE swapped \\uFFFF end", () => {});\n' +
+        'test("throws", () => { throw new Error("bad \\uFFFE byte \\uFFFF order"); });\n',
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Checked before reading the report so a child that died early shows its
+    // stderr here rather than as a missing junit.xml below.
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 1 fail");
+
+    const xmlContent = await file(junitPath).text();
+    // XML 1.0 Char excludes U+FFFE and U+FFFF outright, so neither the literal
+    // code point nor a numeric reference to it may appear anywhere in the report.
+    expect(xmlContent).not.toContain("\uFFFE");
+    expect(xmlContent).not.toContain("\uFFFF");
+    expect(xmlContent).not.toMatch(/&#(6553[45]|x0*fff[ef]);/i);
+
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    const [passing, failing] = result.testsuites.testsuite[0].testcase;
+    expect(passing.$.name).toBe("bom \uFFFD swapped  end");
+    expect(failing.failure[0].$.message).toBe("bad  byte  order");
+    expect(failing.failure[0]._).toContain("Error: bad  byte  order");
+    expect(exitCode).toBe(1);
+  });
+
   it("escapes the classname attribute exactly once", async () => {
     await using tmpDir = tempDir("junit-escape", {
       "package.json": "{}",

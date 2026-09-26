@@ -352,7 +352,7 @@ impl PostgresSQLConnection {
 
     /// Run `drain_internal` on the next tick, with or without bytes to send.
     #[cold]
-    fn dispatch_later(&self) {
+    pub(crate) fn dispatch_later(&self) {
         if !self.auto_flusher.get().registered && self.status.get() == Status::Connected {
             AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(
                 self.as_ctx_ptr(),

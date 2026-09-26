@@ -187,6 +187,20 @@ const groups: Record<string, Record<string, object>> = {
       conversions: 1,
       sameBackend: true,
     },
+    "prepared statement, conversion throws after dispatching a query whose conversion does not return": {
+      thrown: null,
+      outer: { err: "boom" },
+      dispatched: [ok({ y: "2" })],
+      conversions: 2,
+      sameBackend: true,
+    },
+    "prepare: false, conversion throws after dispatching a query whose conversion does not return": {
+      thrown: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+      outer: { err: "boom" },
+      dispatched: [{ err: "ERR_POSTGRES_INVALID_QUERY_BINDING" }],
+      conversions: 2,
+      sameBackend: true,
+    },
   },
   // close() rejects every request of the connection. The pool then opens a new connection.
   // These groups do not close their pools: a request left on a connection keeps the process alive.

@@ -308,6 +308,16 @@ const scenarios: Record<string, () => Promise<unknown>> = {
     return stoppedByTimeout({ prepare: false });
   },
 
+  // run() throws the error of the outer query before the dispatched query is converted.
+  async "prepared statement, conversion throws after dispatching a query whose conversion does not return"() {
+    return throwsInsideTimeout({}, 2_000);
+  },
+
+  // advance() rejects the outer query, and then it converts the dispatched query.
+  async "prepare: false, conversion throws after dispatching a query whose conversion does not return"() {
+    return throwsInsideTimeout({ prepare: false }, 250);
+  },
+
   // advance() rejects the request through the reject callback.
   async "prepare: false, conversion throws a value that is not an Error"() {
     await using unprepared = new SQL({ url, max: 1, idleTimeout: 30, prepare: false });
@@ -333,37 +343,42 @@ const scenarios: Record<string, () => Promise<unknown>> = {
 /** Handles a rejection of `query`. Its own then() and catch() start a query that did not start. */
 const ignoreRejection = (query: Promise<unknown>) => void Promise.prototype.then.call(query, undefined, () => {});
 
+/** Starts a query with the parameter `param`, from inside a conversion. */
+function dispatch(db: SQL, param: object) {
+  const nested = db`select ${param}::text as y`;
+  ignoreRejection(nested);
+  dispatched.push(nested.execute());
+}
+
+// Starts a query inside a timeout of node:vm. `conversion` converts its parameter.
 // On a loaded machine the timeout can come before the conversion dispatched, at any point of the
 // start of the query. That attempt does not count, and nothing of it is used again.
-async function stoppedByTimeout(options: { prepare?: boolean }) {
+async function insideTimeout(
+  options: { prepare?: boolean },
+  timeout: number,
+  conversion: (db: SQL, inside: () => boolean) => string,
+) {
   for (let attempt = 0; attempt < 10; attempt++) {
     const db = new SQL({ url, max: 1, ...options });
     const pid = await backendPid(db);
+    // Both statements are prepared, so the Bind of each is encoded when it is dispatched.
     await db`select ${text("0")}::text as x`;
+    await db`select ${text("0")}::text as y`;
     conversions = 0;
     dispatched = [];
-    let counts = false;
-    const param = {
-      toString() {
-        conversions++;
-        // Its parameter needs JS, which cannot run while the termination is pending.
-        const nested = db`select ${text("2")}::text as y`;
-        ignoreRejection(nested);
-        dispatched.push(nested.execute());
-        counts = true;
-        for (;;) {}
-      },
-    };
+    let inside = true;
+    const param = { toString: () => (conversions++, conversion(db, () => inside)) };
     const outer = db`select ${param}::text as x`;
     ignoreRejection(outer);
     (globalThis as any).run = () => outer.execute();
-    let thrown: unknown;
+    let thrown: unknown = null;
     try {
-      vm.runInThisContext("run()", { timeout: 250 });
+      vm.runInThisContext("run()", { timeout });
     } catch (e: any) {
       thrown = e?.code;
     }
-    if (counts) {
+    inside = false;
+    if (dispatched.length > 0) {
       const result = {
         thrown,
         outer: await settle(outer),
@@ -371,7 +386,7 @@ async function stoppedByTimeout(options: { prepare?: boolean }) {
         conversions,
         sameBackend: (await backendPid(db)) === pid,
       };
-      // close() waits for every query, so it resolves only if the stopped query settled too.
+      // close() waits for every query, so it resolves only if every query settled.
       await db.close();
       return result;
     }
@@ -380,6 +395,26 @@ async function stoppedByTimeout(options: { prepare?: boolean }) {
   }
   return { error: "the timeout came before the conversion dispatched, in every attempt" };
 }
+
+/** The conversion dispatches a query and does not return. The timeout stops it. */
+const stoppedByTimeout = (options: { prepare?: boolean }) =>
+  insideTimeout(options, 250, db => {
+    // Its parameter needs JS, which cannot run while the termination is pending.
+    dispatch(db, text("2"));
+    for (;;) {}
+  });
+
+/** The conversion dispatches a query and throws. That query's conversion does not return inside the timeout. */
+const throwsInsideTimeout = (options: { prepare?: boolean }, timeout: number) =>
+  insideTimeout(options, timeout, (db, inside) => {
+    const waits = () => {
+      conversions++;
+      while (inside()) {}
+      return "2";
+    };
+    dispatch(db, { toString: waits });
+    throw new RangeError("boom");
+  });
 
 async function replyDuringConversion(inFlight: number) {
   const pid = await backendPid(sql);

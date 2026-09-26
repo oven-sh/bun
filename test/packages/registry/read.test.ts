@@ -575,6 +575,14 @@ describe("hooks", () => {
     expect(own.requests[0].headers.accept).toBe(abbreviatedAccept);
   });
 
+  test("a port has one registry", async () => {
+    using first = new Registry({ storage: fixtures.path }).start();
+    using second = new Registry({ storage: fixtures.path, port: first.port });
+    expect(() => second.start()).toThrow(expect.objectContaining({ code: "EADDRINUSE" }));
+    expect(second.listening).toBe(false);
+    expect((await request(`${first.url}-/ping`)).status).toBe(200);
+  });
+
   test("stop and start keep the state", async () => {
     const own = new Registry({ storage: fixtures.path });
     expect(() => own.port).toThrow("The registry has no port before start()");

@@ -157,6 +157,9 @@ export class Registry {
       // it again at the moment the server closes it.
       idleTimeout: 0,
       development: false,
+      // `development: false` turns SO_REUSEPORT on. A second registry on the same port has other users and other
+      // packages, and the kernel would hand each connection to one of the two.
+      reusePort: false,
       fetch: request => this.fetch(request),
     });
     return this;

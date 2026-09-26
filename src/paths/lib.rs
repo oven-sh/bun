@@ -985,3 +985,44 @@ pub mod fs {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{basename_posix, basename_windows};
+
+    #[test]
+    fn basename_posix_of_a_root_is_empty() {
+        for (path, want) in [
+            ("/", ""),
+            ("//", ""),
+            ("", ""),
+            ("/app", "app"),
+            ("/app/", "app"),
+            ("/a/b.c", "b.c"),
+            ("/tmp/dir\\", "dir\\"),
+        ] {
+            assert_eq!(basename_posix(path.as_bytes()), want.as_bytes(), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn basename_windows_of_a_drive_root_is_empty() {
+        for (path, want) in [
+            ("C:\\", ""),
+            ("C:", ""),
+            ("/", ""),
+            ("", ""),
+            ("C:\\app", "app"),
+            ("C:\\app\\", "app"),
+            ("C:/app", "app"),
+            ("C:app", "app"),
+            ("\\\\server\\share\\", "share"),
+        ] {
+            assert_eq!(
+                basename_windows(path.as_bytes()),
+                want.as_bytes(),
+                "{path:?}"
+            );
+        }
+    }
+}

@@ -91,6 +91,32 @@ pub fn install_with_manager(
 
     update_lockfile_if_needed(manager, &load_result)?;
 
+    // packageExtensions: read the root package.json's entries (after the load,
+    // which may have migrated them out of a pnpm config), then make every
+    // loaded package carry the configured extra edges. New ones have no
+    // resolution yet; they are enqueued below once the differ has run
+    // (`package_extension_edges`).
+    manager.load_package_extensions_from_package_json(root_package_json_path.as_bytes())?;
+    let package_extension_edges: Vec<DependencyID> = match &load_result {
+        lockfile::LoadResult::Ok(_) if !manager.options.package_extensions.is_empty() => {
+            // Moved out for the call so the list is not borrowed through `manager`.
+            let extensions = core::mem::take(&mut manager.options.package_extensions);
+            let mgr: *mut PackageManager = manager;
+            // SAFETY: `mgr` is the sole provenance root; `lockfile` and `*log`
+            // are disjoint storage, and through `&mut *mgr` the pass only
+            // touches `known_npm_aliases` (same split as `load_from_cwd` above).
+            let edges = unsafe {
+                let log = (*mgr).log;
+                (*mgr)
+                    .lockfile
+                    .apply_package_extensions(&mut *mgr, &mut *log, &extensions)
+            };
+            manager.options.package_extensions = extensions;
+            edges?
+        }
+        _ => Vec::new(),
+    };
+
     // Snapshot the loaded-from-lockfile package count so
     // `Lockfile::get_package_id` can tell loaded pins apart from packages
     // appended by manifest fetches in this resolve session.
@@ -637,6 +663,30 @@ pub fn install_with_manager(
                 let task = PatchTask::new_calc_patch_hash(manager, key, None);
                 enqueue_patch_task_pre(manager, task);
             }
+        }
+        // packageExtensions edges injected into already-locked packages this
+        // run: their owners are not new, so nothing above walked their
+        // dependency lists — enqueue the still-unresolved ones explicitly.
+        if !package_extension_edges.is_empty() {
+            for &dependency_id in &package_extension_edges {
+                if manager.lockfile.buffers.resolutions[dependency_id as usize]
+                    != invalid_package_id
+                {
+                    continue;
+                }
+                let dependency =
+                    manager.lockfile.buffers.dependencies[dependency_id as usize].clone();
+                if let Err(err) = enqueue_dependency_with_main(
+                    manager,
+                    dependency_id,
+                    &dependency,
+                    invalid_package_id,
+                    false,
+                ) {
+                    add_dependency_error(manager, &dependency, err);
+                }
+            }
+            had_any_diffs = true;
         }
         // Anything that needs to be downloaded from an update needs to be scheduled here
         manager.drain_dependency_list();

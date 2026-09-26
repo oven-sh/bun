@@ -8,7 +8,7 @@ use bun_collections::HashMap;
 use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_install::dependency::Behavior;
+use bun_install::dependency::{Behavior, Dependency, DependencyExt as _};
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::{CommandLineArguments, PackageID, PackageManager, Subcommand, package_manager};
@@ -136,6 +136,7 @@ enum PatternType {
 // a caller-owned slice (BORROW_PARAM), never freed, never literal-only.
 struct GlobPattern<'a> {
     pattern_type: PatternType,
+    exact: &'a [u8],
     prefix: &'a [u8],
     suffix: &'a [u8],
     substring: &'a [u8],
@@ -147,6 +148,7 @@ impl<'a> Default for GlobPattern<'a> {
     fn default() -> Self {
         Self {
             pattern_type: PatternType::Exact,
+            exact: b"",
             prefix: b"",
             suffix: b"",
             substring: b"",
@@ -158,28 +160,28 @@ impl<'a> Default for GlobPattern<'a> {
 
 impl<'a> GlobPattern<'a> {
     fn init(pattern: &'a [u8]) -> GlobPattern<'a> {
-        if let Some(at_pos) = strings::index_of_char_usize(pattern, b'@') {
-            if at_pos > 0 && at_pos < pattern.len() - 1 {
-                let pkg_pattern = &pattern[0..at_pos];
-                let version_pattern = &pattern[at_pos + 1..];
+        let (name_pattern, version_pattern) = Dependency::split_name_and_maybe_version(pattern);
 
-                let mut result = Self::init_for_name(pkg_pattern);
-                result.version_pattern = version_pattern;
+        let mut result = Self::init_for_name(name_pattern);
 
-                let sliced = semver::SlicedString::init(version_pattern, version_pattern);
-                result.version_query = semver::query::parse(version_pattern, sliced).ok();
+        if let Some(version_pattern) = version_pattern {
+            result.version_pattern = version_pattern;
 
-                return result;
-            }
+            let sliced = semver::SlicedString::init(version_pattern, version_pattern);
+            // A dist-tag such as `beta` parses to an empty group, which satisfies every version.
+            result.version_query = semver::query::parse(version_pattern, sliced)
+                .ok()
+                .filter(|group| !group.is_empty());
         }
 
-        Self::init_for_name(pattern)
+        result
     }
 
     fn init_for_name(pattern: &'a [u8]) -> GlobPattern<'a> {
         if !strings::contains_char(pattern, b'*') {
             return GlobPattern {
                 pattern_type: PatternType::Exact,
+                exact: pattern,
                 ..Default::default()
             };
         }
@@ -229,13 +231,14 @@ impl<'a> GlobPattern<'a> {
 
         GlobPattern {
             pattern_type: PatternType::Exact,
+            exact: pattern,
             ..Default::default()
         }
     }
 
-    fn matches_name(&self, name: &[u8], pattern: &[u8]) -> bool {
+    fn matches_name(&self, name: &[u8]) -> bool {
         match self.pattern_type {
-            PatternType::Exact => strings::eql(name, pattern),
+            PatternType::Exact => strings::eql(name, self.exact),
             PatternType::Prefix => name.starts_with(self.prefix),
             PatternType::Suffix => name.ends_with(self.suffix),
             PatternType::Middle => name.starts_with(self.prefix) && name.ends_with(self.suffix),
@@ -442,7 +445,7 @@ impl WhyCommand {
                 });
             }
 
-            if !glob.matches_name(pkg_name, package_pattern) {
+            if !glob.matches_name(pkg_name) {
                 continue;
             }
 

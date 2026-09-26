@@ -304,9 +304,11 @@ slice() {
   if cmp -s "$logs/$name-steps.jsonl" "$wanted"; then
     say "$number. slice in $directory: $(ended "$code"), $steps steps, ALL AS EXPECTED"
   else
+    # diff is for the person who reads the logs: its output is not the same with every diff. The lines
+    # that are on one side only are found by grep, as whole lines and letter by letter.
     diff "$wanted" "$logs/$name-steps.jsonl" > "$logs/$name.diff"
-    grep '^> ' "$logs/$name.diff" | sed 's/^> //' > "$logs/$name-got.jsonl"
-    grep '^< ' "$logs/$name.diff" | sed 's/^< //' > "$logs/$name-wanted.jsonl"
+    grep -F -x -v -f "$wanted" "$logs/$name-steps.jsonl" > "$logs/$name-got.jsonl"
+    grep -F -x -v -f "$logs/$name-steps.jsonl" "$wanted" > "$logs/$name-wanted.jsonl"
     while IFS= read -r line; do
       step=$(printf '%s\n' "$line" | sed 's/^{"step":"\([^"]*\)".*/\1/')
       # With the name of the field, so that a step without a path is found by its name alone.
@@ -328,6 +330,9 @@ slice() {
         put "(the step did not come) <- EXPECTED: $(printf '%s\n' "$line" | describe)" >> "$logs/$name-differences.txt"
       fi
     done < "$logs/$name-wanted.jsonl"
+    if [ ! -s "$logs/$name-differences.txt" ]; then
+      put "the lines that are expected, in another order or one of them twice" >> "$logs/$name-differences.txt"
+    fi
     say "$number. slice in $directory: $(ended "$code"), $steps steps of $(count "$wanted"), NOT AS EXPECTED in $(count "$logs/$name-differences.txt") (logs/$name.diff)"
     say_some "$logs/$name-differences.txt" "$most" "logs/$name-differences.txt"
   fi

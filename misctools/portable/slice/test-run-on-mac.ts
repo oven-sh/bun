@@ -3,7 +3,9 @@
 // steps fail, when the image never ends and when a person interrupts it, and writes nothing outside
 // of its directory. Every case runs under each shell that is here of: dash, bash as sh (the sh of
 // macOS is bash), the sh of busybox, and zsh, which is the shell that a person has on a Mac and may
-// run the script with.
+// run the script with. "busybox-tools" is the sh of busybox with the sed, grep, diff, cmp, cut, tr, sort
+// and tar of busybox in the place of the ones of GNU: the tools of macOS are neither, and what two
+// families of them agree on is more likely to hold there.
 //
 //   bun test-run-on-mac.ts [--case <part of a name>] [--shell <name>]
 //                                 after package-macos.ts. WORK as in build.ts.
@@ -33,7 +35,7 @@
 //                                   say how it ended, and what macOS itself said
 //   the image hangs                 the host never ends: the script ends it and goes on
 //   interrupted                     the same, and the script gets the signal of Control-C
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 const here = dirname(import.meta.path);
@@ -240,10 +242,16 @@ const cases: Case[] = [
 
 const busybox = "/tmp/portable/u4/cache/bbin/sh";
 const zsh = "/tmp/portable/u4/cache/zsh-x86_64/bin/zsh";
-const shells: { name: string; command: string[] }[] = [
+const tools = join(root, "tools-of-busybox");
+if (existsSync(busybox)) {
+  mkdirSync(tools);
+  for (const tool of ["sed", "grep", "diff", "cmp", "cut", "tr", "sort", "tar", "cat", "cp", "mv", "rm", "mkdir", "rmdir", "sleep", "date", "env", "dirname", "df"])
+    symlinkSync(realpathSync(busybox), join(tools, tool));
+}
+const shells: { name: string; command: string[]; path?: string }[] = [
   { name: "dash", command: ["dash"] },
   { name: "bash", command: ["bash", "--posix"] },
-  ...(existsSync(busybox) ? [{ name: "busybox", command: [busybox] }] : []),
+  ...(existsSync(busybox) ? [{ name: "busybox", command: [busybox] }, { name: "busybox-tools", command: [busybox], path: tools }] : []),
   ...(existsSync(zsh) ? [{ name: "zsh", command: [zsh] }] : []),
 ].filter(shell => !option("--shell") || shell.name === option("--shell"));
 
@@ -258,7 +266,10 @@ for (const shell of shells) {
     const before = readdirSync(dirname(dir)).sort().join(" ");
     const started = Date.now();
     // From another directory: the script has to find its own.
-    const child = Bun.spawn([...shell.command, join(dir, "run-on-mac.sh")], { cwd: "/", env: { ...process.env, ...one.env?.(dir) }, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const env: Record<string, string | undefined> = { ...process.env, ...one.env?.(dir) };
+    // The programs that stand for the ones of a Mac come first, then the tools of the shell.
+    if (shell.path) env.PATH = env.PATH!.startsWith(join(dir, "bin") + ":") ? `${join(dir, "bin")}:${shell.path}:${process.env.PATH}` : `${shell.path}:${env.PATH}`;
+    const child = Bun.spawn([...shell.command, join(dir, "run-on-mac.sh")], { cwd: "/", env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     if (one.interrupt) {
       // The image runs once what it prints has a file.
       while (!existsSync(join(dir, "logs/layout-image.jsonl")) && child.exitCode === null) await Bun.sleep(100);

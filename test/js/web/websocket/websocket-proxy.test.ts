@@ -241,6 +241,21 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
     gc();
   });
 
+  // The client parsed every handshake head into 128 header slots, the proxy's
+  // CONNECT reply too, and failed with "Invalid response" past that.
+  test("ws:// through a proxy whose CONNECT reply has 200 header fields", async () => {
+    const connectResponseHeaders = Array.from({ length: 200 }, (_, i) => `x-${String(i).padStart(4, "0")}: v`);
+    using recorded = await startRecordingProxy({ connectResponseHeaders });
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+      proxy: `http://127.0.0.1:${recorded.port}`,
+    });
+    expect({ events: await echoSession(ws, "hello after a long CONNECT reply"), requests: recorded.requests }).toEqual({
+      events: echoed("hello after a long CONNECT reply"),
+      requests: [connectRequest(wsPort)],
+    });
+    gc();
+  });
+
   test("proxy auth failure returns error", async () => {
     using recorded = await startRecordingProxy({ requireAuth: true });
     const url = `ws://127.0.0.1:${wsPort}`;
@@ -285,6 +300,23 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     expect({ events: await echoSession(ws, "hello via tls tunnel"), requests: recorded.requests }).toEqual({
       events: echoed("hello via tls tunnel"),
       requests: [connectRequest(wssPort)],
+    });
+    gc();
+  });
+
+  // Same limit on the path that reads the 101 out of the TLS tunnel.
+  test("wss:// through HTTP proxy when the 101 has 200 extra header fields", async () => {
+    const upgradeHeaders: Record<string, string> = {};
+    for (let i = 0; i < 200; i++) upgradeHeaders[`x-${String(i).padStart(4, "0")}`] = "v";
+    using target = startEchoServer({ tls: true, upgradeHeaders });
+    using recorded = await startRecordingProxy();
+    const ws = new WebSocket(`wss://127.0.0.1:${target.port}`, {
+      proxy: `http://127.0.0.1:${recorded.port}`,
+      tls: { rejectUnauthorized: false },
+    });
+    expect({ events: await echoSession(ws, "hello after a long 101"), requests: recorded.requests }).toEqual({
+      events: echoed("hello after a long 101"),
+      requests: [connectRequest(target.port)],
     });
     gc();
   });

@@ -1,3 +1,4 @@
+import type { Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createHash } from "node:crypto";
@@ -184,5 +185,182 @@ describe("WebSocket upgrade", () => {
     expect(b8.size).toBeGreaterThan(1);
     // E[uuidShaped] = N/64 = 1 for uniform bytes; equals N under the bug.
     expect(uuidShaped).toBeLessThan(N);
+  });
+
+  // The client parsed the 101 response into 128 header slots and failed the
+  // handshake with "Invalid response" when the response had more fields. The
+  // limit is now 2000 fields, which bounds the parse scratch at 64 KB.
+  describe("101 response with more than 128 header fields", () => {
+    type RawSocket = Socket<{ request: string }>;
+
+    // A raw TCP server that calls `respond` with each complete upgrade request.
+    function listen(respond: (socket: RawSocket, request: string) => void) {
+      return Bun.listen<{ request: string }>({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socket.data = { request: "" };
+          },
+          data(socket, chunk) {
+            socket.data.request += chunk.toString("latin1");
+            if (socket.data.request.endsWith("\r\n\r\n")) respond(socket, socket.data.request);
+          },
+        },
+      });
+    }
+
+    // The three fields the handshake needs, then fillers, `count` in total.
+    function responseFields(
+      request: string,
+      count: number,
+      fillerName = (i: number) => `x-${String(i).padStart(4, "0")}`,
+    ): [string, string][] {
+      const key = /^Sec-WebSocket-Key:\s*(\S+)/im.exec(request)![1];
+      const accept = createHash("sha1")
+        .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+        .digest("base64");
+      const fields: [string, string][] = [
+        ["Upgrade", "websocket"],
+        ["Connection", "Upgrade"],
+        ["Sec-WebSocket-Accept", accept],
+      ];
+      for (let i = fields.length; i < count; i++) fields.push([fillerName(i), "v"]);
+      return fields;
+    }
+
+    const statusLine = "HTTP/1.1 101 Switching Protocols\r\n";
+    const fieldLines = (fields: [string, string][]) => fields.map(([name, value]) => `${name}: ${value}\r\n`).join("");
+
+    // Resolves once `event` fires, with the header fields of the handshake
+    // response and, for "message", the data of the message.
+    function handshakeThen(ws: WebSocket, event: "open" | "message") {
+      const { promise, resolve, reject } = Promise.withResolvers<{ rawHeaders: string[]; message?: unknown }>();
+      let rawHeaders: string[] = [];
+      // 'handshake' is a Bun extension consumed by the ws package shim.
+      ws.addEventListener("handshake" as any, ((e: MessageEvent) => (rawHeaders = e.data.rawHeaders)) as any);
+      ws.addEventListener(event, e => resolve({ rawHeaders, message: (e as MessageEvent).data }));
+      ws.addEventListener("error", e => reject(new Error((e as ErrorEvent).message)));
+      ws.addEventListener("close", e => reject(new Error(`closed with code ${e.code}`)));
+      return promise;
+    }
+
+    // Bun.serve adds 4 fields of its own, so 125 headers were enough to fail.
+    test.concurrent("opens when server.upgrade() adds 200 response headers", async () => {
+      const headers: Record<string, string> = {};
+      for (let i = 0; i < 200; i++) headers[`x-${String(i).padStart(4, "0")}`] = "v";
+      await using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(request, server) {
+          if (server.upgrade(request, { headers })) return;
+          return new Response("upgrade failed", { status: 500 });
+        },
+        websocket: {
+          open(ws) {
+            ws.send("hi");
+          },
+          message() {},
+        },
+      });
+
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+      try {
+        const { rawHeaders, message } = await handshakeThen(ws, "message");
+        const received: Record<string, string> = {};
+        for (let i = 0; i < rawHeaders.length; i += 2) {
+          if (rawHeaders[i].startsWith("x-")) received[rawHeaders[i]] = rawHeaders[i + 1];
+        }
+        expect({ received, message }).toEqual({ received: headers, message: "hi" });
+      } finally {
+        ws.close();
+      }
+    });
+
+    test.concurrent.each([129, 1000])("opens with %i fields and delivers each of them", async count => {
+      let sent: [string, string][] = [];
+      using server = listen((socket, request) => {
+        sent = responseFields(request, count);
+        // A text frame ("hi") follows the head in the same write.
+        socket.write(Buffer.from(statusLine + fieldLines(sent) + "\r\n\x81\x02hi", "latin1"));
+        socket.flush();
+      });
+
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+      try {
+        expect(await handshakeThen(ws, "message")).toEqual({ rawHeaders: sent.flat(), message: "hi" });
+      } finally {
+        ws.close();
+      }
+    });
+
+    test.concurrent("reads a head that arrives in two reads, split inside field 201", async () => {
+      let sent: [string, string][] = [];
+      const firstPartSent = Promise.withResolvers<() => void>();
+      using server = listen((socket, request) => {
+        if (request.startsWith("GET /barrier ")) {
+          socket.write(statusLine + fieldLines(responseFields(request, 3)) + "\r\n");
+        } else {
+          sent = responseFields(request, 300);
+          const head = statusLine + fieldLines(sent) + "\r\n";
+          const cut = head.indexOf("x-0200") + 3;
+          socket.write(head.slice(0, cut));
+          firstPartSent.resolve(() => {
+            socket.write(head.slice(cut));
+            socket.flush();
+          });
+        }
+        socket.flush();
+      });
+      const url = `ws://127.0.0.1:${server.port}/`;
+
+      // The event loop delivers the first part to the client before a second
+      // handshake can finish, so the rest of the head arrives in another read.
+      async function sendRestInAnotherRead() {
+        const sendRest = await firstPartSent.promise;
+        const barrier = new WebSocket(url + "barrier");
+        try {
+          await handshakeThen(barrier, "open");
+        } finally {
+          barrier.close();
+        }
+        sendRest();
+      }
+
+      const ws = new WebSocket(url);
+      try {
+        const [opened] = await Promise.all([handshakeThen(ws, "open"), sendRestInAnotherRead()]);
+        expect(opened.rawHeaders).toEqual(sent.flat());
+      } finally {
+        ws.close();
+      }
+    });
+
+    test.concurrent.each([
+      [2000, "opens"],
+      [2001, "fails"],
+    ])("a head with %i fields %s", async count => {
+      let sent: [string, string][] = [];
+      using server = listen((socket, request) => {
+        // One-letter names keep the head under --max-http-header-size (16 KB).
+        sent = responseFields(request, count, () => "x");
+        socket.write(statusLine + fieldLines(sent) + "\r\n");
+        socket.flush();
+      });
+      const url = `ws://127.0.0.1:${server.port}/`;
+
+      const ws = new WebSocket(url);
+      try {
+        const outcome = await handshakeThen(ws, "open").then(
+          opened => opened.rawHeaders,
+          (error: Error) => error.message,
+        );
+        expect(outcome).toEqual(
+          count > 2000 ? `WebSocket connection to '${url}' failed: Invalid response` : sent.flat(),
+        );
+      } finally {
+        ws.close();
+      }
+    });
   });
 });

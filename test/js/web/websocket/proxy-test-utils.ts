@@ -19,6 +19,8 @@ export interface ConnectProxyOptions {
   tls?: boolean;
   /** Observes every CONNECT request the proxy reads, before the proxy answers it. */
   onConnectRequest?: (request: ConnectRequest) => void;
+  /** Extra header lines ("name: value") for the `200 Connection Established` reply. */
+  connectResponseHeaders?: string[];
   /**
    * Intercepts the bytes flowing target -> client once the tunnel is up. Call
    * `forward` to deliver bytes to the client. Defaults to forwarding every
@@ -100,7 +102,8 @@ export function createConnectProxy(options: ConnectProxyOptions = {}): net.Serve
 
       // Connect to target
       targetSocket = net.connect(parseInt(targetPort), targetHost, () => {
-        clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        const extraHeaders = (options.connectResponseHeaders ?? []).map(line => line + "\r\n").join("");
+        clientSocket.write("HTTP/1.1 200 Connection Established\r\n" + extraHeaders + "\r\n");
         tunnelEstablished = true;
 
         // Forward any remaining data
@@ -193,13 +196,16 @@ export function connectRequest(port: number, headers: Record<string, string> = {
   };
 }
 
-/** A WebSocket echo server. It greets each client with "connected", then echoes every message. */
-export function startEchoServer(options: { tls?: boolean } = {}) {
+/**
+ * A WebSocket echo server. It greets each client with "connected", then echoes
+ * every message. `upgradeHeaders` are added to the 101 response.
+ */
+export function startEchoServer(options: { tls?: boolean; upgradeHeaders?: Record<string, string> } = {}) {
   return Bun.serve({
     port: 0,
     ...(options.tls ? { tls: { key: tlsCerts.key, cert: tlsCerts.cert } } : {}),
     fetch(req, server) {
-      if (server.upgrade(req)) return;
+      if (server.upgrade(req, { headers: options.upgradeHeaders })) return;
       return new Response("Expected WebSocket", { status: 400 });
     },
     websocket: {

@@ -462,6 +462,283 @@ describe.skipIf(isASAN)("GC liveness of compiled symbols and callbacks", () => {
   });
 });
 
+// close() frees the TinyCC code, so a call after it used to jump into freed memory. The function
+// objects outlive close() (a destructured symbol, a caller the JIT compiled), so each of them has to
+// throw. Runs in a child process: without the fix the first call after close() is a segfault.
+describe.concurrent("close()", () => {
+  const closed = (name: string) => `TypeError: bun:ffi: cannot call '${name}' because its library was closed`;
+
+  it("a symbol called after its library's close() throws a TypeError", async () => {
+    using dir = tempDir("bun-ffi-cc-call-after-close", {
+      "lib.c": /* c */ `
+        int add(int a, int b) { return a + b; }
+        int answer(void) { return 42; }
+        const char* greeting(void) { return "hello"; }
+      `,
+      "other.c": /* c */ `
+        int add(int a, int b) { return a - b; }
+        int answer(void) { return 0; }
+        const char* greeting(void) { return ""; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const open = (file = "lib.c") =>
+          cc({
+            source: path.join(import.meta.dir, file),
+            symbols: {
+              add: { args: ["int", "int"], returns: "int" },
+              answer: { args: [], returns: "int" },
+              greeting: { args: [], returns: "cstring" },
+            },
+          });
+        const results = {};
+        const attempt = (name, fn) => {
+          try {
+            results[name] = "returned " + fn();
+          } catch (e) {
+            results[name] = e.name + ": " + e.message;
+          }
+        };
+
+        {
+          const lib = open();
+          const { add, answer, greeting } = lib.symbols;
+          function hot(a, b) { return add(a, b); }
+          let sum = 0;
+          for (let i = 0; i < 100_000; i++) sum += hot(i, 1);
+          results["before close"] = [sum, answer(), String(greeting())];
+
+          // close() must not depend on what JS left in \`symbols\`.
+          delete lib.symbols.answer;
+          lib.symbols.add = () => "replaced";
+          Bun.gc(true);
+
+          lib.close();
+          lib.close();
+          attempt("optimized caller", () => hot(1, 2));
+          attempt("destructured symbol", () => add(1, 2));
+          attempt("symbol deleted from lib.symbols", () => answer());
+          attempt("Function.prototype.call", () => add.call(null, 1, 2));
+          attempt("cstring symbol", () => greeting());
+          attempt("cstring symbol .native", () => greeting.native());
+        }
+
+        {
+          // close() is per library.
+          const first = open();
+          const second = open();
+          first.close();
+          // A later cc() can reuse the memory that close() freed. Then the closed symbol would run
+          // the code of the new library and return its result.
+          const third = open("other.c");
+          attempt("closed library", () => first.symbols.add(40, 2));
+          results["open libraries"] = [second.symbols.add(40, 2), third.symbols.add(40, 2)];
+          second.close();
+          third.close();
+        }
+
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr is included in the received object so failures show it, but is not
+    // asserted empty: debug builds emit benign startup warnings.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        "before close": [5000050000, 42, "hello"],
+        "optimized caller": closed("add"),
+        "destructured symbol": closed("add"),
+        "symbol deleted from lib.symbols": closed("answer"),
+        "Function.prototype.call": closed("add"),
+        "cstring symbol": closed("greeting"),
+        "cstring symbol .native": closed("greeting"),
+        "closed library": closed("add"),
+        "open libraries": [42, 38],
+      },
+      exitCode: 0,
+    });
+  });
+
+  // The C code calls back into JS, and that JS closes the library. The call returns into the
+  // compiled code, so close() has to leave it in memory. Without that the return is a segfault.
+  it("close() from a JSCallback that the C code calls lets the call finish", async () => {
+    using dir = tempDir("bun-ffi-cc-close-inside-call", {
+      "lib.c": /* c */ `
+        typedef int (*callback_t)(int);
+        int invoke(callback_t callback, int value) { return callback(value) + 1; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, JSCallback } from "bun:ffi";
+        import path from "path";
+
+        const lib = cc({
+          source: path.join(import.meta.dir, "lib.c"),
+          symbols: { invoke: { args: ["ptr", "int"], returns: "int" } },
+        });
+        const { invoke } = lib.symbols;
+        let armed = false;
+        const callback = new JSCallback(
+          value => {
+            if (armed) lib.close();
+            return value * 2;
+          },
+          { args: ["int"], returns: "int" },
+        );
+        function hot(value) { return invoke(callback.ptr, value); }
+        let sum = 0;
+        for (let i = 0; i < 20_000; i++) sum += hot(i);
+        const results = { "before close": sum };
+
+        armed = true;
+        results["call that closes its library"] = hot(20);
+        try {
+          results["next call"] = "returned " + hot(20);
+        } catch (e) {
+          results["next call"] = e.name + ": " + e.message;
+        }
+        callback.close();
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        "before close": 400000000,
+        "call that closes its library": 41,
+        "next call": closed("invoke"),
+      },
+      exitCode: 0,
+    });
+  });
+
+  // C code that got a napi_env can leave callbacks with the engine: here a function and a cleanup
+  // hook. close() cannot take those back, so it closes the symbols and keeps the code. Without that
+  // the function call is a segfault, and so is the exit. cc()-compiled C resolves napi_* from the
+  // host process, which is only exercised on POSIX today (see cc-fixture.c).
+  it.skipIf(isWindows)("callbacks that the C code gave to Node-API work after close()", async () => {
+    using dir = tempDir("bun-ffi-cc-napi-after-close", {
+      "napi.c": /* c */ `
+        typedef struct napi_env_fake* napi_env_t;
+        typedef struct napi_value_fake* napi_value_t;
+        typedef napi_value_t (*napi_callback_t)(napi_env_t env, void* info);
+        extern int napi_create_function(napi_env_t env, const char* name, unsigned long length, napi_callback_t cb, void* data, napi_value_t* result);
+        extern int napi_create_int32(napi_env_t env, int value, napi_value_t* result);
+        extern int napi_get_undefined(napi_env_t env, napi_value_t* result);
+        extern int napi_add_env_cleanup_hook(napi_env_t env, void (*hook)(void* arg), void* arg);
+        extern int napi_get_global(napi_env_t env, napi_value_t* result);
+        extern int napi_call_function(napi_env_t env, napi_value_t recv, napi_value_t func, unsigned long argc, const napi_value_t* argv, napi_value_t* result);
+        extern long write(int fd, const void* buf, unsigned long count);
+
+        static napi_value_t seven(napi_env_t env, void* info) {
+          napi_value_t result;
+          napi_create_int32(env, 7, &result);
+          return result;
+        }
+        napi_value_t make_function(napi_env_t env) {
+          napi_value_t result;
+          napi_create_function(env, "seven", 5, seven, 0, &result);
+          return result;
+        }
+        static void on_exit_hook(void* arg) {
+          write(2, "cleanup hook ran\\n", 17);
+        }
+        napi_value_t add_cleanup_hook(napi_env_t env) {
+          napi_value_t result;
+          napi_add_env_cleanup_hook(env, on_exit_hook, 0);
+          napi_get_undefined(env, &result);
+          return result;
+        }
+        napi_value_t call(napi_env_t env, napi_value_t callback) {
+          napi_value_t global;
+          napi_value_t result;
+          napi_get_global(env, &global);
+          napi_call_function(env, global, callback, 0, 0, &result);
+          return result;
+        }
+        int plain(void) { return 1; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const open = () =>
+          cc({
+            source: path.join(import.meta.dir, "napi.c"),
+            symbols: {
+              make_function: { args: ["napi_env"], returns: "napi_value" },
+              add_cleanup_hook: { args: ["napi_env"], returns: "napi_value" },
+              call: { args: ["napi_env", "napi_value"], returns: "napi_value" },
+              plain: { args: [], returns: "int" },
+            },
+          });
+
+        const lib = open();
+        const seven = lib.symbols.make_function();
+        lib.symbols.add_cleanup_hook();
+        const results = { "before close": [seven(), lib.symbols.plain()] };
+        lib.close();
+        try {
+          results["symbol"] = "returned " + lib.symbols.plain();
+        } catch (e) {
+          results["symbol"] = e.name + ": " + e.message;
+        }
+        results["function from napi_create_function"] = seven();
+
+        // The JS argument in the napi_env position is not used.
+        const second = open();
+        results["call that closes its library"] = second.symbols.call(null, () => {
+          second.close();
+          return 5;
+        });
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, hookRan: stderr.includes("cleanup hook ran\n"), stderr, exitCode }).toMatchObject({
+      results: {
+        "before close": [7, 1],
+        "symbol": closed("plain"),
+        "function from napi_create_function": 7,
+        "call that closes its library": 5,
+      },
+      hookRan: true,
+      exitCode: 0,
+    });
+  });
+});
+
 // va_arg on x86_64 SysV lowers to a call to __va_arg, which TinyCC expects
 // libtcc1 to provide; Bun replaces libtcc1 with src/runtime/ffi/libtcc1.c.
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.

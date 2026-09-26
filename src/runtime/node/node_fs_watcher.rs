@@ -2,6 +2,8 @@ use core::cell::Cell;
 use core::ffi::c_void;
 #[cfg(not(windows))]
 use core::mem::MaybeUninit;
+#[cfg(not(windows))]
+use core::sync::atomic::AtomicU64;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::Output;
@@ -74,6 +76,9 @@ pub(crate) struct FSWatcher {
     /// While it's not closed, the pending activity
     pending_activity_count: AtomicU32,
     current_task: JsCell<FSWatchTask>,
+    /// Number of the newest event handed to the listener, for `path_watcher::Tail`.
+    #[cfg(not(windows))]
+    delivered: AtomicU64,
 
     /// Armed until `detach()`: the watcher closes with the context that started it.
     abort_handle: bun_jsc::AbortHandle,
@@ -183,6 +188,8 @@ impl Taskable for FSWatchTaskPosix {
 pub(crate) struct Entry {
     event: Event,
     needs_free: bool,
+    /// Not 0 for an event that a later record can merge into.
+    seq: u64,
 }
 
 #[cfg(not(windows))]
@@ -195,7 +202,7 @@ impl FSWatchTaskPosix {
         self.ctx.as_ref().expect("FSWatchTask.ctx unset").get()
     }
 
-    pub(crate) fn append(&mut self, event: Event, needs_free: bool) {
+    pub(crate) fn append(&mut self, event: Event, needs_free: bool, seq: u64) {
         if self.count == 8 {
             self.enqueue();
             let ctx = self.ctx;
@@ -207,7 +214,11 @@ impl FSWatchTaskPosix {
             };
         }
 
-        self.entries[self.count as usize].write(Entry { event, needs_free });
+        self.entries[self.count as usize].write(Entry {
+            event,
+            needs_free,
+            seq,
+        });
         self.count += 1;
     }
 
@@ -216,6 +227,15 @@ impl FSWatchTaskPosix {
         let ctx: *const FSWatcher = self.ctx();
         // SAFETY: BACKREF — the FSWatcher outlives its tasks.
         let _unref = scopeguard::guard((), |()| unsafe { (*ctx).unref_task() });
+        let newest = (0..self.count as usize)
+            // SAFETY: entries [0..count) were written by `append`.
+            .map(|i| unsafe { self.entries[i].assume_init_ref() }.seq)
+            .max()
+            .unwrap_or(0);
+        if newest != 0 {
+            // Before the listener runs, so it runs after each change merged so far.
+            self.ctx().delivered.store(newest, Ordering::SeqCst);
+        }
         for i in 0..self.count as usize {
             // SAFETY: entries [0..count) were written by `append`.
             let entry = unsafe { self.entries[i].assume_init_ref() };
@@ -244,7 +264,7 @@ impl FSWatchTaskPosix {
     }
 
     pub(crate) fn append_abort(&mut self) {
-        self.append(Event::Abort, false);
+        self.append(Event::Abort, false, 0);
         self.enqueue();
     }
 
@@ -333,12 +353,11 @@ pub(crate) type EventPathString = Box<[u8]>;
 
 /// The kind of change a watcher backend reports for a path, before it becomes a JS event.
 /// Every backend (inotify, kqueue, FSEvents, Windows) produces exactly these two.
-#[derive(Copy, Clone, Default, Eq, PartialEq, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum WatchEventKind {
     #[strum(serialize = "rename")]
     Rename,
     #[strum(serialize = "change")]
-    #[default]
     Change,
 }
 
@@ -561,8 +580,20 @@ impl FSWatcher {
         unsafe { &*ctx.unwrap().cast::<FSWatcher>() }
     }
 
+    /// Watcher thread: the number of the newest event that reached the listener.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    pub(crate) fn delivered(ctx: *mut c_void) -> u64 {
+        Self::from_ctx(Some(ctx)).delivered.load(Ordering::SeqCst)
+    }
+
     #[cfg(not(windows))]
     pub(crate) fn on_path_update_posix(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
+        Self::on_record(ctx, event, is_file, 0);
+    }
+
+    /// `on_path_update_posix` for an event that a later record can merge into.
+    #[cfg(not(windows))]
+    pub(crate) fn on_record(ctx: Option<*mut c_void>, event: Event, is_file: bool, seq: u64) {
         let this = Self::from_ctx(ctx);
 
         if this.verbose {
@@ -584,7 +615,7 @@ impl FSWatcher {
             }
         }
 
-        this.current_task.with_mut(|t| t.append(event, true));
+        this.current_task.with_mut(|t| t.append(event, true, seq));
     }
 
     #[cfg(windows)]
@@ -1187,6 +1218,8 @@ impl FSWatcher {
             verbose: args.verbose,
             poll_ref: JsCell::new(KeepAlive::default()),
             pending_activity_count: AtomicU32::new(1),
+            #[cfg(not(windows))]
+            delivered: AtomicU64::new(0),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FSWatcher>(),
         }));
         // SAFETY: `ctx` is the freshly-boxed payload; uniquely owned here.

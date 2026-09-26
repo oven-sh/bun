@@ -1,213 +1,168 @@
-import { Subprocess, spawn, write } from "bun";
-import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { spawn, type Subprocess } from "bun";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isPosix, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
+import type { JSC } from "../../../packages/bun-inspector-protocol/src/protocol/jsc";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
 
 /**
- * Extended InspectorSession with helper methods for TestReporter testing
+ * Drives one `bun --inspect-wait test <file>` child over the inspector protocol.
+ *
+ * Every TestReporter event is recorded in arrival order and never deduplicated,
+ * so a repeated id shows up as a repeated entry.
+ *
+ * The fixtures hold at "gates", each an `await stdin.read()`. The parent opens
+ * the first gate with a write to the child's stdin and the last one by closing
+ * it. A parent that dies closes stdin too, so the child never outlives it.
  */
-class TestReporterSession extends InspectorSession {
-  private foundTests: Map<number, any> = new Map();
-  private startedTests: Set<number> = new Set();
-  private endedTests: Map<number, any> = new Map();
+class TestReporterSession extends InspectorSession implements AsyncDisposable {
+  readonly found: JSC.TestReporter.FoundEvent[] = [];
+  readonly started: number[] = [];
+  readonly ended: JSC.TestReporter.EndEvent[] = [];
+  readonly consoleMessages: string[] = [];
+  readonly stdout: Promise<string>;
+  readonly stderr: Promise<string>;
+  /** Rejects once the child exits. Every wait races against it. */
+  readonly exited: Promise<never>;
+  readonly #checks = new Set<() => void>();
 
-  constructor() {
+  private constructor(readonly proc: Subprocess<"pipe", "pipe", "pipe">) {
     super();
-    this.setupTestEventListeners();
-  }
-
-  private setupTestEventListeners() {
-    this.addEventListener("TestReporter.found", (params: any) => {
-      this.foundTests.set(params.id, params);
-    });
-    this.addEventListener("TestReporter.start", (params: any) => {
-      this.startedTests.add(params.id);
-    });
-    this.addEventListener("TestReporter.end", (params: any) => {
-      this.endedTests.set(params.id, params);
-    });
-  }
-
-  enableInspector() {
-    this.send("Inspector.enable");
-  }
-
-  enableTestReporter() {
-    this.send("TestReporter.enable");
-  }
-
-  enableAll() {
-    this.send("Inspector.enable");
-    this.send("TestReporter.enable");
-    this.send("LifecycleReporter.enable");
-    this.send("Console.enable");
-    this.send("Runtime.enable");
-  }
-
-  initialize() {
-    this.send("Inspector.initialized");
-  }
-
-  unref() {
-    this.socket?.unref();
-  }
-
-  ref() {
-    this.socket?.ref();
-  }
-
-  getFoundTests() {
-    return this.foundTests;
-  }
-
-  getStartedTests() {
-    return this.startedTests;
-  }
-
-  getEndedTests() {
-    return this.endedTests;
-  }
-
-  clearFoundTests() {
-    this.foundTests.clear();
-  }
-
-  waitForEvent(eventName: string, timeout = 10000): Promise<any> {
-    this.ref();
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`Timeout waiting for event: ${eventName}`));
-      }, timeout);
-
-      const listener = (params: any) => {
-        clearTimeout(timer);
-        resolve(params);
-      };
-
-      this.addEventListener(eventName, listener);
-    });
+    this.stdout = proc.stdout.text();
+    this.stderr = proc.stderr.text();
+    this.exited = proc.exited.then(code => this.#fail(`The child exited with code ${code} while a wait was pending`));
+    this.exited.catch(() => {});
+    this.addEventListener("TestReporter.found", params => this.#record(this.found, params));
+    this.addEventListener("TestReporter.start", params => this.#record(this.started, params.id));
+    this.addEventListener("TestReporter.end", params => this.#record(this.ended, params));
+    this.addEventListener("Console.messageAdded", params => this.#record(this.consoleMessages, params.message.text));
   }
 
   /**
-   * Wait for a Console.messageAdded event whose text contains the given substring.
+   * Listens on a unix socket inside `dir`, spawns `bun --inspect-wait test <testFile>`
+   * with `dir` as cwd, and resolves once the child has connected. The child then
+   * blocks until it receives `Inspector.initialized`.
    */
-  waitForConsoleMessage(substring: string, timeout = 10000): Promise<any> {
-    this.ref();
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`Timeout waiting for console message containing: ${substring}`));
-      }, timeout);
-
-      this.addEventListener("Console.messageAdded", (params: any) => {
-        if (params?.message?.text?.includes?.(substring)) {
-          clearTimeout(timer);
-          resolve(params);
-        }
-      });
+  static async start(dir: string, testFile: string): Promise<TestReporterSession> {
+    const socketPath = join(dir, "inspector.sock");
+    const connected = connect(`unix://${socketPath}`);
+    const proc = spawn({
+      // --timeout keeps the fixture tests' budget above the 30s waits in this file, so
+      // a test that is held at a gate cannot time out before the gate opens under load.
+      cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "--timeout", "60000", testFile],
+      env: bunEnv,
+      cwd: dir,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
     });
+    const session = new TestReporterSession(proc);
+    const socket = await Promise.race([connected, session.exited]);
+    const framer = new SocketFramer(message => session.onMessage(message));
+    session.socket = socket;
+    session.framer = framer;
+    socket.data = { onData: framer.onData.bind(framer) };
+    return session;
   }
 
   /**
-   * Wait for a specific number of TestReporter.found events
+   * Resolves once `condition()` holds. Rejects with the events received so far
+   * and the child's output if the child exits first or `what` takes over 30s.
    */
-  waitForFoundTests(count: number, timeout = 10000): Promise<Map<number, any>> {
-    this.ref();
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(
-          new Error(
-            `Timeout waiting for ${count} found tests, got ${this.foundTests.size}: ${JSON.stringify([...this.foundTests.values()])}`,
-          ),
-        );
-      }, timeout);
-
-      const check = () => {
-        if (this.foundTests.size >= count) {
-          clearTimeout(timer);
-          resolve(this.foundTests);
-        }
-      };
-
-      // Check immediately in case we already have enough
-      check();
-
-      // Also listen for new events
-      this.addEventListener("TestReporter.found", check);
+  waitFor(what: string, condition: () => boolean): Promise<void> {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const check = () => {
+      if (condition()) resolve();
+    };
+    const timer = setTimeout(() => this.#fail(`Timed out waiting for ${what}`).catch(reject), 30_000);
+    this.#checks.add(check);
+    check();
+    return Promise.race([promise, this.exited]).finally(() => {
+      clearTimeout(timer);
+      this.#checks.delete(check);
     });
   }
 
-  /**
-   * Wait for a specific number of TestReporter.end events
-   */
-  waitForEndedTests(count: number, timeout = 10000): Promise<Map<number, any>> {
-    this.ref();
+  /** Opens the fixture's first gate. */
+  async openGate() {
+    this.proc.stdin.write("go");
+    await this.proc.stdin.flush();
+  }
 
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`Timeout waiting for ${count} ended tests, got ${this.endedTests.size}`));
-      }, timeout);
+  /** Opens the fixture's last gate: its pending read sees EOF. */
+  async openLastGate() {
+    await this.proc.stdin.end();
+  }
 
-      const check = () => {
-        if (this.endedTests.size >= count) {
-          clearTimeout(timer);
-          resolve(this.endedTests);
-        }
-      };
+  async [Symbol.asyncDispose]() {
+    this.socket?.end();
+    await this.proc[Symbol.asyncDispose]();
+  }
 
-      check();
-      this.addEventListener("TestReporter.end", check);
-    });
+  #record<T>(list: T[], item: T) {
+    list.push(item);
+    for (const check of this.#checks) check();
+  }
+
+  /** Throws `why`, followed by the events received so far and the child's whole output. */
+  async #fail(why: string): Promise<never> {
+    // A no-op if the child has exited. Otherwise its output would never end.
+    this.proc.kill();
+    const [stdout, stderr] = await Promise.all([this.stdout, this.stderr]);
+    const seen = { found: this.found, started: this.started, ended: this.ended, console: this.consoleMessages };
+    throw new Error(`${why}\n${JSON.stringify(seen, null, 2)}\nstdout:\n${stdout}\nstderr:\n${stderr}`);
   }
 }
 
+/** Replaces the temp dir in each event's `url` so the tree compares with `toEqual`. */
+function normalizeFound(found: JSC.TestReporter.FoundEvent[], dir: string): JSC.TestReporter.FoundEvent[] {
+  return found.map(event => ({ ...event, url: event.url && normalizeBunSnapshot(event.url, dir) }));
+}
+
+/** The child's stderr, normalized, for a fixture whose three tests all pass. */
+function expectedStderr(testFile: string) {
+  return [
+    `${testFile}:`,
+    "--------------------- Bun Inspector ---------------------",
+    "Listening on unix:<dir>/inspector.sock",
+    "--------------------- Bun Inspector ---------------------",
+    "(pass) suite A > test A1",
+    "(pass) suite A > test A2",
+    "(pass) suite B > test B1",
+    "",
+    " 3 pass",
+    " 0 fail",
+    " 3 expect() calls",
+    "Ran 3 tests across 1 file.",
+  ].join("\n");
+}
+
 describe.if(isPosix)("TestReporter inspector protocol", () => {
-  let proc: Subprocess | undefined;
-  let socket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
-
-  afterEach(() => {
-    proc?.kill();
-    proc = undefined;
-    // @ts-ignore - close the socket if it exists
-    socket?.end?.();
-    socket = undefined as any;
-  });
-
-  test("retroactively reports tests when TestReporter.enable is called after tests are discovered", async () => {
-    // This test specifically verifies that when TestReporter.enable is called AFTER
-    // test collection has started, the already-discovered tests are retroactively reported.
-    //
-    // The flow is:
-    // 1. Connect to inspector and enable Inspector + Console (NOT TestReporter)
-    // 2. Send Inspector.initialized to allow test collection and execution to proceed
-    // 3. Wait for test A1 to signal it has started via a Console.messageAdded event,
-    //    which guarantees collection is finished and execution has begun
-    // 4. THEN send TestReporter.enable - this should trigger retroactive reporting
-    //    of tests that were discovered but not yet reported
-    // 5. Once we receive the retroactive `found` events (proving enable was processed
-    //    on the JS thread), write a gate file that releases A1. This guarantees A1's
-    //    `end` event fires with the agent enabled rather than racing with the
-    //    cross-thread dispatch of TestReporter.enable.
-    // 6. An afterAll hook polls for a second gate file that we only write after all
-    //    three `end` events have been received. Inspector events are written to the
-    //    socket from the detached debugger thread, and the test runner calls exit()
-    //    immediately after the last test without draining that queue, so without the
-    //    hold the final end(s) can be lost. The afterAll keeps the process alive
-    //    (and the JS thread yielding) until delivery is confirmed.
-
-    using dir = tempDir("test-reporter-delayed-enable", {
-      "delayed.test.ts": `
+  test.concurrent(
+    "retroactively reports tests when TestReporter.enable is called after tests are discovered",
+    async () => {
+      // TestReporter.enable is sent only after test A1 has started (observed through
+      // Console.messageAdded), so every `found` event comes from the retroactive walk
+      // over the already-discovered tree.
+      //
+      // A1 holds at a gate until those `found` events have arrived. That proves the
+      // enable was processed on the JS thread before A1's `end` event, instead of
+      // racing with the cross-thread dispatch of the command.
+      //
+      // The afterAll hook holds at a second gate until every `end` event has arrived.
+      // Inspector events are written to the socket from the debugger thread, and the
+      // runner exits right after the last test without draining that queue, so
+      // without the hold the final `end` events can be lost.
+      using dir = tempDir("test-reporter-delayed-enable", {
+        "delayed.test.ts": `
 import { afterAll, describe, test, expect } from "bun:test";
-import { existsSync } from "node:fs";
+const stdin = Bun.stdin.stream().getReader();
 
 describe("suite A", () => {
   test("test A1", async () => {
     console.log("__A1_RUNNING__");
-    while (!existsSync("a1-gate")) await Bun.sleep(10);
+    await stdin.read();
     expect(1).toBe(1);
   });
   test("test A2", () => {
@@ -222,113 +177,64 @@ describe("suite B", () => {
 });
 
 afterAll(async () => {
-  while (!existsSync("done-gate")) await Bun.sleep(10);
+  await stdin.read();
 });
 `,
-    });
+      });
+      await using session = await TestReporterSession.start(String(dir), "delayed.test.ts");
 
-    const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
-    const gatePath = join(String(dir), "a1-gate");
-    const doneGatePath = join(String(dir), "done-gate");
+      session.send("Inspector.enable");
+      session.send("Console.enable");
+      session.send("Inspector.initialized");
+      await session.waitFor("test A1 to start", () => session.consoleMessages.includes("__A1_RUNNING__"));
 
-    const session = new TestReporterSession();
-    const framer = new SocketFramer((message: string) => {
-      session.onMessage(message);
-    });
+      session.send("TestReporter.enable");
+      await session.waitFor("5 found events", () => session.found.length >= 5);
 
-    const socketPromise = connect(`unix://${socketPath}`).then(s => {
-      socket = s;
-      session.socket = s;
-      session.framer = framer;
-      s.data = {
-        onData: framer.onData.bind(framer),
-      };
-      return s;
-    });
+      // The retroactive path does not capture source lines, so `line` is 0 here.
+      const url = "<dir>/delayed.test.ts";
+      expect(normalizeFound(session.found, String(dir))).toEqual([
+        { id: 1, url, line: 0, name: "suite A", type: "describe" },
+        { id: 2, url, line: 0, name: "test A1", type: "test", parentId: 1 },
+        { id: 3, url, line: 0, name: "test A2", type: "test", parentId: 1 },
+        { id: 4, url, line: 0, name: "suite B", type: "describe" },
+        { id: 5, url, line: 0, name: "test B1", type: "test", parentId: 4 },
+      ]);
 
-    proc = spawn({
-      // --timeout keeps the inner test's budget above the 15000ms outer waits
-      // so A1 cannot time out before the gate file is written under heavy load.
-      cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "--timeout", "30000", "delayed.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      await session.openGate();
+      await session.waitFor("3 end events", () => session.ended.length >= 3);
 
-    await socketPromise;
+      // A1 started before the agent was enabled, so only A2 and B1 report a start.
+      expect(session.started).toEqual([3, 5]);
+      expect(session.ended).toEqual([
+        { id: 2, status: "pass", elapsed: expect.any(Number) },
+        { id: 3, status: "pass", elapsed: expect.any(Number) },
+        { id: 5, status: "pass", elapsed: expect.any(Number) },
+      ]);
+      for (const { elapsed } of session.ended) expect(elapsed).toBeGreaterThanOrEqual(0);
 
-    // Enable Inspector and Console (NOT TestReporter). Console lets us observe when
-    // A1 has actually started executing without relying on wall-clock sleeps.
-    session.enableInspector();
-    session.send("Console.enable");
+      await session.openLastGate();
+      const [stdout, stderr, exitCode] = await Promise.all([session.stdout, session.stderr, session.proc.exited]);
+      expect(normalizeBunSnapshot(stdout, String(dir))).toBe("bun test <version> (<revision>)\n__A1_RUNNING__");
+      expect(normalizeBunSnapshot(stderr, String(dir))).toBe(expectedStderr("delayed.test.ts"));
+      expect(exitCode).toBe(0);
+    },
+  );
 
-    // Register the listener before allowing execution to proceed so we cannot miss the message.
-    const a1Started = session.waitForConsoleMessage("__A1_RUNNING__", 15000);
-
-    // Signal ready - this allows test collection and execution to proceed
-    session.initialize();
-
-    // Wait until test A1 is actually running (collection is done, execution has begun).
-    await a1Started;
-
-    // Now enable TestReporter - this should trigger retroactive reporting
-    // of all tests that were discovered while TestReporter was disabled
-    session.enableTestReporter();
-
-    // We should receive found events for all tests retroactively
-    // Structure: 2 describes + 3 tests = 5 items
-    const foundTests = await session.waitForFoundTests(5, 15000);
-    expect(foundTests.size).toBe(5);
-
-    const testsArray = [...foundTests.values()];
-    const describes = testsArray.filter(t => t.type === "describe");
-    const tests = testsArray.filter(t => t.type === "test");
-
-    expect(describes.length).toBe(2);
-    expect(tests.length).toBe(3);
-
-    // Verify the test names
-    const testNames = tests.map(t => t.name).sort();
-    expect(testNames).toEqual(["test A1", "test A2", "test B1"]);
-
-    // Verify describe names
-    const describeNames = describes.map(d => d.name).sort();
-    expect(describeNames).toEqual(["suite A", "suite B"]);
-
-    // Receiving the retroactive `found` events proves TestReporter.enable has been
-    // processed on the JS thread. Release A1 so its `end` event fires with the agent
-    // enabled, then wait for all three tests to report completion.
-    await write(gatePath, "go");
-
-    const endedTests = await session.waitForEndedTests(3, 15000);
-    expect(endedTests.size).toBe(3);
-
-    // All `end` events received; release the afterAll hold so the subprocess can exit.
-    await write(doneGatePath, "go");
-
-    const exitCode = await proc.exited;
-    expect(exitCode).toBe(0);
-  });
-
-  test("assigns unique test IDs when TestReporter.enable lands mid-collection", async () => {
-    // Regression: the live-registration path (ScopeFunctions::call) and the
-    // retroactive path (retroactively_report_discovered_tests) used to draw
-    // IDs from two independent counters. The existing test above enables
-    // TestReporter only after collection finishes, so the two paths never
-    // interleave there.
+  test.concurrent("assigns unique test IDs when TestReporter.enable lands mid-collection", async () => {
+    // The live registration path (ScopeFunctions) and the retroactive walk used to
+    // draw ids from two independent counters. The test above enables TestReporter
+    // only after collection finishes, so the two paths never interleave there.
     //
-    // Here we pause inside suite B's *async describe callback*. By that point
-    // collection has already run suite A's (sync) callback to completion
-    // (registering test A1/A2), while suite B's own test() has not yet been
-    // called. Enabling TestReporter in that window sends suite A + suite B's
-    // describe through the retroactive walk; test B1 is registered live once
-    // we release the gate.
-
+    // Here collection pauses inside suite B's async describe callback. Suite A's
+    // callback has already run to completion (registering A1 and A2), while suite
+    // B's own test() has not been called yet. Enabling TestReporter in that window
+    // reports suite A, A1, A2 and suite B through the retroactive walk. Test B1 is
+    // registered live once the gate opens.
     using dir = tempDir("test-reporter-mid-collection", {
       "mid-collection.test.ts": `
 import { afterAll, describe, test, expect } from "bun:test";
-import { existsSync } from "node:fs";
+const stdin = Bun.stdin.stream().getReader();
 
 describe("suite A", () => {
   test("test A1", () => {
@@ -341,118 +247,62 @@ describe("suite A", () => {
 
 describe("suite B", async () => {
   console.log("__COLLECTION_CHECKPOINT__");
-  while (!existsSync("collect-gate")) {
-    await Bun.sleep(5);
-  }
+  await stdin.read();
   test("test B1", () => {
     expect(3).toBe(3);
   });
 });
 
 afterAll(async () => {
-  while (!existsSync("done-gate")) await Bun.sleep(10);
+  await stdin.read();
 });
 `,
     });
+    await using session = await TestReporterSession.start(String(dir), "mid-collection.test.ts");
 
-    const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
-    const collectGatePath = join(String(dir), "collect-gate");
-    const doneGatePath = join(String(dir), "done-gate");
-
-    const session = new TestReporterSession();
-    const framer = new SocketFramer((message: string) => {
-      session.onMessage(message);
-    });
-
-    // Track every raw `found` id in arrival order (no dedupe) so a collision
-    // shows up as a literal duplicate independent of the Map-keyed bookkeeping
-    // in TestReporterSession (which would silently coalesce same-id events).
-    const rawFoundIds: number[] = [];
-    session.addEventListener("TestReporter.found", (params: any) => {
-      rawFoundIds.push(params.id);
-    });
-
-    const socketPromise = connect(`unix://${socketPath}`).then(s => {
-      socket = s;
-      session.socket = s;
-      session.framer = framer;
-      s.data = {
-        onData: framer.onData.bind(framer),
-      };
-      return s;
-    });
-
-    proc = spawn({
-      cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "--timeout", "30000", "mid-collection.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    await socketPromise;
-
-    // Enable Inspector and Console (NOT TestReporter). Console lets us observe
-    // the collection checkpoint without disturbing collection itself.
-    session.enableInspector();
+    session.send("Inspector.enable");
     session.send("Console.enable");
+    session.send("Inspector.initialized");
+    await session.waitFor("the collection checkpoint", () =>
+      session.consoleMessages.includes("__COLLECTION_CHECKPOINT__"),
+    );
 
-    const checkpointSeen = session.waitForConsoleMessage("__COLLECTION_CHECKPOINT__", 15000);
+    session.send("TestReporter.enable");
+    await session.waitFor("4 found events", () => session.found.length >= 4);
 
-    // Signal ready - this allows test collection to proceed.
-    session.initialize();
+    const url = "<dir>/mid-collection.test.ts";
+    const retroactive: JSC.TestReporter.FoundEvent[] = [
+      { id: 1, url, line: 0, name: "suite A", type: "describe" },
+      { id: 2, url, line: 0, name: "test A1", type: "test", parentId: 1 },
+      { id: 3, url, line: 0, name: "test A2", type: "test", parentId: 1 },
+      { id: 4, url, line: 0, name: "suite B", type: "describe" },
+    ];
+    expect(normalizeFound(session.found, String(dir))).toEqual(retroactive);
 
-    // Wait until suite A has fully registered and collection is paused inside
-    // suite B's async describe callback (test B1 not yet registered).
-    await checkpointSeen;
+    // Test B1 is registered live while the agent is enabled. Its id must continue
+    // the sequence the retroactive walk used, and the live path reports its line.
+    await session.openGate();
+    await session.waitFor("5 found events", () => session.found.length >= 5);
+    expect(normalizeFound(session.found, String(dir))).toEqual([
+      ...retroactive,
+      { id: 5, url, line: 17, name: "test B1", type: "test", parentId: 4 },
+    ]);
 
-    // Enable TestReporter now, genuinely mid-collection.
-    session.enableTestReporter();
+    await session.waitFor("3 end events", () => session.ended.length >= 3);
+    expect(session.started).toEqual([2, 3, 5]);
+    expect(session.ended).toEqual([
+      { id: 2, status: "pass", elapsed: expect.any(Number) },
+      { id: 3, status: "pass", elapsed: expect.any(Number) },
+      { id: 5, status: "pass", elapsed: expect.any(Number) },
+    ]);
+    for (const { elapsed } of session.ended) expect(elapsed).toBeGreaterThanOrEqual(0);
 
-    // suite A's describe + 2 tests, plus suite B's (empty) describe: 4 events
-    // via the retroactive walk.
-    await session.waitForFoundTests(4, 15000);
-
-    // Release the gate so suite B's callback registers test B1 via the live
-    // path while the agent is enabled.
-    await write(collectGatePath, "go");
-
-    // test B1 brings the total to 5. Pre-fix its id collides with one the
-    // retroactive walk already used, so the Map stays at 4 keys and this
-    // wait times out.
-    const foundTests = await session.waitForFoundTests(5, 15000);
-    expect(foundTests.size).toBe(5);
-
-    const endedTests = await session.waitForEndedTests(3, 15000);
-    expect(endedTests.size).toBe(3);
-
-    // All `end` events received; release the afterAll hold so the subprocess
-    // can exit.
-    await write(doneGatePath, "go");
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    void stdout;
-
-    // Core assertion: every `found` id across both paths is unique.
-    expect(rawFoundIds.length).toBe(5);
-    expect(new Set(rawFoundIds).size).toBe(5);
-
-    // Every `end` event's id must correspond to an actual `test`.
-    for (const id of endedTests.keys()) {
-      const found = foundTests.get(id);
-      expect(found).toBeDefined();
-      expect(found.type).toBe("test");
-    }
-
-    const testNames = [...foundTests.values()]
-      .filter(t => t.type === "test")
-      .map(t => t.name)
-      .sort();
-    expect(testNames).toEqual(["test A1", "test A2", "test B1"]);
-
-    if (exitCode !== 0) {
-      expect(stderr).toBe("");
-    }
+    await session.openLastGate();
+    const [stdout, stderr, exitCode] = await Promise.all([session.stdout, session.stderr, session.proc.exited]);
+    expect(normalizeBunSnapshot(stdout, String(dir))).toBe(
+      "bun test <version> (<revision>)\n__COLLECTION_CHECKPOINT__",
+    );
+    expect(normalizeBunSnapshot(stderr, String(dir))).toBe(expectedStderr("mid-collection.test.ts"));
     expect(exitCode).toBe(0);
   });
 });

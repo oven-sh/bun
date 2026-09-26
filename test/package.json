@@ -123,6 +123,7 @@
     "msgpackr-extract": "3.0.2"
   },
   "resolutions": {
+    "@types/bun": "../packages/bun-types",
     "react": "../node_modules/react",
     "@types/node": "26.2.0"
   }

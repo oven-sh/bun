@@ -848,6 +848,7 @@ impl RunCommand {
                 )
                 .and_then(|f| f.stat())
                 .ok();
+                // FAT volumes have no hard links: copy the copy.
                 Self::plant_windows_node_shim_file(
                     buf,
                     dir_len,
@@ -857,6 +858,17 @@ impl RunCommand {
                     ShimKind::HardLink,
                     &mut made_dir,
                 )
+                .or_else(|_| {
+                    Self::plant_windows_node_shim_file(
+                        buf,
+                        dir_len,
+                        bun,
+                        node_path,
+                        node_stat.as_ref(),
+                        ShimKind::Copy,
+                        &mut made_dir,
+                    )
+                })
             }
         }
     }

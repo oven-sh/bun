@@ -14,7 +14,6 @@ unsafe extern "C" {
     pub fn mi_realloc(p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_expand(p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_free(p: *mut c_void);
-    pub fn mi_strdup(s: *const c_char) -> *mut c_char;
     /// No preconditions; returns null on failure.
     pub safe fn mi_zalloc(size: usize) -> *mut c_void;
     pub fn mi_usable_size(p: *const c_void) -> usize;
@@ -29,6 +28,18 @@ unsafe extern "C" {
     /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
     /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
     pub safe fn mi_on_thread_idle();
+    /// Call right before this thread blocks: mimalloc's scavenger thread does the work of
+    /// `mi_on_thread_idle` while it sleeps, and comes back for what one sweep leaves (the free
+    /// blocks of large pages that were just allocated from). Returns false when nothing was
+    /// handed off (no scavenger, or a thread that never allocated); `mi_on_thread_idle_end` is
+    /// not needed then, and the caller decides whether to sweep inline instead.
+    ///
+    /// # Safety
+    /// After a `true`, this thread must not allocate or free until `mi_on_thread_idle_end`.
+    pub fn mi_on_thread_idle_start() -> bool;
+    /// Awake again: take the heaps back from the scavenger, waiting for a sweep in progress to
+    /// stop at its next page. A no-op on a thread that is not parked. No preconditions.
+    pub safe fn mi_on_thread_idle_end();
     pub fn mi_stats_print_out(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
     pub fn mi_process_info(
         elapsed_msecs: *mut usize,
@@ -52,39 +63,12 @@ bun_opaque::opaque_ffi! {
     pub struct Heap;
 }
 
-impl Heap {
-    #[inline]
-    pub fn malloc(&mut self, size: usize) -> *mut c_void {
-        // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
-        unsafe { mi_heap_malloc(self, size) }
-    }
-
-    #[inline]
-    pub fn calloc(&mut self, count: usize, size: usize) -> *mut c_void {
-        // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
-        unsafe { mi_heap_calloc(self, count, size) }
-    }
-
-    /// # Safety
-    /// `p` must be null or a pointer previously allocated by this heap.
-    #[inline]
-    pub unsafe fn realloc(&mut self, p: *mut c_void, newsize: usize) -> *mut c_void {
-        // SAFETY: `self` is a live `*mut Heap`; caller upholds `p` contract.
-        unsafe { mi_heap_realloc(self, p, newsize) }
-    }
-
-    // `p` is only address-range-tested (never dereferenced) — there is no
-    // caller precondition, so this stays safe.
-}
-
 unsafe extern "C" {
     pub fn mi_heap_new() -> *mut Heap;
     pub fn mi_heap_destroy(heap: *mut Heap);
     pub fn mi_heap_main() -> *mut Heap;
-    pub fn mi_heap_collect(heap: *mut Heap, force: bool);
     pub fn mi_heap_malloc(heap: *mut Heap, size: usize) -> *mut c_void;
     fn mi_heap_zalloc(heap: *mut Heap, size: usize) -> *mut c_void;
-    fn mi_heap_calloc(heap: *mut Heap, count: usize, size: usize) -> *mut c_void;
     pub fn mi_heap_realloc(heap: *mut Heap, p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_heap_malloc_aligned(heap: *mut Heap, size: usize, alignment: usize) -> *mut c_void;
     fn mi_heap_zalloc_aligned(heap: *mut Heap, size: usize, alignment: usize) -> *mut c_void;
@@ -119,10 +103,6 @@ unsafe extern "C" {
         arg: *mut c_void,
     ) -> bool;
     pub fn mi_is_in_heap_region(p: *const c_void) -> bool;
-}
-
-unsafe extern "C" {
-    pub fn mi_thread_set_in_threadpool();
 }
 
 // Named `Option` after mimalloc's `mi_option_t`; shadows `core::option::Option` in

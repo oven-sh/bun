@@ -68,6 +68,7 @@ test("spawn AbortSignal already aborted carries signal.reason as cause", () => {
     expect.objectContaining({
       name: "AbortError",
       code: "ABORT_ERR",
+      message: "The operation was aborted",
       cause: reason,
     }),
   );
@@ -100,6 +101,7 @@ test("spawnSync AbortSignal throws if already aborted", () => {
     expect.objectContaining({
       name: "AbortError",
       code: "ABORT_ERR",
+      message: "The operation was aborted",
       cause: reason,
     }),
   );
@@ -132,6 +134,24 @@ test("spawnSync AbortSignal works as timeout", async () => {
   expect(subprocess.success).toBeFalse();
   const end = performance.now();
   expect(end - start).toBeLessThan(100);
+});
+
+test("spawn AbortSignal that nothing else references still kills the child after GC", async () => {
+  // Nothing native holds the timeout source: it fires only if its wrapper survives the collections.
+  const subprocess = Bun.spawn({
+    cmd: [bunExe(), "--eval", "await Bun.sleep(100000)"],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+    signal: AbortSignal.any([AbortSignal.timeout(100)]),
+  });
+  for (let i = 0; i < 5; i++) {
+    Bun.gc(true);
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  await subprocess.exited;
+  expect(subprocess.signalCode).toBe("SIGTERM");
 });
 
 describe("Bun.spawn option validation", () => {

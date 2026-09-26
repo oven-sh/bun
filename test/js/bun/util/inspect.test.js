@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+  withoutAggressiveGC,
+} from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -579,6 +588,120 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
   });
 });
 
+// A property lookup that throws while an object is being formatted (a Proxy trap in the
+// prototype chain, a lazily initialized property whose initializer throws, a module namespace
+// export that is still in its temporal dead zone) used to leave the exception pending: the
+// lookups of the following properties failed and were dropped from the output or the formatter
+// rethrew the exception from the next property, debug builds asserted, and moving on to the
+// next prototype dereferenced the empty value returned by the throwing getPrototype. Each case
+// runs in a child so a regression fails the test instead of taking down the runner.
+describe.concurrent("Bun.inspect when a property lookup throws", () => {
+  async function runChild(args, cwd) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const inspectInChild = code => runChild(["-e", code]);
+
+  it("skips a prototype property whose Proxy get trap throws and keeps the rest", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1, b: 2, c: 3 }, {
+        get(target, key, receiver) {
+          if (key === "b") throw new Error("get trap");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      const obj = Object.create(proto);
+      obj.own = 0;
+      console.log(Bun.inspect(obj));
+    `);
+    expect(result).toEqual({ stdout: "{\n  own: 0,\n  a: 1,\n  c: 3,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("skips a prototype getter that throws behind a Proxy and keeps the rest", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1, get b() { throw new Error("getter"); }, c: 3 }, {});
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(result).toEqual({ stdout: "{\n  a: 1,\n  c: 3,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("propagates a Proxy getPrototypeOf trap that throws while walking the prototype chain", async () => {
+    // Matches util.inspect: a throwing getPrototypeOf trap is an error, not a display nicety.
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1 }, {
+        getPrototypeOf() {
+          throw new Error("getPrototypeOf trap");
+        },
+      });
+      const obj = Object.create(proto);
+      obj.own = 0;
+      try {
+        Bun.inspect(obj);
+        console.log("no throw");
+      } catch (e) {
+        console.log("threw: " + e.message);
+      }
+    `);
+    expect(result).toEqual({ stdout: "threw: getPrototypeOf trap\n", stderr: "", exitCode: 0 });
+  });
+
+  it("propagates an error thrown by toJSON while formatting", () => {
+    const toJSON = () => {
+      throw new Error("from toJSON");
+    };
+    const params = new URLSearchParams("a=1");
+    params.toJSON = toJSON;
+    expect(() => Bun.inspect(params)).toThrow("from toJSON");
+    const headers = new Headers({ a: "1" });
+    headers.toJSON = toJSON;
+    expect(() => Bun.inspect(headers)).toThrow("from toJSON");
+    const form = new FormData();
+    form.append("a", "1");
+    Object.defineProperty(form, "toJSON", { value: toJSON });
+    expect(() => Bun.inspect(form)).toThrow("from toJSON");
+  });
+
+  it("skips a lazily initialized Bun property whose initializer throws and keeps the rest", async () => {
+    // Bun.$ is the first property of the Bun object and is built by a builtin that calls
+    // Symbol(), as are Bun.sql and Bun.SQL further down, so breaking Symbol makes those
+    // initializers throw while Bun is formatted. Custom inspect functions (Bun.env has one on
+    // Windows) load node:util the first time one runs, which also needs Symbol, so load it first.
+    const result = await inspectInChild(`
+      Bun.inspect({ [Bun.inspect.custom]() { return ""; } });
+      globalThis.Symbol = 0;
+      const out = Bun.inspect(Bun);
+      console.log(JSON.stringify(["$", "Archive", "version"].map(key => out.includes("\\n  " + key + ": "))));
+    `);
+    expect(result).toEqual({ stdout: "[false,true,true]\n", stderr: "", exitCode: 0 });
+  });
+
+  it("skips a module namespace export that is in its temporal dead zone and keeps the rest", async () => {
+    // b.mjs runs while a.mjs is still evaluating, so reading `later` off the namespace throws a
+    // ReferenceError. console.log used to rethrow it; util.inspect prints such an export as
+    // `<uninitialized>`, this formatter leaves it out.
+    using dir = tempDir("inspect-tdz-namespace", {
+      "a.mjs": `
+        import "./b.mjs";
+        export const later = 1;
+        export function hoisted() {}
+      `,
+      "b.mjs": `
+        import * as a from "./a.mjs";
+        console.log(a);
+      `,
+    });
+    const result = await runChild(["a.mjs"], String(dir));
+    expect(result).toEqual({ stdout: "Module {\n  hoisted: [Function: hoisted],\n}\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe("console.logging function displays async and generator names", async () => {
   const cases = [
     function () {},
@@ -926,5 +1049,248 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     );
     expect(stderr).not.toContain("AddressSanitizer");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
+  it("Map respects max_depth", () => {
+    let m = new Map([["leaf", 1]]);
+    for (let i = 0; i < 10; i++) m = new Map([[m, i]]);
+    expect(Bun.inspect(m, { depth: 2 })).toBe(
+      "Map(1) {\n  Map(1) {\n    Map(1) {\n      [Map ...]: 7,\n    }: 8,\n  }: 9,\n}",
+    );
+    expect(Bun.inspect(m, { depth: 0 })).toBe("Map(1) {\n  [Map ...]: 9,\n}");
+    expect(Bun.inspect(m, { depth: Infinity })).toContain('"leaf": 1');
+  });
+
+  it("Set respects max_depth", () => {
+    let s = new Set([1]);
+    for (let i = 0; i < 10; i++) s = new Set([s]);
+    expect(Bun.inspect(s, { depth: 2 })).toBe("Set(1) {\n  Set(1) {\n    Set(1) {\n      [Set ...],\n    },\n  },\n}");
+    expect(Bun.inspect(s, { depth: 0 })).toBe("Set(1) {\n  [Set ...],\n}");
+    expect(Bun.inspect(s, { depth: Infinity })).toContain("1,");
+  });
+
+  it("Array respects max_depth", () => {
+    let a = [1];
+    for (let i = 0; i < 10; i++) a = [a];
+    expect(Bun.inspect(a, { depth: 2 })).toBe("[\n  [\n    [\n      [Array ...]\n    ]\n  ]\n]");
+    expect(Bun.inspect(a, { depth: 0 })).toBe("[\n  [Array ...]\n]");
+    expect(Bun.inspect(a, { depth: Infinity })).toContain("[ 1 ]");
+  });
+
+  it("MapIterator/SetIterator respect max_depth", () => {
+    const mi = () => new Map([["a", 1]]).entries();
+    const si = () => new Set(["leaf"]).values();
+    expect(Bun.inspect({ x: mi() }, { depth: 0 })).toBe("{\n  x: [MapIterator ...],\n}");
+    expect(Bun.inspect({ x: si() }, { depth: 0 })).toBe("{\n  x: [SetIterator ...],\n}");
+    expect(Bun.inspect([[[mi()]]], { depth: 2 })).toBe("[\n  [\n    [\n      [MapIterator ...]\n    ]\n  ]\n]");
+    expect(Bun.inspect([[[si()]]], { depth: 2 })).toBe("[\n  [\n    [\n      [SetIterator ...]\n    ]\n  ]\n]");
+    expect(Bun.inspect([[[mi()]]], { depth: Infinity })).toContain('[ "a", 1 ]');
+    expect(Bun.inspect([[[si()]]], { depth: Infinity })).toContain('"leaf"');
+  });
+
+  it("an empty Array, Map, or Set past max_depth prints as empty", () => {
+    const value = { a: [], b: new Map(), c: new Set(), d: [1], e: new Map([[1, 2]]), f: new Set([1]) };
+    expect(Bun.inspect(value, { depth: 0 })).toBe(
+      "{\n  a: [],\n  b: Map {},\n  c: Set {},\n  d: [Array ...],\n  e: [Map ...],\n  f: [Set ...],\n}",
+    );
+  });
+
+  it("console.log of deeply nested Map/Set/Array/Error does not blow up or throw", async () => {
+    const src = `
+      let m = new Map([["leaf", 1]]);
+      for (let i = 0; i < 1000; i++) m = new Map([[m, i]]);
+      console.log(m);
+
+      let s = new Set([1]);
+      for (let i = 0; i < 1000; i++) s = new Set([s]);
+      console.log(s);
+
+      let a = [1];
+      for (let i = 0; i < 1000; i++) a = [a];
+      console.log(a);
+
+      let e = new Error("leaf");
+      for (let i = 0; i < 1000; i++) e = new Error("retry " + i, { cause: e });
+      console.log(e);
+
+      let ag = new Error("leaf");
+      for (let i = 0; i < 1000; i++) ag = new AggregateError([ag], "L" + i);
+      console.log(ag);
+
+      let ev = new MessageEvent("message", { data: 1 });
+      for (let i = 0; i < 1000; i++) ev = new MessageEvent("message", { data: ev });
+      console.log(ev);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("[Map ...]");
+    expect(stdout).toContain("[Set ...]");
+    expect(stdout).toContain("[Array ...]");
+    expect(stdout).toContain("[Error ...]");
+    expect(stdout).toContain("[MessageEvent ...]");
+    // Previously each of these produced megabytes of output or threw RangeError.
+    expect(stdout.length).toBeLessThan(4096);
+    expect(exitCode).toBe(0);
+  });
+
+  it("Error cause chain truncates at max_depth", () => {
+    let e = new Error("leaf");
+    for (let i = 0; i < 10; i++) e = new Error("retry " + i, { cause: e });
+    const out = Bun.inspect(e, { depth: 2 });
+    expect(out).toContain("error: retry 9");
+    expect(out).toContain("error: retry 8");
+    expect(out).toContain("error: retry 7");
+    expect(out).toContain("[Error ...]");
+    expect(out).not.toContain("error: retry 6");
+    expect(out).not.toContain("error: leaf");
+
+    const full = Bun.inspect(e, { depth: Infinity });
+    expect(full).toContain("error: leaf");
+    expect(full).not.toContain("[Error ...]");
+  });
+
+  it("object/array properties on a cause error still expand one level", () => {
+    const inner = new Error("inner");
+    inner.info = { code: "E_FOO", detail: "bar" };
+    inner.tags = ["a", "b"];
+    const out = Bun.inspect(new Error("outer", { cause: inner }));
+    expect(out).toContain('code: "E_FOO"');
+    expect(out).toContain('detail: "bar"');
+    expect(out).toContain('"a"');
+    expect(out).toContain('"b"');
+    expect(out).not.toContain("info: [Object ...]");
+    expect(out).not.toContain("tags: [Array ...]");
+  });
+
+  it("an Error nested in an Error property walks its cause to the caller's depth", () => {
+    const make = () => {
+      const outer = new Error("outer");
+      outer.details = { inner: new Error("inner", { cause: new Error("deep one") }) };
+      outer.list = [new Error("listed", { cause: new Error("deep two") })];
+      outer.group = { agg: new AggregateError([new Error("member")], "agg") };
+      return outer;
+    };
+    // An inspected Error shows a preview of this file's source. Drop those lines.
+    const inspect = depth => Bun.inspect(make(), { depth }).replace(/^ *\d+ \|.*\n/gm, "");
+
+    const full = inspect(Infinity);
+    expect(full).toContain("error: deep one");
+    expect(full).toContain("error: deep two");
+    expect(full).toContain("error: member");
+    expect(full).not.toContain("[Error ...]");
+
+    const capped = inspect(2);
+    expect(capped).toContain("error: inner");
+    expect(capped).toContain("error: listed");
+    expect(capped).toContain("AggregateError: agg");
+    expect(capped).toContain("[Error ...]");
+    expect(capped).not.toContain("error: deep one");
+    expect(capped).not.toContain("error: deep two");
+    expect(capped).not.toContain("error: member");
+  });
+
+  it("an AggregateError whose members are past max_depth still prints itself", () => {
+    const inspect = errors =>
+      Bun.inspect(new AggregateError(errors, "agg message"), { depth: 0 }).replace(/^ *\d+ \|.*\n/gm, "");
+
+    const out = inspect([new Error("member x"), new Error("member y")]);
+    expect(out.match(/AggregateError: agg message/g)).toHaveLength(1);
+    expect(out.match(/\[Error \.\.\.\]/g)).toHaveLength(2);
+    expect(out).not.toContain("error: member");
+
+    const empty = inspect([]);
+    expect(empty.match(/AggregateError: agg message/g)).toHaveLength(1);
+    expect(empty).not.toContain("[Error ...]");
+  });
+
+  it("nested AggregateError recursion truncates at max_depth", () => {
+    let e = new Error("leaf");
+    for (let i = 0; i < 10; i++) e = new AggregateError([e], "L" + i);
+    const out = Bun.inspect(e, { depth: 2 });
+    expect(out).toContain("AggregateError: L7");
+    expect(out).toContain("[Error ...]");
+    expect(out).not.toContain("error: leaf");
+
+    const full = Bun.inspect(e, { depth: Infinity });
+    expect(full).toContain("error: leaf");
+
+    // Common flat case is unchanged.
+    const flat = Bun.inspect(new AggregateError([new Error("a"), new Error("b")], "agg"));
+    expect(flat).toContain("error: a");
+    expect(flat).toContain("error: b");
+    expect(flat).not.toContain("[Error ...]");
+  });
+
+  it("nested MessageEvent/ErrorEvent respects max_depth", () => {
+    let me = new MessageEvent("message", { data: 1 });
+    for (let i = 0; i < 10; i++) me = new MessageEvent("message", { data: me });
+    const out = Bun.inspect(me, { depth: 2 });
+    expect(out).toContain("[MessageEvent ...]");
+    expect(out.length).toBeLessThan(400);
+    expect(Bun.inspect(me, { depth: Infinity })).toContain("data: 1");
+
+    let ee = new ErrorEvent("error", { error: 1 });
+    for (let i = 0; i < 10; i++) ee = new ErrorEvent("error", { error: ee });
+    expect(Bun.inspect(ee, { depth: 2 })).toContain("[ErrorEvent ...]");
+    expect(Bun.inspect(ee, { depth: Infinity })).toContain("error: 1,");
+  });
+
+  it("deep AggregateError with depth: Infinity bails on stack limit instead of crashing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let e = new Error("leaf");
+         for (let i = 0; i < 20000; i++) e = new AggregateError([e], "L" + i);
+         const out = Bun.inspect(e, { depth: Infinity });
+         console.log("len=" + out.length);
+         console.log("truncated=" + out.includes("[Error ...]"));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith("len=");
+    expect(stdout).toContain("truncated=true");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/25309
+it("object property enumeration scales linearly with property count", () => {
+  function makeWide(n) {
+    const o = {};
+    for (let i = 0; i < n; i++) o["p" + i] = i;
+    return o;
+  }
+  function timeInspect(o) {
+    const t0 = performance.now();
+    const out = Bun.inspect(o);
+    return { ms: performance.now() - t0, out };
+  }
+
+  const small = makeWide(3000);
+  const large = makeWide(30000);
+
+  withoutAggressiveGC(() => {
+    Bun.inspect(small); // warm up
+    const s = timeInspect(small);
+    const l = timeInspect(large);
+
+    // Output still lists every property (no behavior change).
+    expect(s.out.includes("p2999")).toBe(true);
+    expect(l.out.includes("p29999")).toBe(true);
+
+    // Per-property cost must stay roughly constant as n grows 10x. The previous
+    // Vector-based visited-property dedup was O(n^2), giving a ~9x ratio here.
+    expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
   });
 });

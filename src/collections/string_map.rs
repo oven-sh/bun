@@ -10,12 +10,6 @@ pub struct StringMap {
     pub dupe_keys: bool,
 }
 
-impl Default for StringMap {
-    fn default() -> Self {
-        Self::init(false)
-    }
-}
-
 impl StringMap {
     pub fn init(dupe_keys: bool) -> Self {
         Self {

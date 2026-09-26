@@ -18,8 +18,8 @@
 // — so use this deterministic constant instead. The static_assert on the
 // !LAZY branch below fails the Linux/Windows build if it drifts from
 // sqlite3_local.h.
-#define BUN_SQLITE_BUNDLED_VERSION "3.53.2"
-#define BUN_SQLITE_BUNDLED_VERSION_NUMBER 3053002
+#define BUN_SQLITE_BUNDLED_VERSION "3.53.4"
+#define BUN_SQLITE_BUNDLED_VERSION_NUMBER 3053004
 
 #if LAZY_LOAD_SQLITE
 #include "lazy_sqlite3.h"
@@ -183,8 +183,8 @@ static JSObject* createNodeSqliteError(JSGlobalObject* globalObject, int errcode
     auto& vm = getVM(globalObject);
     auto* zigGlobal = defaultGlobalObject(globalObject);
     JSObject* error = createError(zigGlobal, ErrorCode::ERR_SQLITE_ERROR, message);
-    error->putDirect(vm, Identifier::fromString(vm, "errcode"_s), jsNumber(errcode), 0);
-    error->putDirect(vm, Identifier::fromString(vm, "errstr"_s), jsString(vm, WTF::String::fromUTF8(sqlite3_errstr(errcode))), 0);
+    Bun::putDirectNamed(vm, error, "errcode"_s, jsNumber(errcode));
+    Bun::putDirectNamed(vm, error, "errstr"_s, jsString(vm, WTF::String::fromUTF8(sqlite3_errstr(errcode))));
     return error;
 }
 
@@ -868,19 +868,24 @@ static WTF::Lock openDatabasesLock;
 // Keyed by the owning VM, captured while the cell is provably alive: the exit
 // walk filters on the stored pointer instead of dereferencing cells that
 // another thread's heap may be sweeping. Entries are not GC roots.
-static WTF::HashMap<JSDatabaseSync*, JSC::VM*>& openDatabases()
+struct OpenDatabaseOwner {
+    JSC::VM* vm;
+    // The Bun.ModuleGraph context whose script opened it (0: none): closed when that graph is disposed.
+    WebCore::ScriptExecutionContextIdentifier graphContext;
+};
+static WTF::HashMap<JSDatabaseSync*, OpenDatabaseOwner>& openDatabases()
 {
-    static WTF::NeverDestroyed<WTF::HashMap<JSDatabaseSync*, JSC::VM*>> map;
+    static WTF::NeverDestroyed<WTF::HashMap<JSDatabaseSync*, OpenDatabaseOwner>> map;
     return map;
 }
 
-static void registerOpenDatabase(JSDatabaseSync* db, JSC::VM& vm)
+static void registerOpenDatabase(JSDatabaseSync* db, JSC::JSGlobalObject* globalObject)
 {
     // The destructor is what removes the raw pointer again (via
     // closeInternal), so it must run before the cell's memory is reused.
     static_assert(JSDatabaseSync::needsDestruction == JSC::NeedsDestruction);
     WTF::Locker locker { openDatabasesLock };
-    openDatabases().set(db, &vm);
+    openDatabases().set(db, OpenDatabaseOwner { &globalObject->vm(), WebCore::ScriptExecutionContext::ownerOfSQLiteDatabase(globalObject) });
 }
 
 static void unregisterOpenDatabase(JSDatabaseSync* db)
@@ -971,7 +976,7 @@ extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObje
     {
         WTF::Locker locker { openDatabasesLock };
         for (auto& entry : openDatabases()) {
-            if (entry.value == exitingVM)
+            if (entry.value.vm == exitingVM)
                 toClose.append(entry.key);
         }
     }
@@ -988,6 +993,23 @@ extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObje
         // making a later GC destructor a no-op rather than a double close.
         db->closeInternal();
     }
+}
+
+// The databases script of a Bun.ModuleGraph opened, when that graph is disposed.
+extern "C" void Bun__closeNodeSqliteDatabasesOfGraphContext(WebCore::ScriptExecutionContextIdentifier graphContext)
+{
+    WTF::Vector<JSDatabaseSync*> toClose;
+    {
+        WTF::Locker locker { openDatabasesLock };
+        for (auto& entry : openDatabases()) {
+            if (entry.value.graphContext == graphContext)
+                toClose.append(entry.key);
+        }
+    }
+    // (dispose() from inside a UDF/authorizer: closeInternal() leaves the connection to the
+    // outermost BusyScope, which unwinds here, unlike at process exit.)
+    for (auto* db : toClose)
+        db->closeInternal();
 }
 
 void JSDatabaseSync::deleteTrackedSessions()
@@ -1041,8 +1063,9 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     }
 
 #if LAZY_LOAD_SQLITE
-    if (lazyLoadSQLite() < 0) [[unlikely]] {
-        scope.throwException(globalObject, createError(globalObject, WTF::String::fromUTF8(dlerror())));
+    WTF::String msg;
+    if (lazyLoadSQLite(&msg) < 0) [[unlikely]] {
+        scope.throwException(globalObject, createError(globalObject, msg));
         return false;
     }
 #endif
@@ -1075,7 +1098,7 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     ++m_openGeneration;
     // Register before the fallible configuration calls below: each of their
     // failure paths goes through closeInternal(), which unregisters.
-    registerOpenDatabase(this, globalObject->vm());
+    registerOpenDatabase(this, globalObject);
 
 #if LAZY_LOAD_SQLITE
     // Apple's system libsqlite3 defaults SQLITE_FCNTL_PERSIST_WAL on;
@@ -1197,12 +1220,7 @@ void JSDatabaseSync::rememberRegistration(const WTF::String& name, int argc, con
 
 GCClient::IsoSubspace* JSDatabaseSync::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDatabaseSync, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteDatabaseSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteDatabaseSync = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteDatabaseSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteDatabaseSync = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSDatabaseSync, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteDatabaseSync, m_subspaceForNodeSqliteDatabaseSync));
 }
 
 // ─── DatabaseSync prototype functions ───────────────────────────────────────
@@ -1225,13 +1243,13 @@ JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncDeserialize);
 JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncCreateTagStore);
 JSC_DECLARE_HOST_FUNCTION(jsDatabaseSyncDispose);
 
-#define THIS_DATABASE()                                                                                                     \
-    auto& vm = JSC::getVM(globalObject);                                                                                    \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                   \
-    JSDatabaseSync* self = dynamicDowncast<JSDatabaseSync>(callFrame->thisValue());                                         \
-    if (!self) [[unlikely]] {                                                                                               \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "DatabaseSync"_s)); \
-        return {};                                                                                                          \
+#define THIS_DATABASE()                                                                       \
+    auto& vm = JSC::getVM(globalObject);                                                      \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                     \
+    JSDatabaseSync* self = dynamicDowncast<JSDatabaseSync>(callFrame->thisValue());           \
+    if (!self) [[unlikely]] {                                                                 \
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "DatabaseSync"_s); \
+        return {};                                                                            \
     }
 
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncOpen, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -2197,10 +2215,10 @@ static const HashTableValue JSDatabaseSyncPrototypeTableValues[] = {
 void JSDatabaseSyncPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSDatabaseSync::info(), JSDatabaseSyncPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSDatabaseSync::info(), JSDatabaseSyncPrototypeTableValues, *this);
     // Symbol.dispose — swallow errors if not open, matching Node.js.
     putDirectNativeFunction(vm, globalObject, vm.propertyNames->disposeSymbol, 0, jsDatabaseSyncDispose, ImplementationVisibility::Public, NoIntrinsic, 0);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // ─── DatabaseSync constructor ───────────────────────────────────────────────
@@ -2584,12 +2602,7 @@ Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
 
 GCClient::IsoSubspace* JSStatementSync::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSStatementSync, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteStatementSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteStatementSync = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteStatementSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteStatementSync = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSStatementSync, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteStatementSync, m_subspaceForNodeSqliteStatementSync));
 }
 
 // ─── Parameter binding ──────────────────────────────────────────────────────
@@ -2747,13 +2760,13 @@ JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetReturnArrays);
 JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetAllowBareNamedParameters);
 JSC_DECLARE_HOST_FUNCTION(jsStatementSyncSetAllowUnknownNamedParameters);
 
-#define THIS_STATEMENT()                                                                                                     \
-    auto& vm = JSC::getVM(globalObject);                                                                                     \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                    \
-    JSStatementSync* self = dynamicDowncast<JSStatementSync>(callFrame->thisValue());                                        \
-    if (!self) [[unlikely]] {                                                                                                \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "StatementSync"_s)); \
-        return {};                                                                                                           \
+#define THIS_STATEMENT()                                                                       \
+    auto& vm = JSC::getVM(globalObject);                                                       \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                      \
+    JSStatementSync* self = dynamicDowncast<JSStatementSync>(callFrame->thisValue());          \
+    if (!self) [[unlikely]] {                                                                  \
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "StatementSync"_s); \
+        return {};                                                                             \
     }
 
 struct StatementResetter {
@@ -2795,13 +2808,13 @@ static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, Thr
     sqlite3_int64 changes = sqlite3_changes64(db);
     sqlite3_int64 rowid = sqlite3_last_insert_rowid(db);
     if (self->useBigInts()) {
-        result->putDirect(vm, Identifier::fromString(vm, "changes"_s), JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(changes)), 0);
+        Bun::putDirectNamed(vm, result, "changes"_s, JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(changes)));
         RETURN_IF_EXCEPTION(scope, {});
-        result->putDirect(vm, Identifier::fromString(vm, "lastInsertRowid"_s), JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(rowid)), 0);
+        Bun::putDirectNamed(vm, result, "lastInsertRowid"_s, JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(rowid)));
         RETURN_IF_EXCEPTION(scope, {});
     } else {
-        result->putDirect(vm, Identifier::fromString(vm, "changes"_s), jsNumber(static_cast<double>(changes)), 0);
-        result->putDirect(vm, Identifier::fromString(vm, "lastInsertRowid"_s), jsNumber(static_cast<double>(rowid)), 0);
+        Bun::putDirectNamed(vm, result, "changes"_s, jsNumber(static_cast<double>(changes)));
+        Bun::putDirectNamed(vm, result, "lastInsertRowid"_s, jsNumber(static_cast<double>(rowid)));
     }
     return JSValue::encode(result);
 }
@@ -3003,8 +3016,8 @@ static const HashTableValue JSStatementSyncPrototypeTableValues[] = {
 void JSStatementSyncPrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSStatementSync::info(), JSStatementSyncPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSStatementSync::info(), JSStatementSyncPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSStatementSyncConstructor::call(JSGlobalObject* globalObject, CallFrame*)
@@ -3069,12 +3082,7 @@ DEFINE_VISIT_CHILDREN(JSStatementSyncIterator);
 
 GCClient::IsoSubspace* JSStatementSyncIterator::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSStatementSyncIterator, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteStatementSyncIterator.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteStatementSyncIterator = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteStatementSyncIterator.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteStatementSyncIterator = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSStatementSyncIterator, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteStatementSyncIterator, m_subspaceForNodeSqliteStatementSyncIterator));
 }
 
 static inline JSObject* createIterResult(VM& vm, JSGlobalObject* globalObject, bool done, JSValue value)
@@ -3091,7 +3099,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* self = dynamicDowncast<JSStatementSyncIterator>(callFrame->thisValue());
     if (!self) [[unlikely]] {
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "StatementSyncIterator"_s));
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "StatementSyncIterator"_s);
         return {};
     }
     // Once exhausted, next() doesn't touch the statement — so keep
@@ -3146,7 +3154,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorReturn, (JSGlobalObject * global
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* self = dynamicDowncast<JSStatementSyncIterator>(callFrame->thisValue());
     if (!self) [[unlikely]] {
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "StatementSyncIterator"_s));
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "StatementSyncIterator"_s);
         return {};
     }
     // return() is the iterator-protocol cleanup hook (called implicitly by
@@ -3181,7 +3189,7 @@ static const HashTableValue JSStatementSyncIteratorPrototypeTableValues[] = {
 void JSStatementSyncIteratorPrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSStatementSyncIterator::info(), JSStatementSyncIteratorPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSStatementSyncIterator::info(), JSStatementSyncIteratorPrototypeTableValues, *this);
     // No toStringTag — Node's iterator is a plain object whose prototype
     // chain ends at %IteratorPrototype% (which supplies @@iterator).
 }
@@ -3257,21 +3265,16 @@ DEFINE_VISIT_CHILDREN(JSNodeSqliteSession);
 
 GCClient::IsoSubspace* JSNodeSqliteSession::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSNodeSqliteSession, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteSession.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteSession = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteSession.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteSession = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSNodeSqliteSession, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteSession, m_subspaceForNodeSqliteSession));
 }
 
-#define THIS_SESSION()                                                                                                 \
-    auto& vm = JSC::getVM(globalObject);                                                                               \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                              \
-    JSNodeSqliteSession* self = dynamicDowncast<JSNodeSqliteSession>(callFrame->thisValue());                          \
-    if (!self) [[unlikely]] {                                                                                          \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "Session"_s)); \
-        return {};                                                                                                     \
+#define THIS_SESSION()                                                                        \
+    auto& vm = JSC::getVM(globalObject);                                                      \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                     \
+    JSNodeSqliteSession* self = dynamicDowncast<JSNodeSqliteSession>(callFrame->thisValue()); \
+    if (!self) [[unlikely]] {                                                                 \
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "Session"_s);      \
+        return {};                                                                            \
     }
 
 static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallFrame* callFrame,
@@ -3360,7 +3363,7 @@ static const HashTableValue JSNodeSqliteSessionPrototypeTableValues[] = {
 void JSNodeSqliteSessionPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSNodeSqliteSession::info(), JSNodeSqliteSessionPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSNodeSqliteSession::info(), JSNodeSqliteSessionPrototypeTableValues, *this);
     putDirectNativeFunction(vm, globalObject, vm.propertyNames->disposeSymbol, 0, jsSessionDispose, ImplementationVisibility::Public, NoIntrinsic, 0);
 }
 
@@ -3426,12 +3429,7 @@ DEFINE_VISIT_CHILDREN(JSNodeSqliteLimits);
 
 GCClient::IsoSubspace* JSNodeSqliteLimits::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSNodeSqliteLimits, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteLimits.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteLimits = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteLimits.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteLimits = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSNodeSqliteLimits, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteLimits, m_subspaceForNodeSqliteLimits));
 }
 
 bool JSNodeSqliteLimits::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
@@ -3578,12 +3576,7 @@ DEFINE_VISIT_CHILDREN(JSNodeSqliteTagStore);
 
 GCClient::IsoSubspace* JSNodeSqliteTagStore::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSNodeSqliteTagStore, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteTagStore.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteTagStore = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteTagStore.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteTagStore = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSNodeSqliteTagStore, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteTagStore, m_subspaceForNodeSqliteTagStore));
 }
 
 JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, ThrowScope& scope, CallFrame* callFrame)
@@ -3742,13 +3735,13 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
     return stmtObj;
 }
 
-#define THIS_TAGSTORE()                                                                                                    \
-    auto& vm = JSC::getVM(globalObject);                                                                                   \
-    auto scope = DECLARE_THROW_SCOPE(vm);                                                                                  \
-    JSNodeSqliteTagStore* self = dynamicDowncast<JSNodeSqliteTagStore>(callFrame->thisValue());                            \
-    if (!self) [[unlikely]] {                                                                                              \
-        scope.throwException(globalObject, createInvalidThisError(globalObject, callFrame->thisValue(), "SQLTagStore"_s)); \
-        return {};                                                                                                         \
+#define THIS_TAGSTORE()                                                                         \
+    auto& vm = JSC::getVM(globalObject);                                                        \
+    auto scope = DECLARE_THROW_SCOPE(vm);                                                       \
+    JSNodeSqliteTagStore* self = dynamicDowncast<JSNodeSqliteTagStore>(callFrame->thisValue()); \
+    if (!self) [[unlikely]] {                                                                   \
+        throwInvalidThisError(globalObject, scope, callFrame->thisValue(), "SQLTagStore"_s);    \
+        return {};                                                                              \
     }
 
 // Shared tag execution: prepare/reset/bind then delegate to the same
@@ -3833,8 +3826,8 @@ static const HashTableValue JSNodeSqliteTagStorePrototypeTableValues[] = {
 void JSNodeSqliteTagStorePrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSNodeSqliteTagStore::info(), JSNodeSqliteTagStorePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSNodeSqliteTagStore::info(), JSNodeSqliteTagStorePrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSNodeSqliteTagStoreConstructor::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStoreConstructor) };
@@ -4031,8 +4024,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         if (remaining != 0) {
             if (progressFn) {
                 JSObject* payload = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-                payload->putDirect(vm, Identifier::fromString(vm, "totalPages"_s), jsNumber(totalPages), 0);
-                payload->putDirect(vm, Identifier::fromString(vm, "remainingPages"_s), jsNumber(remaining), 0);
+                Bun::putDirectNamed(vm, payload, "totalPages"_s, jsNumber(totalPages));
+                Bun::putDirectNamed(vm, payload, "remainingPages"_s, jsNumber(remaining));
                 MarkedArgumentBuffer args;
                 args.append(payload);
                 auto callData = JSC::getCallData(progressFn);

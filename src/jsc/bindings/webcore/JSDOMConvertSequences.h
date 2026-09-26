@@ -80,14 +80,6 @@ struct SequenceTraits<
         }
     }
 
-    static void reserveEstimated(
-        JSC::JSGlobalObject& lexicalGlobalObject,
-        VectorType& sequence,
-        size_t size)
-    {
-        reserveExact(lexicalGlobalObject, sequence, size);
-    }
-
     template<typename T>
     static void append(
         JSC::JSGlobalObject& lexicalGlobalObject,
@@ -120,11 +112,6 @@ struct SequenceTraits<IDLType, std::array<typename IDLType::ImplementationType, 
             throwTypeError(&lexicalGlobalObject, scope);
         }
     }
-
-    static void reserveEstimated(
-        JSC::JSGlobalObject& lexicalGlobalObject,
-        VectorType& sequence,
-        size_t size) {}
 
     template<typename T>
     static void append(
@@ -170,7 +157,6 @@ struct GenericSequenceConverter {
         forEachInIterable(&lexicalGlobalObject, object, [&result, &index, &elementCtx](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            // auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue);
             auto convertedValue = Bun::convertIDL<IDLType>(*lexicalGlobalObject, nextValue, elementCtx);
             RETURN_IF_EXCEPTION(scope, );
             Traits::append(*lexicalGlobalObject, result, index++, WTF::move(convertedValue));
@@ -272,7 +258,6 @@ struct SequenceConverter {
                 if (!indexValue)
                     indexValue = JSC::jsUndefined();
 
-                // auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue);
                 auto convertedValue = Bun::convertIDL<IDLType>(lexicalGlobalObject, indexValue, elementCtx);
                 RETURN_IF_EXCEPTION(scope, {});
                 Traits::append(lexicalGlobalObject, result, i, WTF::move(convertedValue));
@@ -287,7 +272,6 @@ struct SequenceConverter {
             if (!indexValue)
                 indexValue = JSC::jsUndefined();
 
-            // auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue);
             auto convertedValue = Bun::convertIDL<IDLType>(lexicalGlobalObject, indexValue, elementCtx);
             RETURN_IF_EXCEPTION(scope, {});
             Traits::append(lexicalGlobalObject, result, i, WTF::move(convertedValue));

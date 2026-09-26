@@ -121,8 +121,12 @@ pub mod waiter_thread_flag {
 
     static SHOULD_USE_WAITER_THREAD: AtomicBool = AtomicBool::new(false);
 
+    /// The waiter thread is the fallback for Linux without pidfd. kqueue
+    /// platforms always have EVFILT_PROC, and the thread's loop has no wakeup
+    /// for newly appended processes there, so the flag is not honoured on them.
     #[inline]
     pub fn set() {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         SHOULD_USE_WAITER_THREAD.store(true, Ordering::Relaxed);
     }
 
@@ -185,6 +189,6 @@ pub use spawn_process::spawn_process_posix;
 #[cfg(windows)]
 pub use spawn_process::uv_getrusage;
 pub use spawn_process::{
-    Dup2, ExtraPipe, FdT, IoCounters, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult,
-    PosixStdio, Rusage, RusageFields, StdioKind, WinRusage, WinTimeval, rusage_zeroed,
+    Dup2, ExtraPipe, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio, Rusage,
+    RusageFields, StdioKind, rusage_zeroed,
 };

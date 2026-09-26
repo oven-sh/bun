@@ -4,7 +4,7 @@
 //!
 //! `Worker::create` / `initialize_transpiler` build the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
-//! bitwise struct copy); the `linker.resolver` backref is wired by
+//! bitwise struct copy); the self-referential `linker` backrefs are wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
 use core::mem::{ManuallyDrop, MaybeUninit};
@@ -49,9 +49,7 @@ pub struct ThreadPool {
     // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
     // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
     pub(crate) io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
-    // Conditionally owned via `worker_pool_is_owned`; kept raw so callers
-    // (bundle_v2.rs) can dereference for `wake_for_idle_events()` without a
-    // borrow on `ThreadPool`.
+    // Conditionally owned via `worker_pool_is_owned`.
     pub worker_pool: *mut ThreadPoolLib::ThreadPool,
     pub(crate) worker_pool_is_owned: bool,
     // Per PORTING.md §Concurrency ("Mutex<T> owns T"), the lock is folded into
@@ -237,7 +235,7 @@ impl ThreadPool {
     pub(crate) fn worker_pool(&self) -> &ThreadPoolLib::ThreadPool {
         debug_assert!(!self.worker_pool.is_null());
         // SAFETY: `worker_pool` is initialized before any caller can observe
-        // `self` and lives until `deinit_v2`; all driver methods take `&self`.
+        // `self` and lives until `deinit`; all driver methods take `&self`.
         unsafe { &*self.worker_pool }
     }
 
@@ -247,6 +245,14 @@ impl ThreadPool {
     #[inline]
     pub(crate) fn io_pool_ref(&self) -> Option<&ThreadPoolLib::ThreadPool> {
         self.io_pool.as_deref()
+    }
+
+    /// Sends every thread that may hold a [`Worker`] through its idle queue.
+    pub(crate) fn wake_for_idle_events(&self) {
+        self.worker_pool().wake_for_idle_events();
+        if let Some(io) = self.io_pool_ref() {
+            io.wake_for_idle_events();
+        }
     }
 
     pub(crate) fn start(&self) {
@@ -422,6 +428,7 @@ impl ThreadPool {
                     // fn-pointer in `deinit_task.callback`, `bool` fields).
                     worker = bun_core::heap::into_raw(Box::<Worker>::new_uninit()).cast::<Worker>();
                     v.insert(worker);
+                    WORKER_LIVE_COUNT.fetch_add(1, Ordering::SeqCst);
                 }
             }
         }
@@ -462,6 +469,10 @@ static TLS_WORKER: core::cell::Cell<(u64, *mut Worker)> =
     core::cell::Cell::new((0, core::ptr::null_mut()));
 
 static POOL_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+
+/// `Worker`s created and not yet torn down by their thread, across every pool in the process.
+/// Read by `bun:internal-for-testing`.
+pub static WORKER_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 // ───────────────────────────────────────────────────────────────────────────
 // Worker
@@ -637,6 +648,7 @@ impl Worker {
         if worker.has_created {
             worker.heap = None;
         }
+        WORKER_LIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
     }
 
     // returns `&'static mut` (detached) — the `Worker` is
@@ -690,11 +702,10 @@ impl Worker {
         let arena_ref: &'static ThreadLocalArena =
             unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
 
-        // The
-        // ASTMemoryAllocator owns its bump arena internally and ignores the
-        // passed fallback (see ASTMemoryAllocator::new doc).
-        *self.ast_memory_store = bun_ast::ASTMemoryAllocator::new(arena_ref);
-        self.ast_memory_store.reset();
+        // One mi_heap for the AST stores, `AstAlloc` spills and the parser's
+        // arena: allocations alternate between them per node, and mimalloc
+        // caches only the last heap a thread touched.
+        *self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
         self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());

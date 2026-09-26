@@ -742,6 +742,33 @@ describe("crypto.KeyObjects", () => {
     }
   });
 
+  it("rsa-pss deprecated hash/mgf1Hash options: an error thrown while emitting the DEP0154 warning propagates", async () => {
+    // Emitting a DeprecationWarning reads process.noDeprecation; run in a child so the getter can't
+    // affect other tests.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Object.defineProperty(process, "noDeprecation", { get() { throw new Error("noDeprecation getter"); } });
+        for (const opt of ["hash", "mgf1Hash"]) {
+          try {
+            require("crypto").generateKeyPairSync("rsa-pss", { modulusLength: 512, [opt]: "sha256" });
+            console.log(opt + ": no throw");
+          } catch (e) {
+            console.log(opt + ": " + e.message);
+          }
+        }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("hash: noDeprecation getter\nmgf1Hash: noDeprecation getter\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   ["ed25519", "x25519"].forEach(keyType => {
     it(`${keyType} equals should work`, async () => {
       const first = generateKeyPairSync(keyType);

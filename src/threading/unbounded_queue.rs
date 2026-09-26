@@ -50,13 +50,6 @@ impl<T> Link<T> {
     }
 }
 
-impl<T> Default for Link<T> {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Shorthand for the common [`Node`] case: `T` embeds a [`Link<Self>`] field.
 /// Implement this and the blanket `impl<T: Linked> Node for T` below supplies
 /// the four accessors. Node types with packed/custom link storage (e.g.

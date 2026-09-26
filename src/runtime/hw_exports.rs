@@ -23,7 +23,9 @@
 use core::ffi::c_void;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame,
+};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
 //
@@ -34,7 +36,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFra
 
 /// `export fn Bun__isMainThreadVM() callconv(.c) bool { return get().is_main_thread; }`
 // HOST_EXPORT(Bun__isMainThreadVM, c)
-pub fn is_main_thread_vm() -> bool {
+pub(crate) fn is_main_thread_vm() -> bool {
     VirtualMachine::get().as_mut().is_main_thread
 }
 
@@ -46,7 +48,7 @@ pub fn is_main_thread_vm() -> bool {
 /// scope would trip `assert_exception_presence_matches(false)` if one left an
 /// exception pending while we return `UNDEFINED`.
 // HOST_EXPORT(Bun__drainMicrotasksFromJS)
-pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSValue {
+pub(crate) fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSValue {
     // Hot path (~2×/request via cork callback chain): pass the incoming
     // `global` straight through instead of re-deriving it via
     // TLS→vm→event_loop→vm→global (4 dependent loads — perf root-cause #1).
@@ -62,7 +64,7 @@ pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSV
 
 /// `export fn Bun__logUnhandledException(exception: JSValue) void { get().runErrorHandler(exception, null); }`
 // HOST_EXPORT(Bun__logUnhandledException, c)
-pub fn log_unhandled_exception(exception: JSValue) {
+pub(crate) fn log_unhandled_exception(exception: JSValue) {
     VirtualMachine::get()
         .as_mut()
         .run_error_handler(exception, None);
@@ -77,19 +79,27 @@ pub fn log_unhandled_exception(exception: JSValue) {
 // HOST_EXPORT(Bun__remapStackFramePositions, c)
 // Forwards `frames` to the C++-side remapper without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn remap_stack_frame_positions(
+pub(crate) fn remap_stack_frame_positions(
     vm: &mut VirtualMachine,
     frames: *mut ZigStackFrame,
     frames_count: usize,
 ) {
+    // The collector thread is not otherwise a Bun thread: give it the per-thread output source a source-map warning writes
+    // through and the stack bound the map parser's recursion guard reads (idempotent), and flush what it wrote, since
+    // nothing else on that thread will.
+    let on_js_thread = VirtualMachine::get_or_null().is_some();
+    bun_core::output::Source::configure_thread();
     // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
     // the raw ptr because it forwards to the C++-side remapper.
     unsafe { vm.remap_stack_frame_positions(frames, frames_count) };
+    if !on_js_thread {
+        bun_core::output::flush();
+    }
 }
 
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm, is_patched)`
 // HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMain, c)
-pub fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: bool) {
+pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: bool) {
     if vm.is_in_preload {
         vm.has_patched_run_main = is_patched;
     }
@@ -97,7 +107,7 @@ pub fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: bool) {
 
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm, promise)`
 // HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMainPromise, c)
-pub fn set_override_module_run_main_promise(
+pub(crate) fn set_override_module_run_main_promise(
     vm: &mut VirtualMachine,
     promise: *mut JSInternalPromise,
 ) {
@@ -109,7 +119,7 @@ pub fn set_override_module_run_main_promise(
 
 /// Exported as `Bun__VM__setEntryPointEvalResultESM`.
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultESM, c)
-pub fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValue) {
+pub(crate) fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValue) {
     // allow esm evaluate to set value multiple times
     if !this.entry_point_result.cjs_set_value {
         // `global()` returns `&'static`, decoupled from `this` for the
@@ -121,7 +131,7 @@ pub fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValu
 
 /// Exported as `Bun__VM__setEntryPointEvalResultCJS`.
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultCJS, c)
-pub fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue) {
+pub(crate) fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue) {
     if !this.entry_point_result.value.has() {
         // `global()` returns `&'static`, decoupled from `this` for the
         // disjoint `&mut this.entry_point_result` borrow.
@@ -133,14 +143,11 @@ pub fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue
 
 /// Exported as `Bun__VM__specifierIsEvalEntryPoint`.
 // HOST_EXPORT(Bun__VM__specifierIsEvalEntryPoint, c)
-pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
+pub(crate) fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
     if let Some(eval_source) = this.module_loader.eval_source.as_ref() {
         let global = this.global();
-        // `bun_core::String` is
-        // `Copy` with NO `Drop`; `OwnedString` is the RAII wrapper that derefs.
-        let specifier_str = bun_core::OwnedString::new(
-            bun_jsc::bun_string_jsc::from_js(specifier, global).expect("unexpected exception"),
-        );
+        let specifier_str =
+            bun_core::String::from_js(specifier, global).expect("unexpected exception");
         return specifier_str.eql_utf8(eval_source.path.text);
     }
     false
@@ -149,17 +156,16 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
 /// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
 /// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
-pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
+pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
     if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
         return;
     }
     let global = this.global();
     // A failed conversion just skips the note; must never panic at an FFI
     // boundary.
-    let Ok(specifier_str) = bun_jsc::bun_string_jsc::from_js(specifier, global) else {
+    let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
         return;
     };
-    let specifier_str = bun_core::OwnedString::new(specifier_str);
     if specifier_str.eql_utf8(this.main()) {
         this.entry_point_result.evaluated_as_cjs = true;
     }
@@ -168,7 +174,7 @@ pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
 /// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to
 /// the next tick on the event loop.
 // HOST_EXPORT(Bun__closeChildIPC, c)
-pub fn close_child_ipc(global: &JSGlobalObject) {
+pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if let Some(current_ipc) = crate::ipc_host::get_ipc_instance(vm) {
         // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
@@ -229,12 +235,10 @@ mod sql_hooks {
         cache: *mut c_void,
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> *mut bun_uws::SslCtx {
+    ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
         // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
         let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
-        cache
-            .get_or_create_opts(opts, err)
-            .unwrap_or(core::ptr::null_mut())
+        cache.get_or_create_opts(opts, err)
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         use crate::socket::SSLConfigFromJs;
@@ -305,7 +309,7 @@ mod sql_hooks {
 // ─── entry-point promise reactions (used by `--print`) ───────────────────────
 
 // HOST_EXPORT(Bun__onResolveEntryPointResult)
-pub fn on_resolve_entry_point_result(
+pub(crate) fn on_resolve_entry_point_result(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> bun_jsc::JsResult<JSValue> {
@@ -328,7 +332,7 @@ pub fn on_resolve_entry_point_result(
 }
 
 // HOST_EXPORT(Bun__onRejectEntryPointResult)
-pub fn on_reject_entry_point_result(
+pub(crate) fn on_reject_entry_point_result(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> bun_jsc::JsResult<JSValue> {
@@ -359,16 +363,14 @@ pub fn on_reject_entry_point_result(
 /// `NodeModuleModule._stat(path) -> i32` (0=file, 1=dir, -ENOENT otherwise).
 ///
 /// # Safety
-/// `arg_str` and `out` must be valid C++ stack locals.
+/// `out` must be a valid C++ stack local.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
     _global: *mut JSGlobalObject,
-    arg_str: *const bun_core::String,
+    arg_str: &bun_core::String,
     out: *mut i32,
 ) -> bool {
-    // SAFETY: `arg_str` is a live `bun.String` (C++ stack local); `out` is a
-    // valid out-param.
-    let s = unsafe { (*arg_str).to_utf8() };
+    let s = arg_str.to_utf8();
     // SAFETY: `out` is a valid C++ stack out-param.
     unsafe { *out = bun_jsc::node_module_module::stat(s.slice()) };
     true
@@ -377,21 +379,15 @@ unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
 /// `BunObject.braces(input, options) -> JSValue`.
 ///
 /// # Safety
-/// `arg_input` and `arg_options` must be valid C++ stack locals.
+/// `arg_options` must be a valid C++ stack local.
 // HOST_EXPORT(bindgen_BunObject_dispatchBraces1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn bindgen_bunobject_dispatch_braces(
+pub(crate) fn bindgen_bunobject_dispatch_braces(
     global: &JSGlobalObject,
-    arg_input: *const bun_core::String,
+    input: &bun_core::String,
     arg_options: *const crate::api::bun_object::r#gen::BracesOptions,
 ) -> JSValue {
-    // SAFETY: `arg_input`/`arg_options` are valid C++ stack locals.
-    // The C++ caller retains ownership of the ref-counted handle — we take a
-    // bitwise copy with **no** refcount bump. `bun_core::String` is `Copy`
-    // with no `Drop`, so a plain deref does exactly that; `braces` only
-    // borrows the bytes via `to_utf8()` and never derefs the handle.
-    let input = unsafe { *arg_input };
     // SAFETY: `arg_options` points to a `BracesOptions` on the C++ caller's stack.
     let opts = unsafe { *arg_options };
     bun_jsc::host_fn::to_js_host_call(global, || {
@@ -406,7 +402,7 @@ pub fn bindgen_bunobject_dispatch_braces(
 // HOST_EXPORT(bindgen_BunObject_dispatchGc1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn bindgen_bunobject_dispatch_gc(
+pub(crate) fn bindgen_bunobject_dispatch_gc(
     global: &JSGlobalObject,
     arg_force: *const bool,
     out: *mut usize,
@@ -414,9 +410,9 @@ pub fn bindgen_bunobject_dispatch_gc(
     // SAFETY: `arg_force`/`out` are valid C++ stack locals.
     let force = unsafe { *arg_force };
     // `garbage_collect(force)`: mimalloc cleanup, then sync `runGC(true)`
-    // when `force`, else `collectAsync()` + `heap.size()`.
+    // when `force`, else `collect_async()` + `heap_size()`.
     // SAFETY: bun_vm() never null for a Bun-owned global.
-    unsafe { *out = global.bun_vm().as_mut().garbage_collect(force) };
+    unsafe { *out = global.bun_vm().as_mut().garbage_collect_from_js(force) };
     true
 }
 
@@ -424,38 +420,24 @@ pub fn bindgen_bunobject_dispatch_gc(
 /// (highlighter.test.ts internal).
 ///
 /// # Safety
-/// `arg_code`, `arg_formatter`, and `out` must be valid C++ stack locals.
+/// `arg_formatter` and `out` must be valid C++ stack locals.
 // HOST_EXPORT(bindgen_Fmt_jsc_dispatchFmtString1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn bindgen_fmt_jsc_dispatch_fmt_string(
+pub(crate) fn bindgen_fmt_jsc_dispatch_fmt_string(
     global: &JSGlobalObject,
-    arg_code: *const bun_core::String,
+    arg_code: &bun_core::String,
     arg_formatter: *const bun_jsc::fmt_jsc::js_bindings::Formatter,
     out: *mut bun_core::String,
 ) -> bool {
-    // SAFETY: `arg_code`/`arg_formatter`/`out` are valid C++ stack locals
-    // (see GeneratedBindings.cpp call site).
-    let code = unsafe { (*arg_code).to_utf8() };
+    let code = arg_code.to_utf8();
     // SAFETY: `arg_formatter` points to a `Formatter` on the C++ caller's stack.
     let formatter = unsafe { *arg_formatter };
-    match bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter) {
-        Ok(s) => {
-            // SAFETY: `out` is a valid C++ stack out-param.
-            unsafe { *out = s };
-            true
-        }
-        // OOM is the one `JsError` variant that does **not** leave a pending
-        // exception on the VM; throw it explicitly before signalling failure.
-        Err(bun_jsc::JsError::OutOfMemory) => {
-            let _ = global.throw_out_of_memory();
-            false
-        }
-        // `JSError` / `JSTerminated` already set (or cleared) the pending
-        // exception on `global`; the bindgen ABI signals "exception pending"
-        // via `false`.
-        Err(_) => false,
-    }
+    bindgen_out(
+        global,
+        out,
+        bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter),
+    )
 }
 
 /// `DevServer.getDeinitCountForTesting() -> usize`.
@@ -481,7 +463,7 @@ unsafe extern "C" fn bindgen_DevServer_dispatchGetDeinitCountForTesting1(
 // HOST_EXPORT(bindgen_Bindgen_test_dispatchAdd1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn bindgen_bindgen_test_dispatch_add(
+pub(crate) fn bindgen_bindgen_test_dispatch_add(
     global: &JSGlobalObject,
     arg_a: *const i32,
     arg_b: *const i32,
@@ -564,7 +546,7 @@ fn bindgen_out<T>(global: &JSGlobalObject, out: *mut T, r: bun_jsc::JsResult<T>)
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchCpus1)
-pub fn bindgen_node_os_cpus(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+pub(crate) fn bindgen_node_os_cpus(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
     node_os::cpus(global)
 }
 
@@ -585,7 +567,7 @@ unsafe extern "C" fn bindgen_Node_os_dispatchFreemem1(
 // HOST_EXPORT(bindgen_Node_os_dispatchGetPriority1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn bindgen_node_os_dispatch_get_priority(
+pub(crate) fn bindgen_node_os_dispatch_get_priority(
     global: &JSGlobalObject,
     arg_pid: *const i32,
     out: *mut i32,
@@ -599,7 +581,7 @@ pub fn bindgen_node_os_dispatch_get_priority(
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchHomedir1, c)
-pub fn bindgen_node_os_dispatch_homedir(
+pub(crate) fn bindgen_node_os_dispatch_homedir(
     global: &JSGlobalObject,
     out: *mut bun_core::String,
 ) -> bool {
@@ -607,17 +589,19 @@ pub fn bindgen_node_os_dispatch_homedir(
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchHostname1)
-pub fn bindgen_node_os_hostname(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+pub(crate) fn bindgen_node_os_hostname(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
     node_os::hostname(global)
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchLoadavg1)
-pub fn bindgen_node_os_loadavg(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+pub(crate) fn bindgen_node_os_loadavg(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
     node_os::loadavg(global)
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchNetworkInterfaces1)
-pub fn bindgen_node_os_network_interfaces(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
+pub(crate) fn bindgen_node_os_network_interfaces(
+    global: &JSGlobalObject,
+) -> bun_jsc::JsResult<JSValue> {
     node_os::network_interfaces(global)
 }
 
@@ -646,7 +630,7 @@ unsafe extern "C" fn bindgen_Node_os_dispatchTotalmem1(
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchUptime1, c)
-pub fn bindgen_node_os_dispatch_uptime(global: &JSGlobalObject, out: *mut f64) -> bool {
+pub(crate) fn bindgen_node_os_dispatch_uptime(global: &JSGlobalObject, out: *mut f64) -> bool {
     bindgen_out(global, out, node_os::uptime(global))
 }
 
@@ -655,18 +639,19 @@ pub fn bindgen_node_os_dispatch_uptime(global: &JSGlobalObject, out: *mut f64) -
 // HOST_EXPORT(bindgen_Node_os_dispatchUserInfo1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn bindgen_node_os_dispatch_user_info(
+pub(crate) fn bindgen_node_os_dispatch_user_info(
     global: &JSGlobalObject,
     arg_options: *const crate::node::os::gen_::UserInfoOptions,
 ) -> JSValue {
     // SAFETY: `arg_options` is a valid C++ stack local; `UserInfoOptions` is
-    // `#[repr(C)]` matching the bindgen `extern struct`.
-    let options = unsafe { core::ptr::read(arg_options) };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, &options))
+    // `#[repr(C)]` matching the bindgen `extern struct`. Borrowed: its strings
+    // are `Bun::toString` views owned by the C++ frame.
+    let options = unsafe { &*arg_options };
+    bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, options))
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchVersion1, c)
-pub fn bindgen_node_os_dispatch_version(
+pub(crate) fn bindgen_node_os_dispatch_version(
     global: &JSGlobalObject,
     out: *mut bun_core::String,
 ) -> bool {
@@ -678,7 +663,7 @@ pub fn bindgen_node_os_dispatch_version(
 // HOST_EXPORT(bindgen_Node_os_dispatchSetPriority1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn bindgen_node_os_dispatch_set_priority1(
+pub(crate) fn bindgen_node_os_dispatch_set_priority1(
     global: &JSGlobalObject,
     arg_pid: *const i32,
     arg_priority: *const i32,
@@ -696,7 +681,7 @@ pub fn bindgen_node_os_dispatch_set_priority1(
 // HOST_EXPORT(bindgen_Node_os_dispatchSetPriority2, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn bindgen_node_os_dispatch_set_priority2(
+pub(crate) fn bindgen_node_os_dispatch_set_priority2(
     global: &JSGlobalObject,
     arg_priority: *const i32,
 ) -> bool {
@@ -730,8 +715,8 @@ bun_jsc::jsc_abi_extern! {
 }
 
 // HOST_EXPORT(js2native_bindgen_fmt_jsc_fmtString, jsc)
-pub fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue {
-    let name = bun_core::ZigString::init_utf8(b"fmtString");
+pub(crate) fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue {
+    let name = bun_core::EncodedSlice::latin1(b"fmtString");
     bun_jsc::host_fn::new_runtime_function(
         global,
         Some(&name),
@@ -743,8 +728,8 @@ pub fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue 
 }
 
 // HOST_EXPORT(js2native_bindgen_DevServer_getDeinitCountForTesting, jsc)
-pub fn js2native_bindgen_dev_server_get_deinit_count(global: &JSGlobalObject) -> JSValue {
-    let name = bun_core::ZigString::init_utf8(b"getDeinitCountForTesting");
+pub(crate) fn js2native_bindgen_dev_server_get_deinit_count(global: &JSGlobalObject) -> JSValue {
+    let name = bun_core::EncodedSlice::latin1(b"getDeinitCountForTesting");
     bun_jsc::host_fn::new_runtime_function(
         global,
         Some(&name),

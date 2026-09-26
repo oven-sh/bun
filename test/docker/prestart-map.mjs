@@ -3,7 +3,7 @@
 // must agree on it, which is why it lives in its own module:
 //   - test/docker/coordinator.ts starts every mapped service for the shard at
 //     launch, so containers are (ideally) healthy before the first request.
-//   - scripts/runner.node.mjs orders matching test files toward the end of the
+//   - scripts/runner.node.ts orders matching test files toward the end of the
 //     shard, so container cold-start (~10s for mysqld) overlaps with the
 //     non-docker tests that run first instead of being paid as wall time
 //     inside the first docker test's beforeAll.

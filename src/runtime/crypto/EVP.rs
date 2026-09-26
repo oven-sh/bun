@@ -2,15 +2,15 @@ use core::ffi::{CStr, c_uint};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_core::{String as BunString, ZigString};
+use bun_core::String as BunString;
 
 use crate::jsc::JSGlobalObject;
 
-pub struct EVP {
+pub(crate) struct EVP {
     pub ctx: boringssl::EVP_MD_CTX,
     // FFI: BoringSSL EVP_MD singletons are static for the process lifetime.
     md: *const boringssl::EVP_MD,
-    pub(crate) algorithm: Algorithm,
+    algorithm: Algorithm,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ pub struct EVP {
 // enum here; the higher-tier extras (`names`, `lookup`, `tag_cstr`) that need
 // bun_str live below as an extension trait / free fns on the re-exported type.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_sha_hmac::evp::Algorithm;
+pub(crate) use bun_sha_hmac::evp::Algorithm;
 
 /// Higher-tier helpers on the lowered `Algorithm` enum (orphan rules prevent an
 /// inherent `impl` on a foreign type, so callers `use evp::AlgorithmExt as _;`).
@@ -162,6 +162,10 @@ pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
 }
 
 impl EVP {
+    pub(crate) fn algorithm(&self) -> Algorithm {
+        self.algorithm
+    }
+
     /// # Safety
     /// `md` must be a valid `EVP_MD` pointer (BoringSSL static singleton) and
     /// `engine` must be either null or a valid `ENGINE` pointer.
@@ -188,7 +192,7 @@ impl EVP {
     /// `engine` must be either null or a valid `ENGINE` pointer.
     // Forwards `engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn reset(&mut self, engine: *mut boringssl::ENGINE) {
+    pub(crate) fn reset(&mut self, engine: *mut boringssl::ENGINE) {
         // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx was
         // initialized in init() and remains valid for the lifetime of EVP; self.md is a
         // static singleton.
@@ -306,8 +310,7 @@ impl EVP {
         None
     }
 
-    pub(crate) fn by_name(name: &ZigString, global: &JSGlobalObject) -> Option<EVP> {
-        let name_str = name.to_slice();
+    pub(crate) fn by_name(name: &[u8], global: &JSGlobalObject) -> Option<EVP> {
         // `RareData::boring_engine()` returns `*mut` to bun_jsc's local opaque `ENGINE`
         // stub (bun_jsc has no bun_boringssl_sys dep). Both name the same C `ENGINE`
         // struct, so cast to the real bindgen type for the FFI call.
@@ -320,7 +323,7 @@ impl EVP {
             .boring_engine()
             .cast::<boringssl::ENGINE>();
         // SAFETY: `boring_engine()` returns the VM's lazily-initialized ENGINE (valid or null).
-        Self::by_name_and_engine(engine, name_str.slice())
+        Self::by_name_and_engine(engine, name)
     }
 }
 

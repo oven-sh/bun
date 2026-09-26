@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
+use bun_core::{MutableString, String as BunString};
 use bun_event_loop::{
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
     Task, Taskable,
@@ -16,11 +16,10 @@ use bun_http::{
     Signals, ThreadSafeStreamBuffer,
 };
 use bun_io::KeepAlive;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
-};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional};
+use bun_ptr::RefPtr;
 use bun_sys::FdExt;
 use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
@@ -34,11 +33,12 @@ use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
+use bun_jsc::AbortSignalRef;
 
-use bun_jsc::JsTerminatedResult;
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask callbacks at the tier-3 layer.
-type ElJsResult<T> = bun_event_loop::JsResult<T>;
+
+use http::signals::BODY_HIGH_WATER_MARK;
 
 use boringssl::c::{X509_free, d2i_X509};
 
@@ -47,7 +47,7 @@ use boringssl::c::{X509_free, d2i_X509};
 /// The "last ref dropped on the HTTP thread → deinit on the JS thread" hop:
 /// same pointer, its own tag, so teardown can tell it from a progress update.
 #[repr(transparent)]
-pub struct FetchTaskletDeinitHop(FetchTasklet);
+pub(crate) struct FetchTaskletDeinitHop(FetchTasklet);
 impl Taskable for FetchTaskletDeinitHop {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletDeinit;
     /// The last ref dropped on the HTTP thread while we were tearing down:
@@ -56,23 +56,54 @@ impl Taskable for FetchTaskletDeinitHop {
         // SAFETY: fn contract.
         unsafe { Self::run(this) }
     }
+    /// Frees a tasklet; calls no script.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 impl FetchTaskletDeinitHop {
     /// # Safety
     /// `this` is the tasklet the hop was created from, ref_count == 0, JS thread.
     pub(crate) unsafe fn run(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { FetchTasklet::deinit(this.cast()) }
+        // SAFETY: fn contract — sole owner.
+        drop(unsafe { bun_core::heap::take(this.cast::<FetchTasklet>()) });
+    }
+}
+
+/// The HTTP thread drained the request body's buffer: the hop that tells the sink, on the JS
+/// thread. Same pointer, its own tag.
+#[repr(transparent)]
+pub(crate) struct FetchTaskletRequestDrain(FetchTasklet);
+impl Taskable for FetchTaskletRequestDrain {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletRequestDrain;
+    /// Carries the +1 `on_write_request_data_drain` took.
+    unsafe fn release_unrun(this: *mut Self) {
+        FetchTasklet::deref(this.cast::<FetchTasklet>());
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+impl FetchTaskletRequestDrain {
+    pub(crate) fn run(this: *mut Self) {
+        FetchTasklet::resume_request_data_stream(this.cast::<FetchTasklet>());
     }
 }
 
 impl Taskable for FetchTasklet {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
     /// A progress hop the HTTP thread posted: it carries the +1 that
-    /// `on_progress_update` would have dropped. The HTTP thread is parked /
-    /// this VM's requests are back, so a 1→0 here deinits against a live heap.
+    /// `on_progress_update` would have dropped. The HTTP thread's own +1 is
+    /// released only after its last touch of the tasklet, so a 1→0 here means
+    /// it is done with it, and this runs on the JS thread with the heap alive.
     unsafe fn release_unrun(this: *mut Self) {
         FetchTasklet::deref(this);
+    }
+    /// `on_progress_update` decides: a fetch whose context stopped reports nothing, and what is left
+    /// of it is released there.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -84,7 +115,6 @@ const SCHEDULED_PRERESERVE_MAX: usize = 256 * 1024 * 1024;
 use http::signals::BodyReceiveMode;
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-#[ref_count(destroy = FetchTasklet::deinit)]
 pub struct FetchTasklet {
     // Heap-allocated `FetchRequestBodySink` (a `JSSink`). FetchTasklet owns the
     // allocation from `start_request_stream` until `clear_sink`; the JS
@@ -95,29 +125,34 @@ pub struct FetchTasklet {
     pub(crate) http: Option<Box<AsyncHTTP<'static>>>,
     pub(crate) result: HTTPClientResult<'static>,
     pub(crate) metadata: Option<HTTPResponseMetadata>,
-    /// How the HTTP thread reaches the VM (post progress/deinit tasks). JS-thread
-    /// code uses the VM through `global_this` instead.
-    pub(crate) loop_handle: jsc::LoopHandle,
+    /// Held while the request is out on the HTTP thread (`queue` until its
+    /// final callback / `release_at_shutdown`): how that thread posts progress
+    /// and deinit tasks, and what makes the VM wait for it. JS-thread code uses
+    /// the VM through `global_this` instead and never touches this.
+    pub(crate) http_ticket: Option<jsc::Ticket>,
     pub global_this: GlobalRef,
     pub(crate) request_body: HTTPRequestBody,
-    // ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
-    // starts at 2) and shared with the HTTP thread via raw ptr; `Arc` can't be mutably
-    // borrowed for `acquire/release`. Model as a raw pointer.
-    pub(crate) request_body_streaming_buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
+    /// This side's ref; the HTTP thread holds the other of the two initial refs.
+    pub(crate) request_body_streaming_buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
 
     /// buffer used to stream response to JS
     pub(crate) scheduled_response_buffer: MutableString,
     /// response weak ref we need this to track the response JS lifetime
     pub(crate) response: jsc::Weak<FetchTasklet>,
     /// native response ref if we still need it when JS is discarted
-    // Response is intrusively refcounted; modeled as a raw ptr.
-    pub(crate) native_response: Option<*mut Response>,
-    /// stream strong ref if any is available
-    pub(crate) readable_stream_ref: ReadableStreamStrong,
+    pub(crate) native_response: JsCell<Option<RefPtr<Response>>>,
+    /// The response body stream while this tasklet is its producer.
+    pub(crate) response_stream: crate::webcore::byte_stream::ProducerHold,
     pub(crate) request_headers: Headers,
+    /// `Content-Length` framing a streaming body; `write_request_data` counts against it.
+    pub(crate) declared_request_body_len: Option<u64>,
+    pub(crate) request_body_len_written: u64,
+    /// The count missed and `WriteMessageType::LengthMismatch` was sent.
+    pub(crate) request_body_mismatched: bool,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
-    pub poll_ref: KeepAlive,
+    /// `JsCell`: the ByteStream's drain signal reaches `on_stream_drained` through a shared ref.
+    pub poll_ref: JsCell<KeepAlive>,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
@@ -128,10 +163,10 @@ pub struct FetchTasklet {
     /// We always clone url and proxy (if informed)
     pub(crate) url_proxy_buffer: Box<[u8]>,
 
-    // WebCore::AbortSignal is C++-refcounted (intrusive). Model as
-    // raw ptr; ref/unref via `bun_jsc::AbortSignal`
-    // methods (see clear_abort_signal / queue).
-    pub(crate) signal: Option<*mut AbortSignal>,
+    /// The context whose script called `fetch()`, and its `signal` option.
+    pub(crate) abort_handle: jsc::AbortHandle,
+    /// That context's id: the handle forgets its context once that stops.
+    pub(crate) context: jsc::ContextId,
     pub(crate) signals: Signals,
     pub(crate) signal_store: http::signals::Store,
     pub(crate) has_schedule_callback: AtomicBool,
@@ -141,17 +176,15 @@ pub struct FetchTasklet {
 
     // custom checkServerIdentity
     pub(crate) check_server_identity: StrongOptional,
+    /// The `Bun.FetchSession` of this request, kept from being collected (and
+    /// closing its pool) while the request can still park a socket there.
+    pub(crate) fetch_session: Option<super::fetch_session::SessionHold>,
+    /// The session has the callback, and holds it; `fetch_session` holds the session.
+    pub(crate) session_check_server_identity: bool,
     pub(crate) reject_unauthorized: bool,
     pub(crate) upgraded_connection: bool,
-    // Custom Hostname
-    pub(crate) hostname: Option<Box<[u8]>>,
+    pub(crate) unix_socket_path: Box<[u8]>,
     pub(crate) is_waiting_body: bool,
-    /// Set by `on_start_buffering_callback` (JS thread) and read by
-    /// `callback()` (HTTP thread, under `mutex`): the body is being
-    /// accumulated in `scheduled_response_buffer` for a buffered consumer.
-    /// Distinguishes that path from `drop_backpressure_if_unobserved`, which
-    /// also sets `BufferAll` but still delivers per chunk.
-    pub(crate) is_buffering_body: AtomicBool,
     pub(crate) is_waiting_abort: bool,
     pub(crate) is_waiting_request_stream_start: bool,
     pub(crate) mutex: Mutex,
@@ -165,7 +198,7 @@ pub struct FetchTasklet {
 // `fetch.rs` (e.g. `HTTPRequestBodyExt::any_blob`) and would require changes
 // across files. The enum is also short-lived per-request, so the size cost is bounded.
 #[allow(clippy::large_enum_variant)]
-pub enum HTTPRequestBody {
+pub(crate) enum HTTPRequestBody {
     AnyBlob(AnyBlob),
     Sendfile(http::SendFile),
     ReadableStream(ReadableStreamStrong),
@@ -210,18 +243,20 @@ impl HTTPRequestBody {
         }
     }
 
-    pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<HTTPRequestBody> {
-        let mut body_value = BodyValue::from_js(global_this, value)?;
+    pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
+        let mut body_value = BodyValue::from_js(cx.global(), value)?;
         if matches!(body_value, BodyValue::Used)
-            || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(global_this)))
+            || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(cx.global())))
         {
-            return Err(global_this
+            return Err(cx
+                .global()
                 .err(
                     jsc::ErrorCode::BODY_ALREADY_USED,
                     format_args!("body already used"),
                 )
                 .throw());
         }
+        body_value.to_blob_if_in_memory();
         if let BodyValue::Locked(locked) = &mut body_value {
             if locked.readable.has() {
                 // `BodyValue` now has `Drop` (H3), so we cannot move
@@ -234,7 +269,7 @@ impl HTTPRequestBody {
             }
         }
         if matches!(&body_value, BodyValue::Locked(_)) {
-            let readable = body_value.to_readable_stream(global_this)?;
+            let readable = body_value.to_readable_stream(cx)?;
             if !readable.is_empty_or_undefined_or_null() {
                 if let BodyValue::Locked(l) = &mut body_value {
                     if l.readable.has() {
@@ -286,7 +321,27 @@ impl HTTPRequestBody {
     }
 }
 
+jsc::impl_abort_handle_owner!(FetchTasklet, abort_handle, |this, cause| {
+    // SAFETY: trait contract — `this` is live; JS thread.
+    unsafe {
+        match cause {
+            jsc::AbortCause::Signal(reason) => (*this).abort_listener(reason),
+            jsc::AbortCause::ContextStopped(_) => (*this).abort_task(),
+        }
+    }
+});
+
+impl Drop for FetchTasklet {
+    fn drop(&mut self) {
+        bun_output::scoped_log!(FetchTasklet, "deinit");
+        self.ref_count.assert_no_refs();
+        self.clear_data();
+    }
+}
+
 impl FetchTasklet {
+    const HOLDS_TICKET: &str = "fetch on the HTTP thread holds a ticket";
+
     // ───── raw-ptr field accessors (centralised unsafe) ───────────────────
     //
     // `signal` / `sink` / `native_response` are intrusive-refcounted heap
@@ -329,13 +384,6 @@ impl FetchTasklet {
         unsafe { &*this }
     }
 
-    /// HTTP thread → JS thread: queue `task` on the tasklet's VM. Returns the
-    /// task back if the VM has been torn down (caller releases what it holds).
-    #[inline]
-    fn post(&self, task: core::ptr::NonNull<ConcurrentTask>) -> jsc::vm_handle::Posted {
-        self.loop_handle.post_task(task)
-    }
-
     /// Wrap a borrowed body chunk in a `StreamResult::Temporary*` for
     /// synchronous delivery to `ByteStream::on_data`.
     ///
@@ -355,13 +403,9 @@ impl FetchTasklet {
         }
     }
 
-    /// `Some(&AbortSignal)` while we hold a strong ref on the C++-owned
-    /// `WebCore::AbortSignal*` (taken in `queue`, released in
-    /// `clear_abort_signal`).
     #[inline]
     fn abort_signal(&self) -> Option<&AbortSignal> {
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST handle — safe `*const → &`.
-        self.signal.map(|p| bun_opaque::opaque_deref(p))
+        self.abort_handle.signal()
     }
 
     /// True iff an attached AbortSignal has fired.
@@ -390,6 +434,7 @@ impl FetchTasklet {
         // mutex inside `ThreadSafeStreamBuffer` serialises every cross-thread
         // access (`buffer` and the drain callback alike).
         self.request_body_streaming_buffer
+            .as_ref()
             .map(|p| unsafe { &mut *p.as_ptr() })
     }
 
@@ -415,23 +460,27 @@ impl FetchTasklet {
     // Forwards `this` to ThreadSafeRefCount/dealloc without dereferencing; signature must
     // stay `*mut` because the call may drop the last ref and free the allocation.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    fn deref_from_thread(this: *mut FetchTasklet) {
+    fn deref_from_thread(this: *mut FetchTasklet, ticket: &jsc::Ticket) {
         // SAFETY: caller contract.
         if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
             return;
         }
-        let self_ = Self::from_raw_ref(this);
         // Last ref dropped on the HTTP thread: deinit must run on the JS thread
         // (it drops JSC Strong/Weak handles), so hop there — as a task with its
-        // own tag, so a VM that is tearing down releases it from its queue. The
-        // VM waits for its fetches (embedded work) before closing its handle,
-        // so this is always queued.
-        let task = ConcurrentTask::create(bun_event_loop::Task::init(
+        // own tag, so a VM that is tearing down releases it from its queue.
+        ticket.post(ConcurrentTask::create(bun_event_loop::Task::init(
             this.cast::<FetchTaskletDeinitHop>(),
-        ));
-        let jsc::vm_handle::Posted::Queued = self_.post(task) else {
-            unreachable!("VM handle closed with a fetch outstanding on the HTTP thread");
-        };
+        )));
+    }
+
+    /// HTTP thread, final callback: the fetch is back. Move the ticket out
+    /// (nothing here touches the tasklet after the ref drop) and drop this
+    /// thread's ref through it.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn hand_back(this: *mut FetchTasklet) {
+        // SAFETY: caller contract; the field is HTTP-thread-only.
+        let ticket = unsafe { (*this).http_ticket.take() }.expect(Self::HOLDS_TICKET);
+        Self::deref_from_thread(this, &ticket);
     }
 
     fn clear_sink(&mut self) {
@@ -444,28 +493,26 @@ impl FetchTasklet {
             // FetchTasklet ref — `write_end_request` is the canonical release.
             sink.task = None;
             // `detach` may fire the controller's onClose; every terminal path
-            // here has already cleared it, so this just unprotects the cell and
-            // nulls m_sinkPtr.
-            JSSink::<FetchRequestBodySink>::detach(&mut sink.source, &self.global_this);
+            // here has already cleared it, so this just nulls m_sinkPtr.
+            sink.source.detach(&self.global_this);
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
-            // SAFETY: intrusive-refcounted heap allocation from `ThreadSafeStreamBuffer::new`; this
-            // side holds one of the two initial refs. The HTTP thread may still be using its ref;
-            // `clear_drain_callback` synchronises with it through the buffer's mutex.
+            // The HTTP thread may still be using its ref; `clear_drain_callback`
+            // synchronises with it through the buffer's mutex.
+            // SAFETY: kept live by `buffer`.
             unsafe { (*buffer.as_ptr()).clear_drain_callback() };
-            ThreadSafeStreamBuffer::deref(buffer);
         }
     }
 
     fn clear_data(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "clearData ");
+        // `http.client` borrows `url_proxy_buffer` / `unix_socket_path` / `request_headers`.
+        self.http = None;
         if !self.url_proxy_buffer.is_empty() {
             self.url_proxy_buffer = Box::default();
         }
 
-        if let Some(_hostname) = self.hostname.take() {
-            // dropped by Box
-        }
+        self.unix_socket_path = Box::default();
 
         if let Some(certificate) = self.result.certificate_info.take() {
             drop(certificate);
@@ -474,22 +521,14 @@ impl FetchTasklet {
         // Drop on assignment runs the cleanup. MultiArrayList has no `clear()`.
         self.request_headers = Headers::default();
 
-        if let Some(http_) = self.http.as_mut() {
-            http_.clear_data();
-        }
-
         if let Some(metadata) = self.metadata.take() {
             drop(metadata);
         }
 
         self.response.clear();
-        if let Some(response) = self.native_response.take() {
-            // SAFETY: `response` is the +1 ref held in `native_response`.
-            Response::unref(response);
-        }
+        self.native_response.set(None);
 
         self.clear_stream_handlers();
-        self.readable_stream_ref.deinit();
 
         self.scheduled_response_buffer = MutableString::default();
         // Always detach request_body regardless of type.
@@ -500,37 +539,10 @@ impl FetchTasklet {
 
         self.abort_reason.deinit();
         self.check_server_identity.deinit();
+        self.fetch_session = None;
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
-    }
-
-    /// SAFETY: `this` must be the last reference (ref_count == 0) and have been allocated via heap::alloc.
-    unsafe fn deinit(this: *mut FetchTasklet) {
-        bun_output::scoped_log!(FetchTasklet, "deinit");
-
-        // SAFETY: caller contract — `this` is live with ref_count == 0.
-        unsafe { (*this).ref_count.assert_no_refs() };
-        // JS thread: no longer something the VM must abort at teardown.
-        crate::jsc_hooks::ActiveHandle::Fetch(NonNull::new(this).expect("tasklet")).unregister();
-
-        // SAFETY: this was allocated via heap::alloc in `get()`; ref_count == 0 so exclusive
-        let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.clear_data();
-        // self.http: Option<Box<AsyncHTTP>> dropped here automatically
-        drop(boxed);
-    }
-
-    /// VM teardown's stop phase (JS thread): abort the transport. The HTTP
-    /// thread then fails the request promptly — started or still queued — and
-    /// hands the tasklet back through its final callback, which teardown
-    /// waits for before the handle closes.
-    ///
-    /// # Safety
-    /// `this` is live (registered ⇒ not yet deinit'd); JS thread.
-    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut FetchTasklet) {
-        // SAFETY: fn contract.
-        unsafe { (*this).abort_task() };
     }
 
     /// `HTTPClientResultCallback::release_at_shutdown` for `FetchTasklet`.
@@ -546,14 +558,16 @@ impl FetchTasklet {
     ///     `deinit` to the JS thread, which teardown runs from its queue release.
     ///   * `true` — a non-final `on_progress_update` is queued (this entry is
     ///     still in `in_flight`, so the *final* `callback` hasn't run). That
-    ///     queued node owns the JS-side ref. The JS thread releases it from
-    ///     `release_queued_tasks` *after* the HTTP daemon parks;
-    ///     dropping it here too would leave the queued node pointing at a
-    ///     freed `FetchTasklet`. Drop only the HTTP-side ref.
+    ///     queued node owns the JS-side ref and its VM releases it from its
+    ///     queue; dropping it here too would leave the queued node pointing at
+    ///     a freed `FetchTasklet`. Drop only the HTTP-side ref.
     ///
-    /// `has_schedule_callback` is written exclusively by the HTTP-thread
-    /// `callback` and the JS-thread `on_progress_update`; the JS thread is
-    /// parked in `wait_timeout_while` here, so the load is race-free.
+    /// Only reachable for a request whose VM has *not* torn down (a worker
+    /// still running when the main thread exits): a VM's teardown waits for its
+    /// fetches' tickets — i.e. for their final callback — before the exiting
+    /// main thread parks the HTTP thread. `has_schedule_callback` is written by
+    /// the HTTP-thread `callback` and the JS-thread `on_progress_update` under
+    /// its own compare-exchange discipline, which this load relies on.
     ///
     /// SAFETY: `this` is the live `*mut FetchTasklet` registered as
     /// `result_callback.ctx` in `get()`; HTTP-thread-only at this point.
@@ -565,24 +579,23 @@ impl FetchTasklet {
         let queued_progress_update =
             unsafe { (*this).has_schedule_callback.load(Ordering::Acquire) };
         // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
-        let handle = unsafe {
+        let ticket = unsafe {
             (*this).scheduled_response_buffer = MutableString::default();
-            (*this).loop_handle.clone()
-        };
-        // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
-        FetchTasklet::deref_from_thread(this);
+            (*this).http_ticket.take()
+        }
+        .expect(Self::HOLDS_TICKET);
+        FetchTasklet::deref_from_thread(this, &ticket);
         if !queued_progress_update {
-            // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
-            FetchTasklet::deref_from_thread(this);
+            FetchTasklet::deref_from_thread(this, &ticket);
         }
         // The HTTP thread is done with this fetch.
-        handle.embedded_work_finished();
+        drop(ticket);
     }
 
     fn get_current_response(&self) -> Option<*mut Response> {
         // we need a body to resolve the promise when buffering
-        if let Some(response) = self.native_response {
-            return Some(response);
+        if let Some(response) = self.native_response.get().as_ref() {
+            return Some(response.as_ptr());
         }
 
         // if we did not have a direct reference we check if the Weak ref is still alive
@@ -610,21 +623,20 @@ impl FetchTasklet {
         self.get_current_response().map(|r| unsafe { &mut *r })
     }
 
-    fn start_request_stream(&mut self) {
+    fn start_request_stream(&mut self) -> JsResult<()> {
         self.is_waiting_request_stream_start = false;
         debug_assert!(matches!(
             self.request_body,
             HTTPRequestBody::ReadableStream(_)
         ));
         let HTTPRequestBody::ReadableStream(ref stream_ref) = self.request_body else {
-            return;
+            return Ok(());
         };
-        let Some(stream) = stream_ref.get(&self.global_this) else {
-            return;
+        let Some(stream) = stream_ref.get() else {
+            return Ok(());
         };
         if self.signal_aborted() {
-            stream.abort(&self.global_this);
-            return;
+            return stream.abort(&self.global_this);
         }
 
         let global_this = self.global_this;
@@ -638,15 +650,14 @@ impl FetchTasklet {
             let err = jsc::SystemError {
                 code: BunString::static_(<&'static str>::from(
                     jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
-                ))
-                .into(),
-                message: BunString::static_("Stream already used, please create a new one").into(),
+                )),
+                message: BunString::static_("Stream already used, please create a new one"),
                 ..Default::default()
             };
             let err_instance = err.to_error_instance(&global_this);
             err_instance.ensure_still_alive();
             self.write_end_request(Some(err_instance));
-            return;
+            return Ok(());
         }
 
         let self_ptr = std::ptr::from_mut::<FetchTasklet>(self);
@@ -665,7 +676,7 @@ impl FetchTasklet {
         match stream.wire_native_sink(&global_this, sink_handle, JSValue::UNDEFINED, |src| {
             sink.source = src;
         }) {
-            crate::webcore::readable_stream::NativeWireResult::Wired => return,
+            crate::webcore::readable_stream::NativeWireResult::Wired => return Ok(()),
             crate::webcore::readable_stream::NativeWireResult::EndedInline(err) => {
                 // The source finished inside the wire attempt, so leave the
                 // sink in the state `end_from_stream` leaves it: ended, with
@@ -684,7 +695,7 @@ impl FetchTasklet {
                     err_js
                 });
                 self.write_end_request(err_js);
-                return;
+                return Ok(());
             }
             crate::webcore::readable_stream::NativeWireResult::NotNative => {}
         }
@@ -699,7 +710,7 @@ impl FetchTasklet {
         if let Some(err) = assignment_result.to_error() {
             self.write_end_request(Some(err));
             self.clear_sink();
-            return;
+            return Ok(());
         }
 
         if !assignment_result.is_empty_or_undefined_or_null() {
@@ -724,7 +735,7 @@ impl FetchTasklet {
                         self.write_end_request(Some(result));
                     }
                 }
-                return;
+                return Ok(());
             }
         }
 
@@ -733,9 +744,10 @@ impl FetchTasklet {
         // path always balances the `+1` itself.
         sink.task = None;
         self.write_end_request(None);
+        Ok(())
     }
 
-    fn on_body_received(&mut self) -> JsTerminatedResult<()> {
+    fn on_body_received(&mut self) -> JsResult<()> {
         let success = self.result.is_success();
         let global_this = self.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
@@ -772,14 +784,12 @@ impl FetchTasklet {
             let mut err = scopeguard::guard(self.on_reject(), |mut e| e.reset());
             let mut js_err = JSValue::ZERO;
             // if we are streaming update with error
-            if let Some(readable) = self.readable_stream_ref.get(&global_this) {
-                if let Some(bytes) = readable.ptr.bytes() {
-                    js_err = err.to_js(&global_this);
-                    js_err.ensure_still_alive();
-                    bytes.on_data(StreamResult::Err(StreamError::JSValue(
-                        bun_jsc::strong::Optional::create(js_err, &global_this),
-                    )))?;
-                }
+            if let Some(bytes) = self.response_stream.take() {
+                js_err = err.to_js(&global_this);
+                js_err.ensure_still_alive();
+                bytes.on_data(StreamResult::Err(StreamError::JSValue(
+                    bun_jsc::strong::Optional::create(js_err, &global_this),
+                )));
             }
             // A failure result is terminal (`to_result` forces `has_more =
             // false` once `fail` is set), so everything pending must settle
@@ -797,10 +807,7 @@ impl FetchTasklet {
                 // body value now owns the error
                 let err = scopeguard::ScopeGuard::into_inner(err);
                 let body = response.get_body_value();
-                // Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
-                // now; narrow back to the real `JsTerminated` here.
-                body.to_error_instance(err, &global_this)
-                    .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
+                body.to_error_instance(err, &global_this)?;
             }
             // Cancel the request-body sink last: closing the sink signal fires
             // the controller's onClose synchronously, which can re-enter the
@@ -811,33 +818,34 @@ impl FetchTasklet {
             return Ok(());
         }
 
-        if let Some(readable) = self.readable_stream_ref.get(&global_this) {
-            bun_output::scoped_log!(FetchTasklet, "onBodyReceived readable_stream_ref");
-            if let Some(bytes) = readable.ptr.bytes() {
+        // body can be marked as used but we still need to pipe the data
+        if !self.result.has_more {
+            // Unhook before the final delivery so it cannot signal a producer that is done;
+            // release after it so the bytes land in memory we still pin.
+            if let Some(bytes) = self.response_stream.take() {
+                bun_output::scoped_log!(FetchTasklet, "onBodyReceived response_stream done");
                 bytes.size_hint.set(self.get_size_hint());
-                // body can be marked as used but we still need to pipe the data
-                if self.result.has_more {
-                    let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, false))?;
-                    self.drop_backpressure_if_unobserved(&readable, &bytes);
-                } else {
-                    self.clear_stream_handlers();
-                    let prev = core::mem::take(&mut self.readable_stream_ref);
-                    buffer_reset.set(false);
-
-                    let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, true))?;
-                    drop(prev);
-                }
+                buffer_reset.set(false);
+                let chunk = self.scheduled_response_buffer.list.as_slice();
+                bytes.on_data(Self::temporary_chunk(chunk, true));
                 return Ok(());
             }
+        } else if let Some(bytes) = self.response_stream.bytes() {
+            bun_output::scoped_log!(FetchTasklet, "onBodyReceived response_stream");
+            bytes.size_hint.set(self.get_size_hint());
+            let chunk = self.scheduled_response_buffer.list.as_slice();
+            bytes.on_data(Self::temporary_chunk(chunk, false));
+            if self.response_stream.is_held() {
+                self.after_body_chunk_delivered(&bytes);
+            }
+            return Ok(());
         }
 
         if let Some(response) = self.current_response_mut() {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived Current Response");
             let size_hint = self.get_size_hint();
             response.set_size_hint(size_hint);
-            if let Some(readable) = response.get_body_readable_stream(&global_this) {
+            if let Some(readable) = response.get_body_readable_stream() {
                 bun_output::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived CurrentResponse BodyReadableStream"
@@ -846,12 +854,11 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
-                        bytes.on_data(Self::temporary_chunk(chunk, false))?;
-                        self.drop_backpressure_if_unobserved(&readable, &bytes);
+                        bytes.on_data(Self::temporary_chunk(chunk, false));
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(&global_this);
-                        bytes.on_data(Self::temporary_chunk(chunk, true))?;
+                        bytes.on_data(Self::temporary_chunk(chunk, true));
                     }
 
                     return Ok(());
@@ -901,19 +908,23 @@ impl FetchTasklet {
                     // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
                     // response.body) and outlives this block.
                     let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
-                    // Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
-                    // now; narrow back to the real `JsTerminated` here.
                     // SAFETY: `body` points into `response.body`, disjoint from `headers`
                     // (response.init); both live for this block.
-                    BodyValue::resolve(&mut old, unsafe { &mut *body }, &self.global_this, headers)
-                        .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
+                    let body = unsafe { &mut *body };
+                    let context = self.global_this.bun_vm().context_of(self.context);
+                    BodyValue::resolve(
+                        &mut old,
+                        body,
+                        &self.global_this.js_thread(context),
+                        headers,
+                    )?;
                 }
             }
         }
         Ok(())
     }
 
-    pub(crate) fn on_progress_update(&mut self) -> JsTerminatedResult<()> {
+    pub(crate) fn on_progress_update(&mut self) -> JsResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
         self.mutex.lock();
@@ -921,6 +932,8 @@ impl FetchTasklet {
         let is_done = !self.result.has_more;
 
         let vm = self.global_this.bun_vm();
+        // The response, the upload's pump and what they settle continue the script that fetched.
+        let _context = vm.enter_context(self.context);
         // teardown forbade script: we cannot touch JS
         if !vm.script_allowed() {
             // The certificate will never be checked; release the parked
@@ -950,8 +963,8 @@ impl FetchTasklet {
                 // it again — cancel the sink so the JS side releases the reader;
                 // the pump-promise settlement drops the `startRequestStream` ref.
                 this.cancel_request_body_sink(JSValue::UNDEFINED);
-                let mut poll_ref = core::mem::take(&mut this.poll_ref);
-                poll_ref.unref(bun_io::js_vm_ctx());
+                this.poll_ref
+                    .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
                 // SAFETY: `this` is the live heap tasklet; we hold a ref.
                 FetchTasklet::deref(std::ptr::from_mut(this));
             }
@@ -959,7 +972,15 @@ impl FetchTasklet {
 
         if self.is_waiting_request_stream_start && self.result.can_stream {
             // start streaming
-            self.start_request_stream();
+            if let Err(err) = self.start_request_stream() {
+                // The VM is being stopped: leave like the `!script_allowed()` gate above does.
+                self.mutex.unlock();
+                if is_done {
+                    // SAFETY: `self` is the live heap tasklet; we hold a ref.
+                    FetchTasklet::deref(std::ptr::from_mut(self));
+                }
+                return Err(err);
+            }
             // Makes wpt-h2 number-chunk test deterministic.
             // `assign_to_stream` kicks off `await reader.read()`; an invalid
             // chunk type (e.g. a JS number) throws inside `sink.write` and lands in
@@ -1032,8 +1053,10 @@ impl FetchTasklet {
         // failure) and would otherwise be dropped, leaving the socket parked
         // until the idle timeout.
         if let Some(certificate_info) = self.result.certificate_info.take() {
-            // we receive some error
-            if self.reject_unauthorized && !self.check_server_identity(&certificate_info) {
+            // With `rejectUnauthorized: false` the callback still runs, like
+            // Node's, but its verdict is not enforced.
+            let verdict = self.run_check_server_identity(&certificate_info);
+            if self.reject_unauthorized && !self.enforce_server_identity_verdict(verdict) {
                 bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: aborted due certError");
                 drop(certificate_info);
                 // `check_server_identity` already set abort_reason / aborted /
@@ -1126,7 +1149,6 @@ impl FetchTasklet {
 
         let tracker = self.tracker;
         tracker.will_dispatch(&global_this);
-        // defer block:
         let dispatch_cleanup = |_this: &mut FetchTasklet| {
             bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is not null");
             tracker.did_dispatch(&global_this);
@@ -1167,6 +1189,7 @@ impl FetchTasklet {
             promise: self.promise.take(),
             global_object: global_this,
             success,
+            context: self.context,
         });
         // SAFETY: `vm.event_loop()` is the live JS-thread loop.
         unsafe {
@@ -1178,99 +1201,110 @@ impl FetchTasklet {
         Ok(())
     }
 
-    fn check_server_identity(&mut self, certificate_info: &CertificateInfo) -> bool {
-        if let Some(check_server_identity) = self.check_server_identity.get() {
-            check_server_identity.ensure_still_alive();
-            if !certificate_info.cert.is_empty() {
-                let cert = &certificate_info.cert;
-                let mut cert_ptr = cert.as_ptr();
-                // SAFETY: cert is a valid DER buffer; d2i_X509 reads up to cert.len() bytes
-                let x509 = unsafe {
-                    d2i_X509(
-                        core::ptr::null_mut(),
-                        &raw mut cert_ptr,
-                        core::ffi::c_long::try_from(cert.len()).expect("int cast"),
+    /// `Ok` when the callback approved the certificate; `Err(Some(error))`
+    /// with the reason when it did not; `Err(None)` when there was no
+    /// certificate to show it.
+    fn run_check_server_identity(
+        &mut self,
+        certificate_info: &CertificateInfo,
+    ) -> Result<(), Option<JSValue>> {
+        let Some(check_server_identity) = self.check_server_identity_callback() else {
+            return Err(None);
+        };
+        check_server_identity.ensure_still_alive();
+        if certificate_info.cert.is_empty() {
+            return Err(None);
+        }
+        let cert = &certificate_info.cert;
+        let mut cert_ptr = cert.as_ptr();
+        // SAFETY: cert is a valid DER buffer; d2i_X509 reads up to cert.len() bytes
+        let x509 = unsafe {
+            d2i_X509(
+                core::ptr::null_mut(),
+                &raw mut cert_ptr,
+                core::ffi::c_long::try_from(cert.len()).expect("int cast"),
+            )
+        };
+        if x509.is_null() {
+            return Err(None);
+        }
+        let global_object = self.global_this;
+        // SAFETY: `x` is the non-null `X509*` returned by `d2i_X509` above; this
+        // guard is its sole owner and frees it exactly once on scope exit.
+        let _x509_guard = scopeguard::guard(x509, |x| unsafe { X509_free(x) });
+        // SAFETY: x509 is non-null, freshly parsed; freed by guard above.
+        let js_cert = X509::to_js(unsafe { &mut *x509 }, &global_object)
+            .map_err(|e| Some(global_object.take_exception(e)))?;
+        let js_hostname: JSValue =
+            bun_string_jsc::create_utf8_for_js(&global_object, &certificate_info.hostname)
+                .map_err(|e| Some(global_object.take_exception(e)))?;
+        js_hostname.ensure_still_alive();
+        js_cert.ensure_still_alive();
+        let check_result = match check_server_identity.call(
+            &global_object,
+            JSValue::UNDEFINED,
+            &[js_hostname, js_cert],
+        ) {
+            Ok(v) => v,
+            Err(e) => return Err(Some(global_object.take_exception(e))),
+        };
+
+        // > Returns <Error> object [...] on failure
+        // Any object counts: a DOMException or a util.inherits() error is not an ErrorInstance cell.
+        if check_result.is_object() && check_result.as_any_promise().is_none() {
+            return Err(Some(check_result));
+        }
+        // Like Node, fail on any other truthy value, a Promise included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671-L1688
+        if check_result.to_boolean() {
+            let received = JSGlobalObject::determine_specific_type(&global_object, check_result)
+                .map_err(|e| Some(global_object.take_exception(e)))?;
+            return Err(Some(
+                global_object
+                    .err(
+                        jsc::ErrorCode::INVALID_RETURN_VALUE,
+                        format_args!(
+                            "Expected undefined or an Error to be returned from the \"tls.checkServerIdentity\" function but got {received}."
+                        ),
                     )
-                };
-                if !x509.is_null() {
-                    let global_object = self.global_this;
-                    // SAFETY: `x` is the non-null `X509*` returned by `d2i_X509` above; this
-                    // guard is its sole owner and frees it exactly once on scope exit.
-                    let _x509_guard = scopeguard::guard(x509, |x| unsafe { X509_free(x) });
-                    // SAFETY: x509 is non-null, freshly parsed; freed by guard above.
-                    let js_cert = match X509::to_js(unsafe { &mut *x509 }, &global_object) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            match e {
-                                jsc::JsError::Thrown => {}
-                                jsc::JsError::OutOfMemory => {
-                                    let _ = global_object.throw_out_of_memory();
-                                }
-                                jsc::JsError::Terminated => {}
-                            }
-                            let check_result = global_object.try_take_exception().unwrap();
-                            // mark to wait until deinit
-                            self.is_waiting_abort = self.result.has_more;
-                            self.abort_reason.set(&global_object, check_result);
-                            self.abort_task();
-                            self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
-                            return false;
-                        }
-                    };
-                    let hostname =
-                        OwnedString::new(BunString::clone_utf8(&certificate_info.hostname));
-                    let js_hostname: JSValue = match hostname.to_js(&global_object) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            match e {
-                                jsc::JsError::Thrown => {}
-                                jsc::JsError::OutOfMemory => {
-                                    let _ = global_object.throw_out_of_memory();
-                                }
-                                jsc::JsError::Terminated => {}
-                            }
-                            let hostname_err_result = global_object.try_take_exception().unwrap();
-                            self.is_waiting_abort = self.result.has_more;
-                            self.abort_reason.set(&global_object, hostname_err_result);
-                            self.abort_task();
-                            self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
-                            return false;
-                        }
-                    };
-                    js_hostname.ensure_still_alive();
-                    js_cert.ensure_still_alive();
-                    let check_result = match check_server_identity.call(
-                        &global_object,
-                        JSValue::UNDEFINED,
-                        &[js_hostname, js_cert],
-                    ) {
-                        Ok(v) => v,
-                        Err(e) => global_object.take_exception(e),
-                    };
+                    .to_js(),
+            ));
+        }
+        // > On success, returns <undefined>
+        Ok(())
+    }
 
-                    // > Returns <Error> object [...] on failure
-                    if check_result.is_any_error() {
-                        // mark to wait until deinit
-                        self.is_waiting_abort = self.result.has_more;
-                        self.abort_reason.set(&global_object, check_result);
-                        self.abort_task();
-                        self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
-                        return false;
-                    }
-
-                    // > On success, returns <undefined>
-                    // We treat any non-error value as a success.
-                    return true;
+    /// Fail the request for a rejected certificate. Returns whether it may proceed.
+    fn enforce_server_identity_verdict(&mut self, verdict: Result<(), Option<JSValue>>) -> bool {
+        match verdict {
+            Ok(()) => true,
+            Err(Some(reason)) => {
+                let global_object = self.global_this;
+                // mark to wait until deinit
+                self.is_waiting_abort = self.result.has_more;
+                self.abort_reason.set(&global_object, reason);
+                self.abort_task();
+                self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
+                false
+            }
+            Err(None) => {
+                // Every false return must have scheduled the parked socket's shutdown.
+                if let Some(http_) = self.http.as_mut() {
+                    http::http_thread().schedule_shutdown(http_);
                 }
+                self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
+                false
             }
         }
-        // Empty or unparseable certificate bytes: every false return must have
-        // scheduled the parked socket's shutdown, like the paths above.
-        if let Some(http_) = self.http.as_mut() {
-            http::http_thread().schedule_shutdown(http_);
-        }
-        self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
-        false
+    }
+
+    /// The request's own `checkServerIdentity`, else its session's.
+    fn check_server_identity_callback(&self) -> Option<JSValue> {
+        self.check_server_identity.get().or_else(|| {
+            if !self.session_check_server_identity {
+                return None;
+            }
+            self.fetch_session.as_ref()?.check_server_identity()
+        })
     }
 
     fn get_abort_error(&mut self) -> Option<BodyValueError> {
@@ -1300,17 +1334,7 @@ impl FetchTasklet {
     }
 
     fn clear_abort_signal(&mut self) {
-        let Some(signal) = self.signal.take() else {
-            return;
-        };
-        // `signal` is a live C++-owned WebCore::AbortSignal*; we hold one ref
-        // (taken in `fetch.rs` before populating FetchOptions). Order matters:
-        // cleanNativeBindings first, then unref + pending_activity_unref.
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe `*const → &`.
-        let signal = bun_opaque::opaque_deref(signal);
-        signal.clean_native_bindings(std::ptr::from_mut(self).cast::<c_void>());
-        signal.pending_activity_unref();
-        signal.unref();
+        self.abort_handle.unfollow();
     }
 
     fn on_reject(&mut self) -> BodyValueError {
@@ -1333,11 +1357,37 @@ impl FetchTasklet {
             ));
         }
 
+        if fail == http::Error::ProxyConnectFailed {
+            if let Some(metadata) = &self.result.proxy_connect_response {
+                let global_this = self.global_this;
+                let error = Self::proxy_connect_error(&global_this, &metadata.response)
+                    .unwrap_or_else(|e| global_this.take_exception(e));
+                return BodyValueError::JSValue(StrongOptional::create(error, &global_this));
+            }
+        }
+
+        if fail == http::Error::RequestBodyLengthMismatch
+            && let Some(declared) = self.declared_request_body_len
+        {
+            let written = self.request_body_len_written;
+            let err = self
+                .global_this
+                .err(
+                    jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+                    format_args!(
+                        "Request body of {written} bytes does not match the Content-Length of {declared}"
+                    ),
+                )
+                .to_js();
+            return BodyValueError::JSValue(StrongOptional::create(err, &self.global_this));
+        }
+
         // some times we don't have metadata so we also check http.url
+        // Without the URL's userinfo: errors get logged.
         let path = if let Some(metadata) = &self.metadata {
-            BunString::clone_utf8(metadata.url.slice())
+            BunString::clone_utf8(&ZigURL::parse(metadata.url.slice()).href_without_userinfo())
         } else if let Some(http_) = &self.http {
-            BunString::clone_utf8(http_.url.href)
+            BunString::clone_utf8(&http_.url.href_without_userinfo())
         } else {
             BunString::EMPTY
         };
@@ -1359,33 +1409,42 @@ impl FetchTasklet {
                     b"getaddrinfo",
                     hostname,
                 );
-                err.path = path.into();
+                err.path = path;
                 return BodyValueError::SystemTypeError(err);
             }
         }
 
-        let code = if fail == http::Error::ConnectionClosed {
-            BunString::static_("ECONNRESET")
-        } else {
-            BunString::static_(fail.name())
+        // Socket-level failures carry the errno name `node:net` would report.
+        let code: &'static str = match fail {
+            http::Error::ConnectionClosed => "ECONNRESET",
+            http::Error::Timeout => "ETIMEDOUT",
+            http::Error::ConnectionRefused => self.connect_errno_name().unwrap_or("ECONNREFUSED"),
+            http::Error::FailedToOpenSocket => {
+                self.connect_errno_name().unwrap_or_else(|| fail.name())
+            }
+            http::Error::TLSHandshakeFailed => "EPROTO",
+            _ => fail.name(),
         };
 
         let message = match fail {
-            http::Error::ConnectionClosed => BunString::static_(
-                "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
-            ),
-            http::Error::FailedToOpenSocket => {
-                BunString::static_("Was there a typo in the url or port?")
-            }
-            http::Error::TooManyRedirects => BunString::static_(
-                "The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()",
-            ),
-            http::Error::ConnectionRefused => {
-                BunString::static_("Unable to connect. Is the computer able to access the url?")
-            }
-            http::Error::RedirectURLInvalid => {
-                BunString::static_("Redirect URL in Location header is invalid.")
-            }
+            http::Error::ConnectionClosed => BunString::create_format(format_args!(
+                "{code}: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+            )),
+            http::Error::FailedToOpenSocket => BunString::create_format(format_args!(
+                "{code}: Was there a typo in the url or port?"
+            )),
+            http::Error::TooManyRedirects => BunString::create_format(format_args!(
+                "{code}: The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()",
+            )),
+            http::Error::ConnectionRefused => BunString::create_format(format_args!(
+                "{code}: Unable to connect. Is the computer able to access the url?"
+            )),
+            http::Error::TLSHandshakeFailed => BunString::create_format(format_args!(
+                "{code}: The TLS handshake failed. Does the server speak TLS on this port?"
+            )),
+            http::Error::RedirectURLInvalid => BunString::create_format(format_args!(
+                "{code}: Redirect URL in Location header is invalid."
+            )),
 
             http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT) => {
                 BunString::static_("unable to get issuer certificate")
@@ -1564,9 +1623,6 @@ impl FetchTasklet {
             http::Error::Cert(http::CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256) => {
                 BunString::static_("Suite B: cannot sign P-384 with P-256")
             }
-            http::Error::Cert(http::CertError::HOSTNAME_MISMATCH) => {
-                BunString::static_("Hostname mismatch")
-            }
             http::Error::Cert(http::CertError::EMAIL_MISMATCH) => {
                 BunString::static_("Email address mismatch")
             }
@@ -1586,33 +1642,80 @@ impl FetchTasklet {
                 BunString::static_("unknown certificate verification error")
             }
 
-            e => BunString::create_format(format_args!(
-                "{} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()",
-                e.name(),
-                path,
+            _ => BunString::create_format(format_args!(
+                "{code} fetching \"{path}\". For more information, pass `verbose: true` in the second argument to fetch()",
             )),
         };
 
         let fetch_error = jsc::SystemError {
-            code: code.into(),
-            message: message.into(),
-            path: path.into(),
+            code: BunString::static_(code),
+            message,
+            path,
             ..Default::default()
         };
 
         BodyValueError::SystemTypeError(fetch_error)
     }
 
+    fn connect_errno_name(&self) -> Option<&'static str> {
+        if self.result.connect_errno == 0 {
+            return None;
+        }
+        bun_sys::SystemErrno::init(i64::from(self.result.connect_errno)).map(Into::into)
+    }
+
+    /// `ERR_PROXY_TUNNEL` with the `status`, `statusText` and `headers` of the
+    /// proxy's reply to CONNECT.
+    fn proxy_connect_error(
+        global_this: &JSGlobalObject,
+        response: &bun_picohttp::Response<'_>,
+    ) -> JsResult<JSValue> {
+        let error = global_this
+            .err(
+                jsc::ErrorCode::PROXY_TUNNEL,
+                format_args!(
+                    "Proxy refused to open a tunnel: {} {}",
+                    response.status_code,
+                    bstr::BStr::new(response.status),
+                ),
+            )
+            .to_js();
+        error.put(
+            global_this,
+            b"status".as_slice(),
+            JSValue::js_number_from_int32(response.status_code as i32),
+        );
+        error.put(
+            global_this,
+            b"statusText".as_slice(),
+            bun_string_jsc::create_utf8_for_js(global_this, response.status)?,
+        );
+        // SAFETY: `create_from_pico_headers` returns a fresh refcount=1 FetchHeaders*.
+        let mut headers = unsafe {
+            HeadersRef::adopt(FetchHeaders::create_from_pico_headers(
+                response.headers.list,
+            ))
+        };
+        error.put(
+            global_this,
+            b"headers".as_slice(),
+            headers.to_js(global_this),
+        );
+        Ok(error)
+    }
+
     fn on_readable_stream_available(
         ctx: NonNull<c_void>,
-        global_this: &JSGlobalObject,
+        _global_this: &JSGlobalObject,
         readable: ReadableStream,
     ) {
         let this = Self::from_ctx(ctx);
-        this.readable_stream_ref = ReadableStreamStrong::init(readable, global_this);
-        // A ByteStream now drains scheduled_response_buffer per chunk; undo any
-        // buffered-consumer reservation request so callback() stops growing it.
-        this.is_buffering_body.store(false, Ordering::Release);
+        if let crate::webcore::readable_stream::Source::Bytes(bytes) = readable.ptr {
+            // SAFETY: the caller holds the stream, which owns the live ByteStream. JS thread.
+            unsafe { this.response_stream.hold(bytes) };
+        } else {
+            this.response_stream.release();
+        }
     }
 
     fn on_start_streaming_http_response_body_callback(ctx: NonNull<c_void>) -> DrainResult {
@@ -1622,50 +1725,31 @@ impl FetchTasklet {
         }
 
         // A body consumer is attaching; keep the process alive until the
-        // body finishes (undone in `on_progress_update` when `is_done`).
-        this.poll_ref.ref_(bun_io::js_vm_ctx());
-
-        // The bytes already in `scheduled_response_buffer` are handed to the
-        // new stream below. That is the drain `Paused` was waiting for, so
-        // flip back to `AutoPause` so the resume scheduled here actually
-        // un-pauses the socket; otherwise a reader that finds the drained
-        // buffer smaller than the pending view returns `Pending` without
-        // signalling and the transport stays paused past a server FIN.
-        this.signal_store
-            .try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::AutoPause);
-
-        if let Some(http_) = this.http.as_mut() {
-            http_.enable_response_body_streaming();
-
-            // If the server sent the headers and the response body in two separate socket writes
-            // and if the server doesn't close the connection by itself
-            // and doesn't send any follow-up data
-            // then we must make sure the HTTP thread flushes.
-            http::http_thread().schedule_receive_resume(http_.async_http_id);
-        }
+        // body finishes (undone in `on_progress_update` when `is_done`), or
+        // until the stream parks unread (`park_body_stream`).
+        this.poll_ref
+            .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
 
         this.mutex.lock();
-        // A ByteStream is attaching; clear the buffered-consumer reserve gate
-        // under the mutex so the HTTP thread cannot observe the stale `true`
-        // in `callback()` between this unlock and `on_readable_stream_available`.
-        this.is_buffering_body.store(false, Ordering::Release);
-        // explicit unlock at each return
-        // (no `?` paths between lock and unlock, so a guard is unnecessary).
-        let size_hint = this.get_size_hint();
-
-        // This means we have received part of the body but not the whole thing
-        if !this.scheduled_response_buffer.list.is_empty() {
-            let scheduled_response_buffer = core::mem::take(&mut this.scheduled_response_buffer);
-            this.mutex.unlock();
-
-            return DrainResult::Owned {
-                list: scheduled_response_buffer.list,
-                size_hint: size_hint as usize,
-            };
-        }
-
+        let size_hint = this.get_size_hint() as usize;
+        let drained = core::mem::take(&mut this.scheduled_response_buffer.list);
         this.mutex.unlock();
-        DrainResult::EstimatedSize(size_hint as usize)
+
+        // After the take, not before: a chunk the HTTP thread appends (and pauses for) in
+        // between would otherwise reach the stream with its task finding the buffer empty, and
+        // nothing left to undo that pause. Unconditional: also flushes body bytes the client
+        // holds that arrived with no follow-up read (`drain_response_body`).
+        this.signal_store.receive_on_demand();
+        this.schedule_receive_resume();
+
+        if drained.is_empty() {
+            DrainResult::EstimatedSize(size_hint)
+        } else {
+            DrainResult::Owned {
+                list: drained,
+                size_hint,
+            }
+        }
     }
 
     fn get_size_hint(&self) -> BlobSizeType {
@@ -1676,54 +1760,80 @@ impl FetchTasklet {
         }
     }
 
-    /// Clear every ByteStream.Source callback whose ctx is this FetchTasklet
-    /// before releasing `readable_stream_ref` — the stream can outlive us in JS.
-    fn clear_stream_handlers(&mut self) {
-        if let Some(readable) = self.readable_stream_ref.get(&self.global_this) {
-            if let Some(bytes) = readable.ptr.bytes() {
-                let source = bytes.parent_const();
-                source.producer.set(SourceHandle::None);
-            }
-        }
+    /// Unhook from the response ByteStream (the stream can outlive us in JS). Touches no JS cell.
+    fn clear_stream_handlers(&self) {
+        self.response_stream.release();
     }
 
-    pub(crate) fn on_stream_cancelled(&mut self) {
-        if self.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
-            return;
-        }
-        // reader.cancel() / body.cancel() aborts the fetch so the server sees the
-        // close (Node/Deno/browsers abort unconditionally). abort_task() is idempotent.
+    /// reader.cancel() / body.cancel(): the server has to see the close (Node, Deno and browsers
+    /// abort too). `&self` because a failed sink write reaches here from inside `on_body_received`.
+    pub(crate) fn on_stream_cancelled(&self) {
         self.abort_task();
-        self.ignore_remaining_response_body(false);
+        self.abandon_response_body();
+    }
+
+    /// `SourceHandle::consumer_collected`: the stream's wrapper was swept, so nothing
+    /// can read the rest of the body. Inside a GC sweep, like `on_response_finalize`.
+    pub(crate) fn on_body_stream_collected(&self) {
+        bun_output::scoped_log!(FetchTasklet, "onBodyStreamCollected");
+        self.abandon_response_body();
     }
 
     pub(crate) fn on_stream_drained(&self) {
-        if self
-            .signal_store
-            .try_transition_receive_mode(BodyReceiveMode::Paused, BodyReceiveMode::AutoPause)
-        {
+        self.unpark_body_stream();
+        self.resume_receive();
+    }
+
+    fn resume_receive(&self) {
+        if self.signal_store.unpause_receive() {
             self.schedule_receive_resume();
         }
     }
 
-    /// A native sink attached after `drop_backpressure_if_unobserved` had
-    /// already flipped to `BufferAll`. Move to `Paused`: the socket is still
-    /// reading, so the next `maybe_pause_receive` stops it; the sink's drain
-    /// then resumes via `on_stream_drained`.
+    /// A native sink was wired to the stream: something waits for bytes again.
     pub(crate) fn on_consumer_attached(&self) {
-        let _ = self
-            .signal_store
-            .try_transition_receive_mode(BodyReceiveMode::BufferAll, BodyReceiveMode::Paused);
+        self.unpark_body_stream();
+    }
+
+    /// The other half of this rule is in `callback` (HTTP thread).
+    fn after_body_chunk_delivered(&self, bytes: &crate::webcore::ByteStream) {
+        use crate::webcore::byte_stream::AfterDelivery;
+        bun_output::scoped_log!(
+            FetchTasklet,
+            "afterBodyChunkDelivered buffered={}",
+            bytes.buffered_len()
+        );
+        match self.response_stream.after_delivery(bytes) {
+            AfterDelivery::Resume => self.resume_receive(),
+            AfterDelivery::Pause => self.signal_store.pause_receive(),
+            AfterDelivery::Park => {
+                self.signal_store.pause_receive();
+                self.park_body_stream();
+            }
+        }
+    }
+
+    fn park_body_stream(&self) {
+        if self.response_stream.park() {
+            bun_output::scoped_log!(FetchTasklet, "parkBodyStream");
+            self.poll_ref
+                .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
+        }
+    }
+
+    fn unpark_body_stream(&self) {
+        if self.response_stream.unpark() {
+            bun_output::scoped_log!(FetchTasklet, "unparkBodyStream");
+            self.poll_ref
+                .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+        }
     }
 
     fn on_start_buffering_callback(ctx: NonNull<c_void>) {
         let this = Self::from_ctx(ctx);
-        this.poll_ref.ref_(bun_io::js_vm_ctx());
-        this.is_buffering_body.store(true, Ordering::Release);
-        if this
-            .signal_store
-            .set_receive_mode_terminal(BodyReceiveMode::BufferAll)
-        {
+        this.poll_ref
+            .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+        if this.signal_store.receive_all() {
             this.schedule_receive_resume();
         }
     }
@@ -1732,31 +1842,6 @@ impl FetchTasklet {
         if let Some(http_) = self.http.as_ref() {
             http::http_thread().schedule_receive_resume(http_.async_http_id);
         }
-    }
-
-    /// After a body chunk has been delivered to the ByteStream with
-    /// `has_more == true`, flip to `BufferAll` if the stream has no lock,
-    /// no pipe, and no buffer action. An unlocked stream has no reader, so
-    /// there is nothing to apply backpressure against; let the body
-    /// complete so this tasklet (and the source it roots) can be freed.
-    fn drop_backpressure_if_unobserved(
-        &self,
-        readable: &ReadableStream,
-        bytes: &crate::webcore::ByteStream,
-    ) {
-        if self.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll {
-            return;
-        }
-        if bytes.sink.get().is_some()
-            || bytes.buffer_action.get().is_some()
-            || bytes.pending.get().state == crate::webcore::streams::PendingState::Pending
-            || readable.is_locked(&self.global_this)
-        {
-            return;
-        }
-        self.signal_store
-            .set_receive_mode_terminal(BodyReceiveMode::BufferAll);
-        self.schedule_receive_resume();
     }
 
     fn to_body_value(&mut self) -> BodyValue {
@@ -1790,25 +1875,38 @@ impl FetchTasklet {
         response
     }
 
+    /// <https://fetch.spec.whatwg.org/#main-fetch>: HEAD responses and null body
+    /// statuses have no body. Not 101: the HTTP client only accepts it for a
+    /// requested upgrade, and the upgraded connection is then the body.
+    fn response_body_is_null(&self, status_code: u16) -> bool {
+        (crate::server::http_status_text::is_null_body(status_code) && status_code != 101)
+            || self
+                .http
+                .as_deref()
+                .is_some_and(|http_| http_.method() == Method::HEAD)
+    }
+
+    /// Content the server frames anyway (a 205 with content) is dropped and the connection
+    /// closed. `is_waiting_body` stays false: nothing may reach this body.
+    fn null_body_value(&mut self) -> BodyValue {
+        self.scheduled_response_buffer = MutableString::default();
+        if self.result.has_more {
+            self.abandon_response_body();
+        }
+        BodyValue::Null
+    }
+
     fn to_response(&mut self) -> Response {
         bun_output::scoped_log!(FetchTasklet, "toResponse");
         debug_assert!(self.metadata.is_some());
         // at this point we always should have metadata
         let metadata = self.metadata.as_ref().unwrap();
         let http_response = &metadata.response;
-        self.is_waiting_body = self.result.has_more;
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
         let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
-        // status_text and url must NOT be atomized: the Response can be
-        // destroyed from the HTTP thread via deref_from_thread() -> deinit()
-        // when the VM is shutting down (see is_shutting_down() branch), and
-        // atom strings live in a per-thread table — deref'ing them off-thread
-        // trips the `wasRemoved` RELEASE_ASSERT in AtomStringImpl::remove().
-        // Plain WTFStringImpl refcounts are atomic, so clone_utf8 is safe.
         // Fast path: when the wire reason phrase matches the canonical text for
-        // this status code, store a StaticZigString (deref is a no-op, so still
-        // safe to drop off-thread) and skip the WTF allocation entirely.
+        // this status code, store a StaticEncodedSlice and skip the WTF allocation.
         let status_text = match crate::server::http_status_text::get(status_code)
             .map(|t| &t[4..])
             .filter(|canon| *canon == http_response.status)
@@ -1818,59 +1916,39 @@ impl FetchTasklet {
         };
         let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
+        let body = if self.response_body_is_null(status_code) {
+            self.null_body_value()
+        } else {
+            self.is_waiting_body = self.result.has_more;
+            self.to_body_value()
+        };
         Response::init(
             crate::webcore::response::Init {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
                 headers: Some(unsafe { HeadersRef::adopt(headers) }),
                 status_code,
-                status_text: status_text.into(),
+                status_text,
                 ..Default::default()
             },
-            Body::new(self.to_body_value()),
+            Body::new(body),
             url,
             redirected,
         )
     }
 
-    fn ignore_remaining_response_body(&mut self, from_finalizer: bool) {
-        bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
-        // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
-        // without a stream ref, response body or response instance alive it will just ignore the result
-        // An aborted fetch is already shutting down; don't re-arm receive/resume
-        // draining, which would read the rest of an unbounded body and hold the
-        // socket open (drain_events resumes before shutdowns).
-        let aborted = self.signal_store.aborted.load(Ordering::Relaxed);
-        if self
-            .signal_store
-            .set_receive_mode_terminal(BodyReceiveMode::Ignore)
-            && !aborted
-        {
-            self.schedule_receive_resume();
-        }
-        if let Some(http_) = self.http.as_mut() {
-            if !aborted {
-                http_.enable_response_body_streaming();
-            }
-        }
-        // we should not keep the process alive if we are ignoring the body
-        self.poll_ref.unref(bun_io::js_vm_ctx());
-        // When reached from `on_response_finalize` (a JSC Weak finalizer inside
-        // `WeakBlock::sweep`), `clear_stream_handlers()` must be skipped: it
-        // reaches `JSCell::classInfo()` via generated cached-value setters /
-        // `ReadableStreamTag__tagged`, and touching any cell during
-        // `MutatorState::Sweeping` is forbidden. The request-body sink is left
-        // for `clear_sink()` in `deinit()` (an event-loop task, outside sweep)
-        // to detach.
-        if !from_finalizer {
-            self.clear_stream_handlers();
-        }
-        self.readable_stream_ref.deinit();
+    /// Nothing will read the rest of the body: abort the transport, let go of the loop and of the
+    /// response; `callback` drops whatever still arrives. Safe inside a GC sweep
+    /// (`on_response_finalize`, `on_body_stream_collected`): no JS cell is touched; the
+    /// request-body sink is left for `clear_sink()` in `deinit()`.
+    fn abandon_response_body(&self) {
+        bun_output::scoped_log!(FetchTasklet, "abandonResponseBody");
+        self.signal_store.abandon();
+        self.abort_transport();
+        self.poll_ref
+            .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
+        self.clear_stream_handlers();
         self.response.clear();
-
-        if let Some(response) = self.native_response.take() {
-            // SAFETY: `response` is the +1 ref held in `native_response`.
-            Response::unref(response);
-        }
+        self.native_response.set(None);
     }
 
     fn on_resolve(&mut self) -> JSValue {
@@ -1881,7 +1959,8 @@ impl FetchTasklet {
         // consumer hooks (`on_start_streaming_http_response_body_callback`,
         // `on_start_buffering_callback`) re-ref if the caller reads the body.
         if self.is_waiting_body {
-            self.poll_ref.unref(bun_io::js_vm_ctx());
+            self.poll_ref
+                .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
         }
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
         let global_this = self.global_this;
@@ -1894,26 +1973,23 @@ impl FetchTasklet {
             jsc::WeakRefType::FetchResponse,
             self,
         );
-        // Response is intrusively refcounted; bump for native_response.
         // SAFETY: `response` is the live heap allocation owned by JSC after
-        // `make_maybe_pooled`; `ref_` bumps the intrusive refcount.
-        self.native_response = Some(Response::ref_(response));
+        // `make_maybe_pooled`.
+        self.native_response
+            .set(Some(unsafe { RefPtr::init_ref(response) }));
         // Response-owned listener so abort still errors the body after this tasklet detaches its own.
         if let Some(signal) = self.abort_signal() {
             // SAFETY: `response` is the live heap allocation owned by JSC.
-            unsafe { Response::attach_abort_signal(response, &global_this, signal) };
+            unsafe { Response::attach_abort_signal(response, &global_this, signal, self.context) };
         }
         response_js
     }
 
     fn get(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
-        // SAFETY: bun_vm() returns the FFI `*mut VirtualMachine`; the VM outlives
-        // this tasklet (process-lifetime singleton on the JS thread).
-        let jsc_vm: &'static VirtualMachine = global_this.bun_vm();
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,
             // `AsyncHTTP` has no `Default`/zero-init; defer the Box until
@@ -1921,67 +1997,71 @@ impl FetchTasklet {
             http: None,
             result: HTTPClientResult::default(),
             metadata: None,
-            loop_handle: jsc_vm.loop_handle(),
-            global_this: GlobalRef::from(global_this),
+            http_ticket: None,
+            global_this: GlobalRef::from(cx.global()),
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
             response: jsc::Weak::default(),
-            native_response: None,
-            readable_stream_ref: ReadableStreamStrong::default(),
+            native_response: JsCell::new(None),
+            response_stream: Default::default(),
             request_headers: fetch_options.headers,
+            declared_request_body_len: None,
+            request_body_len_written: 0,
+            request_body_mismatched: false,
             promise,
             concurrent_task: ConcurrentTask::default(),
-            poll_ref: KeepAlive::default(),
+            poll_ref: JsCell::new(KeepAlive::default()),
             body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
-            signal: fetch_options.signal,
+            abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
+            context: cx.context().id(),
             signals: Signals::default(),
-            signal_store: http::signals::Store::default(),
+            signal_store: http::signals::Store::unclaimed(),
             has_schedule_callback: AtomicBool::new(false),
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
+            fetch_session: fetch_options.fetch_session,
+            session_check_server_identity: fetch_options.session_check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
-            hostname: fetch_options.hostname,
+            unix_socket_path: fetch_options.unix_socket_path,
             is_waiting_body: false,
-            is_buffering_body: AtomicBool::new(false),
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
             mutex: Mutex::new(),
             // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
             // bumps a counter on the VM.
-            tracker: AsyncTaskTracker::init(global_this.bun_vm().as_mut()),
+            tracker: AsyncTaskTracker::init(cx.vm().as_mut()),
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
 
-        fetch_tasklet.tracker.did_schedule(global_this);
+        fetch_tasklet.tracker.did_schedule(cx.global());
 
         // `body` is *moved* through `FetchOptions` into `request_body` (no
-        // shallow alias, no post-queue detach), so the StoreRef already carries
+        // shallow alias, no post-queue detach), so the RefPtr<Store> already carries
         // the caller's +1 — bumping it again here leaked one ref per
         // Blob-backed body (issue: fetch-leak fixture #5 RSS growth).
         // `clear_data() → request_body.detach()` releases it.
 
         let url = fetch_options.url;
-        let env = global_this.bun_vm().as_mut().transpiler.env_mut();
+        let env = cx.vm().as_mut().transpiler.env_mut();
         // Capture the proxy env so the HTTP thread can re-resolve per redirect
         // hop (`HTTPClient::reevaluate_proxy_for_redirect`). `ProxySettings`
         // owns copies of the env values, so a later `process.env.HTTP_PROXY =
         // ...` on the JS thread cannot invalidate them mid-request.
-        let proxy_settings: Option<Box<http::ProxySettings>> =
-            if let Some(proxy_opt) = &fetch_options.proxy {
-                if !proxy_opt.is_empty() {
-                    http::ProxySettings::from_explicit(proxy_opt.href, env)
-                } else {
-                    // proxy: "" means explicitly no proxy (direct connection)
-                    None
-                }
-            } else {
-                http::ProxySettings::from_env(env)
-            };
+        let proxy_settings: Option<Box<http::ProxySettings>> = match &fetch_options.proxy {
+            ProxyPolicy::Direct => None,
+            ProxyPolicy::Explicit {
+                href,
+                respect_no_proxy,
+            } => http::ProxySettings::from_explicit(href, env, *respect_no_proxy),
+            // A unix socket is the whole route; the proxy env never applies to it.
+            ProxyPolicy::Env if !fetch_tasklet.unix_socket_path.is_empty() => None,
+            ProxyPolicy::Env => http::ProxySettings::from_env(env),
+        };
         // Hop-0 proxy borrows the boxed `ProxySettings` heap storage, which is
         // moved into `AsyncHTTP::init` below and lives on `client` for the
         // lifetime of the request.
@@ -1991,7 +2071,18 @@ impl FetchTasklet {
             Some(ZigURL::parse(unsafe { &*href }))
         });
 
-        if fetch_tasklet.check_server_identity.has() && fetch_tasklet.reject_unauthorized {
+        // The callback keeps a request on HTTP/1.1. Under `rejectUnauthorized:
+        // false` its verdict is not enforced, so a request pinned to h2/h3
+        // goes ahead without it.
+        let advisory_on_pinned_protocol = !fetch_tasklet.reject_unauthorized
+            && matches!(
+                fetch_options.forced_protocol,
+                Some(http::Protocol::Http2 | http::Protocol::Http3)
+            );
+        if (fetch_tasklet.check_server_identity.has()
+            || fetch_tasklet.session_check_server_identity)
+            && !advisory_on_pinned_protocol
+        {
             fetch_tasklet
                 .signal_store
                 .cert_errors
@@ -2006,32 +2097,30 @@ impl FetchTasklet {
 
         // This task gets queued on the HTTP thread.
         // `AsyncHTTP::init` takes several `&'static [u8]` borrows
-        // (headers_buf, request_body, hostname) that point into
+        // (headers_buf, request_body, unix_socket_path) that point into
         // FetchTasklet-owned storage. The tasklet is heap-pinned via
         // `heap::alloc`, so erase the borrow lifetimes through raw pointers.
         // SAFETY: `fetch_tasklet_ptr` is a stable heap allocation that outlives
         // the AsyncHTTP (dropped together in `deinit`); the slices below borrow
-        // its `request_headers.buf`, `request_body`, and `hostname` fields
-        // which are not reallocated for the lifetime of the request.
+        // its `request_headers.buf`, `request_body`, and `unix_socket_path`
+        // fields which are not reallocated for the lifetime of the request.
         // SAFETY (`Interned::assume` — Population B, holder-backed):
         // `fetch_tasklet_ptr` is a `heap::alloc`'d `FetchTasklet` whose
-        // `request_headers.buf` / `request_body` / `hostname` fields are not
-        // reallocated for the request's lifetime, and the tasklet is freed in
-        // `deinit` only after the owned `AsyncHTTP` is dropped. NOT
-        // process-lifetime — these should become `RawSlice<u8>` once
-        // `AsyncHTTP::init` accepts holder-lifetime slices; `assume` names the
-        // owner so the widen is grep-able until then.
+        // `request_headers.buf` / `request_body` /
+        // `unix_socket_path` fields are not reallocated for the request's
+        // lifetime, and the tasklet is freed in `deinit` only after the owned
+        // `AsyncHTTP` is dropped. NOT process-lifetime — these should become
+        // `RawSlice<u8>` once `AsyncHTTP::init` accepts holder-lifetime slices;
+        // `assume` names the owner so the widen is grep-able until then.
         let headers_buf: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
                 .as_bytes();
         // SAFETY: see `Interned::assume` note above — same heap-pinned `FetchTasklet` owner.
         let request_body_slice: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
-        let hostname: Option<&'static [u8]> = fetch_tasklet
-            .hostname
-            .as_deref()
-            // SAFETY: see block note above — same `FetchTasklet` owner.
-            .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
+        // SAFETY: see block note above — same `FetchTasklet` owner.
+        let unix_socket_path: &'static [u8] =
+            unsafe { bun_ptr::Interned::assume(&fetch_tasklet.unix_socket_path) }.as_bytes();
         // `MultiArrayList` owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
         let header_entries = bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());
@@ -2058,9 +2147,8 @@ impl FetchTasklet {
                 http_proxy: proxy,
                 proxy_settings,
                 proxy_headers: fetch_options.proxy_headers,
-                hostname,
                 signals: Some(fetch_tasklet.signals),
-                unix_socket_path: Some(fetch_options.unix_socket_path),
+                unix_socket_path: Some(unix_socket_path),
                 disable_timeout: Some(fetch_options.disable_timeout),
                 idle_timeout_seconds: fetch_options.idle_timeout_seconds,
                 disable_keepalive: Some(fetch_options.disable_keepalive),
@@ -2070,6 +2158,8 @@ impl FetchTasklet {
                 verbose: Some(fetch_options.verbose),
                 tls_props: fetch_options.ssl_config,
                 compress: fetch_options.compress,
+                pool: fetch_options.pool,
+                bypass_pool: fetch_options.bypass_pool,
             },
         )));
         // enable streaming the write side
@@ -2083,6 +2173,11 @@ impl FetchTasklet {
         http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
+            // An upgraded connection tunnels its "body", so those bytes are not counted.
+            let framing = fetch_options.stream_framing;
+            if !fetch_tasklet.upgraded_connection {
+                fetch_tasklet.declared_request_body_len = framing.content_length;
+            }
             // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
             // thread), so the same raw pointer can be handed to both sides.
             let buffer = ThreadSafeStreamBuffer::new(ThreadSafeStreamBuffer::default());
@@ -2094,12 +2189,13 @@ impl FetchTasklet {
                     fetch_tasklet_ptr,
                 );
             }
-            let buffer_nn = core::ptr::NonNull::new(buffer);
-            fetch_tasklet.request_body_streaming_buffer = buffer_nn;
+            // SAFETY: adopts one of the two initial refs.
+            fetch_tasklet.request_body_streaming_buffer = Some(unsafe { RefPtr::from_raw(buffer) });
             fetch_tasklet.http.as_mut().unwrap().request_body =
                 http::HTTPRequestBody::Stream(http::http_request_body::Stream {
-                    buffer: buffer_nn,
+                    buffer: core::ptr::NonNull::new(buffer),
                     ended: false,
+                    framing,
                 });
         }
         // TODO is this necessary? the http client already sets the redirect type,
@@ -2121,24 +2217,18 @@ impl FetchTasklet {
 
         if let HTTPRequestBody::Sendfile(sendfile) = &fetch_tasklet.request_body {
             debug_assert!(url_is_http);
-            debug_assert!(fetch_options.proxy.is_none());
+            debug_assert!(!matches!(fetch_options.proxy, ProxyPolicy::Explicit { .. }));
             fetch_tasklet.http.as_mut().unwrap().request_body =
                 http::HTTPRequestBody::Sendfile(*sendfile);
         }
 
-        if let Some(signal) = fetch_tasklet.signal {
-            // `signal` is a live C++-owned WebCore::AbortSignal* (already ref'd by
-            // the caller before populating `fetch_options.signal`).
-            // `add_listener` returns `self`, so the field already holds the right ptr.
-            // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe `*const → &`.
-            let signal = bun_opaque::opaque_deref(signal);
-            signal.pending_activity_ref();
-            signal.add_listener(fetch_tasklet_ptr.cast::<c_void>(), Self::__abort_listener_c);
+        if let Some(signal) = fetch_options.signal {
+            // SAFETY: the tasklet is heap-allocated and drops its handle with itself.
+            unsafe { jsc::AbortHandle::follow_owner(fetch_tasklet_ptr, signal) };
         }
         Ok(fetch_tasklet_ptr)
     }
 
-    #[bun_uws::uws_callback]
     pub(crate) fn abort_listener(&mut self, reason: JSValue) {
         bun_output::scoped_log!(FetchTasklet, "abortListener");
         let this = self;
@@ -2156,8 +2246,8 @@ impl FetchTasklet {
         if this.is_waiting_request_stream_start {
             if let HTTPRequestBody::ReadableStream(stream_ref) = &this.request_body {
                 this.is_waiting_request_stream_start = false;
-                if let Some(stream) = stream_ref.get(&this.global_this) {
-                    stream.cancel_with_reason(&this.global_this, reason);
+                if let Some(stream) = stream_ref.get() {
+                    crate::dispatch::fold(stream.cancel_with_reason(&this.global_this, reason));
                 }
             }
         }
@@ -2168,44 +2258,42 @@ impl FetchTasklet {
         let this_ref = Self::from_raw_ref(this);
         // ref until the main thread callback is called
         this_ref.ref_();
-        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`.
-        let task = ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream);
-        // In flight ⇒ still counted work of its VM: the handle is open.
-        let jsc::vm_handle::Posted::Queued = this_ref.post(task) else {
-            unreachable!("VM handle closed with a fetch outstanding on the HTTP thread");
-        };
+        let task = ConcurrentTask::create_from(this.cast::<FetchTaskletRequestDrain>());
+        this_ref
+            .http_ticket
+            .as_ref()
+            .expect(Self::HOLDS_TICKET)
+            .post(task);
     }
 
     /// This is ALWAYS called from the main thread
-    // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
-    fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
+    fn resume_request_data_stream(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_mut(this);
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
-        let result = (|| {
-            if this_ref.signal_aborted() {
-                // already aborted; nothing to drain
-                return;
-            }
+        if !this_ref.signal_aborted() {
             let global_this = this_ref.global_this;
             if let Some(sink) = this_ref.sink_mut() {
                 sink.on_drain(&global_this);
             }
-        })();
+        }
         // deref when done because we ref inside onWriteRequestDataDrain
         // SAFETY: `this` is the live heap tasklet; we hold a ref.
         FetchTasklet::deref(this);
-        let () = result;
-        Ok(())
     }
 
-    /// Whether the request body should skip chunked transfer encoding framing.
-    /// True for upgraded connections (e.g. WebSocket) or when the user explicitly
-    /// set Content-Length without setting Transfer-Encoding.
+    /// True for upgraded connections, HTTP/2 (DATA frames) and `Content-Length` framing.
     pub(crate) fn skip_chunked_framing(&self) -> bool {
-        self.upgraded_connection
-            || self.result.is_http2
-            || (self.request_headers.get(b"content-length").is_some()
-                && self.request_headers.get(b"transfer-encoding").is_none())
+        self.upgraded_connection || self.result.is_http2 || self.declared_request_body_len.is_some()
+    }
+
+    /// The HTTP thread decides: only it knows whether a followed redirect already dropped the body.
+    fn report_content_length_mismatch(&mut self, written: u64) {
+        self.request_body_len_written = written;
+        self.request_body_mismatched = true;
+        if let Some(http_) = self.http.as_mut() {
+            http::http_thread()
+                .schedule_request_write(http_, http::http_thread::WriteMessageType::LengthMismatch);
+        }
     }
 
     /// Called from `FetchRequestBodySink::write_*`; `high_water_mark` is the
@@ -2216,7 +2304,7 @@ impl FetchTasklet {
         data: RequestBodyChunk<'_>,
         high_water_mark: usize,
     ) -> Writable {
-        if self.signal_aborted() {
+        if self.signal_aborted() || self.request_body_mismatched {
             return Writable::Done;
         }
         // An empty chunk is a no-op on every framing path. It must not reach
@@ -2229,6 +2317,20 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", utf8_len);
         if utf8_len == 0 {
             return Writable::Owned(0);
+        }
+        // A surplus byte would sit where a keep-alive peer parses the next request.
+        if let Some(declared) = self.declared_request_body_len {
+            let written = self
+                .request_body_len_written
+                .saturating_add(utf8_len as u64);
+            if written > declared {
+                self.report_content_length_mismatch(written);
+                return Writable::Err(bun_sys::Error::from_code(
+                    bun_sys::E::ECANCELED,
+                    bun_sys::Tag::write,
+                ));
+            }
+            self.request_body_len_written = written;
         }
         let len = utf8_len as BlobSizeType;
         let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
@@ -2280,6 +2382,12 @@ impl FetchTasklet {
     pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(FetchTasklet, "writeEndRequest hasError? {}", err.is_some());
         let this_ptr = std::ptr::from_mut(self);
+        if self.request_body_mismatched {
+            // The pump ending on the `Writable::Err` the mismatch gave it; already reported.
+            // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
+            FetchTasklet::deref(this_ptr);
+            return;
+        }
         if let Some(js_error) = err {
             if self.signal_store.aborted.load(Ordering::Relaxed) || self.abort_reason.has() {
                 // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
@@ -2292,6 +2400,16 @@ impl FetchTasklet {
             self.abort_task();
         } else {
             if self.signal_store.aborted.load(Ordering::Relaxed) {
+                // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
+                FetchTasklet::deref(this_ptr);
+                return;
+            }
+            // Short of the announced length, the peer would wait for the rest forever.
+            let written = self.request_body_len_written;
+            if let Some(declared) = self.declared_request_body_len
+                && written < declared
+            {
+                self.report_content_length_mismatch(written);
                 // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
                 FetchTasklet::deref(this_ptr);
                 return;
@@ -2318,18 +2436,22 @@ impl FetchTasklet {
         FetchTasklet::deref(this_ptr);
     }
 
-    fn abort_task(&mut self) {
-        // Idempotent: reader.cancel() and an AbortSignal can both reach here for
-        // the same fetch. Only the first abort enqueues a shutdown; a second
-        // would append a redundant ShutdownMessage for an already-closing socket.
-        if self.signal_store.aborted.swap(true, Ordering::Relaxed) {
-            return;
+    fn abort_task(&self) {
+        if self.abort_transport() {
+            self.tracker.did_cancel(&self.global_this);
         }
-        self.tracker.did_cancel(&self.global_this);
+    }
 
-        if let Some(http_) = self.http.as_mut() {
+    /// Idempotent: an AbortSignal, VM teardown and `abandon_response_body` can all reach here for
+    /// the same fetch. Only the first enqueues a shutdown. No JS.
+    fn abort_transport(&self) -> bool {
+        if self.signal_store.aborted.swap(true, Ordering::Relaxed) {
+            return false;
+        }
+        if let Some(http_) = self.http.as_deref() {
             http::http_thread().schedule_shutdown(http_);
         }
+        true
     }
 
     /// Cancel an in-flight request-body sink: stores the abort reason, aborts
@@ -2357,7 +2479,6 @@ impl FetchTasklet {
             self.abort_reason.set(&global_this, reason);
         }
         self.abort_task();
-        // Re-borrow after the `&mut self` calls above.
         if let Some(sink) = self.sink_mut() {
             sink.pending.result = Writable::Done;
             sink.pending.run();
@@ -2375,24 +2496,27 @@ impl FetchTasklet {
     }
 
     pub(crate) fn queue(
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
         http::http_thread::init(&http::http_thread::InitOpts::default());
-        let node = Self::get(global, fetch_options, promise)?;
+        let node = Self::get(cx, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);
         let mut batch = bun_threading::thread_pool::Batch::default();
         node_ref.http.as_mut().unwrap().schedule(&mut batch);
-        node_ref.poll_ref.ref_(bun_io::js_vm_ctx());
+        node_ref
+            .poll_ref
+            .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
 
         // increment ref so we can keep it alive until the http client is done
         node_ref.ref_();
-        // Out on the HTTP thread from here until its final callback: the VM
-        // aborts it at teardown (registry) and waits for it (embedded work).
-        node_ref.loop_handle.embedded_work_scheduled();
-        crate::jsc_hooks::ActiveHandle::Fetch(NonNull::new(node).expect("tasklet")).register();
+        // Out on the HTTP thread from here until its final callback: its context
+        // aborts it when it stops, and the VM waits for it (the ticket).
+        node_ref.http_ticket = Some(cx.vm().ticket());
+        // SAFETY: as in `get`.
+        unsafe { jsc::AbortHandle::arm_owner(node, cx.context()) };
         http::HTTPThread::schedule(batch);
 
         Ok(node)
@@ -2415,9 +2539,6 @@ impl FetchTasklet {
         // at this point only this thread is accessing result to is no race condition
         let is_done = !result.has_more;
         let task_ref = Self::from_raw_mut(task);
-        // The final callback is where the HTTP thread hands the fetch back
-        // (`embedded_work_finished` below, after our deref may have freed it).
-        let done_handle = is_done.then(|| task_ref.loop_handle.clone());
 
         task_ref.mutex.lock();
         // we need to unlock before task.deref();
@@ -2481,18 +2602,12 @@ impl FetchTasklet {
 
         let success = task_ref.result.is_success();
 
-        if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
+        if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::Abandoned {
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {
                 task_ref.scheduled_response_buffer = MutableString::default();
             }
             if success && task_ref.result.has_more {
-                // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
                 task_ref.mutex.unlock();
-                if let Some(handle) = done_handle {
-                    // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
-                    FetchTasklet::deref_from_thread(task);
-                    handle.embedded_work_finished();
-                }
                 return;
             }
         } else if success {
@@ -2502,11 +2617,8 @@ impl FetchTasklet {
             } else {
                 // Grow to Content-Length once so the per-packet append below
                 // doesn't leave the ~2x doubling over-capacity that the
-                // ArrayBuffer would adopt. Gated on `is_buffering_body`
-                // (set by `on_start_buffering_callback`), not the raw
-                // `BufferAll` mode: `drop_backpressure_if_unobserved` also
-                // sets `BufferAll` while still draining per chunk.
-                if task_ref.is_buffering_body.load(Ordering::Acquire) {
+                // ArrayBuffer would adopt. Only for a consumer that wants the whole body.
+                if task_ref.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll {
                     if let http::BodySize::ContentLength(n) = task_ref.body_size {
                         if n > scheduled.list.capacity() {
                             let additional = n
@@ -2525,11 +2637,10 @@ impl FetchTasklet {
                     bun_core::handle_oom(scheduled.write(chunk));
                 }
             }
-            if task_ref.result.has_more && !task_ref.scheduled_response_buffer.list.is_empty() {
-                let _ = task_ref.signal_store.try_transition_receive_mode(
-                    BodyReceiveMode::AutoPause,
-                    BodyReceiveMode::Paused,
-                );
+            if task_ref.result.has_more
+                && task_ref.scheduled_response_buffer.list.len() >= BODY_HIGH_WATER_MARK
+            {
+                task_ref.signal_store.pause_receive();
             }
         }
 
@@ -2541,10 +2652,8 @@ impl FetchTasklet {
         ) {
             if has_schedule_callback {
                 task_ref.mutex.unlock();
-                if let Some(handle) = done_handle {
-                    // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
-                    FetchTasklet::deref_from_thread(task);
-                    handle.embedded_work_finished();
+                if is_done {
+                    FetchTasklet::hand_back(task);
                 }
                 return;
             }
@@ -2556,19 +2665,19 @@ impl FetchTasklet {
                 .from(task, AutoDeinit::ManualDeinit),
         );
         // `ct` is the inline `concurrent_task` field of the heap tasklet; the
-        // queue takes ownership of its `next` link. The VM waits for its
-        // fetches (embedded work) before closing its handle: always queued.
-        let jsc::vm_handle::Posted::Queued = task_ref.post(ct) else {
-            unreachable!("VM handle closed with a fetch outstanding on the HTTP thread");
-        };
+        // queue takes ownership of its `next` link. This thread's ref keeps the
+        // tasklet (and the ticket in it) alive across the post.
+        task_ref
+            .http_ticket
+            .as_ref()
+            .expect(Self::HOLDS_TICKET)
+            .post(ct);
 
         task_ref.mutex.unlock();
         // we are done with the http client so we can deref our side
         // this is a atomic operation and will enqueue a task to deinit on the main thread
-        if let Some(handle) = done_handle {
-            // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
-            FetchTasklet::deref_from_thread(task);
-            handle.embedded_work_finished();
+        if is_done {
+            FetchTasklet::hand_back(task);
         }
     }
 }
@@ -2644,46 +2753,33 @@ impl FetchTasklet {
     #[bun_uws::uws_callback(export = "Bun__FetchResponse_finalize", no_catch)]
     pub(crate) fn on_response_finalize(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
-        let this = self;
-        if let Some(response) = this.native_response {
-            // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
-            let body = unsafe { (*response).get_body_value() };
-            // Three scenarios:
-            //
-            // 1. We are streaming, in which case we should not ignore the body.
-            // 2. We were buffering, in which case
-            //    2a. if we have no promise, we should ignore the body.
-            //    2b. if we have a promise, we should keep loading the body.
-            // 3. We never started buffering, in which case we should ignore the body.
-            //
-            // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
-            if !matches!(body, BodyValue::Locked(_)) || this.readable_stream_ref.has() {
-                // Scenario 1 or 3. A paused transport in Scenario 1 is
-                // unstuck by `drop_backpressure_if_unobserved` once the next
-                // already-scheduled chunk reaches `on_body_received` and
-                // finds the stream unlocked.
-                return;
-            }
-
-            if let BodyValue::Locked(locked) = body {
-                if let Some(promise) = locked.promise {
-                    if promise.is_empty_or_undefined_or_null() {
-                        // Scenario 2b.
-                        this.ignore_remaining_response_body(true);
-                    }
-                } else {
-                    // Scenario 3.
-                    this.ignore_remaining_response_body(true);
-                }
-            }
+        let Some(response) = self.native_response.get().as_deref() else {
+            return;
+        };
+        let BodyValue::Locked(locked) = response.get_body_value() else {
+            // The body arrived or failed; nothing is underway.
+            return;
+        };
+        // What can outlive the Response and still take the body: its stream (whose own collection
+        // is `on_body_stream_collected`), or a whole-body consumer (`.text()` and friends hold a
+        // promise, `Bun.write` an `on_receive_value`).
+        let outlived = self.response_stream.is_held()
+            || locked.on_receive_value.is_some()
+            || locked
+                .promise
+                .is_some_and(|promise| !promise.is_empty_or_undefined_or_null());
+        if !outlived {
+            self.abandon_response_body();
         }
     }
 }
 
-pub struct FetchOptions {
+pub(crate) struct FetchOptions {
     pub method: Method,
     pub(crate) headers: Headers,
     pub(crate) body: HTTPRequestBody,
+    /// For a `ReadableStream` body; `transfer_encoding` points into `headers.buf`.
+    pub(crate) stream_framing: http::http_request_body::StreamFraming,
     pub(crate) disable_timeout: bool,
     /// Per-request idle-timeout override, from `fetch(url, { timeout: <ms> })`.
     pub(crate) idle_timeout_seconds: Option<core::ffi::c_uint>,
@@ -2694,56 +2790,36 @@ pub struct FetchOptions {
     pub(crate) url: ZigURL<'static>,
     pub(crate) verbose: http::HTTPVerboseLevel,
     pub(crate) redirect_type: FetchRedirect,
-    pub(crate) proxy: Option<ZigURL<'static>>,
+    pub(crate) proxy: ProxyPolicy,
     pub(crate) proxy_headers: Option<Headers>,
     pub(crate) url_proxy_buffer: Box<[u8]>,
-    pub(crate) signal: Option<*mut AbortSignal>,
-    pub global_this: Option<GlobalRef>,
-    // Custom Hostname
-    pub(crate) hostname: Option<Box<[u8]>>,
+    pub(crate) signal: Option<AbortSignalRef>,
     pub(crate) check_server_identity: StrongOptional,
-    pub(crate) unix_socket_path: ZigStringSlice,
+    pub(crate) unix_socket_path: Box<[u8]>,
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) upgraded_connection: bool,
     pub(crate) forced_protocol: Option<http::Protocol>,
     pub(crate) is_node_http_client: bool,
     pub(crate) compress: Option<http::compress_body::CompressOption>,
+    pub(crate) pool: http::PoolOptions,
+    pub(crate) bypass_pool: bool,
+    pub(crate) fetch_session: Option<super::fetch_session::SessionHold>,
+    /// The session has the callback, and holds it; `fetch_session` holds the session.
+    pub(crate) session_check_server_identity: bool,
 }
 
-impl Default for FetchOptions {
-    fn default() -> Self {
-        // Zero-values for the required fields
-        // (method/headers/body/url/bools/unix_socket_path/globalThis) so
-        // callers can use `..Default::default()` struct-update syntax while
-        // still overriding the required fields explicitly.
-        Self {
-            method: Method::GET,
-            headers: Headers::default(),
-            body: HTTPRequestBody::default(),
-            disable_timeout: false,
-            idle_timeout_seconds: None,
-            disable_keepalive: false,
-            disable_decompression: false,
-            max_redirects: None,
-            reject_unauthorized: true,
-            url: ZigURL::default(),
-            verbose: http::HTTPVerboseLevel::None,
-            redirect_type: FetchRedirect::Follow,
-            proxy: None,
-            proxy_headers: None,
-            url_proxy_buffer: Box::default(),
-            signal: None,
-            global_this: None,
-            hostname: None,
-            check_server_identity: StrongOptional::empty(),
-            unix_socket_path: ZigStringSlice::EMPTY,
-            ssl_config: None,
-            upgraded_connection: false,
-            forced_protocol: None,
-            is_node_http_client: false,
-            compress: None,
-        }
-    }
+/// Where a request's proxy comes from.
+pub(crate) enum ProxyPolicy {
+    /// `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`.
+    Env,
+    /// `proxy: false`.
+    Direct,
+    /// `href` (borrowing `url_proxy_buffer`), for every hop `NO_PROXY` does not
+    /// exempt when it is respected.
+    Explicit {
+        href: &'static [u8],
+        respect_no_proxy: bool,
+    },
 }
 
 pub(crate) struct FetchTaskletPromiseSettle {
@@ -2751,11 +2827,13 @@ pub(crate) struct FetchTaskletPromiseSettle {
     promise: jsc::JSPromiseStrong,
     global_object: GlobalRef,
     success: bool,
+    /// The context of the script that fetched.
+    context: jsc::ContextId,
 }
 
 impl FetchTaskletPromiseSettle {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    pub(crate) fn run(mut self: Box<Self>) -> jsc::JsTerminatedResult<()> {
+    pub(crate) fn run(mut self: Box<Self>) -> JsResult<()> {
         let prom = self.promise.value_or_empty().as_any_promise().unwrap();
         let res = self.held.swap();
         res.ensure_still_alive();
@@ -2776,5 +2854,10 @@ impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box the completion queued.
         drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// The fetch() promise is settled for the script that fetched.
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+        // SAFETY: fn contract — the box the completion queued.
+        unsafe { (*this).context }
     }
 }

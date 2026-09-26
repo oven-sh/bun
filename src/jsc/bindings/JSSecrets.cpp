@@ -79,18 +79,20 @@ struct SecretsJobOptions {
     CString name; // UTF-8 encoded, thread-safe
     CString password; // UTF-8 encoded, thread-safe (only for SET)
     bool allowUnrestrictedAccess = false; // Controls security vs headless access (only for SET)
+    Secrets::Persist persist; // Windows only (only for SET)
 
     // Results (filled in by threadpool)
     Secrets::Error error;
     std::optional<WTF::Vector<uint8_t>> resultPassword;
     bool deleted = false;
 
-    SecretsJobOptions(Operation op, CString&& service, CString&& name, CString&& password, bool allowUnrestrictedAccess = false)
+    SecretsJobOptions(Operation op, CString&& service, CString&& name, CString&& password, bool allowUnrestrictedAccess, Secrets::Persist persist)
         : op(op)
         , service(service)
         , name(name)
         , password(password)
         , allowUnrestrictedAccess(allowUnrestrictedAccess)
+        , persist(persist)
     {
     }
 
@@ -122,6 +124,7 @@ struct SecretsJobOptions {
         String name;
         String password;
         bool allowUnrestrictedAccess = false;
+        Secrets::Persist persist = Secrets::Persist::Enterprise;
 
         const auto fromOptionsObject = [&]() -> bool {
             if (args.size() < 1) {
@@ -168,6 +171,29 @@ struct SecretsJobOptions {
                 if (!allowUnrestrictedAccessValue.isUndefined()) {
                     allowUnrestrictedAccess = allowUnrestrictedAccessValue.toBoolean(globalObject);
                     RETURN_IF_EXCEPTION(scope, false);
+                }
+
+                // Validated on every platform so a typo does not pass on macOS and Linux, which ignore the option.
+                JSValue persistValue = getIfPropertyExistsPrototypePollutionMitigation(globalObject, options, Identifier::fromString(vm, "persist"_s));
+                RETURN_IF_EXCEPTION(scope, false);
+
+                if (!persistValue.isUndefined()) {
+                    std::optional<Secrets::Persist> parsedPersist;
+                    if (persistValue.isString()) {
+                        String persistString = persistValue.toWTFString(globalObject);
+                        RETURN_IF_EXCEPTION(scope, false);
+                        if (persistString == "local"_s) {
+                            parsedPersist = Secrets::Persist::Local;
+                        } else if (persistString == "enterprise"_s) {
+                            parsedPersist = Secrets::Persist::Enterprise;
+                        }
+                    }
+                    if (!parsedPersist) {
+                        static constexpr ASCIILiteral oneOf[] = { "local"_s, "enterprise"_s };
+                        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.persist"_s, "must be one of: "_s, persistValue, oneOf);
+                        return false;
+                    }
+                    persist = *parsedPersist;
                 }
             }
 
@@ -235,7 +261,7 @@ struct SecretsJobOptions {
             RELEASE_AND_RETURN(scope, nullptr);
         }
 
-        RELEASE_AND_RETURN(scope, new SecretsJobOptions(operation, service.utf8(), name.utf8(), password.utf8(), allowUnrestrictedAccess));
+        RELEASE_AND_RETURN(scope, new SecretsJobOptions(operation, service.utf8(), name.utf8(), password.utf8(), allowUnrestrictedAccess, persist));
     }
 };
 
@@ -243,7 +269,7 @@ struct SecretsJobOptions {
 extern "C" {
 
 // Runs on the threadpool - does the actual platform API work
-void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts, JSGlobalObject* global)
+void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts)
 {
     // Already have CString fields, pass them directly to platform APIs
     switch (opts->op) {
@@ -257,7 +283,7 @@ void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts, JSGlobalObject* gl
     }
 
     case SecretsJobOptions::SET:
-        opts->error = Secrets::setPassword(opts->service, opts->name, WTF::move(opts->password), opts->allowUnrestrictedAccess);
+        opts->error = Secrets::setPassword(opts->service, opts->name, WTF::move(opts->password), opts->allowUnrestrictedAccess, opts->persist);
         break;
 
     case SecretsJobOptions::DELETE_OP:
@@ -295,7 +321,6 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
             if (opts->resultPassword.has_value()) {
                 auto resultPassword = WTF::move(opts->resultPassword.value());
                 result = jsString(vm, String::fromUTF8(resultPassword.span()));
-                RETURN_IF_EXCEPTION(scope, );
                 memsetSpan(resultPassword.mutableSpan(), 0);
             } else {
                 result = jsNull();
@@ -310,7 +335,6 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
             result = jsBoolean(opts->deleted);
             break;
         }
-        RETURN_IF_EXCEPTION(scope, );
         RELEASE_AND_RETURN(scope, promise->resolve(global, vm, result));
     }
 }
@@ -321,7 +345,7 @@ void Bun__SecretsJobOptions__deinit(SecretsJobOptions* opts)
 }
 
 // Native binding exports
-void Bun__Secrets__scheduleJob(JSGlobalObject* global, SecretsJobOptions* opts, EncodedJSValue promise);
+void Bun__Secrets__scheduleJob(JSGlobalObject* global, CallFrame* callFrame, SecretsJobOptions* opts, EncodedJSValue promise);
 
 } // extern "C"
 
@@ -340,7 +364,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsGet, (JSGlobalObject * globalObject, CallFrame* 
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }
@@ -355,7 +379,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsSet, (JSGlobalObject * globalObject, CallFrame* 
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }
@@ -375,7 +399,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsDelete, (JSGlobalObject * globalObject, CallFram
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, callFrame, options, JSValue::encode(promise));
 
     return JSValue::encode(promise);
 }

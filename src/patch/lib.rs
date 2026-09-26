@@ -53,7 +53,7 @@ struct ApplyState {
 impl ApplyState {
     fn new() -> Self {
         Self {
-            pathbuf: PathBuffer::uninit(),
+            pathbuf: PathBuffer::ZEROED,
             patch_dir_abs_path: None,
         }
     }
@@ -228,7 +228,7 @@ impl<'a> PatchFile<'a> {
                             sys::Result::Ok(p) => p,
                             sys::Result::Err(e) => return Some(e.without_path()),
                         };
-                        let mut buf = PathBuffer::uninit();
+                        let mut buf = bun_paths::path_buffer_pool::get();
                         let joined_absfilepath =
                             paths::resolve_path::join_z_buf::<paths::platform::Auto>(
                                 &mut buf[..],
@@ -578,12 +578,8 @@ impl<'a> Hunk<'a> {
             }
         }
 
-        if original_length != self.header.original.len as usize
-            || patched_length != self.header.patched.len as usize
-        {
-            return false;
-        }
-        true
+        original_length == self.header.original.len as usize
+            && patched_length == self.header.patched.len as usize
     }
 }
 
@@ -1758,7 +1754,7 @@ pub fn git_diff_internal(
 
     // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
     // resolve `git` here — same as `patchCommit`'s `bun.which` call.
-    let mut gitbuf = PathBuffer::uninit();
+    let mut gitbuf = bun_paths::path_buffer_pool::get();
     let git = bun_which::which(
         &mut gitbuf,
         bun_core::env_var::PATH.get().unwrap_or(b""),

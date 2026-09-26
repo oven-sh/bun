@@ -40,9 +40,8 @@ public:
     // ClearAlgorithms; a vm.heap.addFinalizer registered in the constructor (non-utf8
     // only) is the idempotent fallback for an abandoned stream.
     void* m_decoder { nullptr };
-    // Immutable for the cell's lifetime (the .encoding getter reads this, never
-    // m_decoder which the eager release nulls). Static-tagged: no refcount to drop.
-    BunString m_encodingLabel {};
+    // The Rust `EncodingLabel`. The .encoding getter reads this, never m_decoder.
+    uint8_t m_encoding { 0 };
     // utf-8 non-fatal fast path (shared with Body.textStream()).
     Bun::WebStreams::StreamingUTF8DecodeState m_utf8State;
     bool m_fatal { false };

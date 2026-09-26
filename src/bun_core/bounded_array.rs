@@ -125,14 +125,6 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
     // If a non-`Copy` caller
     // appears, add a `from_slice_clone` or use `ptr::copy_nonoverlapping`.
 
-    /// Return the element at index `i` of the slice.
-    pub fn get(&self, i: usize) -> T
-    where
-        T: Copy,
-    {
-        self.const_slice()[i]
-    }
-
     /// Check that the slice can hold at least `additional_count` items.
     pub(crate) fn ensure_unused_capacity(
         &self,

@@ -34,8 +34,7 @@ pub(crate) fn validate_locals_not_reassigned_after_render(
         &env.functions,
         env,
         &mut context_variables,
-        false,
-        false,
+        Nesting::Outer,
         &mut diagnostics,
     );
 
@@ -79,6 +78,15 @@ fn format_variable_name(place: &Place, identifiers: &[Identifier]) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Nesting {
+    Outer,
+    FunctionExpression {
+        /// Also set when a function expression enclosing this one is async.
+        is_async: bool,
+    },
+}
+
 /// Recursively checks whether a function (or its dependencies) reassigns a
 /// context variable. Returns the reassigned place if found, or None.
 ///
@@ -90,10 +98,14 @@ fn get_context_reassignment(
     functions: &[HirFunction],
     env: &Environment,
     context_variables: &mut HashSet<IdentifierId>,
-    is_function_expression: bool,
-    is_async: bool,
+    nesting: Nesting,
     diagnostics: &mut Vec<CompilerDiagnostic>,
 ) -> Option<Place> {
+    let (is_function_expression, is_async) = match nesting {
+        Nesting::Outer => (false, false),
+        Nesting::FunctionExpression { is_async } => (true, is_async),
+    };
+
     // Maps identifiers to the place that they reassign
     let mut reassigning_functions: IdMap<IdentifierId, Place> = IdMap::new();
 
@@ -115,8 +127,9 @@ fn get_context_reassignment(
                         functions,
                         env,
                         context_variables,
-                        true,
-                        inner_is_async,
+                        Nesting::FunctionExpression {
+                            is_async: inner_is_async,
+                        },
                         diagnostics,
                     );
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isIPv6, isWindows, tls as tlsCert } from "harness";
 
 // `Bun.connect` to a hostname that fails to resolve must surface the resolver
 // error (code `ENOTFOUND`, `syscall: "getaddrinfo"`, `hostname`), matching
@@ -49,6 +49,92 @@ test("Bun.connect reports a failed hostname lookup as the resolver error, not EC
   expect(pick(await connectErrored)).toEqual(EXPECTED);
   expect(pick(promiseError)).toEqual(EXPECTED);
   expect(connectErrorCalls).toBe(1);
+});
+
+// An IPv6 address with a prefix length, or with a shortened IPv4 part, is not
+// an address. ares_inet_pton read "::1/64" as the first 64 bits of ::1, so
+// Bun.connect dialed "::" and reached a listener on ::1. Brackets come off an
+// IPv6 address only.
+test.skipIf(!isIPv6()).each(["::1/64", "::1/0", "2001:db8::1/0", "::ffff:127.1", "[::1/64]"])(
+  "Bun.connect does not dial %j",
+  async hostname => {
+    let accepted = 0;
+    using listener = Bun.listen({
+      hostname: "::1",
+      port: 0,
+      socket: {
+        open(socket) {
+          accepted++;
+          socket.end();
+        },
+        data() {},
+      },
+    });
+    const error: Error = await Bun.connect({
+      hostname,
+      port: listener.port,
+      socket: { open: socket => void socket.end(), data() {} },
+    }).then(
+      () => new Error("connected"),
+      (e: Error) => e,
+    );
+    expect({ ...pick(error), accepted }).toEqual({
+      name: "Error",
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname,
+      message: `getaddrinfo ENOTFOUND ${hostname}`,
+      accepted: 0,
+    });
+  },
+);
+
+// An IPv4 host is an address when the resolver of the platform reads all of
+// it as one. getaddrinfo() reads the inet_aton shorthand. inet_aton itself
+// stops at whitespace and reads what comes before. Each row here is decided
+// without a lookup: the Windows resolver reads no shorthand, so those rows are
+// in udp_socket.test.ts.
+test.each([
+  ["127.0.0.1", "connected"],
+  ...(isWindows ? [] : [["127.1", "connected"] as const, ["0x7f000001", "connected"] as const]),
+  // One row for each byte that isspace() takes: space, \t, \n, \v, \f, \r.
+  ["127.0.0.1 db.allowed.example", "ENOTFOUND"],
+  ["127.1 .allowed.example", "ENOTFOUND"],
+  ["0x7f.1 junk", "ENOTFOUND"],
+  ["127.0.0.1\tx", "ENOTFOUND"],
+  ["127.0.0.1\n", "ENOTFOUND"],
+  ["127.0.0.1\vx", "ENOTFOUND"],
+  ["127.0.0.1\fx", "ENOTFOUND"],
+  ["127.0.0.1\rx", "ENOTFOUND"],
+  ["12\t7.0.0.1", "ENOTFOUND"],
+])("Bun.connect to %j: %s", async (hostname, expected) => {
+  // On every address, so that a connection to 127.1.0.0 also arrives.
+  const dialed: string[] = [];
+  using listener = Bun.listen({
+    hostname: "0.0.0.0",
+    port: 0,
+    socket: {
+      open(socket) {
+        dialed.push(socket.localAddress);
+        socket.end();
+      },
+      data() {},
+    },
+  });
+  const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+  const result = await Bun.connect({
+    hostname,
+    port: listener.port,
+    socket: { open() {}, data() {}, close: () => onClose() },
+  }).then(
+    () => closed.then(() => "connected"),
+    (e: any) => ({ code: e.code, syscall: e.syscall, hostname: e.hostname }),
+  );
+  expect({ result, dialed }).toEqual(
+    expected === "connected"
+      ? { result: "connected", dialed: ["127.0.0.1"] }
+      : { result: { code: expected, syscall: "getaddrinfo", hostname }, dialed: [] },
+  );
 });
 
 test("Bun.connect rejects the promise with the resolver error when connectError is not set", async () => {
@@ -118,4 +204,98 @@ test("consecutive Bun.connect calls to the same unresolvable hostname all get th
     );
   }
   expect(errors).toEqual([EXPECTED, EXPECTED, EXPECTED]);
+});
+
+// A name that cannot be a host name (a space, a colon, an empty label) is
+// answered ENOTFOUND in-process, without asking the system resolver. Some DNS
+// servers never answer a query for such a label, and the resolver then waits
+// out its own timeout (30s on macOS) before reporting anything.
+test.each(["this is not a hostname", "localhost:80", "a..b"])(
+  "Bun.connect to %p, which is not a hostname, fails with ENOTFOUND without asking the resolver",
+  async hostname => {
+    const error = await Bun.connect({
+      hostname,
+      port: 80,
+      socket: { open() {}, data() {} },
+    }).then(
+      () => "resolved",
+      (e: Error) => pick(e),
+    );
+    expect(error).toEqual({ ...EXPECTED, hostname, message: `getaddrinfo ENOTFOUND ${hostname}` });
+  },
+);
+
+// The listen side binds through a synchronous getaddrinfo, so a name the
+// resolver would sit on blocks the whole thread. The same names are rejected
+// before the call, with the same error the connect side reports.
+test.each(["this is not a hostname", "localhost:80", "a..b"])(
+  "Bun.listen on %p, which is not a hostname, throws ENOTFOUND without asking the resolver",
+  hostname => {
+    let error: any;
+    try {
+      Bun.listen({ hostname, port: 0, socket: { data() {} } }).stop(true);
+    } catch (e) {
+      error = e;
+    }
+    expect(pick(error ?? {})).toEqual({ ...EXPECTED, hostname, message: `getaddrinfo ENOTFOUND ${hostname}` });
+  },
+);
+
+// An answer that is already known when Bun.connect() is called (answered
+// in-process, or a cache hit) is delivered from the event loop, not inline.
+// When the connect is made from the callback that delivers the previous
+// answer, the loop has to be woken for it; otherwise each error waits for the
+// next unrelated wakeup (about a second), and 20 of them exceed the test
+// timeout.
+test("back-to-back Bun.connect calls whose names are rejected in-process do not wait for a loop wakeup", async () => {
+  const codes = [];
+  for (let i = 0; i < 20; i++) {
+    codes.push(
+      await Bun.connect({
+        hostname: `not a hostname ${i}`,
+        port: 80,
+        socket: { open() {}, data() {} },
+      }).then(
+        () => "resolved",
+        (e: Error) => e.code,
+      ),
+    );
+  }
+  expect(codes).toEqual(Array(20).fill("ENOTFOUND"));
+});
+
+// Brackets are how a URL writes an IPv6 literal; only such a literal loses
+// them. Anything else in brackets is a name the resolver gets as written, as in
+// Node, and is rejected in-process without touching the network.
+test("Bun.connect unwraps a bracketed IPv6 literal and nothing else", async () => {
+  const outcome = (hostname: string, port: number, tls?: Bun.TLSOptions) =>
+    new Promise<string | boolean>(resolve => {
+      Bun.connect({
+        hostname,
+        port,
+        tls,
+        socket: {
+          open(socket) {
+            if (!tls) (resolve("connected"), socket.end());
+          },
+          handshake(socket, _success, error) {
+            resolve(error ? error.message : socket.authorized);
+            socket.end();
+          },
+          data() {},
+        },
+      }).catch(e => resolve(e.code + " " + e.hostname));
+    });
+
+  expect(await outcome("[example.invalid]", 80)).toBe("ENOTFOUND [example.invalid]");
+  expect(await outcome("[127.0.0.1]", 80)).toBe("ENOTFOUND [127.0.0.1]");
+  expect(await outcome("[]", 80)).toBe("ENOTFOUND []");
+  if (!isIPv6()) return;
+
+  using plain = Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } });
+  expect(await outcome("[::1]", plain.port)).toBe("connected");
+  // The certificate lists IP:::1. The name it is checked against, and SNI,
+  // are the bare address.
+  using secure = Bun.listen({ hostname: "::1", port: 0, tls: tlsCert, socket: { data() {} } });
+  expect(await outcome("[::1]", secure.port, { ca: tlsCert.cert })).toBe(true);
 });

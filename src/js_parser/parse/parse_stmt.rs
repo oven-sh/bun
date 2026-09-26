@@ -923,7 +923,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "export type foo = ..."
                                 let type_range = p.lexer.range();
                                 p.lexer.next()?;
-                                if p.lexer.has_newline_before {
+                                // "export type\n{ foo }" and "export type\n* from 'bar'" are fine
+                                if p.lexer.has_newline_before
+                                    && p.lexer.token != T::TOpenBrace
+                                    && p.lexer.token != T::TAsterisk
+                                {
                                     p.log().add_error_fmt(
                                         Some(p.source),
                                         type_range.end(),
@@ -1024,7 +1028,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let default_name = p.create_default_name(loc);
 
-                    let mut expr = p.parse_async_prefix_expr(async_range, Level::Comma)?;
+                    let mut expr =
+                        p.parse_async_prefix_expr(async_range, Level::Comma, EFlags::None)?;
                     p.parse_suffix(&mut expr, Level::Comma, None, EFlags::None)?;
                     p.lexer.expect_or_insert_semicolon()?;
                     let value = js_ast::StmtOrExpr::Expr(expr);
@@ -1485,7 +1490,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
 
-                let mut default_name = p.lexer.identifier;
+                let default_name = p.lexer.identifier;
                 let default_name_raw = p.lexer.raw();
                 stmt = S::Import {
                     namespace_ref: Ref::NONE,
@@ -1543,23 +1548,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if default_name == b"type" {
                         match p.lexer.token {
                             T::TIdentifier => {
-                                if p.lexer.identifier != b"from" {
-                                    default_name = p.lexer.identifier;
-                                    stmt.default_name.as_mut().unwrap().loc = p.lexer.loc();
+                                // A name of "from" is left to the code below when this is
+                                // "import type from 'bar';" (a value import named "type"), or
+                                // when only "import foo = bar" is valid here and the guard
+                                // below has to reject everything but "import type from = bar".
+                                let import_equals_only = opts.is_export
+                                    || (opts.scope.is_namespace() && !opts.is_typescript_declare);
+                                let leave_from = p.lexer.identifier == b"from"
+                                    && p.next_token_matches(|p| {
+                                        if import_equals_only {
+                                            p.lexer.token != T::TEquals
+                                        } else {
+                                            matches!(
+                                                p.lexer.token,
+                                                T::TStringLiteral
+                                                    | T::TNoSubstitutionTemplateLiteral
+                                            )
+                                        }
+                                    });
+                                if !leave_from {
+                                    let name = p.lexer.identifier;
+                                    let name_loc = p.lexer.loc();
                                     p.lexer.next()?;
 
                                     if p.lexer.token == T::TEquals {
-                                        // "import type foo = require('bar');"
-                                        // "import type foo = bar.baz;"
+                                        // "import type foo = require('bar');" (foo may be "from")
                                         opts.is_typescript_declare = true;
                                         return p.parse_type_script_import_equals_stmt(
-                                            loc,
-                                            opts,
-                                            stmt.default_name.unwrap().loc,
-                                            default_name,
+                                            loc, opts, name_loc, name,
                                         );
                                     } else {
-                                        // "import type foo from 'bar';"
+                                        // "import type foo from 'bar';" (foo may be "from")
                                         p.lexer.expect_contextual_keyword(b"from")?;
                                         let _ = p.parse_path()?;
                                         p.lexer.expect_or_insert_semicolon()?;
@@ -1703,7 +1722,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return p.parse_fn_stmt(async_range.loc, opts, Some(async_range));
             }
 
-            expr = p.parse_async_prefix_expr(async_range, Level::Lowest)?;
+            expr = p.parse_async_prefix_expr(async_range, Level::Lowest, EFlags::None)?;
             p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
         } else {
             let expr_or_let = p.parse_expr_or_let_stmt(opts)?;

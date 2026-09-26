@@ -73,7 +73,13 @@ public:
             return nullptr;
         }
 
-        return us_socket_close((us_socket_t *) this, 0, nullptr);
+        /* Callers rely on the close event having run on return, which code 0 does not give on TLS (CloseCode, src/uws_sys/us_socket_t.rs). */
+        us_socket_t *s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+        if (!us_socket_is_closed((us_socket_t *) this)) {
+            /* Parked behind the TLS ciphertext spill, which a peer that stopped reading never drains. */
+            s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+        }
+        return s;
     }
 
     enum SendStatus : int {
@@ -255,13 +261,6 @@ public:
         /* Set shorter timeout (use ping-timeout) to avoid long hanging sockets after end() on broken connections */
         Super::timeout(webSocketContextData->idleTimeoutComponents.second);
 
-        /* At this point we iterate all currently held subscriptions and emit an event for all of them */
-        if (webSocketData->subscriber && webSocketContextData->subscriptionHandler) {
-            for (Topic *t : webSocketData->subscriber->topics) {
-                webSocketContextData->subscriptionHandler(this, t->name, (int) t->size() - 1, (int) t->size());
-            }
-        }
-
         /* Make sure to unsubscribe from any pub/sub node at exit */
         webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
         webSocketData->subscriber = nullptr;
@@ -300,12 +299,7 @@ public:
             webSocketData->subscriber->user = this;
         }
 
-        /* Cannot return numSubscribers as this is only for this particular websocket context */
-        Topic *topicOrNull = webSocketContextData->topicTree->subscribe(webSocketData->subscriber, topic);
-        if (topicOrNull && webSocketContextData->subscriptionHandler) {
-            /* Emit this socket, the topic, new count, old count */
-            webSocketContextData->subscriptionHandler(this, topic, (int) topicOrNull->size(), (int) topicOrNull->size() - 1);
-        }
+        webSocketContextData->topicTree->subscribe(webSocketData->subscriber, topic);
 
         /* Subscribe always succeeds */
         return true;
@@ -319,12 +313,7 @@ public:
 
         if (!webSocketData->subscriber) { return false; }
 
-        /* Cannot return numSubscribers as this is only for this particular websocket context */
-        auto [ok, last, newCount] = webSocketContextData->topicTree->unsubscribe(webSocketData->subscriber, topic);
-        /* Emit subscription event if last */
-        if (ok && webSocketContextData->subscriptionHandler) {
-            webSocketContextData->subscriptionHandler(this, topic, newCount, newCount + 1);
-        }
+        auto [ok, last] = webSocketContextData->topicTree->unsubscribe(webSocketData->subscriber, topic);
 
         /* Free us as subscribers if we unsubscribed from our last topic */
         if (ok && last) {

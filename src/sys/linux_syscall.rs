@@ -201,6 +201,21 @@ pub(crate) fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i
     retry(|| rustix::fs::statat(dir, path.as_cstr(), at)).map(stat_to_libc)
 }
 
+/// `faccessat(2)`, the syscall without a `flags` argument. Do not use libc's
+/// `faccessat()` for this: glibc 2.33+ issues `faccessat2` first even for
+/// `flags == 0` and falls back on ENOSYS only, so a seccomp filter that
+/// answers the newer call with any other errno (EPERM from a profile written
+/// before Linux 5.8) fails every check. With empty flags rustix goes straight
+/// to `faccessat`.
+#[inline]
+pub(crate) fn faccessat(dir: Fd, path: &ZStr, mode: i32) -> Result<(), i32> {
+    // `Access` is `c_uint` bits on rustix's linux_raw backend, `c_int` on its
+    // libc backend (Android, where bionic's `faccessat` is already flag-less).
+    let access = rustix::fs::Access::from_bits_retain(mode as _);
+    let dir = dir.as_borrowed_fd();
+    retry(|| rustix::fs::accessat(dir, path.as_cstr(), access, rustix::fs::AtFlags::empty()))
+}
+
 /// Map rustix's kernel `struct stat` → `libc::stat`.
 ///
 /// On Bun's tier-1 Linux targets (x86_64, aarch64 — gnu/musl/bionic alike),
@@ -385,7 +400,7 @@ pub(crate) unsafe fn pwritev(
 // `-errno` returns, which callers decode via `GetErrno for isize`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Raw `read(2)` — libc-convention return (for `linux::read` / `posix::read`).
+/// Raw `read(2)` — libc-convention return (for `linux::read`).
 ///
 /// This is a libc-convention thunk: callers may pass `fd == -1` (expecting
 /// EBADF), `buf == NULL` with `count == 0` (expecting `0`), or an
@@ -399,14 +414,6 @@ pub(crate) unsafe fn pwritev(
 pub(crate) unsafe fn read_raw(fd: i32, buf: *mut u8, count: usize) -> isize {
     // SAFETY: raw `read(2)`; kernel validates `fd`/`buf`/`count`.
     unsafe { libc::syscall(libc::SYS_read, fd, buf, count) as isize }
-}
-
-/// Raw `write(2)` — libc-convention return. See `read_raw` for why this
-/// bypasses rustix's typed wrapper.
-#[inline]
-pub(crate) unsafe fn write_raw(fd: i32, buf: *const u8, count: usize) -> isize {
-    // SAFETY: raw `write(2)`; kernel validates `fd`/`buf`/`count`.
-    unsafe { libc::syscall(libc::SYS_write, fd, buf, count) as isize }
 }
 
 /// Raw `epoll_ctl(2)` — libc-convention return.

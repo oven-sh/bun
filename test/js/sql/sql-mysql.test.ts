@@ -414,6 +414,34 @@ if (isDockerEnabled()) {
           expect(dupSecond[0]).toEqual({ x: 1, y: 2, z: 3, w: 4 });
         });
 
+        test("returns every column of a wide prepared-statement result", async () => {
+          // The "more than the max inline capacity" tests above go through
+          // sql.unsafe(), the text protocol. A parameterized query runs as a
+          // prepared statement, whose binary rows carry a NULL bitmap of
+          // (columns + 9) / 8 bytes. 500 columns with 64-byte names (the MySQL
+          // identifier limit) cover a 63-byte bitmap and a row structure far
+          // past the inline property capacity.
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+
+          const columns = Array.from({ length: 500 }, (_, i) => `col_${i}_`.padEnd(64, "x"));
+          const filled = columns.filter((_, i) => i % 7 === 0);
+          const t = "wide_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql.unsafe(
+            `CREATE TEMPORARY TABLE ${t} (id INT PRIMARY KEY, ${columns.map(name => `${name} TINYINT`).join(", ")})`,
+          );
+          await sql.unsafe(
+            `INSERT INTO ${t} (id, ${filled.join(", ")}) VALUES (1, ${filled.map((_, i) => i).join(", ")})`,
+          );
+
+          const expected = Object.fromEntries(columns.map(name => [name, null]));
+          filled.forEach((name, i) => (expected[name] = i));
+          expect(await sql`SELECT * FROM ${sql(t)} WHERE id = ${1}`).toEqual([{ id: 1, ...expected }]);
+          expect(await sql`SELECT * FROM ${sql(t)} WHERE id = ${1}`.values()).toEqual([
+            [1, ...columns.map(name => expected[name])],
+          ]);
+        });
+
         test("Handles numeric column names", async () => {
           // deliberately out of order
           const result = await sql`select 1 as "1", 2 as "2", 3 as "3", 0 as "0"`;

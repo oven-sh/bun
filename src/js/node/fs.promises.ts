@@ -1613,7 +1613,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
   let encoding;
   let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {
-    encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
+    encoding = optionsOrEncoding?.encoding || "utf8";
     flag = optionsOrEncoding?.flag ?? (flag || "w");
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
     signal = optionsOrEncoding?.signal ?? null;

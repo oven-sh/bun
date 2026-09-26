@@ -2376,7 +2376,7 @@ mod stylesheet_impl {
 
             let mut minify_ctx = MinifyContext {
                 arena,
-                targets: &options.targets,
+                targets: options.targets,
                 handler: &mut handler,
                 important_handler: &mut important_handler,
                 handler_context: ctx,

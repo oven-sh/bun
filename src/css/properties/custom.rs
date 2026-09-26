@@ -833,6 +833,27 @@ impl TokenList {
         fallbacks
     }
 
+    /// The features these colors use. `None` with `var()` or `env()`: such a value is valid whatever the rest is.
+    pub(crate) fn get_features(&self) -> Option<css::targets::Features> {
+        use css::targets::Features;
+        let mut features = Features::empty();
+        for token_or_value in self.v.iter() {
+            features |= match token_or_value {
+                TokenOrValue::Color(color) => color.get_features(),
+                TokenOrValue::UnresolvedColor(
+                    UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. },
+                ) => Features::SPACE_SEPARATED_COLOR_NOTATION | alpha.get_features()?,
+                TokenOrValue::UnresolvedColor(UnresolvedColor::LightDark { light, dark }) => {
+                    light.get_features()? | dark.get_features()?
+                }
+                TokenOrValue::Function(f) => f.arguments.get_features()?,
+                TokenOrValue::Var(_) | TokenOrValue::Env(_) => return None,
+                _ => Features::empty(),
+            };
+        }
+        Some(features)
+    }
+
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 }
 

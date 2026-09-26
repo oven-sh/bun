@@ -150,7 +150,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Substitute user-specified defines
                 *e =
                     p.value_for_define(expr.loc, in_.assign_target, is_delete_target, &define.data);
-                p.build_time_values = p.build_time_values.wrapping_add(1);
                 return;
             }
         }
@@ -273,11 +272,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || in_.assign_target == js_ast::AssignTarget::None
                     {
                         p.ignore_usage(e_.ref_);
-                        *e = newvalue;
-                        // `undefined` and `NaN` are in the table of pure globals, not in this one.
-                        if defines.identifiers.contains_key(name) {
-                            p.build_time_values = p.build_time_values.wrapping_add(1);
+                        // `--define G=f` makes `G = x` an assignment to `f`.
+                        if in_.assign_target != js_ast::AssignTarget::None {
+                            if let Data::EIdentifier(target) = newvalue.data {
+                                p.record_assignment(target.ref_);
+                            }
                         }
+                        *e = newvalue;
                         return;
                     }
 
@@ -665,7 +666,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
         if let Some(tag) = e_.tag.as_mut() {
             p.template_tag = tag.data;
+            let prev_in_template_tag = core::mem::replace(&mut p.in_template_tag, true);
             p.visit_expr(tag);
+            p.in_template_tag = prev_in_template_tag;
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -1351,7 +1354,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 is_delete_target,
                                 &define.data,
                             );
-                            p.build_time_values = p.build_time_values.wrapping_add(1);
                             return;
                         }
 
@@ -1880,9 +1882,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
-        p.call_target = e_.target.data;
+        let prev_call_target = core::mem::replace(&mut p.call_target, e_.target.data);
 
-        p.then_catch_chain = ThenCatchChain {
+        let then_catch_chain = ThenCatchChain {
             next_target: e_.target.data,
             has_multiple_args: e_.args.len_u32() >= 2,
             has_catch: matches!(
@@ -1890,6 +1892,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Data::ECall(nt) if core::ptr::eq(&raw const *e_, &raw const *nt)
             ) && p.then_catch_chain.has_catch,
         };
+        let prev_then_catch_chain = core::mem::replace(&mut p.then_catch_chain, then_catch_chain);
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
         p.visit_expr_in_out(
@@ -2173,13 +2176,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.bundler_feature_flag_ref.is_valid() {
             if let Some(result) = Self::maybe_replace_bundler_feature_call(p, &mut *e_, expr.loc) {
                 *e = result;
-                p.build_time_values = p.build_time_values.wrapping_add(1);
                 return;
             }
         }
 
         if p.const_calls.is_some() {
             if let Some(result) = p.fold_const_call(&e_, expr.loc) {
+                // The visitor state is the same as after a visit of the value.
+                p.call_target = prev_call_target;
+                p.then_catch_chain = prev_then_catch_chain;
                 *e = result;
                 return;
             }

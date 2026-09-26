@@ -1,5 +1,5 @@
 #![warn(unused_must_use)]
-//! Folds a call of a function that always returns the same primitive, during the visit pass.
+//! Folds a call of a function that always returns `true`, `false`, `null` or `undefined`, during the visit pass.
 
 use crate::p::P;
 use crate::scan::scan_side_effects::SideEffects;
@@ -16,11 +16,61 @@ bun_core::declare_scope!(const_call, hidden);
 /// The statements of a body that are stepped over before the check gives up.
 const MAX_STEPS: u32 = 16;
 const MAX_GUARD_DEPTH: u32 = 16;
-/// A longer string at every call grows the output (three.js returns shader sources this way).
-const MAX_STRING_LEN: usize = 64;
+
+/// What every call of a function evaluates to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ConstCallValue {
+    True,
+    False,
+    Null,
+    Undefined,
+}
+
+impl ConstCallValue {
+    fn of(data: &ExprData) -> Option<Self> {
+        Some(match data {
+            ExprData::EBoolean(boolean) if boolean.value => Self::True,
+            ExprData::EBoolean(_) => Self::False,
+            ExprData::ENull(_) => Self::Null,
+            ExprData::EUndefined(_) => Self::Undefined,
+            _ => return None,
+        })
+    }
+
+    fn data(self) -> ExprData {
+        match self {
+            Self::True => ExprData::EBoolean(E::Boolean { value: true }),
+            Self::False => ExprData::EBoolean(E::Boolean { value: false }),
+            Self::Null => ExprData::ENull(E::Null {}),
+            Self::Undefined => ExprData::EUndefined(E::Undefined {}),
+        }
+    }
+}
+
+/// Answers what a call of an import returns. The bundler has one for each file it parses.
+pub trait ConstCallLookup {
+    /// `specifier` is the one of an `import` statement of the file, `alias` is the name of the export.
+    fn lookup(&self, specifier: &[u8], alias: &[u8]) -> Option<ConstCallValue>;
+}
+
+/// What the exports of a file return, for the lookup of its importers.
+#[derive(Default)]
+pub struct ConstCallExports {
+    pub values: Vec<(Box<[u8]>, ConstCallValue)>,
+    pub reexports: Vec<ConstCallReexport>,
+    /// The specifier, when the file is only `module.exports = require(specifier)`.
+    pub redirect: Option<Box<[u8]>>,
+}
+
+/// `export { imported as alias } from specifier`, or an import that the file exports again.
+pub struct ConstCallReexport {
+    pub alias: Box<[u8]>,
+    pub specifier: Box<[u8]>,
+    pub imported: Box<[u8]>,
+}
 
 pub(crate) struct Fact {
-    value: Expr,
+    value: ConstCallValue,
     /// Identifies the function in a second parse of the same source.
     name_loc: Loc,
     folds: u32,
@@ -39,33 +89,11 @@ pub(crate) struct ConstCalls {
     pub(crate) unsound_all: bool,
 }
 
-/// Set by `_parse` for its second attempt.
+/// Set by `_parse` for an attempt after the first.
 #[derive(Clone, Copy)]
 pub struct ConstCallRetry<'a> {
     pub(crate) blocklist: &'a [Loc],
     pub(crate) disable: bool,
-}
-
-/// An import that a branch condition calls. The bundler answers with a [`ConstCallSeed`].
-pub struct ConstCallImport<'a> {
-    pub import_record_index: u32,
-    /// The name of the export in the imported file.
-    pub alias: &'a [u8],
-    pub specifier: &'a [u8],
-    pub range: bun_ast::Range,
-}
-
-pub struct ConstCallStop<'a> {
-    pub imports: Vec<ConstCallImport<'a>>,
-    /// The file as visited without the values. `None` when that visit failed.
-    pub ast: Option<bun_ast::Ast<'a>>,
-}
-
-/// The value every call of an import evaluates to.
-pub struct ConstCallSeed<'a> {
-    pub import_record_index: u32,
-    pub alias: &'a [u8],
-    pub value: Expr,
 }
 
 /// `ExprData` variants a parse-pass call argument can be for the call to count as a guard.
@@ -77,34 +105,16 @@ fn is_literal_arg(data: &ExprData) -> bool {
 }
 
 enum Flow {
-    Returns(Expr),
+    Returns(ConstCallValue),
     FallsThrough,
     Unknown,
-}
-
-fn is_const_call_value(data: &ExprData) -> bool {
-    match data {
-        ExprData::ENumber(_) => true,
-        ExprData::EString(str) => str.next.is_none() && str.data.len() <= MAX_STRING_LEN,
-        _ => folds_anywhere(data),
-    }
-}
-
-/// A string or a number can be a specifier, so it folds only in the condition of `if` or `?:`.
-fn folds_anywhere(data: &ExprData) -> bool {
-    matches!(
-        data,
-        ExprData::EBoolean(_)
-            | ExprData::EBranchBoolean(_)
-            | ExprData::ENull(_)
-            | ExprData::EUndefined(_)
-    )
 }
 
 /// What is known before the parse pass. `P::enable_const_calls` adds the rest.
 pub(crate) fn const_calls_allowed(options: &crate::parse::parse_entry::Options<'_>) -> bool {
     options.bundle
-        // Without tree shaking the graph is only scanned (`bun test --changed`).
+        // The same switch as for the values of `const` declarations.
+        && options.features.inlining
         && options.tree_shaking
         && options.features.dead_code_elimination
         && !options.features.hot_module_reloading
@@ -197,7 +207,7 @@ fn scan_returns(stmts: &[Stmt], steps: &mut u32, found: &mut dyn FnMut(Ref)) {
 }
 
 impl ConstCalls {
-    fn record(&mut self, ref_: Ref, name_loc: Loc, value: Expr) {
+    fn record(&mut self, ref_: Ref, name_loc: Loc, value: ConstCallValue) {
         if self.unsound_all || self.merged_with_var.contains(&ref_) {
             return;
         }
@@ -226,17 +236,16 @@ impl ConstCalls {
         self.values.clear();
     }
 
-    /// The imports the bundler must look up for this file, if any.
-    fn imports<'a>(
-        &self,
+    /// Asks `lookup` about each import that a condition calls, and records the answers as facts.
+    fn seed_imports(
+        &mut self,
         stmts: &[Stmt],
         records: &[js_ast::ImportRecord],
-    ) -> Option<Vec<ConstCallImport<'a>>> {
-        let guards = &self.guard_imports;
-        if guards.is_empty() {
-            return None;
+        lookup: &dyn ConstCallLookup,
+    ) {
+        if self.guard_imports.is_empty() {
+            return;
         }
-        let mut imports = Vec::new();
         for stmt in stmts {
             let StmtData::SImport(import) = stmt.data else {
                 continue;
@@ -251,84 +260,57 @@ impl ConstCalls {
             {
                 continue;
             }
-            // `export default function` is not recorded, so a default import alone has no value to get.
-            let items = import.items.slice();
-            if !items
+            let default = import.default_name.map(|name| (&b"default"[..], name));
+            let items = import
+                .items
+                .slice()
                 .iter()
-                .any(|item| guards.contains_key(&item.name.ref_))
-            {
-                continue;
-            }
-            // The bundler waits for this file anyway, so it is asked about every item of the statement.
-            let aliases = import
-                .default_name
-                .map(|_| &b"default"[..])
-                .into_iter()
-                .chain(items.iter().map(|item| item.alias.slice()));
-            for alias in aliases {
-                imports.push(ConstCallImport {
-                    import_record_index: import.import_record_index,
-                    alias,
-                    specifier,
-                    range: record.range,
-                });
-            }
-        }
-        (!imports.is_empty()).then_some(imports)
-    }
-
-    fn install_seeds(&mut self, seeds: &[ConstCallSeed<'_>], stmts: &[Stmt]) {
-        for stmt in stmts {
-            let StmtData::SImport(import) = stmt.data else {
-                continue;
-            };
-            for seed in seeds {
-                if seed.import_record_index != import.import_record_index {
+                .map(|item| (item.alias.slice(), item.name));
+            for (alias, name) in default.into_iter().chain(items) {
+                if !self.guard_imports.contains_key(&name.ref_) {
                     continue;
                 }
-                // `import a, { default as b } from` binds the same export twice.
-                let names = import
-                    .default_name
-                    .filter(|_| seed.alias == b"default")
-                    .into_iter()
-                    .chain(
-                        import
-                            .items
-                            .slice()
-                            .iter()
-                            .filter(|item| item.alias.slice() == seed.alias)
-                            .map(|item| item.name),
-                    );
-                for name in names {
-                    self.values.insert(
-                        name.ref_,
-                        Fact {
-                            value: seed.value,
-                            name_loc: name.loc,
-                            folds: 0,
-                        },
-                    );
+                if let Some(value) = lookup.lookup(specifier, alias) {
+                    self.record(name.ref_, name.loc, value);
                 }
             }
         }
     }
 
     /// What importers may fold: only function declarations, which exist before any module runs.
-    fn exports(
-        &self,
-        symbols: &[js_ast::Symbol],
-        module_scope: &js_ast::Scope,
-    ) -> js_ast::ast_result::ConstCallValues {
-        let mut exports = js_ast::ast_result::ConstCallValues::default();
-        for (ref_, fact) in self.values.iter() {
-            let symbol = &symbols[ref_.inner_index() as usize];
-            if symbol.kind == SymbolKind::HoistedFunction
-                && module_scope
-                    .members
-                    .get(symbol.original_name.slice())
-                    .is_some_and(|member| member.ref_ == *ref_)
+    fn exports(&self, ast: &js_ast::Ast<'_>, module_scope: &js_ast::Scope) -> ConstCallExports {
+        let mut exports = ConstCallExports::default();
+        let symbols = ast.symbols.as_slice();
+        let records = ast.import_records.as_slice();
+        for (alias, export) in ast.named_exports.iter() {
+            let symbol = &symbols[export.ref_.inner_index() as usize];
+            if let Some(fact) = self.values.get(&export.ref_) {
+                if symbol.kind == SymbolKind::HoistedFunction
+                    && module_scope
+                        .members
+                        .get(symbol.original_name.slice())
+                        .is_some_and(|member| member.ref_ == export.ref_)
+                {
+                    exports.values.push((Box::from(&alias[..]), fact.value));
+                }
+                continue;
+            }
+            let Some(import) = ast.named_imports.get(&export.ref_) else {
+                continue;
+            };
+            let Some(imported) = import.alias.filter(|_| !import.alias_is_star) else {
+                continue;
+            };
+            let record = &records[import.import_record_index as usize];
+            if record.kind == js_ast::ImportKind::Stmt
+                && record.loader.is_none()
+                && record.tag == js_ast::ImportRecordTag::None
             {
-                exports.put(*ref_, fact.value).expect("oom");
+                exports.reexports.push(ConstCallReexport {
+                    alias: Box::from(&alias[..]),
+                    specifier: Box::from(record.path.text),
+                    imported: Box::from(imported.slice()),
+                });
             }
         }
         exports
@@ -338,7 +320,7 @@ impl ConstCalls {
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// Runs once, after the parse pass: macro imports are known by then.
     pub(crate) fn enable_const_calls(&mut self) {
-        // The second parse would run each macro again.
+        // A second attempt would run each macro again.
         self.const_calls_enabled =
             const_calls_allowed(&self.options) && self.macro_.refs.is_empty();
     }
@@ -366,18 +348,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Flow::FallsThrough
                 }
                 StmtData::SReturn(ret) => match ret.value {
-                    None => Flow::Returns(Expr {
-                        data: ExprData::EUndefined(E::Undefined {}),
-                        loc: stmt.loc,
-                    }),
-                    Some(value) => {
-                        let value = value.unwrap_inlined();
-                        if is_const_call_value(&value.data) {
-                            Flow::Returns(value)
-                        } else {
-                            Flow::Unknown
-                        }
-                    }
+                    None => Flow::Returns(ConstCallValue::Undefined),
+                    Some(value) => match ConstCallValue::of(&value.unwrap_inlined().data) {
+                        Some(value) => Flow::Returns(value),
+                        None => Flow::Unknown,
+                    },
                 },
                 StmtData::SBlock(block) => self.const_call_flow(block.stmts.slice(), steps),
                 StmtData::SIf(if_) => match SideEffects::to_boolean(self, &if_.test.data) {
@@ -403,27 +378,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// The value every call of a function with this visited body evaluates to.
-    fn const_call_value(&self, args: &[G::Arg], body: &[Stmt], end: Loc) -> Option<Expr> {
+    fn const_call_value(&self, args: &[G::Arg], body: &[Stmt]) -> Option<ConstCallValue> {
         if !args_are_inert(args) {
             return None;
         }
         match self.const_call_flow(body, &mut { MAX_STEPS }) {
             Flow::Returns(value) => Some(value),
-            Flow::FallsThrough => Some(Expr {
-                data: ExprData::EUndefined(E::Undefined {}),
-                loc: end,
-            }),
+            Flow::FallsThrough => Some(ConstCallValue::Undefined),
             Flow::Unknown => None,
         }
     }
 
-    fn record_const_call(&mut self, ref_: Ref, name_loc: Loc, value: Expr, build_time: bool) {
-        // By default only a function that reads a `--define` or `feature()` value folds.
-        if !(build_time || self.options.features.inlining)
-            || self
-                .options
-                .const_call_retry
-                .is_some_and(|retry| retry.blocklist.contains(&name_loc))
+    fn record_const_call(&mut self, ref_: Ref, name_loc: Loc, value: ConstCallValue) {
+        if self
+            .options
+            .const_call_retry
+            .is_some_and(|retry| retry.blocklist.contains(&name_loc))
         {
             return;
         }
@@ -440,8 +410,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// After `visit_func` of a function declaration that keeps its own binding. `build_time`: the body read a build-time value.
-    pub(crate) fn note_const_call_function(&mut self, func: &G::Fn, build_time: bool) {
+    /// After `visit_func` of a function declaration that keeps its own binding.
+    pub(crate) fn note_const_call_function(&mut self, func: &G::Fn) {
         let Some(name) = func.name else { return };
         if !is_plain_function(func.flags) || !self.is_in_function_or_module_scope() {
             return;
@@ -453,46 +423,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return;
         }
-        if let Some(value) =
-            self.const_call_value(func.args.slice(), func.body.stmts.slice(), func.body.loc)
-        {
-            self.record_const_call(name.ref_, name.loc, value, build_time);
+        if let Some(value) = self.const_call_value(func.args.slice(), func.body.stmts.slice()) {
+            self.record_const_call(name.ref_, name.loc, value);
         }
     }
 
-    /// `const f = () => value` or `const f = function () { return value }` in the const local prefix, where no call can run before the declaration.
-    pub(crate) fn note_const_call_decl(
-        &mut self,
-        ref_: Ref,
-        name_loc: Loc,
-        value: &Expr,
-        build_time: bool,
-    ) {
+    /// `const f = () => value` or `const f = function () { return value }` in the const local prefix, where the value of a `const` is inlined too.
+    pub(crate) fn note_const_call_decl(&mut self, ref_: Ref, name_loc: Loc, value: &Expr) {
         if self.enclosing_namespace_arg_ref.is_some() || !self.is_in_function_or_module_scope() {
             return;
         }
         let folded = match value.data {
             ExprData::EArrow(arrow) if !arrow.is_async => {
-                self.const_call_value(arrow.args.slice(), arrow.body.stmts.slice(), arrow.body.loc)
+                self.const_call_value(arrow.args.slice(), arrow.body.stmts.slice())
             }
-            ExprData::EFunction(function) if is_plain_function(function.func.flags) => self
-                .const_call_value(
-                    function.func.args.slice(),
-                    function.func.body.stmts.slice(),
-                    function.func.body.loc,
-                ),
+            ExprData::EFunction(function) if is_plain_function(function.func.flags) => {
+                self.const_call_value(function.func.args.slice(), function.func.body.stmts.slice())
+            }
             _ => None,
         };
         if let Some(value) = folded {
-            self.record_const_call(ref_, name_loc, value, build_time);
+            self.record_const_call(ref_, name_loc, value);
         }
     }
 
     /// `e_call` after the target and the arguments are visited. Argument side effects stay, in order, before the value.
     #[inline(never)]
     pub(crate) fn fold_const_call(&mut self, call: &E::Call, loc: Loc) -> Option<Expr> {
-        // `require(name())` is a way to keep a specifier away from the bundler.
-        if call.optional_chain.is_some() || self.in_import_specifier {
+        // `require(cond() ? a : b)` is a way to keep a specifier away from the bundler.
+        if call.optional_chain.is_some() || self.in_import_specifier || self.in_template_tag {
             return None;
         }
         let target_ref = match call.target.data {
@@ -501,30 +460,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ExprData::EImportIdentifier(id) => id.ref_,
             _ => return None,
         };
-        let in_branch_condition = self.in_branch_condition;
         let fact = self.const_calls.as_mut()?.values.get_mut(&target_ref)?;
-        if !in_branch_condition && !folds_anywhere(&fact.value.data) {
-            return None;
-        }
         fact.folds += 1;
-        self.build_time_values = self.build_time_values.wrapping_add(1);
-        let fact = self.const_calls.as_ref()?.values.get(&target_ref)?;
-        let mut result = Expr {
+        let result = Expr {
             loc,
-            data: fact.value.data,
+            data: fact.value.data(),
         };
-        if let ExprData::EString(str) = result.data {
-            // String folding appends to a node in place.
-            result = self.new_expr(
-                E::String {
-                    data: str.data,
-                    is_utf16: str.is_utf16,
-                    prefer_template: str.prefer_template,
-                    ..Default::default()
-                },
-                loc,
-            );
-        }
         self.ignore_usage(target_ref);
 
         let mut side_effects: Option<Expr> = None;
@@ -565,7 +506,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A local binding with the same name only makes the file stop for nothing.
+    /// A local binding with the same name only makes the file ask for nothing.
     fn note_const_call_guard_name(&mut self, name_ref: Ref) {
         let name = self.load_name_from_ref(name_ref);
         let Some(member) = self.module_scope().members.get(name) else {
@@ -597,36 +538,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         });
     }
 
-    /// The imports the bundler must look up for this file, if any.
-    pub(crate) fn const_call_imports(&self, stmts: &[Stmt]) -> Option<Vec<ConstCallImport<'a>>> {
-        if !self.const_calls_enabled || self.options.const_call_seeds.is_some() {
-            return None;
+    /// After the parse pass: asks the bundler what the imports that a condition calls return.
+    pub(crate) fn seed_const_call_imports(&mut self, stmts: &[Stmt]) {
+        if !self.const_calls_enabled {
+            return;
         }
-        self.const_calls
-            .as_ref()?
-            .imports(stmts, self.import_records.items())
-    }
-
-    /// After the parse pass of a run the bundler seeded.
-    pub(crate) fn install_const_call_seeds(&mut self, stmts: &[Stmt]) {
-        let Some(seeds) = self.options.const_call_seeds else {
+        let (Some(lookup), Some(calls)) = (self.options.const_call_lookup, &mut self.const_calls)
+        else {
             return;
         };
-        if seeds.is_empty() || !self.const_calls_enabled {
-            return;
-        }
-        self.const_calls
-            .get_or_insert_with(Default::default)
-            .install_seeds(seeds, stmts);
+        calls.seed_imports(stmts, self.import_records.items(), lookup);
     }
 
-    pub(crate) fn const_call_exports(&self) -> js_ast::ast_result::ConstCallValues {
-        match &self.const_calls {
-            Some(calls) if self.const_calls_enabled => {
-                calls.exports(&self.symbols, self.module_scope())
-            }
-            _ => Default::default(),
+    /// After `to_ast` of a file that the bundler parses for the lookup of its importers.
+    pub(crate) fn send_const_call_exports(&self, ast: &js_ast::Ast<'_>) {
+        let (Some(exports), Some(calls)) = (self.options.const_call_exports, &self.const_calls)
+        else {
+            return;
+        };
+        if self.const_calls_enabled {
+            exports.set(Some(Box::new(calls.exports(ast, self.module_scope()))));
         }
+    }
+
+    /// The file is only `module.exports = require()` of the record.
+    pub(crate) fn send_const_call_redirect(&self, import_record_index: u32) {
+        let Some(exports) = self.options.const_call_exports else {
+            return;
+        };
+        let record = &self.import_records.items()[import_record_index as usize];
+        exports.set(Some(Box::new(ConstCallExports {
+            redirect: Some(Box::from(record.path.text)),
+            ..Default::default()
+        })));
     }
 
     /// A direct `eval` anywhere in the file.
@@ -654,9 +598,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             calls.unsound.len(),
             calls.unsound_all
         );
+        // An attempt after the first keeps what the attempts before it found.
+        let before = self.options.const_call_retry;
+        let mut blocklist = before.map_or(&[][..], |retry| retry.blocklist).to_vec();
+        blocklist.extend_from_slice(&calls.unsound);
         Some(ConstCallRetry {
-            blocklist: self.arena.alloc_slice_copy(&calls.unsound),
-            disable: calls.unsound_all,
+            blocklist: self.arena.alloc_slice_copy(&blocklist),
+            disable: calls.unsound_all || before.is_some_and(|retry| retry.disable),
         })
     }
 }

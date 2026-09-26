@@ -116,8 +116,6 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
-    /// Set for the second run of a task, which visits the file with the values of its imports.
-    pub(crate) const_call_second_run: Option<Box<ConstCallSecondRun>>,
 }
 
 pub enum ParseTaskStage {
@@ -164,11 +162,7 @@ impl bun_event_loop::Taskable for Result {
 pub(crate) enum ResultValue {
     Success(Success),
     Err(ResultError),
-    Empty {
-        source_index: Index,
-    },
-    /// The visit failed in a file whose conditions call imports. See `const_call_inlining`.
-    NeedsConstCallValues(Box<NeedsConstCallValues>),
+    Empty { source_index: Index },
 }
 
 impl ResultValue {
@@ -177,53 +171,8 @@ impl ResultValue {
             ResultValue::Empty { source_index } => source_index.get(),
             ResultValue::Err(data) => data.source_index.get(),
             ResultValue::Success(val) => val.source.index.0,
-            ResultValue::NeedsConstCallValues(val) => val.source_index.get(),
         }
     }
-}
-
-pub(crate) struct NeedsConstCallValues {
-    pub(crate) source_index: Index,
-    pub(crate) target: options::Target,
-    pub(crate) loader: Loader,
-    /// Arena-owned, and scheduled again when a value is found.
-    pub(crate) task: *mut ParseTask,
-    /// The slices point into the source text and the worker arena, which the task keeps alive.
-    pub(crate) imports: Vec<bun_js_parser::ConstCallImport<'static>>,
-    /// The log before the task parsed. A second run does not load the source again.
-    pub(crate) source_mark: LogMark,
-    /// Those messages, when the result has no log of its own.
-    pub(crate) source_log: Log,
-}
-
-/// The length of a log at one point of a task.
-#[derive(Clone, Copy)]
-pub(crate) struct LogMark {
-    msgs: usize,
-    errors: u32,
-    warnings: u32,
-}
-
-impl LogMark {
-    pub(crate) fn of(log: &Log) -> Self {
-        Self {
-            msgs: log.msgs.len(),
-            errors: log.errors,
-            warnings: log.warnings,
-        }
-    }
-
-    /// Drops what `log` got after the mark.
-    pub(crate) fn rewind(self, log: &mut Log) {
-        log.msgs.truncate(self.msgs);
-        log.errors = self.errors;
-        log.warnings = self.warnings;
-    }
-}
-
-pub(crate) struct ConstCallSecondRun {
-    pub(crate) seeds: Vec<bun_js_parser::ConstCallSeed<'static>>,
-    pub(crate) source_log: Log,
 }
 
 pub(crate) struct WatcherData {
@@ -255,11 +204,6 @@ pub(crate) struct Success {
 
     /// The package name from package.json, used for barrel optimization.
     pub(crate) package_name: ast::StoreStr,
-
-    /// See `bun_ast::Ast::const_call_values`.
-    pub(crate) const_call_values: bun_ast::ast_result::ConstCallValues,
-    /// `Some`: the bundle thread holds this result until it knows what these imports return.
-    pub(crate) needs_const_call_values: Option<Box<NeedsConstCallValues>>,
 }
 
 pub(crate) struct ResultError {
@@ -282,12 +226,6 @@ pub enum Step {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl ParseTask {
-    /// A task is arena-owned and has no `Drop`. `jsx` can own slices from a tsconfig.
-    pub(crate) fn release_owned_fields(&mut self) {
-        drop(core::mem::take(&mut self.jsx));
-        drop(self.const_call_second_run.take());
-    }
-
     /// Shared borrow of the owning `BundleV2`. `ctx` is a BACKREF
     /// (LIFETIMES.tsv) into the arena-allocated bundle, set at `init` time and
     /// valid until `BundleV2::deinit`. Prefer this over open-coded
@@ -369,7 +307,6 @@ impl ParseTask {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
-            const_call_second_run: None,
         }
     }
 
@@ -410,7 +347,6 @@ impl Default for ParseTask {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
-            const_call_second_run: None,
         }
     }
 }
@@ -439,7 +375,7 @@ unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // ever invoked by the thread pool against a `ParseTask` it scheduled, so
     // provenance covers the full `ParseTask` and the `&mut` is unique per the
     // CONCURRENCY note above.
-    let parse_task = unsafe { bun_core::from_field_ptr!(ParseTask, io_task, task) };
+    let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, io_task, task) };
     parse_worker::run_from_thread_pool(parse_task);
 }
 
@@ -450,7 +386,7 @@ unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
 unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.task` (intrusive field) — see
     // `io_task_callback` for the dispatch invariant.
-    let parse_task = unsafe { bun_core::from_field_ptr!(ParseTask, task, task) };
+    let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, task, task) };
     parse_worker::run_from_thread_pool(parse_task);
 }
 
@@ -690,7 +626,6 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
-            const_call_second_run: None,
         };
         let source = Source {
             // `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
@@ -869,59 +804,6 @@ pub mod parse_worker {
     // getAST
     // ───────────────────────────────────────────────────────────────────────────
 
-    /// `get_ast` for the JavaScript and TypeScript loaders.
-    struct JsAst {
-        /// `None`: the visit failed, and `imports` is not empty.
-        ast: Option<(JSAst<'static>, bun_ast::ast_result::ConstCallValues)>,
-        /// See `bun_js_parser::Result::NeedsConstCallValues`.
-        imports: Vec<bun_js_parser::ConstCallImport<'static>>,
-    }
-
-    fn get_js_ast(
-        log: &mut Log,
-        transpiler: *mut Transpiler,
-        opts: ParserOptions<'static>,
-        bump: &'static Bump,
-        source: &'static Source,
-    ) -> core::result::Result<JsAst, AnyError> {
-        let _trace = perf::trace("Bundler.ParseJS");
-        // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; only its
-        // `options` field is reborrowed here.
-        let topts = unsafe { &(*transpiler).options };
-        // `opts` moves into `parse`, so the empty-AST fallback copies it first.
-        let fallback_opts = opts.clone_for_lazy_export();
-        let module_type = opts.module_type;
-        let ast = if let Some(res) =
-            (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
-        {
-            let with_values = |mut ast: bun_ast::Ast<'static>| {
-                let const_call_values = core::mem::take(&mut ast.const_call_values);
-                (JSAst::init(ast), const_call_values)
-            };
-            return Ok(match res {
-                bun_js_parser::Result::Ast(ast) => JsAst {
-                    ast: Some(with_values(*ast)),
-                    imports: Vec::new(),
-                },
-                bun_js_parser::Result::NeedsConstCallValues(stop) => JsAst {
-                    ast: stop.ast.map(with_values),
-                    imports: stop.imports,
-                },
-                bun_js_parser::Result::Cached | bun_js_parser::Result::AlreadyBundled(_) => {
-                    unreachable!("bundler parse never yields Cached/AlreadyBundled")
-                }
-            });
-        } else if module_type == options::ModuleType::Esm {
-            get_empty_ast::<E::Undefined>(log, transpiler, fallback_opts, bump, source)?
-        } else {
-            get_empty_ast::<E::Object>(log, transpiler, fallback_opts, bump, source)?
-        };
-        Ok(JsAst {
-            ast: Some((ast, Default::default())),
-            imports: Vec::new(),
-        })
-    }
-
     // `transpiler`/`resolver` are raw `*mut`. The caller may pass
     // `resolver = &transpiler.resolver`, so
     // the two may point into the same allocation. Taking `&mut Transpiler` +
@@ -949,7 +831,32 @@ pub mod parse_worker {
 
         match loader {
             Loader::Jsx | Loader::Tsx | Loader::Js | Loader::Ts => {
-                unreachable!("run_with_source_code calls get_js_ast")
+                let _trace = perf::trace("Bundler.ParseJS");
+                // `ParserOptions` is not `Clone` (holds `&'a mut MacroContext`).
+                // The empty-AST fallback needs the same options; since `opts`
+                // moves into `.parse()`,
+                // snapshot a faithful field-by-field copy via
+                // `Options::clone_for_lazy_export` (co-located with the struct so
+                // field drift is a hard error) before the move.
+                let fallback_opts = opts.clone_for_lazy_export();
+                let module_type = opts.module_type;
+                return if let Some(res) =
+                    (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
+                {
+                    // `Cached`/`AlreadyBundled` are runtime-loader
+                    // states that never reach the bundler's `getAST`, so unwrap.
+                    match res {
+                        bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
+                        bun_js_parser::Result::Cached
+                        | bun_js_parser::Result::AlreadyBundled(_) => {
+                            unreachable!("bundler parse never yields Cached/AlreadyBundled")
+                        }
+                    }
+                } else if module_type == options::ModuleType::Esm {
+                    get_empty_ast::<E::Undefined>(log, transpiler, fallback_opts, bump, source)
+                } else {
+                    get_empty_ast::<E::Object>(log, transpiler, fallback_opts, bump, source)
+                };
             }
             Loader::Json | Loader::Jsonc => {
                 let _trace = perf::trace("Bundler.ParseJSON");
@@ -2397,23 +2304,13 @@ pub mod parse_worker {
     // runWithSourceCode
     // ───────────────────────────────────────────────────────────────────────────
 
-    /// What one run of a `ParseTask` produced.
-    #[allow(
-        clippy::large_enum_variant,
-        reason = "the large variant is the common one"
-    )]
-    enum Parsed {
-        Success(Success),
-        NeedsConstCallValues(Box<NeedsConstCallValues>),
-    }
-
     fn run_with_source_code(
         task: &mut ParseTask,
         this: &mut crate::Worker,
         step: &mut Step,
         log: &mut Log,
         entry: &mut CacheEntry,
-    ) -> core::result::Result<Parsed, AnyError> {
+    ) -> core::result::Result<Success, AnyError> {
         // reshaped for borrowck — `transpiler_for_target` borrows `this`
         // mutably; we may need to call it again below (server-components branch),
         // so hold it as a raw pointer and reborrow per use site.
@@ -2774,16 +2671,20 @@ pub mod parse_worker {
         }
         opts.module_type = task.module_type;
         opts.is_entry_point = task.is_entry_point;
-        // SAFETY: the task is arena-owned and nothing writes the seeds while it runs.
-        opts.const_call_seeds = task
-            .const_call_second_run
-            .as_deref()
-            .map(|second_run| unsafe { bun_ptr::detach_lifetime(&second_run.seeds[..]) });
 
-        // A task that runs again must start as this run did.
-        let jsx_parse_from_resolver = task.jsx.parse;
-        let side_effects_from_resolver = task.side_effects;
-        let source_mark = LogMark::of(log);
+        let const_call_lookup = if loader.is_javascript_like() && !task.source_index.is_runtime() {
+            // SAFETY: `transpiler` is the one of this worker. It and the bundle outlive the parse.
+            unsafe {
+                crate::const_call_lookup::Lookup::new(task.ctx(), transpiler, bump, task.path)
+            }
+        } else {
+            None
+        };
+        // SAFETY: `const_call_lookup` is dropped after `opts` is.
+        opts.const_call_lookup = const_call_lookup.as_ref().map(|lookup| unsafe {
+            bun_ptr::detach_lifetime_ref::<dyn js_parser::ConstCallLookup>(lookup)
+        });
+
         task.jsx.parse = loader.is_jsx();
 
         let mut unique_key_for_additional_file = FileLoaderHash {
@@ -2796,41 +2697,8 @@ pub mod parse_worker {
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
-        let mut const_call_values = bun_ast::ast_result::ConstCallValues::default();
-        let mut needs_const_call_values: Option<Box<NeedsConstCallValues>> = None;
         let ast_result: core::result::Result<JSAst, AnyError> =
-            if !is_empty && matches!(loader, Loader::Jsx | Loader::Tsx | Loader::Js | Loader::Ts) {
-                match get_js_ast(log, transpiler, opts, bump, source) {
-                    Ok(JsAst { ast, imports }) => {
-                        let needs = (!imports.is_empty()).then(|| {
-                            Box::new(NeedsConstCallValues {
-                                source_index: task.source_index,
-                                target,
-                                loader,
-                                task: core::ptr::null_mut(),
-                                imports,
-                                source_mark,
-                                source_log: Log::init(),
-                            })
-                        });
-                        match (ast, needs) {
-                            (Some((ast, values)), needs) => {
-                                const_call_values = values;
-                                needs_const_call_values = needs;
-                                Ok(ast)
-                            }
-                            (None, Some(mut needs)) => {
-                                task.jsx.parse = jsx_parse_from_resolver;
-                                source_mark.rewind(log);
-                                needs.source_log = core::mem::take(log);
-                                return Ok(Parsed::NeedsConstCallValues(needs));
-                            }
-                            (None, None) => unreachable!("a failed visit is an error"),
-                        }
-                    }
-                    Err(e) => Err(e),
-                }
-            } else if !is_empty || loader.handles_empty_file() {
+            if !is_empty || loader.handles_empty_file() {
                 get_ast(
                     log,
                     transpiler,
@@ -2887,27 +2755,19 @@ pub mod parse_worker {
 
         *step = Step::Resolve;
 
-        let side_effects = task.side_effects;
-        if needs_const_call_values.is_some() {
-            task.jsx.parse = jsx_parse_from_resolver;
-            task.side_effects = side_effects_from_resolver;
-        }
-
-        Ok(Parsed::Success(Success {
+        Ok(Success {
             ast,
             source: source.clone(),
             log: core::mem::take(log),
             use_directive,
             unique_key_for_additional_file: unique_key_for_additional_file.key,
-            side_effects,
+            side_effects: task.side_effects,
             loader,
             package_name: task.package_name,
-            const_call_values,
-            needs_const_call_values,
 
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
-        }))
+        })
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -2921,13 +2781,11 @@ pub mod parse_worker {
     // CONCURRENCY: see `task_callback` — `&mut ParseTask` is unique per callback
     // invocation; all shared state is accessed via `&BundleV2` (read-only) or
     // the per-OS-thread `Worker` arena.
-    pub(crate) fn run_from_thread_pool(task: *mut ParseTask) {
-        // SAFETY: see `task_callback`: the worker that runs a task is the only one that has it.
-        run_from_thread_pool_impl(unsafe { &mut *task }, task);
+    pub(crate) fn run_from_thread_pool(this: &mut ParseTask) {
+        run_from_thread_pool_impl(this);
     }
 
-    /// `task` is `this`, for the bundle thread to schedule again. It is not read here.
-    fn run_from_thread_pool_impl(this: &mut ParseTask, task: *mut ParseTask) {
+    fn run_from_thread_pool_impl(this: &mut ParseTask) {
         // SAFETY: ctx backref valid for the bundle pass (outlives this task).
         let ctx = unsafe { this.ctx() };
         let worker: &mut crate::Worker = crate::Worker::get(ctx);
@@ -2941,10 +2799,7 @@ pub mod parse_worker {
         );
 
         let mut step: Step = Step::Pending;
-        let mut log = match &mut this.const_call_second_run {
-            Some(second_run) => core::mem::take(&mut second_run.source_log),
-            None => Log::init(),
-        };
+        let mut log = Log::init();
         debug_assert!(this.source_index.is_valid()); // forgot to set source_index
 
         let value: ResultValue = 'value: {
@@ -2996,10 +2851,7 @@ pub mod parse_worker {
             let parsed = run_with_source_code(this, worker, &mut step, &mut log, &mut entry);
             this.stage = ParseTaskStage::NeedsParse(entry);
             match parsed {
-                Ok(Parsed::NeedsConstCallValues(needs)) => {
-                    break 'value ResultValue::NeedsConstCallValues(needs);
-                }
-                Ok(Parsed::Success(ast)) => {
+                Ok(ast) => {
                     // When using HMR, always flag asts with errors as parse failures.
                     // Not done outside of the dev server out of fear of breaking existing code.
                     if ctx.transpiler().options.has_dev_server() && ast.log.has_errors() {
@@ -3033,43 +2885,25 @@ pub mod parse_worker {
             }
         };
 
-        let mut value = value;
-        // The bundle thread schedules such a task again when it finds a value.
-        let needs_const_call_values = match &mut value {
-            ResultValue::NeedsConstCallValues(needs) => Some(needs),
-            ResultValue::Success(success) => success.needs_const_call_values.as_mut(),
-            _ => None,
-        };
-        let can_run_again = needs_const_call_values.is_some();
-        if let Some(needs) = needs_const_call_values {
-            needs.task = task;
-        }
-        // Only a result with an AST goes on the graph.
-        let runs_again = matches!(value, ResultValue::NeedsConstCallValues(_));
         let result = Box::new(Result {
             ctx: this.ctx.expect("ParseTask.ctx unset"),
             task: EventLoop::Task::default(),
             value,
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
-            external: if runs_again {
-                ExternalFreeFunction::NONE
-            } else {
-                core::mem::take(&mut this.external_free_function)
-            },
+            external: core::mem::take(&mut this.external_free_function),
             watcher_data: match this.contents_or_fd {
-                ContentsOrFd::Fd { file, dir } if !runs_again => WatcherData {
+                ContentsOrFd::Fd { file, dir } => WatcherData {
                     fd: file,
                     dir_fd: dir,
                 },
-                _ => WatcherData::NONE,
+                ContentsOrFd::Contents(_) => WatcherData::NONE,
             },
         });
         let result = bun_core::heap::into_raw(result);
 
-        if !can_run_again {
-            this.release_owned_fields();
-        }
+        // `ParseTask` is arena-owned (no Drop); `jsx` may hold owned slices from tsconfig.
+        drop(core::mem::take(&mut this.jsx));
 
         // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
         // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
@@ -3121,36 +2955,10 @@ pub mod parse_worker {
     // heap-owning field `on_parse_task_complete` doesn't move out, so take it here.
     fn drop_result_owned_fields(result: &mut Result) {
         match &mut result.value {
-            ResultValue::Success(s) => {
-                drop(core::mem::take(&mut s.log));
-                drop(s.needs_const_call_values.take());
-            }
+            ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
             ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
             ResultValue::Empty { .. } => {}
-            ResultValue::NeedsConstCallValues(_) => {
-                unreachable!("on_parse_task_complete takes it")
-            }
         }
-    }
-
-    /// Completes a result that the bundle thread held, as `on_complete_mini` does for a result from a worker.
-    pub(crate) fn complete_held_result(
-        bundle: &mut BundleV2<'_>,
-        ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
-        success: Success,
-        watcher_data: WatcherData,
-        external: ExternalFreeFunction,
-    ) {
-        let mut result = core::mem::ManuallyDrop::new(Result {
-            ctx: ctx.expect("ParseTask.ctx unset"),
-            task: EventLoop::Task::default(),
-            value: ResultValue::Success(success),
-            external,
-            watcher_data,
-        });
-        BundleV2::on_parse_task_complete(&mut result, bundle);
-        // See `on_complete_mini` for why the rest of the result is not dropped.
-        drop_result_owned_fields(&mut result);
     }
 
     fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {
@@ -3195,5 +3003,4 @@ pub mod parse_worker {
     }
 } // end mod parse_worker
 
-pub(crate) use parse_worker::complete_held_result;
 pub use parse_worker::on_complete;

@@ -83,6 +83,7 @@ pub mod HTMLImportManifest;
 
 pub mod HTMLScanner;
 pub mod cache;
+pub(crate) mod const_call_lookup;
 pub mod entry_points;
 #[path = "OutputFile.rs"]
 pub mod output_file;
@@ -98,7 +99,6 @@ pub use bundled_ast::BundledAst;
 pub mod barrel_imports;
 #[path = "Chunk.rs"]
 pub mod chunk;
-pub(crate) mod const_call_inlining;
 pub mod defines;
 pub mod linker;
 #[path = "LinkerGraph.rs"]

@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use crate::E;
 #[cfg(not(windows))]
 use crate::Fd;
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
+#[cfg(any(not(any(target_os = "linux", target_os = "android")), bun_portable))]
 use crate::Tag;
 #[cfg(not(windows))]
 use bun_core::vec::UninitBuf;
@@ -89,8 +89,11 @@ pub fn copy_file_with_state(
 ) -> CopyFileReturnType {
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let _ = copy_file_state;
-    #[cfg(target_os = "macos")]
-    {
+    bun_core::host_only! { macos => {
+        #[cfg_attr(
+            bun_portable,
+            bun_portable_macros::imports(library = "libSystem", host = "macos")
+        )]
         unsafe extern "C" {
             // safe: by-value `c_int` fds + `u32` flags; bad fd → `EBADF`/
             // `EOPNOTSUPP`, never UB. `state` is `Option<NonNull<c_void>>`
@@ -112,10 +115,9 @@ pub fn copy_file_with_state(
             E::EOPNOTSUPP => {}
             e => return Err(crate::Error::from_code(e, Tag::copyfile)),
         }
-    }
+    }}
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
+    bun_core::host_only! { linux => {
         // Per-fd bit; the other bits persist across files in a tree walk.
         copy_file_state.remove(LinuxCopyFileState::HAS_HINTED_SEQUENTIAL);
 
@@ -172,7 +174,7 @@ pub fn copy_file_with_state(
         }
         let _ = offset;
         return Ok(());
-    }
+    }}
 
     #[cfg(target_os = "freebsd")]
     {
@@ -223,7 +225,10 @@ pub fn copy_file_with_state(
         return Ok(());
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+    #[cfg(any(
+        not(any(target_os = "linux", target_os = "android", windows)),
+        bun_portable
+    ))]
     {
         // macOS has no posix_fadvise; FreeBSD's matches Linux semantics.
         #[cfg(target_os = "freebsd")]

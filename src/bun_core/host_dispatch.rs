@@ -49,13 +49,16 @@ pub fn no_definition_for_this_host(function: &'static str) -> ! {
 /// | `not_macos`           | `not(target_os = "macos")`                                     |
 /// | `freebsd`             | `target_os = "freebsd"`                                        |
 /// | `not_macos_not_linux` | `not(any(target_os = "macos", target_os = "linux", target_os = "android"))` |
+/// | `macos_freebsd`       | `any(target_os = "macos", target_os = "freebsd")`              |
+/// | `not_macos_not_freebsd` | `not(any(target_os = "macos", target_os = "freebsd"))`       |
 ///
 /// The portable image is compiled for Linux and has three hosts. On a Windows host it runs the arm
 /// `windows`. On a macOS host it runs the arm `macos`, or `not_linux` where bun has one piece of code
 /// for every system that is not Linux; in such an arm the name `libc` is `bun_darwin_sys::libc`, which
 /// has macOS as the `libc` crate has it in a build for macOS. On a Linux host, and on a macOS host if
 /// there is no arm for macOS, it runs the arm `linux`, `posix`, `unix` or `not_macos`. It has no use
-/// for `freebsd` and `not_macos_not_linux`.
+/// for `freebsd` and `not_macos_not_linux`. `macos_freebsd` is an arm for macOS, and
+/// `not_macos_not_freebsd` one for the rest.
 ///
 /// An arm for targets that the image has nothing to do with is written with its `cfg`,
 /// `cfg(target_os = "netbsd") => { .. }`: a build for one OS has it under that `cfg`, the image has not.
@@ -107,6 +110,14 @@ macro_rules! __host_select_arm {
         #[cfg(target_os = "freebsd")]
         $block
     };
+    (macos_freebsd [] $block:block) => {
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        $block
+    };
+    (not_macos_not_freebsd [] $block:block) => {
+        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+        $block
+    };
     (cfg [$($predicate:tt)+] $block:block) => {
         #[cfg($($predicate)+)]
         $block
@@ -138,6 +149,12 @@ macro_rules! __host_select_portable {
     };
     ([$($windows:block)?] [] [$($other:block)?] not_linux => $block:block $($rest:tt)*) => {
         $crate::__host_select_portable!([$($windows)?] [$block] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [] [$($other:block)?] macos_freebsd => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$block] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [$($macos:block)?] [] not_macos_not_freebsd => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($macos)?] [$block] $($rest)*)
     };
     ([$($windows:block)?] [$($macos:block)?] [] linux => $block:block $($rest:tt)*) => {
         $crate::__host_select_portable!([$($windows)?] [$($macos)?] [$block] $($rest)*)
@@ -189,7 +206,7 @@ macro_rules! __host_select_pick {
         }
     };
     ([] [] []) => {
-        $crate::host_dispatch::no_definition_for_this_host(concat!(file!(), ":", line!()))
+        compile_error!("host_select!: no arm is for a host of the portable image")
     };
 }
 

@@ -1199,35 +1199,34 @@ impl Renameat2Flags {
     #[cfg(not(windows))]
     pub(crate) fn int(self) -> u32 {
         let mut flags: u32 = 0;
-        #[cfg(target_os = "macos")]
-        {
-            // <sys/stdio.h>: RENAME_SWAP=2, RENAME_EXCL=4, RENAME_NOFOLLOW_ANY=0x10
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= 2,
-                RenameMode::NoReplace => flags |= 4,
+        bun_core::host_select! {
+            macos => {
+                // <sys/stdio.h>: RENAME_SWAP=2, RENAME_EXCL=4, RENAME_NOFOLLOW_ANY=0x10
+                match self.mode {
+                    RenameMode::Normal => {}
+                    RenameMode::Exchange => flags |= 2,
+                    RenameMode::NoReplace => flags |= 4,
+                }
+                if self.nofollow {
+                    flags |= 0x10;
+                }
             }
-            if self.nofollow {
-                flags |= 0x10;
+            linux => {
+                match self.mode {
+                    RenameMode::Normal => {}
+                    RenameMode::Exchange => flags |= libc::RENAME_EXCHANGE as u32,
+                    RenameMode::NoReplace => flags |= libc::RENAME_NOREPLACE as u32,
+                }
+                let _ = self.nofollow;
             }
-        }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= libc::RENAME_EXCHANGE as u32,
-                RenameMode::NoReplace => flags |= libc::RENAME_NOREPLACE as u32,
+            not_macos_not_linux => {
+                match self.mode {
+                    RenameMode::Normal => {}
+                    RenameMode::Exchange => flags |= 1,
+                    RenameMode::NoReplace => flags |= 2,
+                }
+                let _ = self.nofollow;
             }
-            let _ = self.nofollow;
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
-        {
-            match self.mode {
-                RenameMode::Normal => {}
-                RenameMode::Exchange => flags |= 1,
-                RenameMode::NoReplace => flags |= 2,
-            }
-            let _ = self.nofollow;
         }
         flags
     }
@@ -1494,7 +1493,7 @@ impl Tag {
     pub const write: Tag = Tag(48);
     pub(crate) const getcwd: Tag = Tag(49);
     pub const chdir: Tag = Tag(51);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", bun_portable))]
     pub(crate) const fcopyfile: Tag = Tag(52);
     pub const recv: Tag = Tag(53);
     pub const send: Tag = Tag(54);
@@ -2666,61 +2665,63 @@ mod posix_impl {
         to: &ZStr,
         flags: Renameat2Flags,
     ) -> Maybe<()> {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            check_p!(
-                // SAFETY: both dir fds are live (or AT_FDCWD); both `ZStr`s
-                // are valid NUL-terminated C strings for the syscall's duration.
-                unsafe {
-                    libc::syscall(
-                        libc::SYS_renameat2,
-                        from_dir.posix() as libc::c_long,
-                        from.as_ptr(),
-                        to_dir.posix() as libc::c_long,
-                        to.as_ptr(),
-                        flags.int() as libc::c_long,
-                    )
-                },
-                Tag::rename,
-                from
-            );
-            return Ok(());
-        }
-        #[cfg(target_os = "macos")]
-        {
-            unsafe extern "C" {
-                fn renameatx_np(
-                    fromfd: libc::c_int,
-                    from: *const libc::c_char,
-                    tofd: libc::c_int,
-                    to: *const libc::c_char,
-                    flags: libc::c_uint,
-                ) -> libc::c_int;
-            }
-            check_p!(
-                // SAFETY: FFI; all pointers/fds valid for the duration of the call.
-                unsafe {
-                    renameatx_np(
-                        from_dir.native(),
-                        from.as_ptr(),
-                        to_dir.native(),
-                        to.as_ptr(),
-                        flags.int(),
-                    )
-                },
-                Tag::rename,
-                from
-            );
-            return Ok(());
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
-        {
-            if flags.int() != 0 {
-                return Err(
-                    Error::from_code_int(libc::ENOSYS, Tag::rename).with_path(from.as_bytes())
+        bun_core::host_select! {
+            linux => {
+                check_p!(
+                    // SAFETY: both dir fds are live (or AT_FDCWD); both `ZStr`s
+                    // are valid NUL-terminated C strings for the syscall's duration.
+                    unsafe {
+                        libc::syscall(
+                            libc::SYS_renameat2,
+                            from_dir.posix() as libc::c_long,
+                            from.as_ptr(),
+                            to_dir.posix() as libc::c_long,
+                            to.as_ptr(),
+                            flags.int() as libc::c_long,
+                        )
+                    },
+                    Tag::rename,
+                    from
                 );
+                return Ok(());
             }
-            renameat(from_dir, from, to_dir, to)
+            macos => {
+                #[cfg(not(bun_portable))]
+                unsafe extern "C" {
+                    fn renameatx_np(
+                        fromfd: libc::c_int,
+                        from: *const libc::c_char,
+                        tofd: libc::c_int,
+                        to: *const libc::c_char,
+                        flags: libc::c_uint,
+                    ) -> libc::c_int;
+                }
+                #[cfg(bun_portable)]
+                use libc::renameatx_np;
+                check_p!(
+                    // SAFETY: FFI; all pointers/fds valid for the duration of the call.
+                    unsafe {
+                        renameatx_np(
+                            from_dir.native(),
+                            from.as_ptr(),
+                            to_dir.native(),
+                            to.as_ptr(),
+                            flags.int(),
+                        )
+                    },
+                    Tag::rename,
+                    from
+                );
+                return Ok(());
+            }
+            not_macos_not_linux => {
+                if flags.int() != 0 {
+                    return Err(
+                        Error::from_code_int(libc::ENOSYS, Tag::rename).with_path(from.as_bytes())
+                    );
+                }
+                renameat(from_dir, from, to_dir, to)
+            }
         }
     }
     /// `unlinkat` with explicit `flags` (e.g. `AT_REMOVEDIR`). The error is
@@ -2967,47 +2968,51 @@ mod posix_impl {
     }
     /// `lchmod` is BSD/Darwin-only; Linux: `fchmodat(.., AT_SYMLINK_NOFOLLOW)`.
     pub fn lchmod(path: &ZStr, mode: Mode) -> Maybe<()> {
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        {
-            // The `libc` crate omits the `lchmod` binding on both Darwin
-            // (libSystem since 10.5) and FreeBSD (libc since 3.0). Declare
-            // locally.
-            unsafe extern "C" {
-                fn lchmod(path: *const libc::c_char, mode: libc::mode_t) -> libc::c_int;
-            }
-            check_p!(
-                // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
-                unsafe { lchmod(path.as_ptr(), mode as libc::mode_t) },
-                Tag::lchmod,
-                path
-            );
-            Ok(())
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-        {
-            const SYS_FCHMODAT2: libc::c_long = 452;
-            loop {
-                // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
-                let rc = unsafe {
-                    libc::syscall(
-                        SYS_FCHMODAT2,
-                        Fd::cwd().posix() as libc::c_long,
-                        path.as_ptr(),
-                        mode as libc::c_long,
-                        libc::AT_SYMLINK_NOFOLLOW as libc::c_long,
-                    )
-                };
-                if rc < 0 {
-                    let e = last_errno();
-                    if e == libc::EINTR {
-                        continue;
-                    }
-                    if e == libc::ENOSYS {
-                        return fchmodat(Fd::cwd(), path, mode, libc::AT_SYMLINK_NOFOLLOW);
-                    }
-                    return Err(Error::from_code_int(e, Tag::lchmod).with_path(path.as_bytes()));
+        bun_core::host_select! {
+            macos_freebsd => {
+                // The `libc` crate omits the `lchmod` binding on both Darwin
+                // (libSystem since 10.5) and FreeBSD (libc since 3.0). Declare
+                // locally.
+                #[cfg_attr(
+                    bun_portable,
+                    bun_portable_macros::imports(library = "libSystem", host = "macos")
+                )]
+                unsafe extern "C" {
+                    fn lchmod(path: *const libc::c_char, mode: libc::mode_t) -> libc::c_int;
                 }
-                return Ok(());
+                check_p!(
+                    // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+                    unsafe { lchmod(path.as_ptr(), mode as libc::mode_t) },
+                    Tag::lchmod,
+                    path
+                );
+                Ok(())
+            }
+            not_macos_not_freebsd => {
+                const SYS_FCHMODAT2: libc::c_long = 452;
+                loop {
+                    // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+                    let rc = unsafe {
+                        libc::syscall(
+                            SYS_FCHMODAT2,
+                            Fd::cwd().posix() as libc::c_long,
+                            path.as_ptr(),
+                            mode as libc::c_long,
+                            libc::AT_SYMLINK_NOFOLLOW as libc::c_long,
+                        )
+                    };
+                    if rc < 0 {
+                        let e = last_errno();
+                        if e == libc::EINTR {
+                            continue;
+                        }
+                        if e == libc::ENOSYS {
+                            return fchmodat(Fd::cwd(), path, mode, libc::AT_SYMLINK_NOFOLLOW);
+                        }
+                        return Err(Error::from_code_int(e, Tag::lchmod).with_path(path.as_bytes()));
+                    }
+                    return Ok(());
+                }
             }
         }
     }
@@ -3114,15 +3119,15 @@ mod posix_impl {
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            super::linux_syscall::faccessat(dir, sub, libc::F_OK).is_ok()
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
-            // valid NUL-terminated C string.
-            unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+        bun_core::host_select! {
+            linux => {
+                super::linux_syscall::faccessat(dir, sub, libc::F_OK).is_ok()
+            }
+            not_linux => {
+                // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+                // valid NUL-terminated C string.
+                unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
+            }
         }
     }
     /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
@@ -3149,11 +3154,17 @@ mod posix_impl {
             #[link_name = "realpath$DARWIN_EXTSN"]
             fn _realpath(path: *const i8, resolved: *mut i8) -> *mut i8;
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", bun_portable)))]
         use libc::realpath as _realpath;
         // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
         // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
+        #[cfg(not(bun_portable))]
         let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };
+        // The image on macOS: `realpath$DARWIN_EXTSN`, which `libc` is there.
+        #[cfg(bun_portable)]
+        let p = bun_core::host_libc!(unsafe {
+            libc::realpath(path.as_ptr(), buf.0.as_mut_ptr().cast())
+        });
         if p.is_null() {
             return Err(err_with_path(Tag::realpath, path));
         }
@@ -3405,11 +3416,19 @@ mod posix_impl {
     }
 
     // ── macOS clonefile / copyfile ──
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", bun_portable))]
     mod darwin_copy {
         use super::*;
+        // A directory descriptor is translated: the image has the function of bun_darwin_sys.
+        #[cfg(bun_portable)]
+        use bun_darwin_sys::libc::clonefileat;
+        #[cfg_attr(
+            bun_portable,
+            bun_portable_macros::imports(library = "libSystem", host = "macos")
+        )]
         unsafe extern "C" {
             fn clonefile(src: *const i8, dst: *const i8, flags: u32) -> i32;
+            #[cfg(not(bun_portable))]
             fn clonefileat(
                 src_dir: i32,
                 src: *const i8,
@@ -3480,7 +3499,7 @@ mod posix_impl {
             Ok(())
         }
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", bun_portable))]
     pub use darwin_copy::{
         clonefile_ as clonefile, clonefileat_ as clonefileat, copyfile_ as copyfile,
         fcopyfile_ as fcopyfile,
@@ -4640,6 +4659,9 @@ pub use windows_impl::*;
 // that is not below is ambiguous, and its first use does not compile.
 #[cfg(bun_portable)]
 pub use posix_impl::FcntlInt;
+/// Functions that only macOS has. On another host the first call of one stops the image.
+#[cfg(bun_portable)]
+pub use posix_impl::{clonefile, copyfile, fcopyfile};
 #[cfg(bun_portable)]
 pub use windows_impl::*;
 #[cfg(bun_portable)]
@@ -7791,11 +7813,21 @@ pub fn kevent(
 /// `clonefileat` — macOS-only CoW copy relative to directory fds. On
 /// non-Darwin returns ENOTSUP so callers can fall back to a manual copy.
 #[cfg(not(target_os = "macos"))]
+#[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
 pub fn clonefileat(_from_dir: impl AsFd, from: &ZStr, _to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
     let _from_dir = _from_dir.as_fd();
     let _to_dir = _to_dir.as_fd();
     Err(Error::from_code_int(libc::ENOTSUP, Tag::clonefileat)
         .with_path_dest(from.as_bytes(), to.as_bytes()))
+}
+/// The portable image: the function of macOS on a macOS host, and the answer above on another one.
+#[cfg(bun_portable)]
+pub fn clonefileat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
+    if bun_core::host::is_mac() {
+        posix_impl::clonefileat(from_dir.as_fd(), from, to_dir.as_fd(), to)
+    } else {
+        clonefileat__posix(from_dir, from, to_dir, to)
+    }
 }
 
 // ── getFdPath ──
@@ -7866,96 +7898,87 @@ fn get_fd_path_freebsd_linuxulator<'a>(
 /// fd → absolute path. Linux: readlink `/proc/self/fd/N`;
 /// macOS: `fcntl(F_GETPATH)`; Windows: `GetFinalPathNameByHandle`.
 pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        // Fast path: a previous call already proved this is
-        // FreeBSD's Linuxulator. Skip the doomed `/proc/self/fd/N` readlink.
-        if linux_kernel_cached_is_freebsd() {
-            return get_fd_path_freebsd_linuxulator(fd, out);
-        }
-        let mut proc = [0u8; 32];
-        let n = {
-            use std::io::Write as _;
-            let mut c = std::io::Cursor::new(&mut proc[..]);
-            let _ = write!(c, "/proc/self/fd/{}\0", fd.posix());
-            c.position() as usize - 1
-        };
-        // SAFETY: NUL written above.
-        let z = ZStr::from_buf(&proc[..], n);
-        match readlink(z, &mut out.0) {
-            Ok(len) => return Ok(&mut out.0[..len]),
-            Err(e) => {
-                // Under FreeBSD Linuxulator, fall back to
-                // `getFdPathFreeBSDLinuxulator` (`/dev/fd/N`). Probing variant
-                // (memoized read of `/proc/version`); only taken once.
-                if linux_kernel_is_freebsd() {
-                    return get_fd_path_freebsd_linuxulator(fd, out);
+    bun_core::host_select! {
+        linux => {
+            // Fast path: a previous call already proved this is
+            // FreeBSD's Linuxulator. Skip the doomed `/proc/self/fd/N` readlink.
+            if linux_kernel_cached_is_freebsd() {
+                return get_fd_path_freebsd_linuxulator(fd, out);
+            }
+            let mut proc = [0u8; 32];
+            let n = {
+                use std::io::Write as _;
+                let mut c = std::io::Cursor::new(&mut proc[..]);
+                let _ = write!(c, "/proc/self/fd/{}\0", fd.posix());
+                c.position() as usize - 1
+            };
+            // SAFETY: NUL written above.
+            let z = ZStr::from_buf(&proc[..], n);
+            match readlink(z, &mut out.0) {
+                Ok(len) => return Ok(&mut out.0[..len]),
+                Err(e) => {
+                    // Under FreeBSD Linuxulator, fall back to
+                    // `getFdPathFreeBSDLinuxulator` (`/dev/fd/N`). Probing variant
+                    // (memoized read of `/proc/version`); only taken once.
+                    if linux_kernel_is_freebsd() {
+                        return get_fd_path_freebsd_linuxulator(fd, out);
+                    }
+                    return Err(e);
                 }
-                return Err(e);
             }
         }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        out.0.fill(0);
-        fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize)?;
-        // SAFETY: F_GETPATH writes a NUL-terminated string into `out`.
-        let len = unsafe { libc::strlen(out.0.as_ptr().cast()) };
-        return Ok(&mut out.0[..len]);
-    }
-    #[cfg(windows)]
-    {
-        // `GetFinalPathNameByHandle` into a wide buffer,
-        // then transcode WTF-16 → UTF-8 into `out`.
-        let mut wide_buf = bun_paths::w_path_buffer_pool::get();
-        let wide_slice = match crate::windows::GetFinalPathNameByHandle(
-            fd.native(),
-            Default::default(),
-            &mut wide_buf.0[..],
-        ) {
-            Ok(p) => p,
-            Err(_) => return Err(Error::from_code(E::EBADF, Tag::GetFinalPathNameByHandle)),
-        };
-        // Trust that Windows gives us valid UTF-16LE.
-        let len = bun_paths::string_paths::from_w_path(&mut out.0[..], wide_slice).len();
-        return Ok(&mut out.0[..len]);
-    }
-    #[cfg(target_os = "freebsd")]
-    {
-        // FreeBSD: F_KINFO returns a `struct kinfo_file`
-        // with `kf_path`. The /dev/fd readlink trick used for the Linuxulator
-        // path doesn't resolve to an absolute path on native FreeBSD, so go
-        // via fcntl. Mirrors `bun_core::util::fd_path_raw` (T0 sibling).
-        use core::ptr::{addr_of, addr_of_mut};
-        let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
-        // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
-        unsafe {
-            addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
-                .write(core::mem::size_of::<libc::kinfo_file>() as c_int);
+        macos => {
+            out.0.fill(0);
+            fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize)?;
+            // SAFETY: F_GETPATH writes a NUL-terminated string into `out`.
+            let len = unsafe { libc::strlen(out.0.as_ptr().cast()) };
+            return Ok(&mut out.0[..len]);
         }
-        fcntl(fd, libc::F_KINFO, kif.as_mut_ptr() as isize)?;
-        // SAFETY: kernel wrote a NUL-terminated path into kf_path.
-        let path_ptr = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
-        let len = unsafe { libc::strlen(path_ptr.cast()) };
-        // The kernel fills kf_path from the namecache and leaves it empty when it
-        // has no name for the vnode (seen for a just-created file on UFS).
-        if len == 0 {
-            return Err(Error::from_code_int(libc::ENOENT, Tag::fcntl).with_fd(fd));
+        windows => {
+            // `GetFinalPathNameByHandle` into a wide buffer,
+            // then transcode WTF-16 → UTF-8 into `out`.
+            let mut wide_buf = bun_paths::w_path_buffer_pool::get();
+            let wide_slice = match crate::windows::GetFinalPathNameByHandle(
+                fd.native(),
+                Default::default(),
+                &mut wide_buf.0[..],
+            ) {
+                Ok(p) => p,
+                Err(_) => return Err(Error::from_code(E::EBADF, Tag::GetFinalPathNameByHandle)),
+            };
+            // Trust that Windows gives us valid UTF-16LE.
+            let len = bun_paths::string_paths::from_w_path(&mut out.0[..], wide_slice).len();
+            return Ok(&mut out.0[..len]);
         }
-        // SAFETY: path_ptr has `len` initialized bytes (kernel-written).
-        out.0[..len].copy_from_slice(unsafe { core::slice::from_raw_parts(path_ptr, len) });
-        return Ok(&mut out.0[..len]);
-    }
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "freebsd",
-        windows
-    )))]
-    {
-        let _ = (fd, out);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::readlink))
+        freebsd => {
+            // FreeBSD: F_KINFO returns a `struct kinfo_file`
+            // with `kf_path`. The /dev/fd readlink trick used for the Linuxulator
+            // path doesn't resolve to an absolute path on native FreeBSD, so go
+            // via fcntl. Mirrors `bun_core::util::fd_path_raw` (T0 sibling).
+            use core::ptr::{addr_of, addr_of_mut};
+            let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
+            // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
+            unsafe {
+                addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
+                    .write(core::mem::size_of::<libc::kinfo_file>() as c_int);
+            }
+            fcntl(fd, libc::F_KINFO, kif.as_mut_ptr() as isize)?;
+            // SAFETY: kernel wrote a NUL-terminated path into kf_path.
+            let path_ptr = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
+            let len = unsafe { libc::strlen(path_ptr.cast()) };
+            // The kernel fills kf_path from the namecache and leaves it empty when it
+            // has no name for the vnode (seen for a just-created file on UFS).
+            if len == 0 {
+                return Err(Error::from_code_int(libc::ENOENT, Tag::fcntl).with_fd(fd));
+            }
+            // SAFETY: path_ptr has `len` initialized bytes (kernel-written).
+            out.0[..len].copy_from_slice(unsafe { core::slice::from_raw_parts(path_ptr, len) });
+            return Ok(&mut out.0[..len]);
+        }
+        cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "freebsd", windows))) => {
+            let _ = (fd, out);
+            Err(Error::from_code_int(libc::ENOSYS, Tag::readlink))
+        }
     }
 }
 

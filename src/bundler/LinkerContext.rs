@@ -871,23 +871,25 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
-        // Validate top-level await for all files first.
         // SAFETY: scalar `bool` read of a field disjoint from `self` (= `(*bundle).linker`).
-        if unsafe { (*bundle).has_any_top_level_await_modules } {
-            let unsupported_format = match self.options.output_format {
-                Format::Cjs => Some("cjs"),
-                Format::Iife => Some("iife"),
-                Format::Esm | Format::InternalBakeDev => None,
-            };
-            if let Some(format_name) = unsupported_format {
-                // Only `Bun.build()` installs a completion; the CLI never does.
-                // SAFETY: discriminant read of a field disjoint from `self`.
-                let from_js_api = unsafe { (*bundle).completion.is_some() };
-                if self.reject_top_level_await(format_name, from_js_api) {
-                    return Err(LinkError::BuildFailed);
-                }
+        let has_top_level_await = unsafe { (*bundle).has_any_top_level_await_modules };
+        let unsupported_format = match self.options.output_format {
+            Format::Cjs => Some("cjs"),
+            Format::Iife => Some("iife"),
+            Format::Esm | Format::InternalBakeDev => None,
+        };
+        if has_top_level_await && let Some(format_name) = unsupported_format {
+            // Only `Bun.build()` installs a completion; the CLI never does.
+            // SAFETY: discriminant read of a field disjoint from `self`.
+            let from_js_api = unsafe { (*bundle).completion.is_some() };
+            if self.reject_top_level_await(format_name, from_js_api) {
+                return Err(LinkError::BuildFailed);
             }
+        }
 
+        // Validate top-level await for all files first. For cjs and iife no
+        // reachable file has one at this point.
+        if has_top_level_await && unsupported_format.is_none() {
             // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint
             // from `*self` (= `BundleV2.linker`). The SoA column slices below
             // are physically disjoint and the underlying slabs do not

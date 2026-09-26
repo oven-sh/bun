@@ -1020,12 +1020,28 @@ describe.concurrent("bun build --server-components", () => {
   });
 
   // An HTML import makes the CLI set up a client transpiler and bundle a browser
-  // graph; a directive in that graph takes a different path to the same error.
-  test("a 'use client' script reached through an HTML import is a build error, not a crash", async () => {
+  // graph. "use client" there is plain client code (the directive marks a
+  // boundary only when the file is pulled into the server graph), so it bundles.
+  test("a 'use client' script reached through an HTML import is plain client code", async () => {
     using dir = tempDir("sc-html-use-client", {
       "server.ts": `import page from "./index.html"; console.log(page);`,
       "index.html": `<!DOCTYPE html><html><head><script type="module" src="./client.ts"></script></head><body></body></html>`,
       "client.ts": `"use client";\ndocument.body.textContent = "button";`,
+    });
+    const { stderr, exitCode } = await build(dir, "--server-components", "--target=bun", "--outdir=out", "server.ts");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const out = fs.readdirSync(join(String(dir), "out")).sort();
+    expect(out).toEqual([expect.stringMatching(/^index-\w+\.js$/), "index.html", "server.js"]);
+    const client = fs.readFileSync(join(String(dir), "out", out[0]), "utf8");
+    expect(client).toContain(`document.body.textContent = "button"`);
+  });
+
+  test("a 'use server' script reached through an HTML import is a build error, not a crash", async () => {
+    using dir = tempDir("sc-html-use-server", {
+      "server.ts": `import page from "./index.html"; console.log(page);`,
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./actions.ts"></script></head><body></body></html>`,
+      "actions.ts": `"use server";\nexport async function save() { return "saved"; }`,
     });
     const { stdout, stderr, exitCode } = await build(
       dir,
@@ -1035,8 +1051,8 @@ describe.concurrent("bun build --server-components", () => {
       "server.ts",
     );
     expect(stderr).toMatchInlineSnapshot(`
-      "error: "use client" requires a framework with server components configured; "bun build --server-components" does not configure one
-          at <dir>/client.ts"
+      "error: "use server" requires a framework with server components configured; "bun build --server-components" does not configure one
+          at <dir>/actions.ts"
     `);
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);

@@ -7720,17 +7720,15 @@ pub mod bv2_impl {
                     // `result.ast` is moved into `graph.ast` and `result.source` was
                     // swapped earlier, so snapshot the data the use-directive block
                     // needs *before* the move. Only paid for files that hit the SCB gate.
-                    // ParseTask rejects directives without a framework, so the unwraps hold.
+                    // Without a framework the only directive ParseTask lets through is
+                    // "use client" in the browser graph, which is plain client code.
+                    let separate_ssr_graph = this
+                        .framework
+                        .as_ref()
+                        .and_then(|framework| framework.server_components.as_ref())
+                        .map(|sc| sc.separate_ssr_graph);
                     let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
-                        && {
-                            let separate = this
-                                .framework
-                                .as_ref()
-                                .unwrap()
-                                .server_components
-                                .as_ref()
-                                .unwrap()
-                                .separate_ssr_graph;
+                        && separate_ssr_graph.is_some_and(|separate| {
                             let is_client = result.use_directive == crate::UseDirective::Client;
                             let is_browser = result_ast_target == Target::Browser;
                             if separate {
@@ -7738,7 +7736,7 @@ pub mod bv2_impl {
                             } else {
                                 is_client != is_browser
                             }
-                        } {
+                        }) {
                         Some(result.ast.named_exports.clone().expect("oom"))
                     } else {
                         None
@@ -7761,19 +7759,12 @@ pub mod bv2_impl {
                         .expect("oom");
                     }
 
-                    if let Some(named_exports) = named_exports_for_scb {
+                    if let (Some(named_exports), Some(separate_ssr_graph)) =
+                        (named_exports_for_scb, separate_ssr_graph)
+                    {
                         if result.use_directive == crate::UseDirective::Server {
                             bun_core::todo_panic!("\"use server\"");
                         }
-
-                        let separate_ssr_graph = this
-                            .framework
-                            .as_ref()
-                            .unwrap()
-                            .server_components
-                            .as_ref()
-                            .unwrap()
-                            .separate_ssr_graph;
 
                         // `result.source` was swapped into
                         // `graph.input_files` earlier; re-borrow it from the SoA

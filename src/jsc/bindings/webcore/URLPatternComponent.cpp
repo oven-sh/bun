@@ -99,11 +99,12 @@ std::optional<URLPatternComponentResult> URLPatternComponent::componentMatch(JSC
     if (position < 0)
         return std::nullopt;
 
-    unsigned numSubpatterns = regExp->numSubpatterns();
+    // A user regexp like (?<x>...) adds capture groups that have no name; those are not exposed.
+    size_t groupCount = std::min<size_t>(regExp->numSubpatterns(), m_groupNameList.size());
 
     URLPatternComponentResult::GroupsRecord groups;
-    groups.reserveInitialCapacity(numSubpatterns);
-    for (unsigned i = 1; i <= numSubpatterns; ++i) {
+    groups.reserveInitialCapacity(groupCount);
+    for (size_t i = 1; i <= groupCount; ++i) {
         int start = ovector[i * 2];
         int end = ovector[i * 2 + 1];
 
@@ -111,9 +112,7 @@ std::optional<URLPatternComponentResult> URLPatternComponent::componentMatch(JSC
         if (start >= 0)
             value = input.substring(start, end - start);
 
-        size_t groupIndex = i - 1;
-        String groupName = groupIndex < m_groupNameList.size() ? m_groupNameList[groupIndex] : emptyString();
-        groups.append(URLPatternComponentResult::NameMatchPair { WTF::move(groupName), WTF::move(value) });
+        groups.append(URLPatternComponentResult::NameMatchPair { m_groupNameList[i - 1], WTF::move(value) });
     }
 
     return URLPatternComponentResult { !input.isEmpty() ? WTF::move(input) : emptyString(), WTF::move(groups) };

@@ -1387,19 +1387,32 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
             return Err("--include argument must not be empty".to_string());
         }
 
-        if has_glob_metachar(trimmed) {
+        // Normalize Windows backslashes to forward slashes before scanning for metacharacters
+        // so path separators aren't interpreted as escapes in the glob metachar detection.
+        #[cfg(windows)]
+        let normalized: Vec<u8> = trimmed
+            .iter()
+            .map(|&b| if b == b'\\' { b'/' } else { b })
+            .collect();
+        #[cfg(windows)]
+        let to_check: &[u8] = &normalized;
+        #[cfg(not(windows))]
+        let to_check: &[u8] = trimmed;
+
+        // Reject absolute patterns before stripping `./` or scanning.
+        // Absolute on all platforms: starts with `/`. Absolute on Windows: drive path like `C:\`.
+        let is_absolute = to_check.starts_with(b"/") || (to_check.len() > 1 && to_check[1] == b':');
+        if is_absolute {
+            return Err(format!(
+                "--include pattern {} must be relative to cwd",
+                bun_fmt::quote(trimmed),
+            ));
+        }
+
+        if has_glob_metachar(to_check) {
             // Walk only the glob's literal leading directories (`./a/b/*.js` walks
             // `a/b`, not the whole cwd); a leading `./` is not part of the match.
-            // `\` separates path components on Windows but escapes in `bun_glob`.
-            #[cfg(windows)]
-            let normalized: Vec<u8> = trimmed
-                .iter()
-                .map(|&b| if b == b'\\' { b'/' } else { b })
-                .collect();
-            #[cfg(windows)]
-            let glob_src: &[u8] = &normalized;
-            #[cfg(not(windows))]
-            let glob_src: &[u8] = trimmed;
+            let glob_src: &[u8] = to_check;
             let pattern = glob_src.strip_prefix(b"./").unwrap_or(glob_src);
             let mut prefix_len = 0usize;
             let mut pos = 0usize;

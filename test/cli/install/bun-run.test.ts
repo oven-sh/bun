@@ -1,8 +1,8 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync } from "fs";
+import { chmodSync, copyFileSync, existsSync } from "fs";
 import { bunEnv as bunEnv_, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { basename, join } from "path";
+import { basename, dirname, join } from "path";
 
 const bunEnv = {
   ...bunEnv_,
@@ -1146,6 +1146,102 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // https://github.com/oven-sh/bun/issues/44033 — without a real node on PATH,
+  // bun plants a `node.exe` hard link to itself for scripts. A hard link cannot
+  // cross volumes, so a %TEMP% on another drive (or one that does not exist)
+  // used to leave the script with no `node` at all. The shim now lives beside
+  // bun.exe; %TEMP% is only a fallback.
+  it.if(isWindows)("finds node for scripts when %TEMP% cannot hold the node shim (#44033)", async () => {
+    using dir = tempDir("bun-run-node-shim", {
+      "package.json": JSON.stringify({
+        name: "shim",
+        scripts: { v: `node -e "console.log(process.execPath)"` },
+      }),
+    });
+    const missingTemp = join(String(dir), "missing", "deeper");
+    // No node anywhere: drop every spelling of PATH (Windows env keys are
+    // case-insensitive) and the NODE vars an outer `bun run` exports.
+    const env = Object.fromEntries(
+      Object.entries(bunEnv).filter(([k]) => !["PATH", "NODE", "NPM_NODE_EXECPATH"].includes(k.toUpperCase())),
+    );
+    env.PATH = (process.env.PATH ?? "")
+      .split(";")
+      .filter(p => p && !existsSync(join(p, "node.exe")) && !existsSync(join(p, "node.cmd")))
+      .join(";");
+
+    for (const flag of [[], ["--bun"]]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...flag, "run", "v"],
+        cwd: String(dir),
+        env: { ...env, TEMP: missingTemp, TMP: missingTemp },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("command not found");
+      expect(basename(stdout.trim())).toBe("node.exe");
+      expect(basename(dirname(stdout.trim()))).toStartWith("bun-node");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  // When the directory beside bun.exe cannot be created, the shims go to
+  // %TEMP%. When %TEMP% is unusable as well, bun warns once and the script
+  // runs without `node`. A file named `bun-node` beside the exe blocks the
+  // first tier deterministically.
+  it.if(isWindows)("falls back to %TEMP% for the node shim and warns when that fails too", async () => {
+    using dir = tempDir("bun-run-node-shim-fallback", {
+      "bin/bun-node": "not a directory",
+      "tmp/.keep": "",
+      "package.json": JSON.stringify({
+        name: "shim",
+        scripts: { v: `node -e "console.log(process.execPath)"` },
+      }),
+    });
+    const bin = join(String(dir), "bin", "bun.exe");
+    copyFileSync(bunExe(), bin);
+    const env = Object.fromEntries(
+      Object.entries(bunEnv).filter(([k]) => !["PATH", "NODE", "NPM_NODE_EXECPATH"].includes(k.toUpperCase())),
+    );
+    env.PATH = (process.env.PATH ?? "")
+      .split(";")
+      .filter(p => p && !existsSync(join(p, "node.exe")) && !existsSync(join(p, "node.cmd")))
+      .join(";");
+
+    const usableTemp = join(String(dir), "tmp");
+    {
+      await using proc = Bun.spawn({
+        cmd: [bin, "run", "v"],
+        cwd: String(dir),
+        env: { ...env, TEMP: usableTemp, TMP: usableTemp },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("warn:");
+      expect(dirname(dirname(stdout.trim())).toLowerCase()).toBe(usableTemp.toLowerCase());
+      expect(basename(stdout.trim())).toBe("node.exe");
+      expect(exitCode).toBe(0);
+    }
+
+    const missingTemp = join(String(dir), "missing", "deeper");
+    {
+      await using proc = Bun.spawn({
+        cmd: [bin, "run", "v"],
+        cwd: String(dir),
+        env: { ...env, TEMP: missingTemp, TMP: missingTemp },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("warn: could not create the node alias for bun");
+      expect(stderr).toContain("command not found: node");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    }
+  });
 
   // https://github.com/oven-sh/bun/issues/30711 — nested `--bun` used to rewrite
   // the BUN_NODE_DIR/{bun,node} shim to point at ITSELF. After the OUTER `--bun`

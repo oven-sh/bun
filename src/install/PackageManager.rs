@@ -1124,18 +1124,21 @@ fn configure_env_for_scripts_run(
                 .env_mut()
                 .load_node_js_config(paths_fs, node_path_z.as_ref())?;
         } else {
-            'brk: {
-                let current_path = this.env().get(b"PATH").unwrap_or(b"");
-                let mut path_var: Vec<u8> = Vec::with_capacity(current_path.len());
-                path_var.extend_from_slice(current_path);
-                let mut bun_path: &[u8] = b"";
-                if RunCommand::create_fake_temporary_node_executable(&mut path_var, &mut bun_path)
-                    .is_err()
-                {
-                    break 'brk;
+            let current_path = this.env().get(b"PATH").unwrap_or(b"");
+            let mut path_var: Vec<u8> = Vec::with_capacity(current_path.len());
+            path_var.extend_from_slice(current_path);
+            let mut bun_path: &[u8] = b"";
+            match RunCommand::create_fake_temporary_node_executable(&mut path_var, &mut bun_path) {
+                Ok(()) => {
+                    this.env_mut().map.put(b"PATH", &path_var)?;
+                    // Windows finds the `node.exe` shim on the PATH just set; POSIX keeps bun itself.
+                    let node: &[u8] = if cfg!(windows) { b"" } else { bun_path };
+                    let _ = this.env_mut().load_node_js_config(paths_fs, node)?;
                 }
-                this.env_mut().map.put(b"PATH", &path_var)?;
-                let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
+                Err(err) if log_level != package_manager_options::LogLevel::Silent => {
+                    RunCommand::warn_node_shim_failed(err)
+                }
+                Err(_) => {}
             }
         }
     }

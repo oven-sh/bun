@@ -41,20 +41,17 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
-extern "C" int ByteRangeMapping__getSourceID(void* mappings);
-extern "C" void* ByteRangeMapping__find(const BunString* sourceURL);
-
 extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID);
+extern "C" void ByteRangeMapping__addSourceID(const BunString* sourceURL, const BunString* code, int sourceID);
 
-JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
+void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
 {
-    BunString sourceURLBunString = Bun::toString(sourceURL);
-    void* mappings = ByteRangeMapping__find(&sourceURLBunString);
-    if (!mappings) {
-        return 0;
-    }
-
-    return ByteRangeMapping__getSourceID(mappings);
+    if (!vm.controlFlowProfiler())
+        return;
+    BunString sourceURL = Bun::toString(provider.sourceURL());
+    WTF::String sourceString = provider.source().toStringWithoutCopying();
+    BunString source = Bun::toString(sourceString);
+    ByteRangeMapping__addSourceID(&sourceURL, &source, provider.asID());
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);

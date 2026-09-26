@@ -74,6 +74,11 @@ private:
     }
 
     static void forceClose(WebSocketState<isServer> */*wState*/, void *s, std::string_view reason = {}) {
+        if (reason.empty()) {
+            /* The reason length doubles as the close code, and code 0 is the graceful close. */
+            ((WebSocket<SSL, isServer, USERDATA> *) s)->close();
+            return;
+        }
         us_socket_close((us_socket_t *) s, (int) reason.length(), (void *) reason.data());
     }
 

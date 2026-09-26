@@ -503,6 +503,58 @@ describe("FileHandle", () => {
       });
     },
   );
+
+  // When the finalizer's close fails (the user already closed the fd with
+  // fs.closeSync), node throws a UVException for the close instead of
+  // ERR_INVALID_STATE.
+  it.concurrent("FileHandle collected after fs.closeSync(handle.fd) reports the failed close", async () => {
+    const fixture = /* js */ `
+      const fsp = require("node:fs/promises");
+      const fs = require("node:fs");
+      const os = require("node:os");
+      const path = require("node:path");
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fh-gc-closed-"));
+      const file = path.join(dir, "f.txt");
+      fs.writeFileSync(file, "x");
+      const diags = [];
+      process.on("uncaughtException", e => diags.push({ code: e.code, errno: e.errno, syscall: e.syscall, hasPath: "path" in e, message: e.message }));
+
+      (async () => {
+        const fd = await (async () => {
+          const handle = await fsp.open(file);
+          fs.closeSync(handle.fd);
+          return handle.fd;
+        })();
+        for (let i = 0; i < 40 && diags.length < 1; i++) {
+          Bun.gc(true);
+          await new Promise(r => setTimeout(r, 25));
+        }
+        console.log(JSON.stringify({ fd, file, diags }));
+        fs.rmSync(dir, { recursive: true, force: true });
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { fd, file, diags } = JSON.parse(stdout.trim());
+    expect({ diags, stderr, exitCode }).toEqual({
+      diags: [
+        {
+          code: "EBADF",
+          errno: expect.any(Number),
+          syscall: "close",
+          hasPath: false,
+          message: `EBADF: Closing file descriptor ${fd} on garbage collection failed (${file}), close`,
+        },
+      ],
+      stderr: expect.not.stringContaining("error"),
+      exitCode: 0,
+    });
+  });
 });
 
 it("fdatasyncSync", () => {

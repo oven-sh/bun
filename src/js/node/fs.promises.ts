@@ -212,16 +212,24 @@ async function opendir(dir: string, options?) {
 // Mirror that with a FinalizationRegistry so dropped handles don't leak fds.
 let fileHandleRegistry: FinalizationRegistry<{ fd: number; path: string | undefined }> | undefined;
 function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
+  const { fd, path } = held;
+  const suffix = ` (${path ?? "<unknown path>"})`;
+  let err: NodeJS.ErrnoException;
   try {
-    fs.closeSync(held.fd);
-  } catch {}
-  const suffix = held.path !== undefined ? ` (${held.path})` : "";
-  const err: NodeJS.ErrnoException = new Error(
-    "A FileHandle object was closed during garbage collection. This used to be allowed " +
-      "with a deprecation warning but is now considered an error. Please close FileHandle " +
-      `objects explicitly. File descriptor: ${held.fd}${suffix}`,
-  );
-  err.code = "ERR_INVALID_STATE";
+    fs.closeSync(fd);
+    err = new Error(
+      "A FileHandle object was closed during garbage collection. This used to be allowed " +
+        "with a deprecation warning but is now considered an error. Please close FileHandle " +
+        `objects explicitly. File descriptor: ${fd}${suffix}`,
+    );
+    err.code = "ERR_INVALID_STATE";
+  } catch (closeError: any) {
+    const code = closeError?.code ?? "UNKNOWN";
+    err = new Error(`${code}: Closing file descriptor ${fd} on garbage collection failed${suffix}, close`);
+    err.errno = closeError?.errno;
+    err.code = code;
+    err.syscall = "close";
+  }
   process.nextTick(() => {
     throw err;
   });

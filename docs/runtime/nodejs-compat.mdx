@@ -257,7 +257,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream)
 
-🟢 Fully implemented.
+🟢 Fully implemented. As in browsers, this is a `TransformStream` whose readable side has a `highWaterMark` of 0, so a `writer.write()` settles only once the readable side is read from. Node.js instead buffers up to 64 KiB of unread writes. Start reading (or `pipeTo()`) before awaiting a write.
 
 ### [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
 
@@ -285,7 +285,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`DecompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream)
 
-🟢 Fully implemented.
+🟢 Fully implemented. The same backpressure note as [`CompressionStream`](#compressionstream) applies: a `writer.write()` settles only once the readable side is read from.
 
 ### [`ErrorEvent`](https://developer.mozilla.org/en-US/docs/Web/API/ErrorEvent)
 

@@ -101,12 +101,7 @@ fn js_event_loop_ctx() -> Async::EventLoopCtx {
 
 bun_output::declare_scope!(LibUVBackend, visible);
 bun_output::declare_scope!(ResolveInfoRequest, hidden);
-bun_output::declare_scope!(GetHostByAddrInfoRequest, visible);
-bun_output::declare_scope!(CAresNameInfo, hidden);
-bun_output::declare_scope!(GetNameInfoRequest, visible);
 bun_output::declare_scope!(GetAddrInfoRequest, visible);
-bun_output::declare_scope!(CAresReverse, visible);
-bun_output::declare_scope!(CAresLookup, hidden);
 bun_output::declare_scope!(DNSLookup, visible);
 bun_output::declare_scope!(dns, hidden);
 bun_output::declare_scope!(DNSResolver, visible);

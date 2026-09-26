@@ -10,8 +10,6 @@ use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, J
 
 use super::s3_file as S3File;
 
-bun_core::declare_scope!(S3Client, visible);
-
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
 // generic bool. The proc-macro only matches `true`/`false` literals, so
 // monomorphized callers (`<const C: bool>`) branch here. Both arms yield

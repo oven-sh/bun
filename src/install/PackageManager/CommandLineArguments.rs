@@ -504,7 +504,6 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
 #[derive(Clone)]
 pub struct CommandLineArguments {
     pub(crate) cache_dir: Option<&'static [u8]>,
-    pub lockfile: &'static [u8],
     pub(crate) token: &'static [u8],
     pub(crate) global: bool,
     pub(crate) config: Option<&'static [u8]>,
@@ -608,7 +607,6 @@ impl Default for CommandLineArguments {
     fn default() -> Self {
         Self {
             cache_dir: None,
-            lockfile: b"",
             token: b"",
             global: false,
             config: None,

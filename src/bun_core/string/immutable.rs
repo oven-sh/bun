@@ -2204,9 +2204,6 @@ pub fn percent_encode_write(
 // demand as callers need them — see the `crate::strings_impl` re-export block below.
 pub use crate::string::escape_reg_exp::{escape_reg_exp, escape_reg_exp_for_package_name_matching};
 
-crate::declare_scope!(STR, hidden);
-// `log` is `bun.Output.scoped(.STR, .hidden)` — use `crate::scoped_log!(STR, ...)`.
-
 pub type CodePoint = i32;
 
 /// ASCII hex-digit test for code-point–width inputs (`i32` [`CodePoint`],

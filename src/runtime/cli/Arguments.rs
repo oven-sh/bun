@@ -1517,7 +1517,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     let output_dir: Option<&[u8]> = None;
-    let output_file: Option<&[u8]> = None;
 
     ctx.bundler_options.ignore_dce_annotations = args.flag(b"--ignore-dce-annotations");
 
@@ -1687,9 +1686,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     opts.output_dir = output_dir.map(Box::<[u8]>::from);
-    if let Some(of) = output_file {
-        ctx.debug.output_file = of.into();
-    }
 
     if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
         if let Some(shell) = args.option(b"--shell") {

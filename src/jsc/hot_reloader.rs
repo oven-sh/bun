@@ -21,8 +21,6 @@ use crate::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use crate::virtual_machine::VirtualMachine;
 use bun_event_loop::task_tag;
 
-bun_core::declare_scope!(hot_reloader, visible);
-
 use bun_core::env::IS_KQUEUE;
 
 pub enum ImportWatcher {

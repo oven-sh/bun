@@ -28,8 +28,9 @@ pub fn resolve_from_disk_cache(
     this: &mut PackageManager,
     package_name: &[u8],
     version: &dependency::Version,
+    dep_version_buf: &[u8],
 ) -> Option<PackageID> {
-    this.resolve_from_disk_cache(package_name, version)
+    this.resolve_from_disk_cache(package_name, version, dep_version_buf)
 }
 
 #[inline]
@@ -154,10 +155,12 @@ impl PackageManager {
         Ok(list)
     }
 
+    /// `dep_version_buf`: the buffer `version` was parsed in.
     pub(crate) fn resolve_from_disk_cache(
         &mut self,
         package_name: &[u8],
         version: &dependency::Version,
+        dep_version_buf: &[u8],
     ) -> Option<PackageID> {
         if version.tag != dependency::Tag::Npm {
             // only npm supported right now
@@ -190,11 +193,10 @@ impl PackageManager {
         }
         let npm_query = version.npm();
         for installed_version in installed_versions.iter().copied() {
-            if npm_query.version.satisfies(
-                installed_version,
-                self.lockfile.buffers.string_bytes.as_slice(),
-                tags_buf.as_slice(),
-            ) {
+            if npm_query
+                .version
+                .satisfies(installed_version, dep_version_buf, tags_buf.as_slice())
+            {
                 let mut buf = bun_paths::path_buffer_pool::get();
                 let npm_package_path = match super::path_for_cached_npm_path(
                     self,

@@ -2997,7 +2997,8 @@ impl<'a> Resolver<'a> {
                             };
                         }
 
-                        if let Some(id) = manager!().lockfile_resolve(esm.name, &dependency_version)
+                        if let Some(id) =
+                            manager!().lockfile_resolve(esm.name, &dependency_version, string_buf)
                         {
                             resolved_package_id = id;
                         }
@@ -3134,6 +3135,14 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::Failure(err.into());
                     }
                 };
+
+                // Only an npm resolution has a folder here. On Windows "" would open the cwd.
+                if dir_path_for_resolution.is_empty() {
+                    if let Some(d) = self.debug_logs.as_mut() {
+                        d.decrease_indent();
+                    }
+                    return MatchStatus::NotFound;
+                }
 
                 match self.dir_info_for_resolution(dir_path_for_resolution, resolved_package_id) {
                     Ok(dir_info_to_use_) => {
@@ -3520,7 +3529,11 @@ impl<'a> Resolver<'a> {
             };
         }
         // we should never be trying to resolve a dependency that is already resolved
-        debug_assert!(pm!().lockfile_resolve(esm.name, &version).is_none());
+        debug_assert!(
+            pm!()
+                .lockfile_resolve(esm.name, &version, version_buf)
+                .is_none()
+        );
 
         // Add the containing package to the lockfile
 
@@ -3560,7 +3573,8 @@ impl<'a> Resolver<'a> {
         }
 
         if self.opts.install_preference == bun_options_types::offline_mode::OfflineMode::Offline {
-            if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version) {
+            if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version, version_buf)
+            {
                 *input_package_id_ = package_id;
                 return DependencyToResolve::Resolution(
                     pm!().lockfile_package_resolution(package_id),

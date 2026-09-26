@@ -3,6 +3,7 @@ import type { QueryStrings, Query as QueryType } from "./query";
 const PublicArray = globalThis.Array;
 const {
   Query,
+  handOffStartedQueries,
   SQLQueryFlags,
   symbols: { _strings, _values },
 } = require("internal/sql/query");
@@ -940,6 +941,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   public reservedQueue: Array<(err: Error | null, result: any) => void> = [];
 
   public poolStarted: boolean = false;
+  public firstStarted: QueryType<any, any> | undefined = undefined;
+  public lastStarted: QueryType<any, any> | undefined = undefined;
   public closed: boolean = false;
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
@@ -1374,6 +1377,11 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
         throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
       }
+    }
+
+    // A hand-off can run code of the caller, a function-valued password for example, and that code can close the pool.
+    if (!this.closed && timeout !== 0) {
+      handOffStartedQueries(this);
     }
 
     if (this.closed) {
@@ -2278,6 +2286,11 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   release(connection: Connection, connectingEvent?: boolean): void;
   close(options?: { timeout?: number }): Promise<void>;
   flush(): void;
+  /// The queries that then(), catch(), finally() or run() started and that did not reach the pool yet, in start order.
+  /// The list is linked through the queries, both ways. `Query` adds to it and takes from it, and close() hands it
+  /// to the pool.
+  firstStarted: QueryType<any, any> | undefined;
+  lastStarted: QueryType<any, any> | undefined;
 
   isConnected(): boolean;
   get closed(): boolean;

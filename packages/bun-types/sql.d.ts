@@ -687,6 +687,15 @@ declare module "bun" {
      * waits for that close, for at most its `timeout`. When the timeout
      * ends, the pool rejects the queries that are still in flight.
      *
+     * It waits for the queries that started before the call. A query
+     * starts when `.then()`, `.catch()`, `.finally()` or `.execute()` is
+     * called on it. `await` and the functions of `Promise`, such as
+     * `Promise.all()`, call `.then()` in a later microtask. A query that
+     * only they start has not started yet when `close()` follows in the
+     * same tick, and it rejects with the adapter's
+     * `ERR_*_CONNECTION_CLOSED` error. Call `.execute()` on such a query,
+     * or `await` it before `close()`.
+     *
      * @param options Optional `timeout` in seconds
      *
      * @example

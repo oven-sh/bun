@@ -10,8 +10,28 @@ const _values = Symbol("values");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
 const _adapter = Symbol("adapter");
+const _nextStarted = Symbol("nextStarted");
+const _previousStarted = Symbol("previousStarted");
 
 const PublicPromise = Promise;
+
+/// Gives the started queries of `adapter` to it now, in start order. A close() that waits calls this right before it
+/// stops taking queries, so that a query which started before close() does not find the pool closed.
+/// A query stays in the list after this. Its own start takes it out, and then does nothing more.
+function handOffStartedQueries(adapter: DatabaseAdapter<any, any, any>) {
+  for (let query = adapter.firstStarted; query !== undefined; query = query[_nextStarted]) {
+    if (query[_queryStatus] & SQLQueryStatus.handedOff) {
+      continue;
+    }
+    query[_queryStatus] |= SQLQueryStatus.handedOff;
+    try {
+      query[_handler](query, query[_handle]!);
+    } catch (err) {
+      query[_queryStatus] |= SQLQueryStatus.error;
+      query.reject(err as Error);
+    }
+  }
+}
 
 export interface BaseQueryHandle<Connection> {
   done?(): void;
@@ -31,6 +51,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_strings]: QueryStrings;
   public [_values]: any[];
   public [_flags]: SQLQueryFlags;
+  public [_nextStarted]: Query<any, any> | undefined;
+  public [_previousStarted]: Query<any, any> | undefined;
 
   public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
 
@@ -150,7 +172,41 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       return this;
     }
 
-    await Promise.$resolve();
+    // A query of a transaction or of a reserved connection runs on that connection, not through the pool.
+    const adapter = this[_flags] & SQLQueryFlags.allowUnsafeTransaction ? undefined : this[_adapter];
+    if (adapter !== undefined) {
+      const previous = adapter.lastStarted;
+      if (previous === undefined) {
+        adapter.firstStarted = this;
+      } else {
+        previous[_nextStarted] = this;
+        this[_previousStarted] = previous;
+      }
+      adapter.lastStarted = this;
+    }
+
+    // Not a promise: to await a promise reads its `constructor`, and code of the caller can run there.
+    await undefined;
+
+    if (adapter !== undefined) {
+      const previous = this[_previousStarted];
+      const next = this[_nextStarted];
+      if (previous === undefined) {
+        adapter.firstStarted = next;
+      } else {
+        previous[_nextStarted] = next;
+        this[_previousStarted] = undefined;
+      }
+      if (next === undefined) {
+        adapter.lastStarted = previous;
+      } else {
+        next[_previousStarted] = previous;
+        this[_nextStarted] = undefined;
+      }
+      if (this[_queryStatus] & SQLQueryStatus.handedOff) {
+        return;
+      }
+    }
 
     try {
       return handler(this, handle);
@@ -349,10 +405,13 @@ const enum SQLQueryStatus {
   error = 1 << 3,
   executed = 1 << 4,
   invalidHandle = 1 << 5,
+  /// close() gave the query to the pool before the start of the query did.
+  handedOff = 1 << 6,
 }
 
 export default {
   Query,
+  handOffStartedQueries,
   SQLQueryFlags,
   SQLQueryResultMode,
 

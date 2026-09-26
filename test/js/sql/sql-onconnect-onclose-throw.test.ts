@@ -301,6 +301,14 @@ for (const [adapter, closedCode] of [
 
 const als = new AsyncLocalStorage<string>();
 
+// The ways to start a lazy query that give it to the pool in a later promise job.
+const lazyStarts = {
+  "then()": query => query.then(rows => rows),
+  "catch()": query => query.catch(e => Promise.reject(e)),
+  "finally()": query => query.finally(() => {}),
+  "await": query => (async () => await query)(),
+};
+
 type HookEvent = [hook: "onconnect" | "onclose", store: string | undefined];
 
 /**
@@ -363,6 +371,77 @@ describeWithContainer("postgres: AsyncLocalStorage", { image: "postgres_plain" }
       ["onclose", undefined],
     ]);
   });
+
+  // Unlike the two hooks, a function-valued `password` runs when a query makes the pool dial, in that query's context.
+  for (const [name, start] of Object.entries(lazyStarts)) {
+    test(`a function-valued password observes the store of the query that ${name} started`, async () => {
+      await container.ready;
+      const seen: (string | undefined)[] = [];
+      const create = () =>
+        new SQL({
+          url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+          max: 1,
+          password: () => (seen.push(als.getStore()), ""),
+        });
+      const sql = als.run("created", create);
+      try {
+        const rows = await als.run("starter", () => start(sql`select 1 as x`));
+        expect({ rows, seen }).toEqual({ rows: [{ x: 1 }], seen: ["starter"] });
+      } finally {
+        await als.run("closer", () => sql.close());
+      }
+    });
+  }
+
+  // https://github.com/oven-sh/bun/issues/43887
+  // close() gives the query to the pool, so it is close() that makes the pool dial.
+  test("a function-valued password observes the store of a close() that opens the pool for a started query", async () => {
+    await container.ready;
+    const seen: (string | undefined)[] = [];
+    const create = () =>
+      new SQL({
+        url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+        max: 1,
+        password: () => (seen.push(als.getStore()), ""),
+      });
+    const sql = als.run("created", create);
+    const query = als.run("starter", () =>
+      sql`select 1 as x`.then(
+        rows => rows,
+        e => e.code,
+      ),
+    );
+    await als.run("closer", () => sql.close());
+    expect({ rows: await query, seen }).toEqual({ rows: [{ x: 1 }], seen: ["closer"] });
+  });
+});
+
+// The server ends the session of the pool's only connection. A query that starts inside the onclose that follows
+// finds no usable connection, so the pool dials again for it.
+describeWithContainer("postgres: a query that starts inside onclose", { image: "postgres_plain" }, container => {
+  for (const [name, start] of Object.entries(lazyStarts)) {
+    test(`${name} reconnects and resolves`, async () => {
+      await container.ready;
+      const started = Promise.withResolvers<unknown>();
+      let closes = 0;
+      const sql = new SQL({
+        url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+        max: 1,
+        onclose() {
+          if (++closes === 1) started.resolve(start(sql`select 2 as x`));
+        },
+      });
+      try {
+        const ended = await sql`select pg_terminate_backend(pg_backend_pid())`.catch(e => e.code);
+        expect({ ended, rows: await started.promise }).toEqual({
+          ended: "ERR_POSTGRES_SERVER_ERROR",
+          rows: [{ x: 2 }],
+        });
+      } finally {
+        await sql.close();
+      }
+    });
+  }
 });
 
 // Fault-injection test (a refused connection), see the DO NOT COPY THIS PATTERN

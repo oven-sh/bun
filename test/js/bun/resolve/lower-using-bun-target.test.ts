@@ -13,6 +13,10 @@ await f();
 for (using z of [{ [Symbol.dispose]() { console.log("for-of disposed"); } }]) {
   console.log("for-of body");
 }
+for (using w = { [Symbol.dispose]() { console.log("for-head disposed"); } }; ; ) {
+  console.log("for-head body");
+  break;
+}
 using top = { [Symbol.dispose]() { console.log("top-level disposed"); } };
 console.log("done");
 `;
@@ -24,6 +28,8 @@ const expectedStdout =
   "async disposed\n" +
   "for-of body\n" +
   "for-of disposed\n" +
+  "for-head body\n" +
+  "for-head disposed\n" +
   "done\n" +
   "top-level disposed\n";
 
@@ -91,6 +97,7 @@ console.log(url, disposed);`,
     expect(out).toContain("using x =");
     expect(out).toContain("await using y =");
     expect(out).toContain("for (using z of ");
+    expect(out).toContain("for (using w =");
     expect(out).toContain("using top =");
   });
 
@@ -102,6 +109,7 @@ console.log(url, disposed);`,
     expect(out).not.toContain("using x =");
     expect(out).not.toContain("await using y =");
     expect(out).not.toContain("for (using z of ");
+    expect(out).not.toContain("for (using w =");
     expect(out).not.toContain("using top =");
   });
 
@@ -125,6 +133,7 @@ console.log(url, disposed);`,
     expect(stdout).toContain("using x =");
     expect(stdout).toContain("await using y =");
     expect(stdout).toContain("for (using z of ");
+    expect(stdout).toContain("for (using w =");
     expect(stdout).toContain("using top =");
     expect(exitCode).toBe(0);
   });
@@ -149,6 +158,7 @@ console.log(url, disposed);`,
     expect(stdout).not.toContain("using x =");
     expect(stdout).not.toContain("await using y =");
     expect(stdout).not.toContain("for (using z of ");
+    expect(stdout).not.toContain("for (using w =");
     expect(stdout).not.toContain("using top =");
     expect(exitCode).toBe(0);
   });

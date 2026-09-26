@@ -7,7 +7,7 @@ use bun_collections::StringSet;
 use bun_core::Output;
 use bun_core::ZStr;
 #[cfg(not(windows))]
-use bun_paths::SEP;
+use bun_paths::sep;
 use bun_paths::strings;
 #[cfg(not(windows))]
 use bun_resolver::fs::PathName;
@@ -1197,12 +1197,15 @@ where
                                             break 'brk path_string.as_bytes();
                                         } else {
                                             let file_path_without_trailing_slash =
-                                                strings::trim_right(file_path, &[SEP]);
+                                                strings::trim_right(
+                                                    file_path,
+                                                    bun_paths::sep_str().as_bytes(),
+                                                );
                                             _on_file_update_path_buf
                                                 [0..file_path_without_trailing_slash.len()]
                                                 .copy_from_slice(file_path_without_trailing_slash);
                                             _on_file_update_path_buf
-                                                [file_path_without_trailing_slash.len()] = SEP;
+                                                [file_path_without_trailing_slash.len()] = sep();
 
                                             // The separator written at index `len` is
                                             // immediately overwritten by the

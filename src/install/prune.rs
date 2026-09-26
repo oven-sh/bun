@@ -7,7 +7,7 @@ use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::SEP;
+use bun_paths::sep;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
@@ -171,7 +171,7 @@ impl Plan {
 fn join(dir: &[u8], name: &[u8]) -> Box<[u8]> {
     let mut out = Vec::with_capacity(dir.len() + 1 + name.len());
     out.extend_from_slice(dir);
-    out.push(SEP);
+    out.push(sep());
     out.extend_from_slice(name);
     out.into_boxed_slice()
 }

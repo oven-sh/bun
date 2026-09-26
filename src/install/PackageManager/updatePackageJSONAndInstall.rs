@@ -725,7 +725,7 @@ pub(super) fn remove_leftover_node_modules(
     let cwd = bun_sys::Dir::cwd();
     let mut node_modules_buf = bun_paths::path_buffer_pool::get();
     node_modules_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
-    node_modules_buf[b"node_modules".len()] = bun_paths::SEP;
+    node_modules_buf[b"node_modules".len()] = bun_paths::sep();
     let name_hashes = manager.lockfile.packages.items_name_hash();
     for request in updates.iter() {
         // Only top-level folders are removed; nested copies are left alone.

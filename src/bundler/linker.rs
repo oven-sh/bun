@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
-use bun_paths::{self, SEP};
+use bun_paths::{self, sep};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
 // the `Path`/`PathName` value types that `ImportRecord.path` is typed against.
@@ -608,7 +608,7 @@ impl Linker {
                     pretty = dupe(relative_name);
                 } else {
                     if relative_name.len() > 1
-                        && !(relative_name[0] == SEP || relative_name[0] == b'.')
+                        && !(relative_name[0] == sep() || relative_name[0] == b'.')
                     {
                         text = dupe(&strings::concat(&[b"./", relative_name]));
                     } else {

@@ -630,15 +630,15 @@ impl RunCommand {
                 }
             }
 
-            if !path.is_empty() && *path.last().unwrap() != bun_paths::DELIMITER {
-                path.push(bun_paths::DELIMITER);
+            if !path.is_empty() && *path.last().unwrap() != bun_paths::delimiter() {
+                path.push(bun_paths::delimiter());
             }
 
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
             path.extend_from_slice(Self::BUN_NODE_DIR.as_bytes());
-            path.push(bun_paths::DELIMITER);
+            path.push(bun_paths::delimiter());
             Ok(())
         }
 
@@ -740,15 +740,15 @@ impl RunCommand {
                 }
             }
 
-            if !path.is_empty() && *path.last().unwrap() != bun_paths::DELIMITER {
-                path.push(bun_paths::DELIMITER);
+            if !path.is_empty() && *path.last().unwrap() != bun_paths::delimiter() {
+                path.push(bun_paths::delimiter());
             }
 
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
             strings::to_utf8_append_to_list(path, &target_path_buffer[prefix.len()..dir_slice_len]);
-            path.push(bun_paths::DELIMITER);
+            path.push(bun_paths::delimiter());
             let _ = optional_bun_path;
             Ok(())
         }

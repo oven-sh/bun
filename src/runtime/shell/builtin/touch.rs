@@ -269,7 +269,7 @@ impl ShellTouchTask {
         // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
         // for it like for any other operand.
         let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
+        let filepath: &bun_core::ZStr = if Platform::auto().is_absolute(&this.filepath) {
             // Re-terminate (`filepath` is the bare argv bytes without the
             // trailing NUL).
             resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[&this.filepath])

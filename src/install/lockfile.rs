@@ -12,7 +12,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
-use bun_paths::{MAX_PATH_BYTES, SEP, SEP_STR, platform, resolve_path};
+use bun_paths::{MAX_PATH_BYTES, platform, resolve_path, sep, sep_str};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -1695,8 +1695,8 @@ impl<'a> Printer<'a> {
             lockfile_path = unsafe { ZStr::from_raw(lockfile_path_buf1.as_ptr(), path.len()) };
         }
 
-        if !lockfile_path.as_bytes().is_empty() && lockfile_path.as_bytes()[0] == SEP {
-            let dir = bun_paths::dirname(lockfile_path.as_bytes()).unwrap_or(SEP_STR.as_bytes());
+        if !lockfile_path.as_bytes().is_empty() && lockfile_path.as_bytes()[0] == sep() {
+            let dir = bun_paths::dirname(lockfile_path.as_bytes()).unwrap_or(sep_str().as_bytes());
             // NUL-terminate into the buffer that does NOT back `lockfile_path`
             // (see `path_in_buf2` note above). `buf1`'s cwd contents are dead
             // after the join, so it is free for reuse here.

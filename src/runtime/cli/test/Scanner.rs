@@ -340,7 +340,7 @@ impl<'a> Scanner<'a> {
                     return;
                 }
 
-                debug_assert!(strings::index_of(name, bun_paths::NODE_MODULES_NEEDLE).is_none());
+                debug_assert!(strings::index_of(name, bun_paths::node_modules_needle()).is_none());
 
                 for exclude_name in self.exclusion_names {
                     if strings::eql(exclude_name, name) {

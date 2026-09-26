@@ -7,7 +7,7 @@ use bstr::BStr;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::{String as BunString, strings};
 use bun_paths::resolve_path;
-use bun_paths::{Platform, SEP, SEP_STR};
+use bun_paths::{Platform, sep, sep_str};
 
 #[crate::host_fn(export = "Resolver__nodeModulePathsForJS")]
 fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -63,7 +63,7 @@ extern "C" fn node_module_paths_js_value(
     };
     // Node begins with `path.resolve(from)`: no trailing separator past root.
     while full_path.len() > root_index
-        && Platform::AUTO.is_separator(full_path[full_path.len() - 1])
+        && Platform::auto().is_separator(full_path[full_path.len() - 1])
     {
         full_path = &full_path[..full_path.len() - 1];
     }
@@ -75,7 +75,7 @@ extern "C" fn node_module_paths_js_value(
         let mut index: Option<usize> = Some(suffix.len());
         while let Some(end) = index {
             let part: &[u8];
-            match strings::last_index_of_char(&suffix[..end], SEP) {
+            match strings::last_index_of_char(&suffix[..end], sep()) {
                 Some(delim) => {
                     part = &suffix[delim + 1..end];
                     index = Some(delim);
@@ -99,19 +99,19 @@ extern "C" fn node_module_paths_js_value(
                 "{}{}{}node_modules",
                 BStr::new(root_path),
                 BStr::new(&suffix[..prefix_len]),
-                SEP_STR,
+                sep_str(),
             )));
         }
     }
 
-    while !root_path.is_empty() && Platform::AUTO.is_separator(root_path[root_path.len() - 1]) {
+    while !root_path.is_empty() && Platform::auto().is_separator(root_path[root_path.len() - 1]) {
         root_path = &root_path[..root_path.len() - 1];
     }
 
     list.push(BunString::create_format(format_args!(
         "{}{}node_modules",
         BStr::new(root_path),
-        SEP_STR,
+        sep_str(),
     )));
 
     crate::bun_string_jsc::to_js_array(global, &list).or_pending_exception()

@@ -2,7 +2,7 @@ use core::fmt;
 
 use bun_core::fmt::QuotedFormatter;
 use bun_core::{ZStr, strings};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, sep, sep_str};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
@@ -57,10 +57,11 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             self.manager.lockfile.str(str_to_use),
         );
 
-        if !strings::starts_with_char(paths.rel, b'.') && !strings::starts_with_char(paths.rel, SEP)
+        if !strings::starts_with_char(paths.rel, b'.')
+            && !strings::starts_with_char(paths.rel, sep())
         {
             joined[0] = b'.';
-            joined[1] = SEP;
+            joined[1] = sep();
             // `paths.rel` points into `joined[2..]`; extend the view backward
             // by the two bytes just written via safe slicing of `joined`.
             let n = paths.rel.len() + 2;
@@ -188,9 +189,9 @@ fn normalize_package_json_path<'a>(
     let normalized: &[u8] = if non_normalized_path.len() == 1 && non_normalized_path[0] == b'.' {
         non_normalized_path
     } else if bun_paths::is_absolute(non_normalized_path) {
-        strings::trim_right(non_normalized_path, SEP_STR.as_bytes())
+        strings::trim_right(non_normalized_path, sep_str().as_bytes())
     } else {
-        strings::trim_right(normalize(non_normalized_path), SEP_STR.as_bytes())
+        strings::trim_right(normalize(non_normalized_path), sep_str().as_bytes())
     };
 
     const PACKAGE_JSON_LEN: usize = "/package.json".len();
@@ -199,7 +200,7 @@ fn normalize_package_json_path<'a>(
         let mut tempcat = bun_paths::path_buffer_pool::get();
 
         tempcat[..normalized.len()].copy_from_slice(normalized);
-        tempcat[normalized.len()] = SEP;
+        tempcat[normalized.len()] = sep();
         tempcat[normalized.len() + 1..normalized.len() + PACKAGE_JSON_LEN]
             .copy_from_slice(b"package.json");
         let parts: [&[u8]; 2] = [
@@ -219,14 +220,14 @@ fn normalize_package_json_path<'a>(
                 if !path.is_empty() {
                     let offset = path
                         .len()
-                        .saturating_sub((path[path.len().saturating_sub(1)] == SEP) as usize);
+                        .saturating_sub((path[path.len().saturating_sub(1)] == sep()) as usize);
                     if offset > 0 {
                         remain[0..offset].copy_from_slice(&path[0..offset]);
                     }
                     remain = &mut remain[offset..];
                     if !normalized.is_empty() {
-                        if (path[path.len() - 1] != SEP) && (normalized[0] != SEP) {
-                            remain[0] = SEP;
+                        if (path[path.len() - 1] != sep()) && (normalized[0] != sep()) {
+                            remain[0] = sep();
                             remain = &mut remain[1..];
                         }
                     }
@@ -235,7 +236,7 @@ fn normalize_package_json_path<'a>(
             GlobalOrRelative::Relative(_) => {}
         }
         remain[..normalized.len()].copy_from_slice(normalized);
-        remain[normalized.len()] = SEP;
+        remain[normalized.len()] = sep();
         remain[normalized.len() + 1..normalized.len() + PACKAGE_JSON_LEN]
             .copy_from_slice(b"package.json");
         let remain_after = remain.len() - (normalized.len() + PACKAGE_JSON_LEN);

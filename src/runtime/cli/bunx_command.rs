@@ -18,7 +18,7 @@ use bun_core::{ZStr, strings};
 use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
-use bun_paths::{self, DELIMITER};
+use bun_paths::{self, delimiter};
 use bun_resolver::fs::RealFS;
 #[cfg(windows)]
 use bun_sys::FdExt as _;
@@ -381,7 +381,7 @@ impl BunxCommand {
                 "{}",
                 format_args!(
                     "node_modules{sep}{pkg}{sep}package.json",
-                    sep = bun_paths::SEP as char,
+                    sep = bun_paths::sep() as char,
                     pkg = BStr::new(package_name),
                 ),
             )
@@ -409,7 +409,7 @@ impl BunxCommand {
                     cursor,
                     "{}{}package.json",
                     BStr::new(tempdir_name),
-                    bun_paths::SEP as char,
+                    bun_paths::sep() as char,
                 )
                 .expect("unreachable");
                 total - cursor.len()
@@ -477,7 +477,7 @@ impl BunxCommand {
                 cursor,
                 "{tmp}{sep}node_modules{sep}{pkg}{sep}package.json",
                 tmp = BStr::new(tempdir_name),
-                sep = bun_paths::SEP as char,
+                sep = bun_paths::sep() as char,
                 pkg = BStr::new(package_name),
             )
             .expect("unreachable");
@@ -580,7 +580,7 @@ impl BunxCommand {
         };
         let mut start = temp_dir_len + 1;
         loop {
-            let end = match strings::index_of_char_pos(cache_root, bun_paths::SEP, start) {
+            let end = match strings::index_of_char_pos(cache_root, bun_paths::sep(), start) {
                 Some(i) => i,
                 None => cache_root.len(),
             };
@@ -600,7 +600,7 @@ impl BunxCommand {
             if end == cache_root.len() {
                 return true;
             }
-            buf[end] = bun_paths::SEP;
+            buf[end] = bun_paths::sep();
             start = end + 1;
         }
     }
@@ -645,7 +645,7 @@ impl BunxCommand {
                 _ => return false,
             }
             is_leaf = false;
-            match strings::last_index_of_char(&cache_dir[..end], bun_paths::SEP) {
+            match strings::last_index_of_char(&cache_dir[..end], bun_paths::sep()) {
                 Some(idx) if idx > temp_dir_len => end = idx,
                 _ => return true,
             }
@@ -905,7 +905,7 @@ impl BunxCommand {
 
             // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            let mut path_iter = strings::tokenize(&path, &[DELIMITER]);
+            let mut path_iter = strings::tokenize(&path, bun_paths::delimiter_str().as_bytes());
             if let Some(segment) = path_iter.next() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
@@ -921,7 +921,7 @@ impl BunxCommand {
                     strings::without_trailing_slash(&ignore_cwd),
                     true,
                 ) {
-                    new_path.push(DELIMITER);
+                    new_path.push(delimiter());
                     new_path.extend_from_slice(segment);
                 }
             }
@@ -957,13 +957,13 @@ impl BunxCommand {
                 &mut v,
                 "{tmp}{sep}bunx-{uid}-{pkg}{sep}node_modules{sep}.bin",
                 tmp = BStr::new(temp_dir),
-                sep = bun_paths::SEP as char,
+                sep = bun_paths::sep() as char,
                 uid = uid,
                 pkg = BStr::new(&package_fmt),
             )
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             if path_is_nonzero {
-                v.push(DELIMITER);
+                v.push(delimiter());
                 v.extend_from_slice(&path);
             }
             v
@@ -991,7 +991,7 @@ impl BunxCommand {
                 cursor,
                 "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
                 cache = BStr::new(bunx_cache_dir),
-                sep = bun_paths::SEP as char,
+                sep = bun_paths::sep() as char,
                 bin = BStr::new(initial_bin_name),
                 exe = EXE_SUFFIX,
             )
@@ -1182,7 +1182,7 @@ impl BunxCommand {
                                         cursor,
                                         "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
                                         cache = BStr::new(bunx_cache_dir),
-                                        sep = bun_paths::SEP as char,
+                                        sep = bun_paths::sep() as char,
                                         bin = BStr::new(&package_name_for_bin),
                                         exe = EXE_SUFFIX,
                                     )
@@ -1463,7 +1463,7 @@ impl BunxCommand {
                 cursor,
                 "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
                 cache = BStr::new(bunx_cache_dir),
-                sep = bun_paths::SEP as char,
+                sep = bun_paths::sep() as char,
                 bin = BStr::new(initial_bin_name),
                 exe = EXE_SUFFIX,
             )

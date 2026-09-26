@@ -12,7 +12,7 @@ use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
-use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
+use bun_paths::{self as path, AbsPath, PathBuffer, sep};
 use bun_semver::{self as Semver, String as SemverString};
 #[cfg(windows)]
 use bun_sys::FdDirExt;
@@ -875,7 +875,7 @@ pub fn path_for_cached_npm_path<'a>(
 
     debug_assert!(cache_path_buf[package_name.len()] == b'@');
 
-    cache_path_buf[package_name.len()] = SEP;
+    cache_path_buf[package_name.len()] = sep();
 
     let cache_dir: Fd = get_cache_directory(this);
 
@@ -1029,8 +1029,8 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 let mut off = 0usize;
                 ptr[off..off + global_link_dir.len()].copy_from_slice(global_link_dir);
                 off += global_link_dir.len();
-                if global_link_dir[global_link_dir.len() - 1] != SEP {
-                    ptr[off] = SEP;
+                if global_link_dir[global_link_dir.len() - 1] != sep() {
+                    ptr[off] = sep();
                     off += 1;
                 }
                 ptr[off..off + folder.len()].copy_from_slice(&folder);

@@ -299,7 +299,7 @@ impl ShellMkdirTask {
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
         let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
+        let filepath: &bun_core::ZStr = if Platform::auto().is_absolute(&this.filepath) {
             // Owned `Vec<u8>`; ensure NUL-terminated.
             if this.filepath.last() != Some(&0) {
                 this.filepath.push(0);

@@ -76,7 +76,7 @@ pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
 }
 
 pub fn without_nt_prefix<T: Ch>(path: &[T]) -> &[T] {
-    if !cfg!(windows) {
+    if !bun_core::host::is_windows() {
         return path;
     }
     // A local `has_prefix_ascii_t` covers both widths (widens each ASCII byte
@@ -407,22 +407,22 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
     let base = without_trailing_slash(input);
     let mut buf = vec![0u8; base.len() + 2];
     debug_assert!(!base.is_empty());
-    if base[0] == crate::SEP {
-        buf[0] = crate::SEP;
+    if base[0] == crate::sep() {
+        buf[0] = crate::sep();
     }
     // Reshaped for borrowck — track index instead of moving slice ptr.
-    let mut i: usize = (base[0] == crate::SEP) as usize;
+    let mut i: usize = (base[0] == crate::sep()) as usize;
 
-    for token in base.split(|b| *b == crate::SEP).filter(|s| !s.is_empty()) {
+    for token in base.split(|b| *b == crate::sep()).filter(|s| !s.is_empty()) {
         if token.is_empty() {
             continue;
         }
         buf[i..i + token.len()].copy_from_slice(token);
-        buf[i + token.len()] = crate::SEP;
+        buf[i + token.len()] = crate::sep();
         i += token.len() + 1;
     }
-    if i >= 1 && buf[i - 1] != crate::SEP {
-        buf[i] = crate::SEP;
+    if i >= 1 && buf[i - 1] != crate::sep() {
+        buf[i] = crate::sep();
         i += 1;
     }
     buf[i] = 0;
@@ -432,7 +432,7 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
 }
 
 pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
-    strings::index_of(path, crate::NODE_MODULES_NEEDLE).is_some()
+    strings::index_of(path, crate::node_modules_needle()).is_some()
 }
 
 pub use crate::is_sep_any as char_is_any_slash;
@@ -449,7 +449,7 @@ pub use crate::strings::without_trailing_slash;
 
 /// Does not strip the device root (C:\ or \\Server\Share\ portion off of the path)
 pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
-    if cfg!(unix) || input.len() < 3 || input[1] != b':' {
+    if !bun_core::host::is_windows() || input.len() < 3 || input[1] != b':' {
         return without_trailing_slash(input);
     }
 
@@ -472,7 +472,7 @@ pub fn without_leading_slash(this: &[u8]) -> &[u8] {
 }
 
 pub fn without_leading_path_separator(this: &[u8]) -> &[u8] {
-    strings::trim_left(this, &[crate::SEP])
+    strings::trim_left(this, crate::sep_str().as_bytes())
 }
 
 pub use bun_core::strings::remove_leading_dot_slash;

@@ -148,7 +148,7 @@ impl FileSystemRouter {
             if !(root_dir_path_.slice().is_empty() || root_dir_path_.slice() == b".") {
                 // resolve relative path if needed
                 let path_ = root_dir_path_.slice();
-                if path::Platform::AUTO.is_absolute(path_) {
+                if path::Platform::auto().is_absolute(path_) {
                     root_dir_path = root_dir_path_;
                 } else {
                     let parts: [&[u8]; 1] = [path_];

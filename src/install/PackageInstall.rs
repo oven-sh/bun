@@ -5,7 +5,7 @@ use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::{self as path, OSPathChar, OSPathSlice, SEP, SEP_STR};
+use bun_paths::{self as path, OSPathChar, OSPathSlice, sep, sep_str};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
@@ -779,15 +779,15 @@ impl<'a> PackageInstall<'a> {
     // 2. check .bun-tag against the resolved version
     fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: &Dir) -> bool {
         let dest_len = self.destination_dir_subpath.len();
-        let suffix: &[u8] = &[SEP, b'.', b'b', b'u', b'n', b'-', b't', b'a', b'g'];
+        let suffix: &[u8] = &[sep(), b'.', b'b', b'u', b'n', b'-', b't', b'a', b'g'];
         // Reshaped for borrowck — write into buf via raw indices.
         self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
-        self.destination_dir_subpath_buf[dest_len + SEP_STR.len() + b".bun-tag".len()] = 0;
+        self.destination_dir_subpath_buf[dest_len + sep_str().len() + b".bun-tag".len()] = 0;
         // SAFETY: NUL written above.
         let bun_tag_path = unsafe {
             ZStr::from_raw_mut(
                 self.destination_dir_subpath_buf.as_mut_ptr(),
-                dest_len + SEP_STR.len() + b".bun-tag".len(),
+                dest_len + sep_str().len() + b".bun-tag".len(),
             )
         };
         let _restore = scopeguard::guard(
@@ -862,15 +862,27 @@ impl<'a> PackageInstall<'a> {
         let dest_len = self.destination_dir_subpath.len();
         // Write the literal directly into the path buffer; no intermediate Vec.
         let suffix: &[u8] = &[
-            SEP, b'p', b'a', b'c', b'k', b'a', b'g', b'e', b'.', b'j', b's', b'o', b'n',
+            sep(),
+            b'p',
+            b'a',
+            b'c',
+            b'k',
+            b'a',
+            b'g',
+            b'e',
+            b'.',
+            b'j',
+            b's',
+            b'o',
+            b'n',
         ];
         self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
-        self.destination_dir_subpath_buf[dest_len + SEP_STR.len() + b"package.json".len()] = 0;
+        self.destination_dir_subpath_buf[dest_len + sep_str().len() + b"package.json".len()] = 0;
         // SAFETY: NUL written above.
         let package_json_path = unsafe {
             ZStr::from_raw_mut(
                 self.destination_dir_subpath_buf.as_mut_ptr(),
-                dest_len + SEP_STR.len() + b"package.json".len(),
+                dest_len + sep_str().len() + b"package.json".len(),
             )
         };
         let _restore = scopeguard::guard(
@@ -1090,13 +1102,13 @@ impl<'a> PackageInstall<'a> {
     #[cfg(target_os = "macos")]
     fn install_with_clonefile(&mut self, destination_dir: &Dir) -> crate::Result<InstallResult> {
         if self.destination_dir_subpath.as_bytes()[0] == b'@' {
-            if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
+            if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, sep()) {
                 let slash = slash as usize;
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
                 let subdir = ZStr::from_buf(self.destination_dir_subpath_buf, slash);
                 let _ = sys::mkdirat(destination_dir, subdir, 0o755);
-                self.destination_dir_subpath_buf[slash] = SEP;
+                self.destination_dir_subpath_buf[slash] = sep();
             }
         }
 
@@ -1739,8 +1751,8 @@ impl<'a> PackageInstall<'a> {
         {
             let cache_dir_path = sys::get_fd_path(state.walker.root(), &mut buf2)?;
             let cache_len = cache_dir_path.len();
-            if cache_len > 0 && cache_dir_path[cache_len - 1] != SEP {
-                buf2[cache_len] = SEP;
+            if cache_len > 0 && cache_dir_path[cache_len - 1] != sep() {
+                buf2[cache_len] = sep();
                 to_copy_buf2_offset = cache_len + 1;
             } else {
                 to_copy_buf2_offset = cache_len;

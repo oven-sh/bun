@@ -490,7 +490,7 @@ impl<'a> Transpiler<'a> {
                             let buster_name = bun_paths::string_paths::normalize_slashes_only(
                                 &mut cache_bust_buf[..],
                                 dir,
-                                bun_paths::SEP,
+                                bun_paths::sep(),
                             );
                             break 'name self.resolver.bust_dir_cache(
                                 bun_paths::string_paths::without_trailing_slash_windows_path(

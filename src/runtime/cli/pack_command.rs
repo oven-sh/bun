@@ -20,7 +20,7 @@ use bun_parsers::json as JSON;
 use bun_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
 use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
-use bun_paths::{self as path, SEP_STR};
+use bun_paths::{self as path, sep_str};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`).
 use bun_ptr::cow_slice::CowSlice;
@@ -3052,7 +3052,7 @@ fn tarball_destination<'a>(
         let res = write!(
             &mut cursor,
             "{}{}\x00",
-            SEP_STR,
+            sep_str(),
             fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize),
         );
         if res.is_err() {
@@ -3702,7 +3702,7 @@ impl IgnorePatterns {
                 <&str>::from(reason),
                 <&str>::from(ignore_kind),
                 bstr::BStr::new(strings::without_trailing_slash(dir_path)),
-                SEP_STR,
+                sep_str(),
                 <&str>::from(ignore_kind),
             ),
         );

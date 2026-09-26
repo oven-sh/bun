@@ -378,7 +378,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         if let Some(path) = env_var::PATH.get() {
                             // skip empty segments
                             let mut path_iter = path
-                                .split(|b| *b == bun_paths::DELIMITER)
+                                .split(|b| *b == bun_paths::delimiter())
                                 .filter(|s| !s.is_empty());
                             for entry in &mut path_iter {
                                 if strings::eql(entry, output_path) {
@@ -889,9 +889,9 @@ fn print_node_modules_folder_structure(
             &mut possible_path,
             "{}{}{}{}node_modules",
             bstr::BStr::new(directory.relative_path.as_bytes()),
-            bun_paths::SEP_STR,
+            bun_paths::sep_str(),
             bstr::BStr::new(package_name),
-            bun_paths::SEP_STR,
+            bun_paths::sep_str(),
         )
         .expect("unreachable");
 

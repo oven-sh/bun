@@ -3,7 +3,7 @@ use core::ops::Range;
 use crate::{self as sys, Dir, Fd, FdExt, dir_iterator};
 use bun_alloc::AllocError;
 use bun_core::slice_as_bytes;
-use bun_paths::{OSPathChar, OSPathSlice, OSPathSliceZ, SEP};
+use bun_paths::{OSPathChar, OSPathSlice, OSPathSliceZ, sep};
 use bun_wyhash::Wyhash11;
 
 #[inline]
@@ -156,7 +156,7 @@ impl Walker {
 
                         self.name_buffer.truncate(dirname_len);
                         if !self.name_buffer.is_empty() {
-                            self.name_buffer.push(SEP as OSPathChar);
+                            self.name_buffer.push(sep() as OSPathChar);
                             dirname_len += 1;
                         }
                         self.name_buffer.extend_from_slice(base.name.as_slice());

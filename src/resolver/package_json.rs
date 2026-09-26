@@ -3,7 +3,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
-use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
+use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
 
@@ -157,8 +157,6 @@ pub enum IncludeDependencies {
     Local,
     None,
 }
-
-const NODE_MODULES_PATH: &str = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR);
 
 impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
     fn name(&self) -> &[u8] {
@@ -632,7 +630,7 @@ impl PackageJSON {
                                 // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
                                 if !strings::contains(
                                     json_source.path.text,
-                                    NODE_MODULES_PATH.as_bytes(),
+                                    resolve_path::node_modules_needle(),
                                 ) {
                                     let value_loc = json_parser::property_value_loc(
                                         &json_source.contents,

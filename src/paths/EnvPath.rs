@@ -1,14 +1,14 @@
 use bun_alloc::AllocError;
 use bun_core::strings;
 
-use crate::DELIMITER;
+use crate::delimiter;
 
 fn trim_path_delimiters(input: &[u8]) -> &[u8] {
     let mut trimmed = input;
-    while !trimmed.is_empty() && trimmed[0] == DELIMITER {
+    while !trimmed.is_empty() && trimmed[0] == delimiter() {
         trimmed = &trimmed[1..];
     }
-    while !trimmed.is_empty() && trimmed[trimmed.len() - 1] == DELIMITER {
+    while !trimmed.is_empty() && trimmed[trimmed.len() - 1] == delimiter() {
         trimmed = &trimmed[0..trimmed.len() - 1];
     }
     trimmed
@@ -64,7 +64,7 @@ impl EnvPath {
 
         if !self.buf.is_empty() {
             self.buf.reserve(trimmed.len() + 1);
-            self.buf.push(DELIMITER);
+            self.buf.push(delimiter());
             self.buf.extend_from_slice(trimmed);
         } else {
             self.buf.extend_from_slice(trimmed);

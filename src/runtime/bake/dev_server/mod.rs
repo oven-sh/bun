@@ -570,13 +570,13 @@ impl HotReloadEvent {
             return;
         }
 
-        let ends_with_sep = bun_paths::Platform::AUTO.is_separator(dir_path[dir_path.len() - 1]);
+        let ends_with_sep = bun_paths::Platform::auto().is_separator(dir_path[dir_path.len() - 1]);
         self.extra_files.extend_from_slice(if ends_with_sep {
             &dir_path[0..dir_path.len() - 1]
         } else {
             dir_path
         });
-        self.extra_files.push(bun_paths::SEP);
+        self.extra_files.push(bun_paths::sep());
         self.extra_files.extend_from_slice(sub_path);
         self.extra_files.push(0);
     }

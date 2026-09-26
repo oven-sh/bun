@@ -3391,7 +3391,7 @@ mod draft {
         // at runtime in a stack BoundedArray (no heap, async-signal-safe).
         let mut base_path_buf = BoundedArray::<u8, { bun_paths::MAX_PATH_BYTES }>::default();
         let _ = base_path_buf.append_slice(Environment::BASE_PATH);
-        let _ = base_path_buf.append_slice(bun_paths::SEP_STR.as_bytes());
+        let _ = base_path_buf.append_slice(bun_paths::sep_str().as_bytes());
         let base_path: &[u8] = base_path_buf.const_slice();
         {
             if let Some(sl) = source_location {

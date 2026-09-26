@@ -5,7 +5,7 @@ use core::sync::atomic::Ordering;
 use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::SEP;
+use bun_paths::sep;
 use bun_sys::{self as sys, Dir, Fd};
 
 use crate::analytics;
@@ -423,7 +423,7 @@ pub(crate) fn install_hoisted_packages(
             };
         };
 
-        installer.node_modules.path.push(SEP);
+        installer.node_modules.path.push(sep());
 
         let top_level_len =
             strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;

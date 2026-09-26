@@ -2736,6 +2736,31 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn uv_poll_start(handle: *mut uv_poll_t, events: c_int, cb: uv_poll_cb) -> c_int;
 
+    // What uSockets calls and bun's Rust does not. The C of the portable image gets its
+    // declarations of libuv from this block.
+    #[cfg(bun_portable)]
+    pub fn uv_poll_stop(handle: *mut uv_poll_t) -> c_int;
+    #[cfg(bun_portable)]
+    pub fn uv_loop_new() -> *mut Loop;
+    #[cfg(bun_portable)]
+    pub fn uv_loop_delete(loop_: *mut Loop);
+    #[cfg(bun_portable)]
+    pub fn uv_prepare_init(loop_: *mut Loop, prepare: *mut uv_prepare_t) -> c_int;
+    #[cfg(bun_portable)]
+    pub fn uv_prepare_start(prepare: *mut uv_prepare_t, cb: uv_prepare_cb) -> c_int;
+    #[cfg(bun_portable)]
+    pub fn uv_prepare_stop(prepare: *mut uv_prepare_t) -> c_int;
+    #[cfg(bun_portable)]
+    pub fn uv_check_init(loop_: *mut Loop, check: *mut uv_check_t) -> c_int;
+    #[cfg(bun_portable)]
+    pub fn uv_check_start(check: *mut uv_check_t, cb: uv_check_cb) -> c_int;
+    #[cfg(bun_portable)]
+    pub fn uv_check_stop(check: *mut uv_check_t) -> c_int;
+    #[cfg(bun_portable)]
+    pub fn uv_async_init(loop_: *mut Loop, async_: *mut uv_async_t, cb: uv_async_cb) -> c_int;
+    #[cfg(bun_portable)]
+    pub fn uv_async_send(async_: *mut uv_async_t) -> c_int;
+
     // idle/async
     pub fn uv_idle_init(loop_: *mut Loop, idle: *mut uv_idle_t) -> c_int;
     pub fn uv_idle_start(idle: *mut uv_idle_t, cb: uv_idle_cb) -> c_int;

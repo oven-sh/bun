@@ -119,6 +119,13 @@ impl Import {
     }
 }
 
+/// The address of an import for the C of the image, whose imports are in the same table. Does not
+/// return if there is none.
+#[unsafe(no_mangle)]
+pub extern "C" fn __bun_import_address(import: &'static Import) -> *mut c_void {
+    import.address()
+}
+
 /// Keeps the section, and with it the two symbols the linker makes for it, in an image that calls no import.
 #[used]
 #[unsafe(link_section = "bun_imports")]

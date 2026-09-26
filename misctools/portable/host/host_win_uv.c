@@ -11,8 +11,13 @@
 #define BUN_HOST_UV_SYMBOLS(UV) \
   UV(uv__winsock_ensure) \
   UV(uv_accept) \
+  UV(uv_async_init) \
+  UV(uv_async_send) \
   UV(uv_buf_init) \
   UV(uv_cancel) \
+  UV(uv_check_init) \
+  UV(uv_check_start) \
+  UV(uv_check_stop) \
   UV(uv_close) \
   UV(uv_cpu_info) \
   UV(uv_cwd) \
@@ -78,7 +83,9 @@
   UV(uv_listen) \
   UV(uv_loop_alive) \
   UV(uv_loop_close) \
+  UV(uv_loop_delete) \
   UV(uv_loop_init) \
+  UV(uv_loop_new) \
   UV(uv_now) \
   UV(uv_open_osfhandle) \
   UV(uv_os_getppid) \
@@ -92,6 +99,10 @@
   UV(uv_pipe_open) \
   UV(uv_poll_init_socket) \
   UV(uv_poll_start) \
+  UV(uv_poll_stop) \
+  UV(uv_prepare_init) \
+  UV(uv_prepare_start) \
+  UV(uv_prepare_stop) \
   UV(uv_process_kill) \
   UV(uv_read_start) \
   UV(uv_read_stop) \

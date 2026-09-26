@@ -609,7 +609,9 @@ pub enum Wildcard {
 }
 
 impl Token {
-    pub(crate) fn to_range(self, version: &version::Partial<u64>) -> Range {
+    pub(crate) fn to_range(self, parsed: &version::ParseResult<u64>) -> Range {
+        let version = &parsed.version;
+        let wildcard_is_written = parsed.valid && parsed.wildcard_written;
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -617,6 +619,9 @@ impl Token {
                 let mut range = Range::default();
                 'done: {
                     let Some(major) = version.major else {
+                        if wildcard_is_written {
+                            range = Range::init_wildcard(version.min(), Wildcard::Major);
+                        }
                         break 'done;
                     };
                     range.left = Comparator {
@@ -653,6 +658,9 @@ impl Token {
                 let mut range = Range::default();
                 'done: {
                     let Some(major) = version.major else {
+                        if wildcard_is_written {
+                            range = Range::init_wildcard(version.min(), Wildcard::Major);
+                        }
                         break 'done;
                     };
                     range.left = Comparator {
@@ -693,18 +701,26 @@ impl Token {
         }
 
         match self.wildcard {
-            Wildcard::Major => Range {
-                left: Comparator {
-                    op: RangeOp::Gte,
-                    version: version.min(),
+            Wildcard::Major => match self.tag {
+                // https://github.com/npm/node-semver/blob/3a8a4309ae986c1967b3073ba88c9e69433d44cb/classes/range.js#L380-L387
+                TokenTag::Lt | TokenTag::Gt if wildcard_is_written => Range {
+                    left: Comparator::null_set(),
+                    ..Default::default()
                 },
-                right: Comparator {
-                    op: RangeOp::Lte,
-                    version: Version {
-                        major: u64::MAX,
-                        minor: u64::MAX,
-                        patch: u64::MAX,
-                        ..Default::default()
+                // An operator before text that is not a version (`>latest`, `>xenial`) also gets here.
+                _ => Range {
+                    left: Comparator {
+                        op: RangeOp::Gte,
+                        version: version.min(),
+                    },
+                    right: Comparator {
+                        op: RangeOp::Lte,
+                        version: Version {
+                            major: u64::MAX,
+                            minor: u64::MAX,
+                            patch: u64::MAX,
+                            ..Default::default()
+                        },
                     },
                 },
             },
@@ -1097,15 +1113,15 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         list.or_version(version)?;
                     }
                     _ => {
-                        list.or_range(&token.to_range(&parse_result.version))?;
+                        list.or_range(&token.to_range(&parse_result))?;
                     }
                 }
             } else if count == 0 {
-                list.and_range(&token.to_range(&parse_result.version))?;
+                list.and_range(&token.to_range(&parse_result))?;
             } else if is_or {
-                list.or_range(&token.to_range(&parse_result.version))?;
+                list.or_range(&token.to_range(&parse_result))?;
             } else {
-                list.and_range(&token.to_range(&parse_result.version))?;
+                list.and_range(&token.to_range(&parse_result))?;
             }
 
             is_or = false;

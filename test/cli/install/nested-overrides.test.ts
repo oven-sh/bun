@@ -728,6 +728,40 @@ describe.concurrent("version-scoped targets", () => {
     await installOk(dir, "--frozen-lockfile");
   });
 
+  // node-semver reads `<x` and `>x` as `<0.0.0-0`, the empty set. `intersects` is what npm's semver 7.7.4
+  // answers, and npm applies a rule on that answer. Every rule sets 1.0.0. `untouched` is what the declared
+  // range resolves to without it.
+  describe.concurrent.each([
+    { declared: "^1.0.0", selector: "<x", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">*", intersects: false, untouched: "1.1.0" },
+    // neither side has a lower bound
+    { declared: "<2", selector: "<x", intersects: false, untouched: "1.1.0" },
+    { declared: "<=1.0.1", selector: ">x", intersects: false, untouched: "1.0.1" },
+    // the other alternative of the selector still matches
+    { declared: "^1.0.0", selector: "<x || 1", intersects: true, untouched: "1.1.0" },
+  ])("a selector with a wildcard major after < or > %j", ({ declared, selector, intersects, untouched }) => {
+    test(intersects ? "the rule applies" : "the rule leaves the edge alone", async () => {
+      const dir = await project({
+        dependencies: { "no-deps": declared },
+        overrides: { [`no-deps@${selector}`]: "1.0.0" },
+      });
+      const { err } = await installOk(dir);
+      expect(err).not.toContain("warn:");
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe(intersects ? "1.0.0" : untouched);
+      await installOk(dir, "--frozen-lockfile");
+    });
+  });
+
+  test("a selector that no version satisfies leaves a * edge alone", async () => {
+    // npm applies the rule here: its `*` comparator intersects every comparator, `<0.0.0-0` included.
+    // Bun does not, because no version satisfies the selector.
+    const dir = await project({ dependencies: { "no-deps": "*" }, overrides: { "no-deps@<x": "1.0.0" } });
+    const { err } = await installOk(dir);
+    expect(err).not.toContain("warn:");
+    expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("2.0.0");
+    await installOk(dir, "--frozen-lockfile");
+  });
+
   test("edges declared with a dist-tag never match", async () => {
     const dir = await project({
       dependencies: { "no-deps": "latest", "one-range-dep": "1.0.0" },

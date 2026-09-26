@@ -495,15 +495,15 @@ class DockerComposeHelper {
   }
 
   /**
-   * Pull all Docker images explicitly - useful for CI
+   * Pull the image of every service that has no `build:` section - useful for CI
    */
   async pullImages(): Promise<void> {
     console.log("Pulling Docker images...");
-    const { exitCode, stderr } = await this.exec(["pull", "--ignore-pull-failures"]);
-
+    // buildServices() makes the images that have a `build:` section, so every
+    // image this asks for has to come from a registry.
+    const { exitCode, stderr } = await this.exec(["pull", "--ignore-buildable"]);
     if (exitCode !== 0) {
-      // Don't fail on pull errors since some services need building
-      console.warn(`Warning during image pull: ${stderr}`);
+      throw new Error(`Failed to pull images: ${stderr}`);
     }
   }
 
@@ -511,12 +511,21 @@ class DockerComposeHelper {
    * Build all services that need building - useful for CI
    */
   async buildServices(): Promise<void> {
-    // Bare `compose build` builds every service that has a `build:` section,
-    // so there's no hardcoded list to keep in sync as services are converted.
+    // `compose build <service>` does nothing for a service with no `build:`
+    // section, so there's no hardcoded list to keep in sync as services are
+    // converted. One service at a time: a bake machine has 2 CPUs, the MinIO
+    // image compiles for minutes, and the database images give their server
+    // 180 seconds to start while they build.
     console.log("Building all services with a build section...");
-    const { exitCode, stderr } = await this.exec(["build"]);
-    if (exitCode !== 0) {
-      throw new Error(`Failed to build services: ${stderr}`);
+    const services = await this.exec(["config", "--services"]);
+    if (services.exitCode !== 0) {
+      throw new Error(`Failed to list services: ${services.stderr}`);
+    }
+    for (const service of services.stdout.split(/\r?\n/).filter(name => name !== "")) {
+      const { exitCode, stderr } = await this.exec(["build", service]);
+      if (exitCode !== 0) {
+        throw new Error(`Failed to build service ${service}: ${stderr}`);
+      }
     }
   }
 

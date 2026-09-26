@@ -1,9 +1,8 @@
 import type { S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { describe, expect, it } from "bun:test";
-import child_process from "child_process";
 import { createHash, createHmac, randomUUID } from "crypto";
-import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
@@ -11,7 +10,6 @@ const S3 = (...args) => new S3Client(...args);
 // Import docker-compose helper
 import * as dockerCompose from "../../../docker/index.ts";
 
-const dockerCLI = dockerExe() as string;
 type S3Credentials = S3Options & {
   service: string;
 };
@@ -27,23 +25,8 @@ const allCredentials: S3Credentials[] = [
 ];
 
 if (isDockerEnabled()) {
-  // Use docker-compose to start MinIO
+  // Use docker-compose to start MinIO. The service starts with the `buntest` bucket.
   const minioInfo = await dockerCompose.ensure("minio");
-
-  // Get container name for docker exec
-  const containerName = child_process
-    .execSync(
-      `docker ps --filter "ancestor=quay.io/minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
-      { encoding: "utf-8" },
-    )
-    .trim();
-
-  if (containerName) {
-    // Create a bucket using mc inside the container
-    child_process.spawnSync(dockerCLI, [`exec`, containerName, `mc`, `mb`, `data/buntest`], {
-      stdio: "ignore",
-    });
-  }
 
   minioCredentials = {
     endpoint: `http://${minioInfo.host}:${minioInfo.ports[9000]}`, // MinIO endpoint from docker-compose

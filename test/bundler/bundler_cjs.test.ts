@@ -634,6 +634,18 @@ describe("bundler", () => {
         },
       });
     }
+
+    itBundled(`${format}/TopLevelAwaitInEntryAndDependencyFormatError`, {
+      files: {
+        "/entry.mjs": `import { dep } from "./dep.mjs"; export const out = await dep;`,
+        "/dep.mjs": `export const dep = await Promise.resolve("TLA-OK");`,
+      },
+      format,
+      bundleErrors: {
+        "/entry.mjs": [`Top-level await is currently not supported with the "${format}" output format`],
+        "/dep.mjs": [`Top-level await is currently not supported with the "${format}" output format`],
+      },
+    });
   });
 
   // The note names the switch that fits the caller: a flag for `bun build`, a
@@ -663,6 +675,14 @@ describe("bundler", () => {
       format: "cjs",
       cliNote: "Use --compile --format=esm to allow top-level await with --bytecode",
       apiNote: 'Use compile: true and format: "esm" to allow top-level await with bytecode: true',
+    },
+    {
+      name: "--compile --bytecode",
+      flags: ["--compile", "--bytecode", "--outfile=app"],
+      config: { compile: true, bytecode: true },
+      format: "cjs",
+      cliNote: "Use --format=esm to allow top-level await",
+      apiNote: 'Use format: "esm" to allow top-level await',
     },
   ])("top-level await error note with $name", ({ flags, config, format, cliNote, apiNote }) => {
     const files = {

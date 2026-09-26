@@ -883,8 +883,9 @@ impl<'a> LinkerContext<'a> {
                 // Only `Bun.build()` installs a completion; the CLI never does.
                 // SAFETY: discriminant read of a field disjoint from `self`.
                 let from_js_api = unsafe { (*bundle).completion.is_some() };
-                self.reject_top_level_await(format_name, from_js_api);
-                return Err(LinkError::BuildFailed);
+                if self.reject_top_level_await(format_name, from_js_api) {
+                    return Err(LinkError::BuildFailed);
+                }
             }
 
             // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint
@@ -2054,8 +2055,9 @@ impl<'a> LinkerContext<'a> {
         hasher.digest()
     }
 
-    /// One error per file with a top-level `await`, pointing at the `await`.
-    fn reject_top_level_await(&self, format_name: &str, from_js_api: bool) {
+    /// Reports each reachable file that has a top-level `await`, at the `await`.
+    /// Returns whether it reported one.
+    fn reject_top_level_await(&self, format_name: &str, from_js_api: bool) -> bool {
         let parse_graph = self.parse_graph();
         let tla_keywords = parse_graph.ast.items_top_level_await_keyword();
         let input_files = parse_graph.input_files.items_source();
@@ -2071,12 +2073,14 @@ impl<'a> LinkerContext<'a> {
             }
         };
 
-        for (tla_keyword, source) in tla_keywords.iter().zip(input_files) {
-            if tla_keyword.len == 0 {
+        let mut rejected = false;
+        for source_index in &self.graph.reachable_files {
+            let source_index = source_index.get() as usize;
+            let Some(tla_keyword) = tla_keywords.get(source_index).filter(|r| r.len > 0) else {
                 continue;
-            }
+            };
             self.log_disjoint().add_range_error_fmt_with_notes(
-                Some(source),
+                Some(&input_files[source_index]),
                 *tla_keyword,
                 Box::new([Data {
                     text: std::borrow::Cow::Borrowed(note),
@@ -2086,7 +2090,9 @@ impl<'a> LinkerContext<'a> {
                     "Top-level await is currently not supported with the \"{format_name}\" output format"
                 ),
             );
+            rejected = true;
         }
+        rejected
     }
 
     pub(crate) fn validate_tla(

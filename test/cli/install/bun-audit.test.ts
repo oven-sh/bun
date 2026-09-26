@@ -3,7 +3,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { exists, readlink } from "fs/promises";
 import {
   DirectoryTree,
-  VerdaccioRegistry,
   bunEnv,
   bunExe,
   gunzipJsonRequest,
@@ -12,6 +11,7 @@ import {
   tempDir,
 } from "harness";
 import { join } from "node:path";
+import { TestRegistry } from "registry";
 import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixtures";
 
 function fixture(
@@ -25,7 +25,7 @@ function fixture(
 }
 
 let server: Bun.Server;
-const verdaccio = new VerdaccioRegistry();
+const upstream = new TestRegistry();
 
 beforeAll(async () => {
   server = Bun.serve({
@@ -43,12 +43,12 @@ beforeAll(async () => {
       return Response.json(fixture);
     },
   });
-  await verdaccio.start();
+  await upstream.start();
 });
 
 afterAll(() => {
   server?.stop();
-  verdaccio.stop();
+  upstream.stop();
 });
 
 function doAuditTest(
@@ -125,7 +125,7 @@ type RegistryOptions = {
   rewriteTime?: Record<string, Record<string, string>>;
 };
 
-// Answers the bulk-advisory endpoint itself and proxies everything else to verdaccio, pointing manifest tarball URLs back at itself.
+// Answers the bulk-advisory endpoint itself and proxies everything else to the fixture registry, pointing manifest tarball URLs back at itself.
 function startRegistry(advisories: Record<string, Advisory[]>, options: RegistryOptions = {}) {
   let bulkRequests = 0;
   return Bun.serve({
@@ -166,7 +166,7 @@ function startRegistry(advisories: Record<string, Advisory[]>, options: Registry
         return new Response("not found", { status: 404 });
       }
 
-      const up = await fetch(new URL(url.pathname + url.search, verdaccio.registryUrl()), {
+      const up = await fetch(new URL(url.pathname + url.search, upstream.registryUrl()), {
         method: req.method,
         headers: { accept: req.headers.get("accept") ?? "*/*" },
       });
@@ -174,7 +174,7 @@ function startRegistry(advisories: Record<string, Advisory[]>, options: Registry
       if (!up.ok || !contentType.includes("json")) {
         return new Response(up.body, { status: up.status, headers: { "content-type": contentType } });
       }
-      const manifest = JSON.parse((await up.text()).replaceAll(verdaccio.registryUrl(), proxy.url.href));
+      const manifest = JSON.parse((await up.text()).replaceAll(upstream.registryUrl(), proxy.url.href));
       const time = options.rewriteTime?.[packageName];
       if (time) manifest.time = { ...manifest.time, ...time };
       return Response.json(manifest, { status: up.status });

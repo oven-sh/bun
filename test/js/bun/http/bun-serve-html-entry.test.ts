@@ -1,6 +1,7 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 async function getServerUrl(process: Subprocess) {
@@ -714,4 +715,27 @@ test.concurrent("subdirectory routes use forward slashes on Windows", async () =
   const buttons = await fetch(new URL("/components/buttons", serverUrl));
   expect(buttons.status).toBe(200);
   expect(await buttons.text()).toContain("<title>Buttons</title>");
+});
+
+// `internal/html.ts` finds its entry points by their `.html` suffix in
+// process.argv, so argv[1] stays the resolved file when the typed name is a
+// symlink without that suffix.
+test.skipIf(isWindows).concurrent("bun ./app where app is a symlink to an .html file", async () => {
+  await using dir = tempDir("html-entry-symlink", {
+    "site.html": `<!DOCTYPE html><html><head><title>Symlinked</title></head><body>Symlinked</body></html>`,
+  });
+  symlinkSync("site.html", join(String(dir), "app"));
+
+  await using process = Bun.spawn({
+    cmd: [bunExe(), "./app", "--port=0"],
+    env: { ...bunEnv, NODE_ENV: "production" },
+    cwd: String(dir),
+    stdout: "pipe",
+  });
+
+  const serverUrl = await getServerUrl(process);
+
+  const response = await fetch(serverUrl);
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain("<title>Symlinked</title>");
 });

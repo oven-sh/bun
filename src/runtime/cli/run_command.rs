@@ -921,9 +921,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// `VirtualMachine::init`,
     /// hand off CLI state, then enter `Run::start` under the JSC API lock.
+    ///
+    /// `argv_path` becomes `process.argv[1]` when `Some`; `None` means
+    /// `entry_path` is used for both module loading and `argv[1]`.
     pub(crate) fn boot(
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
+        argv_path: Option<Box<[u8]>>,
         loader: Option<Loader>,
     ) -> crate::Result<()> {
         if !ctx.debug.loaded_bunfig {
@@ -1091,6 +1095,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.main_is_html_entrypoint = loader
             .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
             == Loader::Html;
+        // `internal/html.ts` reads its `.html` entries from `process.argv`.
+        if let Some(argv_path) = argv_path.filter(|_| !vm.main_is_html_entrypoint) {
+            vm.set_main_for_argv(Box::leak(argv_path));
+        }
 
         // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
         // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
@@ -1683,7 +1691,12 @@ fn print_unhandled_version_note(vm: &mut VirtualMachine) {
 impl RunCommand {
     /// Duplicate `path` to a process-lifetime buffer, boot the VM, and on
     /// failure print the formatted error + `exit(1)`.
-    fn boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
+    fn boot_and_handle_error(
+        ctx: &mut ContextData,
+        path: &[u8],
+        argv_path: Option<Box<[u8]>>,
+        loader: Option<Loader>,
+    ) -> bool {
         if matches!(
             loader.or_else(|| Self::default_loader_for(path)),
             Some(Loader::Md)
@@ -1700,7 +1713,7 @@ impl RunCommand {
         // owned copy by value.
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
-        if let Err(err) = Self::boot(ctx, owned, loader) {
+        if let Err(err) = Self::boot(ctx, owned, argv_path, loader) {
             Self::boot_failed_exit(ctx, paths::basename(path), &err);
         }
         true
@@ -2548,7 +2561,13 @@ impl RunCommand {
                     // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
+                    let argv_path = Self::absolutize_for_argv(target_name, &text);
+                    return Ok(Self::boot_and_handle_error(
+                        ctx,
+                        &text,
+                        argv_path,
+                        Some(loader),
+                    ));
                 } else {
                     bun_core::scoped_log!(
                         RUN_LOG,
@@ -2568,6 +2587,7 @@ impl RunCommand {
                     return Ok(Self::boot_and_handle_error(
                         ctx,
                         target_name,
+                        None,
                         Some(Loader::Html),
                     ));
                 }
@@ -2697,6 +2717,47 @@ impl RunCommand {
         Ok(false)
     }
 
+    /// Node's `path.resolve(argv[1])`, or `None` when it is `entry_path`.
+    fn absolutize_for_argv(target: &[u8], entry_path: &[u8]) -> Option<Box<[u8]>> {
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let cwd_len = bun_core::getcwd_or_exe_dir(&mut cwd_buf).as_bytes().len();
+        cwd_buf[cwd_len] = paths::SEP;
+        let mut out_buf = bun_paths::path_buffer_pool::get();
+        let mut joined = paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
+            &cwd_buf[..cwd_len + 1],
+            &mut out_buf.0,
+            &[target],
+        )?;
+        let root_len = if cfg!(windows) {
+            paths::resolve_path::windows_filesystem_root(joined).len() + 1
+        } else {
+            1
+        };
+        while joined.len() > root_len && joined[joined.len() - 1] == paths::SEP {
+            joined = &joined[..joined.len() - 1];
+        }
+        // Windows keeps the typed casing in the cwd; the fd path is canonical.
+        let is_entry_path = if cfg!(windows) {
+            bun_core::strings::eql_case_insensitive_ascii(joined, entry_path, true)
+        } else {
+            joined == entry_path
+        };
+        if joined.is_empty() || is_entry_path {
+            return None;
+        }
+        Some(joined.to_vec().into_boxed_slice())
+    }
+
+    /// Whether `path` is the same inode as `entry`.
+    fn names_entry_file(path: &[u8], entry: &bun_sys::Stat) -> bool {
+        if path.len() >= MAX_PATH_BYTES {
+            return false;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        bun_sys::stat(paths::resolve_path::z(path, &mut buf))
+            .is_ok_and(|st| st.st_dev == entry.st_dev && st.st_ino == entry.st_ino)
+    }
+
     /// Fast-path file probe: if `target` resolves to an existing regular file,
     /// duplicate its absolute path and boot the VM. Returns `false` if the
     /// path does not exist / is a directory, so the caller can fall through to
@@ -2779,14 +2840,14 @@ impl RunCommand {
 
         // fstat: directories cannot be run. if only there was a faster way to
         // check this
-        let is_dir = match bun_sys::fstat(fd) {
-            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
+        let entry_stat = match bun_sys::fstat(fd) {
+            Ok(st) => st,
             Err(_) => {
                 let _ = bun_sys::close(fd);
                 return false;
             }
         };
-        if is_dir {
+        if bun_sys::S::ISDIR(entry_stat.st_mode as _) {
             let _ = bun_sys::close(fd);
             return false;
         }
@@ -2810,7 +2871,10 @@ impl RunCommand {
         };
         let _ = bun_sys::close(fd);
 
-        Self::boot_and_handle_error(ctx, &absolute_script_path, None)
+        let argv_path = Self::absolutize_for_argv(target, &absolute_script_path)
+            .filter(|p| Self::names_entry_file(p, &entry_stat));
+
+        Self::boot_and_handle_error(ctx, &absolute_script_path, argv_path, None)
     }
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
@@ -2856,7 +2920,7 @@ impl RunCommand {
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, owned, None) {
+        if let Err(err) = Self::boot(ctx, owned, None, None) {
             Self::boot_failed_exit(ctx, b"-", &err);
         }
         Ok(true)
@@ -2906,7 +2970,7 @@ impl RunCommand {
         let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
             .to_vec()
             .into_boxed_slice();
-        Self::boot(ctx, entry, None)
+        Self::boot(ctx, entry, None, None)
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
@@ -2941,7 +3005,7 @@ impl RunCommand {
             let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
                 .to_vec()
                 .into_boxed_slice();
-            return Self::boot(ctx, entry, None);
+            return Self::boot(ctx, entry, None, None);
         }
 
         if ctx.positionals.is_empty() {
@@ -2984,7 +3048,7 @@ impl RunCommand {
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, normalized, None) {
+        if let Err(err) = Self::boot(ctx, normalized, None, None) {
             Self::exec_as_if_node_boot_failed(ctx, &basename, err);
         }
         Ok(())
@@ -4023,7 +4087,7 @@ impl BunXFastPath {
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
-        if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
+        if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None, None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(

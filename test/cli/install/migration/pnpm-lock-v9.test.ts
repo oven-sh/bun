@@ -126,9 +126,10 @@ snapshots:
 `;
 }
 
-describe("pnpm-lock.yaml v9", () => {
-  // Cases using toMatchSnapshot are sequential: snapshot matchers are unsupported inside a concurrent group.
-  test("v9 git and userinfo-tarball references migrate", async () => {
+// Every case works in its own directory and only reads from the shared registry.
+// The two toMatchSnapshot cases are test.serial: snapshot matchers are unsupported inside a concurrent group.
+describe.concurrent("pnpm-lock.yaml v9", () => {
+  test.serial("v9 git and userinfo-tarball references migrate", async () => {
     using dir = fixture("v9-git-references");
 
     const { stderr, exitCode } = await migrate(String(dir));
@@ -990,7 +991,7 @@ snapshots:
     expect(bunLock).toContain(`"tb": "file:tb-1.0.0.tgz"`);
   });
 
-  test("snapshot alias whose dep-path version is a file: directory or tarball", async () => {
+  test.serial("snapshot alias whose dep-path version is a file: directory or tarball", async () => {
     using dir = fixture("v9-alias-non-registry-dep-path");
 
     const { stderr, exitCode } = await migrate(String(dir));

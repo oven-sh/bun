@@ -71,6 +71,16 @@ Views that share the same `directory` share cookies and storage. Pass `dataStore
   "ephemeral"` (the default).
 </Note>
 
+### User agent
+
+Pass `userAgent` to replace the engine's default `User-Agent` string. It applies to every request the view makes and to `navigator.userAgent` in the page:
+
+```ts
+const view = new Bun.WebView({
+  userAgent: "my-bot/1.0 (+https://example.com/bot)",
+});
+```
+
 ---
 
 ## Backends
@@ -192,9 +202,20 @@ await view.navigate("data:text/html,<h1>hello</h1>");
 await view.navigate("file:///path/to/index.html");
 ```
 
-`navigate()` resolves when the main frame's `load` event fires. After it resolves, `view.url` and `view.title` reflect the new page, and `view.loading` is `false`.
+`navigate()` resolves when the main frame's `load` event fires. After it resolves, `view.url`, `view.title` and `view.status` reflect the new page, and `view.loading` is `false`.
 
 If the navigation fails (DNS failure, connection refused, invalid URL), the promise rejects with an `Error` describing the failure.
+
+A server that answers with an error status (`404`, `500`, `429`) still delivers a page, so `navigate()` resolves. Read `view.status` to tell an error page from content:
+
+```ts
+await view.navigate("https://example.com/missing");
+if (view.status !== null && view.status >= 400) {
+  console.log("server answered", view.status); // 404
+}
+```
+
+`view.status` is `null` when the page did not come from an HTTP response (`data:`, `about:blank`, `file:`).
 
 Only one navigation may be in flight per view at a time. Calling `navigate()` while another is pending throws `ERR_INVALID_STATE` synchronously.
 
@@ -223,6 +244,8 @@ view.onNavigationFailed = error => {
 ```
 
 These fire **before** the corresponding `navigate()` promise settles, so by the time `await view.navigate(...)` returns, your callback has already run. Set to `null` to remove.
+
+With the WebKit backend, `view.status` is already updated when `onNavigated` runs. With the Chrome backend, `onNavigated` fires when the navigation commits, and `view.title` and `view.status` are updated when `navigate()` resolves.
 
 ---
 
@@ -557,6 +580,7 @@ Operations on **different views** are fully independent and run in parallel — 
 | `backend`   | `"webkit"` \| `"chrome"` \| [object](#backends) | `"webkit"` on macOS, `"chrome"` elsewhere | Rendering engine.                                                                              |
 | `console`   | `typeof console` \| `(type, ...args) => void`   | —                                         | Capture page-side `console.*` calls. See [Console capture](#console-capture).                  |
 | `dataStore` | `"ephemeral"` \| `{ directory: string }`        | `"ephemeral"`                             | Storage for cookies / localStorage / IndexedDB. See [Persistent storage](#persistent-storage). |
+| `userAgent` | `string`                                        | engine default                            | The `User-Agent` header and `navigator.userAgent`. See [User agent](#user-agent).              |
 
 #### `backend` object form
 
@@ -575,6 +599,7 @@ Operations on **different views** are fully independent and run in parallel — 
 | -------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------- |
 | `url`                | `string` _(readonly)_                            | The current URL. Updated when a navigation completes. Empty string before first navigation. |
 | `title`              | `string` _(readonly)_                            | The page's `<title>`. Updated when a navigation completes.                                  |
+| `status`             | `number \| null` _(readonly)_                    | The main frame's HTTP status code. `null` for `data:`, `about:blank` and `file:` pages.     |
 | `loading`            | `boolean` _(readonly)_                           | `true` while a navigation is in flight.                                                     |
 | `onNavigated`        | `((url: string, title: string) => void) \| null` | Fires after each successful navigation, before the `navigate()` promise resolves.           |
 | `onNavigationFailed` | `((error: Error) => void) \| null`               | Fires after each failed navigation, before the `navigate()` promise rejects.                |

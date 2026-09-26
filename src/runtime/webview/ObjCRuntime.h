@@ -117,6 +117,17 @@ struct NSURLRequest : Ref {
     static NSURLRequest fromURL(NSURL u) { return msgCls<id>(cls, s_requestWithURL, u.m_id); }
 };
 
+// NSURLResponse. statusCode exists only on the NSHTTPURLResponse subclass;
+// a data: or file: load delivers a plain NSURLResponse.
+struct NSURLResponse : Ref {
+    using Ref::Ref;
+    static Class cls_NSHTTPURLResponse;
+    static SEL s_statusCode;
+
+    bool isHTTP() const { return isKindOf(cls_NSHTTPURLResponse); }
+    long statusCode() const { return msg<long>(s_statusCode); }
+};
+
 struct NSError : Ref {
     using Ref::Ref;
     static SEL s_localizedDescription;
@@ -142,7 +153,9 @@ struct NSNumber : Ref {
     using Ref::Ref;
     static Class cls;
     static SEL s_numberWithDouble;
+    static SEL s_doubleValue;
     static NSNumber withDouble(double d) { return msgCls<id>(cls, s_numberWithDouble, d); }
+    double doubleValue() const { return m_id ? msg<double>(s_doubleValue) : 0; }
 };
 
 struct NSArray : Ref {
@@ -570,6 +583,19 @@ struct WKScriptMessage : Ref {
     id body() const { return msg<id>(s_body); }
 };
 
+// WKNavigationResponse — the argument of
+// webView:decidePolicyForNavigationResponse:decisionHandler:.
+struct WKNavigationResponse : Ref {
+    using Ref::Ref;
+    static SEL s_isForMainFrame;
+    static SEL s_response;
+    static SEL s_canShowMIMEType;
+
+    bool isForMainFrame() const { return msg<signed char>(s_isForMainFrame) != 0; }
+    NSURLResponse response() const { return msg<id>(s_response); }
+    bool canShowMIMEType() const { return msg<signed char>(s_canShowMIMEType) != 0; }
+};
+
 struct WKWebView : Ref {
     using Ref::Ref;
     static Class cls;
@@ -600,6 +626,18 @@ struct WKWebView : Ref {
     static SEL s_setUIDelegate;
     void setUIDelegate(id d) { msg<void>(s_setUIDelegate, d); }
     void loadRequest(NSURLRequest r) { msg<void>(s_loadRequest, r.m_id); }
+
+    static SEL s_setCustomUserAgent;
+    void setCustomUserAgent(NSString ua) { msg<void>(s_setCustomUserAgent, ua.m_id); }
+
+    // backForwardList.currentItem, or nil before the first navigation.
+    static SEL s_backForwardList;
+    static SEL s_currentItem;
+    id currentBackForwardItem() const
+    {
+        Ref list(msg<id>(s_backForwardList));
+        return list ? list.msg<id>(s_currentItem) : nullptr;
+    }
 
     // callAsyncJavaScript:arguments:inFrame:inContentWorld:completionHandler:
     // (public API, macOS 11.0+). The body is wrapped in an async function;
@@ -713,6 +751,18 @@ struct WKWebView : Ref {
     }
 };
 
+// WKBackForwardListItem. The main-frame HTTP status of the document loaded
+// into the item lives on the item as an associated NSNumber, so it is
+// released with the item and a back-forward cache restore (which delivers
+// no response) can read it back.
+struct WKBackForwardListItem : Ref {
+    using Ref::Ref;
+    static char s_statusKey;
+
+    uint16_t status() const;
+    void setStatus(uint16_t status) const;
+};
+
 // Runtime-registered NSObject<WKNavigationDelegate> subclass. The associated
 // object is the WebViewHost*.
 struct NavigationDelegate : Ref {
@@ -733,6 +783,19 @@ struct NavigationDelegate : Ref {
     void clearHost() { s_setAssoc(m_id, &s_hostKey, nullptr, 0); }
     WebViewHost *host() const { return reinterpret_cast<WebViewHost *>(s_getAssoc(m_id, &s_hostKey)); }
 };
+
+inline uint16_t WKBackForwardListItem::status() const
+{
+    if (!m_id) return 0;
+    return static_cast<uint16_t>(NSNumber(NavigationDelegate::s_getAssoc(m_id, &s_statusKey)).doubleValue());
+}
+
+inline void WKBackForwardListItem::setStatus(uint16_t status) const
+{
+    if (!m_id) return;
+    NavigationDelegate::s_setAssoc(m_id, &s_statusKey, NSNumber::withDouble(status).m_id,
+        1 /* OBJC_ASSOCIATION_RETAIN_NONATOMIC */);
+}
 
 } // namespace objc
 

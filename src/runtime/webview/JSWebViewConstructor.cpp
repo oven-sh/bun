@@ -106,6 +106,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
 
     uint32_t width = 800, height = 600;
     WTF::String persistDir;
+    WTF::String userAgent;
     WTF::String initialUrl;
     // Default: WebKit on Darwin (lighter than Chrome, always present);
     // Chrome elsewhere (WebKit needs the system framework, Darwin-only).
@@ -324,6 +325,20 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
                     "dataStore must be \"ephemeral\" or { directory: string }"_s);
             }
         }
+
+        JSValue ua = opts->get(globalObject, Identifier::fromString(vm, "userAgent"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (ua.isString()) {
+            userAgent = ua.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (userAgent.contains('\r') || userAgent.contains('\n') || userAgent.contains('\0')) {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "userAgent must not contain CR, LF or NUL characters"_s);
+            }
+        } else if (!ua.isUndefined()) {
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                "userAgent must be a string"_s);
+        }
     }
 
     if (width == 0 || width > 16384)
@@ -358,6 +373,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
                     : "Failed to connect to Chrome (check backend.url is a valid ws:// debugger endpoint)"_s);
         }
         view->m_consoleIsGlobal = consoleIsGlobal;
+        view->m_userAgent = userAgent;
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
         // No user code ever holds this promise; handled, so a rejection
         // (close mid-load, crash) cannot surface as unhandledRejection.
@@ -373,7 +389,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
 #else
     Bun__Feature__webview_webkit += 1;
     JSWebView* view = JSWebView::createAndSend(globalObject, structure, width, height, persistDir,
-        stdoutInherit, stderrInherit);
+        userAgent, stdoutInherit, stderrInherit);
     if (!view) {
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
             "Failed to spawn WebView host process"_s);

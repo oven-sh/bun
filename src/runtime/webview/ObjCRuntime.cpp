@@ -34,6 +34,9 @@ SEL NSURL::s_absoluteString;
 Class NSURLRequest::cls;
 SEL NSURLRequest::s_requestWithURL;
 
+Class NSURLResponse::cls_NSHTTPURLResponse;
+SEL NSURLResponse::s_statusCode;
+
 SEL NSError::s_localizedDescription;
 SEL NSError::s_userInfo;
 
@@ -42,6 +45,7 @@ SEL NSData::s_length;
 
 Class NSNumber::cls;
 SEL NSNumber::s_numberWithDouble;
+SEL NSNumber::s_doubleValue;
 
 Class NSArray::cls;
 SEL NSArray::s_count;
@@ -167,12 +171,19 @@ SEL WKUserContentController::s_addUserScript;
 
 SEL WKScriptMessage::s_body;
 
+SEL WKNavigationResponse::s_isForMainFrame;
+SEL WKNavigationResponse::s_response;
+SEL WKNavigationResponse::s_canShowMIMEType;
+
 Class WKWebView::cls;
 Class WKWebView::cls_WKSnapshotConfiguration;
 SEL WKWebView::s_initWithFrame_configuration;
 SEL WKWebView::s_setNavigationDelegate;
 SEL WKWebView::s_setUIDelegate;
 SEL WKWebView::s_loadRequest;
+SEL WKWebView::s_setCustomUserAgent;
+SEL WKWebView::s_backForwardList;
+SEL WKWebView::s_currentItem;
 SEL WKWebView::s_stopLoading;
 SEL WKWebView::s_reload;
 SEL WKWebView::s_canGoBack;
@@ -188,6 +199,7 @@ Class NavigationDelegate::cls;
 void (*NavigationDelegate::s_setAssoc)(id, const void*, id, uintptr_t);
 id (*NavigationDelegate::s_getAssoc)(id, const void*);
 char NavigationDelegate::s_hostKey = 0;
+char WKBackForwardListItem::s_statusKey = 0;
 
 } // namespace objc
 
@@ -196,10 +208,57 @@ char NavigationDelegate::s_hostKey = 0;
 
 extern "C" {
 
+static void delegateDidStartProvisionalNavigation(id self, SEL, id /*webView*/, id /*navigation*/)
+{
+    ObjCRuntime::ARPool pool;
+    if (auto* host = objc::NavigationDelegate(self).host()) host->onNavigationStarted();
+}
+
+// webView:decidePolicyForNavigationResponse:decisionHandler:
+// Records the main frame's HTTP status. The policy is WebKit's own default
+// for a missing delegate method: allow what it can show, cancel the rest.
+// The handler is void(^)(WKNavigationResponsePolicy): 0 = Cancel, 1 = Allow.
+static void delegateDecidePolicyForNavigationResponse(id self, SEL, id /*webView*/, id navigationResponse, void* handler)
+{
+    ObjCRuntime::ARPool pool;
+    objc::WKNavigationResponse navResponse(navigationResponse);
+    if (navResponse.isForMainFrame()) {
+        if (auto* host = objc::NavigationDelegate(self).host()) {
+            objc::NSURLResponse response = navResponse.response();
+            long code = response.isHTTP() ? response.statusCode() : 0;
+            host->onNavigationResponse(code > 0 && code <= 0xFFFF ? static_cast<uint16_t>(code) : 0);
+        }
+    }
+    long policy = navResponse.canShowMIMEType() ? 1 : 0;
+    struct {
+        void* isa;
+        int32_t flags;
+        int32_t reserved;
+        void (*invoke)(void*, long);
+    }* block
+        = reinterpret_cast<decltype(block)>(handler);
+    block->invoke(handler, policy);
+}
+
+static void delegateDidCommitNavigation(id self, SEL, id /*webView*/, id /*navigation*/)
+{
+    ObjCRuntime::ARPool pool;
+    if (auto* host = objc::NavigationDelegate(self).host()) host->onNavigationCommitted();
+}
+
 static void delegateDidFinishNavigation(id self, SEL, id /*webView*/, id /*navigation*/)
 {
     ObjCRuntime::ARPool pool;
     if (auto* host = objc::NavigationDelegate(self).host()) host->onNavigationFinished();
+}
+
+// _webView:navigation:didSameDocumentNavigation: (WKNavigationDelegatePrivate).
+// pushState and fragment navigations add a history item for the same
+// document; it needs the document's status for a later cache restore.
+static void delegateDidSameDocumentNavigation(id self, SEL, id /*webView*/, id /*navigation*/, long /*type*/)
+{
+    ObjCRuntime::ARPool pool;
+    if (auto* host = objc::NavigationDelegate(self).host()) host->onSameDocumentNavigation();
 }
 
 static void delegateDidFailNavigation(id self, SEL, id /*webView*/, id /*navigation*/, id error)
@@ -386,6 +445,9 @@ bool ObjCRuntime::load()
     CLS(NSURLRequest::cls, "NSURLRequest");
     NSURLRequest::s_requestWithURL = sel("requestWithURL:");
 
+    CLS(NSURLResponse::cls_NSHTTPURLResponse, "NSHTTPURLResponse");
+    NSURLResponse::s_statusCode = sel("statusCode");
+
     NSError::s_localizedDescription = sel("localizedDescription");
     NSError::s_userInfo = sel("userInfo");
 
@@ -394,6 +456,7 @@ bool ObjCRuntime::load()
 
     CLS(NSNumber::cls, "NSNumber");
     NSNumber::s_numberWithDouble = sel("numberWithDouble:");
+    NSNumber::s_doubleValue = sel("doubleValue");
 
     CLS(NSArray::cls, "NSArray");
     NSArray::s_count = sel("count");
@@ -478,12 +541,19 @@ bool ObjCRuntime::load()
 
     WKScriptMessage::s_body = sel("body");
 
+    WKNavigationResponse::s_isForMainFrame = sel("isForMainFrame");
+    WKNavigationResponse::s_response = sel("response");
+    WKNavigationResponse::s_canShowMIMEType = sel("canShowMIMEType");
+
     CLS(WKWebView::cls, "WKWebView");
     CLS(WKWebView::cls_WKSnapshotConfiguration, "WKSnapshotConfiguration");
     WKWebView::s_initWithFrame_configuration = sel("initWithFrame:configuration:");
     WKWebView::s_setNavigationDelegate = sel("setNavigationDelegate:");
     WKWebView::s_setUIDelegate = sel("setUIDelegate:");
     WKWebView::s_loadRequest = sel("loadRequest:");
+    WKWebView::s_setCustomUserAgent = sel("setCustomUserAgent:");
+    WKWebView::s_backForwardList = sel("backForwardList");
+    WKWebView::s_currentItem = sel("currentItem");
     WKWebView::s_stopLoading = sel("stopLoading");
     WKWebView::s_reload = sel("reload");
     WKWebView::s_canGoBack = sel("canGoBack");
@@ -522,9 +592,17 @@ bool ObjCRuntime::load()
         m_loadError = "failed to allocate delegate class"_s;
         return false;
     }
-    // Type encodings: v = void, @ = id, : = SEL.
+    // Type encodings: v = void, @ = id, : = SEL, @? = block.
+    addMethod(NavigationDelegate::cls, sel("webView:didStartProvisionalNavigation:"),
+        reinterpret_cast<IMP>(delegateDidStartProvisionalNavigation), "v@:@@");
+    addMethod(NavigationDelegate::cls, sel("webView:decidePolicyForNavigationResponse:decisionHandler:"),
+        reinterpret_cast<IMP>(delegateDecidePolicyForNavigationResponse), "v@:@@@?");
+    addMethod(NavigationDelegate::cls, sel("webView:didCommitNavigation:"),
+        reinterpret_cast<IMP>(delegateDidCommitNavigation), "v@:@@");
     addMethod(NavigationDelegate::cls, sel("webView:didFinishNavigation:"),
         reinterpret_cast<IMP>(delegateDidFinishNavigation), "v@:@@");
+    addMethod(NavigationDelegate::cls, sel("_webView:navigation:didSameDocumentNavigation:"),
+        reinterpret_cast<IMP>(delegateDidSameDocumentNavigation), "v@:@@q");
     addMethod(NavigationDelegate::cls, sel("webView:didFailNavigation:withError:"),
         reinterpret_cast<IMP>(delegateDidFailNavigation), "v@:@@@");
     addMethod(NavigationDelegate::cls, sel("webView:didFailProvisionalNavigation:withError:"),

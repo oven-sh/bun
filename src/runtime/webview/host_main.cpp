@@ -243,7 +243,8 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         WTF::String persistDir;
         if (static_cast<DataStoreKind>(p.dataStoreKind) == DataStoreKind::Persistent)
             persistDir = r.str();
-        views.emplace(viewId, WebViewHost::createForIPC(viewId, p.width, p.height, persistDir));
+        WTF::String userAgent = r.str();
+        views.emplace(viewId, WebViewHost::createForIPC(viewId, p.width, p.height, persistDir, userAgent));
         // No Ack for Create — parent doesn't await it (fire-and-forget).
         return;
     }

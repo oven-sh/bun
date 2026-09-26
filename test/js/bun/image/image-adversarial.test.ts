@@ -1187,14 +1187,14 @@ describe("hostile option objects", () => {
   });
 
   test("transfer + GC after the borrow does not free the bytes the pool thread reads", async () => {
-    // The borrow happens on the JS thread inside `.bytes()`, so the transfer
-    // and the collection below both land before the pool job runs: no race on
-    // how long the decode takes. Without the pin, `.buffer` + transfer moves
-    // the storage to an ArrayBuffer nothing references, the collection frees
-    // it, and the job reads the freed block. `Malloc=1` routes the Gigacage
-    // through system malloc so ASAN sees the free; stock bun rejects with
-    // ERR_IMAGE_UNKNOWN_FORMAT instead. Windows is left alone: bmalloc's
-    // SystemHeap is unimplemented there and `Malloc=1` would RELEASE_BASSERT.
+    // Without the pin, `.buffer` + transfer moves the storage to an
+    // ArrayBuffer nothing references and the collection frees it while the
+    // pool job may still read it. The assertion does not depend on catching
+    // that read in the act: the transfer either copies (pinned, `byteLength`
+    // stays) or detaches (`byteLength` 0). `Malloc=1` routes the Gigacage
+    // through system malloc, so ASAN reports the read too when the job is
+    // still running at the free. Windows is left alone: bmalloc's SystemHeap
+    // is unimplemented there and `Malloc=1` would RELEASE_BASSERT.
     const script = `
       import zlib from "node:zlib";
       const be32 = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
@@ -1231,7 +1231,9 @@ describe("hostile option objects", () => {
         ...bunEnv,
         ...(isWindows ? {} : { Malloc: "1" }),
         // symbolize=0: symbolizing a failure report outlasts the test timeout.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+        // detect_leaks=0: Malloc=1 exposes JSC's never-freed startup allocations to LSAN,
+        // and without symbols test/leaksan.supp cannot match them.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
       },
       stderr: "pipe",
     });

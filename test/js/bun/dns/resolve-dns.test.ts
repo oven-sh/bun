@@ -10,8 +10,20 @@ const invalidHostnames = ["adsfa.asdfasdf.asdf.com"]; // known invalid
 // Not host names at all: rejected before any resolver is asked, so the answer
 // does not depend on what the network's DNS server does with a label that has
 // a space in it (some never answer, and mDNSResponder then waits out its 5s or
-// 30s timeout).
-const malformedHostnames = [" ", ".", " .", "localhost:80", "this is not a hostname", "a..b", "foo bar.example.com"];
+// 30s timeout). `/` and `*` are in c-ares's record-name charset but glibc
+// getaddrinfo refuses them in a name being looked up, and so does Bun.
+const malformedHostnames = [
+  " ",
+  ".",
+  " .",
+  "localhost:80",
+  "this is not a hostname",
+  "a..b",
+  "foo bar.example.com",
+  "example.com/path",
+  "a*b.example.com",
+  "*.example.com",
+];
 
 describe("dns", () => {
   describe.each(backends)("lookup() [backend: %s]", backend => {

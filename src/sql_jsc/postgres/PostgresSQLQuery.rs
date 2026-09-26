@@ -16,6 +16,7 @@ use super::Signature;
 use super::command_tag_jsc::CommandTagJsc;
 use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
+use super::postgres_request::EncodeRequest;
 use super::postgres_sql_connection;
 use super::postgres_sql_statement::Status as StatementStatus;
 use bun_sql::postgres::CommandTag;
@@ -77,6 +78,8 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
+    /// Rejected for an undecodable row: in flight, its response skipped, until `ReadyForQuery`.
+    pub(crate) discard_response: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
     /// decrement is idempotent across its call sites.
@@ -102,6 +105,7 @@ impl Default for Flags {
             binary: false,
             bigint: false,
             simple: false,
+            discard_response: false,
             counter: RequestCounter::None,
             reprepared: false,
             result_mode: PostgresSQLQueryResultMode::Objects,
@@ -206,6 +210,7 @@ impl PostgresSQLQuery {
         let event_loop = vm.event_loop_mut();
         let js_err = postgres_error_to_js(global_object, None, err);
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             global_object,
             this_value,
@@ -218,9 +223,23 @@ impl PostgresSQLQuery {
     }
 
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
+        self.status.set(Status::Fail);
+        self.reject(err, global_object);
+    }
+
+    /// Rejects now, but `status` stays in flight: the server is still answering this query.
+    pub(crate) fn on_undecodable_row(&self, err: JSValue, global_object: &JSGlobalObject) {
+        self.update_flags(|f| f.discard_response = true);
+        self.reject(err, global_object);
+    }
+
+    pub(crate) fn is_rejected(&self) -> bool {
+        self.status.get() == Status::Fail || self.flags.get().discard_response
+    }
+
+    fn reject(&self, err: JSValue, global_object: &JSGlobalObject) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
         let _guard = self.ref_guard();
-        self.status.set(Status::Fail);
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
@@ -239,6 +258,7 @@ impl PostgresSQLQuery {
             .unwrap();
         let event_loop = vm.event_loop_mut();
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             global_object,
             this_value,
@@ -313,6 +333,7 @@ impl PostgresSQLQuery {
         let event_loop = vm.event_loop_mut();
 
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             global_object,
             this_value,
@@ -482,6 +503,19 @@ impl PostgresSQLQuery {
             JsError::Thrown
         };
 
+        // A connection that failed or closed answers nothing: a query queued on it would hold the
+        // event loop for ever. The pool hears of a close through `onclose` and stops handing the
+        // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.
+        if matches!(
+            connection.status.get(),
+            bun_sql::postgres::Status::Failed | bun_sql::postgres::Status::Disconnected
+        ) {
+            return Err(throw_write_error(
+                b"Connection closed",
+                AnyPostgresError::ConnectionClosed,
+            ));
+        }
+
         if this.flags.get().simple {
             bun_core::scoped_log!(Postgres, "executeQuery");
 
@@ -609,12 +643,13 @@ impl PostgresSQLQuery {
                                 bun_core::scoped_log!(Postgres, "bindAndExecute");
 
                                 // bindAndExecute will bind + execute, it will change to running after binding is complete
-                                if let Err(err) = PostgresRequest::bind_and_execute(
+                                if let Err(err) = connection.encode_request(
                                     global_object,
-                                    stmt,
-                                    binding_value,
-                                    columns_value,
-                                    writer,
+                                    EncodeRequest::BindAndExecute {
+                                        statement: stmt,
+                                        binding_value,
+                                        columns_value,
+                                    },
                                 ) {
                                     this.release_statement();
                                     return Err(throw_write_error(
@@ -667,12 +702,13 @@ impl PostgresSQLQuery {
                 if !has_params {
                     bun_core::scoped_log!(Postgres, "prepareAndQueryWithSignature");
                     // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
-                    if let Err(err) = PostgresRequest::prepare_and_query_with_signature(
+                    if let Err(err) = connection.encode_request(
                         global_object,
-                        query_str.slice(),
-                        binding_value,
-                        writer,
-                        &mut signature,
+                        EncodeRequest::PrepareAndQuery {
+                            query: query_str.slice(),
+                            signature: &mut signature,
+                            binding_value,
+                        },
                     ) {
                         if connection_entry_value.is_some() {
                             let _ = connection
@@ -789,6 +825,8 @@ impl PostgresSQLQuery {
                 bun_io::AllocatorType::Js,
             ))
         });
+        // advance() below can reject this request with nothing sent, so no reply releases the ref.
+        scopeguard::defer! { connection.update_poll_ref(); }
 
         this.this_value.with_mut(|r| r.upgrade(global_object));
 

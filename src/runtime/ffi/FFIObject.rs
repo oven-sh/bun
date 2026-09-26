@@ -113,7 +113,7 @@ const DOM_CALL: DomCall = DomCall {
     put: FFI__ptr__put,
 };
 
-pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
+pub(crate) fn to_js(global_object: &JSGlobalObject) -> JSValue {
     // Unrolled manually; keep in sync with `FIELDS` below.
     let fields = FIELDS();
     let object = JSValue::create_empty_object(global_object, fields.len() + 3);
@@ -138,7 +138,7 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
     object
 }
 
-pub mod reader {
+pub(crate) mod reader {
     use super::*;
 
     // Same shape as `DOM_CALL` above: the descriptor only needs the `put` extern.
@@ -241,7 +241,7 @@ pub mod reader {
         ),
     ];
 
-    pub fn to_js(global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(global_this: &JSGlobalObject) -> JSValue {
         let obj = JSValue::create_empty_object(global_this, DOM_CALLS.len());
         for (_, dc) in DOM_CALLS {
             // SAFETY: `put` is a C++-side helper; global_this is live for the call.

@@ -252,8 +252,8 @@ let canBuildNodeAddonsCached: boolean | undefined;
 export function canBuildNodeAddons(): boolean {
   if (canBuildNodeAddonsCached === undefined) {
     if (!isMacOS) {
-      // Linux and Windows CI toolchains are provisioned by the bootstrap
-      // scripts in lockstep with the reported Node version; only macOS test
+      // Linux and Windows CI toolchains are baked into the images
+      // (scripts/build/ci-images/spec.ts) in lockstep with the reported Node version; only macOS test
       // boxes have independently-managed Xcode installs.
       canBuildNodeAddonsCached = true;
     } else {
@@ -519,7 +519,7 @@ export interface BunRunResult {
   stdout: string;
   stderr: string;
   exitCode: number;
-  signalCode: NodeJS.Signals | null;
+  signalCode: NodeJS.Signals | number | null;
 }
 
 /**
@@ -2304,10 +2304,7 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
   return outPath;
 }
 
-export const rss: () => number =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? (Bun.unsafe.memoryFootprint as () => number)
-    : process.memoryUsage.rss;
+export const rss: () => number = process.memoryUsage.rss;
 
 /** Read exactly `len` bytes from `fd` at absolute `offset`. */
 export function preadExact(fd: number, offset: number, len: number): Buffer {

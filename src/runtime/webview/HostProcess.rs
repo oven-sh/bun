@@ -131,7 +131,7 @@ bun_spawn::link_impl_ProcessExit! {
             scoped_log!(WebViewHost, "child exited: {}", status);
             // A retired host was already unpublished by Bun__WebViewHost__retire.
             if !(*this).retired {
-                let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
+                let signo: i32 = status.signal().map_or(0, |signal| i32::from(signal.0));
                 Bun__WebViewHost__childDied(signo);
             }
             // `this` was heap-allocated in spawn(); dropping it releases our
@@ -149,11 +149,6 @@ bun_spawn::link_impl_ProcessExit! {
 
 #[cfg(target_os = "macos")]
 fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Result<Fd, Error> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (vm, stdout_inherit, stderr_inherit);
-        return Err(crate::Error::Unsupported);
-    }
     #[cfg(target_os = "macos")]
     {
         // Both ends nonblocking — parent uses usockets; child sets O_NONBLOCK

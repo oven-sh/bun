@@ -301,7 +301,7 @@ class DockerComposeHelper {
   }
 
   // Ask the shard's coordinator (test/docker/coordinator.ts, spawned by
-  // scripts/runner.node.mjs) to start the service, and wait for its ready
+  // scripts/runner.node.ts) to start the service, and wait for its ready
   // message with the port mapping. The coordinator owns every `compose up`
   // for the shard, so concurrent processes can't race duplicate invocations
   // into the daemon. Resolves null when no coordinator is configured or the

@@ -1,5 +1,5 @@
 /**
- * Platform shims — small dylibs/objects linked into the bun executable to
+ * Platform shims — small host tools/objects used at link time to
  * work around toolchain or OS bugs.
  *
  * Each shim is a ninja build edge (source → output), so ninja handles
@@ -17,6 +17,7 @@ import type { Config } from "./config.ts";
 import { DARWIN_STACK_SIZE } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote } from "./shell.ts";
+import { toolIdentityFile } from "./tools.ts";
 
 export interface ShimLinkOpts {
   /** Extra ldflags to append to the link() call. */
@@ -25,14 +26,12 @@ export interface ShimLinkOpts {
   implicitInputs: string[];
 }
 
-const ASAN_DYLD_SHIM = "asan-dyld-shim.dylib";
-
 /**
  * macOS-from-Linux cross links need a post-link fixup pass over every
  * Mach-O executable they produce (the linked bun-profile/bun-debug AND the
  * stripped bun):
  *
- *   - ld64.lld parses `-stack_size` but doesn't implement it (LLVM 21 prints
+ *   - ld64.lld parses `-stack_size` but doesn't implement it (LLVM 23 still prints
  *     "not yet implemented"), so LC_MAIN.stacksize stays 0 → the 8 MB
  *     default instead of the 18 MB JSC needs. Tracked in workarounds.ts
  *     ("darwin-cross-stack-size").
@@ -144,24 +143,6 @@ const MUSL_CRT_OBJECTS = ["Scrt1.o", "crt1.o", "crti.o", "crtn.o"];
 export function registerShimRules(n: Ninja, cfg: Config): void {
   const q = (p: string) => quote(p, false);
 
-  if (cfg.darwin && cfg.asan) {
-    // -install_name @rpath/<name> so dyld resolves it next to the
-    // executable: clang's Darwin driver adds `-rpath @executable_path` to
-    // every -fsanitize=address link (for the ASan runtime), which is every
-    // link this shim goes into. __DATA,__interpose only works from dylibs
-    // (not object files linked into the main binary), hence -dynamiclib.
-    // Same deployment target as everything else, or ld warns the dylib was
-    // "built for newer version" than the executable loading it.
-    const minos =
-      cfg.osxDeploymentTarget !== undefined && cfg.osxSysroot !== undefined
-        ? ` -mmacosx-version-min=${cfg.osxDeploymentTarget} -isysroot ${q(cfg.osxSysroot)}`
-        : "";
-    n.rule("shim_dylib", {
-      command: `${q(cfg.cc)}${minos} -dynamiclib -O2 -install_name @rpath/$name -o $out $in`,
-      description: "shim $name",
-    });
-  }
-
   if (needsMachoPostlink(cfg)) {
     // Host tool — compiled for the BUILD machine (no --target/-isysroot),
     // since it runs as part of the link/strip commands on this host.
@@ -184,20 +165,12 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
   }
 }
 
-const emittedShims = new WeakMap<Ninja, ShimLinkOpts>();
-
 /**
- * The link environment every *target* executable in the graph needs (bun,
- * testFFI, a dep's `exe` steps such as JSC's LLInt extractors): emits the
- * shim edges once per graph and returns the flags / implicit inputs each of
- * those links appends. A link that skipped them would, e.g., hand rust-lld
- * Alpine's compressed CRT objects on musl, or miss the macho-postlink tool.
+ * Emit shim build edges and return link flags. Call before the link() call (emitBun).
  *
  * See scripts/build/workarounds.ts for the self-obsoleting check on each.
  */
 export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
-  const done = emittedShims.get(n);
-  if (done !== undefined) return done;
   const ldflags: string[] = [];
   const implicitInputs: string[] = [];
 
@@ -210,24 +183,9 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
       outputs: [machoPostlinkToolPath(cfg)],
       rule: "host_tool_cc",
       inputs: [resolve(cfg.cwd, "scripts", "build", "shims", "macho-postlink.c")],
+      implicitInputs: [toolIdentityFile(cfg, "cc")],
     });
     implicitInputs.push(...machoPostlinkImplicitInputs(cfg));
-  }
-
-  if (cfg.darwin && cfg.asan) {
-    // macOS 26.4 ASAN dyld deadlock — see shims/asan-dyld-shim.c.
-    const src = resolve(cfg.cwd, "scripts", "build", "shims", "asan-dyld-shim.c");
-    const out = resolve(cfg.buildDir, ASAN_DYLD_SHIM);
-    n.build({
-      outputs: [out],
-      rule: "shim_dylib",
-      inputs: [src],
-      vars: { name: ASAN_DYLD_SHIM },
-    });
-    // No -rpath of our own: the driver's ASan one (see shim_dylib) covers
-    // @rpath/<name>, and a second identical -rpath is an ld warning.
-    ldflags.push(out);
-    implicitInputs.push(out);
   }
 
   if (needsMuslCrtDecompress(cfg)) {
@@ -260,7 +218,5 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
     ldflags.push(`-B${crtDir}`);
   }
 
-  const result = { ldflags, implicitInputs };
-  emittedShims.set(n, result);
-  return result;
+  return { ldflags, implicitInputs };
 }

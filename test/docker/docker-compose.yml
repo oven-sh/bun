@@ -183,7 +183,7 @@ services:
 
   # MinIO (S3) Service
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin

@@ -7,7 +7,6 @@ use crate::{
 };
 use bun_bundler::transpiler::PluginResolver;
 use bun_core::String as BunString;
-use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::SourceProviderMap;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 
@@ -33,12 +32,6 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
 // HOST_EXPORT(Bun__getVM, c)
 pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()
-}
-
-/// Caller must check for termination exception
-// HOST_EXPORT(Bun__drainMicrotasks, c)
-pub fn drain_microtasks() {
-    VirtualMachine::get().event_loop_mut().tick();
 }
 
 // HOST_EXPORT(Bun__readOriginTimer, c)
@@ -116,7 +109,13 @@ pub fn vm_handle_queue_task_concurrently(
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
-pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise) {
+/// `rejection_owner`: the `Bun.ModuleGraph` whose code rejected the promise
+/// (decided by promiseRejectionTracker when it happened), or null.
+pub fn handle_rejected_promise(
+    global: &JSGlobalObject,
+    promise: &mut JSPromise,
+    rejection_owner: JSValue,
+) {
     crate::mark_binding!();
 
     let result = promise.result(global.vm());
@@ -127,11 +126,12 @@ pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise)
         return;
     }
 
-    jsc_vm.unhandled_rejection(global, result, promise.to_js());
+    jsc_vm.unhandled_rejection_owned(global, result, promise.to_js(), rejection_owner);
     jsc_vm.auto_garbage_collect();
 }
 
-struct HandledPromiseContext {
+/// `Bun__handleHandledPromise`'s hop to the next turn of the loop.
+pub struct HandledPromiseTask {
     // VM-lifetime backref (JSC_BORROW) — `GlobalRef` encapsulates the deref.
     global_this: crate::GlobalRef,
     // PORTING.md forbids bare JSValue fields on heap-allocated structs;
@@ -140,20 +140,27 @@ struct HandledPromiseContext {
     promise: Strong,
 }
 
-impl HandledPromiseContext {
-    fn callback(context: *mut Self) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `context` was produced by `heap::alloc` below; we are the
-        // sole owner and reconstitute the Box to drop it at end of scope.
-        let context = unsafe { bun_core::heap::take(context) };
-        let global: &JSGlobalObject = &context.global_this;
+impl HandledPromiseTask {
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub fn run(self: Box<Self>) {
+        let global: &JSGlobalObject = &self.global_this;
         // JSGlobalObject::bun_vm contract.
         let _ = global
             .bun_vm()
             .as_mut()
-            .handled_promise(global, context.promise.get());
-        // drop(context) — Box freed at scope exit (replaces `default_allocator.destroy`);
-        // Strong's Drop replaces the explicit `.unprotect()`.
-        Ok(())
+            .handled_promise(global, self.promise.get());
+    }
+}
+
+impl bun_event_loop::Taskable for HandledPromiseTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::HandledPromise;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed in `handle_handled_promise`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -161,14 +168,15 @@ impl HandledPromiseContext {
 pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     crate::mark_binding!();
     let promise_js = promise.to_js();
-    let context = bun_core::heap::into_raw(Box::new(HandledPromiseContext {
-        global_this: global.into(),
-        promise: Strong::create(promise_js, global),
-    }));
     global
         .bun_vm()
         .event_loop_mut()
-        .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
+        .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
+            HandledPromiseTask {
+                global_this: global.into(),
+                promise: Strong::create(promise_js, global),
+            },
+        )));
 }
 
 // HOST_EXPORT(Bun__onDidAppendPlugin, c)
@@ -213,29 +221,17 @@ pub fn get_tls_reject_unauthorized_value() -> i32 {
 
 // HOST_EXPORT(Bun__isNoProxy, c)
 /// # Safety
-/// `hostname_ptr[..hostname_len]` and `host_ptr[..host_len]` must each be valid
-/// for reads for the duration of the call (or the corresponding len must be 0).
-pub unsafe fn is_no_proxy(
-    hostname_ptr: *const u8,
-    hostname_len: usize,
-    host_ptr: *const u8,
-    host_len: usize,
-) -> bool {
+/// `hostname_ptr[..hostname_len]` must be valid for reads for the duration of
+/// the call (or `hostname_len` must be 0).
+pub unsafe fn is_no_proxy(hostname_ptr: *const u8, hostname_len: usize, port: u16) -> bool {
+    if hostname_len == 0 {
+        return false;
+    }
     // SAFETY: VM singleton is process-lifetime.
     let vm = VirtualMachine::get();
-    let hostname: Option<&[u8]> = if hostname_len > 0 {
-        // SAFETY: caller guarantees `hostname_ptr[..hostname_len]` is valid for reads.
-        Some(unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) })
-    } else {
-        None
-    };
-    let host: Option<&[u8]> = if host_len > 0 {
-        // SAFETY: caller guarantees `host_ptr[..host_len]` is valid for reads.
-        Some(unsafe { bun_core::ffi::slice(host_ptr, host_len) })
-    } else {
-        None
-    };
-    vm.env_loader().is_no_proxy(hostname, host)
+    // SAFETY: caller guarantees `hostname_ptr[..hostname_len]` is valid for reads.
+    let hostname = unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) };
+    vm.env_loader().is_no_proxy(hostname, port)
 }
 
 // HOST_EXPORT(Bun__setVerboseFetchValue, c)

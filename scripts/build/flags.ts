@@ -236,8 +236,11 @@ export const globalFlags: Flag[] = [
 
   // ─── Optimization ───
   {
-    // Deps only see globalFlags, so it must be here — otherwise every
-    // assert() in zstd/boringssl/mimalloc/etc. stays live in release. (bun's own NDEBUG in `defines` below is
+    // cmake's Release/RelWithDebInfo build types append this to
+    // CMAKE_<LANG>_FLAGS_<TYPE> automatically; nested-cmake deps got it
+    // from there. Direct deps only see globalFlags, so it must be here
+    // too — otherwise every assert() in zstd/boringssl/mimalloc/etc.
+    // stays live in release. (bun's own NDEBUG in `defines` below is
     // redundant after this, but harmless.)
     flag: "-DNDEBUG",
     when: c => c.release,
@@ -338,6 +341,18 @@ export const globalFlags: Flag[] = [
     when: c => c.asan,
     desc: "AddressSanitizer (also forwarded to deps for ABI consistency)",
   },
+  {
+    // clang's default, `runtime`, gives every function with an instrumented
+    // local a second prologue that moves the frame to ASAN's heap-backed fake
+    // stack when `detect_stack_use_after_return` is on. JSC's conservative GC
+    // scan cannot see a frame there, so `__asan_default_options`
+    // (src/runtime/bin_entry/mod.rs) turns the option off and that prologue
+    // never runs. `never` does not emit it. rust.ts passes the LLVM option
+    // behind this flag to rustc, which has no flag of its own for it.
+    flag: "-fsanitize-address-use-after-return=never",
+    when: c => c.asan,
+    desc: "ASAN: compile out the fake-stack (stack-use-after-return) instrumentation",
+  },
 
   // ─── C++ language behavior ───
   {
@@ -389,11 +404,21 @@ export const globalFlags: Flag[] = [
   {
     // Arch/Alpine/Fedora/Ubuntu package clang with -fstack-protector-strong on
     // by default; apt.llvm.org (CI) and upstream builds don't. Off: what bun
-    // has always shipped, and a canary load+check in most JSC frames is not
-    // free.
+    // has always shipped on Linux, FreeBSD and Android, and a canary
+    // load+check in most JSC frames is not free.
     flag: "-fno-stack-protector",
-    when: c => c.unix,
+    when: c => c.unix && !c.darwin,
     desc: "No stack protector (pin the toolchain-independent default)",
+  },
+  {
+    // Every clang turns the protector on for a Darwin target (level 1, what
+    // -fstack-protector asks for), the cross-compiling CI one included, so
+    // that is what bun has always shipped on macOS: about 1,250 functions of
+    // bun's own C/C++ and the vendored deps carry a canary there, as the
+    // WebKit prebuilt's do.
+    flag: "-fstack-protector",
+    when: c => c.darwin,
+    desc: "Stack protector on macOS (clang's default for Darwin targets, stated)",
   },
   {
     // clang-cl drops /Oy- on x64 and keeps only non-leaf frames on arm64
@@ -812,8 +837,7 @@ export const defines: Flag[] = [
     desc: "Use non-cancelable POSIX calls on Darwin",
   },
   {
-    // BEXPORT=: see deps/webkit.ts — bun's TUs include bmalloc headers too.
-    flag: ["WIN32", "_WINDOWS", "WIN32_LEAN_AND_MEAN=1", "_CRT_SECURE_NO_WARNINGS", "BORINGSSL_NO_CXX=1", "BEXPORT="],
+    flag: ["WIN32", "_WINDOWS", "WIN32_LEAN_AND_MEAN=1", "_CRT_SECURE_NO_WARNINGS", "BORINGSSL_NO_CXX=1"],
     when: c => c.windows,
     desc: "Standard Windows defines + disable CRT security warnings",
   },
@@ -846,147 +870,13 @@ export const defines: Flag[] = [
 //   For the final bun executable link step only.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * The toolchain half of the link line for a unix target: triple + sysroot,
- * which linker, C++ runtime, PIE policy, deployment target, sanitizer
- * runtime. Everything an
- * executable for the target needs regardless of what it is — bun itself, and
- * the JSC LLInt offset extractors WebKit's build links (deps/webkit.ts,
- * via computeTargetLinkFlags). Bun-specific link policy (symbol lists, ICF,
- * stack size, wraps) stays in `linkerFlags`, which includes this table.
- * Windows links go through lld-link's own argument shape and stay there too.
- */
-export const targetLinkFlags: Flag[] = [
-  // ─── Windows (lld-link, after /link) ───
+export const linkerFlags: Flag[] = [
+  // ─── Sanitizers ───
   {
-    // Explicit machine type — clang-cl's driver does not reliably forward
-    // its default target to lld-link when invoked as a pure link driver
-    // (no source inputs, /link separator), so on arm64 lld-link would
-    // autodetect x64 and reject every arm64 input. CMake's Windows-MSVC
-    // platform module always set /machine: from CMAKE_SYSTEM_PROCESSOR,
-    // which is why the pre-ninja build never needed this in BuildBun.cmake.
-    flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
-    when: c => c.windows,
-    desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
-  },
-  {
-    // Serviced UCRT overlay: an explicit /libpath: is searched before the
-    // /winsysroot-derived paths, so its libucrt.lib/ucrt.lib win over the
-    // splat's stale copies (see UCRT_SERVICING_VERSION in winsysroot.ts —
-    // the VS-manifest payload xwin downloads carries an ancient arm64 UCRT
-    // with broken printf formatting).
-    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
-    when: c => c.windows && c.host.os !== "windows",
-    desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
-  },
-  {
-    // Windows cross-compile: these ldflags go after /link, straight to
-    // lld-link, which doesn't see the compile-side `/winsysroot` from
-    // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
-    // and Windows SDK import libraries (libcmt, kernel32, ...) are found
-    // without a VS dev shell's LIB env.
-    flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
-    when: c => c.windows && c.winsysroot !== undefined,
-    desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
-  },
-  // ─── macOS ───
-  {
-    // Cross-link from a non-darwin host: same pattern as Android/FreeBSD —
-    // target triple + explicit linker. -isysroot is added by the deployment-
-    // target flag below; the clang driver forwards it to ld64.lld as
-    // -syslibroot. -mlinker-version≥520 makes the driver emit the modern
-    // -platform_version argument ld64.lld requires (without it the driver
-    // assumes an ancient host ld64 and emits nothing usable); the exact
-    // value only gates driver behavior, so track a recent ld64 release.
-    flag: c => [`--target=${c.crossTarget!}`, "-mlinker-version=705", `--ld-path=${c.ld}`],
-    when: c => c.darwin && c.crossTarget !== undefined,
-    desc: "macOS cross-link: target triple + ld64.lld + modern linker arg style",
-  },
-  {
-    // Must also be passed at link: ld64 reads this to write LC_BUILD_VERSION.minos.
-    // Without it, ld64 defaults to the SDK version (15.0 on CI) → binary refuses
-    // to launch on macOS 13/14. globalFlags doesn't flow to ldflags, so repeat here.
-    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
-    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
-    desc: "macOS deployment target at link (sets LC_BUILD_VERSION minos)",
-  },
-
-  // ─── Linux ───
-  {
-    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`],
-    when: c => c.linux && c.abi !== "android" && c.crossTarget !== undefined && c.sysroot !== undefined,
-    desc: "linux sysroot link (gnu: ubuntu:20.04+gcc-13; musl: alpine)",
-  },
-  {
-    flag: ["-static-libstdc++", "-static-libgcc"],
-    when: c => c.linux && c.abi === "gnu",
-    desc: "Static C++ runtime (don't depend on host libstdc++)",
-  },
-  {
-    flag: ["-lstdc++", "-lgcc"],
-    when: c => c.linux && c.abi === "musl",
-    desc: "Dynamic C++ runtime on musl (static unavailable)",
-  },
-  {
-    flag: c => [
-      `--target=${c.crossTarget!}`,
-      `--sysroot=${c.sysroot!}`,
-      "--rtlib=compiler-rt",
-      "--unwindlib=libunwind",
-      "-stdlib=libc++",
-      "-static-libstdc++",
-      // -l:libunwind.a (driver-emitted) searches -L paths; point at the NDK's
-      // own per-arch runtime dir so it resolves regardless of resource-dir layout.
-      `-L${join(c.androidNdkRuntimeDir!, c.arm64 ? "aarch64" : "x86_64")}`,
-    ],
-    when: c => c.linux && c.abi === "android",
-    desc: "Android link: target/sysroot + compiler-rt/libunwind + static libc++",
-  },
-  {
-    flag: c => `--ld-path=${c.ld}`,
-    when: c => c.linux,
-    desc: "Use lld instead of system ld",
-  },
-  {
-    flag: ["-fno-pic", "-Wl,-no-pie"],
-    when: c => c.linux && c.abi !== "android",
-    desc: "No PIE (we don't need ASLR; simpler codegen)",
-  },
-  {
-    flag: ["-fPIC", "-pie"],
-    when: c => c.abi === "android",
-    desc: "Android: bionic loader requires PIE",
-  },
-
-  // ─── FreeBSD ───
-  {
-    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
-    when: c => c.freebsd && c.crossTarget !== undefined,
-    desc: "FreeBSD cross-link: target/sysroot + libc++ (FreeBSD base ships libc++)",
-  },
-  {
-    flag: c => `--ld-path=${c.ld}`,
-    when: c => c.freebsd,
-    desc: "Use lld instead of system ld",
-  },
-  {
-    flag: ["-fno-pic", "-Wl,-no-pie"],
-    when: c => c.freebsd,
-    desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
-  },
-  // ─── Sanitizer runtime ───
-  {
-    // Objects are compiled -fsanitize=address (globalFlags); anything linked
-    // from them needs the runtime.
     flag: "-fsanitize=address",
     when: c => c.unix && c.asan,
     desc: "Link ASAN runtime",
   },
-];
-
-export const linkerFlags: Flag[] = [
-  ...targetLinkFlags,
-  // ─── Sanitizers (bun policy) ───
   {
     flag: "-fsanitize=null",
     when: c =>
@@ -1038,39 +928,38 @@ export const linkerFlags: Flag[] = [
     desc: "LTO at link time (matches compile-side -flto=thin)",
   },
   {
-    // Without -O at link time, clang's driver defaults LTO codegen to -O2.
-    // CMake implicitly forwarded CMAKE_CXX_FLAGS (incl. -O2) to the link line;
-    // we must do so explicitly. Dropping this cost ~5 MB of .text on linux-x64
-    // (less unrolling/inlining in JSC — measurable in Yarr, DFG, BuiltinNames).
-    // ELF only: the driver forwards this to lld as -plugin-opt=O2. The Darwin
-    // driver forwards no opt-level flag at all — see the next entry.
-    flag: "-O2",
-    when: c => c.unix && !c.darwin && c.lto && c.release && !c.smol,
-    desc: "LTO codegen at -O2 (ELF: forwarded to lld as -plugin-opt=O2)",
-  },
-  {
-    // The Darwin driver drops a bare -O at link time (`clang++ -### …` shows
-    // no opt-level flag reaching the linker), so Mach-O LTO would codegen at
-    // ld64.lld's built-in defaults: --lto-O2 for the IR pipeline and
-    // --lto-CGO2 (CodeGenOptLevel::Default) for instruction selection —
-    // inline threshold 225 and default isel, while the per-TU build codegens
-    // everything at -O3 + CodeGenOptLevel::Aggressive (threshold 275). Pass
-    // ld64.lld's own options so LTO codegen matches the compile side.
-    // Cross links only: --lto-O/--lto-CGO are lld-specific, and only the
-    // darwin cross link uses lld's Mach-O port (ld64.lld). Native darwin
-    // links go through Apple's ld, which rejects unknown double-dash options,
-    // so they keep the driver's default LTO codegen level.
-    // arm64 only: O3 codegen costs +0.3 MB there but +3.1 MB on x64 (the
-    // higher inline threshold is much more expensive in x86-64's
-    // variable-length encoding); x64 stays at lld's default --lto-O2/CGO2.
-    flag: ["-Wl,--lto-O3", "-Wl,--lto-CGO3"],
-    when: c => c.darwin && c.arm64 && c.crossTarget !== undefined && c.lto && c.release && !c.smol,
-    desc: "LTO codegen at -O3 + aggressive isel (Darwin driver forwards no -O to ld64.lld)",
+    // Said to lld itself. A link-line `-O` reaches lld only through the clang driver, only on ELF, and only beside
+    // `-flto` (as -plugin-opt=O<n>), which a link whose LTO covers the Rust crates alone does not pass; the Darwin
+    // driver forwards none at all.
+    flag: c => [`-Wl,--lto-O${ltoLevel(c)}`, `-Wl,--lto-CGO${ltoLevel(c)}`],
+    when: c => c.unix && linkRunsLto(c) && linksWithLld(c) && !c.smol,
+    desc: "LTO level: IR pipeline and code generation (lld)",
   },
   {
     flag: "-Os",
     when: c => c.unix && c.lto && c.smol,
     desc: "LTO codegen at -Os (matches compile-side opt level)",
+  },
+  {
+    // rustc compiles Android's thread-locals as emulated TLS (its target spec: bionic has ELF TLS from API 29 and
+    // bun targets 28). That is an option of rustc's code generator, not something the bitcode carries, and here
+    // the linker generates the crates' code. Without it the Rust thread-locals become a PT_TLS segment and, on
+    // x86_64, calls to __tls_get_addr, which an API 28 device cannot load; the C/C++ side stays emulated, as clang
+    // does for this triple. clang's own spelling for an LTO link is -plugin-opt=-emulated-tls.
+    flag: "-Wl,-mllvm,-emulated-tls",
+    when: c => linkLtoIsRustOnly(c) && c.abi === "android",
+    desc: "Rust-only LTO in the link: emulated TLS, as rustc generates for Android",
+  },
+
+  {
+    flag: c => (icfMode(c) === "safe" ? "/OPT:SAFEICF" : "/OPT:NOICF"),
+    when: c => c.windows,
+    desc: "Identical-code-folding (safe in release)",
+  },
+  {
+    flag: c => [`/opt:lldlto=${ltoLevel(c)}`, `/opt:lldltocgo=${ltoLevel(c)}`],
+    when: c => c.windows && linkRunsLto(c),
+    desc: "LTO level: IR pipeline and code generation (lld-link)",
   },
 
   // ─── PGO (link-side) ───
@@ -1087,26 +976,40 @@ export const linkerFlags: Flag[] = [
 
   // ─── Windows ───
   {
+    // Explicit machine type — clang-cl's driver does not reliably forward
+    // its default target to lld-link when invoked as a pure link driver
+    // (no source inputs, /link separator), so on arm64 lld-link would
+    // autodetect x64 and reject every arm64 input. CMake's Windows-MSVC
+    // platform module always set /machine: from CMAKE_SYSTEM_PROCESSOR,
+    // which is why the pre-ninja build never needed this in BuildBun.cmake.
+    flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
+    when: c => c.windows,
+    desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
+  },
+  {
+    // Serviced UCRT overlay: an explicit /libpath: is searched before the
+    // /winsysroot-derived paths, so its libucrt.lib/ucrt.lib win over the
+    // splat's stale copies (see UCRT_SERVICING_VERSION in winsysroot.ts —
+    // the VS-manifest payload xwin downloads carries an ancient arm64 UCRT
+    // with broken printf formatting).
+    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
+    when: c => c.windows && c.host.os !== "windows",
+    desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
+  },
+  {
+    // Windows cross-compile: these ldflags go after /link, straight to
+    // lld-link, which doesn't see the compile-side `/winsysroot` from
+    // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
+    // and Windows SDK import libraries (libcmt, kernel32, ...) are found
+    // without a VS dev shell's LIB env.
+    flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
+    when: c => c.windows && c.winsysroot !== undefined,
+    desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
+  },
+  {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
-  },
-  {
-    // WTF/JSC reference bun's hooks (WTFTimer__*, Bun__errorInstance__finalize,
-    // Bun__reportUnhandledError) as `extern "C" __attribute__((weak))`. COFF
-    // has no weak undefined symbol: clang emits a weak external whose default
-    // is a per-TU absolute-0 symbol, and lld-link (MSVC mode) calls two
-    // objects giving the same weak external different defaults a duplicate
-    // symbol — even though bun's strong Rust definition wins either way. One
-    // TU per hook references them in source; ThinLTO importing
-    // RunLoop::TimerBase::start() into a JSC module makes it two. This is
-    // lld-link's own switch for exactly that check (its MinGW-mode default):
-    // duplicate *strong* definitions still error. A no-op once lld-link
-    // accepts several weak references to one symbol (fixed in bun's LLVM
-    // toolchain); drop it when CI links with that.
-    flag: "/lld-allow-duplicate-weak",
-    when: c => c.windows,
-    desc: "Several TUs may weak-reference the same bun hook (COFF weak externals)",
   },
   {
     flag: "/DEBUG:FULL",
@@ -1124,8 +1027,7 @@ export const linkerFlags: Flag[] = [
       // for identity — stay distinct. /OPT:ICF (aggressive) folded
       // callBigIntConstructor with constructBigInt → "not a constructor",
       // and broke expect.any(Constructor); see commit 218430c731. Mirrors
-      // Linux `-Wl,-icf=safe`.
-      "/OPT:SAFEICF",
+      // Linux `--icf=safe`. The mode itself is the entry below.
       // String-literal tail merging (lld-specific; MSVC link.exe has no
       // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
       "/OPT:lldtailmerge",
@@ -1158,7 +1060,7 @@ export const linkerFlags: Flag[] = [
     // says where each input chunk was placed, which is what tells a function
     // apart from the labels the MSVC CRT leaves on data inside its code. They
     // ship in the profile zip beside the binary, for the trace-order step
-    // (.buildkite/ci.mjs) and for verifyOrderFileApplied() in scripts/build/ci.ts.
+    // (.buildkite/ci.ts).
     flag: c => [`/lldmap:${slash(linkerMapPath(c))}`, `/map:${slash(symbolMapPath(c))}`],
     when: c => c.windows && writesLinkerMap(c),
     desc: "Linker maps: the order file tracer's symbol table (see windows-symbols.ts)",
@@ -1222,9 +1124,9 @@ export const linkerFlags: Flag[] = [
     // this is a cross-only divergence (smaller binary than native). The
     // prebuilt WebKit archives are compiled with -faddrsig too, so WebKit
     // code participates in the folding.
-    flag: "-Wl,--icf=safe",
-    when: c => c.darwin && c.crossTarget !== undefined && c.release,
-    desc: "macOS cross-link: fold identical address-insignificant functions",
+    flag: c => `-Wl,--icf=${icfMode(c)}`,
+    when: c => c.darwin && linksWithLld(c),
+    desc: "macOS cross-link: fold identical address-insignificant functions (release)",
   },
   {
     // -ld_new selects Apple's new linker — only meaningful (and only
@@ -1233,6 +1135,18 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,-ld_new",
     when: c => c.darwin && c.crossTarget === undefined,
     desc: "Use new Apple linker (native darwin links only)",
+  },
+  {
+    // Cross-link from a non-darwin host: same pattern as Android/FreeBSD —
+    // target triple + explicit linker. -isysroot is added by the deployment-
+    // target flag below; the clang driver forwards it to ld64.lld as
+    // -syslibroot. -mlinker-version≥520 makes the driver emit the modern
+    // -platform_version argument ld64.lld requires (without it the driver
+    // assumes an ancient host ld64 and emits nothing usable); the exact
+    // value only gates driver behavior, so track a recent ld64 release.
+    flag: c => [`--target=${c.crossTarget!}`, "-mlinker-version=705", `--ld-path=${c.ld}`],
+    when: c => c.darwin && c.crossTarget !== undefined,
+    desc: "macOS cross-link: target triple + ld64.lld + modern linker arg style",
   },
   {
     // The `__BUN,__bun` standalone-graph placeholder (c-bindings.cpp) is a
@@ -1247,6 +1161,14 @@ export const linkerFlags: Flag[] = [
     flag: ["-Wl,-sectalign,__BUN,__bun,0x1000"],
     when: c => c.darwin && c.crossTarget !== undefined && c.x64,
     desc: "macOS x64 cross-link: keep the __BUN segment's filesize ≤ vmsize under ld64.lld",
+  },
+  {
+    // Must also be passed at link: ld64 reads this to write LC_BUILD_VERSION.minos.
+    // Without it, ld64 defaults to the SDK version (15.0 on CI) → binary refuses
+    // to launch on macOS 13/14. globalFlags doesn't flow to ldflags, so repeat here.
+    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
+    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
+    desc: "macOS deployment target at link (sets LC_BUILD_VERSION minos)",
   },
   {
     flag: "-Wl,-w",
@@ -1265,25 +1187,28 @@ export const linkerFlags: Flag[] = [
     // linker deletes after the link, which would leave the debug map dangling
     // and the dSYM empty. -object_path_lto persists the LTO-codegen'd object
     // at a stable path inside the build dir and points the debug map at it.
+    // The link holds bitcode with `lto` off too: the Rust crates (linkLtoIsRustOnly).
     flag: c => `-Wl,-object_path_lto,${c.buildDir}/${bunExeName(c)}.lto.o`,
-    when: c => c.darwin && c.lto,
+    when: c => c.darwin && (c.lto || linkLtoIsRustOnly(c)),
     desc: "Persist the LTO-generated object so dsymutil can extract its DWARF into the dSYM",
   },
   {
     // Mach-O counterpart to lld's --symbol-ordering-file below:
     // <buildDir>/linker.order lists the functions bun actually executes while
-    // starting up, and Apple's linker sorts them to the front of __text. The
-    // file is a build artifact, never committed: configure seeds an empty one
-    // so both link passes share one build.ninja — a release build regenerates
-    // it from its own pass-1 binary and reruns ninja, which relinks and
-    // nothing else. Unknown names are silently skipped, so a stale file only
-    // costs part of the win.
+    // starting up, and Apple's linker sorts them to the front of __text. Where
+    // the file comes from is the same as on linux (see that entry). Unknown
+    // names are silently skipped, so a stale file only costs part of the win.
     flag: c => `-Wl,-order_file,${orderFilePath(c)}`,
     when: c => c.darwin && usesOrderFile(c),
     desc: "Sort startup-hot functions to the front of __text (cuts resident binary pages)",
   },
 
   // ─── Linux ───
+  {
+    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`],
+    when: c => c.linux && c.abi !== "android" && c.crossTarget !== undefined && c.sysroot !== undefined,
+    desc: "linux sysroot link (gnu: ubuntu:20.04+gcc-13; musl: alpine)",
+  },
   {
     // Wrap glibc symbols whose default version on the sysroot's glibc (2.31)
     // is > 2.17. Each __wrap_X in workaround-missing-symbols.cpp pins to the
@@ -1354,6 +1279,31 @@ export const linkerFlags: Flag[] = [
     desc: "Retry pthread_create EAGAIN caused by an in-flight execve",
   },
   {
+    flag: ["-static-libstdc++", "-static-libgcc"],
+    when: c => c.linux && c.abi === "gnu",
+    desc: "Static C++ runtime (don't depend on host libstdc++)",
+  },
+  {
+    flag: ["-lstdc++", "-lgcc"],
+    when: c => c.linux && c.abi === "musl",
+    desc: "Dynamic C++ runtime on musl (static unavailable)",
+  },
+  {
+    flag: c => [
+      `--target=${c.crossTarget!}`,
+      `--sysroot=${c.sysroot!}`,
+      "--rtlib=compiler-rt",
+      "--unwindlib=libunwind",
+      "-stdlib=libc++",
+      "-static-libstdc++",
+      // -l:libunwind.a (driver-emitted) searches -L paths; point at the NDK's
+      // own per-arch runtime dir so it resolves regardless of resource-dir layout.
+      `-L${join(c.androidNdkRuntimeDir!, c.arm64 ? "aarch64" : "x86_64")}`,
+    ],
+    when: c => c.linux && c.abi === "android",
+    desc: "Android link: target/sysroot + compiler-rt/libunwind + static libc++",
+  },
+  {
     // Paired with compile-side -fno-unwind-tables above.
     // Gated on release (not LTO): the workspace is `panic = "abort"` and
     // C++ is `-fno-exceptions`/`-fno-unwind-tables`, so nothing unwinds at
@@ -1367,6 +1317,21 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,--eh-frame-hdr",
     when: c => c.linux && !(c.abi === "gnu" && c.release),
     desc: "Keep eh_frame header (debug/musl/android; needed for DWARF backtraces)",
+  },
+  {
+    flag: c => `--ld-path=${c.ld}`,
+    when: c => c.linux,
+    desc: "Use lld instead of system ld",
+  },
+  {
+    flag: ["-fno-pic", "-Wl,-no-pie"],
+    when: c => c.linux && c.abi !== "android",
+    desc: "No PIE (we don't need ASLR; simpler codegen)",
+  },
+  {
+    flag: ["-fPIC", "-pie"],
+    when: c => c.abi === "android",
+    desc: "Android: bionic loader requires PIE",
   },
   {
     flag: [
@@ -1404,9 +1369,14 @@ export const linkerFlags: Flag[] = [
     // with `bun-profile`, so disabling ICF on the profile binary "for perf
     // symbolication" would also bloat the shipped binary's .text — and
     // `perf` symbolicates folded functions fine via the linker-map anyway.
-    flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${linkerMapPath(c)}`],
-    when: c => c.linux && c.release && !c.asan && !c.valgrind,
-    desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
+    flag: c => `-Wl,--icf=${icfMode(c)}`,
+    when: c => c.linux || c.freebsd,
+    desc: "Identical-code-folding (safe in release; perf symbolication uses the linker-map)",
+  },
+  {
+    flag: c => `-Wl,-Map=${linkerMapPath(c)}`,
+    when: c => c.linux && writesLinkerMap(c),
+    desc: "Linker map",
   },
   {
     // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage
@@ -1436,10 +1406,10 @@ export const linkerFlags: Flag[] = [
     // Packing them together cuts that by a third for a same-size binary.
     //
     // The file is a build artifact, never committed: configure seeds an empty one
-    // (a no-op for lld) so this flag is unconditional and both link passes share
-    // one build.ninja — a release build regenerates it from its own pass-1 binary
-    // and reruns ninja, which relinks and nothing else. Symbols lld cannot find
-    // are skipped, so a stale file only costs part of the win.
+    // (a no-op for lld) so this flag is unconditional. No build traces its own
+    // binary: a CI build inherits the file an earlier build's trace-order step
+    // published (ci.ts "Symbol ordering file"), and links once. Symbols lld
+    // cannot find are skipped, so a stale file only costs part of the win.
     //
     // A local `bun run build:release` therefore links unordered until you run
     // `bun run orderfile` and build again.
@@ -1458,12 +1428,11 @@ export const linkerFlags: Flag[] = [
   },
   {
     // The exe exports symbols (the .def above), so lld-link also writes an
-    // import library — by default `<output basename>.lib`, which is the very
-    // name of the object archive cpp-only mode produces. Nothing consumes
-    // it; park it under obj/.
+    // import library — by default `<output basename>.lib` beside the exe.
+    // Nothing consumes it; park it under obj/.
     flag: c => `/IMPLIB:${slash(join(c.buildDir, "obj", `${bunExeName(c)}.import.lib`))}`,
     when: c => c.windows,
-    desc: "Keep the exe's import library from overwriting <exe>.lib (the object archive)",
+    desc: "Write the exe's import library under obj/",
   },
   {
     flag: c => ["-exported_symbols_list", `${c.cwd}/src/symbols.txt`],
@@ -1471,16 +1440,34 @@ export const linkerFlags: Flag[] = [
     desc: "Exported symbol list",
   },
   {
+    // The link exports the names in the version script's `global:` block, and only those. Not `-rdynamic`: that
+    // exports everything and leaves the hiding to the script's `local: *`, which lld applies before LTO generates
+    // code, so a symbol first made there stayed exported (an emulated thread-local's `__emutls_v.` / `__emutls_t.`
+    // pair, on Android).
     flag: c => [
       "-Wl,-Bsymbolic-functions",
-      "-rdynamic",
-      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
-      `-Wl,--version-script=${c.cwd}/src/linker.lds`,
+      `-Wl,--export-dynamic-symbol-list=${exportListPath(c)}`,
+      `-Wl,--version-script=${versionScriptPath(c)}`,
     ],
-    when: c => c.linux,
-    desc: "Dynamic symbol list + version script",
+    when: c => c.linux || c.freebsd,
+    desc: "Export list + version script",
   },
   // ─── FreeBSD ───
+  {
+    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
+    when: c => c.freebsd && c.crossTarget !== undefined,
+    desc: "FreeBSD cross-link: target/sysroot + libc++ (FreeBSD base ships libc++)",
+  },
+  {
+    flag: c => `--ld-path=${c.ld}`,
+    when: c => c.freebsd,
+    desc: "Use lld instead of system ld",
+  },
+  {
+    flag: ["-fno-pic", "-Wl,-no-pie"],
+    when: c => c.freebsd,
+    desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
+  },
   {
     flag: [
       "-Wl,-O2",
@@ -1516,31 +1503,67 @@ export const linkerFlags: Flag[] = [
     when: c => c.freebsd && c.release,
     desc: "Garbage-collect unused sections",
   },
-  {
-    flag: c => [
-      "-Wl,-Bsymbolic-functions",
-      "-rdynamic",
-      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
-      `-Wl,--version-script=${c.cwd}/src/linker-freebsd.lds`,
-    ],
-    when: c => c.freebsd,
-    desc: "Dynamic symbol list + version script (FreeBSD adds environ/__progname)",
-  },
 ];
+
+/**
+ * Release Rust reaches the link as ThinLTO bitcode (rust.ts) and the linker optimises it: together with the C/C++
+ * where `lto` is on, by itself where it is off. ASan builds link machine code.
+ */
+export function rustLtoInLink(c: Config): boolean {
+  return c.release && !c.asan;
+}
+
+/** The link optimises bitcode: the C/C++'s (`lto`), the Rust crates', or both. */
+function linkRunsLto(c: Config): boolean {
+  return c.lto || rustLtoInLink(c);
+}
+
+/**
+ * An lld does the link: every one but a native macOS link, which goes through Apple's ld. That linker takes none of
+ * lld's LTO-level or ICF options (it runs clang's libLTO at its default level and has no ICF), so those are stated
+ * only here.
+ */
+export function linksWithLld(c: Config): boolean {
+  return !c.darwin || c.crossTarget !== undefined;
+}
+
+/**
+ * The level of the link's LTO, for the IR pipeline and for code generation. 2 is also lld's default; it is stated so
+ * that no link depends on the default. 3 on the macOS arm64 cross link, where it makes LTO codegen match the -O3
+ * compile side for +0.3 MB; on x64 the same costs +3.1 MB (the higher inline threshold is much more expensive in
+ * x86-64's variable-length encoding).
+ */
+function ltoLevel(c: Config): 2 | 3 {
+  return c.darwin && c.arm64 && c.lto && c.release ? 3 : 2;
+}
+
+/**
+ * Identical-code folding. `safe` folds only functions whose address is never taken, which it reads from the
+ * address-significance table the release objects carry (`-faddrsig`, `-Cllvm-args=-addrsig` for Rust): the crates are
+ * one ThinLTO module each, so the copies of a function several of them instantiate are merged only here. Off outside
+ * release and under ASan and valgrind, where every function should stay what the source says.
+ */
+function icfMode(c: Config): "safe" | "none" {
+  return c.release && !c.asan && !c.valgrind ? "safe" : "none";
+}
+
+/** The link's LTO covers the Rust crates and nothing else: the C/C++ is compiled without LTO. */
+function linkLtoIsRustOnly(c: Config): boolean {
+  return rustLtoInLink(c) && !c.lto;
+}
 
 /**
  * Whether this target links with a symbol ordering file (lld
  * `--symbol-ordering-file` on linux, `-order_file` on darwin, which both Apple
  * ld and ld64.lld take, lld-link `/order` on windows). Only where the startup
- * win is worth a relink: release builds, not under a sanitizer — the tracer
+ * win is worth having: release builds, not under a sanitizer — the tracer
  * swaps `.text` out for a private copy, and nobody measures startup RSS on an
  * ASAN build anyway.
  *
- * This says where the order file is CONSUMED, not where it is produced. A
- * cross-compiled lane cannot trace its own binary (`canTraceOrderFile`), so it
- * inherits an earlier build's file instead and still links ordered; the
- * trace-order step in .buildkite/ci.mjs produces that file on the target's test
- * fleet. Both windows targets work this way: their tracer is a debugger
+ * This says where the order file is CONSUMED, not where it is produced. Every
+ * build inherits an earlier build's file; the trace-order step in
+ * .buildkite/ci.ts produces that file on the target's test fleet, after the
+ * build. On windows the tracer is a debugger
  * (scripts/orderfile/functrace-windows.c), so it needs no preload mechanism,
  * and it plants INT3 or BRK depending on which architecture it is built for.
  *
@@ -1601,6 +1624,19 @@ export function linkerMapOutputs(cfg: Config): string[] {
 }
 
 /**
+ * The ld version script of an ELF link: the names it exports (the `global:` block), their version node, and that
+ * everything else is local. FreeBSD's adds `environ` and `__progname`, which lld would reject as undefined on Linux.
+ */
+export function versionScriptPath(cfg: Pick<Config, "cwd" | "freebsd">): string {
+  return join(cfg.cwd, "src", cfg.freebsd ? "linker-freebsd.lds" : "linker.lds");
+}
+
+/** `<buildDir>/exports.list`: the version script's `global:` block as lld's export list; configure writes it (bun.ts). */
+export function exportListPath(cfg: Pick<Config, "buildDir">): string {
+  return join(cfg.buildDir, "exports.list");
+}
+
+/**
  * Files the linker reads via flags above. Return as implicit inputs so
  * ninja relinks when exported symbols / version script change.
  * CMake tracks these via set_target_properties LINK_DEPENDS.
@@ -1610,12 +1646,11 @@ export function linkerMapOutputs(cfg: Config): string[] {
  * only relink.
  */
 export function linkDepends(cfg: Config): string[] {
-  if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   const depends = cfg.windows
     ? [join(cfg.cwd, "src/symbols.def")]
     : cfg.darwin
       ? [join(cfg.cwd, "src/symbols.txt")]
-      : [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")]; // linux: ELF dynamic-list + version script
+      : [exportListPath(cfg), versionScriptPath(cfg)];
   if (usesOrderFile(cfg)) depends.push(orderFilePath(cfg));
   return depends;
 }
@@ -1747,7 +1782,7 @@ export const fileOverrides: FileOverride[] = [
     // disabling the other or clang errors.
     extraFlags: ["-fno-lto", "-fno-whole-program-vtables"],
     when: c => c.linux && c.lto && c.abi === "gnu",
-    desc: "Disable LTO: LLD 21 emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
+    desc: "Disable LTO: LLD (first seen with 21; not re-checked on 23) emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
   },
   {
     file: "src/jsc/bindings/windows/rescle.cpp",
@@ -1861,81 +1896,9 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
 }
 
 /**
- * System libraries to link. Platform-dependent.
- */
-export function systemLibs(cfg: Config): string[] {
-  const libs: string[] = [];
-
-  if (cfg.linux) {
-    if (cfg.abi === "android") {
-      // bionic: pthread/dl/rt are folded into libc; no separate libatomic
-      // (compiler-rt builtins). -llog for WTF's __android_log_* logging
-      // (Assertions.cpp under OS(ANDROID)); --as-needed drops it from release
-      // binaries, where those calls are dead.
-      libs.push("-lc", "-lm", "-llog");
-    } else {
-      libs.push("-lc", "-lpthread", "-ldl");
-      // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
-      // The static path needs to be the actual file path for lld to find it;
-      // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets
-      // found in lib search paths, -latomic.so doesn't exist so we use -latomic.
-      if (cfg.staticLibatomic) {
-        libs.push("-l:libatomic.a");
-      } else {
-        libs.push("-latomic");
-      }
-    }
-  }
-
-  if (cfg.darwin) {
-    // icucore: system ICU framework.
-    // resolv: DNS resolution (getaddrinfo et al).
-    libs.push("-licucore", "-lresolv");
-  }
-
-  if (cfg.freebsd) {
-    // pthread/m: explicit on FreeBSD (not folded into libc).
-    // execinfo: backtrace() — separate library on FreeBSD.
-    // kvm/procstat/elf: process introspection for node:os and crash handler.
-    // libutil (openpty) is linked statically: its soname bumped .so.9 → .so.10
-    // between 14.x and 15.0, so a dynamic NEEDED entry from the 14.3 sysroot
-    // fails to load on 15.x (#40530). Every other lib here kept its soname.
-    libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-l:libutil.a");
-  }
-
-  if (cfg.windows) {
-    // Explicit .lib: these go after /link so no auto-suffixing by the
-    // clang-cl driver. lld-link auto-appends .lib but link.exe doesn't;
-    // explicit is portable.
-    libs.push(
-      "winmm.lib",
-      "bcrypt.lib",
-      "ntdll.lib",
-      "userenv.lib",
-      "dbghelp.lib",
-      "crypt32.lib",
-      "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
-      "ws2_32.lib",
-      "delayimp.lib", // required for /delayload: in release
-    );
-  }
-
-  return libs;
-}
-
-/** `targetLinkFlags` resolved for cfg — the link line's toolchain half (see the table). */
-export function computeTargetLinkFlags(cfg: Config): string[] {
-  const out: string[] = [];
-  for (const f of targetLinkFlags) {
-    if (f.when && !f.when(cfg)) continue;
-    out.push(...resolveFlagValue(f.flag, cfg));
-  }
-  return out;
-}
-
-/**
- * Just the -march/-mcpu/-mtune flags — rust.ts translates them into rustc's
- * -Ctarget-cpu so Rust code targets the same CPU as the C++.
+ * Just the -march/-mcpu/-mtune flags. For deps (WebKit) whose own build system
+ * sets -O/-g/sanitizer flags but never sets a CPU target, so without this they
+ * end up targeting generic x86-64 while the rest of bun targets nehalem.
  */
 export function computeCpuTargetFlags(cfg: Config): string[] {
   const out: string[] = [];

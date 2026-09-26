@@ -92,6 +92,8 @@ pub mod thread_pool;
 pub(crate) mod AstBuilder;
 pub mod analyze_transpiled_module;
 pub mod bundled_ast;
+pub mod bytecode_order;
+pub mod prelinked_module_graph;
 pub use bundled_ast::BundledAst;
 pub mod barrel_imports;
 #[path = "Chunk.rs"]
@@ -282,9 +284,18 @@ pub mod options {
         /// The one shared string table every chunk's bytecode references by ordinal (`EncoderStringTable::serialize`).
         #[strum(serialize = "bytecode-string-table")]
         BytecodeStringTable,
+        /// `--compile --bytecode` with a payload order file: the one payload holding every chunk's bytecode
+        /// (`bytecode_order::LinkedPayload`). Each chunk's `Bytecode` file then has no bytes, and says where its cache entry is
+        /// in it (`OutputFile::bytecode_entry_offset`).
+        #[strum(serialize = "bytecode-payload")]
+        BytecodePayload,
         /// The string table every chunk's `ModuleInfo` body indexes (`ModuleInfoStringTable::serialize`).
         #[strum(serialize = "module-info-string-table")]
         ModuleInfoStringTable,
+        /// The pre-resolved ES module graph of a --compile executable (`prelinked_module_graph::build`), consumed by
+        /// JSC's module loader (`JSC::PrelinkedModuleGraph`).
+        #[strum(serialize = "prelinked-module-graph")]
+        PrelinkedModuleGraph,
         #[strum(serialize = "metafile-json")]
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
@@ -300,7 +311,9 @@ pub mod options {
                     | OutputKind::ModuleInfo
                     | OutputKind::BuiltinBytecode
                     | OutputKind::BytecodeStringTable
+                    | OutputKind::BytecodePayload
                     | OutputKind::ModuleInfoStringTable
+                    | OutputKind::PrelinkedModuleGraph
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
             )

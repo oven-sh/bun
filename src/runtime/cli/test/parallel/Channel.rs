@@ -36,7 +36,7 @@ use bun_sys::FdExt as _;
 use bun_uws as uws;
 
 #[cfg(windows)]
-use bun_libuv_sys::{UvHandle as _, UvStream as _};
+use bun_libuv_sys::UvStream as _;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -46,7 +46,7 @@ use super::frame;
 
 /// The owner implements [`bun_core::IntrusiveField<Channel<Self>>`]
 /// (via `bun_core::intrusive_field!`) plus the two callbacks below.
-pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
+pub(crate) trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>);
     fn on_channel_done(&mut self);
 }
@@ -56,7 +56,7 @@ pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
 // `impl ChannelOwner` is in scope. Method impls that recover the owner via
 // `IntrusiveField::OFFSET` keep the bound. (Rust also forbids a stricter bound
 // on `Drop` than on the struct, so Drop/Default below are unbounded too.)
-pub struct Channel<Owner> {
+pub(crate) struct Channel<Owner> {
     /// Incoming bytes that don't yet form a complete frame.
     pub(crate) r#in: JsCell<Vec<u8>>,
     /// Outgoing bytes the kernel didn't accept yet.
@@ -77,9 +77,9 @@ pub struct Channel<Owner> {
 }
 
 #[cfg(windows)]
-pub type Backend = WindowsBackend;
+pub(crate) type Backend = WindowsBackend;
 #[cfg(not(windows))]
-pub type Backend = PosixBackend;
+pub(crate) type Backend = PosixBackend;
 
 impl<Owner> Default for Channel<Owner> {
     fn default() -> Self {
@@ -110,10 +110,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 // -- POSIX (usockets) --------------------------------------------------------
 
 #[cfg(not(windows))]
-pub type Socket = uws::NewSocketHandler<false>;
+pub(crate) type Socket = uws::NewSocketHandler<false>;
 
 #[cfg(not(windows))]
-pub struct PosixBackend {
+pub(crate) struct PosixBackend {
     pub(crate) socket: Cell<Socket>,
     /// Bytes at the front of `out` already written to the kernel;
     /// front-draining per partial write instead is quadratic in backlog size.
@@ -158,7 +158,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 // -- Windows (uv.Pipe) -------------------------------------------------------
 
 #[cfg(windows)]
-pub struct WindowsBackend {
+pub(crate) struct WindowsBackend {
     pub(crate) pipe: Cell<*mut uv::Pipe>,
     /// Read scratch — libuv asks us to allocate before each read.
     /// Wrapped so every byte is interior-mutable: libuv forms
@@ -269,15 +269,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
     /// Windows-only: adopt a `uv::Pipe` already initialized by spawn (the
     /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
-    /// reading. On failure the caller still owns `pipe`.
-    ///
-    /// We keep the pipe ref'd:
-    /// the worker (and the coordinator before workers register process exit
-    /// handles) has nothing else keeping `uv_loop_alive()` true, so unref'ing
-    /// here makes autoTick() take the tickWithoutIdle (NOWAIT) path and never
-    /// block for the peer's first frame. The pipe is closed explicitly in
-    /// `close()` / `Drop`, and both sides exit via Global.exit / drive()
-    /// returning, so the extra ref never holds the process open.
+    /// reading. On failure the caller still owns `pipe`. The pipe stays ref'd
+    /// so the loop blocks for the peer's first frame; `Drop` closes it.
     #[cfg(windows)]
     pub(crate) fn adopt_pipe(
         this: *mut Self,
@@ -436,21 +429,19 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 
     /// True while any encoded bytes are still queued or in flight.
     pub(crate) fn has_pending_writes(&self) -> bool {
-        if !self.out.get().is_empty() {
-            return true;
-        }
         #[cfg(windows)]
         {
-            return !self.backend.inflight.get().is_empty();
+            !self.out.get().is_empty() || !self.backend.inflight.get().is_empty()
         }
         #[cfg(not(windows))]
         {
-            false
+            !self.out.get().is_empty()
         }
     }
 
     /// Best-effort drain of any buffered writes.
-    pub fn flush(&self) {
+    #[cfg(not(windows))]
+    pub(crate) fn flush(&self) {
         #[cfg(windows)]
         {
             return self.submit_windows_write();
@@ -489,33 +480,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 }
             }
         }
-    }
-
-    pub fn close(&self) {
-        if self.done.get() {
-            return;
-        }
-        self.flush();
-        #[cfg(windows)]
-        {
-            let p = self.backend.pipe.replace(core::ptr::null_mut());
-            if !p.is_null() {
-                // SAFETY: `p` is the live Box-allocated uv_pipe_t owned by this channel.
-                if unsafe { !(*p).is_closing() } {
-                    // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
-                    unsafe { uv::Pipe::close_and_destroy(p) };
-                } else {
-                    // Already closing: keep ownership; the uv close callback
-                    // finishes the teardown.
-                    self.backend.pipe.set(p);
-                }
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            self.backend.socket.get().close(uws::CloseCode::Normal);
-        }
-        self.mark_done();
     }
 
     // -- frame decode (shared) -----------------------------------------------

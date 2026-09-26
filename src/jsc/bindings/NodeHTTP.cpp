@@ -33,6 +33,7 @@ extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSVal
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
+extern "C" EncodedJSValue Server__setMaxHeadersCount(JSC::JSGlobalObject*, EncodedJSValue, uint32_t);
 
 // Bit layout must stay in sync with kDispatchBits* in src/js/node/_http_server.ts.
 static constexpr uint32_t kDispatchConnClose = 1 << 0;
@@ -55,9 +56,7 @@ static bool svEqualsIgnoreCase(std::string_view a, std::string_view lower)
     return true;
 }
 
-// `1#token` list scan (RFC 9110): does `value` contain `lowerToken` at
-// non-alphanumeric boundaries, ASCII-case-insensitively? Mirrors the
-// /(?:^|\W)tok(?:$|\W)/i checks node:http uses for Connection/Expect values.
+// Mirrors node:http's /(?:^|\W)100-continue(?:$|\W)/i check on the Expect value.
 static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
 {
     const size_t n = value.length(), m = lowerToken.length();
@@ -101,10 +100,12 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         args.append(methodString);
     }
 
-    // Deliberate: the bitfield scans every header the parser accepted, like
-    // the parser's own Host/Expect handling, while req.rawHeaders/req.headers
-    // still apply the server.maxHeadersCount truncation on materialization.
     uint32_t bits = 0;
+    // llhttp's F_CONNECTION_CLOSE / F_CONNECTION_UPGRADE: a whole list item.
+    if (request->hasConnectionClose(true))
+        bits |= kDispatchConnClose;
+    if (request->hasConnectionToken("upgrade") || request->isUpgradeRequest())
+        bits |= kDispatchConnUpgrade;
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
         const std::string_view name = pair.first;
@@ -125,7 +126,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         flatHeaders.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(name.data()), name.length() });
         flatHeaders.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(value.data()), value.length() });
 
-        // Duplicate headers OR their token bits (the lazy header build joins
+        // Duplicate headers OR their bits (the lazy header build joins
         // duplicates with ", ", and a token match on the joined value is a
         // token match on one of the parts).
         switch (name.length()) {
@@ -141,16 +142,9 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
             }
             break;
         case 7:
-            if (svEqualsIgnoreCase(name, "upgrade"))
+            // llhttp's F_UPGRADE needs a non-empty value.
+            if (!value.empty() && svEqualsIgnoreCase(name, "upgrade"))
                 bits |= kDispatchHasUpgrade;
-            break;
-        case 10:
-            if (svEqualsIgnoreCase(name, "connection")) {
-                if (svValueHasToken(value, "close"))
-                    bits |= kDispatchConnClose;
-                if (svValueHasToken(value, "upgrade"))
-                    bits |= kDispatchConnUpgrade;
-            }
             break;
         case 14:
             if (svEqualsIgnoreCase(name, "content-length"))
@@ -243,10 +237,10 @@ template<bool isSSL>
 static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
 {
     app->enableNodeHttpCompat();
-    app->setOnSocketClosed([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
+    app->setOnSocketClosed([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, int readError, bool peerEnded) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
-        socket->onClose();
+        socket->onClose(readError, peerEnded);
     });
     app->setOnSocketDrain([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
@@ -263,6 +257,7 @@ static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
         // the socket is adopted and might not be the same as the rawSocket
         socket->socket = rawSocket;
         socket->upgraded = true;
+        socket->releaseTunnelReadsForUpgrade();
     });
 }
 
@@ -754,6 +749,14 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
         nodeHttpResponsePtr);
 }
 
+// Node's static_cast<uint64_t>(double) is undefined for these: NaN or below 1 selects the default limit (0), 2^64 or more selects none.
+static uint64_t maxHTTPHeaderSizeFromNumber(double value)
+{
+    if (!(value >= 1)) return 0;
+    if (value >= 18446744073709551616.0) return UINT64_MAX;
+    return static_cast<uint64_t>(value);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -777,7 +780,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
     Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientBits & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
-    Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHeaderSizeNumber);
+    Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHTTPHeaderSizeFromNumber(maxHeaderSizeNumber));
     RETURN_IF_EXCEPTION(scope, {});
 
     Server__setOnClientError(globalObject, JSValue::encode(serverValue), JSValue::encode(callback));
@@ -815,6 +818,23 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetAppFlags, (JSGlobalObject * globalObject, Call
     return JSValue::encode(jsUndefined());
 }
 
+// Also called on a listening server. 0 means the option is not set.
+JSC_DEFINE_HOST_FUNCTION(jsHTTPSetMaxHeadersCount, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(callFrame->argumentCount() == 2);
+    // This is an internal binding.
+    JSValue serverValue = callFrame->uncheckedArgument(0);
+    uint32_t maxHeadersCount = callFrame->uncheckedArgument(1).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Server__setMaxHeadersCount(globalObject, JSValue::encode(serverValue), maxHeadersCount);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
 {
     auto* obj = constructEmptyObject(globalObject);
@@ -825,6 +845,9 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerAppFlags"_s)),
         JSC::JSFunction::create(vm, globalObject, 5, "setServerAppFlags"_s, jsHTTPSetAppFlags, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerMaxHeadersCount"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "setServerMaxHeadersCount"_s, jsHTTPSetMaxHeadersCount, ImplementationVisibility::Public), 0);
     obj->putDirectNativeFunction(
         vm, globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, "drainMicrotasks"_s)),
         0, Bun__drainMicrotasksFromJS, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);

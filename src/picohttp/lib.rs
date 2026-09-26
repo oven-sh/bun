@@ -26,7 +26,7 @@ mod c {
         pub value_len: usize,
     }
     /// Mirrors `struct phr_chunked_decoder` from picohttpparser.h. The HTTP
-    /// client writes `consume_trailer` and reads `_state` directly, so the
+    /// client owns the storage and writes `consume_trailer` directly, so the
     /// layout must match C exactly.
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
@@ -35,7 +35,9 @@ mod c {
         /// Set to 1 to discard trailing headers after the terminal `0\r\n` chunk.
         pub consume_trailer: core::ffi::c_char,
         pub(crate) _hex_count: core::ffi::c_char,
-        pub _state: core::ffi::c_char,
+        pub(crate) _state: core::ffi::c_char,
+        pub(crate) _total_read: u64,
+        pub(crate) _total_overhead: u64,
     }
     unsafe extern "C" {
         pub(super) fn phr_parse_response(
@@ -54,6 +56,8 @@ mod c {
             buf: *mut u8,
             len: *mut usize,
         ) -> isize;
+        /// Added by patches/picohttpparser/chunked-decoder.patch.
+        pub safe fn phr_decode_chunked_is_in_trailers(decoder: &phr_chunked_decoder) -> c_int;
     }
 }
 
@@ -593,3 +597,4 @@ impl fmt::Display for Headers<'_> {
 
 pub use c::phr_chunked_decoder;
 pub use c::phr_decode_chunked;
+pub use c::phr_decode_chunked_is_in_trailers;

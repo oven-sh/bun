@@ -1594,6 +1594,7 @@ impl<'a> Transpiler<'a> {
                     warn_about_unbundled_modules: !target.is_bun(),
                     allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
                     module_type: to_parser_module_type(this_parse.module_type),
+                    jsc_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
                     import_meta_main_value: None,
@@ -3128,7 +3129,7 @@ impl<'a> Transpiler<'a> {
         &mut self,
         file_path_text: &'static [u8],
         dirname_fd: FD,
-        file_path_pretty: &[u8],
+        file_path_pretty: &'static [u8],
     ) -> Option<crate::output_file::Value> {
         use crate::bun_css;
 
@@ -3167,7 +3168,7 @@ impl<'a> Transpiler<'a> {
                 CSS_MODULE_SUFFIX,
             );
         if enable_css_modules {
-            opts.filename = bun_paths::basename(file_path_text);
+            opts.filename = file_path_pretty;
             opts.css_modules = Some(bun_css::CssModuleConfig::default());
         }
 
@@ -3184,7 +3185,7 @@ impl<'a> Transpiler<'a> {
             entry.contents(),
             opts,
             None,
-            bun_ast::Index::INVALID,
+            bun_ast::Index::source(0u32),
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -3204,7 +3205,7 @@ impl<'a> Transpiler<'a> {
             );
             return None;
         }
-        let symbols = bun_ast::symbol::Map::init_list(Default::default());
+        let symbols = bun_ast::symbol::Map::init_list(vec![extra.symbols]);
         let result = match sheet.to_css(
             alloc,
             &bun_css::PrinterOptions {

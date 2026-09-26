@@ -2,6 +2,7 @@ use core::ptr::NonNull;
 
 use bstr::BStr;
 use bun_ast::{self, ExprData, Log};
+use bun_collections::StringHashMap;
 use bun_core::Global;
 use bun_core::Output;
 use bun_core::{ZStr, strings};
@@ -144,7 +145,24 @@ fn get_candidate_package_patterns<'a>(
 pub(crate) struct WorkspacePackage {
     pub(crate) package_json_path: Box<[u8]>,
     pub(crate) dir: Box<[u8]>,
+    /// Directory symlinks that also reach this package. A path filter matches any of them.
+    alias_dirs: Vec<Box<[u8]>>,
     pub(crate) json: bun_resolver::PackageJSON,
+}
+
+/// Whether `dir` goes through a directory symlink below the workspace root.
+fn is_link_path(root_dir: &[u8], root_real_dir: &[u8], dir: &[u8], real_dir: &[u8]) -> bool {
+    let (Some(rel), Some(real_rel)) = (
+        dir.strip_prefix(root_dir),
+        real_dir.strip_prefix(root_real_dir),
+    ) else {
+        return true;
+    };
+    if cfg!(windows) {
+        !strings::eql_case_insensitive_ascii_check_length(rel, real_rel)
+    } else {
+        rel != real_rel
+    }
 }
 
 pub(crate) struct SelectedPackages {
@@ -177,13 +195,60 @@ pub(crate) fn select_packages(
 
     let mut iter = PackageFilterIterator::init(&glob_patterns, &root_dir)?;
     let mut discovered: Vec<WorkspacePackage> = Vec::new();
+    // Whether `discovered[i].dir` goes through a directory symlink.
+    let mut dir_is_link: Vec<bool> = Vec::new();
+    // Each "workspaces" entry is walked on its own, so two entries can yield the same path.
+    let mut seen_paths: StringHashMap<()> = StringHashMap::default();
+    // Index into `discovered` by real directory. `usize::MAX` when its package.json did not parse.
+    let mut by_real_dir: StringHashMap<usize> = StringHashMap::default();
+    let mut dir_z_buf = path_buffer_pool::get();
+    let mut real_dir_buf = path_buffer_pool::get();
+    let mut root_real_buf = path_buffer_pool::get();
+    let root_real_dir: &[u8] = match bun_sys::realpath(
+        resolve_path::z(&root_dir, &mut dir_z_buf),
+        &mut root_real_buf,
+    ) {
+        Ok(real) => real,
+        Err(_) => &root_dir,
+    };
     while let Some(package_json_path) = iter.next()? {
+        if seen_paths.get_or_put(&package_json_path)?.found_existing {
+            continue;
+        }
         let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
             &package_json_path,
         ));
-        if ctx.workspaces && dir == &*root_dir {
+        let real_dir: &[u8] =
+            match bun_sys::realpath(resolve_path::z(dir, &mut dir_z_buf), &mut real_dir_buf) {
+                Ok(real) => real,
+                Err(_) => dir,
+            };
+        // Neither a link back at the root, nor the root itself under --workspaces, is a package.
+        if (ctx.workspaces && dir == &*root_dir) || (dir != &*root_dir && real_dir == root_real_dir)
+        {
             continue;
         }
+        let is_link = is_link_path(&root_dir, root_real_dir, dir, real_dir);
+        let slot = by_real_dir.get_or_put(real_dir)?;
+        if slot.found_existing {
+            let i = *slot.value_ptr;
+            if i == usize::MAX {
+                continue;
+            }
+            let package = &mut discovered[i];
+            if dir_is_link[i] && !is_link {
+                // The path that is not a link is the one that runs.
+                package
+                    .alias_dirs
+                    .push(core::mem::replace(&mut package.dir, dir.into()));
+                package.package_json_path = package_json_path;
+                dir_is_link[i] = false;
+            } else {
+                package.alias_dirs.push(dir.into());
+            }
+            continue;
+        }
+        *slot.value_ptr = usize::MAX;
         let Some(json) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
             resolver,
             dir,
@@ -197,33 +262,43 @@ pub(crate) fn select_packages(
             );
             continue;
         };
+        *slot.value_ptr = discovered.len();
         discovered.push(WorkspacePackage {
             dir: dir.into(),
+            alias_dirs: Vec::new(),
             package_json_path,
             json,
         });
+        dir_is_link.push(is_link);
     }
+    drop(dir_z_buf);
+    drop(real_dir_buf);
+    drop(root_real_buf);
 
     let mut path_buf = path_buffer_pool::get();
-    let posix_dirs: Vec<Box<[u8]>> = discovered
+    let mut to_posix = |dir: &[u8]| -> Box<[u8]> {
+        strings::without_trailing_slash(resolve_path::join_abs_string_buf::<platform::Posix>(
+            dir,
+            &mut path_buf.0,
+            &[b".".as_slice()],
+        ))
+        .into()
+    };
+    let posix_dirs: Vec<Box<[u8]>> = discovered.iter().map(|p| to_posix(&p.dir)).collect();
+    let posix_alias_dirs: Vec<Vec<Box<[u8]>>> = discovered
         .iter()
-        .map(|p| {
-            strings::without_trailing_slash(resolve_path::join_abs_string_buf::<platform::Posix>(
-                &p.dir,
-                &mut path_buf.0,
-                &[b".".as_slice()],
-            ))
-            .into()
-        })
+        .map(|p| p.alias_dirs.iter().map(|d| to_posix(d)).collect())
         .collect();
     drop(path_buf);
 
     let candidates: Vec<Candidate<'_>> = discovered
         .iter()
         .zip(&posix_dirs)
-        .map(|(p, dir)| Candidate {
+        .zip(&posix_alias_dirs)
+        .map(|((p, dir), alias_dirs)| Candidate {
             name: &p.json.name,
             abs_posix_dir: dir,
+            alias_posix_dirs: alias_dirs,
             is_root: false,
         })
         .collect();

@@ -748,12 +748,13 @@ describe("bun", () => {
     });
     const stdoutval = stdout.toString();
     const count = (needle: string) => stdoutval.split(needle).length - 1;
-    // `pkga` is matched once. `cyc` is matched at `packages/cyc` and once more
-    // through its own `loop` alias, where the cycle is detected and descent
-    // stops instead of recursing until the path length limit.
+    // The walk reaches `cyc` at `packages/cyc` and once more through its own
+    // `loop` alias, where the cycle is detected and descent stops instead of
+    // recursing until the path length limit. Both paths are one package, so
+    // it runs once.
     expect({ scripta: count("scripta"), scriptcyc: count("scriptcyc"), exitCode }).toEqual({
       scripta: 1,
-      scriptcyc: 2,
+      scriptcyc: 1,
       exitCode: 0,
     });
   });
@@ -787,6 +788,166 @@ describe("bun", () => {
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
   });
+});
+
+// Runs the `build` script. `ran` has one element per script run, so a package
+// that runs twice is listed twice.
+async function runBuild(cwd: string, args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", ...args, "build"],
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { ran: (stdout.match(/ran-\w+/g) ?? []).sort(), stderr, exitCode };
+}
+
+describe.concurrent('"workspaces" entries that match the same package', () => {
+  function fixture(workspaces: string[] | { packages: string[] }) {
+    return tempDir("filter-workspaces-overlap", {
+      packages: {
+        app: { "package.json": JSON.stringify({ name: "app", scripts: { build: "echo ran-app" } }) },
+        legacy: { "package.json": JSON.stringify({ name: "legacy", scripts: { build: "echo ran-legacy" } }) },
+      },
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces }),
+    });
+  }
+
+  test.each([
+    ["a glob and a path", ["packages/*", "packages/legacy"]],
+    ["two globs", ["packages/*", "packages/l*"]],
+    ["one path written two ways", ["packages/app", "packages/legacy", "./packages/legacy/"]],
+    ['the { "packages": [...] } form', { packages: ["packages/*", "packages/legacy"] }],
+  ])("%s: each package runs once", async (_, workspaces) => {
+    using dir = fixture(workspaces);
+    const { ran, exitCode } = await runBuild(String(dir), ["--filter", "*"]);
+    expect({ ran, exitCode }).toEqual({ ran: ["ran-app", "ran-legacy"], exitCode: 0 });
+  });
+
+  test.each([[["--workspaces"]], [["--parallel", "--workspaces"]], [["--sequential", "--filter", "*"]]])(
+    "%j runs each package once",
+    async args => {
+      using dir = fixture(["packages/*", "packages/legacy"]);
+      const { ran, exitCode } = await runBuild(String(dir), args);
+      expect({ ran, exitCode }).toEqual({ ran: ["ran-app", "ran-legacy"], exitCode: 0 });
+    },
+  );
+
+  test("a package.json that fails to parse is reported once", async () => {
+    using dir = fixture(["packages/*", "packages/legacy"]);
+    await Bun.write(join(String(dir), "packages", "legacy", "package.json"), "this is { not valid json");
+    const { ran, stderr, exitCode } = await runBuild(String(dir), ["--filter", "*"]);
+    expect({ ran, warnings: stderr.split("skipping this workspace package").length - 1, exitCode }).toEqual({
+      ran: ["ran-app"],
+      warnings: 1,
+      exitCode: 0,
+    });
+  });
+});
+
+// #43358: `packages/*` matches `packages/alias` (a link to `packages/real`)
+// and `packages/real`. Both are one package, so it runs once.
+describe.concurrent("a directory symlink to a workspace package", () => {
+  function fixture() {
+    const dir = tempDir("filter-symlink-alias", {
+      packages: {
+        real: {
+          "package.json": JSON.stringify({ name: "real", scripts: { build: "echo ran-real" } }),
+        },
+        other: {
+          "package.json": JSON.stringify({
+            name: "other",
+            dependencies: { real: "workspace:*" },
+            scripts: { build: "echo ran-other" },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+    });
+    // "junction" so the link is creatable on unprivileged Windows; the type
+    // is ignored on POSIX.
+    symlinkSync(join(dir, "packages", "real"), join(dir, "packages", "alias"), "junction");
+    return dir;
+  }
+
+  test.each([
+    [
+      ["--filter", "*"],
+      ["ran-other", "ran-real"],
+    ],
+    [["--workspaces"], ["ran-other", "ran-real"]],
+    [["--filter", "real"], ["ran-real"]],
+    [
+      ["--filter", "other..."],
+      ["ran-other", "ran-real"],
+    ],
+    [["--filter", "./packages/alias"], ["ran-real"]],
+    [["--filter", "./packages/real"], ["ran-real"]],
+    [
+      ["--filter", "./packages/*"],
+      ["ran-other", "ran-real"],
+    ],
+    // A relational path filter finds the dependents through either path.
+    [
+      ["--filter", "...{./packages/real}"],
+      ["ran-other", "ran-real"],
+    ],
+    [
+      ["--filter", "...{./packages/alias}"],
+      ["ran-other", "ran-real"],
+    ],
+    // A negated path filter on either path excludes the package.
+    [["--filter", "*", "--filter", "!./packages/alias"], ["ran-other"]],
+    [["--filter", "*", "--filter", "!./packages/real"], ["ran-other"]],
+  ])("%j runs each package once", async (args, ran) => {
+    using dir = fixture();
+    const result = await runBuild(String(dir), args);
+    expect({ ran: result.ran, exitCode: result.exitCode }).toEqual({ ran, exitCode: 0 });
+  });
+
+  // The error names `package.dir`, so it shows which of the two paths is the package.
+  test("the real path is the package, also when the link is found first", async () => {
+    using dir = tempDir("filter-symlink-first", {
+      packages: {
+        real: { "package.json": JSON.stringify({ name: "real", scripts: { other: "echo" } }) },
+      },
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: ["packages/alias", "packages/real"],
+      }),
+    });
+    symlinkSync(join(dir, "packages", "real"), join(dir, "packages", "alias"), "junction");
+    const { stderr, exitCode } = await runBuild(String(dir), ["--workspaces"]);
+    expect({ at: stderr.match(/Missing 'build' script at '(.*)'/)?.[1], exitCode }).toEqual({
+      at: join(dir, "packages", "real"),
+      exitCode: 1,
+    });
+  });
+
+  test.each([[["--workspaces"]], [["--filter", "*"]]])(
+    "%j does not run the root through a link back to it",
+    async args => {
+      using dir = tempDir("filter-symlink-root", {
+        packages: {
+          real: {
+            "package.json": JSON.stringify({ name: "real", scripts: { build: "echo ran-real" } }),
+          },
+        },
+        "package.json": JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: ["packages/*"],
+          scripts: { build: "echo ran-root" },
+        }),
+      });
+      symlinkSync(String(dir), join(dir, "packages", "up"), "junction");
+      const result = await runBuild(String(dir), args);
+      expect({ ran: result.ran, exitCode: result.exitCode }).toEqual({ ran: ["ran-real"], exitCode: 0 });
+    },
+  );
 });
 
 describe("selectors", () => {

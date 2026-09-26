@@ -377,14 +377,14 @@ fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> 
     File::read_from(Fd::cwd(), &target.package_json_path).is_ok_and(|on_disk| on_disk == printed)
 }
 
-/// Phase 2 (after bun.lock is saved): add `trustedDependencies` learned during the install and write every edited entry whose bytes differ from disk.
+/// Phase 2 (after bun.lock is saved): add `trustedDependencies` learned during the install to the root package.json (the only one `bun install` reads them from) and write every edited entry whose bytes differ from disk.
 pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
     if manager.edited_package_jsons.is_empty()
         || !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
     {
         return Ok(());
     }
-    let edited = core::mem::take(&mut manager.edited_package_jsons);
+    let mut edited = core::mem::take(&mut manager.edited_package_jsons);
     let mut trusted: Vec<Box<[u8]>> = if manager
         .options
         .do_
@@ -395,14 +395,17 @@ pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
         Vec::new()
     };
 
+    if !trusted.is_empty() && edited.iter().any(|e| e.received_requests) {
+        let root = root_target();
+        let entry = fetch_entry(manager, &root);
+        let mut root_json = entry.root;
+        PackageJSONEditor::edit_trusted_dependencies(&mut root_json, &mut trusted)?;
+        print_package_json_into_cache_entry(entry, root_json);
+        push(&mut edited, root, false);
+    }
+
     let mut any_failed = false;
     for e in &edited {
-        if e.received_requests && !trusted.is_empty() {
-            let entry = fetch_entry(manager, &e.target);
-            let mut root = entry.root;
-            PackageJSONEditor::edit_trusted_dependencies(&mut root, &mut trusted)?;
-            print_package_json_into_cache_entry(entry, root);
-        }
         if unchanged_on_disk(manager, &e.target) {
             continue;
         }

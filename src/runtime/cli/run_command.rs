@@ -925,6 +925,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
         loader: Option<Loader>,
+        argv1: Option<Box<[u8]>>,
     ) -> crate::Result<()> {
         if !ctx.debug.loaded_bunfig {
             arguments::load_config_path(
@@ -970,6 +971,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
+        vm.argv1 = argv1;
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
@@ -1683,7 +1685,12 @@ fn print_unhandled_version_note(vm: &mut VirtualMachine) {
 impl RunCommand {
     /// Duplicate `path` to a process-lifetime buffer, boot the VM, and on
     /// failure print the formatted error + `exit(1)`.
-    fn boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
+    fn boot_and_handle_error(
+        ctx: &mut ContextData,
+        path: &[u8],
+        loader: Option<Loader>,
+        argv1: Option<Box<[u8]>>,
+    ) -> bool {
         if matches!(
             loader.or_else(|| Self::default_loader_for(path)),
             Some(Loader::Md)
@@ -1700,7 +1707,7 @@ impl RunCommand {
         // owned copy by value.
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
-        if let Err(err) = Self::boot(ctx, owned, loader) {
+        if let Err(err) = Self::boot(ctx, owned, loader, argv1) {
             Self::boot_failed_exit(ctx, paths::basename(path), &err);
         }
         true
@@ -2548,7 +2555,10 @@ impl RunCommand {
                     // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
+                    let argv1 = path
+                        .is_symlink
+                        .then(|| path.pretty.to_vec().into_boxed_slice());
+                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader), argv1));
                 } else {
                     bun_core::scoped_log!(
                         RUN_LOG,
@@ -2569,6 +2579,7 @@ impl RunCommand {
                         ctx,
                         target_name,
                         Some(Loader::Html),
+                        None,
                     ));
                 }
             }
@@ -2810,7 +2821,18 @@ impl RunCommand {
         };
         let _ = bun_sys::close(fd);
 
-        Self::boot_and_handle_error(ctx, &absolute_script_path, None)
+        let argv1 = {
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
+            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
+            let mut argv_buf = bun_paths::path_buffer_pool::get();
+            let Some(path) = paths::resolve_path::join_abs_string_buf_checked::<
+                paths::platform::Auto,
+            >(cwd.as_bytes(), &mut argv_buf.0, &[target]) else {
+                return false;
+            };
+            (path != &*absolute_script_path).then(|| path.to_vec().into_boxed_slice())
+        };
+        Self::boot_and_handle_error(ctx, &absolute_script_path, None, argv1)
     }
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
@@ -2856,7 +2878,7 @@ impl RunCommand {
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, owned, None) {
+        if let Err(err) = Self::boot(ctx, owned, None, None) {
             Self::boot_failed_exit(ctx, b"-", &err);
         }
         Ok(true)
@@ -2906,7 +2928,7 @@ impl RunCommand {
         let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
             .to_vec()
             .into_boxed_slice();
-        Self::boot(ctx, entry, None)
+        Self::boot(ctx, entry, None, None)
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
@@ -2941,7 +2963,7 @@ impl RunCommand {
             let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
                 .to_vec()
                 .into_boxed_slice();
-            return Self::boot(ctx, entry, None);
+            return Self::boot(ctx, entry, None, None);
         }
 
         if ctx.positionals.is_empty() {
@@ -2984,7 +3006,7 @@ impl RunCommand {
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, normalized, None) {
+        if let Err(err) = Self::boot(ctx, normalized, None, None) {
             Self::exec_as_if_node_boot_failed(ctx, &basename, err);
         }
         Ok(())
@@ -4023,7 +4045,7 @@ impl BunXFastPath {
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
-        if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
+        if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None, None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(

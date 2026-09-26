@@ -33,6 +33,71 @@ test("ArrayBuffer values are serialized like typed arrays", () => {
   `);
 });
 
+test("object keys get the same escapes in Latin-1 and UTF-16 strings", () => {
+  // A string decoded from UTF-16 bytes keeps 16-bit storage, even when every character is ASCII.
+  const utf16 = (s: string) => Buffer.from(s, "utf16le").toString("utf16le");
+  const special = '"\\\n\x1b';
+  const value = {
+    [utf16(["ascii in utf16 ", special].join(""))]: 1,
+    ["latin1 " + special]: 2,
+    ["lone surrogates \ud800 \udc00"]: 3,
+    // A Latin-1 string cannot hold these three characters.
+    ["utf16 only \u2028\u2029\ufeff"]: 4,
+    ["日本 " + special]: 5,
+    ["😀 " + special]: 6,
+  };
+  expect(value).toMatchInlineSnapshot(`
+    {
+      "ascii in utf16 \\"\\\\\\n\\u001B": 1,
+      "latin1 \\"\\\\\\n\\u001B": 2,
+      "lone surrogates \\uD800 \\uDC00": 3,
+      "utf16 only \\u2028\\u2029\\uFEFF": 4,
+      "日本 \\"\\\\\\n\\u001B": 5,
+      "😀 \\"\\\\\\n\\u001B": 6,
+    }
+  `);
+
+  // A matcher failure prints the value too. toEqual uses the snapshot formatter. toBe uses the console formatter.
+  const failure = (fn: () => void) => {
+    try {
+      fn();
+    } catch (e) {
+      return Bun.stripANSI((e as Error).message);
+    }
+  };
+  expect(failure(() => expect(value).toEqual(0))).toMatchInlineSnapshot(`
+    "expect(received).toEqual(expected)
+
+    - 0
+    + {
+    +   "ascii in utf16 \\"\\\\\\n\\u001B": 1,
+    +   "latin1 \\"\\\\\\n\\u001B": 2,
+    +   "lone surrogates \\uD800 \\uDC00": 3,
+    +   "utf16 only \\u2028\\u2029\\uFEFF": 4,
+    +   "日本 \\"\\\\\\n\\u001B": 5,
+    +   "😀 \\"\\\\\\n\\u001B": 6,
+    + }
+
+    - Expected  - 1
+    + Received  + 8
+    "
+  `);
+  expect(failure(() => expect(value).toBe(0))).toMatchInlineSnapshot(`
+    "expect(received).toBe(expected)
+
+    Expected: 0
+    Received: {
+      "ascii in utf16 \\"\\\\\\n\\u001B": 1,
+      "latin1 \\"\\\\\\n\\u001B": 2,
+      "lone surrogates \\uD800 \\uDC00": 3,
+      "utf16 only \\u2028\\u2029\\uFEFF": 4,
+      "日本 \\"\\\\\\n\\u001B": 5,
+      "😀 \\"\\\\\\n\\u001B": 6,
+    }
+    "
+  `);
+});
+
 describe("toMatchSnapshot errors", () => {
   it("should throw if property matchers exist and received is not an object", () => {
     expect(() => {

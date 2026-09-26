@@ -5,102 +5,124 @@ import { fullGC, heapStats } from "bun:jsc";
 
 expect(process.cwd()).toBe(import.meta.dir);
 
-let promise;
+// plugin.ts (registered in bunfig.toml) awaits `globalThis.callback` from its
+// onLoad hook, so a case can stop the server while its bundle is in flight.
+let callbackCalls = 0;
 
-async function run({ closeActiveConnections = false, sendAnyRequests = true, websocket = 0 }) {
-  let lastDevServerDeinitCount = getDevServerDeinitCount();
-
-  async function main() {
-    globalThis.pluginLoaded = undefined;
-
-    const server = Bun.serve({
-      routes: {
-        "/": html,
-      },
-      fetch(req, server) {
-        return new Response("FAIL");
-      },
-      port: 0,
-    });
-
-    expect(globalThis.pluginLoaded).toBeUndefined();
-
-    let sockets: WebSocket[] = [];
-    if (websocket > 0) {
-      const opens: Promise<void>[] = [];
-      for (let i = 0; i < websocket; i++) {
-        const { promise, resolve, reject } = Promise.withResolvers<void>();
-        const ws = new WebSocket(server.url.origin + "/_bun/hmr");
-        let opened = false;
-        ws.onopen = () => {
-          opened = true;
-          console.log("WebSocket opened");
-          resolve();
-        };
-        ws.onerror = e => {
-          e.preventDefault();
-          if (!opened) reject(new Error(`websocket ${i} failed before open`));
-        };
-        ws.onclose = () => {
-          console.log("WebSocket closed");
-          if (!opened) reject(new Error(`websocket ${i} closed before open`));
-        };
-        sockets.push(ws);
-        opens.push(promise);
-      }
-      await Promise.all(opens);
-    }
-
-    globalThis.callback = async () => {
-      server.stop(closeActiveConnections);
-      await (promise = new Promise(resolve => setTimeout(resolve, 250)));
-    };
-
-    if (sendAnyRequests) {
-      if (closeActiveConnections) {
-        expect(fetch(server.url.origin, { keepalive: false })).rejects.toThrow("closed unexpectedly");
-      } else {
-        const response = await fetch(server.url.origin, { keepalive: false });
-        expect(response.status).toBe(200);
-      }
-    } else {
-      server.stop(closeActiveConnections);
-    }
-
-    // Server is closed
-    expect(fetch(server.url.origin, { keepalive: false })).rejects.toThrow("Unable to connect");
-  }
-
+// Resolves with the fetch error's `code`. `expect(...).rejects` is not used
+// here: it spins a nested event loop synchronously, and most waits in `run`
+// start inside a WebSocket callback.
+async function fetchErrorCode(request: Promise<Response>): Promise<string> {
   try {
-    await main();
-  } finally {
-    // The closure assigned to `globalThis.callback` inside `main()` captures
-    // `server`; left in place it roots the JS Server wrapper through every GC
-    // below, so the wrapper never finalizes and the native NewServer box (and
-    // everything its config owns) is still live at process exit.
-    globalThis.callback = undefined;
+    await request;
+    return "fulfilled";
+  } catch (e: any) {
+    return e.code ?? String(e);
   }
-
-  if (closeActiveConnections) {
-    await promise;
-    await new Promise(resolve => setTimeout(resolve, 250));
-  }
-
-  const targetCount = lastDevServerDeinitCount + 1;
-  let attempts = 0;
-  while (getDevServerDeinitCount() === lastDevServerDeinitCount) {
-    Bun.gc(true);
-    fullGC();
-    await new Promise(resolve => setTimeout(resolve, 100));
-    attempts++;
-    if (attempts > 10) {
-      throw new Error("Failed to trigger deinit");
-    }
-  }
-  expect(getDevServerDeinitCount()).toBe(targetCount);
 }
 
-// baseline do nothing
+async function run({
+  closeActiveConnections,
+  sendAnyRequests,
+  websocket,
+}: {
+  closeActiveConnections: boolean;
+  sendAnyRequests: boolean;
+  websocket: number;
+}) {
+  const deinitsBefore = getDevServerDeinitCount();
+  const pluginLoadedBefore = globalThis.pluginLoaded;
+  callbackCalls = 0;
+
+  const server = Bun.serve({
+    routes: {
+      "/": html,
+    },
+    fetch() {
+      return new Response("FAIL");
+    },
+    port: 0,
+  });
+  const origin = server.url.origin;
+
+  const closes: Promise<CloseEvent>[] = [];
+  let stopped: Promise<void> | undefined;
+  // Recorded inside the plugin callback and asserted after the bundle. A throw
+  // inside the callback only fails the bundle, and after an abrupt stop there
+  // is no client left to report that to.
+  let refusedWhileBundling: string | undefined;
+  try {
+    // Serve plugins load on the first bundle, not when the server starts.
+    expect(globalThis.pluginLoaded).toBe(pluginLoadedBefore);
+
+    const opens: Promise<void>[] = [];
+    for (let i = 0; i < websocket; i++) {
+      const ws = new WebSocket(origin + "/_bun/hmr");
+      const open = Promise.withResolvers<void>();
+      const close = Promise.withResolvers<CloseEvent>();
+      ws.onopen = () => open.resolve();
+      ws.onclose = event => {
+        open.reject(new Error(`websocket ${i} closed before it opened (code ${event.code})`));
+        close.resolve(event);
+      };
+      opens.push(open.promise);
+      closes.push(close.promise);
+    }
+    await Promise.all(opens);
+
+    if (sendAnyRequests) {
+      const request = fetch(origin, { keepalive: false });
+      const requestErrorCode = closeActiveConnections ? fetchErrorCode(request) : undefined;
+
+      globalThis.callback = async () => {
+        callbackCalls++;
+        stopped = server.stop(closeActiveConnections);
+        // The bundle that serves `request` stays in flight until this returns.
+        refusedWhileBundling = await fetchErrorCode(fetch(origin, { keepalive: false }));
+        // An abrupt stop also closed the socket of `request`. Let the client
+        // see that before the bundle completes.
+        if (requestErrorCode) await requestErrorCode;
+      };
+
+      if (requestErrorCode) {
+        expect(await requestErrorCode).toBe("ECONNRESET");
+      } else {
+        const response = await request;
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("text/html;charset=utf-8");
+        expect(await response.text()).toContain('<script type="module" crossorigin src="/_bun/client/index-');
+      }
+      expect(globalThis.pluginLoaded).toBe(true);
+    } else {
+      stopped = server.stop(closeActiveConnections);
+    }
+  } finally {
+    // The closure captures `server`. Left in place it would root the JS Server
+    // wrapper through every GC below.
+    globalThis.callback = undefined;
+    // A case that failed before its own stop() must not leave a server behind.
+    stopped ??= server.stop(true);
+  }
+  expect(callbackCalls).toBe(sendAnyRequests ? 1 : 0);
+
+  expect(await fetchErrorCode(fetch(origin, { keepalive: false }))).toBe("ConnectionRefused");
+
+  // `stop()` resolves once the last request, connection and listener are gone.
+  // The DevServer is dropped in that same pass, before the promise settles, so
+  // the count must be exact here without any GC.
+  await stopped;
+  expect(getDevServerDeinitCount()).toBe(deinitsBefore + 1);
+  // `stop()` closed the listener synchronously, while the bundle was in flight.
+  expect(refusedWhileBundling).toBe(sendAnyRequests ? "ConnectionRefused" : undefined);
+
+  // Dropping the DevServer closes every HMR socket it still had (an abrupt
+  // stop closed them earlier). The clients see an abnormal closure.
+  const closeEvents = await Promise.all(closes);
+  expect(closeEvents.map(event => ({ code: event.code, wasClean: event.wasClean }))).toEqual(
+    Array.from({ length: websocket }, () => ({ code: 1006, wasClean: false })),
+  );
+}
+
 const cases = [
   { closeActiveConnections: false, sendAnyRequests: false, websocket: 0 },
   { closeActiveConnections: false, sendAnyRequests: false, websocket: 1 },
@@ -161,14 +183,10 @@ afterAll(async () => {
 });
 
 for (const { closeActiveConnections, sendAnyRequests, websocket } of cases) {
-  test(
-    "flags: " +
-      Object.entries({ closeActiveConnections, sendAnyRequests, websocket })
-        .filter(([key, value]) => value)
-        .map(([key, value]) => (key === "websocket" ? `websocket=${value}` : key))
-        .join(" "),
-    async () => {
-      await run({ closeActiveConnections, sendAnyRequests, websocket });
-    },
-  );
+  const flags = Object.entries({ closeActiveConnections, sendAnyRequests, websocket })
+    .filter(([, value]) => value)
+    .map(([key, value]) => (key === "websocket" ? `websocket=${value}` : key));
+  test("flags: " + (flags.join(" ") || "none"), async () => {
+    await run({ closeActiveConnections, sendAnyRequests, websocket });
+  });
 }

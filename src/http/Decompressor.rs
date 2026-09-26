@@ -1,4 +1,3 @@
-use bun_core::MutableString;
 use bun_http_types::Encoding::Encoding;
 
 // The streaming decoders below own only their C-side state and take
@@ -59,14 +58,14 @@ impl Decompressor {
     }
 
     /// Feed one body chunk `buffer` through the decoder, appending the
-    /// decompressed output to `body_out_str` until it holds `max_output` bytes. Creates the
+    /// decompressed output to `out` until it holds `max_output` bytes. Creates the
     /// decoder on first call. Returns the input bytes consumed. Returns `ShortRead` when more
     /// input is needed and the stream is not yet done.
     pub(crate) fn decompress_chunk(
         &mut self,
         encoding: Encoding,
         buffer: &[u8],
-        body_out_str: &mut MutableString,
+        out: &mut Vec<u8>,
         max_output: usize,
         is_done: bool,
     ) -> crate::Result<usize> {
@@ -76,7 +75,6 @@ impl Decompressor {
         if matches!(self, Decompressor::None) {
             self.init(encoding, buffer)?;
         }
-        let out = &mut body_out_str.list;
         match self {
             Decompressor::Zlib(reader) => Ok(reader.decompress(buffer, out, max_output, is_done)?),
             Decompressor::Brotli(reader) => {

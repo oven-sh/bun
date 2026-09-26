@@ -19,6 +19,28 @@ fn gzip_trailer_size(buffer: &[u8]) -> Option<usize> {
         .map(|size| u32::from_le_bytes(*size) as usize)
 }
 
+/// One libdeflate call over a whole gzip body into `size` bytes. False: zlib decodes it.
+fn inflate_exact_size(
+    decompressor: &mut bun_libdeflate_sys::libdeflate::Decompressor,
+    buffer: &[u8],
+    size: usize,
+    out: &mut Vec<u8>,
+) -> bool {
+    use bun_libdeflate_sys::libdeflate::{Encoding, Status};
+    out.clear();
+    // A trailer can lie; the streaming path allocates only what is really there.
+    if out.try_reserve_exact(size).is_err() {
+        return false;
+    }
+    let result = decompressor.decompress_to_vec(buffer, out, Encoding::Gzip);
+    // Unconsumed input means a multi-member stream (RFC 1952 §2.2), which libdeflate does not decode.
+    if result.status == Status::Success && result.read == buffer.len() {
+        return true;
+    }
+    out.clear();
+    false
+}
+
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 
@@ -250,14 +272,28 @@ impl<'a> InternalState<'a> {
     /// than failing it: chunked decoder already in the trailers state, or a
     /// close-delimited response (no Content-Length, no Transfer-Encoding).
     pub(crate) fn is_body_complete_on_close(&self) -> bool {
-        // Every byte arrived; only the decode is outstanding.
-        if self.flags.decompress_output_pending && self.is_done() {
-            return true;
-        }
         if self.is_chunked_encoding() {
             return bun_picohttp::phr_decode_chunked_is_in_trailers(&self.chunked_decoder) != 0;
         }
         self.content_length.is_none() && self.response_stage == HTTPStage::Body
+    }
+
+    /// Drops input that nothing will decode.
+    pub(crate) fn discard_held_input(&mut self) {
+        self.flags.decompress_output_pending = false;
+        self.compressed_body.list.clear();
+        self.compressed_body_consumed = 0;
+    }
+
+    /// The rest of a body that is complete on the wire, for `HTTPClientResult::held_body`.
+    pub(crate) fn take_held_body(&mut self) -> HeldBody {
+        self.flags.decompress_output_pending = false;
+        HeldBody {
+            encoding: self.encoding,
+            decompressor: core::mem::take(&mut self.decompressor),
+            input: core::mem::take(&mut self.compressed_body.list),
+            consumed: core::mem::take(&mut self.compressed_body_consumed),
+        }
     }
 
     /// Mark the body complete and drive `process_body_buffer` one last time
@@ -324,32 +360,12 @@ impl<'a> InternalState<'a> {
                         break 'libdeflate;
                     }
                     if estimated_size < EXACT_SIZE_INFLATE_MAX {
-                        self.decoded_body.list.clear();
-                        // A trailer can lie; the streaming path below allocates only what is really there.
-                        if self
-                            .decoded_body
-                            .list
-                            .try_reserve_exact(estimated_size)
-                            .is_err()
-                        {
-                            break 'libdeflate;
-                        }
-                        let result = deflater.decompressor_mut().decompress_to_vec(
+                        still_needs_to_decompress = !inflate_exact_size(
+                            deflater.decompressor_mut(),
                             buffer,
+                            estimated_size,
                             &mut self.decoded_body.list,
-                            bun_libdeflate::Encoding::Gzip,
                         );
-                        // libdeflate decodes a single gzip member; unconsumed
-                        // input means this is a multi-member stream (RFC 1952
-                        // §2.2). Let the zlib path handle it.
-                        if result.status == bun_libdeflate::Status::Success
-                            && result.read == buffer.len()
-                        {
-                            still_needs_to_decompress = false;
-                        } else {
-                            self.decoded_body.list.clear();
-                        }
-
                         break 'libdeflate;
                     }
                 }
@@ -409,7 +425,7 @@ impl<'a> InternalState<'a> {
             match self.decompressor.decompress_chunk(
                 self.encoding,
                 buffer,
-                &mut self.decoded_body,
+                &mut self.decoded_body.list,
                 max_output,
                 is_done,
             ) {
@@ -489,6 +505,62 @@ impl<'a> InternalState<'a> {
         }
 
         Ok(!self.decoded_body.list.is_empty())
+    }
+}
+
+/// The undecoded rest of a body whose transport finished, and its decoder. The consumer owns it.
+pub struct HeldBody {
+    encoding: Encoding,
+    decompressor: Decompressor,
+    input: Vec<u8>,
+    consumed: usize,
+}
+
+// SAFETY: owns its bytes and its decoder's C state, which no thread has a claim on.
+unsafe impl Send for HeldBody {}
+
+impl HeldBody {
+    /// Appends decoded bytes to `out` until it holds `max_output`. `Ok(true)`: the body has ended.
+    pub fn decode(&mut self, out: &mut Vec<u8>, max_output: usize) -> Result<bool, Error> {
+        if max_output == usize::MAX && self.inflate_exact_size(out) {
+            return Ok(true);
+        }
+        let input = &self.input[self.consumed..];
+        log!("Decompressing {} bytes of a held body\n", input.len());
+        self.consumed +=
+            self.decompressor
+                .decompress_chunk(self.encoding, input, out, max_output, true)?;
+        let ended = out.len() < max_output
+            || (self.consumed == self.input.len() && !self.decompressor.is_mid_stream());
+        Ok(ended)
+    }
+}
+
+impl HeldBody {
+    /// A gzip body that no decoder has started, for a consumer that takes all of it.
+    fn inflate_exact_size(&mut self, out: &mut Vec<u8>) -> bool {
+        if !bun_core::feature_flags::is_libdeflate_enabled()
+            || self.encoding != Encoding::Gzip
+            || !matches!(self.decompressor, Decompressor::None)
+            || self.consumed != 0
+            || !out.is_empty()
+        {
+            return false;
+        }
+        let Some(size) = gzip_trailer_size(&self.input).filter(|&n| n < EXACT_SIZE_INFLATE_MAX)
+        else {
+            return false;
+        };
+        let Some(mut decompressor) = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
+        else {
+            return false;
+        };
+        log!("Decompressing {} bytes with libdeflate\n", self.input.len());
+        if !inflate_exact_size(&mut decompressor, &self.input, size, out) {
+            return false;
+        }
+        self.consumed = self.input.len();
+        true
     }
 }
 

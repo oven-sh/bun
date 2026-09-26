@@ -59,7 +59,7 @@ pub use http_context::{HTTPContext, HTTPSocket, PeerVerification};
 pub use http_request_body::HTTPRequestBody;
 pub use http_thread::HttpThread as HTTPThread;
 pub use http_thread::shutdown_for_exit;
-pub use internal_state::InternalState;
+pub use internal_state::{HeldBody, InternalState};
 pub use proxy_tunnel::ProxyTunnel;
 pub use send_file::SendFile;
 pub use signals::Signals;
@@ -223,6 +223,8 @@ pub struct Flags {
     pub forced_protocol: Option<Protocol>,
     pub(crate) h3_retried: bool,
     pub is_node_http_client: bool,
+    /// `Options::takes_held_body`.
+    pub(crate) takes_held_body: bool,
 }
 
 impl Default for Flags {
@@ -246,6 +248,7 @@ impl Default for Flags {
             forced_protocol: None,
             h3_retried: false,
             is_node_http_client: false,
+            takes_held_body: false,
         }
     }
 }
@@ -488,6 +491,8 @@ pub struct HTTPClientResult<'a> {
     /// Boxed: it is large and rare, and every result is moved and dropped
     /// several times per request.
     pub proxy_connect_response: Option<Box<HTTPResponseMetadata>>,
+    /// Final result only: what the consumer's budget left undecoded (`Options::takes_held_body`).
+    pub held_body: Option<Box<HeldBody>>,
 }
 
 /// Keep-alive pool partition of the fetch session a request belongs to.
@@ -577,6 +582,7 @@ impl<'a> HTTPClientResult<'a> {
             certificate_info: self.certificate_info,
             connect_errno: self.connect_errno,
             proxy_connect_response: self.proxy_connect_response,
+            held_body: self.held_body,
         }
     }
 }
@@ -2165,7 +2171,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         if in_progress && self.state.is_body_complete_on_close() {
-            if let Err(err) = self.state.finalize_body_on_eof() {
+            if let Err(err) = self.finish_body_on_close() {
                 self.fail(err);
                 return;
             }
@@ -2206,11 +2212,6 @@ impl<'a> HTTPClient<'a> {
 
     pub(crate) fn on_timeout<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         if self.flags.disable_timeout {
-            return;
-        }
-        // A fully received body that waits on its consumer expects nothing from the socket.
-        if self.state.has_pending_compressed() && self.state.is_done() {
-            socket.set_timeout(0);
             return;
         }
         bun_core::scoped_log!(fetch, "Timeout  {}\n", BStr::new(self.url.href));
@@ -4125,33 +4126,58 @@ impl<'a> HTTPClient<'a> {
         socket.set_timeout(self.effective_idle_timeout_seconds());
     }
 
-    /// Output budget of one decode pass. h1 only: h2/h3 detach before held input could drain.
+    /// A compressed body is decoded one budget at a time, as its consumer reads. h1 only.
     #[inline]
-    fn decompress_output_cap(&self) -> usize {
-        if self.flags.protocol == Protocol::Http1_1 && self.signals.is_demand_driven() {
-            signals::BODY_HIGH_WATER_MARK
+    fn decodes_on_demand(&self) -> bool {
+        self.flags.protocol == Protocol::Http1_1 && self.signals.is_demand_driven()
+    }
+
+    /// Output budget of one decode pass. The last pass has `HELD_BODY_MIN` more, or no budget without a `HeldBody` taker.
+    #[inline]
+    fn decompress_output_cap(&self, is_final_chunk: bool) -> usize {
+        if !self.decodes_on_demand() {
+            return usize::MAX;
+        }
+        if !is_final_chunk {
+            return signals::BODY_HIGH_WATER_MARK;
+        }
+        if self.flags.takes_held_body {
+            signals::BODY_HIGH_WATER_MARK + Self::HELD_BODY_MIN
         } else {
             usize::MAX
         }
     }
 
+    /// A rest that decodes to less than this ends on the HTTP thread: it is not worth a work-pool job.
+    const HELD_BODY_MIN: usize = 64 * 1024;
+
     /// Decodes what has arrived under the consumer's budget. Returns whether to report bytes.
     fn process_received_body(&mut self, is_final_chunk: bool) -> crate::Result<bool> {
-        let mut max_output = self.decompress_output_cap();
-        if max_output != usize::MAX && self.state.encoding.is_compressed() {
-            // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
-            if self.signals.is_receive_paused() {
-                self.state.flags.decompress_output_pending = true;
+        let mut max_output = self.decompress_output_cap(is_final_chunk);
+        if self.state.encoding.is_compressed() {
+            // Nothing will read it, and its transport is being shut down.
+            if self.signals.is_body_abandoned() {
+                self.state.discard_held_input();
                 return Ok(false);
             }
-            // A body that one libdeflate call can inflate waits whole for its consumer.
-            if is_final_chunk && self.state.wants_exact_size_inflate() {
-                if self.signals.hold_for_consumer() {
-                    self.state.flags.decompress_output_pending = true;
-                    return Ok(false);
+            if max_output != usize::MAX {
+                let paused = self.signals.is_receive_paused();
+                if is_final_chunk && self.state.wants_exact_size_inflate() {
+                    // A body that one libdeflate call can inflate goes whole to its consumer.
+                    if paused || self.signals.is_body_unclaimed() {
+                        self.state.flags.decompress_output_pending = true;
+                        return Ok(false);
+                    }
+                    // A consumer attached after the cap was read.
+                    max_output = self.decompress_output_cap(is_final_chunk);
+                } else if paused {
+                    // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
+                    if !is_final_chunk {
+                        self.state.flags.decompress_output_pending = true;
+                        return Ok(false);
+                    }
+                    max_output = Self::HELD_BODY_MIN;
                 }
-                // A consumer attached after the cap was read.
-                max_output = self.decompress_output_cap();
             }
         }
         // `process_body_buffer` takes `&mut self.state`, so the bytes move out first.
@@ -4193,6 +4219,12 @@ impl<'a> HTTPClient<'a> {
         self.set_timeout(&socket);
     }
 
+    /// The transport ended, and with it a close-delimited body.
+    pub(crate) fn finish_body_on_close(&mut self) -> crate::Result<()> {
+        self.state.flags.received_last_chunk = true;
+        self.process_received_body(true).map(drop)
+    }
+
     pub(crate) fn drain_response_body<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         if self.pump_held_body::<IS_SSL>(socket) {
             let ctx = self.get_ssl_ctx::<IS_SSL>();
@@ -4221,18 +4253,15 @@ impl<'a> HTTPClient<'a> {
         }
 
         // A consumer that paused again gets another resume when it unpauses.
-        let pumped = self.state.has_pending_compressed() && !self.signals.is_receive_paused();
-        if pumped {
-            let is_final = self.state.is_done();
-            if let Err(err) = self.process_received_body(is_final) {
+        if self.state.has_pending_compressed() && !self.signals.is_receive_paused() {
+            // Not the final chunk: a body that is complete on the wire has ended the request.
+            if let Err(err) = self.process_received_body(false) {
                 self.close_and_fail::<IS_SSL>(err, socket);
                 return false;
             }
         }
 
-        // A pump that ends the body has to say so even with no bytes (a stream trailer alone).
-        let ended = pumped && self.state.is_done() && !self.state.has_pending_compressed();
-        !self.state.decoded_body.list.is_empty() || ended
+        !self.state.decoded_body.list.is_empty()
     }
 
     fn send_progress_update_without_stage_check<const IS_SSL: bool>(
@@ -4582,6 +4611,14 @@ impl<'a> HTTPClient<'a> {
             None
         };
         let certificate_info = self.state.certificate_info.take();
+        // check if we are reporting cert errors, do not have a fail state and we are not done
+        let has_more =
+            certificate_info.is_some() || (self.state.fail.is_none() && !self.state.is_done());
+        // The transport has all of the body. What is not decoded yet is the consumer's to decode.
+        let held_body =
+            (!has_more && self.state.fail.is_none() && self.state.has_pending_compressed())
+                .then(|| Box::new(self.state.take_held_body()));
+        debug_assert!(held_body.is_none() || self.flags.takes_held_body);
         if certificate_info.is_none() {
             if let Some(metadata) = self.state.cloned_metadata.take() {
                 // transfer ownership of the metadata here
@@ -4595,8 +4632,8 @@ impl<'a> HTTPClient<'a> {
                     dns_hostname: self.state.dns_hostname.take(),
                     connect_errno: self.state.connect_errno,
                     proxy_connect_response: None,
-                    has_more: self.state.fail.is_none()
-                        && (!self.state.is_done() || self.state.has_pending_compressed()),
+                    has_more,
+                    held_body,
                     body_size,
                     certificate_info: None,
                     can_stream: (self.state.request_stage == RequestStage::Body
@@ -4616,10 +4653,8 @@ impl<'a> HTTPClient<'a> {
             dns_hostname: self.state.dns_hostname.take(),
             connect_errno: self.state.connect_errno,
             proxy_connect_response,
-            // check if we are reporting cert errors, do not have a fail state and we are not done
-            has_more: certificate_info.is_some()
-                || (self.state.fail.is_none()
-                    && (!self.state.is_done() || self.state.has_pending_compressed())),
+            has_more,
+            held_body,
             body_size,
             certificate_info,
             // we can stream the request_body at this stage
@@ -4647,7 +4682,7 @@ impl<'a> HTTPClient<'a> {
             && let Some(len) = content_length
             && incoming_data.len() >= len
             // The single-packet path decodes the whole body with no output budget.
-            && !(self.state.encoding.is_compressed() && self.signals.is_demand_driven())
+            && !(self.state.encoding.is_compressed() && self.decodes_on_demand())
         {
             self.handle_response_body_from_single_packet(&incoming_data[0..len])?;
             Ok(true)
@@ -4739,7 +4774,6 @@ impl<'a> HTTPClient<'a> {
             // Close-delimited bodies still need per-packet decompression, but
             // a non-streaming consumer must not see per-packet progress: the
             // terminal callback (on close) is the first to carry metadata.
-            let is_done = is_done && !self.state.has_pending_compressed();
             return Ok(is_done || (processed && is_streaming));
         }
         Ok(false)
@@ -4752,7 +4786,7 @@ impl<'a> HTTPClient<'a> {
         let small_len = 16 * 1024usize;
         if incoming_data.len() <= small_len
             && self.state.get_body_buffer().list.is_empty()
-            && !(self.state.encoding.is_compressed() && self.signals.is_demand_driven())
+            && !(self.state.encoding.is_compressed() && self.decodes_on_demand())
         {
             self.handle_response_body_chunked_encoding_from_single_packet(incoming_data)
         } else {
@@ -4824,12 +4858,11 @@ impl<'a> HTTPClient<'a> {
             // Done
             _ => {
                 self.state.flags.received_last_chunk = true;
-                let processed = self.process_received_body(true)?;
+                self.process_received_body(true)?;
 
                 self.report_progress(buffer_len);
 
-                // A held body ends when `drain_response_body` has pumped it dry, not here.
-                return Ok(processed || !self.state.has_pending_compressed());
+                return Ok(true);
             }
         }
     }

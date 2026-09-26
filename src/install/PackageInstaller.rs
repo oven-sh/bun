@@ -641,20 +641,13 @@ impl<'a> PackageInstaller<'a> {
             if defer_this_bin {
                 deferred.push(dep_id);
             }
-            // globally linked packages shouls always belong to the root
-            // tree (0).
-            let global = if !manager.options.global || tree_id != 0 {
-                false
-            } else {
-                'global: {
-                    for request in manager.update_requests.iter() {
-                        if request.package_id == package_id {
-                            break 'global true;
-                        }
-                    }
-                    break 'global false;
-                }
-            };
+            // Globally linked packages always belong to the root tree (0).
+            let global = tree_id == 0
+                && manager.links_bins_globally(
+                    package_id,
+                    self.successfully_installed
+                        .is_set_allow_out_of_bound(package_id as usize, false),
+                );
 
             loop {
                 // `node_modules_path` (mut) and `target_node_modules_path`

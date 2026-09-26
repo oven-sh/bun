@@ -60,6 +60,16 @@ impl Format {
     }
 }
 
+/// How a step ended. Matches `Bun::WebStreams::CodecStepEnd` in `StreamsForward.h`.
+#[repr(u8)]
+pub(crate) enum StepEnd {
+    Done = 0,
+    /// The codec stopped at the output cap: step again, with no input, before the next chunk.
+    More = 1,
+    /// Trailing junk follows `out`: the caller delivers it, then fails the chunk with the junk error.
+    TrailingJunk = 2,
+}
+
 /// Growth granularity of a step's output buffer.
 const CHUNK: usize = 16 * 1024;
 
@@ -302,6 +312,8 @@ impl CompressionStreamCoder {
         }))
     }
 
+    /// First byte of a gzip member (RFC 1952 ID1): bytes after a member that start otherwise are trailing junk.
+    const GZIP_ID1: u8 = 0x1f;
     const ZSTD_MAGIC: [u8; 4] = 0xFD2F_B528u32.to_le_bytes();
     const ZSTD_MAGIC_SKIPPABLE: [u8; 3] = [0x2A, 0x4D, 0x18];
 
@@ -320,8 +332,12 @@ impl CompressionStreamCoder {
     /// collects at most `max(high_water_mark, chunk length)` bytes into `out` and
     /// returns `true` if the codec stopped at that cap, in which case the caller
     /// must step again (with no input) before feeding the next chunk.
-    fn step(&mut self, input: &[u8], finish: bool, out: &mut Vec<u8>) -> Result<bool, CodecError> {
-        out.clear();
+    fn advance(
+        &mut self,
+        input: &[u8],
+        finish: bool,
+        out: &mut Vec<u8>,
+    ) -> Result<bool, CodecError> {
         if let Some(mut pending) = self.pending.take() {
             debug_assert!(input.is_empty());
             return match self.run(
@@ -359,6 +375,25 @@ impl CompressionStreamCoder {
                     cap,
                 });
                 Ok(true)
+            }
+        }
+    }
+
+    /// [`advance`](Self::advance) for the callers: a failed step has no output, and trailing junk ends the step.
+    fn step(
+        &mut self,
+        input: &[u8],
+        finish: bool,
+        out: &mut Vec<u8>,
+    ) -> Result<StepEnd, CodecError> {
+        out.clear();
+        match self.advance(input, finish, out) {
+            Ok(false) => Ok(StepEnd::Done),
+            Ok(true) => Ok(StepEnd::More),
+            Err(CodecError::TrailingJunk) => Ok(StepEnd::TrailingJunk),
+            Err(e) => {
+                out.clear();
+                Err(e)
             }
         }
     }
@@ -425,7 +460,7 @@ impl CompressionStreamCoder {
                     // a member boundary". For gzip, a following chunk starts the
                     // next member; for deflate/deflate-raw it is trailing junk.
                     if self.ended && !input.is_empty() {
-                        if !gzip {
+                        if !gzip || input[0] != Self::GZIP_ID1 {
                             return Err(CodecError::TrailingJunk);
                         }
                         // SAFETY: `s` is an initialized inflate stream.
@@ -478,7 +513,7 @@ impl CompressionStreamCoder {
                             if remaining.is_empty() {
                                 return Ok(Progress::Done);
                             }
-                            if !gzip {
+                            if !gzip || remaining[0] != Self::GZIP_ID1 {
                                 return Err(CodecError::TrailingJunk);
                             }
                             // SAFETY: `s` is an initialized inflate stream.
@@ -658,7 +693,7 @@ impl CompressionStreamCoder {
             }
             Backend::ZstdDecode(p) => {
                 // After a frame completes, whatever follows must be another frame
-                // magic (see `zstd_head`); `step` has already re-attached a split one.
+                // magic (see `zstd_head`); `advance` has already re-attached a split one.
                 let mut input_buf = zstd::ZSTD_inBuffer {
                     src: input.as_ptr().cast(),
                     size: input.len(),
@@ -813,7 +848,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionS
 }
 
 /// One JS-thread [`step`](CompressionStreamCoder::step): returns its output as
-/// a fresh (possibly empty) `Uint8Array` and sets `more` if the coder must be
+/// a fresh (possibly empty) `Uint8Array` and sets `end`; at `More` the coder must be
 /// stepped again (with `input` null), or throws a `TypeError` and returns zero.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
@@ -823,7 +858,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transform(
     input: *const u8,
     input_len: usize,
     finish: bool,
-    more: &mut bool,
+    end: &mut StepEnd,
 ) -> JSValue {
     let slice = if input.is_null() {
         &[][..]
@@ -838,8 +873,8 @@ pub(crate) extern "C" fn CompressionStreamCoder__transform(
     // only driven from the JS thread, so the call-scoped `&mut *this` has no
     // alias.
     let result = match unsafe { (*this).step(slice, finish, &mut out) } {
-        Ok(has_more) => {
-            *more = has_more;
+        Ok(how) => {
+            *end = how;
             let chunk = if out.is_empty() {
                 JSUint8Array::create_empty(global)
             } else {
@@ -848,7 +883,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transform(
             bun_jsc::to_js_host_fn_result(global, chunk)
         }
         Err(e) => {
-            *more = false;
+            *end = StepEnd::Done;
             throw_codec_error(global, e);
             JSValue::ZERO
         }
@@ -880,6 +915,14 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
     }
 }
 
+/// The error of a step that ended with [`StepEnd::TrailingJunk`].
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn CompressionStreamCoder__trailingJunkError(
+    global: &JSGlobalObject,
+) -> JSValue {
+    codec_error_to_js(global, &CodecError::TrailingJunk)
+}
+
 fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
     let _ = global.throw_value(codec_error_to_js(global, &e));
 }
@@ -897,7 +940,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     finish: bool,
     sink_id: u8,
     sink_ptr: *mut core::ffi::c_void,
-    more: &mut bool,
+    end: &mut StepEnd,
 ) -> JSValue {
     let slice = if input.is_null() {
         &[][..]
@@ -909,8 +952,8 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     let mut out = rare.take_compression_scratch();
     // SAFETY: as in `CompressionStreamCoder__transform`.
     let result = match unsafe { (*this).step(slice, finish, &mut out) } {
-        Ok(has_more) => {
-            *more = has_more;
+        Ok(how) => {
+            *end = how;
             'write: {
                 let Some(sink_ptr) = NonNull::new(sink_ptr).filter(|_| !out.is_empty()) else {
                     break 'write JSValue::UNDEFINED;
@@ -930,7 +973,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
             }
         }
         Err(e) => {
-            *more = false;
+            *end = StepEnd::Done;
             throw_codec_error(global, e);
             JSValue::ZERO
         }
@@ -991,7 +1034,8 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
         // cell's finalizer only releases its own); see the field doc.
         match unsafe { (*this.coder.as_ptr()).step(this.input.slice(), this.finish, &mut this.out) }
         {
-            Ok(more) => this.more = more,
+            Ok(StepEnd::TrailingJunk) => this.error = Some(CodecError::TrailingJunk),
+            Ok(how) => this.more = matches!(how, StepEnd::More),
             Err(e) => this.error = Some(e),
         }
         Some(done)
@@ -1003,19 +1047,19 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
         cx: &bun_jsc::JsThread<'_>,
     ) -> bun_jsc::JsResult<()> {
         let global = cx.global();
-        let (out, out_len, err) = match &this.error {
-            None => (this.out.as_ptr(), this.out.len(), JSValue::ZERO),
-            Some(e) => (core::ptr::null(), 0, codec_error_to_js(global, e)),
+        let error = match &this.error {
+            None => JSValue::ZERO,
+            Some(e) => codec_error_to_js(global, e),
         };
         // SAFETY: FFI into `JSCompressionStreamShared.cpp`; see above.
         unsafe {
             Bun__CompressionStream__deliverAsync(
                 global,
                 js.stream.get(),
-                out,
-                out_len,
+                this.out.as_ptr(),
+                this.out.len(),
                 this.more,
-                err,
+                error,
             )
         };
         Ok(())

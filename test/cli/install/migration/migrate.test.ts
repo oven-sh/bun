@@ -1518,6 +1518,61 @@ describe("package-lock.json migration fixes", () => {
     },
   );
 
+  test.concurrent(
+    "a ranged peer npm satisfied with a lower version migrates to the tree a fresh resolve writes",
+    async () => {
+      // npm satisfied peer-deps-fixed's `no-deps@^1.0.0` with the 1.0.0 it hoisted. bun binds such a
+      // peer to the highest satisfying version in the lockfile (1.0.1) whenever it loads bun.lock, and
+      // peer-deps-fixed, a devDependency, hoists before the root's dependencies: a migrated tree
+      // built from npm's binding would key 1.0.0 at the root and be rebuilt with 1.0.1 there by the
+      // first install that loads it.
+      using registry = localRegistry();
+      const entry = (name: string, version: string, info: Record<string, unknown> = {}) => ({
+        version,
+        resolved: registry.tarball(name, version),
+        integrity: registry.integrity(name, version),
+        ...info,
+      });
+      const root = {
+        name: "ranged-peer",
+        dependencies: { "one-dep": "1.0.0", "one-fixed-dep": "1.0.0" },
+        devDependencies: { "peer-deps-fixed": "1.0.0" },
+      };
+      using dir = synthetic(
+        "npm-migrate-ranged-peer",
+        {
+          "package.json": JSON.stringify(root),
+          "package-lock.json": npmLock("ranged-peer", {
+            "": root,
+            "node_modules/no-deps": entry("no-deps", "1.0.0"),
+            "node_modules/one-dep": entry("one-dep", "1.0.0", { dependencies: { "no-deps": "1.0.1" } }),
+            "node_modules/one-dep/node_modules/no-deps": entry("no-deps", "1.0.1"),
+            "node_modules/one-fixed-dep": entry("one-fixed-dep", "1.0.0", { dependencies: { "no-deps": "1.0.0" } }),
+            "node_modules/peer-deps-fixed": entry("peer-deps-fixed", "1.0.0", {
+              dev: true,
+              peerDependencies: { "no-deps": "^1.0.0" },
+            }),
+          }),
+        },
+        registry.url,
+      );
+      const { lock } = await migrate(dir);
+      expect(lock.packages["no-deps"][0]).toBe("no-deps@1.0.1");
+      expect(lock.packages["one-fixed-dep/no-deps"][0]).toBe("no-deps@1.0.0");
+      await frozen(dir);
+
+      using freshDir = synthetic(
+        "npm-migrate-ranged-peer-fresh",
+        { "package.json": JSON.stringify(root) },
+        registry.url,
+      );
+      const fresh = await run(freshDir, "install", "--lockfile-only");
+      expect(fresh.exitCode).toBe(0);
+      const { lock: freshLock } = await readLock(freshDir);
+      expect(lock.packages).toStrictEqual(freshLock.packages);
+    },
+  );
+
   test.concurrent("workspace listed in the lockfile but deleted from disk is skipped", async () => {
     const src = join(ARBORIST, "workspaces-simple-virtual");
     const packageLock = JSON.parse(fs.readFileSync(join(src, "package-lock.json"), "utf8"));

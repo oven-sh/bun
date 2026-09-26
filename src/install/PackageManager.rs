@@ -1135,7 +1135,10 @@ fn configure_env_for_scripts_run(
                     let node: &[u8] = if cfg!(windows) { b"" } else { bun_path };
                     let _ = this.env_mut().load_node_js_config(paths_fs, node)?;
                 }
-                Err(err) => RunCommand::warn_node_shim_failed(err),
+                Err(err) if log_level != package_manager_options::LogLevel::Silent => {
+                    RunCommand::warn_node_shim_failed(err)
+                }
+                Err(_) => {}
             }
         }
     }

@@ -871,6 +871,7 @@ pub(crate) fn defines_from_transform_options(
         behavior = framework.behavior;
         if behavior == api::DotEnvBehavior::LoadAllWithoutInlining
             || behavior == api::DotEnvBehavior::disable
+            || behavior == api::DotEnvBehavior::DisableWithoutInlining
         {
             break 'load_env;
         }
@@ -884,7 +885,9 @@ pub(crate) fn defines_from_transform_options(
         )?;
     }
 
-    if behavior != api::DotEnvBehavior::LoadAllWithoutInlining {
+    if behavior != api::DotEnvBehavior::LoadAllWithoutInlining
+        && behavior != api::DotEnvBehavior::DisableWithoutInlining
+    {
         let quoted_node_env: Box<[u8]> = 'brk: {
             if let Some(node_env) = node_env {
                 if !node_env.is_empty() {

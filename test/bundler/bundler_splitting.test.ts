@@ -793,6 +793,29 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/a.js", stdout: "globals\nstore1\nstore2 1\na 1 2\nlazy 1 2" },
   });
+  itBundled("splitting/SharedCodeRunsBeforeLaterChunkOfOtherEntry", {
+    files: {
+      "/app.js": /* js */ `
+        import "./helper.js";
+        import "./registry.js";
+        import { plugin } from "./plugin.js";
+        import { declared } from "./declared.js";
+        console.log("app", plugin, declared());
+        import("./route.js");
+      `,
+      "/admin.js": `import "./plugin.js"; console.log("admin");`,
+      "/helper.js": `console.log("helper");`,
+      "/registry.js": `console.log("registry"); globalThis.REGISTRY = new Map();`,
+      "/plugin.js": `globalThis.REGISTRY.set("plugin", 1); console.log("plugin"); export const plugin = 1;`,
+      "/declared.js": `export function declared() { return "declared"; }`,
+      "/route.js": `import "./registry.js"; import { declared } from "./declared.js"; console.log("route", declared());`,
+    },
+    entryPoints: ["/app.js", "/admin.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/app.js", stdout: "helper\nregistry\nplugin\napp 1 declared\nroute declared" },
+  });
   itBundled("splitting/EntryFileAfterOneThatStaysAlsoStays", {
     files: {
       "/index.js": /* js */ `

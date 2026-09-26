@@ -837,7 +837,6 @@ fn reached_chunks_in_order(
 
     let mut reached: Vec<u32> = Vec::new();
     let mut reached_set = AutoBitSet::init_empty(chunks_len)?;
-    let mut last = AutoBitSet::init_empty(chunks_len)?;
     let mut visited = AutoBitSet::init_empty(c.graph.files.len())?;
     let mut stack: Vec<Frame> = Vec::new();
 
@@ -851,13 +850,11 @@ fn reached_chunks_in_order(
                     if other == u32::MAX || other == chunk_index {
                         continue;
                     }
-                    if c.runs_last
+                    let ranks_again = c
+                        .ranks_chunk_again
                         .as_ref()
-                        .is_some_and(|files| files.is_set(source_index as usize))
-                    {
-                        last.set(other as usize);
-                    }
-                    if !reached_set.is_set(other as usize) {
+                        .is_some_and(|files| files.is_set(source_index as usize));
+                    if ranks_again || !reached_set.is_set(other as usize) {
                         reached_set.set(other as usize);
                         reached.push(other);
                     }
@@ -901,6 +898,13 @@ fn reached_chunks_in_order(
             stack[mark..].reverse();
         }
     }
-    reached.sort_by_key(|&other| last.is_set(other as usize));
+    // `ranks_chunk_again`: the last mention counts.
+    reached.reverse();
+    reached.retain(|&other| {
+        let first = reached_set.is_set(other as usize);
+        reached_set.unset(other as usize);
+        first
+    });
+    reached.reverse();
     Ok(reached)
 }

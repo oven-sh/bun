@@ -236,7 +236,7 @@ struct Group {
     wants_inits: bool,
     pin: Pin,
     /// The parent of a pinned entry point's class.
-    runs_last: bool,
+    parent_of_pinned_entry: bool,
     /// See `entries_loaded_mid_evaluation`.
     loads_mid_evaluation: Option<AutoBitSet>,
     /// Every live part of every file is side-effect free.
@@ -285,7 +285,7 @@ impl Group {
             recheck: false,
             wants_inits: false,
             pin,
-            runs_last: false,
+            parent_of_pinned_entry: false,
             loads_mid_evaluation: None,
             pure: true,
             deps: Vec::new(),
@@ -1412,7 +1412,7 @@ pub(crate) fn merge_small_chunks(
             continue;
         };
         if class.count() == 1 && pin_entry_chunk(class.find_first_set().expect("one bit set")) {
-            groups.values_mut()[target_index].runs_last = true;
+            groups.values_mut()[target_index].parent_of_pinned_entry = true;
         }
         for &member in members {
             let group = &groups.values()[member];
@@ -1852,20 +1852,25 @@ fn rekey_files(
     group_of_file: &[usize],
     groups: &[Group],
 ) -> crate::Result<()> {
+    let mut ranks_chunk_again = AutoBitSet::init_empty(group_of_file.len())?;
+    for (source_index, &group_index) in group_of_file.iter().enumerate() {
+        if group_index != usize::MAX
+            && groups[resolve(groups, group_index)].parent_of_pinned_entry
+            && !this.loading_file_only_declares(source_index as u32)
+        {
+            ranks_chunk_again.set(source_index);
+        }
+    }
+    this.ranks_chunk_again = Some(ranks_chunk_again);
     let file_entry_bits = this.graph.files.items_entry_bits_mut();
-    let mut runs_last = AutoBitSet::init_empty(group_of_file.len())?;
     for (source_index, &group_index) in group_of_file.iter().enumerate() {
         if group_index == usize::MAX {
             continue;
         }
-        let group = &groups[resolve(groups, group_index)];
-        if group.runs_last {
-            runs_last.set(source_index);
-        }
-        if !file_entry_bits[source_index].eql(&group.bits) {
-            file_entry_bits[source_index] = group.bits.clone()?;
+        let bits = &groups[resolve(groups, group_index)].bits;
+        if !file_entry_bits[source_index].eql(bits) {
+            file_entry_bits[source_index] = bits.clone()?;
         }
     }
-    this.runs_last = Some(runs_last);
     Ok(())
 }

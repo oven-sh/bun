@@ -139,8 +139,8 @@ pub struct LinkerContext<'a> {
     /// `merge_small_chunks` proved to be no-ops where it moved them: a chunk
     /// their chunk imports makes the same calls first.
     pub(crate) inits_already_done: Option<AutoBitSet>,
-    /// Files of a chunk that took the fold in place of a pinned entry point's chunk. A chunk imports it after the others, as that code ran.
-    pub(crate) runs_last: Option<AutoBitSet>,
+    /// The files that run something in a chunk that took the fold in place of a pinned entry point's chunk. Its rank among imports is that of the last one, not the first.
+    pub(crate) ranks_chunk_again: Option<AutoBitSet>,
     /// The part `scan_imports_and_exports` adds to each entry point file (`u32::MAX` elsewhere).
     pub(crate) entry_point_part_indices: Vec<u32>,
 }
@@ -182,7 +182,7 @@ impl<'a> Default for LinkerContext<'a> {
             renamer_rows: None,
             preload_entries: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             inits_already_done: None,
-            runs_last: None,
+            ranks_chunk_again: None,
             entry_point_part_indices: Vec::new(),
         }
     }
@@ -570,7 +570,7 @@ impl<'a> LinkerContext<'a> {
         });
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
-        self.runs_last = None;
+        self.ranks_chunk_again = None;
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.

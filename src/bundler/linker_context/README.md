@@ -742,10 +742,10 @@ The renamed symbols are then used during final code generation to produce output
 - Reduces each chunk key (`File.entry_bits`) to its load-condition class by dropping such redundant dynamic entries
 - Rewrites the entry bits of files to those of the class's parent chunk (the chunk keyed by the reduced set, else the largest member) before `computeChunks()` groups files
 - Leaves an entry point's own chunk alone when the entry point has exports, with `--compile`, and for an entry point without `[hash]` in its name (its host can load it as `entry.js?v=1`, so no chunk may import it)
-- Keeps the order that a fold into such an entry point's chunk would give: the chunks of other classes, then the files of the class in evaluation order. The parent chunk of the class holds the first part of that list and the entry point's chunk the rest
+- Keeps the order that a fold into such an entry point's chunk would give: the chunks of other classes that the walk reaches before the last file of the class, then the files of the class in evaluation order. The parent chunk of the class holds the first part of that list and the entry point's chunk the rest
   - The entry point's own files that precede a file of the parent move into the parent (`files_that_leave_entry_chunk`). Files that only declare (`loading_file_only_declares`, syntax alone) do not count on either side
   - A file takes the own files that it imports along. The first file that leads back to the entry point's file ends the list: no chunk may import that chunk
-  - Every chunk imports the parent after its other imports (`runs_last`)
+  - The rank of the parent among a chunk's imports is that of the last of its files that runs something, not the first (`ranks_chunk_again`). A chunk that the walk reaches later comes after it
 - Keeps a chunk out of the fold when it can be in the middle of being evaluated while an entry of its class loads (it, or a file that statically imports its way to it, `require()`s a split ES module): the entry's chunk reads the other members then
 - With `--min-chunk-size`, additionally folds small chunks with no top-level side effects into a chunk loaded by a superset of their entries when every dependency is already loaded wherever the target is, no static import cycle between chunks results, and every CommonJS/ESM wrapper the moved code initializes at the top level is already initialized by a chunk the target imports
 

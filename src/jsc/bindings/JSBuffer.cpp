@@ -2373,11 +2373,22 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.h#L325-L330
+// Node's native writers reject a non-string value and never coerce it, so its
+// toString() does not run.
+static JSString* stringArgumentOrThrow(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    if (value.isString()) [[likely]]
+        return asString(value);
+    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "argument must be a string"_s);
+    return nullptr;
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L962-L990
 // Only utf8Write/latin1Write/asciiWrite go through this strict JS wrapper in node;
 // the other encodings use jsBufferPrototypeFunction_StringWriteWithEncoding below.
 template<BufferEncodingType encoding>
-static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, JSValue offsetValue, JSValue lengthValue)
+static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSValue stringValue, JSValue offsetValue, JSValue lengthValue)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -2438,6 +2449,11 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
         maxLength = std::min(byteLength - safeOffset, static_cast<size_t>(intLength));
     }
 
+    // The wrapper's bounds checks above run before node's native writer sees the value,
+    // so an out-of-bounds offset or length wins over a non-string value.
+    JSString* str = stringArgumentOrThrow(scope, lexicalGlobalObject, stringValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, safeOffset, maxLength, encoding));
 }
 
@@ -2449,10 +2465,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlo
 
     auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
 
-    auto arg0 = callFrame->argument(0);
-    JSString* text = arg0.toStringOrNull(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
+    JSValue stringValue = callFrame->argument(0);
     JSValue offsetValue = callFrame->argument(1);
     JSValue lengthValue = callFrame->argument(2);
 
@@ -2461,7 +2474,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlo
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, jsBufferPrototypeFunction_writeEncodingBody<encoding>(vm, lexicalGlobalObject, castedThis, text, offsetValue, lengthValue));
+    RELEASE_AND_RETURN(scope, jsBufferPrototypeFunction_writeEncodingBody<encoding>(vm, lexicalGlobalObject, castedThis, stringValue, offsetValue, lengthValue));
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L711-L741
@@ -2484,7 +2497,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_StringWriteWithEncoding(JSC
     const JSValue offsetValue = callFrame->argument(1);
     const JSValue lengthValue = callFrame->argument(2);
 
-    JSString* text = strValue.toStringOrNull(lexicalGlobalObject);
+    // The binding rejects the value before it reads offset or length.
+    JSString* text = stringArgumentOrThrow(scope, lexicalGlobalObject, strValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     size_t offset = 0;
@@ -2492,9 +2506,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_StringWriteWithEncoding(JSC
         return {};
     }
 
-    // toStringOrNull/toNumber only run user-overridable code for object arguments, and
-    // that code can detach or resize the view, so re-validate only when it could have run.
-    if ((strValue.isObject() || offsetValue.isObject()) && castedThis->isDetached()) [[unlikely]] {
+    // toNumber only runs user-overridable code for an object argument, and that code
+    // can detach or resize the view, so re-validate only when it could have run.
+    if (offsetValue.isObject() && castedThis->isDetached()) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
         return {};
     }

@@ -1767,10 +1767,12 @@ impl VirtualMachine {
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
             }
+            // The field, not `is_main_thread()`: a macro VM on the bundler thread and the
+            // debugger's VM have no worker either, and must not end the process.
             if fatal_exit
                 && !self.suppress_fatal_uncaught
                 && !self.unhandled_rejections_quiet
-                && self.is_main_thread()
+                && self.is_main_thread
                 && self.hot_reload == HotReload::None
                 && origin != UncaughtExceptionOrigin::EntryPointRejection
             {

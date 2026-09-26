@@ -1199,6 +1199,41 @@ export function testMacro(val: any) {
   );
 });
 
+// The macro runs in its own VM on the bundler thread. What it rejects is a
+// build error for the caller of Bun.build(), which goes on. In a script, not
+// under the test runner, that VM must not take the process down.
+test.concurrent("an async macro that rejects fails the build and leaves the process running", async () => {
+  using dir = tempDir("macro-rejects", {
+    "index.ts": `
+      import { rejects } from "./macro" with { type: "macro" };
+      console.log(rejects());
+    `,
+    "macro.ts": `
+      export async function rejects() {
+        throw new Error("macro-rejects");
+      }
+    `,
+    "build.ts": `
+      const result = await Bun.build({ entrypoints: ["./index.ts"], throw: false });
+      console.log("success=" + result.success + " logs=" + result.logs.length);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A debug build also prints "[macro] call rejects" to stdout.
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: expect.stringMatching(/(^|\n)success=false logs=1\n$/),
+    stderr: expect.stringContaining("macro-rejects"),
+    exitCode: 0,
+  });
+});
+
 // Since NODE_PATH has to be set, we need to run this test outside the bundler tests.
 test.concurrent("regression/NODE_PATHBuild api", async () => {
   const dir = tempDirWithFiles("node-path-build", {

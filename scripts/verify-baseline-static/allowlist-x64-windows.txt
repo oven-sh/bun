@@ -870,6 +870,16 @@ _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect  [AVX, AVX
 
 
 # ----------------------------------------------------------------------------
+# Rust libm `fmaf` (compiler-builtins), reached from naga's constant evaluator
+# (WebGPU, src/webgpu). Gate: libm::math::arch::x86::fma picks one of these or
+# the soft-float fallback once, from its own CPUID probe (`select_once!`).
+# (2 symbols)
+# ----------------------------------------------------------------------------
+libm::math::arch::x86::fma::fmaf_with_fma   [FMA]
+libm::math::arch::x86::fma::fmaf_with_fma4  [FMA4]
+
+
+# ----------------------------------------------------------------------------
 # Rust blake2b_simd AVX2 (via rust-argon2). Gate: is_x86_feature_detected!("avx2")
 # in blake2b_simd::Platform::detect() — falls back to SSE4.1 / portable.
 # (1 symbol)
@@ -917,7 +927,7 @@ __std_search_1                                                                  
 
 # ----------------------------------------------------------------------------
 # MSVC CRT libm + mem*/str* SIMD variants. Gate: __isa_available.
-# (44 symbols)
+# (46 symbols)
 # ----------------------------------------------------------------------------
 __remainder_piby2_fma3      [AVX, FMA]
 __remainder_piby2_fma3_bdl  [AVX, FMA]
@@ -941,8 +951,10 @@ cosh_fma                    [AVX, FMA]
 coshf_fma                   [AVX, FMA]
 exp                         [AVX, FMA]
 exp2_fma                    [AVX, FMA]
+exp2f_fma                   [AVX, FMA]
 expf                        [AVX, FMA]
 fma                         [FMA]
+fmaf                        [FMA]
 fmod                        [FMA]
 log                         [AVX, FMA]
 log10                       [AVX, FMA]

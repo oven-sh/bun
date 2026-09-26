@@ -709,6 +709,8 @@ pub fn exit(code: u32) -> ! {
 
     #[cfg(target_os = "macos")]
     {
+        // `exit()` runs exit handlers newest first, and `Bun__onExit` is registered at startup. A library loaded later (a GPU driver) would tear down before the callbacks that still use it, so they run here first, as in the Windows branch.
+        Bun__onExit();
         libc_exit(code as i32)
     }
     #[cfg(windows)]
@@ -726,6 +728,8 @@ pub fn exit(code: u32) -> ! {
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         if env::ENABLE_ASAN {
+            // See the macOS branch above.
+            Bun__onExit();
             libc_exit(code as i32);
         }
         quick_exit(code as c_int);

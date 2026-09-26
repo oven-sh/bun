@@ -2,6 +2,7 @@
 
 #include "ZigGlobalObject.h"
 #include "BunModuleRegistry.h"
+#include "BunWebGPU.h"
 #include "BuiltinModuleKeys.h"
 #include "IsolatedModuleCache.h"
 #include "MessagePort.h"
@@ -2528,11 +2529,12 @@ void GlobalObject::finishCreation(VM& vm)
              JSC::JSGlobalObject* globalObject = init.owner;
              unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
 
-             JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+             JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 5);
 
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
+             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "gpu"_s), Bun::functionNavigatorGetGPU, JSC::NoIntrinsic, accessorAttributes);
 
              obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                  jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);

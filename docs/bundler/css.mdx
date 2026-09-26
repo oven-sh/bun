@@ -493,46 +493,37 @@ The `:is()` pseudo-class function (formerly `:matches()`) takes a selector list 
 }
 
 /* Complex example with multiple groups */
-:is(header, main, footer) :is(h1, h2, .title) {
+:is(.card, .panel) :is(h2, .title) {
   font-family: "Heading Font", sans-serif;
 }
 ```
 
-For browsers that don't support `:is()`, Bun's CSS bundler provides fallbacks using vendor-prefixed alternatives:
+For browsers that don't support `:is()`, Bun's CSS bundler provides fallbacks using the vendor-prefixed `:-webkit-any()` and `:-moz-any()`:
 
 ```css
 /* Fallback using -webkit-any */
-.article :-webkit-any(h1, h2, h3) {
-  margin-top: 1.5em;
+:-webkit-any(.card, .panel) :-webkit-any(h2, .title) {
+  font-family: "Heading Font", sans-serif;
 }
 
 /* Fallback using -moz-any */
-.article :-moz-any(h1, h2, h3) {
-  margin-top: 1.5em;
+:-moz-any(.card, .panel) :-moz-any(h2, .title) {
+  font-family: "Heading Font", sans-serif;
 }
 
 /* Original preserved for modern browsers */
-.article :is(h1, h2, h3) {
-  margin-top: 1.5em;
-}
-
-/* Complex example with fallbacks */
-:-webkit-any(header, main, footer) :-webkit-any(h1, h2, .title) {
-  font-family: "Heading Font", sans-serif;
-}
-
-:-moz-any(header, main, footer) :-moz-any(h1, h2, .title) {
-  font-family: "Heading Font", sans-serif;
-}
-
-:is(header, main, footer) :is(h1, h2, .title) {
+:is(.card, .panel) :is(h2, .title) {
   font-family: "Heading Font", sans-serif;
 }
 ```
 
 <Warning>
-  The vendor-prefixed versions have limitations compared to the standardized `:is()` selector, particularly with complex
-  selectors. Bun only uses the prefixed versions when they work correctly.
+  The prefixed forms are more limited than `:is()`. They accept compound selectors only, and browsers give them the
+  specificity of a single class no matter what is inside, while `:is()` takes the specificity of its most specific
+  argument. Bun only emits the prefixed fallbacks when every `:is()` in the rule uses no combinators and has at least
+  one argument with a class, attribute, pseudo-class, or ID. A rule like `.article :is(h1, h2, h3)` stays `:is()` only:
+  a `:-webkit-any(h1, h2, h3)` copy would be more specific than the original in current browsers and could override
+  rules it should not.
 </Warning>
 
 ### :not() selector

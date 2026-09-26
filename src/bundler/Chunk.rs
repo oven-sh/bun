@@ -433,6 +433,53 @@ pub struct CodeResult {
     pub(crate) shifts: Vec<source_map::SourceMapShifts>,
 }
 
+/// Appends `//# sourceMappingURL=<prefix><rel_path>\n`, percent-encoded so that no byte of either part ends the comment.
+pub(crate) fn append_source_mapping_url_comment(out: &mut Vec<u8>, prefix: &[u8], rel_path: &[u8]) {
+    const START: &[u8] = b"//# sourceMappingURL=";
+    out.reserve(START.len() + prefix.len() + rel_path.len() + b"\n".len());
+    out.extend_from_slice(START);
+    // `prefix` is publicPath, a URL already: printable ASCII stays, so `?`, `#`, `[::1]` and `%XX` keep their meaning.
+    percent_encode(out, prefix, |byte| byte.is_ascii_graphic());
+    percent_encode(out, rel_path, is_url_path_byte);
+    out.push(b'\n');
+}
+
+/// Returns `code` followed by the comment, in an allocation of the exact size.
+pub(crate) fn with_source_mapping_url_comment(
+    code: &[u8],
+    prefix: &[u8],
+    rel_path: &[u8],
+) -> Box<[u8]> {
+    let mut comment: Vec<u8> = Vec::new();
+    append_source_mapping_url_comment(&mut comment, prefix, rel_path);
+
+    let mut buf: Vec<u8> = Vec::with_capacity(code.len() + comment.len());
+    buf.extend_from_slice(code);
+    buf.extend_from_slice(&comment);
+    buf.into_boxed_slice()
+}
+
+fn percent_encode(out: &mut Vec<u8>, bytes: &[u8], keep: impl Fn(u8) -> bool) {
+    for &byte in bytes {
+        if keep(byte) {
+            out.push(byte);
+        } else {
+            let [high, low] = bun_core::fmt::hex2_upper(byte);
+            out.extend_from_slice(&[b'%', high, low]);
+        }
+    }
+}
+
+/// The set Go's `URL.EscapedPath` (esbuild) keeps, minus `:`: a first path segment with a colon parses as a scheme.
+fn is_url_path_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+        | b'-' | b'.' | b'_' | b'~'
+        | b'$' | b'&' | b'+' | b',' | b'/' | b';' | b'=' | b'@'
+    )
+}
+
 /// What the paths `code()` writes over a chunk's references to other outputs
 /// are relative to. A public path makes them outdir-relative either way.
 #[derive(Clone, Copy, PartialEq, Eq)]

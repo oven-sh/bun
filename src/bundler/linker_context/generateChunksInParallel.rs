@@ -15,7 +15,7 @@ use crate::Chunk;
 use crate::Index;
 use crate::analyze_transpiled_module;
 use crate::cheap_prefix_normalizer;
-use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
+use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking, with_source_mapping_url_comment};
 use crate::options;
 use crate::options::Loader;
 
@@ -813,16 +813,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             )
                         };
 
-                        let source_map_start = b"//# sourceMappingURL=";
-                        let total_len =
-                            buffer.len() + source_map_start.len() + a.len() + b.len() + b"\n".len();
-                        let mut buf: Vec<u8> = Vec::with_capacity(total_len);
-                        buf.extend_from_slice(&buffer);
-                        buf.extend_from_slice(source_map_start);
-                        buf.extend_from_slice(a);
-                        buf.extend_from_slice(b);
-                        buf.push(b'\n');
-                        buffer = buf.into_boxed_slice();
+                        buffer = with_source_mapping_url_comment(&buffer, a, b);
                     }
 
                     standalone_sourcemaps[ci] = Some(output_source_map);
@@ -1031,20 +1022,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             [b"", path::basename(&source_map_final_rel_path)]
                         };
 
-                        let source_map_start = b"//# sourceMappingURL=";
-                        let total_len = code_result.buffer.len()
-                            + source_map_start.len()
-                            + a.len()
-                            + b.len()
-                            + b"\n".len();
-                        let mut buf: Vec<u8> = Vec::with_capacity(total_len);
-                        buf.extend_from_slice(&code_result.buffer);
-                        buf.extend_from_slice(source_map_start);
-                        buf.extend_from_slice(a);
-                        buf.extend_from_slice(b);
-                        buf.push(b'\n');
-
-                        code_result.buffer = buf.into_boxed_slice();
+                        code_result.buffer =
+                            with_source_mapping_url_comment(&code_result.buffer, a, b);
                     }
 
                     sourcemap_output_file =

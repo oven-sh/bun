@@ -1556,6 +1556,40 @@ impl PackageManifest {
         None
     }
 
+    /// Highest release, or highest prerelease if there are no releases.
+    /// Both lists are sorted ascending at serialization time.
+    fn find_highest_version(
+        &self,
+        min_age_ms: Option<f64>,
+        had_too_recent: &mut bool,
+    ) -> Option<FindResult<'_>> {
+        for list in [&self.pkg.releases, &self.pkg.prereleases] {
+            let keys = list.keys.get(&self.versions);
+            if keys.is_empty() {
+                continue;
+            }
+            let values = list.values.get(&self.package_versions);
+            let mut i = keys.len();
+            while i > 0 {
+                i -= 1;
+                let package = &values[i];
+                if let Some(min_age_ms) = min_age_ms {
+                    if Self::is_package_version_too_recent(package, min_age_ms) {
+                        *had_too_recent = true;
+                        continue;
+                    }
+                }
+                return Some(FindResult {
+                    version: keys[i],
+                    package,
+                });
+            }
+            // every release is age-gated; do not fall through to prereleases
+            return None;
+        }
+        None
+    }
+
     pub(crate) fn should_exclude_from_age_filter(&self, exclusions: Option<&[&[u8]]>) -> bool {
         if let Some(excl) = exclusions {
             let pkg_name = self.name();
@@ -1665,6 +1699,12 @@ pub enum FindVersionResult<'a> {
         result: FindResult<'a>,
         newest_filtered: Option<Semver::Version>,
     },
+    /// `dist-tags.latest` did not resolve to a known version; fell back to the
+    /// highest published version.
+    FoundLatestFallback {
+        result: FindResult<'a>,
+        had_too_recent: bool,
+    },
     Err(FindVersionError),
 }
 
@@ -1673,6 +1713,7 @@ impl<'a> FindVersionResult<'a> {
         match self {
             FindVersionResult::Found(result) => Some(result),
             FindVersionResult::FoundWithFilter { result, .. } => Some(result),
+            FindVersionResult::FoundLatestFallback { result, .. } => Some(result),
             FindVersionResult::Err(_) => None,
         }
     }
@@ -1682,6 +1723,7 @@ impl<'a> FindVersionResult<'a> {
             FindVersionResult::FoundWithFilter {
                 newest_filtered, ..
             } => newest_filtered.is_some(),
+            FindVersionResult::FoundLatestFallback { had_too_recent, .. } => *had_too_recent,
             FindVersionResult::Err(err) => *err == FindVersionError::AllVersionsTooRecent,
             // .err.too_recent is only for direct version checks which doesn't prove there was a later version that could have been chosen
             _ => false,
@@ -1696,14 +1738,31 @@ impl PackageManifest {
         minimum_release_age_ms: Option<f64>,
         exclusions: Option<&[&[u8]]>,
     ) -> FindVersionResult<'_> {
-        let Some(dist_result) = self.find_by_dist_tag(tag) else {
-            return FindVersionResult::Err(FindVersionError::NotFound);
-        };
         let min_age_gate_ms = match minimum_release_age_ms {
             Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
                 Some(min_age_ms)
             }
             _ => None,
+        };
+        let Some(dist_result) = self.find_by_dist_tag(tag) else {
+            // https://github.com/oven-sh/bun/issues/12041: match npm and let
+            // `latest` fall back to the highest published version when the
+            // manifest's `dist-tags.latest` is stale or missing.
+            if tag == b"latest" {
+                let mut had_too_recent = false;
+                if let Some(highest) =
+                    self.find_highest_version(min_age_gate_ms, &mut had_too_recent)
+                {
+                    return FindVersionResult::FoundLatestFallback {
+                        result: highest,
+                        had_too_recent,
+                    };
+                }
+                if had_too_recent {
+                    return FindVersionResult::Err(FindVersionError::AllVersionsTooRecent);
+                }
+            }
+            return FindVersionResult::Err(FindVersionError::NotFound);
         };
         let Some(min_age_ms) = min_age_gate_ms else {
             return FindVersionResult::Found(dist_result);

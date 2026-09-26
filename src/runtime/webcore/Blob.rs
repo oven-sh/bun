@@ -2095,68 +2095,27 @@ impl BlobExt for Blob {
     }
 
     fn resolve_size(&self) {
+        let (offset, size) = self.resolved_size();
+        self.offset.set(offset);
+        self.size.set(size);
+    }
+
+    /// The `(offset, size)` of this view against its store, without touching
+    /// `self`: `ByteBlobLoader::setup` resolves a `Blob` it does not own
+    /// mutably, and `Blob` is not `Clone`. Stats a file store on first use.
+    fn resolved_size(&self) -> (SizeType, SizeType) {
         let Some(store) = self.store.get() else {
-            self.size.set(0);
-            return;
+            return (self.offset.get(), 0);
         };
         // dispatch on the copied `DataTag` rather than
         // `match &store.data { File(file) => … }`. The latter goes through
         // `RefPtr<Store>::Deref → &Store → &Data` (no `UnsafeCell`), and that shared
         // borrow is live across the arm body where `resolve_file_stat`
         // materializes `&mut File` on the same memory via the raw
-        // `heap::alloc` pointer — Stacked Borrows UB, and under noalias the
+        // `heap::alloc` pointer: Stacked Borrows UB, and under noalias the
         // optimizer may legally cache the pre-call `seekable: None` and fall
-        // through to `self.size.get() = 0`. `Store::data_mut` centralises
+        // through to a size of 0. `Store::data_mut` centralises
         // the raw-ptr deref so each read here is a fresh, safe borrow.
-        match Store::data_mut(store).tag() {
-            store::DataTag::Bytes => {
-                let offset = self.offset.get();
-                let store_size = store.size();
-                if store_size != MAX_SIZE {
-                    self.offset.set(store_size.min(offset));
-                    let available = store_size - self.offset.get();
-                    self.size.set(window_size(self.size.get(), available));
-                }
-            }
-            store::DataTag::File => {
-                if Store::data_mut(store).as_file().seekable.is_none() {
-                    resolve_file_stat(store);
-                }
-                // Fresh borrow after possible mutation by `resolve_file_stat`.
-                let file = Store::data_mut(store).as_file();
-
-                if file.seekable.is_some() && file.max_size != MAX_SIZE {
-                    let store_size = file.max_size;
-                    let offset = self.offset.get();
-                    self.offset.set(store_size.min(offset));
-                    let available = store_size - self.offset.get();
-                    self.size.set(window_size(self.size.get(), available));
-                    return;
-                }
-
-                // For non-seekable files (pipes, FIFOs), the size is genuinely
-                // unknown — leave it as max_size so that stream readers don't
-                // treat it as an empty file.
-                if file.seekable == Some(false) {
-                    return;
-                }
-                self.size.set(0);
-            }
-            store::DataTag::S3 => self.size.set(0),
-        }
-    }
-
-    /// Non-mutating variant of [`resolve_size`]: returns the `(offset, size)` that
-    /// `resolve_size` would assign without touching `self`. For callers
-    /// (e.g. `ByteBlobLoader::setup`) that need the resolved size of a `Blob`
-    /// they don't own mutably — `Blob` is not `Clone`.
-    fn resolved_size(&self) -> (SizeType, SizeType) {
-        let Some(store) = self.store.get() else {
-            return (self.offset.get(), 0);
-        };
-        // see `resolve_size` — dispatch on the copied tag and re-read
-        // via `Store::data_mut` after `resolve_file_stat` so no
-        // `Deref`-produced `&Data`/`&File` is live across the mutating call.
         match Store::data_mut(store).tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
@@ -2180,6 +2139,8 @@ impl BlobExt for Blob {
                     let available = store_size - offset;
                     return (offset, window_size(self.size.get(), available));
                 }
+                // A pipe or FIFO has no size to resolve. Its view keeps
+                // `MAX_SIZE`, so a stream reader does not take it for empty.
                 if file.seekable == Some(false) {
                     return (self.offset.get(), self.size.get());
                 }

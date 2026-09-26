@@ -32,8 +32,12 @@ describe.concurrent("WebSocket close() argument validation", () => {
     expect(error!.message).toContain(messageContains);
   }
 
+  // Bind the address that the clients dial. On macOS, a port-0 bind to the
+  // default dual-stack [::] address can get a port that an IPv4 socket already
+  // listens on, and a dial to 127.0.0.1 then reaches that socket.
   function upgradeServer(onClose?: (event: { code: number; reason: string }) => void) {
     return Bun.serve({
+      hostname: "127.0.0.1",
       port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) return;

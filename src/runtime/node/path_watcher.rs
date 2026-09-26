@@ -1670,8 +1670,14 @@ impl Kqueue {
                         &sys::Error::from_code(err.get_errno(), Tag::kevent),
                     );
                     // macOS: the next file watch starts a fresh kqueue and reader.
+                    // On EBADF the number is no longer ours to close.
                     #[cfg(target_os = "macos")]
-                    manager.platform_fd.set(Fd::INVALID);
+                    {
+                        if err.get_errno() != E::EBADF {
+                            kq.close();
+                        }
+                        manager.platform_fd.set(Fd::INVALID);
+                    }
                     manager.mutex.unlock();
                     return;
                 }

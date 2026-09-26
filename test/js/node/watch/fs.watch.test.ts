@@ -666,6 +666,7 @@ describe("fs.watch", () => {
     const stale = fs.watch(target, eventType => {
       if (eventType === "rename") gone.resolve();
     });
+    stale.once("error", gone.reject);
     const changed = Promise.withResolvers<[string, string | null]>();
     let fresh: fs.FSWatcher | undefined;
     try {
@@ -676,6 +677,7 @@ describe("fs.watch", () => {
         // Windows may first deliver the creation of the new file as "rename".
         if (eventType === "change") changed.resolve([eventType, filename]);
       });
+      fresh.once("error", changed.reject);
       fs.writeFileSync(target, "z");
       expect(await changed.promise).toEqual(["change", "f.txt"]);
     } finally {

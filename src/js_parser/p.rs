@@ -315,8 +315,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
-    /// This file prints such a `var` as an assignment to the function's
-    /// binding: `function f() {} var f = 1` becomes `function f() {} f = 1`.
+    /// This file prints such a `var` as an assignment: `var f = 1` becomes `f = 1`.
     pub(crate) lowers_var_merged_with_function: bool,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,
@@ -3420,12 +3419,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.hoist_symbols(self.module_scope_ref());
 
-        // A file with `import` or `export` is strict, and there the pair is an early
-        // error. The dev server prints each file in a function, which accepts the pair.
+        let pair_is_an_early_error_in_the_source = self.has_es_module_syntax;
+        let output_is_a_function_body = self.options.features.hot_module_reloading;
         self.lowers_var_merged_with_function = self.options.bundle
             && self.has_top_level_function_merged_with_var
-            && !self.has_es_module_syntax
-            && !self.options.features.hot_module_reloading;
+            && !pair_is_an_early_error_in_the_source
+            && !output_is_a_function_body;
         if self.lowers_var_merged_with_function {
             self.mark_functions_overwritten_after_var();
         }
@@ -8162,11 +8161,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr::init_identifier(r#ref, loc)
     }
 
-    /// True if `root` is the binding of a top-level function declaration. That
-    /// declaration declares the binding, so the caller prints no `var` for it.
-    /// Tree shaking looks up a use by the ref as written, which is not always
-    /// the root. A part that uses the binding gets a use of the root, which
-    /// keeps the function. A `var` in dead code leaves no use.
+    /// Tree shaking looks up a use by its own ref, so a live use of a linked symbol needs a use of `root` to keep the function.
     #[cold]
     #[inline(never)]
     fn keeps_function_merged_with_var(&mut self, root: Ref) -> bool {
@@ -8228,11 +8223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `function f() {} var f; function f() {}`: the last declaration is the value
-    /// of `f`, and module code rejects two function declarations of one name.
-    /// `declare_symbol` does not see this pair of functions, because the `var` is
-    /// between them. This runs before the visit pass, while each link still
-    /// points to the next declaration.
+    /// Of `function f() {} var f; function f() {}` only the last function prints: `declare_symbol` sees no pair of functions.
     #[cold]
     #[inline(never)]
     fn mark_functions_overwritten_after_var(&mut self) {

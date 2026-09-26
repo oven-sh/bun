@@ -103,8 +103,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
-        // Tree shaking removes an unused top-level "var", so it also removes the
-        // assignment that stands for one.
+        // An unused top-level "var" is removable, and so is the assignment that stands for it.
         let does_not_affect_tree_shaking =
             p.current_scope == p.module_scope && p.decls_can_be_removed_if_unused(decls);
         RelocateVars {

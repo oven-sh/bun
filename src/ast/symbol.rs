@@ -109,9 +109,7 @@ pub struct Symbol {
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct SymbolFlags: u8 {
-        /// A module-scope `var` and a function declaration share this
-        /// binding. Set on both symbols of that merge and on each symbol
-        /// that replaces them later, so the root of the link chain has it.
+        /// A module-scope `var` and a function declaration share this binding. The root of the link chain has it.
         const FUNCTION_MERGED_WITH_VAR = 1 << 0;
 
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;

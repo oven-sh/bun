@@ -304,8 +304,8 @@ async function withFaultProxy<T>(
 }
 
 // The 'error', 'end' and 'close' events of `socket`, in order, up to the first
-// 'end' or 'close'. `peer` goes away once it has seen the fault, which is what
-// ends `socket` on Node.
+// 'end' or 'close'. Node keeps `socket` open after the error, so `peer` ends
+// then: its FIN is what ends `socket` there.
 function faultEvents(socket: TLSSocket, peer: TLSSocket) {
   const events: string[] = [];
   let library: string | undefined;
@@ -313,6 +313,7 @@ function faultEvents(socket: TLSSocket, peer: TLSSocket) {
   socket.on("error", (err: NodeJS.ErrnoException & { library?: string }) => {
     events.push(`error ${err.code}`);
     library = err.library;
+    peer.end();
   });
   socket.on("end", () => {
     events.push("end");
@@ -323,7 +324,7 @@ function faultEvents(socket: TLSSocket, peer: TLSSocket) {
     resolve();
   });
   socket.resume();
-  peer.on("error", () => peer.destroy());
+  peer.on("error", () => {});
   peer.resume();
   return settled.then(() => ({ events: [...events], library }));
 }

@@ -66,14 +66,19 @@ impl Parse for Arguments {
             let list;
             syn::parenthesized!(list in input);
             let kinds = Punctuated::<Ident, Token![,]>::parse_terminated(&list)?;
-            let kinds = kinds.iter().map(Kind::parse).collect::<syn::Result<Vec<_>>>()?;
+            let kinds = kinds
+                .iter()
+                .map(Kind::parse)
+                .collect::<syn::Result<Vec<_>>>()?;
             if !kinds.contains(&kind) {
                 return Err(syn::Error::new(
                     keyword.span(),
                     "the list of `dispatch` names this definition too",
                 ));
             }
-            if kinds.contains(&Kind::Posix) && (kinds.contains(&Kind::Linux) && kinds.contains(&Kind::Macos)) {
+            if kinds.contains(&Kind::Posix)
+                && (kinds.contains(&Kind::Linux) && kinds.contains(&Kind::Macos))
+            {
                 return Err(syn::Error::new(
                     keyword.span(),
                     "`posix` is never chosen next to both `linux` and `macos`",
@@ -200,7 +205,11 @@ fn dispatcher(
             let call = call(Kind::Linux);
             tests.push(quote!(if ::bun_core::host::is_linux() { return #call; }));
         }
-        quote!(::bun_core::host::no_definition_for_this_host(concat!(module_path!(), "::", stringify!(#name))))
+        quote!(::bun_core::host::no_definition_for_this_host(concat!(
+            module_path!(),
+            "::",
+            stringify!(#name)
+        )))
     };
 
     let attributes = variant

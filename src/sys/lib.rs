@@ -267,7 +267,10 @@ pub mod dir_iterator {
     #[cfg(bun_portable)]
     pub enum Name {
         Posix(Name__posix),
-        Windows { name: Name__windows, utf8_z: Vec<u8> },
+        Windows {
+            name: Name__windows,
+            utf8_z: Vec<u8>,
+        },
     }
     #[cfg(bun_portable)]
     impl Name {
@@ -304,9 +307,7 @@ pub mod dir_iterator {
         pub fn as_zstr(&self) -> &bun_core::ZStr {
             match self {
                 Name::Posix(name) => name.as_zstr(),
-                Name::Windows { utf8_z, .. } => {
-                    bun_core::ZStr::from_buf(utf8_z, utf8_z.len() - 1)
-                }
+                Name::Windows { utf8_z, .. } => bun_core::ZStr::from_buf(utf8_z, utf8_z.len() - 1),
             }
         }
     }
@@ -1366,6 +1367,19 @@ pub(crate) mod flavor {
         pub(crate) use bun_libuv_sys::uv_statfs_t as StatFS;
 
         pub(crate) const MAX_COUNT: usize = u32::MAX as usize;
+
+        /// `O` in a build for Windows has `SYNC`, `DSYNC` and `NOCTTY` as 0, and its other flags
+        /// with the values of Linux on x86-64. The image has the values of its C library: the same
+        /// ones on x86-64, so a caller's flags are the flags of the code for Windows once the three
+        /// are taken out.
+        #[inline]
+        pub(crate) fn open_flags(flags: i32) -> i32 {
+            #[cfg(not(target_arch = "x86_64"))]
+            compile_error!(
+                "the values of libc's O_* are not the ones of bun's O for Windows on this processor: translate them here"
+            );
+            flags & !(libc::O_SYNC | libc::O_DSYNC | libc::O_NOCTTY)
+        }
 
         #[inline]
         pub(crate) fn platform_iovec_create(buf: &mut [u8]) -> PlatformIOVec {
@@ -3706,7 +3720,6 @@ pub mod sys_uv {
     bun_core::host_dispatch! {
         windows = super::sys_uv_windows, posix = super;
         pub fn mkdir(file_path: &ZStr, flags: Mode) -> Maybe<()>;
-        pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Maybe<Fd>;
         pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Maybe<usize>;
         pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Maybe<usize>;
         pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize>;
@@ -3715,6 +3728,17 @@ pub mod sys_uv {
         pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize>;
     }
 
+    pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Maybe<Fd> {
+        if bun_core::host::is_windows() {
+            super::sys_uv_windows::open(
+                file_path,
+                super::flavor::windows::open_flags(c_flags),
+                perm_,
+            )
+        } else {
+            super::open(file_path, c_flags, perm_)
+        }
+    }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
         if bun_core::host::is_windows() {
             super::sys_uv_windows::fstat(fd).map(Stat::from)
@@ -4506,9 +4530,7 @@ mod windows_impl {
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         // SetFilePointerEx.
         let mut new: i64 = 0;
-        let ok = unsafe {
-            w::SetFilePointerEx(fd.native(), offset, &mut new, whence as u32)
-        };
+        let ok = unsafe { w::SetFilePointerEx(fd.native(), offset, &mut new, whence as u32) };
         if ok == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
         }
@@ -4561,9 +4583,8 @@ mod windows_impl {
         // negative length and Winsock fails with WSAEFAULT.
         let len = buf.len().min(i32::MAX as usize) as i32;
         let socket: w::HANDLE = fd.native();
-        let rc = unsafe {
-            w::ws2_32::recv(socket as usize, buf.as_mut_ptr().cast::<_>(), len, flags)
-        };
+        let rc =
+            unsafe { w::ws2_32::recv(socket as usize, buf.as_mut_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::recv).with_fd(fd));
         }
@@ -4614,7 +4635,6 @@ pub use windows_impl::*;
 #[cfg(bun_portable)]
 bun_core::host_dispatch! {
     windows = windows_impl, posix = posix_impl;
-    pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd>;
     pub fn close(fd: Fd) -> Maybe<()>;
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize>;
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize>;
@@ -4627,7 +4647,6 @@ bun_core::host_dispatch! {
     pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize>;
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()>;
     pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()>;
-    pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd>;
     pub fn dup(fd: Fd) -> Maybe<Fd>;
     pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd>;
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize>;
@@ -4660,6 +4679,22 @@ bun_core::host_dispatch! {
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize>;
     pub fn mmap(_addr: *mut u8, _len: usize, _prot: i32, _flags: i32, _fd: Fd, _off: i64) -> Maybe<*mut u8>;
     pub fn munmap(_ptr: *mut u8, _len: usize) -> Maybe<()>;
+}
+#[cfg(bun_portable)]
+pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+    if bun_core::host::is_windows() {
+        windows_impl::open(path, flavor::windows::open_flags(flags), mode)
+    } else {
+        posix_impl::open(path, flags, mode)
+    }
+}
+#[cfg(bun_portable)]
+pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+    if bun_core::host::is_windows() {
+        windows_impl::openat(dir, path, flavor::windows::open_flags(flags), mode)
+    } else {
+        posix_impl::openat(dir, path, flags, mode)
+    }
 }
 #[cfg(bun_portable)]
 pub fn stat(path: &ZStr) -> Maybe<Stat> {
@@ -4884,10 +4919,16 @@ pub struct PlatformIoVecConst {
 }
 // SAFETY: `{ ULONG, *const u8 }` — `(0, null)` is a valid empty `uv_buf_t` (S021).
 #[cfg(any(windows, bun_portable))]
-#[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, PlatformIoVecConst, PlatformIoVec))]
+#[cfg_attr(
+    bun_portable,
+    bun_portable_macros::flavor(windows, PlatformIoVecConst, PlatformIoVec)
+)]
 unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
 #[cfg(any(windows, bun_portable))]
-#[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, PlatformIoVecConst, PlatformIoVec))]
+#[cfg_attr(
+    bun_portable,
+    bun_portable_macros::flavor(windows, PlatformIoVecConst, PlatformIoVec)
+)]
 const _: () = assert!(
     core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<bun_libuv_sys::uv_buf_t>()
         && core::mem::align_of::<PlatformIoVecConst>()
@@ -8055,7 +8096,10 @@ pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     copy_file::copy_file(in_, out)
 }
 #[cfg(any(windows, bun_portable))]
-#[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, dispatch(posix, windows)))]
+#[cfg_attr(
+    bun_portable,
+    bun_portable_macros::host_os(windows, dispatch(posix, windows))
+)]
 pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     // Windows `bun.copyFile` takes paths, not fds; fd-based callers (e.g.
     // `move_file_z_with_handle`'s EXDEV fallback) get the read/write loop.
@@ -9280,7 +9324,7 @@ pub(crate) fn copy_file_z_slow_with_handle(
     {
         // Preallocation is best-effort.
         #[allow(clippy::unnecessary_cast)]
-                let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size as i64);
+        let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size as i64);
     }
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
     let r = copy_file(in_handle, dst);
@@ -9289,13 +9333,13 @@ pub(crate) fn copy_file_z_slow_with_handle(
     #[cfg(unix)]
     if r.is_ok() {
         #[allow(clippy::unnecessary_cast)]
-                let _ = safe_libc::fchmod(dst.native(), st.st_mode as libc::mode_t);
+        let _ = safe_libc::fchmod(dst.native(), st.st_mode as libc::mode_t);
         #[allow(clippy::unnecessary_cast)]
-                let _ = safe_libc::fchown(
-                    dst.native(),
-                    st.st_uid as libc::uid_t,
-                    st.st_gid as libc::gid_t,
-                );
+        let _ = safe_libc::fchown(
+            dst.native(),
+            st.st_uid as libc::uid_t,
+            st.st_gid as libc::gid_t,
+        );
     }
     let _ = close(dst);
     r

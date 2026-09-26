@@ -2,6 +2,7 @@
 //
 // The size and the alignment of every structure of the bindings, the offset and the size of each field
 // and the value of each constant, as this program has them.
+#![rustfmt::skip]
 #![allow(clippy::all, deprecated, non_snake_case)]
 
 use core::mem::{align_of, offset_of, size_of};

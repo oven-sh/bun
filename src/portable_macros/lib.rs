@@ -11,7 +11,9 @@
 //! - [`flavor`]: one of several definitions of a type, each for one OS, under a name of its own.
 
 use proc_macro::TokenStream;
-use proc_macro2::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream as Tokens, TokenTree};
+use proc_macro2::{
+    Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream as Tokens, TokenTree,
+};
 use quote::{ToTokens, quote};
 
 mod host_os;
@@ -86,10 +88,12 @@ pub fn host_os(args: TokenStream, item: TokenStream) -> TokenStream {
 /// the type that holds one of them, written by hand, has the name itself.
 #[proc_macro_attribute]
 pub fn flavor(args: TokenStream, item: TokenStream) -> TokenStream {
-    let mut names = Tokens::from(args).into_iter().filter_map(|token| match token {
-        TokenTree::Ident(ident) => Some(ident.to_string()),
-        _ => None,
-    });
+    let mut names = Tokens::from(args)
+        .into_iter()
+        .filter_map(|token| match token {
+            TokenTree::Ident(ident) => Some(ident.to_string()),
+            _ => None,
+        });
     let Some(os) = names.next() else {
         return syn::Error::new(Span::call_site(), "expected `flavor(<os>, <name>, ..)`")
             .into_compile_error()
@@ -276,9 +280,11 @@ fn attribute_name(attribute: &Group) -> Option<String> {
 fn string_value(stream: Tokens, key: &str) -> Option<String> {
     let tokens: Vec<TokenTree> = stream.into_iter().collect();
     tokens.windows(3).find_map(|window| match window {
-        [TokenTree::Ident(name), TokenTree::Punct(equals), TokenTree::Literal(value)]
-            if name == key && equals.as_char() == '=' =>
-        {
+        [
+            TokenTree::Ident(name),
+            TokenTree::Punct(equals),
+            TokenTree::Literal(value),
+        ] if name == key && equals.as_char() == '=' => {
             syn::parse2::<syn::LitStr>(value.to_token_stream())
                 .ok()
                 .map(|literal| literal.value())

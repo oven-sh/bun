@@ -35,7 +35,15 @@ unsafe extern "C" {
 /// What the host calls. It has the calling convention of the host's functions, as a callback of libuv
 /// or of Windows has in the image.
 #[bun_portable_macros::win_abi]
-unsafe extern "C" fn on_callback(context: *mut c_void, a: i32, b: i64, c: u32, d: i16, e: i64, f: f64) -> i64 {
+unsafe extern "C" fn on_callback(
+    context: *mut c_void,
+    a: i32,
+    b: i64,
+    c: u32,
+    d: i16,
+    e: i64,
+    f: f64,
+) -> i64 {
     // SAFETY: `context` is the `i64` that `run` passes to `test_callback` and keeps alive over the call.
     let seen = unsafe { &mut *context.cast::<i64>() };
     *seen += 1;
@@ -54,23 +62,50 @@ pub fn run() -> bool {
 
     // SAFETY: the function reads its arguments and nothing else.
     let sum = unsafe { test_sum6(-1, 20_000_000_000, 3_000_000_000, 7 as *mut c_void, -4, 5) };
-    let expected = -1 + 20_000_000_000 * 10 + 3_000_000_000 * 100 + 7 * 1000 + (-4) * 10000 + 5 * 100000;
+    let expected =
+        -1 + 20_000_000_000 * 10 + 3_000_000_000 * 100 + 7 * 1000 + (-4) * 10000 + 5 * 100000;
     check(&mut report, "six integers", sum == expected);
 
     let mixed = test_mixed(1.5, -2, 0.25, 3.0, 4);
-    check(&mut report, "floating point and integers", mixed == 1.5 * 2.0 - 2.0 * 3.0 + 0.25 * 5.0 + 3.0 * 7.0 + 4.0 * 11.0);
+    check(
+        &mut report,
+        "floating point and integers",
+        mixed == 1.5 * 2.0 - 2.0 * 3.0 + 0.25 * 5.0 + 3.0 * 7.0 + 4.0 * 11.0,
+    );
 
-    let pair = test_pair_by_value(Pair { first: 10, second: 20 }, 3);
-    check(&mut report, "a structure of 16 bytes, by value", pair == Pair { first: 23, second: 7 });
+    let pair = test_pair_by_value(
+        Pair {
+            first: 10,
+            second: 20,
+        },
+        3,
+    );
+    check(
+        &mut report,
+        "a structure of 16 bytes, by value",
+        pair == Pair {
+            first: 23,
+            second: 7,
+        },
+    );
 
     let mut calls = 0i64;
     // SAFETY: `on_callback` has the signature the host calls, and `calls` outlives the call.
     let result = unsafe { test_callback(on_callback, (&raw mut calls).cast()) };
     let expected = -1 + 20_000_000_000 + 3_000_000_000 - 4 + 5 + 13 + 1;
-    check(&mut report, "a function of the image, called by the host", result == expected && calls == 1);
+    check(
+        &mut report,
+        "a function of the image, called by the host",
+        result == expected && calls == 1,
+    );
 
     report.begin("imports of this test");
-    report.number("in_the_table", host_imports::all().filter(|import| import.library().to_bytes() == b"bun_host_test").count() as i64);
+    report.number(
+        "in_the_table",
+        host_imports::all()
+            .filter(|import| import.library().to_bytes() == b"bun_host_test")
+            .count() as i64,
+    );
     report.end_ok();
 
     report.print() && passed

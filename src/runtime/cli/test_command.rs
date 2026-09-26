@@ -2034,9 +2034,9 @@ impl TestCommand {
             }
             false
         };
-        // A path argument that selects no test file. The other arguments still
+        // Path arguments that select no test file. The other arguments still
         // run. The exit code is 1 unless --pass-with-no-tests is set.
-        let mut had_unmatched_path_arg = false;
+        let mut unmatched_path_args: Vec<&'static [u8]> = Vec::new();
         if has_relative_path {
             // One of the files is a filepath. Instead of treating the
             // arguments as filters, treat them as filepaths
@@ -2047,16 +2047,10 @@ impl TestCommand {
                     Err(scanner::ScanError::DoesNotExist) => 0,
                 };
                 if matched == 0 {
-                    had_unmatched_path_arg = true;
-                    if Output::is_ai_agent() {
-                        pretty_errorln!(
-                            "Test filter <b>{}<r> had no matches in --cwd={}",
-                            bun_fmt::quote(arg),
-                            bun_fmt::quote(FileSystem::instance().top_level_dir)
-                        );
-                    } else {
-                        pretty_errorln!("Test filter <b>{}<r> had no matches", bun_fmt::quote(arg));
-                    }
+                    // SAFETY: bytes live in `ctx.positionals` (process-lifetime)
+                    // and this frame never returns.
+                    unmatched_path_args.push(unsafe { bun_ptr::detach_lifetime::<u8>(&**arg) });
+                    Self::print_unmatched_path_arg(arg);
                 }
             }
         } else {
@@ -2156,6 +2150,7 @@ impl TestCommand {
             }
         }
 
+        let had_unmatched_path_arg = !unmatched_path_args.is_empty();
         let mut all_test_files = scanner.take_found_test_files().expect("oom");
         // Snapshot the count before `test_files` mutably borrows `all_test_files`
         // so the watcher-enable check below can read it without reborrowing.
@@ -2624,6 +2619,15 @@ impl TestCommand {
                 }
 
                 reporter.print_summary();
+
+                // Repeat the scan-time lines next to the summary, where the
+                // exit code is decided.
+                if had_unmatched_path_arg {
+                    pretty_error!("\n");
+                    for arg in &unmatched_path_args {
+                        Self::print_unmatched_path_arg(arg);
+                    }
+                }
             } else {
                 pretty_error!(
                     "<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {} file{} (skipping {} test{}) ",
@@ -2703,6 +2707,18 @@ impl TestCommand {
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
         }
         Ok(())
+    }
+
+    fn print_unmatched_path_arg(arg: &[u8]) {
+        if Output::is_ai_agent() {
+            pretty_errorln!(
+                "Test filter <b>{}<r> had no matches in --cwd={}",
+                bun_fmt::quote(arg),
+                bun_fmt::quote(FileSystem::instance().top_level_dir)
+            );
+        } else {
+            pretty_errorln!("Test filter <b>{}<r> had no matches", bun_fmt::quote(arg));
+        }
     }
 
     fn run_event_loop_for_watch(vm: &mut VirtualMachine) {

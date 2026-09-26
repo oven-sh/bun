@@ -3707,9 +3707,10 @@ declare module "bun" {
     executablePath?: string;
     outfile?: string;
     /**
-     * Files or directories to embed into the executable under their original
-     * relative paths. At runtime they are reachable via `node:fs` and
-     * `Bun.file()` relative to `import.meta.dir`.
+     * Files or directories to embed into the executable. Each one is mounted
+     * under its basename, next to the entry point: `"./build/client"` lands at
+     * `path.join(import.meta.dir, "client")`. At runtime the files are
+     * reachable via `node:fs` and `Bun.file()`.
      *
      * Equivalent CLI flag: `--asset` (repeatable)
      */

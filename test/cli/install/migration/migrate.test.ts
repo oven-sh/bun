@@ -1255,7 +1255,7 @@ describe("package-lock.json migration fixes", () => {
     await frozen(dir);
 
     using fresh = fixture("carbonium");
-    const result = await run(fresh, "install", "--frozen-lockfile", "--lockfile-only");
+    const result = await run(fresh, "install", "--lockfile-only");
     expect(result.stderr).not.toContain("Ignoring lockfile");
     expect(result.exitCode).toBe(0);
     expect((await readLock(fresh)).lock.packages).toStrictEqual(lock.packages);

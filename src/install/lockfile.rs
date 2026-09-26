@@ -345,6 +345,17 @@ pub enum Migrated {
     Pnpm,
 }
 
+impl Migrated {
+    pub(crate) fn source_lockfile_name(self) -> Option<&'static str> {
+        match self {
+            Migrated::None => None,
+            Migrated::Npm => Some("package-lock.json"),
+            Migrated::Yarn => Some("yarn.lock"),
+            Migrated::Pnpm => Some("pnpm-lock.yaml"),
+        }
+    }
+}
+
 pub struct LoadResultErr {
     pub step: LoadStep,
     pub value: BunError,
@@ -393,6 +404,13 @@ impl<'a> LoadResult<'a> {
         match self {
             LoadResult::Ok(ok) => ok.migrated == Migrated::Pnpm,
             _ => false,
+        }
+    }
+
+    pub(crate) fn migrated(&self) -> Migrated {
+        match self {
+            LoadResult::Ok(ok) => ok.migrated,
+            _ => Migrated::None,
         }
     }
 

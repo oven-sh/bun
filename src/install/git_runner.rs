@@ -24,6 +24,7 @@ use bun_sys::windows::libuv as uv;
 use bun_threading::thread_pool as ThreadPool;
 
 use crate::install::{ExtractData, ExtractDataJson};
+use crate::package_manager_real::ProcessOnlyEnv;
 use crate::package_manager_task::{self as Task, Tag};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::{Error, PackageManager};
@@ -593,7 +594,7 @@ impl GitSubprocess {
     /// Spawns `git <args>` with stdout and stderr captured. On `Ok` the child
     /// may already have exited and freed `this`.
     fn spawn(this: ThisPtr<Self>, args: &[&[u8]]) -> Result<(), Error> {
-        let env = GitEnv::get(this.manager().env_mut());
+        let env = GitEnv::get(&this.manager().process_env);
         let Some(git) = &env.git else {
             this.log_error(format_args!(
                 "\"git\" is not installed (needed for \"{}\")",
@@ -886,6 +887,7 @@ impl GitSubprocess {
             }
         }
         Output::flush();
+        self.manager().note_dotenv_only_vars(ProcessOnlyEnv::Git);
     }
 
     /// Fails the task with `err`. Frees `this`.

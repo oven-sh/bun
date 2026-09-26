@@ -57,7 +57,7 @@ pub fn install_with_manager(
 
     // Start resolving DNS for the default registry immediately.
     // Unless you're behind a proxy.
-    if !manager.env().has_http_proxy()
+    if !manager.process_env.has_http_proxy()
         && manager.options.offline != crate::package_manager_real::options::OfflineMode::Offline
     {
         // And don't try to resolve DNS if it's an IP address.

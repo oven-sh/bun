@@ -10,7 +10,7 @@
 
 /// Types. An integer type of C is written as the integer it is on macOS.
 pub mod types {
-    use core::ffi::c_void;
+    use core::ffi::{c_char, c_void};
 
     pub type attrgroup_t = u32;
     #[repr(C)]
@@ -37,7 +37,7 @@ pub mod types {
         pub d_reclen: u16,
         pub d_namlen: u16,
         pub d_type: u8,
-        pub d_name: [i8; 1024],
+        pub d_name: [c_char; 1024],
     }
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -143,7 +143,7 @@ pub mod types {
     pub struct sockaddr {
         pub sa_len: u8,
         pub sa_family: u8,
-        pub sa_data: [i8; 14],
+        pub sa_data: [c_char; 14],
     }
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -155,7 +155,7 @@ pub mod types {
         pub sdl_nlen: u8,
         pub sdl_alen: u8,
         pub sdl_slen: u8,
-        pub sdl_data: [i8; 12],
+        pub sdl_data: [c_char; 12],
     }
     pub type socklen_t = u32;
     pub type speed_t = u64;
@@ -201,9 +201,9 @@ pub mod types {
         pub f_type: u32,
         pub f_flags: u32,
         pub f_fssubtype: u32,
-        pub f_fstypename: [i8; 16],
-        pub f_mntonname: [i8; 1024],
-        pub f_mntfromname: [i8; 1024],
+        pub f_fstypename: [c_char; 16],
+        pub f_mntonname: [c_char; 1024],
+        pub f_mntfromname: [c_char; 1024],
         pub f_flags_ext: u32,
         pub f_reserved: [u32; 7],
     }
@@ -638,31 +638,31 @@ pub mod constants {
 /// The functions, bound through the import table.
 pub mod functions {
     use super::types::*;
-    use core::ffi::c_void;
+    use core::ffi::{c_char, c_void};
 
     #[bun_portable_macros::imports(library = "libSystem", host = "macos")]
     unsafe extern "C" {
         #[cfg_attr(bun_portable, no_errno)]
         pub fn __error() -> *mut i32;
         #[cfg_attr(bun_portable, no_errno)]
-        pub fn _NSGetEnviron() -> *mut *mut *mut i8;
-        pub fn clonefile(src: *const i8, dst: *const i8, flags: u32) -> i32;
-        pub fn clonefileat(src_dirfd: i32, src: *const i8, dst_dirfd: i32, dst: *const i8, flags: u32) -> i32;
+        pub fn _NSGetEnviron() -> *mut *mut *mut c_char;
+        pub fn clonefile(src: *const c_char, dst: *const c_char, flags: u32) -> i32;
+        pub fn clonefileat(src_dirfd: i32, src: *const c_char, dst_dirfd: i32, dst: *const c_char, flags: u32) -> i32;
         #[cfg(target_arch = "x86_64")]
         #[link_name = "close$NOCANCEL"]
         pub fn close(fd: i32) -> i32;
         #[cfg(target_arch = "aarch64")]
         pub fn close(fd: i32) -> i32;
-        pub fn copyfile(from: *const i8, to: *const i8, state: *mut c_void, flags: u32) -> i32;
+        pub fn copyfile(from: *const c_char, to: *const c_char, state: *mut c_void, flags: u32) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
         pub fn dlclose(handle: *mut c_void) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
-        pub fn dlopen(filename: *const i8, flag: i32) -> *mut c_void;
+        pub fn dlopen(filename: *const c_char, flag: i32) -> *mut c_void;
         #[cfg_attr(bun_portable, no_errno)]
-        pub fn dlsym(handle: *mut c_void, symbol: *const i8) -> *mut c_void;
-        pub fn faccessat(dirfd: i32, pathname: *const i8, mode: i32, flags: i32) -> i32;
+        pub fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+        pub fn faccessat(dirfd: i32, pathname: *const c_char, mode: i32, flags: i32) -> i32;
         pub fn fchmod(fd: i32, mode: u16) -> i32;
-        pub fn fclonefileat(srcfd: i32, dst_dirfd: i32, dst: *const i8, flags: u32) -> i32;
+        pub fn fclonefileat(srcfd: i32, dst_dirfd: i32, dst: *const c_char, flags: u32) -> i32;
         #[link_name = "bun_host_darwin_fcntl3"]
         pub fn fcntl(fd: i32, cmd: i32, argument: isize) -> i32;
         pub fn fcopyfile(from: i32, to: i32, state: *mut c_void, flags: u32) -> i32;
@@ -675,9 +675,9 @@ pub mod functions {
         pub fn fstat(fildes: i32, buf: *mut stat) -> i32;
         #[cfg(target_arch = "x86_64")]
         #[link_name = "fstatat$INODE64"]
-        pub fn fstatat(dirfd: i32, pathname: *const i8, buf: *mut stat, flags: i32) -> i32;
+        pub fn fstatat(dirfd: i32, pathname: *const c_char, buf: *mut stat, flags: i32) -> i32;
         #[cfg(target_arch = "aarch64")]
-        pub fn fstatat(dirfd: i32, pathname: *const i8, buf: *mut stat, flags: i32) -> i32;
+        pub fn fstatat(dirfd: i32, pathname: *const c_char, buf: *mut stat, flags: i32) -> i32;
         #[cfg(target_arch = "x86_64")]
         #[link_name = "fstatfs$INODE64"]
         pub fn fstatfs(fd: i32, buf: *mut statfs) -> i32;
@@ -685,7 +685,7 @@ pub mod functions {
         pub fn fstatfs(fd: i32, buf: *mut statfs) -> i32;
         pub fn fsync(fd: i32) -> i32;
         pub fn ftruncate(fd: i32, length: i64) -> i32;
-        pub fn getattrlist(path: *const i8, attrList: *mut c_void, attrBuf: *mut c_void, attrBufSize: usize, options: u32) -> i32;
+        pub fn getattrlist(path: *const c_char, attrList: *mut c_void, attrBuf: *mut c_void, attrBufSize: usize, options: u32) -> i32;
         pub fn getentropy(buf: *mut c_void, buflen: usize) -> i32;
         pub fn getloadavg(loadavg: *mut f64, nelem: i32) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
@@ -699,9 +699,9 @@ pub mod functions {
         pub fn kqueue() -> i32;
         #[cfg(target_arch = "x86_64")]
         #[link_name = "lstat$INODE64"]
-        pub fn lstat(path: *const i8, buf: *mut stat) -> i32;
+        pub fn lstat(path: *const c_char, buf: *mut stat) -> i32;
         #[cfg(target_arch = "aarch64")]
-        pub fn lstat(path: *const i8, buf: *mut stat) -> i32;
+        pub fn lstat(path: *const c_char, buf: *mut stat) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
         pub fn mach_absolute_time() -> u64;
         #[cfg_attr(bun_portable, no_errno)]
@@ -712,11 +712,11 @@ pub mod functions {
         pub fn memset_pattern4(b: *mut c_void, pattern4: *const c_void, len: usize);
         #[cfg_attr(bun_portable, no_errno)]
         pub fn memset_pattern8(b: *mut c_void, pattern8: *const c_void, len: usize);
-        pub fn mkdirat(dirfd: i32, pathname: *const i8, mode: u16) -> i32;
+        pub fn mkdirat(dirfd: i32, pathname: *const c_char, mode: u16) -> i32;
         #[link_name = "bun_host_darwin_open3"]
-        pub fn open(path: *const i8, oflag: i32, mode: i32) -> i32;
+        pub fn open(path: *const c_char, oflag: i32, mode: i32) -> i32;
         #[link_name = "bun_host_darwin_openat4"]
-        pub fn openat(dirfd: i32, path: *const i8, oflag: i32, mode: i32) -> i32;
+        pub fn openat(dirfd: i32, path: *const c_char, oflag: i32, mode: i32) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
         pub fn os_unfair_lock_lock(lock: *mut os_unfair_lock_s);
         #[cfg_attr(bun_portable, no_errno)]
@@ -724,24 +724,24 @@ pub mod functions {
         #[cfg_attr(bun_portable, no_errno)]
         pub fn os_unfair_lock_unlock(lock: *mut os_unfair_lock_s);
         #[cfg_attr(bun_portable, no_errno)]
-        pub fn posix_spawn_file_actions_addopen(actions: *mut *mut c_void, fd: i32, path: *const i8, oflag: i32, mode: u16) -> i32;
+        pub fn posix_spawn_file_actions_addopen(actions: *mut *mut c_void, fd: i32, path: *const c_char, oflag: i32, mode: u16) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
         pub fn posix_spawn_file_actions_destroy(actions: *mut *mut c_void) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
         pub fn posix_spawn_file_actions_init(actions: *mut *mut c_void) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
-        pub fn posix_spawnp(pid: *mut i32, file: *const i8, file_actions: *const *mut c_void, attrp: *const *mut c_void, argv: *const *mut i8, envp: *const *mut i8) -> i32;
+        pub fn posix_spawnp(pid: *mut i32, file: *const c_char, file_actions: *const *mut c_void, attrp: *const *mut c_void, argv: *const *mut c_char, envp: *const *mut c_char) -> i32;
         pub fn pread(fd: i32, buf: *mut c_void, count: usize, offset: i64) -> isize;
         pub fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
-        pub fn pthread_setname_np(name: *const i8) -> i32;
+        pub fn pthread_setname_np(name: *const c_char) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
         pub fn pthread_threadid_np(thread: usize, thread_id: *mut u64) -> i32;
         pub fn pwrite(fd: i32, buf: *const c_void, count: usize, offset: i64) -> isize;
         pub fn read(fd: i32, buf: *mut c_void, count: usize) -> isize;
         #[link_name = "realpath$DARWIN_EXTSN"]
-        pub fn realpath(pathname: *const i8, resolved: *mut i8) -> *mut i8;
-        pub fn renameatx_np(fromfd: i32, from: *const i8, tofd: i32, to: *const i8, flags: u32) -> i32;
+        pub fn realpath(pathname: *const c_char, resolved: *mut c_char) -> *mut c_char;
+        pub fn renameatx_np(fromfd: i32, from: *const c_char, tofd: i32, to: *const c_char, flags: u32) -> i32;
         pub fn sendfile(fd: i32, s: i32, offset: i64, len: *mut i64, hdtr: *mut sf_hdtr, flags: i32) -> i32;
         pub fn setsockopt(socket: i32, level: i32, name: i32, value: *const c_void, option_len: u32) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
@@ -750,21 +750,21 @@ pub mod functions {
         pub fn sigwait(set: *const u32, sig: *mut i32) -> i32;
         #[cfg(target_arch = "x86_64")]
         #[link_name = "stat$INODE64"]
-        pub fn stat(path: *const i8, buf: *mut stat) -> i32;
+        pub fn stat(path: *const c_char, buf: *mut stat) -> i32;
         #[cfg(target_arch = "aarch64")]
-        pub fn stat(path: *const i8, buf: *mut stat) -> i32;
+        pub fn stat(path: *const c_char, buf: *mut stat) -> i32;
         #[cfg(target_arch = "x86_64")]
         #[link_name = "statfs$INODE64"]
-        pub fn statfs(path: *const i8, buf: *mut statfs) -> i32;
+        pub fn statfs(path: *const c_char, buf: *mut statfs) -> i32;
         #[cfg(target_arch = "aarch64")]
-        pub fn statfs(path: *const i8, buf: *mut statfs) -> i32;
+        pub fn statfs(path: *const c_char, buf: *mut statfs) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
-        pub fn strlen(cs: *const i8) -> usize;
+        pub fn strlen(cs: *const c_char) -> usize;
         pub fn sysctl(name: *mut i32, namelen: u32, oldp: *mut c_void, oldlenp: *mut usize, newp: *mut c_void, newlen: usize) -> i32;
-        pub fn sysctlbyname(name: *const i8, oldp: *mut c_void, oldlenp: *mut usize, newp: *mut c_void, newlen: usize) -> i32;
-        pub fn sysctlnametomib(name: *const i8, mibp: *mut i32, sizep: *mut usize) -> i32;
-        pub fn truncate(path: *const i8, length: i64) -> i32;
-        pub fn unlinkat(dirfd: i32, pathname: *const i8, flags: i32) -> i32;
+        pub fn sysctlbyname(name: *const c_char, oldp: *mut c_void, oldlenp: *mut usize, newp: *mut c_void, newlen: usize) -> i32;
+        pub fn sysctlnametomib(name: *const c_char, mibp: *mut i32, sizep: *mut usize) -> i32;
+        pub fn truncate(path: *const c_char, length: i64) -> i32;
+        pub fn unlinkat(dirfd: i32, pathname: *const c_char, flags: i32) -> i32;
         #[cfg_attr(bun_portable, no_errno)]
         pub fn vm_deallocate(target_task: u32, address: usize, size: usize) -> i32;
         pub fn write(fd: i32, buf: *const c_void, count: usize) -> isize;
@@ -778,7 +778,7 @@ pub(crate) mod functions_for_bun {
     #[allow(unused_imports)]
     use super::types::*;
     #[allow(unused_imports)]
-    use core::ffi::c_void;
+    use core::ffi::{c_char, c_void};
 
     pub use super::functions::_NSGetEnviron;
     pub use super::functions::clonefile;
@@ -825,14 +825,14 @@ pub(crate) mod functions_for_bun {
     }
     /// The result is an error number: the one of the image.
     #[inline]
-    pub unsafe fn posix_spawnp(pid: *mut i32, file: *const i8, file_actions: *const *mut c_void, attrp: *const *mut c_void, argv: *const *mut i8, envp: *const *mut i8) -> i32 {
+    pub unsafe fn posix_spawnp(pid: *mut i32, file: *const c_char, file_actions: *const *mut c_void, attrp: *const *mut c_void, argv: *const *mut c_char, envp: *const *mut c_char) -> i32 {
         crate::errno::to_image(unsafe { super::functions::posix_spawnp(pid, file, file_actions, attrp, argv, envp) })
     }
     pub use super::functions::pread;
     pub use super::functions::proc_pidpath;
     /// The result is an error number: the one of the image.
     #[inline]
-    pub unsafe fn pthread_setname_np(name: *const i8) -> i32 {
+    pub unsafe fn pthread_setname_np(name: *const c_char) -> i32 {
         crate::errno::to_image(unsafe { super::functions::pthread_setname_np(name) })
     }
     pub use super::functions::pthread_threadid_np;

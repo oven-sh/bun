@@ -311,6 +311,7 @@ pub fn types(report: &mut Report) {
         type T = bun_windows_sys::RUNTIME_FUNCTION;
         let _ = write!(out, ",\n\"RUNTIME_FUNCTION\":{{\"size\":{},\"align\":{},\"fields\":{{", size_of::<T>(), align_of::<T>());
         let _ = write!(out, "\"BeginAddress\":{{\"offset\":{},\"size\":{}}}", offset_of!(T, BeginAddress), size_of_field(|value: &T| &value.BeginAddress));
+        #[cfg(target_arch = "x86_64")]
         let _ = write!(out, ",\"EndAddress\":{{\"offset\":{},\"size\":{}}}", offset_of!(T, EndAddress), size_of_field(|value: &T| &value.EndAddress));
         let _ = write!(out, ",\"UnwindData\":{{\"offset\":{},\"size\":{}}}", offset_of!(T, UnwindData), size_of_field(|value: &T| &value.UnwindData));
         out.extend_from_slice(b"}}");

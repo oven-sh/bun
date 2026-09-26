@@ -153,8 +153,11 @@ for (const name of [...wanted].sort()) {
 
 // ── Rust ──
 
+// `char` is signed on macOS. It stays `c_char` here, which is unsigned in the image for arm64: what the
+// image hands over is a pointer to it, or an array of it, and the code of the image has its own `c_char`
+// in those. An argument that is a `char` itself is written `i8`.
 const primitive: Record<string, string> = {
-  c_void: "c_void", c_char: "i8", c_schar: "i8", c_uchar: "u8", c_short: "i16", c_ushort: "u16", c_int: "i32", c_uint: "u32",
+  c_void: "c_void", c_char: "c_char", c_schar: "i8", c_uchar: "u8", c_short: "i16", c_ushort: "u16", c_int: "i32", c_uint: "u32",
   c_long: "i64", c_ulong: "u64", c_longlong: "i64", c_ulonglong: "u64", c_float: "f32", c_double: "f64",
 };
 /** The type in Rust. A name of the crate that is a structure stays a name; everything else is written out. */
@@ -203,7 +206,8 @@ const definition = (facts: Facts, item: Item): string => {
 };
 const declaration = (facts: Facts, item: Item): string => {
   const shim = shims[item.name];
-  const inputs = shim ? shim.arguments.map(a => a.replace(/c_char/g, "i8").replace(/c_int/g, "i32").replace(/c_ulong/g, "u64")) : (item.inputs ?? []).map((input, index) => `${/^(_|type|ref|box|loop|move|in|fn)?$/.test(input.name) ? `argument_${index}` : input.name}: ${rustOf(facts, input.type)}`);
+  const byValue = (type: string) => (type === "c_char" ? "i8" : type);
+  const inputs = shim ? shim.arguments.map(a => a.replace(/c_int/g, "i32").replace(/c_ulong/g, "u64")) : (item.inputs ?? []).map((input, index) => `${/^(_|type|ref|box|loop|move|in|fn)?$/.test(input.name) ? `argument_${index}` : input.name}: ${byValue(rustOf(facts, input.type))}`);
   const symbol = shim ? shim.symbol : item.symbol;
   const lines: string[] = [];
   if (symbol) lines.push(`        #[link_name = "${symbol}"]`);
@@ -298,7 +302,7 @@ ${[...sources].sort().map(file => `//   ${file}`).join("\n")}
 const rustLines: string[] = [header];
 rustLines.push(`/// Types. An integer type of C is written as the integer it is on macOS.
 pub mod types {
-    use core::ffi::c_void;
+    use core::ffi::{c_char, c_void};
 `);
 for (const entry of types) {
   if (shared.has(entry.name)) rustLines.push(`    pub use ::libc::${entry.name};`);
@@ -315,7 +319,7 @@ rustLines.push(`}
 /// The functions, bound through the import table.
 pub mod functions {
     use super::types::*;
-    use core::ffi::c_void;
+    use core::ffi::{c_char, c_void};
 
     #[bun_portable_macros::imports(library = "libSystem", host = "macos")]
     unsafe extern "C" {`);
@@ -333,7 +337,7 @@ pub(crate) mod functions_for_bun {
     #[allow(unused_imports)]
     use super::types::*;
     #[allow(unused_imports)]
-    use core::ffi::c_void;
+    use core::ffi::{c_char, c_void};
 `);
 for (const entry of functions) {
   if (unbound.includes(entry.name)) continue;

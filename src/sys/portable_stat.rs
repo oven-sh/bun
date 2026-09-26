@@ -43,7 +43,8 @@ impl From<libc::stat> for Stat {
         Stat {
             st_dev: stat.st_dev,
             st_mode: u64::from(stat.st_mode),
-            st_nlink: stat.st_nlink,
+            // 64 bits on x86-64, 32 on arm64.
+            st_nlink: u64::from(stat.st_nlink),
             st_uid: u64::from(stat.st_uid),
             st_gid: u64::from(stat.st_gid),
             st_rdev: stat.st_rdev,

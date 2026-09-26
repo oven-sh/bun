@@ -1,8 +1,8 @@
-{"step":"host","os":"linux","path_flavour":"posix","image":"portable","ok":true}
+{"step":"host","os":"darwin","path_flavour":"posix","image":"portable","ok":true}
 {"step":"start","tree_exists":false,"ok":true}
 {"step":"mkdir","ok":true}
-{"step":"mkdir again","ok":false,"error":"EEXIST","errno":17,"syscall":"mkdir"}
-{"step":"mkdir, parent missing","path":"no/such","ok":false,"error":"ENOENT","errno":2,"syscall":"mkdir"}
+{"step":"mkdir again","ok":false,"error":"EEXIST","errno":17}
+{"step":"mkdir, parent missing","path":"no/such","ok":false,"error":"ENOENT","errno":2}
 {"step":"open directory","ok":true}
 {"step":"mkdir_recursive_at","path":"a/b/c","ok":true}
 {"step":"mkdir_recursive_at again","path":"a/b/c","ok":true}
@@ -12,21 +12,21 @@
 {"step":"write","path":"a/hello.txt","ok":true}
 {"step":"fstat","kind":"file","size":13,"ok":true}
 {"step":"close","path":"a/hello.txt","ok":true}
-{"step":"open, create exclusive, exists","ok":false,"error":"EEXIST","errno":17,"syscall":"open"}
+{"step":"open, create exclusive, exists","ok":false,"error":"EEXIST","errno":17}
 {"step":"open, append","ok":true}
 {"step":"write, appended","path":"a/hello.txt","ok":true}
 {"step":"openat, read","path":"a/hello.txt","content":"hello, world\nappended\n","ok":true}
 {"step":"pread","content":"world","ok":true}
 {"step":"pread, past the end","count":0,"ok":true}
 {"step":"fstat, of openat","kind":"file","size":22,"ok":true}
-{"step":"open, missing","ok":false,"error":"ENOENT","errno":2,"syscall":"open"}
+{"step":"open, missing","ok":false,"error":"ENOENT","errno":2}
 {"step":"stat","path":"a/hello.txt","kind":"file","size":22,"ok":true}
 {"step":"stat, directory","path":"a/b","kind":"directory","ok":true}
-{"step":"stat, missing","path":"a/missing.txt","ok":false,"error":"ENOENT","errno":2,"syscall":"stat"}
+{"step":"stat, missing","path":"a/missing.txt","ok":false,"error":"ENOENT","errno":2}
 {"step":"lstat","path":"a/hello.txt","kind":"file","size":22,"ok":true}
 {"step":"exists","a/hello.txt":true,"a/missing.txt":false,"ok":true}
 {"step":"rename","path":"a/hello.txt -> a/b/renamed.txt","ok":true}
-{"step":"rename, missing","path":"a/hello.txt -> a/b/renamed.txt","ok":false,"error":"ENOENT","errno":2,"syscall":"rename"}
+{"step":"rename, missing","path":"a/hello.txt -> a/b/renamed.txt","ok":false,"error":"ENOENT","errno":2}
 {"step":"renameat","path":"a/b/renamed.txt -> a/renamed.txt","ok":true}
 {"step":"copy_file","path":"a/renamed.txt -> a/copy.txt","ok":true}
 {"step":"read the copy","content":"hello, world\nappended\n","ok":true}
@@ -36,24 +36,34 @@
 {"step":"readlink","target":"renamed.txt","ok":true}
 {"step":"lstat, link","kind":"symlink","ok":true}
 {"step":"stat, through the link","kind":"file","size":22,"ok":true}
-{"step":"readlink, not a link","ok":false,"error":"EINVAL","errno":22,"syscall":"readlink"}
+{"step":"readlink, not a link","ok":false,"error":"EINVAL","errno":22}
 {"step":"list","path":"a","entries":[{"name":"b","kind":"directory"},{"name":"copy.txt","kind":"file"},{"name":"grüße ✓ 🍞.txt","kind":"file"},{"name":"link","kind":"symlink"},{"name":"renamed.txt","kind":"file"},{"name":"side","kind":"directory"}],"ok":true}
-{"step":"renameat2, no replace, destination exists","path":"a/renamed.txt -> a/copy.txt","ok":false,"error":"EEXIST","errno":17,"syscall":"rename"}
+{"step":"renameat2, no replace, destination exists","path":"a/renamed.txt -> a/copy.txt","ok":false,"error":"EEXIST","errno":17}
 {"step":"renameat2, no replace","path":"a/copy.txt -> a/moved.txt","ok":true}
 {"step":"renameat, back","path":"a/moved.txt -> a/copy.txt","ok":true}
 {"step":"lchmod","path":"a/copy.txt","mode":416,"ok":true}
 {"step":"realpath, of a link","path":"a/link","ends_with slice-tree/a/renamed.txt":true,"ok":true}
-{"step":"stat, times","path":"a/renamed.txt","has a time of birth":true,"born before it was last written":false,"ok":true}
+{"step":"stat, times","path":"a/renamed.txt","has a time of birth":true,"born before it was last written":true,"ok":true}
 {"step":"exists_at","a/renamed.txt":true,"a/missing.txt":false,"from the working directory":true,"ok":true}
 {"step":"lstatat, link","path":"a/link","kind":"symlink","ok":true}
 {"step":"fstatat, through the link","path":"a/link","kind":"file","size":22,"ok":true}
-{"step":"fstatat, missing","path":"a/missing.txt","ok":false,"error":"ENOENT","errno":2,"syscall":"fstatat"}
+{"step":"fstatat, missing","path":"a/missing.txt","ok":false,"error":"ENOENT","errno":2}
 {"step":"flags of a descriptor","path":"a/copy.txt","append":true,"write only":true,"non blocking":false,"ok":true}
 {"step":"dup, and write through it","ok":true}
 {"step":"read what was written through the second descriptor","content":"hello!","ok":true}
-{"step":"rmdir, not empty","path":"a","ok":false,"error":"ENOTEMPTY","errno":39,"syscall":"unlink"}
-{"step":"unlink, directory","path":"a/side","ok":false,"error":"EISDIR","errno":21,"syscall":"unlink"}
-{"step":"unlink, missing","path":"a/missing.txt","ok":false,"error":"ENOENT","errno":2,"syscall":"unlink"}
+{"step":"clonefile","path":"a/clone.txt","content":"hello, world\nappended\n","ok":true}
+{"step":"clonefileat","path":"a/clone-at.txt","content":"hello, world\nappended\n","ok":true}
+{"step":"clonefileat, from the working directory","path":"a/clone-cwd.txt","content":"hello, world\nappended\n","ok":true}
+{"step":"clonefile, destination exists","path":"a/clone.txt","refused":true,"ok":true}
+{"step":"clonefile, destination exists, the copy is as it was","content":"hello, world\nappended\n","ok":true}
+{"step":"fcopyfile","path":"a/renamed.txt -> a/fcopy.txt","content":"hello, world\nappended\n","ok":true}
+{"step":"path of a descriptor","path":"a/renamed.txt","ends_with slice-tree/a/renamed.txt":true,"absolute":true,"ok":true}
+{"step":"path of a descriptor, bun_core","result is positive":1,"ends_with slice-tree/a/renamed.txt":true,"ok":true}
+{"step":"path of a descriptor, of a directory","ends_with slice-tree":true,"ok":true}
+{"step":"path of a descriptor that is closed","ok":false,"error":"EBADF","errno":9}
+{"step":"rmdir, not empty","path":"a","ok":false,"error":"ENOTEMPTY","errno":66}
+{"step":"unlink, directory","path":"a/side","ok":false,"error":"EPERM","errno":1}
+{"step":"unlink, missing","path":"a/missing.txt","ok":false,"error":"ENOENT","errno":2}
 {"step":"unlink, link","path":"a/link","ok":true}
 {"step":"unlink","path":"a/copy.txt","ok":true}
 {"step":"unlinkat","path":"a/renamed.txt","ok":true}

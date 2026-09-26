@@ -1382,13 +1382,27 @@ pub(crate) mod flavor {
         /// with the values of Linux on x86-64. The image has the values of its C library: the same
         /// ones on x86-64, so a caller's flags are the flags of the code for Windows once the three
         /// are taken out.
+        #[cfg(target_arch = "x86_64")]
         #[inline]
         pub(crate) fn open_flags(flags: i32) -> i32 {
-            #[cfg(not(target_arch = "x86_64"))]
-            compile_error!(
-                "the values of libc's O_* are not the ones of bun's O for Windows on this processor: translate them here"
-            );
             flags & !(libc::O_SYNC | libc::O_DSYNC | libc::O_NOCTTY)
+        }
+        /// arm64: Linux has `O_DIRECTORY` and `O_NOFOLLOW` where x86-64 has `O_DIRECT` and
+        /// `O_LARGEFILE`, and the other way round. The code for Windows has neither of the last two.
+        #[cfg(not(target_arch = "x86_64"))]
+        #[inline]
+        pub(crate) fn open_flags(flags: i32) -> i32 {
+            const DIRECTORY: i32 = 0o200000;
+            const NOFOLLOW: i32 = 0o400000;
+            let moved = libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_DIRECT | libc::O_LARGEFILE;
+            let mut out = flags & !(libc::O_SYNC | libc::O_DSYNC | libc::O_NOCTTY | moved);
+            if flags & libc::O_DIRECTORY != 0 {
+                out |= DIRECTORY;
+            }
+            if flags & libc::O_NOFOLLOW != 0 {
+                out |= NOFOLLOW;
+            }
+            out
         }
 
         #[inline]
@@ -3427,18 +3441,18 @@ mod posix_impl {
             bun_portable_macros::imports(library = "libSystem", host = "macos")
         )]
         unsafe extern "C" {
-            fn clonefile(src: *const i8, dst: *const i8, flags: u32) -> i32;
+            fn clonefile(src: *const c_char, dst: *const c_char, flags: u32) -> i32;
             #[cfg(not(bun_portable))]
             fn clonefileat(
                 src_dir: i32,
-                src: *const i8,
+                src: *const c_char,
                 dst_dir: i32,
-                dst: *const i8,
+                dst: *const c_char,
                 flags: u32,
             ) -> i32;
             fn copyfile(
-                from: *const i8,
-                to: *const i8,
+                from: *const c_char,
+                to: *const c_char,
                 state: *mut core::ffi::c_void,
                 flags: u32,
             ) -> i32;

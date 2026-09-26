@@ -50,7 +50,7 @@ const integerTypes = new Set([
 ]);
 const unsignedTypes = new Set(["u8", "u16", "u32", "u64", "usize", "c_uint", "c_ushort", "c_uchar", "c_ulonglong"]);
 
-export type Field = { name: string; cName: string; public: boolean };
+export type Field = { name: string; cName: string; public: boolean; /** The field is one of this processor only: `target_arch = "x86_64"`. */ cfg?: string };
 export type Type = { kind: "struct" | "union"; rust: string; c: string; packed: boolean; fields: Field[]; file: string; line: number };
 export type Constant = { rust: string; c: string; unsigned: boolean; file: string; line: number };
 
@@ -125,7 +125,8 @@ function scan(source: { file: string; path: string }) {
       for (let k = i + 1; k < lines.length && lines[k].trim() !== "}"; k++) {
         const field = /^\s*(pub(?:\([a-z]+\))? )?([a-zA-Z_][A-Za-z_0-9]*): /.exec(lines[k]);
         if (!field || /^\s*(\/\/|#\[)/.test(lines[k])) continue;
-        fields.push({ name: field[2], cName: cFieldNames[field[2]] ?? field[2], public: field[1] === "pub " });
+        const cfg = /^\s*#\[cfg\((target_arch = "[a-z0-9_]+")\)\]$/.exec(lines[k - 1] ?? "")?.[1];
+        fields.push({ name: field[2], cName: cFieldNames[field[2]] ?? field[2], public: field[1] === "pub ", cfg });
       }
       types.push({ kind: type[1] as "struct" | "union", rust, c: cTypeNames[rust] ?? type[2], packed: repr!.includes("packed"), fields, file: source.file, line: i + 1 });
       continue;
@@ -270,6 +271,7 @@ pub fn types(report: &mut Report) {
       // SAFETY (of the generated line): the field of a union is borrowed, not read.
       const place = type.kind === "union" ? `unsafe { &value.${field.name} }` : `&value.${field.name}`;
       const size = type.packed ? `"null"` : `size_of_field(|value: &T| ${place})`;
+      if (field.cfg) out.push(`        #[cfg(${field.cfg})]`);
       out.push(
         `        let _ = write!(out, "${first ? "" : ","}\\"${field.cName}\\":{{\\"offset\\":{},\\"size\\":{}}}", offset_of!(T, ${field.name}), ${size});`,
       );

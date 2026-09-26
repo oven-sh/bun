@@ -1,21 +1,150 @@
 {
- "about": "What a run of bun_fs_slice may print on a host that is not Linux where expected/linux.jsonl has something else. compare-run.ts reads this file. A step is named as in the output; a step with a path is \"<step> <path>\".",
+ "about": "What a run of bun_fs_slice prints on a host that is not Linux where expected/linux.jsonl has something else. compare-run.ts and expected.ts read this file. A step is named as in the output; a step with a path is \"<step> <path>\". \"absent\": steps of Linux that the host does not have. \"only_here\": steps that only this host has, and the step of Linux they follow. A line of the output that starts with {\"detail\" is not compared on any host.",
  "win32": {
-  "host": { "fields": { "os": "win32", "path_flavour": "windows" }, "why": "the host" },
+  "host": {
+   "fields": {
+    "os": "win32",
+    "path_flavour": "windows"
+   },
+   "why": "the host"
+  },
   "symlink a/link -> renamed.txt": {
-   "may_fail_with": ["EPERM"],
-   "then_absent": ["readlink", "lstat, link", "stat, through the link", "unlink, link a/link"],
-   "then_not_listed": ["link"],
+   "may_fail_with": [
+    "EPERM"
+   ],
+   "then_absent": [
+    "readlink",
+    "lstat, link",
+    "stat, through the link",
+    "unlink, link a/link"
+   ],
+   "then_not_listed": [
+    "link"
+   ],
    "why": "Windows makes a symbolic link for an administrator, or for everybody when Developer Mode is on: libuv reports ERROR_PRIVILEGE_NOT_HELD as EPERM"
   },
   "unlink, directory a/side": {
-   "error": ["EPERM"],
+   "error": [
+    "EPERM"
+   ],
    "why": "libuv's unlink for Windows refuses a directory with ERROR_ACCESS_DENIED, which is EPERM (vendor/libuv/src/win/fs.c, fs__unlink), as Node.js does on Windows"
+  },
+  "absent": {
+   "steps": [
+    "renameat2, no replace, destination exists a/renamed.txt -> a/copy.txt",
+    "renameat2, no replace a/copy.txt -> a/moved.txt",
+    "renameat, back a/moved.txt -> a/copy.txt",
+    "lchmod a/copy.txt",
+    "realpath, of a link a/link",
+    "stat, times a/renamed.txt",
+    "exists_at",
+    "lstatat, link a/link",
+    "fstatat, through the link a/link",
+    "fstatat, missing a/missing.txt",
+    "flags of a descriptor a/copy.txt",
+    "dup, and write through it",
+    "read what was written through the second descriptor"
+   ],
+   "why": "steps of POSIX (src/posix.rs of the slice)"
+  },
+  "errno": {
+   "compared": false,
+   "why": "the number of an error is compared on Linux and on macOS"
   }
  },
  "darwin": {
-  "host": { "fields": { "os": "darwin" }, "why": "the host" },
-  "unlink, directory a/side": { "error": ["EPERM"], "why": "unlink(2) of macOS gives EPERM for a directory" }
+  "host": {
+   "fields": {
+    "os": "darwin"
+   },
+   "why": "the host"
+  },
+  "unlink, directory a/side": {
+   "error": [
+    "EPERM"
+   ],
+   "why": "unlink(2) of macOS gives EPERM for a directory"
+  },
+  "stat, times a/renamed.txt": {
+   "fields": {
+    "born before it was last written": true
+   },
+   "why": "macOS keeps the time a file was made. Linux's struct stat has none, and bun takes the time of the last change of status there, as libuv does: the rename of the file is later than its last write"
+  },
+  "errno": {
+   "compared": true,
+   "numbers": "../bindings/darwin.json",
+   "why": "the number of an error is the one of macOS"
+  },
+  "only_here": {
+   "after": "read what was written through the second descriptor",
+   "steps": [
+    {
+     "step": "clonefile",
+     "path": "a/clone.txt",
+     "content": "hello, world\nappended\n",
+     "ok": true
+    },
+    {
+     "step": "clonefileat",
+     "path": "a/clone-at.txt",
+     "content": "hello, world\nappended\n",
+     "ok": true
+    },
+    {
+     "step": "clonefileat, from the working directory",
+     "path": "a/clone-cwd.txt",
+     "content": "hello, world\nappended\n",
+     "ok": true
+    },
+    {
+     "step": "clonefile, destination exists",
+     "path": "a/clone.txt",
+     "refused": true,
+     "ok": true
+    },
+    {
+     "step": "clonefile, destination exists, the copy is as it was",
+     "content": "hello, world\nappended\n",
+     "ok": true
+    },
+    {
+     "step": "fcopyfile",
+     "path": "a/renamed.txt -> a/fcopy.txt",
+     "content": "hello, world\nappended\n",
+     "ok": true
+    },
+    {
+     "step": "path of a descriptor",
+     "path": "a/renamed.txt",
+     "ends_with slice-tree/a/renamed.txt": true,
+     "absolute": true,
+     "ok": true
+    },
+    {
+     "step": "path of a descriptor, bun_core",
+     "result is positive": 1,
+     "ends_with slice-tree/a/renamed.txt": true,
+     "ok": true
+    },
+    {
+     "step": "path of a descriptor, of a directory",
+     "ends_with slice-tree": true,
+     "ok": true
+    },
+    {
+     "step": "path of a descriptor that is closed",
+     "ok": false,
+     "error": "EBADF",
+     "errno": 9,
+     "syscall": "fcntl"
+    }
+   ],
+   "why": "steps of macOS (src/macos.rs of the slice): clonefile and its fallback copyfile, fcopyfile, fcntl(F_GETPATH)"
+  }
  },
- "every_host": { "syscall": "the name of the system call that bun attributes an error to is compared on Linux only: bun's code for another OS reaches the same result through other calls" }
+ "every_host": {
+  "syscall": "the name of the system call that bun attributes an error to is compared on Linux only: bun's code for another OS reaches the same result through other calls",
+  "detail": "a line that starts with {\"detail\" says how something went on the machine (which way a copy was made, the error number that macOS gave): it is not compared"
+ }
 }

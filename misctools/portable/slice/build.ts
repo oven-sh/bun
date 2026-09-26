@@ -176,8 +176,22 @@ const steps: Record<string, { done: () => boolean; make: () => void | Promise<vo
         `-Clink-arg=${join(cdeps, "libcdeps.a")}`,
         "-Clink-arg=-lc++", "-Clink-arg=-lclang_rt.builtins",
       ];
+      // rustc links a static program that can be loaded anywhere (static-pie) for x86_64 musl, and not
+      // for aarch64 musl: its description of that target does not say that the target has them. The
+      // image is one, so the target is described here, as rustc describes it and with that one line more.
+      let target = triple;
+      if (arch === "aarch64") {
+        const printed = Bun.spawnSync(["rustc", "-Zunstable-options", "--print", "target-spec-json", "--target", triple], { stdout: "pipe", stderr: "inherit" });
+        if (printed.exitCode !== 0) throw new Error("rustc --print target-spec-json");
+        const spec = JSON.parse(printed.stdout.toString());
+        delete spec["is-builtin"];
+        spec["static-position-independent-executables"] = true;
+        mkdirSync(join(work, "targets"), { recursive: true });
+        target = join(work, "targets", `${triple}.json`);
+        writeFileSync(target, JSON.stringify(spec, null, 1) + "\n");
+      }
       run(
-        ["cargo", "build", "--release", "--target", triple, "-Zbuild-std=std,core,alloc,panic_abort", "-Zbuild-std-features=panic-unwind,default"],
+        ["cargo", "build", "--release", "--target", target, "-Zbuild-std=std,core,alloc,panic_abort", "-Zbuild-std-features=panic-unwind,default", ...(arch === "aarch64" ? ["-Zjson-target-spec"] : [])],
         {
           cwd: here,
           env: {

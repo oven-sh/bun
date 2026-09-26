@@ -260,6 +260,96 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies("^" + padded, "6.0.0", false);
   });
 
+  describe("> with a partial version starts at the next major or minor", () => {
+    // node-semver reads `>1` as `>=2.0.0` and `>1.2` as `>=1.3.0`. Where a second comparator
+    // names a prerelease of that bound, the prerelease rule alone does not reject the version.
+    // Every expectation is the answer of npm's semver 7.7.4.
+    const rows: [range: string, version: string, expected: boolean][] = [
+      [">1 >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      [">=2.0.0-rc.0 >1", "2.0.0-rc.1", false],
+      ["> 1 >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      [">v1 >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      [">1.x >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      [">1.* >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      [">1.x.x >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      [">1 <=2.0.0-rc.5", "2.0.0-rc.1", false],
+      ["<=2.0.0-rc.5 >1", "2.0.0-rc.1", false],
+      [">1 ^2.0.0-rc.0", "2.0.0-rc.1", false],
+      [">1 ~2.0.0-rc.0", "2.0.0-rc.1", false],
+      [">0 >=1.0.0-a", "1.0.0-a", false],
+      [">1 >=2.0.0-rc.0 || 5.0.0", "2.0.0-rc.1", false],
+      ["5.0.0 || >1 >=2.0.0-rc.0", "2.0.0-rc.1", false],
+      [">1.9 >=1.10.0-rc.0", "1.10.0-rc.1", false],
+      [">=1.10.0-rc.0 >1.9", "1.10.0-rc.1", false],
+      ["> 1.9 >=1.10.0-rc.0", "1.10.0-rc.1", false],
+      [">1.2.x >=1.3.0-rc.0", "1.3.0-rc.1", false],
+      [">1.2.* >=1.3.0-rc.0", "1.3.0-rc.1", false],
+      [">1.2 <=1.3.0-rc.5", "1.3.0-rc.1", false],
+      [">1.2 ^1.3.0-rc.0", "1.3.0-rc.1", false],
+      [">0.0 >=0.1.0-a", "0.1.0-a", false],
+      [">99 ~>100.0.0-9", "100.0.0-aA", false],
+
+      // still inside the range
+      [">1", "2.0.0", true],
+      [">1", "3.1.4", true],
+      [">1.x", "2.0.0", true],
+      [">0", "1.0.0", true],
+      [">1.2", "1.3.0", true],
+      [">1.2", "2.0.0", true],
+      [">1.2.x", "1.3.0", true],
+      [">0.0", "0.1.0", true],
+      [">1 >=2.0.0-rc.0", "2.0.0", true],
+      // a prerelease above the bound still passes
+      [">1 >=2.0.1-rc.0", "2.0.1-rc.1", true],
+      [">1 >=3.0.0-rc.0", "3.0.0-rc.1", true],
+      [">1.9 >=2.0.0-rc.0", "2.0.0-rc.1", true],
+      [">1.2 >=1.3.1-rc.0", "1.3.1-rc.1", true],
+      [">1.2 >=1.4.0-rc.0", "1.4.0-rc.1", true],
+      [">1 || 2.0.0-rc.1", "2.0.0-rc.1", true],
+      // a full version after `>` keeps its form
+      [">1.9.9 >=2.0.0-rc.0", "2.0.0-rc.1", true],
+      [">1.2.3-rc.0", "1.2.3-rc.1", true],
+
+      // rejected before this change too
+      [">1", "1.0.0", false],
+      [">1", "1.9.9", false],
+      [">1", "2.0.0-rc.1", false],
+      [">1", "2.0.0-0", false],
+      [">1.x", "1.9.9", false],
+      [">0", "0.9.9", false],
+      [">1.2", "1.2.0", false],
+      [">1.2", "1.2.9", false],
+      [">1.2", "1.3.0-rc.1", false],
+      [">1.2.x", "1.2.9", false],
+      [">0.0", "0.0.9", false],
+      [">1 >=2.0.0-rc.5", "2.0.0-rc.1", false],
+    ];
+    test.each(rows)("%s with %s is %p", (range, version, expected) => {
+      testSatisfies(range, version, expected);
+    });
+
+    // npm's semver rejects a number above 2^53 - 1, so these have no answer from it. Bun counts
+    // in u64: the minor carries into the major, and nothing is above the last major.
+    const M = "18446744073709551615";
+    const M1 = "18446744073709551614";
+    const u64Rows: [range: string, version: string, expected: boolean][] = [
+      [`>${M1}`, `${M}.0.0`, true],
+      [`>${M1}`, `${M1}.${M}.${M}`, false],
+      [`>${M1} >=${M}.0.0-rc.0`, `${M}.0.0-rc.1`, false],
+      [`>1.${M1}`, `1.${M}.0`, true],
+      [`>1.${M1}`, `1.${M1}.${M}`, false],
+      [`>1.${M1} >=1.${M}.0-rc.0`, `1.${M}.0-rc.1`, false],
+      [`>1.${M}`, `2.0.0`, true],
+      [`>1.${M}`, `1.${M}.${M}`, false],
+      [`>1.${M} >=2.0.0-rc.0`, `2.0.0-rc.1`, false],
+      [`>${M}`, `${M}.0.0`, false],
+      [`>${M}`, `${M}.${M}.${M}`, false],
+    ];
+    test.each(u64Rows)("%s with %s is %p", (range, version, expected) => {
+      testSatisfies(range, version, expected);
+    });
+  });
+
   test("u64::MAX component does not collapse ^/~/x/hyphen ranges to empty", () => {
     // Desugaring these range forms builds an exclusive `< {component+1}` upper bound.
     // At u64::MAX that +1 must not saturate back to MAX (which yields `>=X <X`, an empty range).

@@ -728,6 +728,65 @@ describe.concurrent("version-scoped targets", () => {
     await installOk(dir, "--frozen-lockfile");
   });
 
+  // `>1` is `>=2.0.0` and `>1.0` is `>=1.1.0`, so neither meets a range that ends below that
+  // bound. `intersects` is what npm's semver 7.7.4 answers, and npm applies a rule on that
+  // answer. Every rule sets 1.0.0. `untouched` is what the declared range resolves to without it.
+  describe.concurrent.each([
+    { declared: "^1.0.0", selector: ">1", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: "> 1", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">1.x", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">1 <3", intersects: false, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">1 || <1.0.0", intersects: false, untouched: "1.1.0" },
+    { declared: "1.x", selector: ">1", intersects: false, untouched: "1.1.0" },
+    { declared: ">=1.0.0 <2.0.0", selector: ">1", intersects: false, untouched: "1.1.0" },
+    { declared: "~1.0.0 || ^1.1.0", selector: ">1", intersects: false, untouched: "1.1.0" },
+    { declared: "~1.0.0", selector: ">1.0", intersects: false, untouched: "1.0.1" },
+    { declared: "~1.0.0", selector: ">1.0.x", intersects: false, untouched: "1.0.1" },
+    { declared: "1.0.x", selector: ">1.0", intersects: false, untouched: "1.0.1" },
+    { declared: ">=1.0.0 <1.1.0", selector: ">1.0", intersects: false, untouched: "1.0.1" },
+    // the same pairs with `>` in the declared range
+    { declared: ">1", selector: "^1.0.0", intersects: false, untouched: "2.0.0" },
+    { declared: ">1", selector: "<2.0.0", intersects: false, untouched: "2.0.0" },
+    { declared: ">1.0", selector: "~1.0.0", intersects: false, untouched: "2.0.0" },
+    // pairs that already did not meet
+    { declared: "1.0.0 - 1.1.0", selector: ">1", intersects: false, untouched: "1.1.0" },
+    { declared: "1.0.1", selector: ">1.0", intersects: false, untouched: "1.0.1" },
+    // ranges that do meet
+    { declared: "^2.0.0", selector: ">1", intersects: true, untouched: "2.0.0" },
+    { declared: "2.0.0", selector: ">1", intersects: true, untouched: "2.0.0" },
+    { declared: "<=2.0.0", selector: ">1", intersects: true, untouched: "2.0.0" },
+    { declared: ">=1.0.0", selector: ">1", intersects: true, untouched: "2.0.0" },
+    { declared: "^1.0.0", selector: ">1 || 1.0.1", intersects: true, untouched: "1.1.0" },
+    { declared: "^1.0.0", selector: ">1.0", intersects: true, untouched: "1.1.0" },
+    { declared: "1.1.0", selector: ">1.0", intersects: true, untouched: "1.1.0" },
+    { declared: "<=1.1.0", selector: ">1.0", intersects: true, untouched: "1.1.0" },
+    { declared: ">1", selector: "^2.0.0", intersects: true, untouched: "2.0.0" },
+    { declared: ">1.0", selector: "~1.1.0", intersects: true, untouched: "2.0.0" },
+  ])("> with a partial version, as selector or declared range %j", ({ declared, selector, intersects, untouched }) => {
+    test(intersects ? "the rule applies" : "the rule leaves the edge alone", async () => {
+      const dir = await project({
+        dependencies: { "no-deps": declared },
+        overrides: { [`no-deps@${selector}`]: "1.0.0" },
+      });
+      const { err } = await installOk(dir);
+      expect(err).not.toContain("warn:");
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe(intersects ? "1.0.0" : untouched);
+      await installOk(dir, "--frozen-lockfile");
+    });
+  });
+
+  test("a selector that is > with a partial version leaves a transitive ^ edge alone", async () => {
+    // one-range-dep declares no-deps@^1.0.0
+    const dir = await project({
+      dependencies: { "one-range-dep": "1.0.0" },
+      overrides: { "one-range-dep": { "no-deps@>1": "1.0.0" } },
+    });
+    const { err } = await installOk(dir);
+    expect(err).not.toContain("warn:");
+    expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
+    await installOk(dir, "--frozen-lockfile");
+  });
+
   test("edges declared with a dist-tag never match", async () => {
     const dir = await project({
       dependencies: { "no-deps": "latest", "one-range-dep": "1.0.0" },

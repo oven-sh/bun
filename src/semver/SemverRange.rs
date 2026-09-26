@@ -253,6 +253,52 @@ impl Comparator {
         }
     }
 
+    /// node-semver's `>{major}`: `>={major+1}.0.0`, or `>={major+1}.0.0-0` with `includePrerelease`.
+    pub(crate) fn gte_next_major(major: u64, include_prerelease: bool) -> Comparator {
+        match major.checked_add(1) {
+            Some(m) if !include_prerelease => Comparator {
+                op: Op::Gte,
+                version: Version {
+                    major: m,
+                    ..Default::default()
+                },
+            },
+            _ => Comparator {
+                op: Op::Gt,
+                version: Version {
+                    major,
+                    minor: u64::MAX,
+                    patch: u64::MAX,
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
+    /// `gte_next_major` for `>{major}.{minor}`: `>={major}.{minor+1}.0`, on overflow the next major.
+    pub(crate) fn gte_next_minor(major: u64, minor: u64, include_prerelease: bool) -> Comparator {
+        match minor.checked_add(1) {
+            Some(m) if !include_prerelease => Comparator {
+                op: Op::Gte,
+                version: Version {
+                    major,
+                    minor: m,
+                    ..Default::default()
+                },
+            },
+            Some(_) => Comparator {
+                op: Op::Gt,
+                version: Version {
+                    major,
+                    minor,
+                    patch: u64::MAX,
+                    ..Default::default()
+                },
+            },
+            None => Comparator::gte_next_major(major, include_prerelease),
+        }
+    }
+
     #[inline]
     pub(crate) fn eql(self, rhs: Comparator) -> bool {
         self.op == rhs.op && self.version.eql(rhs.version)

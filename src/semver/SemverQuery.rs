@@ -609,7 +609,11 @@ pub enum Wildcard {
 }
 
 impl Token {
-    pub(crate) fn to_range(self, version: &version::Partial<u64>) -> Range {
+    pub(crate) fn to_range(
+        self,
+        version: &version::Partial<u64>,
+        include_prerelease: bool,
+    ) -> Range {
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -734,15 +738,10 @@ impl Token {
                     ..Default::default()
                 },
                 TokenTag::Gt => Range {
-                    left: Comparator {
-                        op: RangeOp::Gt,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: u64::MAX,
-                            patch: u64::MAX,
-                            ..Default::default()
-                        },
-                    },
+                    left: Comparator::gte_next_major(
+                        version.major.unwrap_or(0),
+                        include_prerelease,
+                    ),
                     ..Default::default()
                 },
                 TokenTag::Gte => Range {
@@ -785,15 +784,11 @@ impl Token {
                     ..Default::default()
                 },
                 TokenTag::Gt => Range {
-                    left: Comparator {
-                        op: RangeOp::Gt,
-                        version: Version {
-                            major: version.major.unwrap_or(0),
-                            minor: version.minor.unwrap_or(0),
-                            patch: u64::MAX,
-                            ..Default::default()
-                        },
-                    },
+                    left: Comparator::gte_next_minor(
+                        version.major.unwrap_or(0),
+                        version.minor.unwrap_or(0),
+                        include_prerelease,
+                    ),
                     ..Default::default()
                 },
                 TokenTag::Gte => Range {
@@ -828,6 +823,19 @@ impl Token {
 }
 
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
+    parse_with(input, sliced, false)
+}
+
+/// `parse` with node-semver's `includePrerelease`: `>1` is `>=2.0.0-0`, not `>=2.0.0`.
+pub fn parse_including_prerelease(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
+    parse_with(input, sliced, true)
+}
+
+fn parse_with(
+    input: &[u8],
+    sliced: SlicedString,
+    include_prerelease: bool,
+) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
         input: std::ptr::from_ref::<[u8]>(input),
@@ -1097,15 +1105,15 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         list.or_version(version)?;
                     }
                     _ => {
-                        list.or_range(&token.to_range(&parse_result.version))?;
+                        list.or_range(&token.to_range(&parse_result.version, include_prerelease))?;
                     }
                 }
             } else if count == 0 {
-                list.and_range(&token.to_range(&parse_result.version))?;
+                list.and_range(&token.to_range(&parse_result.version, include_prerelease))?;
             } else if is_or {
-                list.or_range(&token.to_range(&parse_result.version))?;
+                list.or_range(&token.to_range(&parse_result.version, include_prerelease))?;
             } else {
-                list.and_range(&token.to_range(&parse_result.version))?;
+                list.and_range(&token.to_range(&parse_result.version, include_prerelease))?;
             }
 
             is_or = false;

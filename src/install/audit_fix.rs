@@ -135,9 +135,12 @@ impl AdvisoryIndex {
             .iter()
             .map(|&(start, len)| {
                 let input = &range_buf[start..start + len];
-                Semver::query::parse(input, SlicedString::init(&range_buf, input))
-                    .ok()
-                    .filter(|group| !group.is_empty())
+                Semver::query::parse_including_prerelease(
+                    input,
+                    SlicedString::init(&range_buf, input),
+                )
+                .ok()
+                .filter(|group| !group.is_empty())
             })
             .collect();
         let mut by_name: HashMap<PackageNameHash, Vec<usize>> = HashMap::new();

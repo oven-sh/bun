@@ -46,7 +46,8 @@ impl Report {
 
     pub fn boolean(&mut self, key: &str, value: bool) {
         self.key(key);
-        self.out.extend_from_slice(if value { b"true" } else { b"false" });
+        self.out
+            .extend_from_slice(if value { b"true" } else { b"false" });
     }
 
     /// `[{"name": .., "kind": ..}, ..]`

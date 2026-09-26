@@ -448,8 +448,7 @@ pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> cra
 
             while amt_written < amt_read {
                 {
-                    let wrote =
-                        crate::write(Fd::from_native(out), &buf[amt_written..amt_read])?;
+                    let wrote = crate::write(Fd::from_native(out), &buf[amt_written..amt_read])?;
                     if wrote == 0 {
                         return Ok(amt_written);
                     }

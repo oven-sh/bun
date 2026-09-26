@@ -943,7 +943,10 @@ impl Fd {
         self.posix()
     }
     #[cfg(any(windows, bun_portable))]
-    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, dispatch(posix, windows)))]
+    #[cfg_attr(
+        bun_portable,
+        bun_portable_macros::host_os(windows, dispatch(posix, windows))
+    )]
     pub fn uv(self) -> i32 {
         match self.decode_windows() {
             DecodeWindows::Uv(v) => v,
@@ -1008,7 +1011,10 @@ impl Fd {
     }
 
     #[cfg(any(windows, bun_portable))]
-    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, associated, dispatch(posix, windows)))]
+    #[cfg_attr(
+        bun_portable,
+        bun_portable_macros::host_os(windows, associated, dispatch(posix, windows))
+    )]
     #[inline]
     pub fn stdin() -> Fd {
         fd::WINDOWS_CACHED_STDIN
@@ -1017,7 +1023,10 @@ impl Fd {
             .unwrap_or(Fd::INVALID)
     }
     #[cfg(any(windows, bun_portable))]
-    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, associated, dispatch(posix, windows)))]
+    #[cfg_attr(
+        bun_portable,
+        bun_portable_macros::host_os(windows, associated, dispatch(posix, windows))
+    )]
     #[inline]
     pub fn stdout() -> Fd {
         fd::WINDOWS_CACHED_STDOUT
@@ -1026,7 +1035,10 @@ impl Fd {
             .unwrap_or(Fd::INVALID)
     }
     #[cfg(any(windows, bun_portable))]
-    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, associated, dispatch(posix, windows)))]
+    #[cfg_attr(
+        bun_portable,
+        bun_portable_macros::host_os(windows, associated, dispatch(posix, windows))
+    )]
     #[inline]
     pub fn stderr() -> Fd {
         fd::WINDOWS_CACHED_STDERR
@@ -1042,7 +1054,10 @@ impl Fd {
     const WINDOWS_CWD: u64 = 1 << 62;
 
     #[cfg(any(windows, bun_portable))]
-    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, associated, dispatch(posix, windows)))]
+    #[cfg_attr(
+        bun_portable,
+        bun_portable_macros::host_os(windows, associated, dispatch(posix, windows))
+    )]
     #[inline]
     pub fn cwd() -> Fd {
         Fd(Self::WINDOWS_CWD)
@@ -1056,7 +1071,10 @@ impl Fd {
         matches!(self.posix(), 0..=2)
     }
     #[cfg(any(windows, bun_portable))]
-    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, dispatch(posix, windows)))]
+    #[cfg_attr(
+        bun_portable,
+        bun_portable_macros::host_os(windows, dispatch(posix, windows))
+    )]
     pub fn is_stdio(self) -> bool {
         // Cache check first (matches `to_uv_index`): the cache reflects what the
         // process saw at startup, even after `SetStdHandle`/`AllocConsole`.

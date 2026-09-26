@@ -57,7 +57,8 @@ pub(crate) fn expand(args: Tokens, item: Tokens) -> syn::Result<Tokens> {
     if let Some(TokenTree::Literal(abi)) = cursor.peek() {
         let abi = abi.to_string();
         if abi != "\"C\"" && abi != "\"system\"" {
-            return Err(cursor.error("the functions of the host OS are `extern \"system\"` or `extern \"C\"`"));
+            return Err(cursor
+                .error("the functions of the host OS are `extern \"system\"` or `extern \"C\"`"));
         }
         cursor.next();
     }
@@ -72,7 +73,11 @@ pub(crate) fn expand(args: Tokens, item: Tokens) -> syn::Result<Tokens> {
     let mut out = Tokens::new();
     while !functions.is_done() {
         let function = parse_function(&mut functions)?;
-        out.extend(per_architecture(wrapper(&function, &library, &kept_attributes)));
+        out.extend(per_architecture(wrapper(
+            &function,
+            &library,
+            &kept_attributes,
+        )));
     }
     Ok(out)
 }
@@ -151,7 +156,9 @@ fn parse_function(cursor: &mut Cursor) -> syn::Result<Function> {
         return Err(cursor.error("expected the name of the function"));
     };
     let Some(parameters) = cursor.take_group(Delimiter::Parenthesis) else {
-        return Err(cursor.error("expected the arguments of the function (generic functions cannot be imported)"));
+        return Err(cursor.error(
+            "expected the arguments of the function (generic functions cannot be imported)",
+        ));
     };
     let arguments = parse_arguments(parameters)?;
 
@@ -219,9 +226,9 @@ fn parse_argument(tokens: Vec<TokenTree>, index: usize) -> syn::Result<Argument>
             "a variadic function cannot be called through the import table",
         ));
     }
-    let colon = tokens.iter().position(
-        |token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == ':'),
-    );
+    let colon = tokens
+        .iter()
+        .position(|token| matches!(token, TokenTree::Punct(punct) if punct.as_char() == ':'));
     let Some(colon) = colon else {
         return Err(syn::Error::new(span, "expected `name: Type`"));
     };

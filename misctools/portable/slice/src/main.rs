@@ -59,9 +59,15 @@ impl Work {
     fn path(&self, relative: &[u8]) -> Vec<u8> {
         let mut buffer = bun_paths::path_buffer_pool::get();
         let joined = if self.windows_paths {
-            resolve_path::join_string_buf::<platform::Windows>(&mut buffer[..], &[&self.root, relative])
+            resolve_path::join_string_buf::<platform::Windows>(
+                &mut buffer[..],
+                &[&self.root, relative],
+            )
         } else {
-            resolve_path::join_string_buf::<platform::Posix>(&mut buffer[..], &[&self.root, relative])
+            resolve_path::join_string_buf::<platform::Posix>(
+                &mut buffer[..],
+                &[&self.root, relative],
+            )
         };
         let mut path = joined.to_vec();
         path.push(0);
@@ -118,8 +124,18 @@ fn run_steps(directory: &[u8]) -> bool {
     report.string("os", bun_core::host::os().name_string().as_bytes());
     #[cfg(not(bun_portable))]
     report.string("os", bun_core::env::OS.name_string().as_bytes());
-    report.string("path_flavour", if windows_paths { b"windows" } else { b"posix" });
-    report.string("image", if cfg!(bun_portable) { b"portable" } else { b"native" });
+    report.string(
+        "path_flavour",
+        if windows_paths { b"windows" } else { b"posix" },
+    );
+    report.string(
+        "image",
+        if cfg!(bun_portable) {
+            b"portable"
+        } else {
+            b"native"
+        },
+    );
     report.end_ok();
 
     let mut cwd_buffer = bun_paths::path_buffer_pool::get();
@@ -136,14 +152,20 @@ fn run_steps(directory: &[u8]) -> bool {
         let join = |parts: &[&[u8]]| {
             let mut buffer = bun_paths::path_buffer_pool::get();
             if windows_paths {
-                resolve_path::join_abs_string_buf::<platform::Windows>(&cwd, &mut buffer[..], parts).to_vec()
+                resolve_path::join_abs_string_buf::<platform::Windows>(&cwd, &mut buffer[..], parts)
+                    .to_vec()
             } else {
-                resolve_path::join_abs_string_buf::<platform::Posix>(&cwd, &mut buffer[..], parts).to_vec()
+                resolve_path::join_abs_string_buf::<platform::Posix>(&cwd, &mut buffer[..], parts)
+                    .to_vec()
             }
         };
         (join(&[directory]), join(&[directory, TREE]))
     };
-    let work = Work { base, root, windows_paths };
+    let work = Work {
+        base,
+        root,
+        windows_paths,
+    };
 
     // Left by a run that did not finish.
     let _ = work.delete_tree();
@@ -155,7 +177,11 @@ fn run_steps(directory: &[u8]) -> bool {
     let root_z = work.path(b"");
     report.step("mkdir", b"", bun_sys::mkdir(z(&root_z), 0o755));
     report.step("mkdir again", b"", bun_sys::mkdir(z(&root_z), 0o755));
-    report.step("mkdir, parent missing", b"no/such", bun_sys::mkdir(z(&work.path(b"no/such")), 0o755));
+    report.step(
+        "mkdir, parent missing",
+        b"no/such",
+        bun_sys::mkdir(z(&work.path(b"no/such")), 0o755),
+    );
 
     let root_fd = match bun_sys::open_dir_absolute(&work.root) {
         Ok(fd) => {
@@ -170,9 +196,21 @@ fn run_steps(directory: &[u8]) -> bool {
             return false;
         }
     };
-    report.step("mkdir_recursive_at", b"a/b/c", bun_sys::mkdir_recursive_at_mode(root_fd, b"a/b/c", 0o755));
-    report.step("mkdir_recursive_at again", b"a/b/c", bun_sys::mkdir_recursive_at_mode(root_fd, b"a/b/c", 0o755));
-    report.step("mkdirat", b"a/side", bun_sys::mkdirat(root_fd, z(b"a/side\0"), 0o755));
+    report.step(
+        "mkdir_recursive_at",
+        b"a/b/c",
+        bun_sys::mkdir_recursive_at_mode(root_fd, b"a/b/c", 0o755),
+    );
+    report.step(
+        "mkdir_recursive_at again",
+        b"a/b/c",
+        bun_sys::mkdir_recursive_at_mode(root_fd, b"a/b/c", 0o755),
+    );
+    report.step(
+        "mkdirat",
+        b"a/side",
+        bun_sys::mkdirat(root_fd, z(b"a/side\0"), 0o755),
+    );
 
     // ── create, write, append ──
     let hello = work.path(b"a/hello.txt");
@@ -209,7 +247,11 @@ fn run_steps(directory: &[u8]) -> bool {
         Ok(fd) => {
             report.end_ok();
             let file = File::from_fd(fd);
-            report.step("write, appended", b"a/hello.txt", file.write_all(b"appended\n"));
+            report.step(
+                "write, appended",
+                b"a/hello.txt",
+                file.write_all(b"appended\n"),
+            );
         }
         Err(error) => report.end_error(&error),
     }
@@ -292,17 +334,33 @@ fn run_steps(directory: &[u8]) -> bool {
     }
     report.begin("exists");
     report.boolean("a/hello.txt", bun_sys::exists(&hello[..hello.len() - 1]));
-    report.boolean("a/missing.txt", bun_sys::exists(&work.path(b"a/missing.txt")[..work.path(b"a/missing.txt").len() - 1]));
+    report.boolean(
+        "a/missing.txt",
+        bun_sys::exists(&work.path(b"a/missing.txt")[..work.path(b"a/missing.txt").len() - 1]),
+    );
     report.end_ok();
 
     // ── rename ──
     let renamed = work.path(b"a/b/renamed.txt");
-    report.step("rename", b"a/hello.txt -> a/b/renamed.txt", bun_sys::rename(z(&hello), z(&renamed)));
-    report.step("rename, missing", b"a/hello.txt -> a/b/renamed.txt", bun_sys::rename(z(&hello), z(&renamed)));
+    report.step(
+        "rename",
+        b"a/hello.txt -> a/b/renamed.txt",
+        bun_sys::rename(z(&hello), z(&renamed)),
+    );
+    report.step(
+        "rename, missing",
+        b"a/hello.txt -> a/b/renamed.txt",
+        bun_sys::rename(z(&hello), z(&renamed)),
+    );
     report.step(
         "renameat",
         b"a/b/renamed.txt -> a/renamed.txt",
-        bun_sys::renameat(root_fd, z(b"a/b/renamed.txt\0"), root_fd, z(b"a/renamed.txt\0")),
+        bun_sys::renameat(
+            root_fd,
+            z(b"a/b/renamed.txt\0"),
+            root_fd,
+            z(b"a/renamed.txt\0"),
+        ),
     );
     let renamed = work.path(b"a/renamed.txt");
 
@@ -311,7 +369,11 @@ fn run_steps(directory: &[u8]) -> bool {
     report.string("path", b"a/renamed.txt -> a/copy.txt");
     let copied = (|| -> Maybe<()> {
         let from = File::from_fd(bun_sys::open(z(&renamed), O::RDONLY, 0)?);
-        let to = File::from_fd(bun_sys::open(z(&work.path(b"a/copy.txt")), O::WRONLY | O::CREAT | O::TRUNC, 0o644)?);
+        let to = File::from_fd(bun_sys::open(
+            z(&work.path(b"a/copy.txt")),
+            O::WRONLY | O::CREAT | O::TRUNC,
+            0o644,
+        )?);
         bun_sys::copy_file(from.handle(), to.handle())
     })();
     match copied {
@@ -319,7 +381,9 @@ fn run_steps(directory: &[u8]) -> bool {
         Err(error) => report.end_error(&error),
     }
     report.begin("read the copy");
-    match bun_sys::open(z(&work.path(b"a/copy.txt")), O::RDONLY, 0).and_then(|fd| File::from_fd(fd).read_to_end()) {
+    match bun_sys::open(z(&work.path(b"a/copy.txt")), O::RDONLY, 0)
+        .and_then(|fd| File::from_fd(fd).read_to_end())
+    {
         Ok(bytes) => {
             report.string("content", &bytes);
             report.end_ok();
@@ -353,7 +417,12 @@ fn run_steps(directory: &[u8]) -> bool {
     // ── a name that is not ASCII ──
     let unicode = "a/gr\u{fc}\u{df}e \u{2713} \u{1f35e}.txt".as_bytes();
     report.begin("create, name that is not ASCII");
-    match bun_sys::openat(root_fd, z(&[unicode, b"\0"].concat()), O::WRONLY | O::CREAT | O::TRUNC, 0o644) {
+    match bun_sys::openat(
+        root_fd,
+        z(&[unicode, b"\0"].concat()),
+        O::WRONLY | O::CREAT | O::TRUNC,
+        0o644,
+    ) {
         Ok(fd) => {
             let file = File::from_fd(fd);
             match file.write_all(unicode) {
@@ -382,7 +451,10 @@ fn run_steps(directory: &[u8]) -> bool {
         report.begin("lstat, link");
         match bun_sys::lstat(z(&link)) {
             Ok(stat) => {
-                report.string("kind", kind_name(bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode)).as_bytes());
+                report.string(
+                    "kind",
+                    kind_name(bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode)).as_bytes(),
+                );
                 report.end_ok();
             }
             Err(error) => report.end_error(&error),
@@ -417,7 +489,9 @@ fn run_steps(directory: &[u8]) -> bool {
             let mut iterator = bun_sys::iterate_dir(directory);
             let listed = loop {
                 match iterator.next() {
-                    Ok(Some(entry)) => entries.push((entry.name.slice_u8().to_vec(), kind_name(entry.kind))),
+                    Ok(Some(entry)) => {
+                        entries.push((entry.name.slice_u8().to_vec(), kind_name(entry.kind)))
+                    }
                     Ok(None) => break Ok(()),
                     Err(error) => break Err(error),
                 }
@@ -434,16 +508,44 @@ fn run_steps(directory: &[u8]) -> bool {
     }
 
     // ── remove ──
-    report.step("rmdir, not empty", b"a", bun_sys::rmdir(z(&work.path(b"a"))));
-    report.step("unlink, directory", b"a/side", bun_sys::unlink(z(&work.path(b"a/side"))));
-    report.step("unlink, missing", b"a/missing.txt", bun_sys::unlink(z(&work.path(b"a/missing.txt"))));
+    report.step(
+        "rmdir, not empty",
+        b"a",
+        bun_sys::rmdir(z(&work.path(b"a"))),
+    );
+    report.step(
+        "unlink, directory",
+        b"a/side",
+        bun_sys::unlink(z(&work.path(b"a/side"))),
+    );
+    report.step(
+        "unlink, missing",
+        b"a/missing.txt",
+        bun_sys::unlink(z(&work.path(b"a/missing.txt"))),
+    );
     if have_link {
         report.step("unlink, link", b"a/link", bun_sys::unlink(z(&link)));
     }
-    report.step("unlink", b"a/copy.txt", bun_sys::unlink(z(&work.path(b"a/copy.txt"))));
-    report.step("unlinkat", b"a/renamed.txt", bun_sys::unlinkat(root_fd, z(b"a/renamed.txt\0")));
-    report.step("unlinkat, name that is not ASCII", b"", bun_sys::unlinkat(root_fd, z(&[unicode, b"\0"].concat())));
-    report.step("rmdirat", b"a/side", bun_sys::rmdirat(root_fd, z(b"a/side\0")));
+    report.step(
+        "unlink",
+        b"a/copy.txt",
+        bun_sys::unlink(z(&work.path(b"a/copy.txt"))),
+    );
+    report.step(
+        "unlinkat",
+        b"a/renamed.txt",
+        bun_sys::unlinkat(root_fd, z(b"a/renamed.txt\0")),
+    );
+    report.step(
+        "unlinkat, name that is not ASCII",
+        b"",
+        bun_sys::unlinkat(root_fd, z(&[unicode, b"\0"].concat())),
+    );
+    report.step(
+        "rmdirat",
+        b"a/side",
+        bun_sys::rmdirat(root_fd, z(b"a/side\0")),
+    );
     report.step("rmdir", b"a/b/c", bun_sys::rmdir(z(&work.path(b"a/b/c"))));
     let _ = bun_sys::close(root_fd);
     report.step("delete_tree", b"", work.delete_tree());
@@ -461,9 +563,8 @@ unsafe extern "C" {
 }
 
 fn usage() -> c_int {
-    let _ = File::borrow(&Fd::stderr()).write_all(
-        b"usage: bun_fs_slice <directory> | --imports | --layout | --abi\n",
-    );
+    let _ = File::borrow(&Fd::stderr())
+        .write_all(b"usage: bun_fs_slice <directory> | --imports | --layout | --abi\n");
     2
 }
 
@@ -479,7 +580,8 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     bun_core::output::stdio::init();
     #[cfg(bun_portable)]
     if let Some(invalid) = invalid_hook {
-        let _ = File::borrow(&Fd::stderr()).write_all(b"bun_fs_slice: BUN_PORTABLE_HOST_OS is not linux, darwin or win32: ");
+        let _ = File::borrow(&Fd::stderr())
+            .write_all(b"bun_fs_slice: BUN_PORTABLE_HOST_OS is not linux, darwin or win32: ");
         let _ = File::borrow(&Fd::stderr()).write_all(invalid.0);
         let _ = File::borrow(&Fd::stderr()).write_all(b"\n");
         return 2;

@@ -10,12 +10,12 @@ use bun_core::ZStr;
 
 use crate::ReturnCodeExt;
 use crate::Tag;
-use crate::windows::libuv as uv;
 #[cfg(bun_portable)]
 use crate::flavor::windows::{
     PlatformIOVec, PlatformIOVecConst, Stat, StatFS, platform_iovec_const_create,
     platform_iovec_create,
 };
+use crate::windows::libuv as uv;
 use crate::{E, Fd, FdExt, Mode};
 #[cfg(not(bun_portable))]
 use crate::{
@@ -807,8 +807,7 @@ pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Result<usize> {
 
     while !remaining.is_empty() {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
-        let bufs: [PlatformIOVecConst; 1] =
-            [platform_iovec_const_create(&remaining[0..chunk_len])];
+        let bufs: [PlatformIOVecConst; 1] = [platform_iovec_const_create(&remaining[0..chunk_len])];
 
         match pwritev(fd, &bufs, current_position) {
             Result::Err(err) => return Result::Err(err),
@@ -843,8 +842,7 @@ pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
 
     while !remaining.is_empty() {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
-        let bufs: [PlatformIOVecConst; 1] =
-            [platform_iovec_const_create(&remaining[0..chunk_len])];
+        let bufs: [PlatformIOVecConst; 1] = [platform_iovec_const_create(&remaining[0..chunk_len])];
 
         match writev_const(fd, &bufs) {
             Result::Err(err) => return Result::Err(err),

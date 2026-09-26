@@ -194,7 +194,11 @@ macro_rules! host_const {
 #[macro_export]
 macro_rules! __host_const_value {
     (windows => $windows:expr, posix => $posix:expr) => {
-        if $crate::host::is_windows() { $windows } else { $posix }
+        if $crate::host::is_windows() {
+            $windows
+        } else {
+            $posix
+        }
     };
     (linux => $linux:expr, macos => $macos:expr, windows => $windows:expr) => {
         if $crate::host::is_windows() {

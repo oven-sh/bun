@@ -4898,6 +4898,176 @@ describe("Buffer.copyBytesFrom", () => {
   });
 });
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L904-L934
+describe("Buffer.prototype.toString(encoding, start, end) argument handling", () => {
+  const unknownEncoding = expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING", name: "TypeError" });
+  // Logs its name on every coercion. Deliberate difference: Bun coerces each argument once.
+  // Node's JS coerces start up to three times and end twice (each comparison, then MathTrunc).
+  const logged = (log, name, value) => ({
+    [Symbol.toPrimitive]() {
+      log.push(name);
+      return value;
+    },
+  });
+  const throws = name => ({
+    [Symbol.toPrimitive]() {
+      throw new Error("coerced " + name);
+    },
+  });
+  // ERR_UNKNOWN_ENCODING is a TypeError too, so the BigInt tests compare the code as well.
+  const thrown = fn => {
+    try {
+      fn();
+    } catch (e) {
+      return { name: e.name, code: e.code };
+    }
+  };
+
+  it("returns '' for an empty range and does not look at the encoding", () => {
+    const buf = Buffer.from("abc");
+    // end <= start
+    expect(buf.toString("bogus", 1, 1)).toBe("");
+    expect(buf.toString("bogus", 2, 1)).toBe("");
+    expect(buf.toString("bogus", 0, 0)).toBe("");
+    expect(buf.toString("bogus", 0, -1)).toBe("");
+    expect(buf.toString("bogus", 0, NaN)).toBe("");
+    expect(buf.toString("bogus", 0, null)).toBe("");
+    expect(buf.toString("bogus", "1", "1")).toBe("");
+    expect(buf.toString("bogus", 2.9, 2.1)).toBe("");
+    // start >= length
+    expect(buf.toString("bogus", 3)).toBe("");
+    expect(buf.toString("bogus", 3.5)).toBe("");
+    expect(buf.toString("bogus", 5)).toBe("");
+    expect(buf.toString("bogus", Infinity)).toBe("");
+    // Other values that are not an encoding, and one that cannot become a string.
+    for (const encoding of ["", null, 1, {}, Symbol("bogus"), throws("encoding")]) {
+      expect(buf.toString(encoding, 1, 1)).toBe("");
+    }
+    expect(buf.toLocaleString("bogus", 1, 1)).toBe("");
+    expect(Buffer.prototype.toString.call(new Uint8Array([97, 98, 99]), "bogus", 1, 1)).toBe("");
+  });
+
+  // Node and Bun already agree on these. They pin that only an empty range skips the encoding.
+  it("throws ERR_UNKNOWN_ENCODING for a range that is not empty", () => {
+    const buf = Buffer.from("abc");
+    expect(() => buf.toString("bogus")).toThrow(unknownEncoding);
+    expect(() => buf.toString("bogus", 1)).toThrow(unknownEncoding);
+    expect(() => buf.toString("bogus", 0, 1)).toThrow(unknownEncoding);
+    expect(() => buf.toString("bogus", -1)).toThrow(unknownEncoding);
+    expect(() => buf.toString("bogus", NaN)).toThrow(unknownEncoding);
+    expect(() => buf.toString("bogus", 2.9)).toThrow(unknownEncoding);
+    expect(() => buf.toString("", 0, 1)).toThrow(unknownEncoding);
+    expect(() => buf.toString(null, 0, 1)).toThrow(unknownEncoding);
+    expect(buf.toString(undefined, 1, 2)).toBe("b");
+  });
+
+  it("coerces start, then end, then the encoding", () => {
+    const log = [];
+    const buf = Buffer.from("abc");
+    expect(buf.toString(logged(log, "encoding", "latin1"), logged(log, "start", 1), logged(log, "end", 2))).toBe("b");
+    expect(log).toEqual(["start", "end", "encoding"]);
+
+    // The first argument that fails to coerce decides the error.
+    expect(() => buf.toString(throws("encoding"), throws("start"), throws("end"))).toThrow("coerced start");
+    expect(() => buf.toString(throws("encoding"), 0, throws("end"))).toThrow("coerced end");
+    expect(() => buf.toString(throws("encoding"), 0, 1)).toThrow("coerced encoding");
+    expect(() => buf.toString("bogus", throws("start"))).toThrow("coerced start");
+    expect(() => buf.toString("bogus", 1, throws("end"))).toThrow("coerced end");
+  });
+
+  it("stops at the first check that makes the range empty", () => {
+    const buf = Buffer.from("abc");
+
+    const log = [];
+    expect(buf.toString(logged(log, "encoding", "utf8"), logged(log, "start", 1), logged(log, "end", 1))).toBe("");
+    expect(log).toEqual(["start", "end"]);
+
+    // start >= length returns before end is read.
+    log.length = 0;
+    expect(buf.toString(logged(log, "encoding", "utf8"), logged(log, "start", 3), logged(log, "end", 1))).toBe("");
+    expect(log).toEqual(["start"]);
+    expect(buf.toString("utf8", 3, throws("end"))).toBe("");
+    expect(() => buf.toString("utf8", 2, throws("end"))).toThrow("coerced end");
+  });
+
+  it("treats a zero-length buffer as an empty range", () => {
+    const empty = Buffer.alloc(0);
+    expect(empty.toString("bogus")).toBe("");
+    expect(empty.toString("bogus", 0, 0)).toBe("");
+    expect(empty.toString(throws("encoding"))).toBe("");
+    // start and end are still coerced. Only a start above 0 returns before end is read.
+    expect(() => empty.toString("utf8", throws("start"))).toThrow("coerced start");
+    expect(() => empty.toString("utf8", 0, throws("end"))).toThrow("coerced end");
+    expect(empty.toString("utf8", 1, throws("end"))).toBe("");
+  });
+
+  it("coerces start and end with the number hint", () => {
+    const hints = [];
+    const hinted = value => ({
+      [Symbol.toPrimitive](hint) {
+        hints.push(hint);
+        return value;
+      },
+    });
+    const buf = Buffer.from("abc");
+    expect(buf.toString("utf8", hinted(1), hinted(2))).toBe("b");
+    expect(hints).toEqual(["number", "number"]);
+    // A Date is a number only under the number hint.
+    expect(buf.toString("utf8", new Date(1), new Date(2))).toBe("b");
+  });
+
+  // Node compares start and end (`start <= 0`, `start >= length`, `end > length`) before it
+  // truncates them. A comparison accepts a BigInt and MathTrunc throws a TypeError for one.
+  it("accepts a BigInt start or end that Node's comparisons resolve and rejects every other one", () => {
+    const buf = Buffer.from("abc");
+    const typeError = { name: "TypeError", code: undefined };
+    expect(buf.toString("utf8", 0n)).toBe("abc");
+    expect(buf.toString("utf8", -1n)).toBe("abc");
+    expect(buf.toString("utf8", 3n)).toBe("");
+    expect(buf.toString("utf8", 2n ** 70n)).toBe("");
+    expect(buf.toString("utf8", 1, 4n)).toBe("bc");
+    expect(buf.toString("utf8", Object(0n), { valueOf: () => 2n ** 70n })).toBe("abc");
+    expect(thrown(() => buf.toString("utf8", 1n))).toEqual(typeError);
+    expect(thrown(() => buf.toString("utf8", 0, 3n))).toEqual(typeError);
+    expect(thrown(() => buf.toString("utf8", 0, 0n))).toEqual(typeError);
+    expect(thrown(() => buf.toString("utf8", 0, -1n))).toEqual(typeError);
+
+    // The order of the checks holds for a BigInt too.
+    expect(buf.toString("utf8", 3, 0n)).toBe("");
+    expect(buf.toString("bogus", 3n)).toBe("");
+    expect(thrown(() => buf.toString("bogus", 1n))).toEqual(typeError);
+    expect(() => buf.toString("bogus", 0n)).toThrow(unknownEncoding);
+    expect(() => buf.toString("bogus", 1, 4n)).toThrow(unknownEncoding);
+
+    const empty = Buffer.alloc(0);
+    expect(empty.toString("utf8", 0n)).toBe("");
+    expect(empty.toString("utf8", 1n)).toBe("");
+    expect(empty.toString("bogus", 0, 1n)).toBe("");
+    expect(thrown(() => empty.toString("utf8", 0, 0n))).toEqual(typeError);
+  });
+
+  // Differential test: the fixture prints the result, or the thrown error class and code, for
+  // every combination of a set of encodings, starts and ends, and the order of coercion.
+  // Running it under Node.js and under Bun must produce identical lines.
+  it.skipIf(!nodeExe())("every toString() argument shape produces the same output in Node.js and Bun", async () => {
+    const fixture = join(import.meta.dir, "buffer-tostring-args-fixture.js");
+    async function run(exe) {
+      await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { lines: stdout.split("\n"), exitCode };
+    }
+    const [bunRun, nodeRun] = await Promise.all([run(bunExe()), run(nodeExe())]);
+    expect(nodeRun.lines.length).toBeGreaterThan(1000);
+    const differences = nodeRun.lines.flatMap((line, i) =>
+      line === bunRun.lines[i] ? [] : [{ node: line, bun: bunRun.lines[i] }],
+    );
+    expect(differences).toEqual([]);
+    expect(bunRun.lines.length).toBe(nodeRun.lines.length);
+    expect(nodeRun.exitCode).toBe(0);
+    expect(bunRun.exitCode).toBe(0);
+  });
+});
+
 describe("Buffer.prototype.toString binary-to-text encodings", () => {
   // Reference implementations (scalar, independent of Bun's native encoders) so
   // the SIMD/bulk paths for hex and base64 are checked byte-for-byte, including

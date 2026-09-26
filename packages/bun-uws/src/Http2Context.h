@@ -30,6 +30,7 @@
 #include "SocketKinds.h"
 #include "Http2ResponseData.h"
 #include "Http3Request.h"
+#include "StreamWebSocketTopics.h"
 
 #include <lshpack.h>
 
@@ -39,6 +40,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -69,6 +71,7 @@ enum ErrorCode : uint32_t {
 enum SettingId : uint16_t {
     SETTINGS_HEADER_TABLE_SIZE = 1, SETTINGS_ENABLE_PUSH = 2, SETTINGS_MAX_CONCURRENT_STREAMS = 3,
     SETTINGS_INITIAL_WINDOW_SIZE = 4, SETTINGS_MAX_FRAME_SIZE = 5, SETTINGS_MAX_HEADER_LIST_SIZE = 6,
+    SETTINGS_ENABLE_CONNECT_PROTOCOL = 8,
 };
 
 static constexpr uint32_t FRAME_HEADER_SIZE = 9;
@@ -176,7 +179,7 @@ static inline bool isKnownMethod(std::string_view method) {
 /* The request fields validation cares about. lshpack reports the HPACK
  * static-table index when the peer used one for the name (nearly always);
  * literal names fall back to a compare. */
-enum class Field : uint8_t { Other, Method, Scheme, Path, Authority, Host, ContentLength, Te, Expect, ConnectionSpecific };
+enum class Field : uint8_t { Other, Method, Scheme, Path, Authority, Protocol, Host, ContentLength, Te, Expect, ConnectionSpecific };
 static inline Field classify(int hpackIndex, std::string_view name) {
     switch (hpackIndex) {
     case LSHPACK_HDR_AUTHORITY: return Field::Authority;
@@ -196,6 +199,7 @@ static inline Field classify(int hpackIndex, std::string_view name) {
     case 5: if (name == ":path") return Field::Path; break;
     case 6: if (name == "expect") return Field::Expect; break;
     case 7: if (name == ":method") return Field::Method; if (name == ":scheme") return Field::Scheme; if (name == "upgrade") return Field::ConnectionSpecific; break;
+    case 9: if (name == ":protocol") return Field::Protocol; break;
     case 10: if (name == ":authority") return Field::Authority; if (name == "connection") return Field::ConnectionSpecific; if (name == "keep-alive") return Field::ConnectionSpecific; break;
     case 14: if (name == "content-length") return Field::ContentLength; break;
     case 16: if (name == "proxy-connection") return Field::ConnectionSpecific; break;
@@ -232,6 +236,16 @@ struct Http2Response {
     bool wide = false;
     int64_t declaredContentLength = -1;
     uint64_t receivedBodyBytes = 0;
+    /* Request classification captured before the decoded header scratch
+     * buffer is reused. Extended CONNECT remains a normal HTTP/2 stream;
+     * these bits only select the stream protocol after Bun accepts it. */
+    bool connectRequest = false;
+    bool websocketConnect = false;
+    /* Accepted Extended CONNECT streams are bidirectional tunnels. Sending
+     * END_STREAM must not trigger the ordinary-response shortcut that resets
+     * an unread request body; the peer still owns its half of the tunnel. */
+    bool tunnelMode = false;
+    uint16_t statusCode = 200;
 
     /* END_STREAM received / sent. A reset (either direction) closes both. */
     bool remoteClosed = false;
@@ -247,6 +261,13 @@ struct Http2Response {
      * permissive value among its open streams. */
     uint8_t timeoutS = 255;
     uint8_t pausedTimeoutS = 255;
+    /* WebSocket idle/close deadlines are stream-local. They share the one
+     * uSockets connection timer only as a wake-up source. */
+    bool websocketTimeoutOwned = false;
+    bool websocketTimeoutActive = false;
+    bool websocketTimeoutRefreshOnWrite = false;
+    uint16_t websocketTimeoutS = 0;
+    std::chrono::steady_clock::time_point websocketDeadline;
     /* Retired: out of conn->streams, waiting in pendingFree for deletion. */
     bool dead = false;
 
@@ -262,6 +283,10 @@ struct Http2Response {
         if (data.state & Http2ResponseData::HTTP_STATUS_CALLED) return this;
         data.state |= Http2ResponseData::HTTP_STATUS_CALLED;
         std::string_view code = status.size() >= 3 ? status.substr(0, 3) : std::string_view{"200"};
+        if (code.size() == 3 && code[0] >= '0' && code[0] <= '9' &&
+            code[1] >= '0' && code[1] <= '9' && code[2] >= '0' && code[2] <= '9') {
+            statusCode = (uint16_t)((code[0] - '0') * 100 + (code[1] - '0') * 10 + (code[2] - '0'));
+        }
         data.appendHeader(":status", 7, code.data(), (unsigned) code.size());
         return this;
     }
@@ -281,9 +306,11 @@ struct Http2Response {
     }
 
     inline void writeMark();
+    inline void finalizeConnectStatus();
     inline Http2Response *writeContinue();
     inline void flushHeaders(bool immediately = false);
     inline bool write(std::string_view chunk, size_t *writtenPtr = nullptr);
+    inline bool tryWriteWebSocketFrame(std::string_view header, std::string_view payload);
     void end(std::string_view body = {}, bool closeConnection = false) {
         internalEnd(body, body.length(), false, closeConnection);
     }
@@ -296,6 +323,9 @@ struct Http2Response {
 
     bool hasResponded() { return !(data.state & Http2ResponseData::HTTP_RESPONSE_PENDING); }
     size_t getBufferedAmount() { return data.backpressure.length(); }
+    /* Predict whether this complete application frame can be accepted without
+     * exceeding its per-stream backpressure budget. */
+    inline bool canWriteWithinBackpressure(size_t length, size_t maxBackpressure);
 
     inline Http2Response *pause();
     inline Http2Response *resume();
@@ -306,8 +336,26 @@ struct Http2Response {
      * HTTP/1 socket mid-response. */
     /* RST_STREAM (unless already closed both ways) and retire. */
     inline void close(http2::ErrorCode code = http2::ERR_CANCEL);
+    bool isConnectRequest() { return connectRequest; }
+    bool isWebSocketConnectRequest() { return websocketConnect; }
+    bool upgradeToWebSocket() {
+        if (dead || localClosed || remoteClosed || tunnelMode || !websocketConnect || hasResponded()) return false;
+        tunnelMode = true;
+        /* DATA after a successful Extended CONNECT is WebSocket tunnel data,
+         * not an HTTP request body.  A stray content-length header must not
+         * truncate or reject valid RFC 6455 frames once the protocol has
+         * switched. */
+        declaredContentLength = -1;
+        writeStatus("200");
+        flushHeaders();
+        growReceiveWindow();
+        return true;
+    }
     inline void setTimeout(uint8_t seconds);
     inline void resetTimeout();
+    inline void setWebSocketTimeout(uint16_t seconds);
+    inline void touchWebSocketTimeout();
+    void setWebSocketTimeoutRefreshOnWrite(bool enabled) { websocketTimeoutRefreshOnWrite = enabled; }
 
     Http2Response *onWritable(void *userData, Http2ResponseData::OnWritableCallback h) {
         data.writableUserData = userData; data.onWritable = h; return this;
@@ -386,6 +434,7 @@ struct Http2Connection {
     uint32_t lastProcessedStreamId = 0;
     bool goawaySent = false;
     bool goawayReceived = false;
+    bool peerEnableConnectProtocol = false;
     double resetTokens = http2::RESET_BURST;
     std::chrono::steady_clock::time_point resetRefilledAt = std::chrono::steady_clock::now();
 
@@ -419,6 +468,13 @@ struct Http2Connection {
     /* Seconds of silence before onTimeout; recomputed when a stream sets a
      * timeout or retires (see Http2Response::timeoutS). */
     unsigned idleTimeoutS = 0;
+    std::chrono::steady_clock::time_point lastActivity = std::chrono::steady_clock::now();
+    /* Conservative lower bound for deciding when stream-local WebSocket
+     * deadlines need a scan. This is separate from the native socket timer:
+     * an earlier connection-idle deadline must not make every DATA frame walk
+     * all multiplexed WebSocket streams after that instant has passed. */
+    std::optional<std::chrono::steady_clock::time_point> earliestWebSocketDeadline;
+    std::optional<std::chrono::steady_clock::time_point> armedTimeoutDeadline;
     int drainDepth = 0;
 
     Http2Connection(us_socket_t *socket, Http2Context *context) : s(socket), ctx(context) {
@@ -521,6 +577,27 @@ struct Http2Connection {
         return sent;
     }
 
+    /* Atomically frame two adjacent application byte ranges as one DATA
+     * frame. The ranges must not alias `out`, whose reserve may relocate it.
+     * Constrained sends fall back to write(), keeping its established
+     * partial-write and drain behavior unchanged. */
+    bool tryWriteDataSegmentsFully(Http2Response *stream, std::string_view first, std::string_view second) {
+        if (second.length() > SIZE_MAX - first.length()) return false;
+        size_t length = first.length() + second.length();
+        if (length > peerMaxFrameSize || length > sendAllowance(stream)) return false;
+
+        char frameHeader[http2::FRAME_HEADER_SIZE];
+        http2::writeFrameHeader(frameHeader, (uint32_t) length, http2::DATA, 0, stream->id);
+        out->reserve(out->length() + sizeof(frameHeader) + length);
+        out->append(frameHeader, sizeof(frameHeader));
+        out->append(first.data(), first.length());
+        out->append(second.data(), second.length());
+        stream->sendWindow -= (int32_t) length;
+        connSendWindow -= (int64_t) length;
+        if (length) wroteStreamBytes = true;
+        return true;
+    }
+
     void writeEndStream(Http2Response *stream) {
         writeFrame(http2::DATA, http2::END_STREAM, stream->id, nullptr, 0);
         stream->localClosed = true;
@@ -601,6 +678,11 @@ struct Http2Connection {
     inline void retireStream(Http2Response *stream, bool abortNow);
     inline void recomputeIdleTimeout();
     inline void touch();
+    inline void touch(std::chrono::steady_clock::time_point now);
+    inline void armTimeout();
+    inline void armTimeout(std::chrono::steady_clock::time_point now);
+    inline void recomputeWebSocketDeadline();
+    inline bool expireWebSocketTimeouts(std::chrono::steady_clock::time_point now);
     inline void replenishStreamWindow(Http2Response *stream, uint32_t bytes);
 
     /* ── inbound ──────────────────────────────────────────────────────── */
@@ -630,6 +712,11 @@ struct Http2Context {
         Http2Request *httpRequest;
     };
     HttpRouter<RouterData> router;
+    /* server.reload() may run from inside a route callback.  Mutating the
+     * active HttpRouter would invalidate the handler/node vectors still on
+     * router.route()'s stack, so build the replacement off to the side and
+     * install it after the outermost dispatch returns. */
+    std::unique_ptr<HttpRouter<RouterData>> pendingRouter;
 
     Loop *loop = nullptr;
     /* The HttpContextData<SSL> we take connections from: its filter handlers
@@ -642,6 +729,13 @@ struct Http2Context {
     /* Seconds without traffic in either direction before a connection is
      * dropped (streams in flight are aborted); 0 disables. */
     unsigned idleTimeoutS = 10;
+    /* RFC 8441 SETTINGS_ENABLE_CONNECT_PROTOCOL. This is intentionally false
+     * until the embedding Bun server installs a stream-WebSocket transport;
+     * never advertise a protocol path that would fall through as HTTP. */
+    bool enableConnectProtocol = false;
+    bool isTls = false;
+
+    StreamTopicTree *topicTree = nullptr;
 
     /* Output buffer lent to whichever connection is inside a socket event;
      * see Http2Connection::out. */
@@ -658,6 +752,20 @@ struct Http2Context {
 
     std::vector<Http2Connection *> sweepList;
 
+    /* The embedder can destroy the H2 app re-entrantly from any JS callback
+     * reached through this context (message/drain/close/request).  Connection
+     * busy counts keep Http2Connection objects alive, but they do not pin
+     * their owning Http2Context. */
+    unsigned activeCalls = 0;
+    bool freePending = false;
+
+    struct CallGuard {
+        Http2Context *ctx;
+        explicit CallGuard(Http2Context *ctx) : ctx(ctx) { ctx->activeCalls++; }
+        CallGuard(const CallGuard &) = delete;
+        ~CallGuard() { ctx->releaseCall(); }
+    };
+
     static Http2Connection *connection(us_socket_t *s) {
         return *(Http2Connection **) us_socket_ext(s);
     }
@@ -667,26 +775,55 @@ struct Http2Context {
         return v > 0xffffff ? 0xffffff : (uint32_t) v;
     }
 
-    static Http2Context *create(Loop *loop, unsigned idleTimeoutS) {
+    static Http2Context *create(Loop *loop, unsigned idleTimeoutS, bool enableConnectProtocol = false) {
         Http2Context *ctx = new Http2Context;
         ctx->loop = loop;
         ctx->idleTimeoutS = idleTimeoutS;
+        ctx->enableConnectProtocol = enableConnectProtocol;
+        ctx->topicTree = createStreamTopicTree();
         us_socket_group_init(&ctx->group, (us_loop_t *) loop, &vtable, ctx);
         return ctx;
     }
 
+    uint32_t publish(std::string_view topic, std::string_view message, int opCode, bool compress) {
+        bool queued = false;
+        uint32_t status = publishToStreamTopic(topicTree, nullptr, topic, message, opCode, compress, queued);
+        if (queued) scheduleDeferredDrain();
+        return status;
+    }
+
+    unsigned int numSubscribers(std::string_view topic) {
+        return streamTopicSubscriberCount(topicTree, topic);
+    }
+
     void free() {
+        if (freePending) return;
+        CallGuard guard(this);
+        freePending = true;
         closeAll();
         if (parent && detachFromParent) detachFromParent(parent, this);
+    }
+
+private:
+    void releaseCall() {
+        if (--activeCalls == 0 && freePending) destroyNow();
+    }
+
+    void destroyNow() {
         for (Http2Connection *conn : sweepList) { conn->inSweepList = false; if (--conn->busy == 0 && conn->closed) delete conn; }
         sweepList.clear();
+        delete topicTree;
+        topicTree = nullptr;
         us_socket_group_deinit(&group);
         delete this;
     }
 
+public:
+
     /* Hook into an HttpContext<SSL>'s data so its connections can migrate here. */
     template <bool SSL>
     void attach(HttpContextData<SSL> *data, bool allowHttp1) {
+        isTls = SSL;
         parent = data;
         parentFlags = &data->flags;
         parentMaxHeaderSize = &data->maxHeaderSize;
@@ -727,6 +864,10 @@ struct Http2Context {
      * that arrived with the preface are fed straight in; `prefaceConsumed`
      * preface bytes were already matched by the caller. */
     us_socket_t *adopt(us_socket_t *s, bool filteredOpen, bool filteredAccept, const char *initialData, int initialLength, unsigned prefaceConsumed) {
+        /* The first read can contain the preface, SETTINGS, HEADERS, DATA and
+         * synchronously-entered user callbacks. Pin the context exactly like
+         * the normal onData socket callback does. */
+        CallGuard guard(this);
         us_socket_adopt(s, &group, US_SOCKET_KIND_DYNAMIC, -1, -1);
         Http2Connection *conn = new Http2Connection(s, this);
         conn->filteredOpen = filteredOpen;
@@ -749,7 +890,8 @@ struct Http2Context {
                 MoveOnlyFunction<void(Http2Response *, Http2Request *)> &&handler) {
         std::vector<std::string_view> methods =
             method == "*" ? std::vector<std::string_view>{"*"} : std::vector<std::string_view>{method};
-        router.add(methods, pattern, [handler = std::move(handler)](auto *r) mutable {
+        HttpRouter<RouterData> &target = pendingRouter ? *pendingRouter : router;
+        target.add(methods, pattern, [handler = std::move(handler)](auto *r) mutable {
             /* Copy out: the handler may reload routes, replacing `router`
              * (and its user data) while we're inside it. */
             Http2Request *req = r->getUserData().httpRequest;
@@ -758,12 +900,14 @@ struct Http2Context {
             req->setParameters(r->getParameters());
             handler(res, req);
             return !req->getYield();
-        }, method == "*" ? router.LOW_PRIORITY : router.MEDIUM_PRIORITY);
+        }, method == "*" ? target.LOW_PRIORITY : target.MEDIUM_PRIORITY);
     }
 
-    /* server.reload(): drop all routes. Safe from inside a handler: the
-     * route lambda copied what it needs and returns straight after. */
-    void clearRoutes() { router = decltype(router){}; }
+    /* server.reload(): atomically replace all routes. */
+    void clearRoutes() {
+        if (dispatchDepth > 0) pendingRouter = std::make_unique<HttpRouter<RouterData>>();
+        else router = decltype(router){};
+    }
 
     /* fn may close connections (and run JS that closes others), so snapshot
      * the group's list first and pin each entry across the call. */
@@ -782,6 +926,7 @@ struct Http2Context {
     /* GOAWAY every connection and close it. Streams still in flight get
      * onAborted, as TemplatedApp::close() does for HTTP/1 sockets. */
     void closeAll() {
+        CallGuard guard(this);
         forEachConnection([](Http2Connection *conn) {
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
@@ -794,6 +939,7 @@ struct Http2Context {
      * start and they close once their last stream retires (graceful stop);
      * without it they are left alone. */
     size_t closeIdle(bool closeWhenIdle) {
+        CallGuard guard(this);
         size_t closedNow = 0;
         forEachConnection([&](Http2Connection *conn) {
             if (!conn->streams.empty() && !closeWhenIdle) return;
@@ -814,29 +960,52 @@ struct Http2Context {
     void *scheduleDrainUser = nullptr;
 
     bool drainScheduled = false;
+    bool drainInProgress = false;
+    bool drainRescheduled = false;
 
-    /* Queued connections are pinned (busy) so they can't be deleted before
-     * the pass reaches them. */
-    void scheduleSweep(Http2Connection *conn) {
-        if (conn->inSweepList || conn->closed) return;
-        conn->inSweepList = true;
-        conn->busy++;
-        sweepList.push_back(conn);
+    /* Queue a context-wide deferred pass even when no individual connection
+     * needs sweeping. TopicTree batches small publications and must be drained
+     * once per loop turn just like the HTTP/1 app's pre/post handlers. */
+    void scheduleDeferredDrain() {
+        /* TopicTree callbacks can publish again while drain() is active. The
+         * embedder already owns the current deferred task, so remember that
+         * it needs another pass instead of invoking its scheduling hook
+         * re-entrantly or losing the wake-up when drain() clears its flag. */
+        if (drainInProgress) {
+            drainRescheduled = true;
+            return;
+        }
         if (!drainScheduled && scheduleDrain) {
             drainScheduled = true;
             scheduleDrain(scheduleDrainUser, this);
         }
     }
 
+    /* Queued connections are pinned (busy) so they can't be deleted before
+     * the pass reaches them. */
+    void scheduleSweep(Http2Connection *conn) {
+        if (freePending || conn->inSweepList || conn->closed) return;
+        conn->inSweepList = true;
+        conn->busy++;
+        sweepList.push_back(conn);
+        scheduleDeferredDrain();
+    }
+
     /* The embedder's deferred callback: returns whether more work is queued
      * (so a repeating task can stay registered). */
     bool drain() {
+        CallGuard guard(this);
+        if (freePending) return false;
         /* Stay "scheduled" across sweep() so re-queues from inside it don't
          * call the hook re-entrantly; whatever is queued afterwards keeps the
          * embedder's task alive via the return value. */
         drainScheduled = true;
+        drainInProgress = true;
+        drainRescheduled = false;
+        if (topicTree) topicTree->drain();
         sweep();
-        drainScheduled = !sweepList.empty();
+        drainInProgress = false;
+        drainScheduled = drainRescheduled || !sweepList.empty();
         return drainScheduled;
     }
 
@@ -858,7 +1027,15 @@ struct Http2Context {
             if (conn->busy > 0) continue;
             conn->busy++;
             conn->borrowSharedOut();
-            conn->pump();
+            /* uSockets owns one idle timer per TCP connection. Deferred
+             * output on a busy sibling can keep restarting that timer, so
+             * enforce the absolute deadlines owned by WebSocket streams
+             * before producing more connection-level output. */
+            if (conn->earliestWebSocketDeadline) {
+                auto now = std::chrono::steady_clock::now();
+                if (now >= *conn->earliestWebSocketDeadline) conn->expireWebSocketTimeouts(now);
+            }
+            if (!conn->closed) conn->pump();
             conn->returnSharedOut();
             conn->busy--;
             if (!sweepConnection(conn)) continue;
@@ -901,6 +1078,7 @@ private:
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         if (us_socket_is_shut_down(s)) return s;
         Http2Connection *conn = connection(s);
+        CallGuard guard(conn->ctx);
         conn->borrowSharedOut();
         conn->onData(data, (size_t) length);
         return s;
@@ -908,10 +1086,19 @@ private:
 
     static us_socket_t *onWritable(us_socket_t *s) {
         Http2Connection *conn = connection(s);
+        CallGuard guard(conn->ctx);
         conn->busy++;
         conn->flush();
         conn->borrowSharedOut();
-        if (!conn->closed) conn->drainWritable();
+        if (!conn->closed) {
+            /* Writable callbacks are connection-wide. Traffic from one H2
+             * stream must not postpone an idle WebSocket sibling forever. */
+            if (conn->earliestWebSocketDeadline) {
+                auto now = std::chrono::steady_clock::now();
+                if (now >= *conn->earliestWebSocketDeadline) conn->expireWebSocketTimeouts(now);
+            }
+            if (!conn->closed) conn->drainWritable();
+        }
         conn->busy--;
         return epilogue(conn, s);
     }
@@ -919,6 +1106,7 @@ private:
     static us_socket_t *onClose(us_socket_t *s, int, void *) {
         Http2Connection *conn = connection(s);
         Http2Context *ctx = conn->ctx;
+        CallGuard guard(ctx);
         conn->closed = true;
         if (ctx->sharedOutHolder == conn) { ctx->sharedOut.clear(); ctx->sharedOutHolder = nullptr; conn->out = &conn->ownOut; }
         conn->busy++;
@@ -947,20 +1135,43 @@ private:
         return s;
     }
 
-    /* No traffic either way for idleTimeoutS (or a drained going-away
-     * connection): streams in flight are aborted through onClose. */
+    /* The socket timer is only a wake-up source. WebSocket deadlines are
+     * stream-local; the legacy connection-idle deadline covers ordinary H2
+     * requests and a connection with no streams. */
     static us_socket_t *onTimeout(us_socket_t *s) {
         Http2Connection *conn = connection(s);
+        CallGuard guard(conn->ctx);
         conn->busy++;
-        std::vector<Http2Response *> open = conn->streams;
-        for (Http2Response *stream : open) {
-            if (!stream->dead && stream->data.onTimeout) stream->data.onTimeout(stream, stream->data.userData);
-        }
+        conn->armedTimeoutDeadline.reset();
+        auto now = std::chrono::steady_clock::now();
+        /* The timer wheel is only a wake-up source. armTimeout() pads its
+         * bucket selection against an early sweep, but use the monotonic clock
+         * as the authority anyway: no stream may expire before its deadline. */
+        bool expiredWebSockets = conn->expireWebSocketTimeouts(now);
         conn->busy--;
         if (conn->closed) {
             if (conn->busy == 0) delete conn;
             return s;
         }
+        if (expiredWebSockets) {
+            conn->flush();
+            conn->armTimeout();
+            return epilogue(conn, s);
+        }
+
+        auto connectionDeadline = conn->lastActivity + std::chrono::seconds(conn->idleTimeoutS);
+        if (!conn->idleTimeoutS || connectionDeadline > now) {
+            conn->armTimeout();
+            return s;
+        }
+
+        std::vector<Http2Response *> open = conn->streams;
+        for (Http2Response *stream : open) {
+            if (!stream->dead && !stream->websocketTimeoutOwned && stream->data.onTimeout) {
+                stream->data.onTimeout(stream, stream->data.userData);
+            }
+        }
+        if (conn->closed) return s;
         if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
         conn->flush();
         return us_socket_close(s, 0, nullptr);
@@ -968,6 +1179,7 @@ private:
 
     static us_socket_t *onEnd(us_socket_t *s) {
         Http2Connection *conn = connection(s);
+        CallGuard guard(conn->ctx);
         conn->flush();
         return us_socket_close(s, 0, nullptr);
     }
@@ -1011,7 +1223,7 @@ private:
 inline uint32_t Http2Connection::maxHeaderListSize() { return ctx->maxHeaderListSize(); }
 
 inline void Http2Connection::writeSettings() {
-    char payload[6 * 4];
+    char payload[6 * 5];
     char *p = payload;
     auto put = [&](uint16_t id, uint32_t value) {
         p[0] = (char)(id >> 8); p[1] = (char) id; http2::writeU32BE(p + 2, value); p += 6;
@@ -1020,26 +1232,130 @@ inline void Http2Connection::writeSettings() {
     put(http2::SETTINGS_INITIAL_WINDOW_SIZE, http2::LOCAL_INITIAL_WINDOW_SIZE);
     put(http2::SETTINGS_MAX_FRAME_SIZE, http2::LOCAL_MAX_FRAME_SIZE);
     put(http2::SETTINGS_MAX_HEADER_LIST_SIZE, maxHeaderListSize());
+    if (ctx->enableConnectProtocol) put(http2::SETTINGS_ENABLE_CONNECT_PROTOCOL, 1);
     writeFrame(http2::SETTINGS, 0, 0, payload, (uint32_t)(p - payload));
     writeWindowUpdate(0, http2::LOCAL_CONNECTION_WINDOW_SIZE - http2::DEFAULT_WINDOW_SIZE);
 }
 
+inline void Http2Connection::armTimeout() {
+    armTimeout(std::chrono::steady_clock::now());
+}
+
+inline void Http2Connection::armTimeout(std::chrono::steady_clock::time_point now) {
+    using Clock = std::chrono::steady_clock;
+    std::optional<Clock::time_point> next;
+    std::optional<Clock::time_point> nextWebSocket;
+
+    /* The legacy connection-idle budget continues to cover ordinary request
+     * streams. WebSocket streams are deliberately excluded and contribute
+     * their own absolute deadline below. */
+    if (idleTimeoutS) next = lastActivity + std::chrono::seconds(idleTimeoutS);
+    for (Http2Response *stream : streams) {
+        if (stream->dead || !stream->websocketTimeoutActive) continue;
+        if (!nextWebSocket || stream->websocketDeadline < *nextWebSocket) nextWebSocket = stream->websocketDeadline;
+        if (!next || stream->websocketDeadline < *next) next = stream->websocketDeadline;
+    }
+    earliestWebSocketDeadline = nextWebSocket;
+    if (!next) {
+        if (armedTimeoutDeadline) us_socket_timeout(s, 0);
+        armedTimeoutDeadline.reset();
+        return;
+    }
+    /* us_socket_timeout() selects a relative four-second wheel bucket and
+     * calling it again replaces that selection. Activity on one multiplexed
+     * stream must therefore not postpone an already earlier deadline owned by
+     * a sibling. onTimeout() reconciles the coarse bucket with this exact
+     * deadline. */
+    if (armedTimeoutDeadline && *next >= *armedTimeoutDeadline) return;
+    auto remaining = *next - now;
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(remaining).count();
+    unsigned seconds = milliseconds <= 0 ? 1u : (unsigned) std::min<int64_t>((milliseconds + 999) / 1000, UINT_MAX);
+    /* A uSockets timeout is anchored to the timer wheel's last sweep rather
+     * than the instant it is armed, so an unpadded N-second timeout can fire
+     * almost one wheel period early. Keep the exact deadline above and pad
+     * only the wake-up bucket (4s on the short wheel, 60s on the long wheel),
+     * following Bun's normalize_idle_timeout_seconds() rule. */
+    constexpr unsigned SHORT_WHEEL_PERIOD_SECONDS = 4;
+    constexpr unsigned LONG_WHEEL_PERIOD_SECONDS = 60;
+    constexpr unsigned SHORT_WHEEL_MAX_SECONDS = 240;
+    if (seconds > SHORT_WHEEL_MAX_SECONDS - SHORT_WHEEL_PERIOD_SECONDS) {
+        uint64_t minutes = ((uint64_t) seconds + LONG_WHEEL_PERIOD_SECONDS - 1) / LONG_WHEEL_PERIOD_SECONDS + 1;
+        seconds = (unsigned) std::min<uint64_t>(minutes * LONG_WHEEL_PERIOD_SECONDS, UINT_MAX);
+    } else {
+        seconds += SHORT_WHEEL_PERIOD_SECONDS;
+    }
+    armedTimeoutDeadline = *next;
+    us_socket_timeout(s, seconds);
+}
+
+inline void Http2Connection::recomputeWebSocketDeadline() {
+    std::optional<std::chrono::steady_clock::time_point> next;
+    for (Http2Response *stream : streams) {
+        if (stream->dead || !stream->websocketTimeoutActive) continue;
+        if (!next || stream->websocketDeadline < *next) next = stream->websocketDeadline;
+    }
+    earliestWebSocketDeadline = next;
+}
+
+inline bool Http2Connection::expireWebSocketTimeouts(std::chrono::steady_clock::time_point now) {
+    std::vector<Http2Response *> due;
+    for (Http2Response *stream : streams) {
+        if (!stream->dead && stream->websocketTimeoutActive && stream->websocketDeadline <= now) {
+            stream->websocketTimeoutActive = false;
+            due.push_back(stream);
+        }
+    }
+    for (Http2Response *stream : due) {
+        if (stream->dead) continue;
+        if (stream->data.onTimeout) stream->data.onTimeout(stream, stream->data.userData);
+        if (!stream->dead && !stream->websocketTimeoutActive) stream->close(http2::ERR_CANCEL);
+    }
+    /* Timeout callbacks may close, pause, or re-arm any stream. Re-establish
+     * the lower bound only after those re-entrant changes have settled. */
+    recomputeWebSocketDeadline();
+    return !due.empty();
+}
+
 inline void Http2Connection::touch() {
-    us_socket_timeout(s, idleTimeoutS);
+    if (!idleTimeoutS) return;
+    touch(std::chrono::steady_clock::now());
+}
+
+inline void Http2Connection::touch(std::chrono::steady_clock::time_point now) {
+    if (!idleTimeoutS) return;
+    lastActivity = now;
+    /* Activity only moves the connection deadline later. Keep an existing
+     * earlier wake-up: onTimeout reconciles it against the exact deadline.
+     * A full scan is only needed when no deadline is currently armed. */
+    if (!armedTimeoutDeadline) armTimeout(now);
 }
 
 inline void Http2Connection::recomputeIdleTimeout() {
-    /* Most permissive among open streams (0 = never); a stream that never
-     * asked counts as the context default, as does a connection with none. */
+    /* Most permissive among ordinary request streams (0 = never). Accepted
+     * WebSocket tunnels are governed by their independent deadline. */
     unsigned t = streams.empty() ? ctx->idleTimeoutS : 0;
     bool never = streams.empty() && ctx->idleTimeoutS == 0;
+    bool ordinary = false;
     for (Http2Response *stream : streams) {
-        unsigned s = stream->timeoutS == 255 ? ctx->idleTimeoutS : stream->timeoutS;
-        if (s == 0) { never = true; break; }
-        t = std::max(t, s);
+        if (stream->websocketTimeoutOwned) continue;
+        ordinary = true;
+        unsigned streamTimeout = stream->timeoutS == 255 ? ctx->idleTimeoutS : stream->timeoutS;
+        if (streamTimeout == 0) {
+            never = true;
+            break;
+        }
+        t = std::max(t, streamTimeout);
+    }
+    if (!streams.empty() && !ordinary) {
+        t = 0;
+        never = true;
     }
     idleTimeoutS = never ? 0 : t;
-    touch();
+    auto now = std::chrono::steady_clock::now();
+    lastActivity = now;
+    /* Timeout ownership/configuration changed, so the previous lower bound
+     * may no longer represent the earliest live deadline. */
+    armTimeout(now);
 }
 
 inline void Http2Connection::borrowSharedOut() {
@@ -1217,14 +1533,14 @@ inline void Http2Connection::retireStream(Http2Response *stream, bool abortNow) 
      * socket event, or from the deferred pass if we're outside one; never
      * under the API call that got us here. */
     if (busy == 0) ctx->scheduleSweep(this);
-    if (stream->timeoutS != 255) recomputeIdleTimeout();
+    if (stream->timeoutS != 255 || stream->websocketTimeoutOwned) recomputeIdleTimeout();
 }
 
 inline void Http2Connection::streamMaybeClosed(Http2Response *stream) {
     if (stream->dead) return;
     bool localDone = stream->localClosed || stream->reset;
     bool remoteDone = stream->remoteClosed || stream->reset;
-    if (localDone && !remoteDone) {
+    if (localDone && !remoteDone && !stream->tunnelMode) {
         /* Response complete while the request body is still coming: tell
          * the peer to stop (RFC 9113 §8.1) rather than sink unread bytes. */
         writeRstStream(stream->id, http2::ERR_NO_ERROR);
@@ -1309,7 +1625,23 @@ inline void Http2Connection::onData(const char *data, size_t length) {
     }
     /* Only frames that move a stream count as activity: a peer holding
      * streams open at a zero window can't keep the connection alive on PINGs. */
-    if (progressed || streams.empty()) touch();
+    bool madeProgress = progressed || streams.empty();
+    if (earliestWebSocketDeadline || (madeProgress && idleTimeoutS)) {
+        auto now = std::chrono::steady_clock::now();
+        bool ranTimeoutCallbacks = false;
+        /* WebSocket activity can move the exact deadline later while leaving
+         * this conservative lower bound in place. Once reached, one scan
+         * rebases it; unrelated connection-idle deadlines do not trigger it. */
+        if (earliestWebSocketDeadline && now >= *earliestWebSocketDeadline) {
+            ranTimeoutCallbacks = expireWebSocketTimeouts(now);
+        }
+        if (!closed && madeProgress) {
+            /* A timeout callback may have changed the connection timeout or
+             * activity timestamp. Avoid overwriting either with stale state. */
+            if (ranTimeoutCallbacks) touch();
+            else touch(now);
+        }
+    }
     progressed = false;
     busy--;
     Http2Context::epilogue(this, s);
@@ -1324,6 +1656,13 @@ inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *
     if (length / 6 > http2::MAX_SETTINGS_PER_FRAME) return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
     for (uint32_t off = 0; off < length; off += 6) {
         uint16_t id = (uint16_t)((payload[off] << 8) | payload[off + 1]);
+        /* RFC 9113 section 6.5: an identifier may occur at most once in one
+         * SETTINGS frame. The frame is capped at 32 entries, so this tiny
+         * allocation-free scan is cheaper than maintaining a 64K-bit set. */
+        for (uint32_t previous = 0; previous < off; previous += 6) {
+            uint16_t previousId = (uint16_t)((payload[previous] << 8) | payload[previous + 1]);
+            if (previousId == id) return connectionError(http2::ERR_PROTOCOL_ERROR);
+        }
         uint32_t value = http2::readU32BE(payload + off + 2);
         switch (id) {
         case http2::SETTINGS_HEADER_TABLE_SIZE: {
@@ -1341,6 +1680,14 @@ inline bool Http2Connection::handleSettings(uint8_t flags, const unsigned char *
         }
         case http2::SETTINGS_ENABLE_PUSH:
             if (value > 1) return connectionError(http2::ERR_PROTOCOL_ERROR);
+            break;
+        case http2::SETTINGS_ENABLE_CONNECT_PROTOCOL:
+            /* RFC 8441 section 3: the only defined values are 0 and 1.  The
+             * peer's value governs Extended CONNECT requests initiated by us;
+             * this server does not initiate requests, but still validates the
+             * setting on receipt. */
+            if (value > 1 || (peerEnableConnectProtocol && value == 0)) return connectionError(http2::ERR_PROTOCOL_ERROR);
+            if (value == 1) peerEnableConnectProtocol = true;
             break;
         case http2::SETTINGS_INITIAL_WINDOW_SIZE: {
             if (value > (uint32_t) http2::MAX_WINDOW_SIZE) return connectionError(http2::ERR_FLOW_CONTROL_ERROR);
@@ -1498,10 +1845,10 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
         Http2Response *stream = findStream(streamId);
         if (!stream) {
             if (streamId > lastStreamId || (streamId & 1) == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
-            /* Closed stream: still answer the two things that are errors in
-             * any state (§6.9, §6.9.1); an RST on a closed stream is harmless. */
+            /* A positive WINDOW_UPDATE may race stream retirement and must be
+             * ignored (§6.9). A zero increment is malformed independently of
+             * flow-control state and remains a stream error. */
             if (increment == 0) return streamError(streamId, nullptr, http2::ERR_PROTOCOL_ERROR);
-            if ((int64_t) peerInitialWindowSize + increment > http2::MAX_WINDOW_SIZE) return streamError(streamId, nullptr, http2::ERR_FLOW_CONTROL_ERROR);
             return true;
         }
         if (increment == 0) return streamError(streamId, stream, http2::ERR_PROTOCOL_ERROR);
@@ -1525,6 +1872,9 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
 inline bool Http2Connection::handleData(Http2Response *stream, bool fin, uint32_t length, const unsigned char *body, uint32_t bodyLength) {
     /* A frame with no body bytes (empty, or all padding) moves nothing. */
     if (bodyLength > 0 || fin) progressed = true;
+    /* The WebSocket adapter owns its stream-local deadline. In particular it
+     * must not refresh the short close/ping grace period after local close;
+     * doing so here would let a peer evade that deadline by dribbling DATA. */
     /* §6.9.1: the peer may not send beyond what we advertised for this stream. */
     if (length > stream->receiveWindow - stream->unackedReceive) return streamError(stream->id, stream, http2::ERR_FLOW_CONTROL_ERROR);
     stream->receivedBodyBytes += bodyLength;
@@ -1601,7 +1951,10 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
 
     if (existing) {
         /* A later HEADERS on an open stream is the trailer section: it must
-         * end the stream, and trailers aren't surfaced. */
+         * end the stream, and trailers aren't surfaced. Once Extended CONNECT
+         * becomes a tunnel, only DATA carries WebSocket bytes; a later HEADERS
+         * block is a stream protocol error rather than an HTTP trailer. */
+        if (existing->tunnelMode) return streamError(streamId, existing, http2::ERR_PROTOCOL_ERROR);
         if (existing->remoteClosed) return streamError(streamId, existing, http2::ERR_STREAM_CLOSED);
         bool badTrailer = !endStream || tooLarge;
         for (size_t i = 0; !badTrailer && i < list.size(); i++) {
@@ -1654,9 +2007,9 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     /* Request validation (§8.3): pseudo-headers first, exactly the request
      * set, each once; connection-specific fields are malformed. */
     bool sawRegular = false, malformed = false, isConnect = false;
-    unsigned seen = 0; /* 1 :method, 2 :scheme, 4 :path, 8 :authority */
+    unsigned seen = 0; /* 1 :method, 2 :scheme, 4 :path, 8 :authority, 16 :protocol */
     int64_t contentLength = -1;
-    std::string_view authority, host, path, method;
+    std::string_view authority, host, path, method, protocol, scheme;
     for (const us_quic_header_t &h : list) {
         std::string_view name{h.name, h.name_len}, value{h.value, h.value_len};
         http2::Field f = http2::classify(h.qpack_index, name);
@@ -1667,9 +2020,10 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
             unsigned bit;
             switch (f) {
             case http2::Field::Method: bit = 1; method = value; isConnect = value == "CONNECT"; break;
-            case http2::Field::Scheme: bit = 2; break;
+            case http2::Field::Scheme: bit = 2; scheme = value; break;
             case http2::Field::Path: bit = 4; path = value; break;
             case http2::Field::Authority: bit = 8; authority = value; break;
+            case http2::Field::Protocol: bit = 16; protocol = value; break;
             default: bit = 0; break;
             }
             if (!bit || (seen & bit) || value.empty()) { malformed = true; break; }
@@ -1692,18 +2046,33 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
             if (malformed) break;
         }
     }
+    bool extendedConnect = (seen & 16) != 0;
     if (!malformed) {
-        malformed = isConnect ? seen != (1 | 8) : (seen & 7) != 7;
+        if (extendedConnect) {
+            malformed = !ctx->enableConnectProtocol || !isConnect || seen != (1 | 2 | 4 | 8 | 16);
+            if (!malformed) {
+                for (unsigned char c : protocol) {
+                    if (!isTokenByte(c)) { malformed = true; break; }
+                }
+            }
+            if (!malformed && protocol == "websocket") {
+                malformed = scheme != (ctx->isTls ? "https" : "http");
+            }
+        } else {
+            malformed = isConnect ? seen != (1 | 8) : (seen & 7) != 7;
+        }
     }
     if (!malformed && endStream && contentLength > 0) malformed = true;
     if (selfDependent) malformed = true;
-    if (!malformed && !validPseudoHeaderTarget(method, path, authority, host)) malformed = true;
+    if (!malformed && !validPseudoHeaderTarget(method, path, authority, host, extendedConnect)) malformed = true;
     if (malformed) {
         return streamError(streamId, nullptr, http2::ERR_PROTOCOL_ERROR);
     }
 
     Http2Response *stream = new Http2Response(this, streamId, peerInitialWindowSize);
     stream->declaredContentLength = contentLength;
+    stream->connectRequest = isConnect;
+    stream->websocketConnect = extendedConnect && protocol == "websocket";
     stream->remoteClosed = endStream;
     streams.push_back(stream);
     progressed = true;
@@ -1723,8 +2092,17 @@ inline bool Http2Connection::dispatchRequest(Http2Response *stream, const us_qui
     }
     ctx->dispatchDepth++;
     ctx->router.getUserData() = {stream, &req};
-    bool routed = ctx->router.route(req.getMethod(), req.getUrl());
+    /* Bun's public WebSocket route is a GET route: HTTP/1 upgrade requests
+     * arrive as GET, while RFC 8441 represents the same opening handshake as
+     * Extended CONNECT. Route only a validated websocket CONNECT through the
+     * GET table; Http2Request keeps the wire method so fallback/fetch handling
+     * and every other CONNECT protocol retain their normal semantics. */
+    bool routed = ctx->router.route(stream->websocketConnect ? std::string_view("get") : req.getMethod(), req.getUrl());
     ctx->dispatchDepth--;
+    if (ctx->dispatchDepth == 0 && ctx->pendingRouter) {
+        ctx->router = std::move(*ctx->pendingRouter);
+        ctx->pendingRouter.reset();
+    }
     if (closed) return false;
     if (!routed && !stream->dead) {
         stream->writeStatus("404 Not Found")->end();
@@ -1752,6 +2130,18 @@ inline void Http2Response::writeMark() {
     writeHeader("date", std::string_view{ld->date, 29});
 }
 
+inline void Http2Response::finalizeConnectStatus() {
+    /* A 2xx response to CONNECT accepts a tunnel. Bun's ordinary fetch
+     * response path cannot expose a bidirectional tunnel; only a transport
+     * adapter such as upgradeToWebSocket() may send success. Avoid promising
+     * a tunnel and then writing an ordinary HTTP response body. */
+    if (!connectRequest || tunnelMode || statusCode < 200 || statusCode >= 300) return;
+    statusCode = 501;
+    if (data.hdrs.isEmpty()) return;
+    auto &status = data.hdrs[0];
+    if (status.valueLen == 3) memcpy(data.hdrBuf.mutableSpan().data() + status.valueOff, "501", 3);
+}
+
 inline Http2Response *Http2Response::writeContinue() {
     if (dead || localClosed) return this;
     conn->writeInformational(this, "100");
@@ -1764,6 +2154,7 @@ inline void Http2Response::flushHeaders(bool) {
     if (!(data.state & Http2ResponseData::HTTP_WRITE_CALLED)) {
         writeStatus("200");
         writeMark();
+        finalizeConnectStatus();
         conn->writeHeaderBlock(this, false);
         data.state |= Http2ResponseData::HTTP_WRITE_CALLED;
         conn->scheduleFlush();
@@ -1791,6 +2182,26 @@ inline bool Http2Response::write(std::string_view chunk, size_t *writtenPtr) {
     return w == chunk.length();
 }
 
+inline bool Http2Response::tryWriteWebSocketFrame(std::string_view header, std::string_view payload) {
+    if (dead || localClosed || data.backpressure.length() != 0) return false;
+    flushHeaders();
+    if (payload.length() > SIZE_MAX - header.length()) return false;
+    size_t length = header.length() + payload.length();
+    if (!conn->tryWriteDataSegmentsFully(this, header, payload)) return false;
+    data.offset += length;
+    conn->scheduleFlush();
+    return true;
+}
+
+inline bool Http2Response::canWriteWithinBackpressure(size_t length, size_t maxBackpressure) {
+    if (dead || localClosed) return false;
+    if (!maxBackpressure) return true;
+    size_t buffered = data.backpressure.length();
+    size_t immediate = buffered ? 0 : std::min(length, conn->sendAllowance(this));
+    size_t queued = length - immediate;
+    return buffered <= maxBackpressure && queued <= maxBackpressure - buffered;
+}
+
 inline void Http2Response::endWithoutBody(std::optional<size_t> reportedContentLength, bool) {
     if (dead) return;
     if (reportedContentLength.has_value() && !(data.state & Http2ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
@@ -1808,6 +2219,7 @@ inline void Http2Response::endWithoutBody(std::optional<size_t> reportedContentL
     } else {
         writeStatus("200");
         writeMark();
+        finalizeConnectStatus();
         conn->writeHeaderBlock(this, true);
         data.state |= Http2ResponseData::HTTP_WRITE_CALLED;
     }
@@ -1844,6 +2256,7 @@ inline bool Http2Response::internalEnd(std::string_view body, uint64_t totalSize
             writeHeader("content-length", totalSize);
             data.state |= Http2ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
         }
+        finalizeConnectStatus();
         if (body.empty() && data.offset >= totalSize) {
             c->writeHeaderBlock(this, true);
             data.state |= Http2ResponseData::HTTP_WRITE_CALLED;
@@ -1912,6 +2325,10 @@ inline bool Http2Response::drain() {
         data.offset += w;
         data.backpressure.erase(w);
         budget -= w;
+        /* Match H1: actual outbound progress keeps an active WebSocket alive.
+         * Rust disables this while awaiting Pong or a close response so a
+         * peer cannot evade those short grace deadlines with WINDOW_UPDATE. */
+        if (websocketTimeoutRefreshOnWrite) touchWebSocketTimeout();
     }
     if (data.endAfterDrain) {
         data.endAfterDrain = false;
@@ -1983,6 +2400,43 @@ inline void Http2Response::setTimeout(uint8_t seconds) {
 
 inline void Http2Response::resetTimeout() {
     if (!dead) conn->touch();
+}
+
+inline void Http2Response::setWebSocketTimeout(uint16_t seconds) {
+    if (dead) return;
+    bool firstWebSocketTimeout = !websocketTimeoutOwned;
+    bool wasActive = websocketTimeoutActive;
+    websocketTimeoutOwned = true;
+    websocketTimeoutS = seconds;
+    websocketTimeoutActive = seconds != 0;
+    std::chrono::steady_clock::time_point refreshedAt;
+    if (websocketTimeoutActive) {
+        refreshedAt = std::chrono::steady_clock::now();
+        websocketDeadline = refreshedAt + std::chrono::seconds(seconds);
+        if (!conn->earliestWebSocketDeadline || websocketDeadline < *conn->earliestWebSocketDeadline) {
+            conn->earliestWebSocketDeadline = websocketDeadline;
+        }
+    }
+    if (firstWebSocketTimeout) {
+        /* This stream has just left the connection-wide request timeout. */
+        conn->recomputeIdleTimeout();
+    } else if (websocketTimeoutActive &&
+        (!wasActive || !conn->armedTimeoutDeadline || websocketDeadline < *conn->armedTimeoutDeadline)) {
+        /* A newly active or earlier deadline may need an earlier timer slot.
+         * Moving an active deadline later deliberately leaves the old timer
+         * armed: an early wake-up is harmless and avoids scanning every
+         * multiplexed stream on each WebSocket message. */
+        conn->armTimeout(refreshedAt);
+    }
+}
+
+inline void Http2Response::touchWebSocketTimeout() {
+    if (dead || !websocketTimeoutOwned || websocketTimeoutS == 0) return;
+    bool wasActive = websocketTimeoutActive;
+    websocketTimeoutActive = true;
+    auto now = std::chrono::steady_clock::now();
+    websocketDeadline = now + std::chrono::seconds(websocketTimeoutS);
+    if (!wasActive || !conn->armedTimeoutDeadline) conn->armTimeout(now);
 }
 
 inline void Http2Response::close(http2::ErrorCode code) {

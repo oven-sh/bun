@@ -7,15 +7,17 @@ use bun_core::Utf8Bytes;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{ComptimeStringMapExt as _, JsCell};
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
-use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
+use bun_uws_sys::web_socket::{
+    H1WebSocketUpgradeServer, H1Wrap, StreamWebSocketTransport, StreamWrap, WebSocketHandler,
+};
 use bun_uws_sys::{Opcode, SendStatus};
 
-use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, CallFrame, CommonAbortReason, JSGlobalObject, JSType, JSValue,
     JsError, JsRef, JsResult,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
+use crate::server::{WebSocketServerHandler, WebSocketTree};
 use crate::webcore::{Blob, BlobExt};
 
 bun_output::declare_scope!(WebSocketServer, visible);
@@ -66,13 +68,29 @@ pub(crate) struct ServerWebSocket {
 }
 
 // We pack the per-socket data into this struct below:
-// ssl:1, closed:1, <unused>:1, binary_type:4, packed_websocket_ptr:57
+// transport:bits 0+2, closed:1, binary_type:4, packed_websocket_ptr:57
 #[repr(transparent)]
 #[derive(Copy, Clone, Default)]
 pub(crate) struct Flags(u64);
 
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum TransportKind {
+    H1Plain = 0,
+    H1Tls = 1,
+    H2 = 2,
+    // Reserved for the future HTTP/3 WebSocket adapter.
+    H3 = 3,
+}
+
 impl Flags {
-    const SSL_BIT: u64 = 1 << 0;
+    // Keep the historical bit positions: bit 0 was SSL, bit 2 was H2, and
+    // bit 1 remains the closed flag. The sparse pair leaves the packed layout
+    // and all pointer/binary-type offsets unchanged while making transport a
+    // single decoded field with one reserved H3 value.
+    const TLS_BIT: u64 = 1 << 0;
+    const H2_BIT: u64 = 1 << 2;
+    const TRANSPORT_MASK: u64 = Self::TLS_BIT | Self::H2_BIT;
     const CLOSED_BIT: u64 = 1 << 1;
     const BINARY_TYPE_SHIFT: u32 = 3;
     const BINARY_TYPE_MASK: u64 = 0b1111 << Self::BINARY_TYPE_SHIFT;
@@ -80,16 +98,24 @@ impl Flags {
     const PTR_MASK: u64 = (1u64 << 57) - 1;
 
     #[inline]
-    pub(crate) fn ssl(self) -> bool {
-        self.0 & Self::SSL_BIT != 0
+    fn transport(self) -> TransportKind {
+        match self.0 & Self::TRANSPORT_MASK {
+            0 => TransportKind::H1Plain,
+            Self::TLS_BIT => TransportKind::H1Tls,
+            Self::H2_BIT => TransportKind::H2,
+            Self::TRANSPORT_MASK => TransportKind::H3,
+            _ => unreachable!("invalid WebSocket transport kind"),
+        }
     }
     #[inline]
-    pub(crate) fn set_ssl(&mut self, v: bool) {
-        if v {
-            self.0 |= Self::SSL_BIT;
-        } else {
-            self.0 &= !Self::SSL_BIT;
-        }
+    fn set_transport(&mut self, transport: TransportKind) {
+        let encoded = match transport {
+            TransportKind::H1Plain => 0,
+            TransportKind::H1Tls => Self::TLS_BIT,
+            TransportKind::H2 => Self::H2_BIT,
+            TransportKind::H3 => Self::TRANSPORT_MASK,
+        };
+        self.0 = (self.0 & !Self::TRANSPORT_MASK) | encoded;
     }
     #[inline]
     pub(crate) fn closed(self) -> bool {
@@ -132,13 +158,18 @@ impl Flags {
     #[inline]
     fn websocket(self) -> AnyWebSocket {
         // Ensure those other bits are zeroed out
-        let ptr = self.packed_websocket_ptr() as usize as *mut uws::RawWebSocket;
-        if self.ssl() {
-            // SAFETY: packed_websocket_ptr was set from ws.raw() in on_open; non-null while !closed
-            AnyWebSocket::Ssl(ptr)
-        } else {
-            // SAFETY: same as above
-            AnyWebSocket::Tcp(ptr)
+        let ptr = self.packed_websocket_ptr() as usize as *mut c_void;
+        match self.transport() {
+            TransportKind::H2 => AnyWebSocket::H2(ptr.cast::<bun_uws_sys::h2::WebSocket>()),
+            TransportKind::H1Tls => {
+                // SAFETY: packed_websocket_ptr was set from ws.raw() in on_open; non-null while !closed
+                AnyWebSocket::Ssl(ptr.cast::<uws::RawWebSocket>())
+            }
+            TransportKind::H1Plain => {
+                // SAFETY: same as above
+                AnyWebSocket::Tcp(ptr.cast::<uws::RawWebSocket>())
+            }
+            TransportKind::H3 => unreachable!("HTTP/3 WebSockets are not wired yet"),
         }
     }
 }
@@ -220,9 +251,10 @@ pub(super) fn blob_payload<'a>(
 /// Handler state a `publish*` method reads once up front (`publish_ctx`).
 #[derive(Clone, Copy)]
 struct PublishCtx {
-    /// The server's `uws_app_t*`; `ssl` says which `NewApp<SSL>` it is.
-    app: *mut c_void,
-    ssl: bool,
+    h1_app: *mut c_void,
+    h1_ssl: bool,
+    has_stream_trees: bool,
+    server: super::AnyServer,
     publish_to_self: bool,
 }
 
@@ -280,12 +312,16 @@ impl ServerWebSocket {
     #[inline]
     fn publish_ctx(&self) -> Option<PublishCtx> {
         let handler = self.handler();
+        // `app` remains the stopped-server gate even when the current socket
+        // is H2; the parent uWS app owns the listener and server lifetime.
         let app = handler.app?;
-        let flags = handler.flags;
+        let server = handler.server?;
         Some(PublishCtx {
-            app,
-            ssl: flags.contains(HandlerFlags::SSL),
-            publish_to_self: flags.contains(HandlerFlags::PUBLISH_TO_SELF),
+            h1_app: app,
+            h1_ssl: handler.flags.contains(HandlerFlags::SSL),
+            has_stream_trees: server.has_stream_websocket_trees(),
+            server,
+            publish_to_self: handler.flags.contains(HandlerFlags::PUBLISH_TO_SELF),
         })
     }
 
@@ -321,10 +357,41 @@ impl ServerWebSocket {
         opcode: Opcode,
         compress: bool,
     ) -> JSValue {
-        let status = if !ctx.publish_to_self && !self.is_closed() {
-            self.websocket().publish(topic, buffer, opcode, compress)
+        let ws = self.websocket();
+        /* Keep the dominant HTTP/1-only path on the same uWebSockets calls it
+         * used before stream transports existed. Cross-tree subscriber lookups
+         * are needed only on a listener that actually has a stream app. */
+        if !ws.is_stream() && !ctx.has_stream_trees {
+            let status = if !ctx.publish_to_self && !self.is_closed() {
+                ws.publish(topic, buffer, opcode, compress)
+            } else {
+                AnyWebSocket::publish_h1_with_options(
+                    ctx.h1_ssl, ctx.h1_app, topic, buffer, opcode, compress,
+                )
+            };
+            return send_status_to_js(status, buffer.len(), "publish", "bytes");
+        }
+
+        let status = if ctx.publish_to_self || self.is_closed() {
+            ctx.server.publish(topic, buffer, opcode, compress)
         } else {
-            AnyWebSocket::publish_with_options(ctx.ssl, ctx.app, topic, buffer, opcode, compress)
+            /* The socket publishes into its own tree so uWS skips it as the
+             * sender; every other tree receives the message as a server-wide
+             * publication. */
+            let own_tree = WebSocketTree::of(ws);
+            let self_subscribed = u32::from(ws.is_subscribed(topic));
+            let own = (ctx
+                .server
+                .num_subscribers_in(own_tree, topic)
+                .saturating_sub(self_subscribed)
+                != 0)
+                .then(|| ws.publish(topic, buffer, opcode, compress));
+            let others = WebSocketTree::ALL
+                .into_iter()
+                .filter(|tree| *tree != own_tree)
+                .filter(|tree| ctx.server.num_subscribers_in(*tree, topic) != 0)
+                .map(|tree| ctx.server.publish_in(tree, topic, buffer, opcode, compress));
+            bun_uws::SendStatus::worst(own.into_iter().chain(others))
         };
         send_status_to_js(status, buffer.len(), "publish", "bytes")
     }
@@ -426,10 +493,14 @@ impl ServerWebSocket {
         self.update_flags(|f| {
             f.set_packed_websocket_ptr(ws.raw() as usize as u64);
             f.set_closed(false);
-            f.set_ssl(matches!(ws, AnyWebSocket::Ssl(_)));
+            f.set_transport(match ws {
+                AnyWebSocket::Tcp(_) => TransportKind::H1Plain,
+                AnyWebSocket::Ssl(_) => TransportKind::H1Tls,
+                AnyWebSocket::H2(_) => TransportKind::H2,
+            });
         });
 
-        let handler = self.handler();
+        let handler = self.handler().snapshot();
         let vm = handler.vm();
         // Live-socket accounting lives on the server (`Cell`), reached
         // through the type-erased backref so the shared `&Handler` suffices.
@@ -439,11 +510,11 @@ impl ServerWebSocket {
         }
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
-        let on_error = handler.on_error;
 
         if on_open_handler.is_empty_or_undefined_or_null() {
             return Ok(());
         }
+        let _error_handler_pin = handler.protect_error_handler();
 
         let this_value = self
             .this_value
@@ -479,7 +550,7 @@ impl ServerWebSocket {
                 this_value.unprotect();
             }
 
-            let handled = handler.run_error_callback(on_error, global_object, err_value);
+            let handled = handler.run_error_callback(global_object, err_value);
             if closed_here {
                 if let Some(server) = server {
                     // May run the idle pass; no `&Handler` borrow is live here.
@@ -504,14 +575,15 @@ impl ServerWebSocket {
             opcode.0,
             bstr::BStr::new(message)
         );
-        let on_message_handler = self.handler().on_message;
-        let on_error = self.handler().on_error;
+        let handler = self.handler().snapshot();
+        let on_message_handler = handler.on_message;
         if on_message_handler.is_empty_or_undefined_or_null() {
             return Ok(());
         }
-        let global_object = self.handler().global_object();
+        let _error_handler_pin = handler.protect_error_handler();
+        let global_object = handler.global_object();
         // This is the start of a task.
-        let vm = self.handler().vm();
+        let vm = handler.vm();
 
         let _loop_guard = vm.enter_event_loop_scope();
 
@@ -544,9 +616,7 @@ impl ServerWebSocket {
             Ok(result) => result,
             Err(e) => {
                 let err_value = global_object.take_error(e);
-                return self
-                    .handler()
-                    .run_error_callback(on_error, global_object, err_value);
+                return handler.run_error_callback(global_object, err_value);
             }
         };
 
@@ -574,15 +644,15 @@ impl ServerWebSocket {
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     pub(crate) fn on_drain(&self, _ws: AnyWebSocket) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onDrain");
-        let handler = self.handler();
+        let handler = self.handler().snapshot();
         let vm = handler.vm();
         if self.is_closed() {
             return Ok(());
         }
 
         let on_drain = handler.on_drain;
-        let on_error = handler.on_error;
         if !on_drain.is_empty() {
+            let _error_handler_pin = handler.protect_error_handler();
             let global_object = handler.global_object();
 
             let args = [self
@@ -601,7 +671,7 @@ impl ServerWebSocket {
             self.websocket().cork(&mut corker, Corker::run);
             if let Err(e) = corker.result {
                 let err_value = global_object.take_error(e);
-                handler.run_error_callback(on_error, global_object, err_value)?;
+                handler.run_error_callback(global_object, err_value)?;
             }
         }
         Ok(())
@@ -628,13 +698,13 @@ impl ServerWebSocket {
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     pub(crate) fn on_ping(&self, _ws: AnyWebSocket, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onPing: {}", bstr::BStr::new(data));
-        let handler = self.handler();
+        let handler = self.handler().snapshot();
         let cb = handler.on_ping;
-        let on_error = handler.on_error;
         let vm = handler.vm();
         if cb.is_empty_or_undefined_or_null() {
             return Ok(());
         }
+        let _error_handler_pin = handler.protect_error_handler();
         let global_this = handler.global_object();
 
         // This is the start of a task.
@@ -651,7 +721,7 @@ impl ServerWebSocket {
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onPing error");
-            handler.run_error_callback(on_error, global_this, err)?;
+            handler.run_error_callback(global_this, err)?;
         }
         Ok(())
     }
@@ -659,12 +729,12 @@ impl ServerWebSocket {
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     pub(crate) fn on_pong(&self, _ws: AnyWebSocket, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onPong: {}", bstr::BStr::new(data));
-        let handler = self.handler();
+        let handler = self.handler().snapshot();
         let cb = handler.on_pong;
-        let on_error = handler.on_error;
         if cb.is_empty_or_undefined_or_null() {
             return Ok(());
         }
+        let _error_handler_pin = handler.protect_error_handler();
 
         let global_this = handler.global_object();
         let vm = handler.vm();
@@ -683,7 +753,7 @@ impl ServerWebSocket {
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onPong error");
-            handler.run_error_callback(on_error, global_this, err)?;
+            handler.run_error_callback(global_this, err)?;
         }
         Ok(())
     }
@@ -694,7 +764,8 @@ impl ServerWebSocket {
     pub(crate) fn on_close(&self, _ws: AnyWebSocket, code: i32, message: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
-        let handler = self.handler();
+        let handler = self.handler().snapshot();
+        let _error_handler_pin = handler.protect_error_handler();
         // Copy the erased server handle out now: the guard below runs after
         // every `handler` borrow has expired, and `on_websocket_closed` may
         // form `&mut NewServer` (which owns the handler storage) to run the
@@ -754,7 +825,6 @@ impl ServerWebSocket {
         // Copy to a stack local before `sig.signal()` re-enters JS: a GC
         // between the test and the `.call(...)` could otherwise collect it.
         let on_close_handler = handler.on_close;
-        let on_error = handler.on_error;
         if !on_close_handler.is_empty_or_undefined_or_null() {
             let global_object = handler.global_object();
 
@@ -778,7 +848,7 @@ impl ServerWebSocket {
                         "onClose error (message) {}",
                         was_not_empty
                     );
-                    return handler.run_error_callback(on_error, global_object, err);
+                    return handler.run_error_callback(global_object, err);
                 }
             };
 
@@ -786,7 +856,7 @@ impl ServerWebSocket {
             if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
                 let err = global_object.take_error(e);
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
-                return handler.run_error_callback(on_error, global_object, err);
+                return handler.run_error_callback(global_object, err);
             }
         } else if let Some(sig) = signal {
             let _loop_guard = vm.enter_event_loop_scope();
@@ -801,13 +871,19 @@ impl ServerWebSocket {
         Ok(())
     }
 
-    pub(crate) fn behavior<ServerType, const SSL: bool>(
+    pub(crate) fn behavior_h1<ServerType, const SSL: bool>(
         opts: &WebSocketBehavior,
     ) -> WebSocketBehavior
     where
-        ServerType: WebSocketUpgradeServer<SSL>,
+        ServerType: H1WebSocketUpgradeServer<SSL>,
     {
-        Wrap::<ServerType, Self, SSL>::apply(opts)
+        H1Wrap::<ServerType, Self, SSL>::apply(opts)
+    }
+
+    pub(crate) fn behavior_stream<X: StreamWebSocketTransport>(
+        opts: &WebSocketBehavior,
+    ) -> bun_uws_sys::stream_websocket::WebSocketBehavior<X> {
+        StreamWrap::<Self, X>::apply(opts)
     }
 
     // No `#[bun_jsc::host_fn]` here — the constructor extern shim is
@@ -1616,5 +1692,31 @@ impl<'a> Corker<'a> {
             },
             self.args,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BinaryType, Flags, TransportKind};
+
+    #[test]
+    fn flags_pack_transport_without_overlapping_other_fields() {
+        for transport in [
+            TransportKind::H1Plain,
+            TransportKind::H1Tls,
+            TransportKind::H2,
+            TransportKind::H3,
+        ] {
+            let mut flags = Flags::default();
+            flags.set_transport(transport);
+            flags.set_closed(true);
+            flags.set_binary_type(BinaryType::Blob);
+            flags.set_packed_websocket_ptr((1u64 << 56) | 0x1234);
+
+            assert_eq!(flags.transport(), transport);
+            assert!(flags.closed());
+            assert_eq!(flags.binary_type() as u8, BinaryType::Blob as u8);
+            assert_eq!(flags.packed_websocket_ptr(), (1u64 << 56) | 0x1234);
+        }
     }
 }

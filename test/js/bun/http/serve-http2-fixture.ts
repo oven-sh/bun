@@ -2,7 +2,7 @@
 // per describe block, driven over real sockets by the test. Prints its port as
 // JSON on stdout once listening and stops on stdin EOF.
 //
-//   bun serve-http2-fixture.ts --big-file <path> [--tls] [--no-http1] [--http3] [--idle-timeout <s>]
+//   bun serve-http2-fixture.ts --big-file <path> [--tls] [--no-http1] [--http3] [--no-websocket] [--idle-timeout <s>]
 import { serve } from "bun";
 import { tls as tlsCert } from "harness";
 import { parseArgs } from "node:util";
@@ -12,6 +12,13 @@ const { values: args } = parseArgs({
     tls: { type: "boolean", default: false },
     http1: { type: "boolean", default: true },
     http3: { type: "boolean", default: false },
+    websocket: { type: "boolean", default: true },
+    "ws-pings": { type: "boolean", default: true },
+    "ws-dedicated-compression": { type: "boolean", default: false },
+    "ws-idle-timeout": { type: "string", default: "120" },
+    "ws-max-payload-length": { type: "string", default: String(16 * 1024 * 1024) },
+    "ws-backpressure-limit": { type: "string", default: String(16 * 1024 * 1024) },
+    "ws-close-on-backpressure-limit": { type: "boolean", default: false },
     "idle-timeout": { type: "string", default: "30" },
     "big-file": { type: "string" },
   },
@@ -26,6 +33,12 @@ const makeRoutes = () => ({
   "/api/:id": (req: Bun.BunRequest<"/api/:id">) =>
     new Response("id=" + req.params.id, { headers: { "x-route": "api" } }),
   "/route-only": { POST: () => new Response("posted") },
+  "/ws-route": {
+    GET(req: Request, server: Bun.Server<undefined>) {
+      if (server.upgrade(req)) return;
+      return new Response("route upgrade failed", { status: 400 });
+    },
+  },
   "/static": new Response("from-static-route", { headers: { "content-type": "text/plain", etag: '"v1"' } }),
   "/static-hop": new Response("hop", {
     headers: { connection: "keep-alive", "keep-alive": "timeout=5", te: "gzip", "x-kept": "1" },
@@ -47,7 +60,158 @@ const server = serve({
   idleTimeout: Number(args["idle-timeout"]),
   routes: makeRoutes(),
   fetch: handler,
-  websocket: { message() {} },
+  websocket: args.websocket
+    ? {
+        perMessageDeflate: args["ws-dedicated-compression"] ? { compress: "dedicated", decompress: "dedicated" } : true,
+        maxPayloadLength: Number(args["ws-max-payload-length"]),
+        backpressureLimit: Number(args["ws-backpressure-limit"]),
+        closeOnBackpressureLimit: args["ws-close-on-backpressure-limit"],
+        idleTimeout: Number(args["ws-idle-timeout"]),
+        sendPings: args["ws-pings"],
+        open(ws) {
+          const action = (ws.data as any)?.action;
+          if (action === "reload-on-open") {
+            server.reload({
+              routes: makeRoutes(),
+              fetch: handler,
+              websocket: {
+                message(next, nextMessage) {
+                  next.send(`reloaded:${nextMessage}`);
+                },
+              },
+            });
+            // The callback snapshot and this socket must both remain valid
+            // across a handler-table replacement from inside open().
+            ws.send("open-reload-complete");
+          } else if (action === "stop-on-open") {
+            // Exercises synchronous stream retirement while server.upgrade()
+            // is still on the stack.
+            server.stop(true);
+          }
+        },
+        message(ws, message) {
+          if (typeof message === "string" && message.startsWith("subscribe:")) {
+            const topic = message.slice("subscribe:".length);
+            ws.subscribe(topic);
+            ws.send(`subscribed:${topic}`);
+            return;
+          }
+          if (typeof message === "string" && message.startsWith("unsubscribe:")) {
+            const topic = message.slice("unsubscribe:".length);
+            ws.unsubscribe(topic);
+            ws.send(`unsubscribed:${topic}`);
+            return;
+          }
+          if (message === "subscriptions") {
+            ws.send(JSON.stringify(ws.subscriptions));
+            return;
+          }
+          if (message === "retained-request") {
+            const retained = (ws.data as any)?.request as Request | undefined;
+            ws.send(
+              JSON.stringify({
+                url: retained?.url,
+                header: retained?.headers.get("x-retained-request"),
+              }),
+            );
+            return;
+          }
+          if (typeof message === "string" && message.startsWith("server-subscriber-count:")) {
+            ws.send(
+              `server-subscriber-count:${server.subscriberCount(message.slice("server-subscriber-count:".length))}`,
+            );
+            return;
+          }
+          if (message === "close-local") {
+            ws.close(1000, "local close");
+            return;
+          }
+          if (message === "terminate-and-count") {
+            ws.terminate();
+            console.error(`WS-TERMINATE-SUBSCRIBERS:${server.subscriberCount("terminated-topic")}`);
+            return;
+          }
+          if (message === "close-long") {
+            ws.close(1000, "x".repeat(200));
+            return;
+          }
+          if (message === "fill-backpressure") {
+            ws.send("x".repeat(70_000));
+            return;
+          }
+          if (message === "fill-bounded-backpressure") {
+            ws.send("x".repeat(66_000));
+            return;
+          }
+          if (message === "fill-slow-backpressure") {
+            ws.send("x".repeat(256 * 1024));
+            return;
+          }
+          if (typeof message === "string" && message.startsWith("publish-status:")) {
+            const separator = message.indexOf(":", "publish-status:".length);
+            const topic = message.slice("publish-status:".length, separator);
+            const payload = message.slice(separator + 1);
+            ws.send(`publish-status:${ws.publish(topic, payload)}`);
+            return;
+          }
+          if (typeof message === "string" && message.startsWith("server-publish:")) {
+            const separator = message.indexOf(":", "server-publish:".length);
+            const topic = message.slice("server-publish:".length, separator);
+            const payload = message.slice(separator + 1);
+            ws.send(`server-publish-status:${server.publish(topic, payload)}`);
+            return;
+          }
+          if (typeof message === "string" && message.startsWith("publish:")) {
+            const separator = message.indexOf(":", "publish:".length);
+            const topic = message.slice("publish:".length, separator);
+            const payload = message.slice(separator + 1);
+            ws.publish(topic, payload);
+            ws.send(`published:${topic}`);
+            return;
+          }
+          if (message === "reload-handlers") {
+            server.reload({
+              routes: makeRoutes(),
+              fetch: handler,
+              websocket: {
+                message(next, nextMessage) {
+                  next.send(`reloaded:${nextMessage}`);
+                },
+              },
+            });
+            // This old callback must stay rooted until it returns. Future
+            // events on the same socket use the replacement handler.
+            ws.send("reload-complete");
+            return;
+          }
+          ws.send(message, true);
+        },
+        close(ws, _code, reason) {
+          if ((ws.data as any)?.action === "report-close") {
+            console.error(`WS-CLOSE-REASON:${reason.length}:${reason}`);
+          } else if ((ws.data as any)?.action === "report-abnormal-close") {
+            console.error(`WS-ABNORMAL-CLOSE:${_code}:${reason.length}`);
+          } else if ((ws.data as any)?.action === "report-close-subscriptions") {
+            console.error(`WS-CLOSE-SUBSCRIPTIONS:${JSON.stringify(ws.subscriptions)}`);
+          }
+        },
+        drain(ws) {
+          const data = ws.data as any;
+          if (data?.action === "report-drain") {
+            console.error("WS-DRAIN");
+          } else if (data?.action === "publish-on-drain" && !data.published) {
+            data.published = true;
+            server.publish("drain-topic", "published-from-drain");
+          }
+        },
+        ping(ws, data) {
+          if ((ws.data as any)?.action === "report-control") ws.send(`ping-callback:${Buffer.from(data).toString()}`);
+        },
+        pong(ws, data) {
+          if ((ws.data as any)?.action === "report-control") ws.send(`pong-callback:${Buffer.from(data).toString()}`);
+        },
+      }
+    : undefined,
 });
 
 async function handler(req: Request, server: Bun.Server<undefined>): Promise<Response | undefined> {
@@ -77,6 +241,18 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
     }
     case "/big":
       return new Response(big, { headers: { "content-type": "application/octet-stream" } });
+    case "/slow-outbound": {
+      let sent = 0;
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            await Bun.sleep(250);
+            controller.enqueue(new Uint8Array([0x78]));
+            if (++sent === 48) controller.close();
+          },
+        }),
+      );
+    }
     case "/stream": {
       let i = 0;
       return new Response(
@@ -246,6 +422,63 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       return new Response(String(server.upgrade(req)), { status: 200 });
     case "/ws":
       if (server.upgrade(req)) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-headers":
+      if (
+        server.upgrade(req, {
+          headers: {
+            "sec-websocket-protocol": "chat",
+            "content-length": "123",
+            "x-upgrade-transport": "h2",
+          },
+        })
+      )
+        return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-bogus-protocol":
+      if (server.upgrade(req, { headers: { "sec-websocket-protocol": "bogus" } })) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-force-extension":
+      if (server.upgrade(req, { headers: { "sec-websocket-extensions": "permessage-deflate" } })) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-delayed":
+      // Let the H2 frame parser continue past HEADERS before accepting the
+      // tunnel. DATA from the same socket read must be buffered, not dropped.
+      await Promise.resolve();
+      if (server.upgrade(req)) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-delayed-end":
+      // Leave enough time for a peer END_STREAM to arrive after the request
+      // was classified as upgradeable but before the application decides.
+      await Bun.sleep(25);
+      if (server.upgrade(req)) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-open-reload":
+      if (server.upgrade(req, { data: { action: "reload-on-open" } as any })) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-open-stop":
+      if (server.upgrade(req, { data: { action: "stop-on-open" } as any })) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-retain-request":
+      if (server.upgrade(req, { data: { action: "retain-request", request: req } as any })) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-close-report":
+      if (server.upgrade(req, { data: { action: "report-close" } as any })) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-abnormal-close":
+      if (server.upgrade(req, { data: { action: "report-abnormal-close" } as any })) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-close-subscriptions":
+      if (server.upgrade(req, { data: { action: "report-close-subscriptions" } as any })) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-drain":
+      if (server.upgrade(req, { data: { action: "report-drain" } as any })) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-drain-publish":
+      if (server.upgrade(req, { data: { action: "publish-on-drain", published: false } as any })) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-control":
+      if (server.upgrade(req, { data: { action: "report-control" } as any })) return;
       return new Response("upgrade failed", { status: 400 });
     case "/late-read": {
       // Reads the body only once GET /release-late-read arrives.

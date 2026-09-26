@@ -640,8 +640,6 @@ impl ServerConfig {
             reuse_port: env.get(b"NODE_UNIQUE_ID").is_some(),
             ..ServerConfig::default()
         };
-        // The listen target. `args.address` is built from these once every
-        // option is read.
         let mut hostname: Option<ZBox> = None;
         let mut unix: Option<ZBox> = None;
 

@@ -1138,9 +1138,8 @@ public:
         group.vtable = &httpVTable<true>;
     }
 
-    /* The options of every listener that can be a TCP socket. HTTP clients always send first
-     * (the request, or ClientHello for TLS), so defer accept() until data arrives and dispatch
-     * the read immediately after accept. */
+    /* HTTP clients always send first (the request, or ClientHello for TLS), so defer
+     * accept() until data arrives and dispatch the read immediately after accept. */
     static int tcpListenOptions(int options) {
         return options | LIBUS_LISTEN_DEFER_ACCEPT;
     }

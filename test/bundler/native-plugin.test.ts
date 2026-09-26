@@ -631,6 +631,80 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     expect(exitCode).toBe(0);
   });
 
+  it("refuses a native onBeforeParse registration on the private plugin object once the build runs", async () => {
+    // The parse workers read the onBeforeParse list with no lock, so nothing may append to it after
+    // the build starts. The private plugin object is a gcProtect'ed cell, so
+    // bun:jsc.getProtectedObjects() returns it.
+    await Bun.write(path.join(tempdir, "late_registration_index.ts"), `export const v = "foo";\n`);
+
+    const buildScript = /* ts */ `
+      import * as path from "path";
+      import { getProtectedObjects } from "bun:jsc";
+      const tempdir = process.env.BUN_TEST_TEMP_DIR!;
+      const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+
+      const hasOwn = Object.prototype.hasOwnProperty;
+      function findPlugin() {
+        for (const object of getProtectedObjects()) {
+          try {
+            if (object && typeof object === "object" && hasOwn.call(object, "onBeforeParse") && hasOwn.call(object, "generateDeferPromise")) {
+              return object;
+            }
+          } catch {}
+        }
+        return undefined;
+      }
+
+      let plugin: any;
+      function onBeforeParse() {
+        try {
+          plugin.onBeforeParse(/never-matches/, "probe", napiModule, "plugin_impl", undefined);
+          return "accepted";
+        } catch (e: any) {
+          return e.code ?? e.name;
+        }
+      }
+      const outcomes: Record<string, string> = {};
+      const result = await Bun.build({
+        outdir: path.join(tempdir, "dist-late-registration"),
+        entrypoints: [path.join(tempdir, "late_registration_index.ts")],
+        throw: false,
+        plugins: [
+          {
+            name: "late-registration",
+            setup(build) {
+              plugin = findPlugin();
+              outcomes.duringSetup = onBeforeParse();
+              build.onLoad({ filter: /late_registration_index\\.ts$/ }, () => {
+                outcomes.duringBuild = onBeforeParse();
+                return undefined;
+              });
+            },
+          },
+        ],
+      });
+      console.log(JSON.stringify({ success: result.success, outcomes }));
+    `;
+    await Bun.write(path.join(tempdir, "late_registration_build.ts"), buildScript);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(tempdir, "late_registration_build.ts")],
+      env: { ...bunEnv, BUN_TEST_TEMP_DIR: tempdir },
+      cwd: tempdir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const resultLine = stdout.split("\n").find(line => line.startsWith('{"success"'));
+    const parsed = resultLine ? JSON.parse(resultLine) : { stderr, stdout };
+    expect(parsed).toEqual({
+      success: true,
+      outcomes: { duringSetup: "accepted", duringBuild: "ERR_INVALID_STATE" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("should use result of the first plugin that runs and doesn't execute the others", async () => {
     const filter = /\.ts/;
 

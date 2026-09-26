@@ -1907,8 +1907,9 @@ impl Package<u64> {
                         dep.literal = dependency_version.literal;
                         dependency_version = dep;
                     }
-                } else if workspace_version.is_some() {
+                } else if workspace_version.is_some() && external_alias.hash == name_hash {
                     // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
+                    // An alias installs in `node_modules/<alias>`, so it leaves the workspace in place.
                     for dep in &mut package_dependencies[0..dependencies_count as usize] {
                         if dep.name_hash == name_hash && dep.behavior.is_workspace() {
                             *dep = Dependency {

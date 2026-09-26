@@ -397,6 +397,119 @@ test.concurrent.each([
   });
 });
 
+// An alias installs in `node_modules/<alias>`. A root alias of the registry package that has a
+// workspace's name takes no folder from that workspace, so the workspace and its own
+// dependencies stay installed, whether or not the workspace has a version.
+describe.each(["hoisted", "isolated"] as const)(
+  "root alias of the registry package with a workspace's name (%s)",
+  linker => {
+    test.concurrent.each([
+      { title: "workspace version out of the alias range", version: { version: "3.0.0" }, add: false },
+      { title: "workspace without a version", version: {}, add: false },
+      { title: "alias added with bun add", version: { version: "3.0.0" }, add: true },
+    ])("keeps the workspace: $title", async ({ version, add }) => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const workspaceDir = join(packageDir, "packages", "no-deps");
+      const root = { name: "root", workspaces: ["packages/*"] };
+      await Promise.all([
+        verdaccio.writeBunfig(packageDir, { linker }),
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify(add ? root : { ...root, dependencies: { published: "npm:no-deps@1.0.0" } }),
+        ),
+        write(
+          join(workspaceDir, "package.json"),
+          JSON.stringify({ name: "no-deps", ...version, dependencies: { "a-dep": "1.0.1" } }),
+        ),
+      ]);
+
+      await runBunInstall(env, packageDir);
+      if (add) {
+        await using proc = spawn({
+          cmd: [bunExe(), "add", "published@npm:no-deps@1.0.0"],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(stdout).toContain("installed published@npm:no-deps@1.0.0");
+        expect(exitCode).toBe(0);
+      }
+
+      const lockfileText = await file(join(packageDir, "bun.lock")).text();
+      const lockfile = Bun.JSONC.parse(lockfileText) as {
+        workspaces: Record<string, unknown>;
+        packages: Record<string, [string, ...unknown[]]>;
+      };
+      expect(Object.keys(lockfile.workspaces)).toEqual(["", "packages/no-deps"]);
+      expect(
+        Object.fromEntries(Object.entries(lockfile.packages).map(([key, [resolution]]) => [key, resolution])),
+      ).toEqual({
+        "a-dep": "a-dep@1.0.1",
+        "no-deps": "no-deps@workspace:packages/no-deps",
+        "published": "no-deps@1.0.0",
+      });
+      expect(await file(join(packageDir, "node_modules", "published", "package.json")).json()).toEqual({
+        name: "no-deps",
+        version: "1.0.0",
+      });
+      expect(await file(Bun.resolveSync("a-dep/package.json", workspaceDir)).json()).toEqual({
+        name: "a-dep",
+        version: "1.0.1",
+      });
+
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+      expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfileText);
+      await runBunInstall(env, packageDir, { frozenLockfile: true });
+    });
+  },
+);
+
+// A bun.lock from a bun that dropped the workspace for such an alias does not list the workspace.
+// It is out of date like any lockfile that misses a workspace: a frozen install rejects it, and a
+// plain install adds the workspace.
+test.concurrent("bun.lock without the workspace that a root alias used to drop is out of date", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const lockfilePath = join(packageDir, "bun.lock");
+  type Lockfile = { workspaces: Record<string, unknown>; packages: Record<string, unknown> };
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { published: "npm:no-deps@1.0.0" } }),
+    ),
+    write(
+      join(packageDir, "packages", "no-deps", "package.json"),
+      JSON.stringify({ name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } }),
+    ),
+  ]);
+  await runBunInstall(env, packageDir);
+
+  const lockfile = Bun.JSONC.parse(await file(lockfilePath).text()) as Lockfile;
+  delete lockfile.workspaces["packages/no-deps"];
+  delete lockfile.packages["no-deps"];
+  delete lockfile.packages["a-dep"];
+  expect(Object.keys(lockfile.packages)).toEqual(["published"]);
+  await write(lockfilePath, JSON.stringify(lockfile, null, 2));
+
+  const { err } = await runBunInstall(env, packageDir, {
+    frozenLockfile: true,
+    allowErrors: true,
+    expectedExitCode: 1,
+  });
+  expect(err).toContain("lockfile had changes, but lockfile is frozen");
+
+  await runBunInstall(env, packageDir);
+  expect(Object.keys((Bun.JSONC.parse(await file(lockfilePath).text()) as Lockfile).workspaces)).toEqual([
+    "",
+    "packages/no-deps",
+  ]);
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+});
+
 // `$name` copies the root's spec for `name`. When that spec is a range linked to a workspace, the
 // override is still the range, which is what bun.lock records, so a reload sees no change.
 test.concurrent("$ref override of a range linked to a workspace round-trips through bun.lock", async () => {

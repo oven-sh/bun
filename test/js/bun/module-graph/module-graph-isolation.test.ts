@@ -920,12 +920,12 @@ const dir = String(
     `,
     "fetch-session-of-a-disposed-graph.mjs": `
       import net from "node:net";
-      // A server that keeps its connections alive, and counts them.
-      const open = new Set();
-      let onClose = () => {};
+      // A server that keeps its connections alive, and knows each one: in the order they were made.
+      const connections = [];
       const server = net.createServer(socket => {
-        open.add(socket);
-        socket.on("close", () => { open.delete(socket); onClose(); }).on("error", () => {});
+        const connection = { open: true, closed: Promise.withResolvers() };
+        connections.push(connection);
+        socket.on("close", () => { connection.open = false; connection.closed.resolve(); }).on("error", () => {});
         socket.on("data", () => socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok"));
       });
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -933,15 +933,20 @@ const dir = String(
       // The host's own session keeps one too: that one stays.
       const hostsSession = new Bun.FetchSession();
       await (await hostsSession.fetch(url)).text();
-      const theHosts = open.size;
       const graph = new Bun.ModuleGraph();
       const app = await graph.import(import.meta.dir + "/uses-a-fetch-session.mjs");
       await graph.run(() => app.fetchThroughItsOwnSession(url));
-      const openBeforeDispose = open.size - theHosts;
+      const [theHosts, theGraphs] = connections;
+      const openBeforeDispose = connections.filter(connection => connection.open).length;
       graph.dispose();
-      // The HTTP thread closes it, whenever the system next runs that thread: no number of this thread's turns bounds that.
-      while (open.size > theHosts) await new Promise(resolve => (onClose = resolve));
-      console.log(JSON.stringify({ openBeforeDispose, openAfter: open.size - theHosts, theHostsStillThere: theHosts }));
+      // The HTTP thread closes it, whenever the system next runs that thread: no number of this thread's turns bounds
+      // that. One that stays open keeps this waiting, and the test fails by its timeout.
+      await theGraphs.closed.promise;
+      // A session that is collected closes its connections too. Neither was: the graph's is used here, after the
+      // wait, and the host's answers again on the connection it kept.
+      void app.fetchThroughItsOwnSession;
+      await (await hostsSession.fetch(url)).text();
+      console.log(JSON.stringify({ openBeforeDispose, connectionsMade: connections.length, theGraphsOpen: theGraphs.open, theHostsOpen: theHosts.open }));
       process.exit(0);
     `,
     "dials-the-host.mjs": `
@@ -3591,7 +3596,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   );
   test("the connections a Bun.FetchSession it made keeps alive are closed with it", async () => {
     expect(await runsFixture("fetch-session-of-a-disposed-graph.mjs")).toEqual({
-      stdout: `{"openBeforeDispose":1,"openAfter":0,"theHostsStillThere":1}`,
+      stdout: `{"openBeforeDispose":2,"connectionsMade":2,"theGraphsOpen":false,"theHostsOpen":true}`,
       exitCode: 0,
     });
   });

@@ -1708,15 +1708,84 @@ pub mod lexer {
 }
 
 pub mod lexer_tables {
+    crate::comptime_string_set! {
+        /// The 9 strict-mode future reserved words (ES2015 §11.6.2.2).
+        static STRICT_MODE_RESERVED_WORD_SET = {
+            b"implements",
+            b"interface",
+            b"let",
+            b"package",
+            b"private",
+            b"protected",
+            b"public",
+            b"static",
+            b"yield",
+        };
+    }
+
+    /// The 9 strict-mode reserved words as a plain array, for callers that
+    /// only need `.len()` / `.iter()`.
+    pub const STRICT_MODE_RESERVED_WORDS: [&[u8]; 9] = {
+        let keys = __ComptimeStringSet_STRICT_MODE_RESERVED_WORD_SET::KEYS;
+        assert!(keys.len() == 9);
+        let mut out: [&[u8]; 9] = [&[]; 9];
+        let mut i = 0;
+        while i < out.len() {
+            out[i] = keys[i];
+            i += 1;
+        }
+        out
+    };
+
+    /// Hot-path strict-mode reserved-word membership check.
+    #[inline]
+    pub fn is_strict_mode_reserved_word(s: &[u8]) -> bool {
+        STRICT_MODE_RESERVED_WORD_SET.contains(s)
+    }
+
     crate::comptime_string_map! {
-        /// The 9 strict-mode reserved words (ES2015 §11.6.2.2) mapped to the
-        /// underscore-prefixed replacement used by
-        /// `MutableString::ensure_valid_identifier` to mangle a name that is
-        /// already a syntactically valid identifier but would collide with a
-        /// strict-mode reserved word. Single source of truth —
-        /// [`STRICT_MODE_RESERVED_WORDS`], [`is_strict_mode_reserved_word`],
-        /// and [`strict_mode_reserved_word_remap`] all derive from it.
-        static STRICT_MODE_RESERVED_WORD_REMAP: &'static [u8] = {
+        /// Names a generated top-level binding must not use, each mapped to a
+        /// `_`-prefixed replacement: reserved words (a syntax error) and the
+        /// globals that printed literals read (`var NaN` shadows `NaN`).
+        static UNSAFE_BINDING_NAME_REMAP: &'static [u8] = {
+            // ES keywords (ES2015 §11.6.2.1)
+            b"break" => b"_break",
+            b"case" => b"_case",
+            b"catch" => b"_catch",
+            b"class" => b"_class",
+            b"const" => b"_const",
+            b"continue" => b"_continue",
+            b"debugger" => b"_debugger",
+            b"default" => b"_default",
+            b"delete" => b"_delete",
+            b"do" => b"_do",
+            b"else" => b"_else",
+            b"enum" => b"_enum",
+            b"export" => b"_export",
+            b"extends" => b"_extends",
+            b"false" => b"_false",
+            b"finally" => b"_finally",
+            b"for" => b"_for",
+            b"function" => b"_function",
+            b"if" => b"_if",
+            b"import" => b"_import",
+            b"in" => b"_in",
+            b"instanceof" => b"_instanceof",
+            b"new" => b"_new",
+            b"null" => b"_null",
+            b"return" => b"_return",
+            b"super" => b"_super",
+            b"switch" => b"_switch",
+            b"this" => b"_this",
+            b"throw" => b"_throw",
+            b"true" => b"_true",
+            b"try" => b"_try",
+            b"typeof" => b"_typeof",
+            b"var" => b"_var",
+            b"void" => b"_void",
+            b"while" => b"_while",
+            b"with" => b"_with",
+            // strict-mode future reserved words (ES2015 §11.6.2.2)
             b"implements" => b"_implements",
             b"interface" => b"_interface",
             b"let" => b"_let",
@@ -1726,34 +1795,22 @@ pub mod lexer_tables {
             b"public" => b"_public",
             b"static" => b"_static",
             b"yield" => b"_yield",
+            // reserved in module code
+            b"await" => b"_await",
+            // disallowed as a BindingIdentifier in strict mode
+            b"arguments" => b"_arguments",
+            b"eval" => b"_eval",
+            // global value properties
+            b"Infinity" => b"_Infinity",
+            b"NaN" => b"_NaN",
+            b"undefined" => b"_undefined",
         };
     }
 
-    /// The 9 strict-mode reserved words as a plain array, for callers that
-    /// only need `.len()` / `.iter()`.
-    pub const STRICT_MODE_RESERVED_WORDS: [&[u8]; 9] = {
-        let entries = __ComptimeStringMap_STRICT_MODE_RESERVED_WORD_REMAP::ENTRIES;
-        assert!(entries.len() == 9);
-        let mut out: [&[u8]; 9] = [&[]; 9];
-        let mut i = 0;
-        while i < out.len() {
-            out[i] = entries[i].0;
-            i += 1;
-        }
-        out
-    };
-
-    /// Hot-path strict-mode reserved-word membership check.
+    /// `b"if"` → `Some(b"_if")`; `None` when `s` is not in the table.
     #[inline]
-    pub fn is_strict_mode_reserved_word(s: &[u8]) -> bool {
-        STRICT_MODE_RESERVED_WORD_REMAP.contains_key(s)
-    }
-
-    /// Underscore-prefixed replacement for a strict-mode reserved word
-    /// (`b"let"` → `b"_let"`); `None` for any other input.
-    #[inline]
-    pub fn strict_mode_reserved_word_remap(s: &[u8]) -> Option<&'static [u8]> {
-        STRICT_MODE_RESERVED_WORD_REMAP.get(s).copied()
+    pub fn unsafe_binding_name_remap(s: &[u8]) -> Option<&'static [u8]> {
+        UNSAFE_BINDING_NAME_REMAP.get(s).copied()
     }
 }
 

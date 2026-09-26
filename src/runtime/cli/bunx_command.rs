@@ -573,11 +573,7 @@ impl BunxCommand {
             return false;
         }
         buf[..cache_root.len()].copy_from_slice(cache_root);
-        let is_trusted_dir = |st: &bun_sys::Stat| {
-            (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
-                && st.st_uid == uid
-                && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
-        };
+        let is_trusted_dir = |st: &bun_sys::Stat| bun_sys::stat_is_owner_only_writable_dir(st, uid);
         let mut start = temp_dir_len + 1;
         loop {
             let end = match strings::index_of_char_pos(cache_root, bun_paths::SEP, start) {

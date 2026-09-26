@@ -5,6 +5,7 @@
 // `import()`), distinct from `--asset` (raw bytes, read via `fs`/`Bun.file`, tested in
 // compile-asset-bunfs.test.ts). See docs/bundler/executables.mdx.
 import { describe, expect, test } from "bun:test";
+import { readdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -51,6 +52,11 @@ async function build(dir: string, via: Via, include: string[], opts: { bytecode?
 }
 
 async function run(dir: string) {
+  // Delete every source file: an included module must resolve from the executable,
+  // never from the build directory (bytecode builds record it as import.meta.dirname).
+  for (const name of readdirSync(dir)) {
+    if (name !== "app" + exe) rmSync(join(dir, name), { recursive: true, force: true });
+  }
   // cwd outside the build dir so the binary cannot accidentally find real files on disk
   // (that gap is #44053 — an --external/bare-specifier resolution issue, not this feature;
   // an --include'd module must resolve purely from $bunfs).
@@ -96,17 +102,20 @@ describe.concurrent("compile include", () => {
       async () => {
         using dir = tempDir(`compile-include-not-eager-${via}`, {
           "index.ts": /* ts */ `
-            // Never imports plugins/*, directly or dynamically.
-            console.log(JSON.stringify({ sawMarker: globalThis.__marker === true }));
+            import { join } from "path";
+            // Nothing above this line imports plugins/*.
+            const before = globalThis.__marker === true;
+            await import(join(import.meta.dirname, "plugins", "target.js"));
+            console.log(JSON.stringify({ before, after: globalThis.__marker === true }));
           `,
           "plugins/target.js": `globalThis.__marker = true; export default 1;`,
-          "plugins/other.js": `globalThis.__marker = true; export default 2;`,
+          "plugins/other.js": `throw new Error("other.js must not run");`,
         });
 
         expect((await build(String(dir), via, ["./plugins/*.js"])).failed).toBe(false);
         const { stdout, stderr, exitCode } = await run(String(dir));
         expect(stderr.trim()).toBe("");
-        expect(JSON.parse(stdout.trim())).toEqual({ sawMarker: false });
+        expect(JSON.parse(stdout.trim())).toEqual({ before: false, after: true });
         expect(exitCode).toBe(0);
       },
       TIMEOUT,
@@ -194,7 +203,8 @@ describe.concurrent("compile include", () => {
               await import(join(import.meta.dirname, "plugins", "target.js"));
               console.log(JSON.stringify({ threw: false }));
             } catch (e: any) {
-              console.log(JSON.stringify({ threw: true, hasMessage: typeof e.message === "string" }));
+              const kept = (await import(join(import.meta.dirname, "other", "keep.js"))).default;
+              console.log(JSON.stringify({ threw: true, hasMessage: typeof e.message === "string", kept }));
             }
           `,
           "plugins/target.js": `export default "not-included";`,
@@ -204,7 +214,7 @@ describe.concurrent("compile include", () => {
         expect((await build(String(dir), via, ["./other"])).failed).toBe(false);
         const { stdout, stderr, exitCode } = await run(String(dir));
         expect(stderr.trim()).toBe("");
-        expect(JSON.parse(stdout.trim())).toEqual({ threw: true, hasMessage: true });
+        expect(JSON.parse(stdout.trim())).toEqual({ threw: true, hasMessage: true, kept: "included" });
         expect(exitCode).toBe(0);
       },
       TIMEOUT,

@@ -1740,6 +1740,25 @@ extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
+// Node 15 to 21 had this limit and threw this error: https://github.com/nodejs/node/blob/v20.18.0/src/node_buffer.cc#L457-L461
+static NEVER_INLINE void throwBufferTooLarge(napi_env env)
+{
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    static_assert(MAX_ARRAY_BUFFER_SIZE == 0x100000000ull);
+    scope.throwException(globalObject, createErrorWithCode(vm, globalObject, "ERR_BUFFER_TOO_LARGE"_s, "Cannot create a Buffer larger than 0x100000000 bytes"_s, JSC::ErrorType::Error));
+}
+
+// Node also runs finalize_cb on this failure. Bun does not, because node-addon-api then frees its finalizer data twice.
+#define NAPI_RETURN_IF_BUFFER_TOO_LARGE(_env, _length)                   \
+    do {                                                                 \
+        if ((_length) > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {            \
+            throwBufferTooLarge(_env);                                   \
+            NAPI_RETURN_STATUS_IF_EXCEPTION(_env, napi_generic_failure); \
+        }                                                                \
+    } while (0)
+
 // SharedArrayBuffer backing stores can outlive the creating napi_env (they
 // may be posted to other agents), so Node-API specifies a finalizer with no
 // env parameter. This destructor mirrors NapiExternalBufferDestructor but
@@ -1777,6 +1796,7 @@ extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
+    NAPI_RETURN_IF_BUFFER_TOO_LARGE(env, byte_length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2312,7 +2332,10 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
     RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreateUninitialized(length, 1);
     if (!arrayBuffer) {
         // Node leaves a pending exception for a failed allocation.
-        JSC::throwOutOfMemoryError(globalObject, scope);
+        if (length > MAX_ARRAY_BUFFER_SIZE)
+            throwBufferTooLarge(env);
+        else
+            JSC::throwOutOfMemoryError(globalObject, scope);
         RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_generic_failure));
     }
 
@@ -2347,7 +2370,10 @@ extern "C" napi_status napi_create_buffer_copy(napi_env env, size_t length,
     RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreateUninitialized(length, 1);
     if (!arrayBuffer) {
         // Node leaves a pending exception for a failed allocation.
-        JSC::throwOutOfMemoryError(globalObject, scope);
+        if (length > MAX_ARRAY_BUFFER_SIZE)
+            throwBufferTooLarge(env);
+        else
+            JSC::throwOutOfMemoryError(globalObject, scope);
         RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_generic_failure));
     }
     if (length > 0) {
@@ -2441,6 +2467,8 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    // Before the NULL-data branch, as in Node: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L478-L484
+    NAPI_RETURN_IF_BUFFER_TOO_LARGE(env, length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2492,13 +2520,14 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    NAPI_RETURN_IF_BUFFER_TOO_LARGE(env, byte_length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
 
     // Uses NapiExternalBufferDestructor instead of createSharedTask so that
     // finalize_cb is only invoked once JSArrayBuffer::create has succeeded.
-    // Per the Node-API contract, the caller retains ownership of
+    // In Bun the caller retains ownership of
     // external_data when this function fails, so calling finalize_cb on a
     // failure path would cause a double-free. JSArrayBuffer::create(vm, ...)
     // currently asserts on OOM rather than throwing, so there is no

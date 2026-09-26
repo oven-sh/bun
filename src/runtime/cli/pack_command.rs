@@ -532,18 +532,8 @@ fn iterate_included_project_tree(
                         continue;
                     }
 
-                    // include patterns are not recursive unless they start with `**/`
-                    // normally the behavior of `index.js` and `**/index.js` are the same,
-                    // but includes require `**/`
-                    let match_path: &[u8] = if include
-                        .flags
-                        .contains(PatternFlags::LEADING_DOUBLESTAR_SLASH)
-                    {
-                        entry_name
-                    } else {
-                        entry_subpath.as_bytes()
-                    };
-                    if glob::r#match(include.glob.slice(), match_path).matches() {
+                    // `index.js` matches only at the root, `**/index.js` at any depth
+                    if glob::r#match(include.glob.slice(), entry_subpath.as_bytes()).matches() {
                         included = true;
                     }
                 }
@@ -559,15 +549,7 @@ fn iterate_included_project_tree(
                         continue;
                     }
 
-                    let match_path: &[u8] = if exclude
-                        .flags
-                        .contains(PatternFlags::LEADING_DOUBLESTAR_SLASH)
-                    {
-                        entry_name
-                    } else {
-                        entry_subpath.as_bytes()
-                    };
-                    let result = glob::r#match(exclude.glob.slice(), match_path);
+                    let result = glob::r#match(exclude.glob.slice(), entry_subpath.as_bytes());
                     if result.is_negated() && !result.matches() {
                         included = false;
                     }
@@ -3544,17 +3526,14 @@ bitflags::bitflags! {
         const REL_PATH = 1 << 0;
         /// can only match directories (had an ending slash, also trimmed)
         const DIRS_ONLY = 1 << 1;
-        const LEADING_DOUBLESTAR_SLASH = 1 << 2;
         /// true if the pattern starts with `!`
-        const NEGATED = 1 << 3;
-        // _: u4 padding implicit
+        const NEGATED = 1 << 2;
     }
 }
 
 impl Pattern {
     pub(crate) fn from_utf8(pattern: &[u8]) -> Result<Option<Pattern>, AllocError> {
         let mut remain = pattern;
-        let mut has_leading_doublestar_could_start_with_bang = false;
         let (has_leading_or_middle_slash, has_trailing_slash, add_negate) = 'check_slashes: {
             let before_length = remain.len();
 
@@ -3567,15 +3546,6 @@ impl Pattern {
 
             if remain.is_empty() {
                 return Ok(None);
-            }
-
-            // `**/foo` matches the same as `foo`
-            if remain.starts_with(b"**/") {
-                remain = &remain[b"**/".len()..];
-                if remain.is_empty() {
-                    return Ok(None);
-                }
-                has_leading_doublestar_could_start_with_bang = true;
             }
 
             let trailing_slash = remain[remain.len() - 1] == b'/';
@@ -3616,9 +3586,6 @@ impl Pattern {
         let mut flags = PatternFlags::empty();
         if has_leading_or_middle_slash {
             flags |= PatternFlags::REL_PATH;
-        }
-        if has_leading_doublestar_could_start_with_bang {
-            flags |= PatternFlags::LEADING_DOUBLESTAR_SLASH;
         }
         if has_trailing_slash {
             flags |= PatternFlags::DIRS_ONLY;
@@ -3709,10 +3676,32 @@ impl IgnorePatterns {
         Global::crash();
     }
 
+    /// Same as git's `trim_trailing_spaces` in dir.c: `foo\ ` keeps its space.
     fn trim_trailing_spaces(line: &[u8]) -> &[u8] {
-        // TODO: copy this function
-        // https://github.com/git/git/blob/17d4b10aea6bda2027047a0e3548a6f8ad667dde/dir.c#L986
-        line
+        let mut last_space: Option<usize> = None;
+        let mut i = 0;
+        while i < line.len() {
+            match line[i] {
+                b' ' => {
+                    if last_space.is_none() {
+                        last_space = Some(i);
+                    }
+                }
+                b'\\' => {
+                    i += 1;
+                    if i == line.len() {
+                        return line;
+                    }
+                    last_space = None;
+                }
+                _ => last_space = None,
+            }
+            i += 1;
+        }
+        match last_space {
+            Some(end) => &line[..end],
+            None => line,
+        }
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice

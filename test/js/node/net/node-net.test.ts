@@ -513,7 +513,7 @@ describe("net.Socket write", () => {
   // path) then called `deinit()`/`destroy()` on freed memory, and
   // `getListener` read `handlers.mode` through the same dangling pointer.
   // These only fault under ASAN/debug-poison, so they are gated accordingly.
-  it.skipIf(!isDebug && !isASAN)(
+  it.concurrent.skipIf(!isDebug && !isASAN)(
     "native handle does not retain a dangling handlers pointer after connectError (scope.exit path)",
     async () => {
       const fixture = `
@@ -550,7 +550,7 @@ describe("net.Socket write", () => {
     },
   );
 
-  it.skipIf(!isDebug && !isASAN)(
+  it.concurrent.skipIf(!isDebug && !isASAN)(
     "native handle does not retain a dangling handlers pointer after close (getListener)",
     async () => {
       const fixture = `
@@ -590,7 +590,7 @@ describe("net.Socket write", () => {
     },
   );
 
-  it.skipIf(!isDebug && !isASAN)(
+  it.concurrent.skipIf(!isDebug && !isASAN)(
     "reconnecting through a native handle whose handlers were freed does not double-free (connectInner)",
     async () => {
       const fixture = `
@@ -637,35 +637,37 @@ describe("net.Socket write", () => {
   );
 });
 
-it("should handle connection error", done => {
-  let errored = false;
+it("should handle connection error", async () => {
+  // Nothing listens on a port that was just released.
+  const probe = createServer();
+  await once(probe.listen(0, "127.0.0.1"), "listening");
+  const { port } = probe.address() as import("node:net").AddressInfo;
+  await new Promise(resolve => probe.close(resolve));
 
-  // @ts-ignore
-  const socket = connect(55555, "127.0.0.1", () => {
-    done(new Error("Should not have connected"));
+  const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+  const events: unknown[] = [];
+  const socket = connect(port, "127.0.0.1", () => reject(new Error("Should not have connected")));
+  socket.on("error", (e: any) =>
+    events.push({ message: e.message, code: e.code, syscall: e.syscall, address: e.address, port: e.port }),
+  );
+  socket.on("connect", () => reject(new Error("Should not have connected")));
+  socket.on("close", hadError => {
+    events.push(`close hadError=${hadError}`);
+    resolve();
   });
+  await closed;
 
-  socket.on("error", error => {
-    if (errored) {
-      return done(new Error("Should not have errored twice"));
-    }
-    errored = true;
-    expect(error).toBeDefined();
-    expect(error.message).toBe("connect ECONNREFUSED 127.0.0.1:55555");
-    expect((error as any).code).toBe("ECONNREFUSED");
-    expect((error as any).syscall).toBe("connect");
-    expect((error as any).address).toBe("127.0.0.1");
-    expect((error as any).port).toBe(55555);
-  });
-
-  socket.on("connect", () => {
-    done(new Error("Should not have connected"));
-  });
-
-  socket.on("close", () => {
-    expect(errored).toBe(true);
-    done();
-  });
+  // Exactly one 'error', then 'close'.
+  expect(events).toEqual([
+    {
+      message: `connect ECONNREFUSED 127.0.0.1:${port}`,
+      code: "ECONNREFUSED",
+      syscall: "connect",
+      address: "127.0.0.1",
+      port,
+    },
+    "close hadError=true",
+  ]);
 });
 
 it("should handle connection error (unix)", done => {
@@ -703,14 +705,33 @@ it("Socket has a prototype", () => {
   function Connection2() {}
   require("util").inherits(Connection, Socket);
   require("util").inherits(Connection2, require("tls").TLSSocket);
+  expect(Object.getPrototypeOf(Connection.prototype)).toBe(Socket.prototype);
+  expect(Object.getPrototypeOf(Connection2.prototype)).toBe(TLSSocket.prototype);
 });
 
-it("unref should exit when no more work pending", async () => {
-  const process = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "node-unref-fixture.js")],
-    env: bunEnv,
+// node-unref-fixture.js and node-ref-default-fixture.js send a request to this TLS server.
+function replyingTLSServer() {
+  return Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: tlsCert,
+    socket: {
+      data(socket) {
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+      },
+      // The unref fixture exits in the middle of the handshake.
+      error() {},
+    },
   });
-  expect(await process.exited).toBe(0);
+}
+
+it.concurrent("unref should exit when no more work pending", async () => {
+  using server = replyingTLSServer();
+  const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-unref-fixture.js"), {
+    PORT: String(server.port),
+  });
+  // The fixture prints "Received data. FAIL" and exits 1 if the unref'd socket held the loop until the reply.
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
 });
 
 // IPv4-only server + injected lookup listing ::1 first forces a refused attempt then a retry; the call runs mid-lookup
@@ -846,18 +867,19 @@ describe.concurrent("unref()/pause() around connect()", () => {
   });
 });
 
-it("socket should keep process alive if unref is not called", async () => {
-  const process = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "node-ref-default-fixture.js")],
-    env: bunEnv,
+it.concurrent("socket should keep process alive if unref is not called", async () => {
+  using server = replyingTLSServer();
+  const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-ref-default-fixture.js"), {
+    PORT: String(server.port),
   });
-  expect(await process.exited).toBe(1);
+  // The fixture exits 1 from its 'data' listener. A socket that did not hold the loop lets it exit 0 before the reply.
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "Received data.", stderr: "", exitCode: 1 });
 });
 
 // Node never resumes a socket on the user's behalf: afterConnect only calls
 // read(0) (lib/net.js), so bytes that arrive before a 'data' listener is
 // attached stay buffered instead of being emitted to nobody and lost.
-it("a connected socket is not flowing until the user reads from it", async () => {
+it.concurrent("a connected socket is not flowing until the user reads from it", async () => {
   const { promise: received, resolve: onClose, reject } = Promise.withResolvers<string>();
   const server = createServer(c => {
     c.on("error", reject);
@@ -882,73 +904,40 @@ it("a connected socket is not flowing until the user reads from it", async () =>
   }
 });
 
-it("should not hang after FIN", async () => {
-  const net = require("node:net");
-  const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
-  const server = net.createServer(c => {
+it.concurrent("should not hang after FIN", async () => {
+  const server = createServer(c => {
     c.write("Hello client");
     c.end();
   });
   try {
-    server.on("error", reject);
-    server.listen(0, () => {
-      resolveListening(server.address().port);
+    await once(server.listen(0), "listening");
+    const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-fin-fixture.js"), {
+      PORT: String((server.address() as import("node:net").AddressInfo).port),
     });
-    const process = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "node-fin-fixture.js")],
-      stderr: "inherit",
-      stdin: "ignore",
-      stdout: "inherit",
-      env: {
-        ...bunEnv,
-        PORT: ((await listening) as number).toString(),
-      },
-    });
-    const timeout = setTimeout(() => {
-      process.kill();
-      reject(new Error("Timeout"));
-    }, 60_000);
-    expect(await process.exited).toBe(0);
-    clearTimeout(timeout);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   } finally {
     server.close();
   }
-}, 120_000);
+});
 
-it("should not hang after destroy", async () => {
-  const net = require("node:net");
-  const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
-  const server = net.createServer(c => {
+it.concurrent("should not hang after destroy", async () => {
+  const server = createServer(c => {
     // The client destroys without reading; the resulting RST surfaces as
     // ECONNRESET here (Node behaves identically) — handle it.
     c.on("error", () => {});
     c.write("Hello client");
   });
   try {
-    server.on("error", reject);
-    server.listen(0, () => {
-      resolveListening(server.address().port);
+    await once(server.listen(0), "listening");
+    const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "node-destroy-fixture.js"), {
+      PORT: String((server.address() as import("node:net").AddressInfo).port),
     });
-    const process = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "node-destroy-fixture.js")],
-      stderr: "inherit",
-      stdin: "ignore",
-      stdout: "inherit",
-      env: {
-        ...bunEnv,
-        PORT: ((await listening) as number).toString(),
-      },
-    });
-    const timeout = setTimeout(() => {
-      process.kill();
-      reject(new Error("Timeout"));
-    }, 60_000);
-    expect(await process.exited).toBe(0);
-    clearTimeout(timeout);
+    // The fixture prints its 'error' event, if any, on stderr.
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   } finally {
     server.close();
   }
-}, 120_000);
+});
 
 it("should trigger error when aborted even if connection failed #13126", async () => {
   const signal = AbortSignal.timeout(100);
@@ -971,7 +960,7 @@ it("should trigger error when aborted even if connection failed #13126", async (
 
 it("should trigger error when aborted even if connection failed, and the signal is already aborted #13126", async () => {
   const signal = AbortSignal.timeout(1);
-  await Bun.sleep(10);
+  if (!signal.aborted) await once(signal, "abort");
   const socket = createConnection({
     host: "example.com",
     port: 999,
@@ -1190,81 +1179,6 @@ it.if(isWindows)("should not leak when connect({path}) fails asynchronously whil
     exitCode: 0,
   });
 });
-
-// On Windows, unix paths route through the named-pipe codepath which reports
-// failure asynchronously; this test targets the synchronous-failure branch in
-// Listener.connectInner.
-it.skipIf(isWindows)(
-  "should not leak when connect({path}) fails synchronously on a reused handle",
-  async () => {
-    // node:net creates a detached native socket (`_handle`) and passes it as
-    // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
-    // before `doConnect`. A nonexistent unix path makes `doConnect` throw
-    // synchronously while the socket is still `.detached`, so
-    // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
-    // fire — the ref taken here must be released by the caller for reused
-    // sockets too, not only freshly-allocated ones. Without that, every
-    // failed reconnect leaks one native TCPSocket struct + its connection
-    // string.
-    const script = `
-      const net = require("node:net");
-      const { heapStats } = require("bun:jsc");
-      const path = "/tmp/bun-test-nonexistent-" + process.pid + ".sock";
-
-      function once() {
-        return new Promise(resolve => {
-          const s = new net.Socket();
-          s.on("error", () => {});
-          s.on("close", resolve);
-          s.connect({ path });
-        });
-      }
-      async function run(n) {
-        for (let i = 0; i < n; i += 100) {
-          const batch = [];
-          for (let j = 0; j < 100; j++) batch.push(once());
-          await Promise.all(batch);
-        }
-        Bun.gc(true);
-        await Bun.sleep(20);
-        Bun.gc(true);
-      }
-
-      // Count live mimalloc pages across all size bins. Each leaked
-      // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
-      // (release) / ~160 pages (debug+ASAN). Unlike RSS this is the
-      // allocator's own bookkeeping, so it's independent of OS page
-      // reclamation.
-      function pageCount() {
-        return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
-      }
-
-      // Warm up with the SAME workload as the measured run: on builds where
-      // JSC shares mimalloc, its heap keeps growing until the first full-size
-      // batch, so equal batches make the delta isolate the per-run leak.
-      await run(8000);
-      const before = pageCount();
-      await run(8000);
-      const after = pageCount();
-      console.log(JSON.stringify({ before, after, delta: after - before }));
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
-    // Without the balancing deref: +25 pages (release) / +163 (debug+ASAN).
-    // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
-    // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
-    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
 
 // node only reaches readStart() from _read(), and read(0) never calls _read once
 // the readable side has ended, so a `readable: false` client leaves the peer's
@@ -1525,16 +1439,17 @@ describe("Socket fd adoption", () => {
   it("a bare { fd } does not throw so connect({ fd }) can attach a native handle", () => {
     // No explicit writable: true -> no adoption, no fstat. child_process
     // extra stdio relies on this path (connect({ fd }) attaches natively).
-    expect(() => new Socket({ fd: 0x7ffff })).not.toThrow();
+    const socket = new Socket({ fd: 0x7ffff });
+    expect({ destroyed: socket.destroyed, pending: socket.pending }).toEqual({ destroyed: false, pending: true });
   });
 
   // node's _writeGeneric restarts the idle timer before every write; the
   // synchronous fd write path has no handle doing that for it.
-  it.skipIf(isWindows)("writes to an adopted fd restart the setTimeout() idle timer", async () => {
+  it.concurrent.skipIf(isWindows)("writes to an adopted fd restart the setTimeout() idle timer", async () => {
     const { rfd, wfd } = openFifo("timeout.fifo");
     const socket = new Socket({ fd: wfd, readable: false, writable: true });
     try {
-      const idle = 500;
+      const idle = 200;
       const writes: number[] = [];
       const timeouts: number[] = [];
       socket.on("timeout", () => timeouts.push(performance.now()));
@@ -1543,13 +1458,13 @@ describe("Socket fd adoption", () => {
       for (let i = 0; i < 20; i++) {
         writes.push(performance.now());
         socket.write("x");
-        await Bun.sleep(50);
+        await Bun.sleep(idle / 10);
       }
       if (timeouts.length === 0) await once(socket, "timeout");
       // Whenever 'timeout' fired, a full idle period had passed since the last
       // write before it: each write restarted the timer. (A scheduler stall
       // longer than `idle` between two writes is then a legitimate timeout, not
-      // a failure.) Without the restart the first one lands ~50ms after a write.
+      // a failure.) Without the restart the first one lands ~20ms after a write.
       const gaps = timeouts.map(at => at - Math.max(...writes.filter(w => w <= at)));
       expect(gaps.filter(gap => gap < idle * 0.9)).toEqual([]);
       expect(drain(rfd)).toBe(Buffer.alloc(20, "x").toString());
@@ -1563,7 +1478,7 @@ describe("Socket fd adoption", () => {
   // writable, so inherited properties never adopt anything (an own file fd
   // would throw ERR_INVALID_FD_TYPE); the Duplex flags and the adoption
   // decision must come from the same view.
-  it("ignores fd / readable / writable that are not own properties of the options", async () => {
+  it.concurrent("ignores fd / readable / writable that are not own properties of the options", async () => {
     const path = join(tmpdirSync(), "inherited-fd.txt");
     const fd = fs.openSync(path, "w");
     try {
@@ -1650,13 +1565,13 @@ describe.concurrent("socket that already sent FIN and is paused with unread data
           const d = process.cpuUsage(before);
           console.log("cpu", d.user + d.system);
           conn.resume();
-        }, 1000);
+        }, 500);
       });
     `);
-    // A level-triggered hangup left registered would have burned the whole 1s of
-    // wall time as CPU; 500ms leaves room over the debug+ASAN idle baseline.
+    // A level-triggered hangup left registered burns at least the 500ms of wall
+    // time as CPU. The idle baseline of a debug+ASAN build is about 30ms.
     const cpuMicros = Number((result.lines.find(l => l.startsWith("cpu ")) ?? "cpu -1").slice(4));
-    expect({ ...result, cpuIdle: cpuMicros >= 0 && cpuMicros < 500_000 }).toEqual({
+    expect({ ...result, cpuIdle: cpuMicros >= 0 && cpuMicros < 250_000 }).toEqual({
       lines: ["close 65536", `cpu ${cpuMicros}`],
       stderr: "",
       exitCode: 0,
@@ -1916,6 +1831,94 @@ describe.concurrent("backpressure-paused socket does not keep the process alive"
     });
   });
 });
+
+// On Windows, unix paths route through the named-pipe codepath which reports
+// failure asynchronously; this test targets the synchronous-failure branch in
+// Listener.connectInner.
+it.concurrent.skipIf(isWindows)(
+  "should not leak when connect({path}) fails synchronously on a reused handle",
+  async () => {
+    // node:net creates a detached native socket (`_handle`) and passes it as
+    // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
+    // before `doConnect`. A nonexistent unix path makes `doConnect` throw
+    // synchronously while the socket is still `.detached`, so
+    // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
+    // fire. The ref taken here must be released by the caller for reused
+    // sockets too, not only freshly-allocated ones. Without that, every
+    // failed reconnect leaks one native TCPSocket struct + its connection
+    // string.
+    //
+    // An ASAN build takes that struct from the system allocator, so the
+    // mimalloc page count below stays flat with the leak in place. There
+    // LeakSanitizer reports it at exit, after any number of failed connects.
+    const iterations = isASAN ? 100 : 8000;
+    const script = `
+      const net = require("node:net");
+      const { heapStats } = require("bun:jsc");
+      const path = "/tmp/bun-test-nonexistent-" + process.pid + ".sock";
+
+      function once() {
+        return new Promise(resolve => {
+          const s = new net.Socket();
+          s.on("error", () => {});
+          s.on("close", resolve);
+          s.connect({ path });
+        });
+      }
+      async function run(n) {
+        for (let i = 0; i < n; i += 100) {
+          const batch = [];
+          for (let j = 0; j < 100; j++) batch.push(once());
+          await Promise.all(batch);
+        }
+        Bun.gc(true);
+        await Bun.sleep(20);
+        Bun.gc(true);
+      }
+
+      // Count live mimalloc pages across all size bins. Each leaked
+      // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
+      // (release). Unlike RSS this is the allocator's own bookkeeping, so
+      // it's independent of OS page reclamation.
+      function pageCount() {
+        return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
+      }
+
+      // Warm up with the SAME workload as the measured run: on builds where
+      // JSC shares mimalloc, its heap keeps growing until the first full-size
+      // batch, so equal batches make the delta isolate the per-run leak.
+      await run(${iterations});
+      const before = pageCount();
+      await run(${iterations});
+      const after = pageCount();
+      console.log(JSON.stringify({ before, after, delta: after - before }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+        ...(isASAN && {
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+        }),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A LeakSanitizer report lands here.
+    expect(stderr).toBe("");
+    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
+    // Without the balancing deref: +25 pages (release).
+    // With it the socket delta is 0, but since #34009 JSC shares mimalloc and
+    // adds up to +14 of heap noise on aarch64/darwin release (build 75589).
+    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(20);
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
 
 describe("paused socket whose peer sends RST", () => {
   // Regression: on Linux, epoll forwarded the raw EPOLLERR bit (8) as a libus
@@ -2774,7 +2777,7 @@ it("onread: `false` from a callback holding the `true` sentinel still pauses unt
 // onStreamRead calls the user callback bare, so the process dies rather than
 // the socket being failed closed.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L179
-it("onread: a callback that throws is an uncaught exception", async () => {
+it.concurrent("onread: a callback that throws is an uncaught exception", async () => {
   // 12 bytes through a 4-byte buffer; the callback throws on the first slice.
   const fixture = /* js */ `
     const net = require("net");
@@ -2794,6 +2797,8 @@ it("onread: a callback that throws is an uncaught exception", async () => {
         },
       });
       client.on("error", () => console.log("socket-error"));
+      // If the throw does not end the process, the listening server holds it open.
+      setTimeout(() => process.exit(2), 10_000).unref();
     });
   `;
   await using proc = Bun.spawn({
@@ -2813,14 +2818,14 @@ it("onread: a callback that throws is an uncaught exception", async () => {
   expect(lines[0]).toBe("calls:abcd");
   expect(lines).not.toContain("socket-error");
   expect(["calls:abcd", "calls:abcd,efgh", "calls:abcd,efgh,ijkl"]).toEqual(expect.arrayContaining(lines));
-  expect(exitCode).not.toBe(0);
+  expect(exitCode).toBe(1);
 });
 
 // Node bounds each kernel read to the onread buffer's size, so a throw that is
 // swallowed by a process.on('uncaughtException') handler loses no bytes (the
 // next slice is a separate onStreamRead call). Bun slices one larger native
 // read in JS, so the catch is per-slice to preserve that.
-it("onread: a swallowed throw does not drop the rest of the current native read", async () => {
+it.concurrent("onread: a swallowed throw does not drop the rest of the current native read", async () => {
   const fixture = /* js */ `
     process.on("uncaughtException", e => console.log("uncaught:" + e.message));
     const net = require("net");
@@ -3086,14 +3091,23 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
 // The writev fast path is `#[cfg(unix)]`, and on Windows the amount a send
 // accepts is machine dependent, so the buffered precondition cannot be built there.
 describe.skipIf(isWindows)("socket write while data is buffered natively", () => {
-  // Counts received bytes per fill value. STALL_ON_ACCEPT=1 blocks the loop on
-  // accept so the kernel buffers stay full while the client writes.
+  // Counts received bytes per fill value. It does not read the connection
+  // (pauseOnConnect), so the kernel buffers fill up and stay full, until the
+  // client creates the file "submitted". That file holds a byte count. The
+  // server creates the file "drained" once it has received that many bytes.
   const serverFixture = /* js */ `
+    import fs from "node:fs";
     import net from "node:net";
     const KNOWN = [0x61, 0x69, 0x73]; // 'a', 'i', 's'
     const counts = { a: 0, i: 0, s: 0, other: 0 };
     const runs = [];
     let total = 0;
+    let drainTo = Infinity;
+    function reportDrained() {
+      if (total < drainTo) return;
+      drainTo = Infinity;
+      fs.writeFileSync("drained", "");
+    }
     function scan(d) {
       total += d.length;
       let pos = 0;
@@ -3116,12 +3130,16 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
         pos = end;
       }
     }
-    const server = net.createServer(c => {
-      c.on("data", scan);
+    const server = net.createServer({ pauseOnConnect: true }, c => {
+      c.on("data", d => {
+        scan(d);
+        reportDrained();
+      });
       let printed = false;
       const done = () => {
         if (printed) return;
         printed = true;
+        clearInterval(poll);
         console.log(JSON.stringify({ total, counts, runs }));
         c.destroy();
         server.close();
@@ -3129,9 +3147,13 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
       c.on("end", done);
       c.on("close", done);
       c.on("error", done);
-      if (process.env.STALL_ON_ACCEPT === "1") {
-        Bun.sleepSync(1500);
-      }
+      const poll = setInterval(() => {
+        if (!fs.existsSync("submitted")) return;
+        clearInterval(poll);
+        drainTo = Number(fs.readFileSync("submitted", "utf8"));
+        c.resume();
+        reportDrained();
+      }, 1);
     });
     server.listen(0, "127.0.0.1", () => {
       console.log(JSON.stringify({ port: server.address().port }));
@@ -3142,9 +3164,15 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
   // layer while data is still buffered. A _write callback that does not fire
   // synchronously means the chunk is now buffered natively.
   const clientFixture = /* js */ `
+    import fs from "node:fs";
     import net from "node:net";
     const phase = process.argv[2]; // "loss" | "dup"
     const port = Number(process.argv[3]);
+    // Lets the peer read. It creates "drained" once it has received drainTo bytes.
+    function submitted(drainTo) {
+      fs.writeFileSync("submitted.tmp", String(drainTo));
+      fs.renameSync("submitted.tmp", "submitted");
+    }
     const sock = net.connect(port, "127.0.0.1", () => {
       sock.setNoDelay(true);
       const writeDirect = chunk => {
@@ -3168,15 +3196,34 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
         finalChunk = Buffer.alloc(64 * 1024, 0x73);
         sent.s = finalChunk.length;
       } else {
-        // Leave a small (< 1MB) native remainder...
-        for (let attempt = 0; attempt < 64 && !sawPartial; attempt++) {
-          const C = Buffer.alloc(1024 * 1024, 0x61);
+        // Leave a small (< 64KB) native remainder...
+        const size = 64 * 1024;
+        for (let attempt = 0; attempt < 1024 && !sawPartial; attempt++) {
+          const C = Buffer.alloc(size, 0x61);
           sawPartial = !writeDirect(C);
           sent.a += C.length;
         }
-        // ...then block the loop while the peer drains, so the next writev takes
-        // the whole remainder plus a prefix of the new chunk (written > buffered.len).
-        if (sawPartial) Bun.sleepSync(1500);
+        // ...then block the loop, so that no writable event flushes the remainder,
+        // until the peer has read all but the last chunk. At most the rest of that
+        // chunk is still in the kernel, so the next writev takes the whole remainder
+        // plus a prefix of the new chunk (written > buffered.len).
+        if (sawPartial) {
+          // sent.a counts the partial chunk too: this is a single write, and it was partial.
+          if (sent.a === size) {
+            console.error("precondition failed: the first write was partial, so the peer has nothing to drain first");
+            sock.destroy();
+            process.exit(3);
+          }
+          submitted(sent.a - size);
+          const deadline = Date.now() + 60_000;
+          while (!fs.existsSync("drained")) {
+            if (Date.now() > deadline) {
+              console.error("the peer did not drain the connection");
+              process.exit(4);
+            }
+            Bun.sleepSync(1);
+          }
+        }
         finalChunk = Buffer.alloc(32 * 1024 * 1024, 0x69);
         sent.i = finalChunk.length;
       }
@@ -3191,6 +3238,12 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
       sock._write(finalChunk, "buffer", () => resolve());
       // bytesWritten counts flushed plus still-buffered bytes.
       sent.bw = sock.bytesWritten;
+      if (phase === "loss") submitted(sent.a + sent.s);
+      // The test runner does not kill the children of a concurrent test that timed out.
+      setTimeout(() => {
+        console.error("the final write did not drain");
+        process.exit(5);
+      }, 60_000).unref();
       flushed.then(() => {
         console.log(JSON.stringify(sent));
         sock.end();
@@ -3219,7 +3272,7 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
   // "loss": the writev stops inside the old buffered data, the new chunk must be kept.
   // "dup": the writev consumes the old data plus a prefix of the new chunk,
   // that prefix must not be resent.
-  describe.each(["loss", "dup"] as const)("%s", phase => {
+  describe.concurrent.each(["loss", "dup"] as const)("%s", phase => {
     it("a partial writev keeps exactly the unsent suffix", async () => {
       using dir = tempDir("writev-remainder", {
         "server-fixture.mjs": serverFixture,
@@ -3228,7 +3281,7 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
 
       await using server = Bun.spawn({
         cmd: [bunExe(), "server-fixture.mjs"],
-        env: phase === "loss" ? { ...bunEnv, STALL_ON_ACCEPT: "1" } : bunEnv,
+        env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
@@ -3355,7 +3408,7 @@ describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
 describe("net.Server.listen({ fd })", () => {
   // node's createServerHandle only accepts TCP / pipe descriptors and reports anything else as EINVAL;
   // the raw listen(2) failure for a datagram socket is EOPNOTSUPP.
-  it.skipIf(isWindows)("reports a datagram descriptor as EINVAL, like node", async () => {
+  it.concurrent.skipIf(isWindows)("reports a datagram descriptor as EINVAL, like node", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

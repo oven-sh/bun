@@ -261,6 +261,12 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
     sys::send_non_block(fd, buf).map_err(|err| sys::Error {
         syscall: sys::Tag::write,
+        // XNU's send() says ENOTCONN once a stream peer is fully gone; write(2) on the same fd (and Node) say EPIPE.
+        errno: if err.get_errno() == sys::E::ENOTCONN {
+            sys::E::EPIPE as _
+        } else {
+            err.errno
+        },
         ..err
     })
 }

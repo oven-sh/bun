@@ -118,32 +118,37 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 
   // The rejected query sends nothing, so no reply comes back to release the
   // event loop ref that the query took. The connection must release it itself.
-  test.each([false, true])("a script whose last query was rejected exits on its own (prepare: %p)", async prepare => {
-    await container.ready;
-    const script = `
-      const sql = new Bun.SQL({ url: process.env.DATABASE_URL, max: 1, prepare: ${prepare} });
-      await sql.connect();
-      // A later tick: the idle connection does not hold the process any more.
-      await new Promise(resolve => setImmediate(resolve));
-      const param = { toString() { throw new Error("boom from toString"); } };
-      console.log(await sql\`SELECT \${param}::text AS v\`.then(() => "resolved", e => e.message));
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, DATABASE_URL: url() },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // stderr is here so that a failure shows it. A sanitizer build can write to it.
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "boom from toString\n",
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
-  });
+  test.each([false, true])(
+    "a script whose last query was rejected exits on its own (prepare: %p)",
+    async prepare => {
+      await container.ready;
+      const script = `
+        const sql = new Bun.SQL({ url: process.env.DATABASE_URL, max: 1, prepare: ${prepare} });
+        await sql.connect();
+        // A later tick: the idle connection does not hold the process any more.
+        await new Promise(resolve => setImmediate(resolve));
+        const param = { toString() { throw new Error("boom from toString"); } };
+        console.log(await sql\`SELECT \${param}::text AS v\`.then(() => "resolved", e => e.message));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, DATABASE_URL: url() },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // stderr is here so that a failure shows it. A sanitizer build can write to it.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "boom from toString\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+    // On a loaded machine a debug build took 15 s to run the subprocess.
+    60_000,
+  );
 
-  test("a query dispatched from inside a conversion that then fails never gets another query's row", async () => {
+  test("a query dispatched from inside a conversion that then fails gets its own row", async () => {
     await container.ready;
     await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
     const settled = (query: Promise<unknown>) =>
@@ -159,9 +164,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     let nested!: Promise<unknown>;
     const dispatchesThenThrows = {
       toString() {
-        // execute() starts the query synchronously: its frames land inside the
-        // outer query's partial Bind, so the tail of the buffer is not only the
-        // outer query's and must not be discarded.
+        // execute() starts the query synchronously, while the outer Bind is encoded.
         const query = sql`SELECT ${"nested value"}::text AS nested`;
         query.execute();
         nested = settled(query);
@@ -173,15 +176,11 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     later.execute();
     const [nestedResult, laterResult] = await Promise.all([nested, settled(later)]);
 
-    // The server rejects the mixed frame and closes the connection. Both queries
-    // were written to it, so both reject. Neither hangs or gets the other's row.
     expect({ outer, nested: nestedResult, later: laterResult }).toEqual({
       outer: "boom after dispatch",
-      nested: "ERR_POSTGRES_CONNECTION_CLOSED",
-      later: "ERR_POSTGRES_CONNECTION_CLOSED",
+      nested: [{ nested: "nested value" }],
+      later: [{ nested: "later value" }],
     });
-    // The pool reconnects.
-    expect(await sql`SELECT ${"after"}::text AS v`).toEqual([{ v: "after" }]);
   });
 });
 

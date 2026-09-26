@@ -105,11 +105,19 @@ pub struct PostgresSQLConnection {
     pub(crate) write_buffer: JsCell<OffsetByteList>,
     /// Bumped when a `Writer` is handed out and when `write_buffer` is drained or freed.
     write_epoch: Cell<u32>,
+    /// Set while `encode_request` runs: parameter conversion can call back into this connection.
+    pub(crate) is_encoding: Cell<bool>,
+    /// Where the batch that is being encoded starts in `write_buffer`.
+    pub(crate) encode_start: Cell<u32>,
+    /// How much of the buffer ahead of that batch went to the socket during the encode.
+    pub(crate) sent_while_encoding: Cell<u32>,
     // Private — `JsCell` aliasing invariant; only `Reader` and `on_data`
     // touch these (both in this module).
     read_buffer: JsCell<OffsetByteList>,
     last_message_start: Cell<u32>,
     pub(crate) requests: JsCell<PostgresRequest::Queue>,
+    /// Requests whose conversion a termination stopped. They are rejected when JS can run again.
+    stopped_requests: JsCell<Vec<RefPtr<PostgresSQLQuery>>>,
     /// number of pipelined requests (Bind/Execute/Prepared statements)
     pub(crate) pipelined_requests: Cell<u32>,
     /// number of non-pipelined requests (Simple/Copy)
@@ -318,13 +326,14 @@ impl HasAutoFlush for PostgresSQLConnection {
 
 impl PostgresSQLConnection {
     fn on_auto_flush_impl(&self) -> bool {
+        let _guard = self.ref_guard();
+        self.reject_stopped_requests();
         if self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
             debug!("onAutoFlush: has backpressure");
             self.auto_flusher.with_mut(|a| a.registered = false);
             // if we have backpressure, wait for onWritable
             return false;
         }
-        let _guard = self.ref_guard();
         debug!("onAutoFlush: draining");
         // drain as much as we can
         self.drain_internal();
@@ -339,6 +348,18 @@ impl PostgresSQLConnection {
         self.auto_flusher
             .with_mut(|a| a.registered = keep_flusher_registered);
         keep_flusher_registered
+    }
+
+    /// Run `drain_internal` on the next tick, with or without bytes to send.
+    #[cold]
+    pub(crate) fn dispatch_later(&self) {
+        if !self.auto_flusher.get().registered && self.status.get() == Status::Connected {
+            AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(
+                self.as_ctx_ptr(),
+                self.vm(),
+            );
+            self.auto_flusher.with_mut(|a| a.registered = true);
+        }
     }
 
     fn register_auto_flusher(&self) {
@@ -672,7 +693,14 @@ impl PostgresSQLConnection {
         self.js_value.with_mut(|r| r.finalize());
     }
 
+    /// `update_poll_ref`, out of line: for a path that a query takes only when something failed.
+    #[cold]
+    pub(crate) fn update_poll_ref_cold(&self) {
+        self.update_poll_ref();
+    }
+
     /// Keep the process alive only while a connected connection has something in flight.
+    #[inline(always)]
     pub(crate) fn update_poll_ref(&self) {
         if self.status.get() != Status::Connected {
             return;
@@ -702,6 +730,9 @@ impl PostgresSQLConnection {
             debug!("flushData: has backpressure");
             return;
         }
+        if self.is_encoding.get() {
+            return self.flush_ahead_of_encode();
+        }
 
         let chunk = self.write_buffer.get().remaining();
         if chunk.is_empty() {
@@ -709,6 +740,15 @@ impl PostgresSQLConnection {
             return;
         }
 
+        let wrote = self.send(chunk);
+        if wrote > 0 {
+            self.consume_write_buffer(wrote);
+        }
+    }
+
+    /// Write `chunk` to the socket. Returns how many bytes the socket took.
+    #[inline]
+    fn send(&self, chunk: &[u8]) -> u32 {
         let wrote = self.socket.get().write(chunk);
         self.update_flags(|f| {
             f.set(
@@ -717,11 +757,22 @@ impl PostgresSQLConnection {
             )
         });
         debug!("flushData: wrote {}/{} bytes", wrote, chunk.len());
-        if wrote > 0 {
-            SocketMonitor::write(&chunk[..usize::try_from(wrote).expect("int cast")]);
-            self.write_buffer
-                .with_mut(|b| b.consume(u32::try_from(wrote).expect("int cast")));
-            self.bump_write_epoch();
+        if wrote <= 0 {
+            return 0;
+        }
+        SocketMonitor::write(&chunk[..wrote as usize]);
+        wrote as u32
+    }
+
+    /// The buffer ends in a partial message: send only the messages ahead of it.
+    #[cold]
+    fn flush_ahead_of_encode(&self) {
+        let sent = self.sent_while_encoding.get();
+        let buffer = self.write_buffer.get();
+        let chunk = &buffer.remaining()[sent as usize..self.encode_start.get() as usize];
+        if !chunk.is_empty() {
+            // The encoder holds offsets into the buffer. `encode_request` consumes afterwards.
+            self.sent_while_encoding.set(sent + self.send(chunk));
         }
     }
 
@@ -957,9 +1008,14 @@ impl PostgresSQLConnection {
             return;
         }
 
+        // advance() runs user JS, which can close the connection.
+        let _guard = self.ref_guard();
+        self.reject_stopped_requests();
         self.drain_internal();
     }
 
+    /// The caller holds a ref on the connection.
+    #[inline]
     fn drain_internal(&self) {
         debug!("drainInternal");
         let event_loop = self.event_loop();
@@ -974,6 +1030,8 @@ impl PostgresSQLConnection {
             // no backpressure yet so pipeline more if possible and flush again
             self.advance();
             self.flush_data();
+            // advance() can reject a request with nothing sent, so no reply releases the ref.
+            self.update_poll_ref_cold();
         }
         event_loop.exit();
     }
@@ -1183,9 +1241,13 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             ref_count: Cell::new(1),
             write_buffer: JsCell::new(OffsetByteList::default()),
             write_epoch: Cell::new(0),
+            is_encoding: Cell::new(false),
+            encode_start: Cell::new(0),
+            sent_while_encoding: Cell::new(0),
             read_buffer: JsCell::new(OffsetByteList::default()),
             last_message_start: Cell::new(0),
             requests: JsCell::new(PostgresRequest::Queue::new()),
+            stopped_requests: JsCell::new(Vec::new()),
             pipelined_requests: Cell::new(0),
             nonpipelinable_requests: Cell::new(0),
             pending_requests: Cell::new(0),
@@ -1413,8 +1475,10 @@ impl PostgresSQLConnection {
             self.disconnect();
         }
         self.unregister_auto_flusher();
-        self.write_buffer.with_mut(|b| b.clear_and_free());
-        self.bump_write_epoch();
+        // An encoder up the stack holds offsets into the buffer. `encode_request` frees it.
+        if !self.is_encoding.get() {
+            self.free_write_buffer();
+        }
     }
 
     pub fn do_close(
@@ -1439,7 +1503,37 @@ impl PostgresSQLConnection {
         });
     }
 
+    /// A termination stopped the conversion of `req`, and no JS can run until it is withdrawn.
+    pub(crate) fn reject_later(&self, req: &PostgresSQLQuery) {
+        req.status.set(QueryStatus::Fail);
+        self.stopped_requests.with_mut(|s| s.push(req.ref_guard()));
+        self.dispatch_later();
+    }
+
+    #[inline]
+    fn reject_stopped_requests(&self) {
+        if !self.stopped_requests.get().is_empty() {
+            self.reject_stopped_requests_now();
+        }
+    }
+
+    #[cold]
+    fn reject_stopped_requests_now(&self) {
+        if self.global().has_exception() {
+            return;
+        }
+        for req in self.stopped_requests.with_mut(core::mem::take) {
+            let stopped = postgres_error_to_js(
+                self.global(),
+                Some(b"A parameter conversion was stopped before it finished"),
+                AnyPostgresError::InvalidQueryBinding,
+            );
+            req.on_js_error(stopped, self.global());
+        }
+    }
+
     fn clean_up_requests(&self, js_reason: Option<JSValue>) {
+        self.reject_stopped_requests();
         // R-2: `&self` carries no `noalias`; every field accessed below is
         // `Cell`/`JsCell`-backed, so re-entrant JS callbacks (promise reject →
         // user `.catch()` → new query enqueue) that mutate `self.requests`
@@ -1555,6 +1649,7 @@ impl PostgresSQLConnection {
             .get()
             .contains(ConnectionFlags::IS_READY_FOR_QUERY)
             || self.current().is_some()
+            || self.is_encoding.get()
     }
 
     #[inline]
@@ -1584,6 +1679,7 @@ impl PostgresSQLConnection {
             && !flags.contains(ConnectionFlags::WAITING_TO_PREPARE) // cannot pipeline when waiting prepare
             && !flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // dont make sense to buffer more if we have backpressure
             && (self.write_buffer.get().len() as usize) < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
+            && !self.is_encoding.get() // a request is half written
     }
 }
 
@@ -1659,7 +1755,19 @@ impl PostgresSQLConnection {
         self.write_epoch.set(self.write_epoch.get().wrapping_add(1));
     }
 
+    #[inline]
+    pub(crate) fn consume_write_buffer(&self, bytes: u32) {
+        self.write_buffer.with_mut(|b| b.consume(bytes));
+        self.bump_write_epoch();
+    }
+
+    pub(crate) fn free_write_buffer(&self) {
+        self.write_buffer.with_mut(|b| b.clear_and_free());
+        self.bump_write_epoch();
+    }
+
     pub(crate) fn writer(&self) -> protocol::NewWriter<Writer> {
+        debug_assert!(!self.is_encoding.get(), "a request is being encoded");
         self.bump_write_epoch();
         protocol::NewWriter {
             wrapped: Writer {
@@ -1827,12 +1935,54 @@ impl PostgresSQLConnection {
     /// unnamed prepared statements with params skip writeQuery+Sync and need
     /// advance() to send everything atomically on an idle connection.
     pub(crate) fn advance_and_flush(&self) {
+        if self.is_encoding.get() {
+            // The encoder's caller dispatches. The flusher does if a termination stops it.
+            self.dispatch_later();
+            return;
+        }
         let flags = self.flags.get();
         if !flags.contains(ConnectionFlags::HAS_BACKPRESSURE)
             && flags.contains(ConnectionFlags::IS_READY_FOR_QUERY)
         {
             self.advance();
             self.flush_data();
+        }
+    }
+
+    /// Queue `request` ahead of the last `behind` requests, which its conversion queued.
+    #[cold]
+    pub(crate) fn enqueue_ahead_of(&self, request: RefPtr<PostgresSQLQuery>, behind: usize) {
+        // Replies go to the head of the queue, so wire order has to equal queue order.
+        self.requests.with_mut(|q| {
+            debug_assert!(behind <= q.len(), "pending_requests exceeds the queue");
+            q.insert(q.len().saturating_sub(behind), request)
+        });
+    }
+
+    /// Encode the batch of the request at `offset`, which `advance()` took out of `pending_requests`.
+    #[inline(always)]
+    fn encode_queued(
+        &self,
+        req: &PostgresSQLQuery,
+        offset: &mut usize,
+        request: EncodeRequest<'_>,
+    ) -> Result<(), AnyPostgresError> {
+        // A close() from inside a conversion must not count a Pending request twice.
+        req.status.set(QueryStatus::Binding);
+        let result = self.encode_request(self.global(), request);
+        let is_req = |r: &RefPtr<PostgresSQLQuery>| core::ptr::eq(r.as_ptr(), req);
+        if !self.requests.get().get(*offset).is_some_and(is_req) {
+            self.find_again(req, offset);
+        }
+        result
+    }
+
+    /// A reply handled during the conversion popped settled requests off the head of the queue.
+    #[cold]
+    fn find_again(&self, req: &PostgresSQLQuery, offset: &mut usize) {
+        let is_req = |r: &RefPtr<PostgresSQLQuery>| core::ptr::eq(r.as_ptr(), req);
+        if let Some(at) = self.requests.get().iter().take(*offset).position(is_req) {
+            *offset = at;
         }
     }
 
@@ -1844,7 +1994,11 @@ impl PostgresSQLConnection {
         err: AnyPostgresError,
     ) {
         if let Some(err_) = self.global().try_take_exception() {
-            req.on_js_error(err_, self.global());
+            if self.global().has_exception() {
+                self.reject_later(req);
+            } else {
+                req.on_js_error(err_, self.global());
+            }
             return;
         }
         if let Some(statement) = new_statement {
@@ -1854,30 +2008,42 @@ impl PostgresSQLConnection {
         req.on_write_fail(err, self.global(), self.get_queries_array());
     }
 
+    /// Pop the requests at the head of the queue that have settled.
+    #[inline(always)]
+    fn discard_finished_requests(&self) {
+        while let Some(request) = self.current() {
+            match request.status.get() {
+                QueryStatus::Success | QueryStatus::Fail => self.discard_request(&request),
+                _ => break,
+            }
+        }
+    }
+
     fn advance(&self) {
+        if self.is_encoding.get() {
+            // A reply handled during a conversion still leaves the queue. The encoder's caller dispatches.
+            debug!("advance: encoding");
+            self.discard_finished_requests();
+            return;
+        }
         let mut offset: usize = 0;
         debug!("advance");
         // The cleanup loop runs after the main loop returns;
         // expanded as a closure called at every return point below.
         macro_rules! defer_cleanup {
+            ($self:ident) => {
+                $self.discard_finished_requests()
+            };
+        }
+        // A pending termination fails every conversion. The flusher dispatches the rest later.
+        macro_rules! next_after_failed_encode {
             ($self:ident) => {{
-                // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
-                // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
-                while let Some(result) = $self.current() {
-                    // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
-                    // so we do the cleanup here
-                    match result.status.get() {
-                        QueryStatus::Success => {
-                            $self.discard_request(&result);
-                            continue;
-                        }
-                        QueryStatus::Fail => {
-                            $self.discard_request(&result);
-                            continue;
-                        }
-                        _ => break, // truly current item
-                    }
+                if $self.global().has_exception() {
+                    $self.dispatch_later();
+                    defer_cleanup!($self);
+                    return;
                 }
+                continue;
             }};
         }
 
@@ -1939,6 +2105,8 @@ impl PostgresSQLConnection {
                         defer_cleanup!(self);
                         return;
                     } else {
+                        // A conversion can close the connection, which drops the queue's ref.
+                        let _req_ref = req.ref_guard();
                         if let Some(statement) = req.statement_mut() {
                             match statement.status {
                                 StatementStatus::Failed => {
@@ -1997,9 +2165,9 @@ impl PostgresSQLConnection {
                                         // other connection poolers in transaction mode.
                                         debug!("parse, bind and execute unnamed stmt");
                                         let query_str = req.query.to_utf8();
-                                        let global = self.global_object;
-                                        if let Err(err) = self.encode_request(
-                                            &global,
+                                        if let Err(err) = self.encode_queued(
+                                            &req,
+                                            &mut offset,
                                             EncodeRequest::ParseBindAndExecute {
                                                 query: query_str.slice(),
                                                 statement,
@@ -2020,13 +2188,13 @@ impl PostgresSQLConnection {
                                                 "parse, bind and execute failed: {}",
                                                 <&'static str>::from(err)
                                             );
-                                            continue;
+                                            next_after_failed_encode!(self);
                                         }
                                     } else {
                                         debug!("binding and executing stmt");
-                                        let global = self.global_object;
-                                        if let Err(err) = self.encode_request(
-                                            &global,
+                                        if let Err(err) = self.encode_queued(
+                                            &req,
+                                            &mut offset,
                                             EncodeRequest::BindAndExecute {
                                                 statement,
                                                 binding_value,
@@ -2042,14 +2210,13 @@ impl PostgresSQLConnection {
                                                 offset += 1;
                                             }
                                             debug!("bind and execute failed: {}", err);
-                                            continue;
+                                            next_after_failed_encode!(self);
                                         }
                                     }
 
                                     self.update_flags(|f| {
                                         f.remove(ConnectionFlags::IS_READY_FOR_QUERY)
                                     });
-                                    req.status.set(QueryStatus::Binding);
                                     req.update_flags(|f| f.counter = RequestCounter::Pipelined);
                                     self.pipelined_requests
                                         .set(self.pipelined_requests.get() + 1);
@@ -2103,9 +2270,9 @@ impl PostgresSQLConnection {
                                             postgres_sql_query::js::binding_get_cached(this_value)
                                                 .unwrap_or_default();
                                         debug!("prepareAndQueryWithSignature");
-                                        let global = self.global_object;
-                                        if let Err(err) = self.encode_request(
-                                            &global,
+                                        if let Err(err) = self.encode_queued(
+                                            &req,
+                                            &mut offset,
                                             EncodeRequest::PrepareAndQuery {
                                                 query: query_str.slice(),
                                                 signature: &mut statement.signature,
@@ -2127,13 +2294,12 @@ impl PostgresSQLConnection {
                                                 "prepareAndQueryWithSignature failed: {}",
                                                 <&'static str>::from(err)
                                             );
-                                            continue;
+                                            next_after_failed_encode!(self);
                                         }
                                         self.update_flags(|f| {
                                             f.remove(ConnectionFlags::IS_READY_FOR_QUERY);
                                             f.insert(ConnectionFlags::WAITING_TO_PREPARE);
                                         });
-                                        req.status.set(QueryStatus::Binding);
                                         statement.status = StatementStatus::Parsing;
                                         self.flush_data_and_reset_timeout();
                                         defer_cleanup!(self);
@@ -2167,9 +2333,9 @@ impl PostgresSQLConnection {
                                             postgres_sql_query::js::columns_get_cached(this_value)
                                                 .unwrap_or_default();
                                         debug!("parseAndBindAndExecute (unnamed, first execution)");
-                                        let global = self.global_object;
-                                        if let Err(err) = self.encode_request(
-                                            &global,
+                                        if let Err(err) = self.encode_queued(
+                                            &req,
+                                            &mut offset,
                                             EncodeRequest::ParseBindAndExecute {
                                                 query: query_str.slice(),
                                                 statement,
@@ -2189,13 +2355,12 @@ impl PostgresSQLConnection {
                                                 "parseAndBindAndExecute failed: {}",
                                                 <&'static str>::from(err)
                                             );
-                                            continue;
+                                            next_after_failed_encode!(self);
                                         }
                                         self.update_flags(|f| {
                                             f.remove(ConnectionFlags::IS_READY_FOR_QUERY);
                                             f.insert(ConnectionFlags::WAITING_TO_PREPARE);
                                         });
-                                        req.status.set(QueryStatus::Binding);
                                         statement.status = StatementStatus::Parsing;
                                         req.update_flags(|f| f.counter = RequestCounter::Pipelined);
                                         self.pipelined_requests

@@ -263,6 +263,7 @@ pub(crate) fn list_objects(
             acl: None,
             storage_class: None,
             request_payer: false,
+            content_length: None,
         },
         None,
     ) {
@@ -1174,6 +1175,7 @@ fn download_stream(
             content_encoding: None,
             acl: None,
             storage_class: None,
+            content_length: None,
         },
         None,
     ) {

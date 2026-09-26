@@ -278,6 +278,7 @@ impl S3Credentials {
         let method = sign_options.method;
         let request_path = sign_options.path;
         let content_hash = sign_options.content_hash;
+        let content_length = sign_options.content_length;
         let mut content_md5: Option<Box<[u8]>> = None;
 
         if let Some(content_md5_val) = sign_options.content_md5 {
@@ -464,7 +465,13 @@ impl S3Credentials {
         };
         let mut signed_headers_buf = [0u8; 256];
         let signed_headers: &[u8] = if sign_query {
-            b"host"
+            // A presigned URL signs `host`, and `content-length` too when the caller asked for the
+            // upload to be held to a size. Alphabetical, as the canonical request requires.
+            if content_length.is_some() {
+                b"content-length;host"
+            } else {
+                b"host"
+            }
         } else {
             SignedHeaders::get(header_key, &mut signed_headers_buf)
         };
@@ -580,6 +587,14 @@ impl S3Credentials {
                     );
                 }
 
+                // The same list as `signed_headers`, percent-encoded because it goes in a query
+                // parameter and the separator is a `;`.
+                let encoded_signed_headers: &[u8] = if content_length.is_some() {
+                    b"content-length%3Bhost"
+                } else {
+                    b"host"
+                };
+
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 let canonical: &[u8] = 'brk_canonical: {
                     let mut query_parts: Vec<Vec<u8>> = Vec::with_capacity(13);
@@ -605,7 +620,10 @@ impl S3Credentials {
                     if let Some(token) = encoded_session_token {
                         query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
                     }
-                    query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
+                    query_parts.push(alloc_print!(
+                        "X-Amz-SignedHeaders={}",
+                        BStr::new(encoded_signed_headers)
+                    ));
                     if let Some(cd) = encoded_content_disposition {
                         query_parts.push(alloc_print!(
                             "response-content-disposition={}",
@@ -631,14 +649,22 @@ impl S3Credentials {
                         query_string.extend_from_slice(part);
                     }
 
+                    let canonical_headers: Vec<u8> = match content_length {
+                        Some(len) => {
+                            alloc_print!("content-length:{}\nhost:{}", len, BStr::new(&host))
+                        }
+                        None => alloc_print!("host:{}", BStr::new(&host)),
+                    };
+
                     break 'brk_canonical buf_print(
                         &mut tmp_buffer,
                         format_args!(
-                            "{}\n{}\n{}\nhost:{}\n\nhost\n{}",
+                            "{}\n{}\n{}\n{}\n\n{}\n{}",
                             method_name,
                             BStr::new(normalized_path),
                             BStr::new(&query_string),
-                            BStr::new(&host),
+                            BStr::new(&canonical_headers),
+                            BStr::new(signed_headers),
                             BStr::new(aws_content_hash)
                         ),
                     )
@@ -699,7 +725,10 @@ impl S3Credentials {
                     "X-Amz-Signature={}",
                     HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
                 ));
-                url_query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
+                url_query_parts.push(alloc_print!(
+                    "X-Amz-SignedHeaders={}",
+                    BStr::new(encoded_signed_headers)
+                ));
                 if let Some(cd) = encoded_content_disposition {
                     url_query_parts.push(alloc_print!(
                         "response-content-disposition={}",
@@ -1068,6 +1097,7 @@ pub struct SignOptions<'a> {
     pub content_disposition: Option<&'a [u8]>,
     pub content_type: Option<&'a [u8]>,
     pub content_encoding: Option<&'a [u8]>,
+    pub content_length: Option<u64>,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
@@ -1225,6 +1255,7 @@ impl<'a> Default for SignOptions<'a> {
             content_disposition: None,
             content_type: None,
             content_encoding: None,
+            content_length: None,
             acl: None,
             storage_class: None,
             request_payer: false,

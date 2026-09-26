@@ -35,6 +35,33 @@ test("await import('bun')", async () => {
   expect(BunESM.default).toBe(Bun);
 });
 
+test("reifying every lazy property at once passes exception check validation", async () => {
+  // { ...Bun } and Object.entries(Bun) run every PropertyCallback builder of the Bun object back
+  // to back (JSObject::reifyAllStaticProperties). Builds with exception scope verification
+  // (debug, ASAN) abort if one of them returns with an unchecked simulated throw; release
+  // builds ignore the option, so there this only checks the copy is complete.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const spread = { ...Bun };
+       const entries = Object.entries(Bun);
+       const keys = Object.keys(Bun);
+       const mismatched = keys.filter(key => !(key in spread) || spread[key] !== Bun[key]);
+       console.log(JSON.stringify({ keys: keys.length > 0, entries: entries.length === keys.length, mismatched }));`,
+    ],
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ keys: true, entries: true, mismatched: [] }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("a lazy property whose builtin fails to load throws from the read", async () => {
   // The shell builtin ($) and the sql module body (sql, SQL, postgres) call Symbol(), so
   // breaking it makes each builder throw. The read must throw that error (debug builds used to

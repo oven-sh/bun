@@ -5831,22 +5831,26 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     }
 }
 
-/// Whether a second Blob over `store` reads the same bytes from the start.
-/// Memory and S3 do. A path does when it names a regular file (each read
-/// opens it again); it is stat'd here if that is not yet known. A file
-/// descriptor never does: its offset, and for a pipe its bytes, are shared.
+pub(crate) fn store_is_fd(store: &RefPtr<Store>) -> bool {
+    matches!(&store.data, store::Data::File(file) if file.pathlike.is_fd())
+}
+
+/// Whether a second Blob over `store` reads the same bytes. Must not cache the stat it makes.
 pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
-    match Store::data_mut(store).tag() {
-        store::DataTag::Bytes | store::DataTag::S3 => true,
-        store::DataTag::File => {
-            if let PathOrFileDescriptor::Fd(_) = Store::data_mut(store).as_file().pathlike {
-                return false;
-            }
-            if Store::data_mut(store).as_file().seekable.is_none() {
-                resolve_file_stat(store);
-            }
-            Store::data_mut(store).as_file().seekable != Some(false)
-        }
+    let store::Data::File(file) = &store.data else {
+        return true;
+    };
+    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+        return false;
+    };
+    // Set by `resolve_file_stat` to "is a regular file".
+    if let Some(is_regular_file) = file.seekable {
+        return is_regular_file;
+    }
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    match bun_sys::stat(path.slice_z(&mut buffer)) {
+        bun_sys::Result::Ok(stat) => bun_sys::S::ISREG(stat.st_mode as _),
+        _ => true,
     }
 }
 

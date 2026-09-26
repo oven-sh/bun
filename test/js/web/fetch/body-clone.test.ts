@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
+import { unlinkSync, utimesSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -1135,8 +1136,10 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
   });
 
   // A pipe yields its bytes once, so two Blobs over it would compete for
-  // them. A body over such a store is read as one stream and teed instead,
-  // whether it was given as a stream or as the Blob itself, and both bodies
+  // them. A body over a file descriptor, or over an unread stream of a path
+  // that is not a regular file, is read as one stream and teed instead. A
+  // FIFO given by path as the Blob itself is duped, as in 1.4.2: clone() of
+  // a Blob body does no filesystem I/O. In the teed cases both bodies
   // see the whole input.
   async function cloneInChild(bodyExpr: string, args: string[] = []) {
     await using proc = Bun.spawn({
@@ -1182,6 +1185,109 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     });
     expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", [fifo])).toEqual(bothBodiesReadStdin);
     expect(await writer.exited).toBe(0);
+  });
+
+  // clone() must not change what the Bun.file() behind a body answers later.
+  // The body shares its store with that Bun.file(), and a stat cached on the
+  // store is what `size`, `lastModified`, `exists()` and a later `.body` use.
+  describe("clone() caches no stat on the store it shares with the Bun.file()", () => {
+    const post = (body: Bun.BunFile) => new Request("http://example.com/", { method: "POST", body });
+    // Every entry point that clones a body.
+    const cloners: Array<[string, (file: Bun.BunFile) => unknown]> = [
+      ["Response.clone()", file => new Response(file).clone()],
+      ["Response.clone() of a file.stream() body", file => new Response(file.stream()).clone()],
+      ["Request.clone()", file => post(file).clone()],
+      ["new Request(request)", file => new Request(post(file))],
+      ["new Request(request, init)", file => new Request(post(file), { headers: { "x-test": "1" } })],
+      // @ts-expect-error Bun takes a Response as init and clones its body.
+      ["new Request(url, response)", file => new Request("http://example.com/", new Response(file))],
+    ];
+
+    async function afterClone<T>(
+      clone: (file: Bun.BunFile) => unknown,
+      change: (path: string) => unknown,
+      read: (file: Bun.BunFile) => T | Promise<T>,
+    ) {
+      const path = join(tempDirWithFiles("body-clone-change", { "log.txt": "12345" }), "log.txt");
+      const file = Bun.file(path);
+      clone(file);
+      await change(path);
+      return await read(file);
+    }
+    const grow = (path: string) => Bun.write(path, "123456789");
+
+    test.each(cloners)("%s: size and a later body stream see a file that grew", async (_, clone) => {
+      expect({
+        size: await afterClone(clone, grow, file => file.size),
+        bodyStream: await afterClone(clone, grow, file => Bun.readableStreamToText(new Response(file).body!)),
+      }).toEqual({ size: 9, bodyStream: "123456789" });
+    });
+
+    test("lastModified and exists() see a file that changed", async () => {
+      const clone = cloners[0][1];
+      const mtime = new Date("2033-05-18T03:33:20.000Z");
+      expect({
+        lastModified: await afterClone(
+          clone,
+          path => utimesSync(path, mtime, mtime),
+          file => file.lastModified,
+        ),
+        exists: await afterClone(clone, unlinkSync, file => file.exists()),
+      }).toEqual({ lastModified: mtime.getTime(), exists: false });
+    });
+  });
+
+  // A Blob body over a path is duped without a stat, whatever the path names
+  // and whether or not an earlier `size` cached its mode. clone() does not
+  // throw, and each body opens the path on its own when it is read.
+  describe("clone() dupes a Blob body over a path that is not a regular file", () => {
+    const handles: Array<[string, (path: string) => Bun.BunFile]> = [
+      ["a fresh Bun.file()", path => Bun.file(path)],
+      [
+        "a Bun.file() whose size was read before",
+        path => {
+          const file = Bun.file(path);
+          file.size;
+          return file;
+        },
+      ],
+    ];
+
+    test.each(handles)("a directory, %s: both bodies reject with EISDIR", async (_, open) => {
+      const response = new Response(open(tempDirWithFiles("body-clone-dir", {})));
+      let clone: Response;
+      expect(() => (clone = response.clone())).not.toThrow();
+      const results = await Promise.allSettled([clone!.text(), response.text()]);
+      expect(results.map(r => (r.status === "rejected" ? `rejected ${r.reason?.code}` : r.status))).toEqual([
+        "rejected EISDIR",
+        "rejected EISDIR",
+      ]);
+    });
+
+    test.skipIf(isWindows).each(handles)("/dev/null and /dev/zero, %s: both bodies read them", async (_, open) => {
+      const empty = new Response(open("/dev/null"));
+      const emptyClone = empty.clone();
+      const zeros = new Response(open("/dev/zero").slice(0, 8));
+      const zerosClone = zeros.clone();
+      expect({
+        "/dev/null": await Promise.all([emptyClone.text(), empty.text()]),
+        "/dev/zero": (await Promise.all([zerosClone.bytes(), zeros.bytes()])).map(bytes => bytes.length),
+      }).toEqual({ "/dev/null": ["", ""], "/dev/zero": [8, 8] });
+    });
+  });
+
+  // A guard on the stream arm, which still stats the path: that stat is not
+  // cached either. procfs reports `st_size == 0` for a file that has content,
+  // so a cached stat would make both bodies and the Bun.file() read "".
+  test.skipIf(process.platform !== "linux")("a procfs Bun.file().stream() body is read whole", async () => {
+    const file = Bun.file("/proc/sys/kernel/ostype");
+    const original = new Response(file.stream());
+    const clone = original.clone();
+    expect({
+      clone: await clone.text(),
+      original: await original.text(),
+      file: await file.text(),
+    }).toEqual({ clone: "Linux\n", original: "Linux\n", file: "Linux\n" });
   });
 });
 

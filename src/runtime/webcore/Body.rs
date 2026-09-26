@@ -1574,9 +1574,8 @@ impl Value {
         }
 
         if let Value::Blob(b) = self {
-            if b.store()
-                .is_some_and(|store| !blob::store_reads_repeatably(store))
-            {
+            // No stat here: a path is duped as it is, so a FIFO given by path is not detected.
+            if b.store().is_some_and(blob::store_is_fd) {
                 // A pipe or other fd yields its bytes once: read it as one
                 // stream and tee that.
                 self.to_readable_stream(cx)?;

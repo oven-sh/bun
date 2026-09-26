@@ -113,7 +113,7 @@ server.listen(0, "127.0.0.1", () => {
       timeout,
       paths: paths.map(({ name, early, inCall, late, cutAfterHead }) => ({ name, early, inCall, late, cutAfterHead })),
     };
-    console.log("ok " + JSON.stringify(summary));
+    console.log(JSON.stringify(summary));
     process.exit(0);
   }
 

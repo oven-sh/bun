@@ -4211,6 +4211,12 @@ describe("bundler", () => {
         function f() { return 1; }
         { var f = 5; (() => console.log("read-in-closure", typeof f, f))(); }
       `,
+      // The value of the top-level `var` has no side effect, and only the nested `var` reads it.
+      "/read-of-value-in-nested-scope.js": /* js */ `
+        function f() { return 1; }
+        var f = 5;
+        { var f; console.log("read-of-value-in-nested-scope", f); }
+      `,
       "/no-other-use.js": /* js */ `
         var f = 1;
         function f() { return 1; }
@@ -4262,6 +4268,7 @@ describe("bundler", () => {
       var-function-function 0
       read-in-nested-scope function
       read-in-closure number 5
+      read-of-value-in-nested-scope 5
       no-other-use
       use-strict 1 2
       nested-function function

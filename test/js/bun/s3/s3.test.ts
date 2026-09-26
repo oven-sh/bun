@@ -1407,8 +1407,8 @@ for (let credentials of allCredentials) {
             expect(url.includes("X-Amz-SignedHeaders")).toBe(true);
           });
 
-          it("s3().presign() endpoint should work", async () => {
-            const url = s3("s3://folder/credentials-test", s3Options).presign({
+          it("s3().presign() bucket option should work", async () => {
+            const url = s3("s3://credentials-test", s3Options).presign({
               expiresIn: 10,
               bucket: "my-bucket",
             });

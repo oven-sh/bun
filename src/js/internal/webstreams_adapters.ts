@@ -82,7 +82,7 @@ class ReadableFromWeb extends Readable {
       } catch {}
     }
     this.#closed = true;
-    this.destroy(error);
+    destroyer(this, error);
   }
 
   // One reader.read() per _read(). readMany() would drain a start()-enqueued

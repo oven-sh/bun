@@ -135,6 +135,11 @@ function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
   return chunk;
 }
 
+// destroy(falsy) emits no 'error'. Node's adapter makes it an AbortError (destroyer()).
+function failPull(stream: NativeReadable, reason: unknown) {
+  errorOrDestroy(stream, reason || $makeAbortError());
+}
+
 function read(this: NativeReadable, maxToRead: number) {
   $debug(`[${this.debugId}] read${this[kPendingRead] ? ", is already pending" : ""}`);
   var ptr = this.$bunNativePtr;
@@ -168,7 +173,12 @@ function read(this: NativeReadable, maxToRead: number) {
     }
   }
   const chunk = getRemainingChunk(this, maxToRead);
-  var result = ptr.pull(chunk, this[kCloseState]);
+  var result;
+  try {
+    result = ptr.pull(chunk, this[kCloseState]);
+  } catch (error) {
+    return failPull(this, error);
+  }
   $assert(result !== undefined);
   $debug(
     `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
@@ -183,9 +193,7 @@ function read(this: NativeReadable, maxToRead: number) {
         this[kPendingRead] = false;
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
       },
-      reason => {
-        errorOrDestroy(this, reason);
-      },
+      reason => failPull(this, reason),
     );
   } else {
     this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);

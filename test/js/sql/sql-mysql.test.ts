@@ -1,6 +1,7 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
+import type net from "node:net";
 import path from "path";
 import {
   listeningServer,
@@ -11,8 +12,10 @@ import {
   mysqlLenencStr,
   mysqlOkPacket,
   mysqlRawPacket,
+  mysqlReadLenencInt,
   mysqlReadPackets,
   mysqlStmtPrepareOk,
+  mysqlTextResultSet,
 } from "./wire-frames";
 const dir = tempDirWithFiles("sql-test", {
   "select-param.sql": `select ? as x`,
@@ -20,6 +23,40 @@ const dir = tempDirWithFiles("sql-test", {
 });
 function rel(filename: string) {
   return path.join(dir, filename);
+}
+
+// A feature flag is read once per process, so each state of
+// BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING runs its fixture in a child of its own.
+// A child that hangs is killed after 60 seconds. Each fixture sets a longer
+// connectionTimeout and each test sets a longer timeout, so the test then
+// fails on its assertions.
+const autoPipeliningFlagStates = [
+  { state: "set", flag: "1" },
+  { state: "unset", flag: undefined },
+];
+async function runWithAutoPipeliningFlag(
+  flag: string | undefined,
+  fixture: string,
+  env: Record<string, string>,
+  onStdout?: (stdout: string) => void,
+) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING: flag, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+  });
+  let stdout = "";
+  const readStdout = async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stdout) {
+      stdout += decoder.decode(chunk, { stream: true });
+      onStdout?.(stdout);
+    }
+  };
+  const [, stderr, exitCode] = await Promise.all([readStdout(), proc.stderr.text(), proc.exited]);
+  return { stderr, stdout: stdout.trim().split(/\r?\n/), exitCode, signalCode: proc.signalCode };
 }
 
 // Assertions for the NEWDECIMAL decoder against a real server, used by the
@@ -164,6 +201,61 @@ if (isDockerEnabled()) {
             }),
           ).toSpawn();
         });
+        test.each(autoPipeliningFlagStates)(
+          "every kind of query settles with BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING $state",
+          async ({ flag }) => {
+            const fixture = /* js */ `
+              const sql = new Bun.SQL({
+                url: process.env.MYSQL_URL,
+                tls: process.env.CA_PATH ? { ca: Bun.file(process.env.CA_PATH) } : undefined,
+                max: 1,
+                connectionTimeout: 100,
+              });
+              const select = value => sql\`SELECT \${value} AS v\`.then(rows => rows[0].v);
+              const simple = (await sql\`SELECT 'a' AS v\`.simple())[0].v;
+              const firstUse = await select("b");
+              const cached = await select("c");
+              const queued = await Promise.all([select("d"), select("e"), select("f")]);
+              // The first use of a second statement between two executes of a cached statement.
+              const other = value => sql\`SELECT \${value} AS w, 1 AS n\`.then(rows => rows[0].w);
+              const mixed = await Promise.all([select("l"), other("m"), select("n"), other("o")]);
+              const noParameters = (await sql\`SELECT 'g' AS v\`)[0].v;
+              const unsafe = (await sql.unsafe("SELECT ? AS v", ["h"]))[0].v;
+              const transaction = await sql.begin(async tx => (await tx\`SELECT \${"i"} AS v\`)[0].v);
+              const connection = await sql.reserve();
+              const reserved = (await connection\`SELECT \${"j"} AS v\`)[0].v;
+              connection.release();
+              const simpleAfter = (await sql\`SELECT 'k' AS v\`.simple())[0].v;
+              const prepared = { firstUse, cached, queued, mixed, noParameters, unsafe, transaction, reserved };
+              console.log(JSON.stringify({ simple, ...prepared, simpleAfter }));
+              await sql.close();
+            `;
+            const result = await runWithAutoPipeliningFlag(flag, fixture, {
+              MYSQL_URL: getOptions().url,
+              CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
+            });
+            expect(result).toEqual({
+              stderr: expect.any(String),
+              stdout: [
+                JSON.stringify({
+                  simple: "a",
+                  firstUse: "b",
+                  cached: "c",
+                  queued: ["d", "e", "f"],
+                  mixed: ["l", "m", "n", "o"],
+                  noParameters: "g",
+                  unsafe: "h",
+                  transaction: "i",
+                  reserved: "j",
+                  simpleAfter: "k",
+                }),
+              ],
+              exitCode: 0,
+              signalCode: null,
+            });
+          },
+          90_000,
+        );
         test("should return lastInsertRowid and affectedRows", async () => {
           await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
           using sql = await db.reserve();
@@ -1229,6 +1321,154 @@ if (isDockerEnabled()) {
     );
   }
 }
+
+// A mock, because a real server does not report which commands the client
+// wrote or in which order. The mock answers `SELECT ? AS v` with the bound
+// string, and it never answers the COM_STMT_EXECUTE that binds `hold`.
+async function mysqlCommandRecorder(hold?: string) {
+  const COM_QUIT = 0x01;
+  const COM_QUERY = 0x03;
+  const COM_STMT_PREPARE = 0x16;
+  const COM_STMT_EXECUTE = 0x17;
+  const column = { name: "v", type: 0xfd /* MYSQL_TYPE_VAR_STRING */ };
+
+  // COM_STMT_EXECUTE with one parameter: Int<1>(0x17) Int<4>(statement_id) Int<1>(flags) Int<4>(iteration_count)
+  //   Byte<1>(null_bitmap) Int<1>(new_params_bind_flag) [Int<2>(type) when that flag is 1] string<lenenc>(value)
+  function boundString(payload: Buffer): string {
+    let offset = 1 + 4 + 1 + 4 + 1;
+    offset += payload[offset] === 1 ? 3 : 1;
+    const { value: length, width } = mysqlReadLenencInt(payload, offset);
+    return payload.subarray(offset + width, offset + width + length).toString();
+  }
+
+  const commands: string[] = [];
+  const sockets = new Set<net.Socket>();
+  const { server, port } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    sockets.add(socket);
+    socket.write(mysqlHandshakeV10());
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!authed) {
+          authed = true;
+          socket.write(mysqlOkPacket(seq + 1));
+          return;
+        }
+        if (mysqlAckSessionSetup(socket, payload)) return;
+        if (payload[0] === COM_STMT_PREPARE) {
+          commands.push("PREPARE");
+          socket.write(
+            Buffer.concat([
+              mysqlStmtPrepareOk(1, 1, 1, 1),
+              mysqlColumnDefinition(2, { ...column, name: "?" }),
+              mysqlColumnDefinition(3, column),
+            ]),
+          );
+        } else if (payload[0] === COM_STMT_EXECUTE) {
+          const value = boundString(payload);
+          commands.push("EXECUTE " + value);
+          if (value === hold) return;
+          socket.write(
+            Buffer.concat([
+              mysqlRawPacket(1, mysqlLenencInt(1)),
+              mysqlColumnDefinition(2, column),
+              mysqlRawPacket(3, Buffer.concat([Buffer.from([0x00, 0x00]), mysqlLenencStr(value)])),
+              mysqlOkPacket(4, 0xfe),
+            ]),
+          );
+        } else if (payload[0] === COM_QUERY) {
+          commands.push("QUERY");
+          socket.write(mysqlTextResultSet(1, [column], [["e"]]));
+        } else {
+          if (payload[0] !== COM_QUIT) commands.push("0x" + payload[0].toString(16));
+          socket.end();
+        }
+      });
+    });
+    socket.on("error", () => {});
+    socket.on("close", () => sockets.delete(socket));
+  });
+
+  return {
+    port,
+    commands,
+    // The client closes its side when the server ends the connection. All that
+    // the client wrote arrives before that close.
+    hangUp: () => sockets.forEach(socket => socket.end()),
+    // Resolves when the connection has closed. By then the mock has parsed
+    // all that the child wrote.
+    close: () => new Promise<void>(resolve => server.close(() => resolve())),
+  };
+}
+
+test.concurrent.each(autoPipeliningFlagStates)(
+  "MySQL: queries are written in queue order with BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING $state",
+  async ({ flag }) => {
+    const mock = await mysqlCommandRecorder();
+    // The first query prepares the statement and executes it, the second
+    // executes the cached statement, and the last three are queued together.
+    const fixture = /* js */ `
+      const sql = new Bun.SQL({ url: process.env.MYSQL_URL, max: 1, connectionTimeout: 100 });
+      const value = rows => rows[0].v;
+      const select = bound => sql\`SELECT \${bound} AS v\`.then(value);
+      const firstUse = await select("a");
+      const cached = await select("b");
+      const queued = await Promise.all([select("c"), select("d"), sql\`SELECT 'e' AS v\`.simple().then(value)]);
+      console.log(JSON.stringify({ firstUse, cached, queued }));
+      await sql.close();
+    `;
+    const result = await runWithAutoPipeliningFlag(flag, fixture, {
+      MYSQL_URL: `mysql://root@127.0.0.1:${mock.port}/db`,
+    }).finally(mock.close);
+
+    expect({ ...result, commands: mock.commands }).toEqual({
+      stderr: expect.any(String),
+      stdout: [JSON.stringify({ firstUse: "a", cached: "b", queued: ["c", "d", "e"] })],
+      exitCode: 0,
+      signalCode: null,
+      commands: ["PREPARE", "EXECUTE a", "EXECUTE b", "EXECUTE c", "EXECUTE d", "QUERY"],
+    });
+  },
+  90_000,
+);
+
+// The flag promises one command at a time. https://github.com/oven-sh/bun/issues/44027
+// asks if the adapter promises it without the flag too.
+test.concurrent(
+  "MySQL: nothing is written behind an unanswered command with BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING set",
+  async () => {
+    const mock = await mysqlCommandRecorder("b");
+    // The child queues three executes of a cached statement, and the mock
+    // never answers the first. When the child has flushed what it queued, the
+    // mock ends the connection.
+    const fixture = /* js */ `
+      const sql = new Bun.SQL({ url: process.env.MYSQL_URL, max: 1, connectionTimeout: 100 });
+      const select = value => sql\`SELECT \${value} AS v\`;
+      await select("a");
+      const queued = ["b", "c", "d"].map(value => select(value).then(() => "resolved", error => error.code));
+      // The connection flushes its write buffer before the next turn of the event loop.
+      await new Promise(resolve => setImmediate(resolve));
+      console.log("queued");
+      console.log(JSON.stringify(await Promise.all(queued)));
+      await sql.close();
+    `;
+    const url = `mysql://root@127.0.0.1:${mock.port}/db`;
+    const result = await runWithAutoPipeliningFlag("1", fixture, { MYSQL_URL: url }, stdout => {
+      if (stdout.includes("queued")) mock.hangUp();
+    }).finally(mock.close);
+
+    const closed = "ERR_MYSQL_CONNECTION_CLOSED";
+    expect({ ...result, commands: mock.commands }).toEqual({
+      stderr: expect.any(String),
+      stdout: ["queued", JSON.stringify([closed, closed, closed])],
+      exitCode: 0,
+      signalCode: null,
+      commands: ["PREPARE", "EXECUTE a", "EXECUTE b"],
+    });
+  },
+  90_000,
+);
 
 test("MySQL: binary TIME with a very large days field formats without integer wraparound", async () => {
   const COM_STMT_PREPARE = 0x16;

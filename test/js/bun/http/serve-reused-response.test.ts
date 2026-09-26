@@ -139,6 +139,57 @@ describe("returning a Response with an already-used body", () => {
     expect(errors).toEqual([alreadyUsedError]);
   });
 
+  // The upstream body arrives after the handler returns, so the consumer is still waiting on it.
+  it("returning a fetch() Response that a pending text() reads calls the error handler", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { createServer } = require("node:net");
+        const { once } = require("node:events");
+        const sendBody = Promise.withResolvers();
+        const upstream = createServer(socket => {
+          socket.once("data", async () => {
+            socket.write("HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+            await sendBody.promise;
+            socket.end("5\\r\\nhello\\r\\n0\\r\\n\\r\\n");
+          });
+        }).listen(0, "127.0.0.1");
+        await once(upstream, "listening");
+        let consumed;
+        const errors = [];
+        const server = Bun.serve({
+          port: 0,
+          async fetch() {
+            const response = await fetch("http://127.0.0.1:" + upstream.address().port);
+            consumed = response.text();
+            return response;
+          },
+          error(err) {
+            errors.push(err.code);
+            return new Response("handled", { status: 500 });
+          },
+        });
+        const response = await fetch(server.url);
+        const body = await response.text();
+        sendBody.resolve();
+        console.log(JSON.stringify({ status: response.status, body, errors, consumed: await consumed }));
+        await server.stop(true);
+        upstream.close();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(
+      JSON.stringify({ status: 500, body: "handled", errors: ["ERR_BODY_ALREADY_USED"], consumed: "hello" }) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
   it("a Response that is not reused keeps working", async () => {
     const error = jest.fn();
     await using server = serve({

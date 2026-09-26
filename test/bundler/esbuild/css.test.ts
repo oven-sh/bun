@@ -1,5 +1,7 @@
-import { describe } from "bun:test";
-import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
+import { isWindows, tempDir } from "harness";
+import { symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -1261,6 +1263,203 @@ b {
     onAfterBundle(api) {
       api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `.a{mask:url(./sprites-mrrzcz3w.svg#icon)}`);
     },
+  });
+  // A literal `#` in a directory or file name is part of the path. The resolver
+  // finds the file as written and removes nothing, so nothing is put back.
+  itBundled("css/URLLiteralHashInPathFileLoader", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: url("./C#/logo.svg") }
+        .b { --bg: url(./C#/logo.svg) }
+        .c { mask: url(./sprites.svg#icon) }
+      `,
+      "/C#/logo.svg": Buffer.alloc(128 * 1024 + 1, "A").toString(),
+      "/sprites.svg": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+    },
+    loader: {
+      ".svg": "file",
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+.a {
+  background: url("./logo-chnz2qpd.svg");
+}
+.b {
+  --bg: url("./logo-chnz2qpd.svg");
+}
+.c {
+  mask: url("./sprites-mrrzcz3w.svg#icon");
+}
+`);
+    },
+  });
+  itBundled("css/URLLiteralHashInPathDataURL", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { mask: url("./C#/small.svg") }
+        .b { mask: url(./icon#1.svg) }
+        .c { mask: url(./small.svg#m1) }
+      `,
+      "/C#/small.svg": `<svg xmlns="http://www.w3.org/2000/svg"><mask id="m2"/></svg>`,
+      "/icon#1.svg": `<svg xmlns="http://www.w3.org/2000/svg"><mask id="m3"/></svg>`,
+      "/small.svg": `<svg xmlns="http://www.w3.org/2000/svg"><mask id="m1"/></svg>`,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      const dataUrl = (id: string) =>
+        "data:image/svg+xml;base64," +
+        Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg"><mask id="${id}"/></svg>`).toString("base64");
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+.a {
+  mask: url("${dataUrl("m2")}");
+}
+.b {
+  mask: url("${dataUrl("m3")}");
+}
+.c {
+  mask: url("${dataUrl("m1")}#m1");
+}
+`);
+    },
+  });
+  // `?` is not legal in a Windows file name.
+  (isWindows ? itBundled.skip : itBundled)("css/URLLiteralQuestionMarkInPath", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: url("./what?/logo.svg") }
+        .b { background: url("./sprites.svg?v=3") }
+      `,
+      "/what?/logo.svg": Buffer.alloc(128 * 1024 + 1, "A").toString(),
+      "/sprites.svg": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+    },
+    loader: {
+      ".svg": "file",
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+.a {
+  background: url("./logo-chnz2qpd.svg");
+}
+.b {
+  background: url("./sprites-mrrzcz3w.svg?v=3");
+}
+`);
+    },
+  });
+  // An onResolve result cannot say what the plugin removed, so a record that a
+  // plugin answers gets its suffix back, as before. The resolver gets the
+  // records that the plugin declines.
+  itBundled("css/URLLiteralHashInPathPlugin", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { mask: url("virtual:sprites.svg#icon") }
+        .b { mask: url("echo:small.svg#icon") }
+        .c { background: url("./D#/declined.svg") }
+        .d { mask: url("./sprites.svg?declined#c") }
+        .e { mask: url("#sprite") }
+        .f { background: url("?theme=dark") }
+      `,
+      "/D#/declined.svg": Buffer.alloc(128 * 1024 + 1, "D").toString(),
+      "/sprites.svg": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+    },
+    loader: {
+      ".svg": "file",
+    },
+    outdir: "/out",
+    plugins(builder) {
+      // The plugin removes the suffix itself.
+      builder.onResolve({ filter: /^virtual:/ }, args => ({
+        path: join(dirname(args.importer), args.path.slice("virtual:".length).replace(/#.*$/, "")),
+      }));
+      // The plugin hands the specifier back in its own namespace.
+      builder.onResolve({ filter: /^echo:/ }, args => ({ path: args.path, namespace: "echo" }));
+      builder.onLoad({ filter: /.*/, namespace: "echo" }, () => ({
+        contents: `<svg xmlns="http://www.w3.org/2000/svg"><mask id="icon"/></svg>`,
+        loader: "file",
+      }));
+      // The whole specifier is the suffix.
+      builder.onResolve({ filter: /^#sprite$|^\?theme=/ }, args => ({
+        path: join(dirname(args.importer), "sprites.svg"),
+      }));
+      builder.onResolve({ filter: /declined/ }, () => undefined);
+    },
+    onAfterBundle(api) {
+      const echoed = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg"><mask id="icon"/></svg>`).toString("base64");
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+.a {
+  mask: url("./sprites-mrrzcz3w.svg#icon");
+}
+.b {
+  mask: url("data:application/octet-stream;base64,${echoed}#icon");
+}
+.c {
+  background: url("./declined-cxysrr0j.svg");
+}
+.d {
+  mask: url("./sprites-mrrzcz3w.svg?declined#c");
+}
+.e {
+  mask: url("./sprites-mrrzcz3w.svg#sprite");
+}
+.f {
+  background: url("./sprites-mrrzcz3w.svg?theme=dark");
+}
+`);
+    },
+  });
+  // An absolute specifier has every ancestor directory in its text, so the
+  // stray suffix carried local path segments into the output.
+  test("css/URLLiteralHashInAncestorDirectoryOfAbsoluteSpecifier", async () => {
+    using dir = tempDir("css-url-hash-absolute", {
+      "C#/proj/img/logo.svg": Buffer.alloc(128 * 1024 + 1, "A").toString(),
+    });
+    const proj = join(String(dir), "C#", "proj");
+    const logo = join(proj, "img", "logo.svg").replaceAll("\\", "/");
+    writeFileSync(join(proj, "entry.css"), `.a { background: url("${logo}") }\n`);
+    const result = await Bun.build({
+      entrypoints: [join(proj, "entry.css")],
+      outdir: join(String(dir), "out"),
+      loader: { ".svg": "file" },
+    });
+    const css = await result.outputs.find(output => output.path.endsWith(".css"))!.text();
+    expect(css.match(/url\([^)]*\)/g)).toEqual([`url("./logo-chnz2qpd.svg")`]);
+  });
+  // The resolver stores the real path, so the resolved path of `./link#/logo.svg`
+  // does not end with `#/logo.svg`.
+  test("css/URLLiteralHashInSymlinkedDirectory", async () => {
+    using dir = tempDir("css-url-hash-symlink", {
+      "entry.css": `.a { background: url("./link#/logo.svg") }\n.b { mask: url("./real/logo.svg#icon") }\n`,
+      "real/logo.svg": Buffer.alloc(128 * 1024 + 1, "A").toString(),
+    });
+    symlinkSync(join(String(dir), "real"), join(String(dir), "link#"), "junction");
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.css")],
+      outdir: join(String(dir), "out"),
+      loader: { ".svg": "file" },
+    });
+    const css = await result.outputs.find(output => output.path.endsWith(".css"))!.text();
+    expect(css.match(/url\([^)]*\)/g)).toEqual([`url("./logo-chnz2qpd.svg")`, `url("./logo-chnz2qpd.svg#icon")`]);
+  });
+  // In-memory files match by exact key, so nothing is ever removed for them.
+  test("css/URLLiteralHashInPathInMemoryFiles", async () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg"/>`;
+    const result = await Bun.build({
+      entrypoints: ["/virtual/entry.css"],
+      files: {
+        "/virtual/entry.css": `.a { background: url("./C#/small.svg") }\n`,
+        "/virtual/C#/small.svg": svg,
+      },
+    });
+    const css = await result.outputs.find(output => output.path.endsWith(".css"))!.text();
+    expect(css.match(/url\([^)]*\)/g)).toEqual([
+      `url("data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}")`,
+    ]);
   });
 
   itBundled("css/IgnoreURLsInAtRulePrelude", {

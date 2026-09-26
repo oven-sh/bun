@@ -55,6 +55,8 @@ pub use api::JSBundler::FileMap;
 pub struct PendingImport {
     pub(crate) to_source_index: Index,
     pub(crate) import_record_index: u32,
+    /// See `ImportRecordFlags::RESOLVED_WITHOUT_URL_SUFFIX`.
+    pub(crate) resolved_without_url_suffix: bool,
 }
 
 pub struct BundleV2<'a> {
@@ -2955,6 +2957,10 @@ pub mod bv2_impl {
                     [import_record.importer_source_index as usize]
                     .as_mut_slice()[import_record.import_record_index as usize];
                 record.source_index = source_index;
+                record.flags.set(
+                    bun_ast::ImportRecordFlags::RESOLVED_WITHOUT_URL_SUFFIX,
+                    resolve_result.flags.removed_url_suffix(),
+                );
             }
         }
 
@@ -5193,6 +5199,10 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
+                    // An onResolve result cannot say what the plugin removed, so the suffix always goes back.
+                    let resolved_without_url_suffix = resolve.import_record.kind.is_from_css()
+                        && ImportRecord::url_suffix_start(&resolve.import_record.specifier)
+                            .is_some();
                     // SAFETY: `result.{path,namespace}` are `Box<[u8]>`. Each arm below
                     // either moves both boxes into `this.free_list` before it stores
                     // `path` (`!found_existing`, external import), or drops them and
@@ -5389,12 +5399,17 @@ pub mod bv2_impl {
                                 let _ = entry.value_ptr.push(PendingImport {
                                     to_source_index: source_index,
                                     import_record_index: resolve.import_record.import_record_index,
+                                    resolved_without_url_suffix,
                                 });
                             } else {
                                 let import_record: &mut ImportRecord = &mut source_import_records
                                     .as_mut_slice()
                                     [resolve.import_record.import_record_index as usize];
                                 import_record.source_index = source_index;
+                                import_record.flags.set(
+                                    bun_ast::ImportRecordFlags::RESOLVED_WITHOUT_URL_SUFFIX,
+                                    resolved_without_url_suffix,
+                                );
                                 this.schedule_barrel_imports_after_plugin_resolve(
                                     resolve.import_record.importer_source_index,
                                 );
@@ -6949,6 +6964,11 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                import_record.flags.set(
+                    bun_ast::ImportRecordFlags::RESOLVED_WITHOUT_URL_SUFFIX,
+                    resolve_result.flags.removed_url_suffix(),
+                );
+
                 // borrowck — `Result.path()` returns `Option<&mut Path>`, which
                 // would lock the whole struct while the loop body still needs to
                 // read other `resolve_result` fields (`.flags`, `.path_pair`,
@@ -7348,8 +7368,13 @@ pub mod bv2_impl {
                     if save_import_record_source_index
                         || input_file_loaders[to_assign.to_source_index.get() as usize].is_css()
                     {
-                        import_records.as_mut_slice()[to_assign.import_record_index as usize]
-                            .source_index = to_assign.to_source_index;
+                        let record = &mut import_records.as_mut_slice()
+                            [to_assign.import_record_index as usize];
+                        record.source_index = to_assign.to_source_index;
+                        record.flags.set(
+                            bun_ast::ImportRecordFlags::RESOLVED_WITHOUT_URL_SUFFIX,
+                            to_assign.resolved_without_url_suffix,
+                        );
                     }
                 }
                 drop(value);

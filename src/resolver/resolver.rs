@@ -1385,8 +1385,7 @@ impl<'a> Resolver<'a> {
         if matches!(tmp, ResultUnion::NotFound) && kind.is_from_css() {
             'try_without_suffix: {
                 // If resolution failed, try again with the URL query and/or hash removed
-                let maybe_suffix = strings::index_of_any(import_path, b"?#");
-                let Some(suffix) = maybe_suffix else {
+                let Some(suffix) = ast::ImportRecord::url_suffix_start(import_path) else {
                     break 'try_without_suffix;
                 };
                 if suffix < 1 {
@@ -1399,7 +1398,7 @@ impl<'a> Resolver<'a> {
                         bstr::BStr::new(&import_path[suffix..])
                     ));
                 }
-                let result2 = self.resolve_without_symlinks(
+                let mut result2 = self.resolve_without_symlinks(
                     source_dir_normalized,
                     &import_path[0..suffix],
                     kind,
@@ -1407,6 +1406,9 @@ impl<'a> Resolver<'a> {
                 );
                 if matches!(result2, ResultUnion::NotFound) {
                     break 'try_without_suffix;
+                }
+                if let ResultUnion::Success(result) = &mut result2 {
+                    result.flags.insert(ResultFlags::REMOVED_URL_SUFFIX);
                 }
                 tmp = result2;
             }

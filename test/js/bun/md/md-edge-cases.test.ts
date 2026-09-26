@@ -1343,32 +1343,36 @@ describe("permissive autolinks and emphasis delimiters", () => {
   }
 
   test.each([
-    // The link ends in front of the closer of the emphasis around it.
+    // cmark-gfm 0.29.0.gfm.13 and md4c print the same output for the rows of this group.
     [
       "**https://example.com/path/to/page**",
       '<p><strong><a href="https://example.com/path/to/page">https://example.com/path/to/page</a></strong></p>\n',
     ],
+    [
+      "**See https://example.com/path**.",
+      '<p><strong>See <a href="https://example.com/path">https://example.com/path</a></strong>.</p>\n',
+    ],
+    ["*see http://x.yz/a*.", '<p><em>see <a href="http://x.yz/a">http://x.yz/a</a></em>.</p>\n'],
     ["__a@b.cob__", '<p><strong><a href="mailto:a@b.cob">a@b.cob</a></strong></p>\n'],
     ["_a@b.co__", '<p><em><a href="mailto:a@b.co">a@b.co</a></em>_</p>\n'],
     ["**http://example.com/a**", '<p><strong><a href="http://example.com/a">http://example.com/a</a></strong></p>\n'],
     ["~~www.example.com/a~~", '<p><del><a href="http://www.example.com/a">www.example.com/a</a></del></p>\n'],
     [
-      "see *http://example.com/path*with*stars for more",
-      '<p>see <em><a href="http://example.com/path">http://example.com/path</a></em>with*stars for more</p>\n',
-    ],
-    [
       "**Note:** contact __support@example.com__ today.\n\nSecond paragraph.",
       '<p><strong>Note:</strong> contact <strong><a href="mailto:support@example.com">support@example.com</a></strong> today.</p>\n' +
         "<p>Second paragraph.</p>\n",
     ],
-    // The link ends in front of an opener whose closer it does not reach.
-    ["*a*http://a.bc/*y z*", '<p><em>a</em><a href="http://a.bc/">http://a.bc/</a><em>y z</em></p>\n'],
-    // The bytes after the cut still count as neighbors: the closing "_" of the whole pair stays in the link.
     [
-      "*a*https://example.com/_b_*c d*",
-      '<p><em>a</em><a href="https://example.com/_b_">https://example.com/_b_</a><em>c d</em></p>\n',
+      "http://a.bc/x ![a www.d.ef/y](i) www.g.hi/z ![b](j) k@l.mn",
+      '<p><a href="http://a.bc/x">http://a.bc/x</a> <img src="i" alt="a www.d.ef/y" /> ' +
+        '<a href="http://www.g.hi/z">www.g.hi/z</a> <img src="j" alt="b" /> <a href="mailto:k@l.mn">k@l.mn</a></p>\n',
     ],
-    // A pair that lies in the URL stays part of the URL.
+    // As md4c. cmark-gfm links the whole URL and prints the "*" in front of it as text.
+    [
+      "see *http://example.com/path*with*stars for more",
+      '<p>see <em><a href="http://example.com/path">http://example.com/path</a></em>with*stars for more</p>\n',
+    ],
+    // As cmark-gfm: the delimiters in a link between plain boundaries are URL bytes. md4c pairs them.
     [
       "**https://example.com/src/__init__.py**",
       '<p><strong><a href="https://example.com/src/__init__.py">https://example.com/src/__init__.py</a></strong></p>\n',
@@ -1377,28 +1381,26 @@ describe("permissive autolinks and emphasis delimiters", () => {
       "https://example.com/src/__tests__/a.js",
       '<p><a href="https://example.com/src/__tests__/a.js">https://example.com/src/__tests__/a.js</a></p>\n',
     ],
-    // A link between plain boundaries is found before emphasis is resolved:
-    // the delimiters in it do not pair with delimiters outside of it.
     [
       "http://example.com/path*with stars*",
       '<p><a href="http://example.com/path*with">http://example.com/path*with</a> stars*</p>\n',
     ],
     ["*a http://x.yz/b*c d*", '<p><em>a <a href="http://x.yz/b*c">http://x.yz/b*c</a> d</em></p>\n'],
     ["2*3 http://x.yz/a*b", '<p>2*3 <a href="http://x.yz/a*b">http://x.yz/a*b</a></p>\n'],
-    // It stays a link in the part of the text that a cut link did not take.
-    [
-      "*a*http://a.bc/*y?q=(www.d.ef) z*",
-      '<p><em>a</em><a href="http://a.bc/">http://a.bc/</a><em>y?q=(<a href="http://www.d.ef">www.d.ef</a>) z</em></p>\n',
-    ],
-    // Image labels have links of their own. The links after a label are still found.
-    [
-      "http://a.bc/x ![a www.d.ef/y](i) www.g.hi/z ![b](j) k@l.mn",
-      '<p><a href="http://a.bc/x">http://a.bc/x</a> <img src="i" alt="a www.d.ef/y" /> ' +
-        '<a href="http://www.g.hi/z">www.g.hi/z</a> <img src="j" alt="b" /> <a href="mailto:k@l.mn">k@l.mn</a></p>\n',
-    ],
     [
       "https://foo.bar/a*b\nhttps://foo.bar/a*b",
       '<p><a href="https://foo.bar/a*b">https://foo.bar/a*b</a>\n<a href="https://foo.bar/a*b">https://foo.bar/a*b</a></p>\n',
+    ],
+    // Bun only, on purpose: the link ends in front of an opener whose closer it does not reach.
+    // cmark-gfm links the whole URL and prints the last "*" as text. md4c keeps the emphasis and links nothing.
+    ["*a*http://a.bc/*y z*", '<p><em>a</em><a href="http://a.bc/">http://a.bc/</a><em>y z</em></p>\n'],
+    [
+      "*a*https://example.com/_b_*c d*",
+      '<p><em>a</em><a href="https://example.com/_b_">https://example.com/_b_</a><em>c d</em></p>\n',
+    ],
+    [
+      "*a*http://a.bc/*y?q=(www.d.ef) z*",
+      '<p><em>a</em><a href="http://a.bc/">http://a.bc/</a><em>y?q=(<a href="http://www.d.ef">www.d.ef</a>) z</em></p>\n',
     ],
   ])("html(%j)", (input, expected) => {
     expect(Markdown.html(input, opts)).toBe(expected);

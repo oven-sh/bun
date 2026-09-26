@@ -190,9 +190,10 @@ pub(crate) fn find_permissive_autolink(
     Some(al)
 }
 
-/// A permissive autolink whose boundaries do not depend on emphasis resolution.
+/// A permissive autolink with plain boundaries. The walk gets one that ends in `*`, `_` or `~`: it can cut it.
 pub(crate) fn find_strict_permissive_autolink(content: &[u8], pos: usize) -> AutolinkResult {
     scan_permissive_autolink(content, pos, None, content.len())
+        .filter(|al| !EMPH_DELIMS.contains(content[al.end - 1]))
 }
 
 /// Where to cut a link that ends at `end` so that it covers only whole pairs of `runs`; `None` if it does.

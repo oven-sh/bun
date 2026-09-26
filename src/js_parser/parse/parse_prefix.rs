@@ -961,6 +961,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED {
             // This is either an old-style type cast or a generic lambda function
 
+            // ".mts" and ".cts" files reject a "<" that a JSX file would read as an element
+            if p.options.ts_no_ambiguous_less_than && !p.is_ts_arrow_fn_jsx()? {
+                p.log().add_range_error(
+                    Some(p.source),
+                    p.lexer.range(),
+                    b"This syntax is not allowed in files with the \".mts\" or \".cts\" extension",
+                );
+            }
+
             // "<T>(x)"
             // "<T>(x) => {}"
             match p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking() {

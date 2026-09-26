@@ -992,6 +992,60 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
     mode
 }
 
+/// Who can read a regular file that an extractor creates.
+#[derive(Clone, Copy)]
+pub enum FileReaders {
+    /// Every user: npm's `fmode` (#14467), https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
+    Everyone,
+    /// The users the entry names, as GNU tar does.
+    FromEntry,
+}
+
+/// `openat` mode for a regular file entry, without setuid, setgid and sticky.
+pub fn file_mode(perm: bun_sys::Mode, readers: FileReaders) -> bun_sys::Mode {
+    let mode = perm & 0o777;
+    match readers {
+        FileReaders::Everyone => mode | 0o666,
+        // An unset mode field gets the mode `Bun.Archive` writes.
+        FileReaders::FromEntry if mode == 0 => 0o644,
+        FileReaders::FromEntry => mode,
+    }
+}
+
+/// Opens a regular file entry for writing, replacing an existing file as GNU tar does (#43132).
+#[cfg(not(windows))]
+pub fn create_entry_file(dir: Fd, path: &ZStr, mode: bun_sys::Mode) -> bun_sys::Maybe<Fd> {
+    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL;
+    match bun_sys::openat(dir, path, flags, mode) {
+        Err(err) if err.get_errno() == bun_sys::E::EEXIST => match bun_sys::unlinkat(dir, path) {
+            Ok(()) => bun_sys::openat(dir, path, flags, mode),
+            Err(unlink_err) => truncate_entry_file(dir, path, mode, unlink_err),
+        },
+        result => result,
+    }
+}
+
+/// Truncates a file that cannot be removed, unless it is a symlink or has other names.
+#[cfg(not(windows))]
+fn truncate_entry_file(
+    dir: Fd,
+    path: &ZStr,
+    mode: bun_sys::Mode,
+    unlink_err: bun_sys::Error,
+) -> bun_sys::Maybe<Fd> {
+    // O_CREAT keeps the kernel's sticky directory checks, O_NONBLOCK makes a FIFO fail with ENXIO.
+    let flags =
+        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NOFOLLOW | bun_sys::O::NONBLOCK;
+    let fd = bun_sys::openat(dir, path, flags, mode)?;
+    let guard = scopeguard::guard(fd, |fd| fd.close());
+    let stat = bun_sys::fstat(fd)?;
+    if !bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode) || stat.st_nlink != 1 {
+        return Err(unlink_err);
+    }
+    bun_sys::ftruncate(fd, 0)?;
+    Ok(scopeguard::ScopeGuard::into_inner(guard))
+}
+
 /// Validates that a symlink target doesn't escape the extraction directory.
 /// Returns true if the symlink is safe (target stays within extraction dir),
 /// false if it would escape (e.g., via ../ traversal or absolute path).
@@ -1214,6 +1268,7 @@ pub mod archiver {
         pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
+        pub file_readers: super::FileReaders,
     }
 
     impl Default for ExtractOptions {
@@ -1223,6 +1278,7 @@ pub mod archiver {
                 close_handles: true,
                 log: false,
                 npm: false,
+                file_readers: super::FileReaders::Everyone,
             }
         }
     }
@@ -1344,6 +1400,7 @@ impl Archiver {
                         bun_paths::platform::Auto,
                     >(pathname, &mut normalized_buf[..]);
                     let normalized_len = normalized.len();
+                    normalized_buf[normalized_len] = 0;
                     let pathname: &[u8] = &normalized_buf[..normalized_len];
                     if pathname.is_empty() || pathname == b"." {
                         continue 'loop_;
@@ -1359,14 +1416,14 @@ impl Archiver {
                     let size: usize =
                         usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
                     if size > 0 {
-                        let Ok(opened) = bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0)
-                        else {
+                        // SAFETY: normalized_buf[normalized_len] == 0 (written above).
+                        let pathname_z: &ZStr =
+                            unsafe { ZStr::from_raw(pathname.as_ptr(), pathname.len()) };
+                        let Ok(stat) = bun_sys::fstatat(dir, pathname_z) else {
                             continue 'loop_;
                         };
-                        let _close_guard = scopeguard::guard(opened, |fd| fd.close());
-                        let stat_size = bun_sys::get_file_size(opened)?;
 
-                        if stat_size > 0 {
+                        if stat.st_size > 0 {
                             let is_already_top_level = dirname.is_empty();
                             let path_to_use_: &[u8] = 'brk: {
                                 let __pathname: &[u8] = pathname;
@@ -1673,23 +1730,17 @@ impl Archiver {
                             }
                         }
                         bun_sys::FileKind::File => {
-                            // first https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L65-L66
-                            // this.fmode = opts.fmode || 0o666
-                            //
-                            // then https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
-                            //
-                            // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
                             #[cfg(not(windows))]
-                            let mode: bun_sys::Mode = bun_sys::Mode::try_from(
+                            let mode = file_mode(
                                 // SAFETY: entry valid
-                                (lib::Entry::opaque_ref(entry).perm() & 0o777) | 0o666,
-                            )
-                            .unwrap();
-
-                            let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+                                lib::Entry::opaque_ref(entry).perm(),
+                                options.file_readers,
+                            );
 
                             #[cfg(windows)]
-                            let file_handle_native: Fd =
+                            let file_handle_native: Fd = {
+                                let flags =
+                                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
                                 match bun_sys::openat_windows(dir_fd, path_slice, flags, 0) {
                                     Ok(fd) => fd,
                                     Err(e) => match e.get_errno() {
@@ -1706,16 +1757,16 @@ impl Archiver {
                                         }
                                         _ => return Err(e.into()),
                                     },
-                                };
+                                }
+                            };
 
                             #[cfg(not(windows))]
                             let file_handle_native: Fd = {
-                                // dir.createFileZ(.{truncate, mode}) → bun_sys::openat
                                 // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
                                 let path_z: &ZStr = unsafe {
                                     ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
                                 };
-                                match bun_sys::openat(dir_fd, path_z, flags, mode) {
+                                match create_entry_file(dir_fd, path_z, mode) {
                                     Ok(fd) => fd,
                                     Err(err) => match err.get_errno() {
                                         bun_sys::E::EACCES
@@ -1726,7 +1777,7 @@ impl Archiver {
                                                 return Err(err.into());
                                             }
                                             let _ = dir.make_path_u8(dirname);
-                                            bun_sys::openat(dir_fd, path_z, flags, mode)?
+                                            create_entry_file(dir_fd, path_z, mode)?
                                         }
                                         _ => return Err(err.into()),
                                     },

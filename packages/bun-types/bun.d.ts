@@ -10290,6 +10290,15 @@ declare module "bun" {
      * Creates the target directory and any necessary parent directories if they don't exist.
      * Existing files are overwritten.
      *
+     * On Linux and macOS, Bun removes an existing file and creates a new one, so a hard link to
+     * it does not change. If Bun cannot remove the file (its directory is not writable), Bun
+     * truncates the file and writes it in place, unless it is a symlink or a hard link. A file
+     * that Bun writes in place keeps its mode.
+     *
+     * On Linux and macOS, each new file gets the permission bits of its archive entry (`0o644` if
+     * the entry has none), and the process umask applies. Bun does not restore the setuid, setgid,
+     * and sticky bits of a file.
+     *
      * @param path - The directory path to extract to
      * @param options - Optional extraction options
      * @param options.glob - Glob pattern(s) to filter entries (positive patterns include, negative patterns starting with `!` exclude)

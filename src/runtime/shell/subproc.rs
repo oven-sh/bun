@@ -1736,6 +1736,10 @@ impl PipeReader {
 
         #[allow(unused_mut)]
         let mut reader = IOReader::init::<PipeReader>();
+        if let BufferedOutput::ArrayBuffer { buf, .. } = &buffered_output {
+            // The extra byte is clipped by `append`: that is how an overflow shows.
+            reader.set_limit(Some(buf.slice().len() + 1));
+        }
         #[cfg(not(windows))]
         let stdio_result = result;
         #[cfg(windows)]

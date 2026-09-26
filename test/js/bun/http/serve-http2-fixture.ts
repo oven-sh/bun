@@ -21,6 +21,8 @@ const bigFile = args["big-file"]!;
 
 const big = Buffer.alloc(5 * 1024 * 1024, "abcdefghijklmnop");
 let lateRead: PromiseWithResolvers<void> | undefined;
+let slowArrived = 0;
+let onSlowArrived: (() => void) | undefined;
 
 const makeRoutes = () => ({
   "/api/:id": (req: Bun.BunRequest<"/api/:id">) =>
@@ -259,6 +261,8 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       lateRead = undefined;
       return new Response("released");
     case "/slow": {
+      slowArrived++;
+      onSlowArrived?.();
       await Bun.sleep(Number(url.searchParams.get("ms") ?? "50"));
       return new Response("slow");
     }
@@ -273,9 +277,15 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
     }
     case "/passthrough":
       return new Response(req.body, { headers: { "x-passthrough": "1" } });
-    case "/stop":
+    case "/stop": {
+      // ?slow=N stops only once N requests for /slow are here. A /slow on another
+      // connection has no order with this request, and one that arrives after
+      // stop() is refused.
+      const slow = Number(url.searchParams.get("slow") ?? "0");
+      while (slowArrived < slow) await new Promise<void>(resolve => (onSlowArrived = resolve));
       setTimeout(() => server.stop(), 0);
       return new Response("stopping");
+    }
     case "/reload":
       server.reload({
         routes: { ...makeRoutes(), "/reloaded-route": new Response("after-reload") },

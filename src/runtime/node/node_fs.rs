@@ -572,6 +572,10 @@ mod _async_tasks {
 
         const _: () = assert!(ReadFile::HAVE_ABORT_SIGNAL);
         const _: () = assert!(WriteFile::HAVE_ABORT_SIGNAL);
+        const _: () = assert!(matches!(
+            <StatOrNotFound as FsReturn>::UNDEFINED_RESULT,
+            UndefinedResult::Passed
+        ));
 
         #[cfg(windows)]
         /// Used internally. Not from JavaScript.
@@ -969,7 +973,7 @@ mod _async_tasks {
 
             let _dispatch = tracker.dispatch(global_object);
 
-            completion.settle(global_object, converted, success)
+            completion.settle(global_object, converted, success, R::UNDEFINED_RESULT)
         }
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
@@ -1108,9 +1112,20 @@ mod _async_tasks {
         }
     }
 
+    /// What a `node:fs` callback gets when the result of its operation converts to `undefined`.
+    #[derive(Clone, Copy)]
+    pub(crate) enum UndefinedResult {
+        /// `callback(null)`, the rule of node's `FSReqCallback::Resolve`:
+        /// https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L736-L741
+        Omitted,
+        /// `callback(null, undefined)`.
+        Passed,
+    }
+
     /// Convert an async-FS result payload to a `JSValue`.
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub(crate) trait FsReturn {
+        const UNDEFINED_RESULT: UndefinedResult = UndefinedResult::Omitted;
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
         /// The result is not going to be reported (the context of the script that asked has
         /// stopped): release what only that script could have released.
@@ -1137,12 +1152,6 @@ mod _async_tasks {
         #[inline]
         fn fs_to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
             Ok(JSValue::js_boolean(self))
-        }
-    }
-    impl FsReturn for Null {
-        #[inline]
-        fn fs_to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(JSValue::NULL)
         }
     }
     impl FsReturn for Stats {
@@ -1198,6 +1207,9 @@ mod _async_tasks {
         }
     }
     impl FsReturn for StatOrNotFound {
+        /// Node's `makeStatsCallback` passes `(null, undefined)` when `throwIfNoEntry: false` finds nothing:
+        /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L186-L194
+        const UNDEFINED_RESULT: UndefinedResult = UndefinedResult::Passed;
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.to_js_newly_created(global)
@@ -1291,11 +1303,24 @@ mod _async_tasks {
             }
         }
 
-        pub(crate) fn resolve(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+        pub(crate) fn resolve(
+            &self,
+            global: &JSGlobalObject,
+            value: JSValue,
+            undefined_result: UndefinedResult,
+        ) -> JsResult<()> {
             match self {
                 Self::Promise(promise) => promise.get().resolve(global, value),
                 Self::Callback(callback) => {
-                    Self::call(global, callback.get(), &[JSValue::NULL, value]);
+                    let arguments = [JSValue::NULL, value];
+                    let argc = if value.is_undefined()
+                        && matches!(undefined_result, UndefinedResult::Omitted)
+                    {
+                        1
+                    } else {
+                        2
+                    };
+                    Self::call(global, callback.get(), &arguments[..argc]);
                     Ok(())
                 }
             }
@@ -1337,9 +1362,10 @@ mod _async_tasks {
             global: &JSGlobalObject,
             converted: JsResult<JSValue>,
             success: bool,
+            undefined_result: UndefinedResult,
         ) -> JsResult<()> {
             match converted {
-                Ok(value) if success => self.resolve(global, value),
+                Ok(value) if success => self.resolve(global, value, undefined_result),
                 error => self.reject(global, error),
             }
         }
@@ -1408,7 +1434,7 @@ mod _async_tasks {
 
             match aborted {
                 Some(abort_error) => completion.reject(global_object, Ok(abort_error)),
-                None => completion.settle(global_object, converted, success),
+                None => completion.settle(global_object, converted, success, R::UNDEFINED_RESULT),
             }
         }
     }
@@ -2356,7 +2382,12 @@ mod _async_tasks {
             completion.ensure_still_alive();
             let _dispatch = js.tracker.dispatch(global_object);
             drop(this);
-            completion.settle(global_object, converted, success)
+            completion.settle(
+                global_object,
+                converted,
+                success,
+                <ret::Readdir as FsReturn>::UNDEFINED_RESULT,
+            )
         }
     }
 
@@ -4510,13 +4541,10 @@ impl StringOrUndefined {
     }
 }
 
-/// For use in `Return`'s definitions to act as `void` while returning `null` to JavaScript
-pub(crate) struct Null;
-
 pub(crate) mod ret {
     use super::*;
 
-    pub(crate) type Access = Null;
+    pub(crate) type Access = ();
     pub(crate) type AppendFile = ();
     pub(crate) type Close = ();
     pub(crate) type CopyFile = ();
@@ -4680,7 +4708,7 @@ impl NodeFS {
                 if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
                     return Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(p));
                 }
-                return Ok(Null);
+                return Ok(());
             }
         }
         // The `bun_sys::access` Windows
@@ -4694,7 +4722,7 @@ impl NodeFS {
         };
         match Syscall::access(path, args.mode.as_int()) {
             Err(err) => Err(err.with_path(args.path.slice())),
-            Ok(_) => Ok(Null),
+            Ok(_) => Ok(()),
         }
     }
 

@@ -6400,7 +6400,7 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
   ];
   const existTests = [
     ["existsSync", 'assert.strictEqual(fs.existsSync("../../config"), true)'],
-    ["accessSync", 'assert.strictEqual(fs.accessSync("../../config"), null)'],
+    ["accessSync", 'assert.strictEqual(fs.accessSync("../../config"), undefined)'],
   ];
 
   for (const [name, code] of nonExistTests) {
@@ -7057,6 +7057,12 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     ["fs.readdir", `require("fs").readdir(${dirLit}, () => { throw new Error("boom"); })`],
     ["fs.open", `require("fs").open("/definitely/not/here", "r", () => { throw new Error("boom"); })`],
     ["fs.access", `require("fs").access(${file}, () => { throw new Error("boom"); })`],
+    // Both argument counts of the native completion: (null), and (null, result) for mkdir's created path.
+    ["fs.chmod", `require("fs").chmod(${file}, 0o644, () => { throw new Error("boom"); })`],
+    [
+      "fs.mkdir (recursive)",
+      `require("fs").mkdir(${dirLit} + "/mk/a", { recursive: true }, () => { throw new Error("boom"); })`,
+    ],
     ["fs.realpath", `require("fs").realpath(${file}, () => { throw new Error("boom"); })`],
     [
       "fs.close",

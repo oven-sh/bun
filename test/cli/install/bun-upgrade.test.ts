@@ -1,10 +1,11 @@
 import { spawn } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, isMusl, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { existsSync, statSync } from "node:fs";
 import { copyFile, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
+import { makeZipStored, restrictedPathDir } from "./fake-release";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
 
 // Cover every platform/arch/abi/cpu combination so the asset list matches
@@ -21,81 +22,6 @@ function allAssetNames(profile = false) {
     }
   }
   return names;
-}
-
-// Build a minimal ZIP archive with a single stored (uncompressed) entry.
-// `unzip -o` on POSIX restores the mode from the Unix external-attrs field;
-// Expand-Archive on Windows ignores it.
-function makeZipStored(entryName: string, data: Buffer, unixMode: number): Buffer {
-  const nameBytes = Buffer.from(entryName, "utf8");
-  const crc = Bun.hash.crc32(data);
-  const size = data.length;
-
-  const lfhLen = 30 + nameBytes.length;
-  const cdhLen = 46 + nameBytes.length;
-  const cdOffset = lfhLen + size;
-
-  const buf = Buffer.alloc(lfhLen + size + cdhLen + 22);
-  let p = 0;
-  const u16 = (v: number) => {
-    buf.writeUInt16LE(v, p);
-    p += 2;
-  };
-  const u32 = (v: number) => {
-    buf.writeUInt32LE(v >>> 0, p);
-    p += 4;
-  };
-  const raw = (b: Buffer) => {
-    b.copy(buf, p);
-    p += b.length;
-  };
-
-  // Local file header
-  u32(0x04034b50);
-  u16(20); // version needed
-  u16(0); // flags
-  u16(0); // method: stored
-  u16(0); // mtime
-  u16(0); // mdate
-  u32(crc);
-  u32(size);
-  u32(size);
-  u16(nameBytes.length);
-  u16(0);
-  raw(nameBytes);
-  raw(data);
-
-  // Central directory header
-  u32(0x02014b50);
-  u16((3 << 8) | 20); // made by: Unix, spec 2.0
-  u16(20);
-  u16(0);
-  u16(0);
-  u16(0);
-  u16(0);
-  u32(crc);
-  u32(size);
-  u32(size);
-  u16(nameBytes.length);
-  u16(0);
-  u16(0);
-  u16(0);
-  u16(0);
-  u32((0o100000 | unixMode) << 16);
-  u32(0); // LFH offset
-  raw(nameBytes);
-
-  // End of central directory
-  u32(0x06054b50);
-  u16(0);
-  u16(0);
-  u16(1);
-  u16(1);
-  u32(cdhLen);
-  u32(cdOffset);
-  u16(0);
-
-  return buf;
 }
 
 // Write a release zip for the current target that, once unpacked, yields an
@@ -295,6 +221,84 @@ it("completes against a locally-served release with the system temp dir held ope
   // takes the "already on the latest" exit instead.
   expect(stderr).toMatch(/Upgraded\.|already on the latest/);
   expect(exitCode).toBe(0);
+});
+
+// Minimal hosts often lack `unzip`. `bun upgrade` then falls back to the other
+// extractors in its table. The PATH holds one extractor at a time, so each
+// table row runs wherever that program exists on the host. The busybox and
+// python3 probes rule out a busybox without the unzip applet and a python3
+// shim that needs more of PATH than the test gives it.
+const extractors: Record<string, string[] | undefined> = {
+  unzip: undefined,
+  busybox: ["/bin/sh", "-c", "busybox --list | grep -x unzip"],
+  "7z": undefined,
+  "7zz": undefined,
+  "7za": undefined,
+  bsdtar: undefined,
+  python3: ["python3", "-m", "zipfile", "-h"],
+};
+const extractorPaths = Object.entries(extractors).map(
+  ([name, probe]) =>
+    [name, restrictedPathDir(name === "busybox" ? ["busybox", "grep"] : [name], [name], probe)] as const,
+);
+afterAll(() => {
+  for (const [, dir] of extractorPaths) dir?.[Symbol.dispose]();
+});
+
+describe.concurrent("extracts the release archive when the only extractor in PATH is", () => {
+  for (const [name, dir] of extractorPaths) {
+    it.skipIf(!dir)(name, async () => {
+      const version = "9.9.9";
+      using cwd = tempDir("bun-upgrade-extractor", {});
+      const execPath = join(cwd, basename(bunExe()));
+      const zipPath = join(cwd, "release.zip");
+      await Promise.all([copyFile(bunExe(), execPath), writeFakeReleaseZip(zipPath, version)]);
+
+      using server = startReleaseServer({ tagName: `bun-v${version}`, zipPath });
+
+      await using proc = Bun.spawn({
+        cmd: [execPath, "upgrade", "--stable"],
+        cwd: String(cwd),
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        // The staging dir is $TMPDIR/<version>, so each test needs its own.
+        env: { ...server.env, PATH: dir!, BUN_TMPDIR: String(cwd) },
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("Upgraded.");
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
+// Any of the extractors above can run, so a failure has to say which one did.
+// The last one found on the host is the one least likely to be `unzip`.
+const [failingExtractor, failingExtractorPath] = extractorPaths.findLast(([, dir]) => dir) ?? [];
+it.skipIf(!failingExtractorPath)("names the extractor that fails on a bad archive", async () => {
+  using cwd = tempDir("bun-upgrade-bad-archive", {});
+  const execPath = join(cwd, basename(bunExe()));
+  await copyFile(bunExe(), execPath);
+
+  // Without a zipPath the server answers the download with bytes that are not a zip.
+  using server = startReleaseServer({ tagName: "bun-v9.9.9" });
+
+  await using proc = Bun.spawn({
+    cmd: [execPath, "upgrade", "--stable"],
+    cwd: String(cwd),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: { ...server.env, PATH: failingExtractorPath!, BUN_TMPDIR: String(cwd) },
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`${failingExtractor} failed (exit code:`);
+  expect(exitCode).toBe(1);
 });
 
 it("recreates the staging directory in the temp dir instead of reusing a pre-existing one", async () => {

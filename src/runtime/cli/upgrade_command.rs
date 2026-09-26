@@ -63,6 +63,112 @@ fn argv_contains(target: &[u8]) -> bool {
     bun_core::argv().iter().any(|a| a == target)
 }
 
+/// A program that can extract the release zip on POSIX into the current
+/// directory. `before` and `after` are the arguments around the archive path.
+#[cfg(unix)]
+struct UnzipProgram {
+    bin: &'static [u8],
+    /// The first argument of a multi-call binary. A build can leave the applet out.
+    applet: Option<&'static [u8]>,
+    before: &'static [&'static [u8]],
+    after: &'static [&'static [u8]],
+}
+
+/// Probe order. Must match the `for cmd in ...` loop in `install.sh`.
+/// The vendored libarchive has no zip reader, so an external program extracts it.
+#[cfg(unix)]
+const UNZIP_PROGRAMS: &[UnzipProgram] = &[
+    UnzipProgram {
+        bin: b"unzip",
+        applet: None,
+        before: &[b"-q", b"-o"],
+        after: &[],
+    },
+    UnzipProgram {
+        bin: b"busybox",
+        applet: Some(b"unzip"),
+        before: &[b"-q", b"-o"],
+        after: &[],
+    },
+    UnzipProgram {
+        bin: b"7z",
+        applet: None,
+        before: &[b"x", b"-y"],
+        after: &[],
+    },
+    UnzipProgram {
+        bin: b"7zz",
+        applet: None,
+        before: &[b"x", b"-y"],
+        after: &[],
+    },
+    UnzipProgram {
+        bin: b"7za",
+        applet: None,
+        before: &[b"x", b"-y"],
+        after: &[],
+    },
+    UnzipProgram {
+        bin: b"bsdtar",
+        applet: None,
+        before: &[b"--no-same-owner", b"-xf"],
+        after: &[],
+    },
+    UnzipProgram {
+        bin: b"python3",
+        applet: None,
+        before: &[b"-m", b"zipfile", b"-e"],
+        after: &[b"."],
+    },
+];
+
+/// `busybox --list` prints one applet name per line.
+#[cfg(unix)]
+fn has_applet(exe: &[u8], applet: &[u8]) -> bool {
+    let argv: [&[u8]; 2] = [exe, b"--list"];
+    let Ok(Ok(result)) = spawn_sync::spawn(&spawn_sync::Options {
+        argv: build_argv(&argv),
+        envp: None,
+        stdin: spawn_sync::SyncStdio::Ignore,
+        stdout: spawn_sync::SyncStdio::Buffer,
+        stderr: spawn_sync::SyncStdio::Ignore,
+        ..Default::default()
+    }) else {
+        return false;
+    };
+    result.status.is_ok()
+        && strings::split(result.stdout.as_slice(), b"\n").any(|line| line == applet)
+}
+
+/// Returns the name and the argv of the first entry of `UNZIP_PROGRAMS` found in `path`.
+#[cfg(unix)]
+fn find_unzip_argv(
+    path: &[u8],
+    cwd: &[u8],
+    archive: &[u8],
+) -> Option<(&'static [u8], Vec<Box<[u8]>>)> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    for program in UNZIP_PROGRAMS {
+        let Some(exe) = which(&mut buf, path, cwd, program.bin) else {
+            continue;
+        };
+        if program
+            .applet
+            .is_some_and(|applet| !has_applet(exe.as_bytes(), applet))
+        {
+            continue;
+        }
+        let mut argv = Vec::with_capacity(program.before.len() + program.after.len() + 3);
+        argv.push(Box::<[u8]>::from(exe.as_bytes()));
+        argv.extend(program.applet.map(Box::<[u8]>::from));
+        argv.extend(program.before.iter().map(|a| Box::<[u8]>::from(*a)));
+        argv.push(Box::<[u8]>::from(archive));
+        argv.extend(program.after.iter().map(|a| Box::<[u8]>::from(*a)));
+        return Some((program.bin, argv));
+    }
+    None
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct Version {
@@ -816,29 +922,20 @@ impl UpgradeCommand {
 
                 #[cfg(unix)]
                 {
-                    let mut unzip_path_buf = bun_paths::path_buffer_pool::get();
-                    let Some(unzip_exe) = which(
-                        &mut unzip_path_buf,
+                    let Some((unzip_name, unzip_argv)) = find_unzip_argv(
                         env_loader.map.get(b"PATH").unwrap_or(b""),
                         filesystem.top_level_dir,
-                        b"unzip",
+                        tmpname.as_bytes(),
                     ) else {
                         let _ = sys::unlinkat(&save_dir, tmpname);
                         bun_core::pretty_errorln!(
-                            "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work."
+                            "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work (7z, busybox, bsdtar, python3 supported)."
                         );
                         Global::exit(1);
                     };
 
-                    // We could just embed libz2
-                    // however, we want to be sure that xattrs are preserved
-                    // xattrs are used for codesigning
-                    // it'd be easy to mess that up
-                    let unzip_argv: [&[u8]; 4] =
-                        [unzip_exe.as_bytes(), b"-q", b"-o", tmpname.as_bytes()];
-
                     let unzip_result = match spawn_sync::spawn(&spawn_sync::Options {
-                        argv: build_argv(&unzip_argv),
+                        argv: unzip_argv,
                         envp: None,
                         cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
                         stdin: spawn_sync::SyncStdio::Inherit,
@@ -852,7 +949,8 @@ impl UpgradeCommand {
                         Ok(Err(err)) => {
                             let _ = sys::unlinkat(&save_dir, tmpname);
                             bun_core::pretty_errorln!(
-                                "<r><red>error:<r> Failed to spawn unzip due to {}.",
+                                "<r><red>error:<r> Failed to spawn {} due to {}.",
+                                bstr::BStr::new(unzip_name),
                                 bstr::BStr::new(err.name())
                             );
                             Global::exit(1);
@@ -860,7 +958,8 @@ impl UpgradeCommand {
                         Err(err) => {
                             let _ = sys::unlinkat(&save_dir, tmpname);
                             bun_core::pretty_errorln!(
-                                "<r><red>error:<r> Failed to spawn unzip due to {}.",
+                                "<r><red>error:<r> Failed to spawn {} due to {}.",
+                                bstr::BStr::new(unzip_name),
                                 err.name()
                             );
                             Global::exit(1);
@@ -871,17 +970,41 @@ impl UpgradeCommand {
                         Status::Exited(e) if e.code == 0 => {}
                         Status::Exited(e) => {
                             bun_core::pretty_errorln!(
-                                "<r><red>Unzip failed<r> (exit code: {})",
+                                "<r><red>{} failed<r> (exit code: {})",
+                                bstr::BStr::new(unzip_name),
                                 e.code
                             );
                             let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }
                         other => {
-                            bun_core::pretty_errorln!("<r><red>Unzip failed<r> ({})", other);
+                            bun_core::pretty_errorln!(
+                                "<r><red>{} failed<r> ({})",
+                                bstr::BStr::new(unzip_name),
+                                other
+                            );
                             let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }
+                    }
+
+                    // `python3 -m zipfile` does not restore the file mode, and
+                    // some busybox builds do not either.
+                    let exe_z: &ZStr = ZStr::from_static(if use_profile {
+                        const_format::concatcp!(UpgradeCommand::PROFILE_EXE_SUBPATH, "\0")
+                            .as_bytes()
+                    } else {
+                        const_format::concatcp!(UpgradeCommand::EXE_SUBPATH, "\0").as_bytes()
+                    });
+                    if let Err(err) = sys::fchmodat(&save_dir, exe_z, 0o755, 0) {
+                        let _ = sys::unlinkat(&save_dir, tmpname);
+                        let _ = save_dir_.delete_tree(&version_name);
+                        bun_core::pretty_errorln!(
+                            "<r><red>error:<r> Failed to set permissions on {} due to {}.",
+                            bstr::BStr::new(exe),
+                            bstr::BStr::new(err.name())
+                        );
+                        Global::exit(1);
                     }
                 }
                 #[cfg(windows)]

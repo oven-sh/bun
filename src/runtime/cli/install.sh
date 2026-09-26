@@ -53,8 +53,27 @@ success() {
     echo -e "${Green}$@ ${Color_Off}"
 }
 
-command -v unzip >/dev/null ||
-    error 'unzip is required to install bun'
+if command -v curl >/dev/null; then
+    download_cmd=curl
+elif command -v wget >/dev/null; then
+    download_cmd=wget
+else
+    error 'curl or wget is required to install bun'
+fi
+
+unzip_cmd=''
+for cmd in unzip busybox 7z 7zz 7za bsdtar python3; do
+    command -v "$cmd" >/dev/null || continue
+    # A busybox build can leave out the unzip applet.
+    if [[ $cmd = busybox ]] && ! busybox --list 2>/dev/null | grep -x unzip >/dev/null; then
+        continue
+    fi
+    unzip_cmd=$cmd
+    break
+done
+
+[[ $unzip_cmd ]] ||
+    error 'unzip is required to install bun (7z, busybox, bsdtar, python3 supported)'
 
 if [[ $# -gt 2 ]]; then
     error 'Too many arguments, only 2 are allowed. The first can be a specific tag of bun to install. (e.g. "bun-v0.1.4") The second can be a build variant of bun to install. (e.g. "debug-info")'
@@ -146,11 +165,33 @@ if [[ ! -d $bin_dir ]]; then
         error "Failed to create install directory \"$bin_dir\""
 fi
 
-curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
-    error "Failed to download bun from \"$bun_uri\""
+case $download_cmd in
+curl)
+    curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri"
+    ;;
+wget)
+    wget -q -O "$exe.zip" "$bun_uri"
+    ;;
+esac || error "Failed to download bun from \"$bun_uri\""
 
-unzip -oqd "$bin_dir" "$exe.zip" ||
-    error 'Failed to extract bun'
+# python3's zipfile does not restore the file mode; the chmod below covers it.
+case $unzip_cmd in
+unzip)
+    unzip -oqd "$bin_dir" "$exe.zip"
+    ;;
+busybox)
+    busybox unzip -oq "$exe.zip" -d "$bin_dir"
+    ;;
+7z | 7zz | 7za)
+    "$unzip_cmd" x -y -o"$bin_dir" "$exe.zip" >/dev/null
+    ;;
+bsdtar)
+    bsdtar --no-same-owner -xf "$exe.zip" -C "$bin_dir"
+    ;;
+python3)
+    python3 -m zipfile -e "$exe.zip" "$bin_dir"
+    ;;
+esac || error 'Failed to extract bun'
 
 mv "$bin_dir/bun-$target/$exe_name" "$exe" ||
     error 'Failed to move extracted bun to destination'

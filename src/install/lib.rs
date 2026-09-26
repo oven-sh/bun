@@ -698,8 +698,7 @@ impl RunCommand {
         use bun_core::WStr;
         use bun_sys::windows as win;
 
-        // A hard link made through a symlinked `bun.exe` (winget `Links`, mklink)
-        // would link the reparse point, so link the file it resolves to.
+        // Link the file a symlinked `bun.exe` (winget `Links`, mklink) resolves to.
         let mut scratch = bun_paths::w_path_buffer_pool::get();
         let mut image_buf = bun_paths::w_path_buffer_pool::get();
         let launched = win::exe_path_w();
@@ -801,8 +800,7 @@ impl RunCommand {
     /// `\node.exe.<pid>.tmp\0` at its longest.
     const SHIM_NAME_ROOM: usize = b"\\node.exe.".len() + 10 + b".tmp\0".len();
 
-    /// Plants `node.exe` and `bun.exe` in `buf[..dir_len]`. In `Copy` mode only
-    /// `node.exe` is a copy; `bun.exe` is a hard link to that copy.
+    /// Plants both shims in `buf[..dir_len]`. In `Copy` mode `bun.exe` hard-links the `node.exe` copy.
     fn plant_windows_node_shims_in(
         buf: &mut [u16],
         dir_len: usize,
@@ -863,8 +861,7 @@ impl RunCommand {
         }
     }
 
-    /// Keeps a shim that matches `src`. Makes a missing one. Replaces a stale one by a
-    /// rename over it, so a name for it exists at every moment.
+    /// Keeps a matching shim, makes a missing one, renames a fresh one over a stale one.
     fn plant_windows_node_shim_file(
         buf: &mut [u16],
         dir_len: usize,

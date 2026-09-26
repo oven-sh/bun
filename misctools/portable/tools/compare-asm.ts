@@ -6,6 +6,10 @@
 //       --mode expanded     the source after `cfg` and macro expansion, `rustc -Zunpretty=expanded`,
 //                           with debug assertions and without. Needs no code generation, so it runs
 //                           for every target a `cargo check` runs for.
+//       --mode all          both, one after the other. The machine code of a crate does not have
+//                           its generic and inline functions, which are compiled where they are
+//                           used: the expanded source has them, and so has the machine code of
+//                           the crates that use them (--dependents).
 //       --crates a,b        instead of the crates whose files differ from the base
 //       --dependents        also the crates of the workspace that depend on them: what they inline
 //                           and instantiate from the changed crates is compiled there
@@ -766,7 +770,15 @@ for (let i = 0; i < argv.length; i++) {
   else if (argv[i] === "--dependents") options.dependents = "";
   else options[argv[i].slice(2)] = argv[++i] ?? "";
 }
-if (options.base) await compareTrees(options);
+if (options.base && options.mode === "all") {
+  let worst = 0;
+  for (const mode of ["expanded", "asm"]) {
+    const forwarded = argv.flatMap((argument, index) => (argument === "--mode" || argv[index - 1] === "--mode" ? [] : [argument]));
+    const result = Bun.spawnSync(["bun", import.meta.path, ...forwarded, "--mode", mode], { stdout: "inherit", stderr: "inherit" });
+    worst = Math.max(worst, result.exitCode ?? 2);
+  }
+  process.exit(worst);
+} else if (options.base) await compareTrees(options);
 else if (positional.length === 2) {
   const comparison = compareFiles(positional[0], positional[1], options.target, options.show);
   console.log(JSON.stringify(comparison, null, 1));

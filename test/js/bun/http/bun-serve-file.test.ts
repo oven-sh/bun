@@ -20,6 +20,18 @@ const files = {
   "bytes256.bin": Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
 };
 
+// When two multi-megabyte strings differ, toBe() elides the middle of each,
+// which can hide where they differ. Compare the lengths, then point at the
+// first character that differs.
+function expectSameText(actual: string, expected: string) {
+  expect(actual.length).toBe(expected.length);
+  if (actual === expected) return;
+  let at = 0;
+  while (actual[at] === expected[at]) at++;
+  const around = (text: string) => text.slice(Math.max(0, at - 10), at + 10);
+  expect({ differsAt: at, text: around(actual) }).toEqual({ differsAt: null, text: around(expected) });
+}
+
 describe("Bun.file in serve routes", () => {
   let server: Server;
   let tempDir: string;
@@ -179,36 +191,13 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(200);
       const bytes = await res.bytes();
       expect(bytes).toEqual(new Uint8Array([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe, 0xfd]));
-      expect(res.headers.get("Content-Type")).toMatch(/application\/octet-stream/);
+      expect(res.headers.get("Content-Type")).toBe("application/octet-stream");
     });
 
     it("serves large file", async () => {
       const res = await fetch(new URL(`/large.txt`, server.url));
       expect(res.status).toBe(200);
-      const text = await res.text();
-      expect(text).toHaveLength(LARGE_SIZE);
-
-      if (files["large.txt"] !== text) {
-        console.log("Expected length:", files["large.txt"].length);
-        console.log("Actual length:", text.length);
-        console.log("First 100 chars expected:", files["large.txt"].slice(0, 100));
-        console.log("First 100 chars actual:", text.slice(0, 100));
-        console.log("Last 100 chars expected:", files["large.txt"].slice(-100));
-        console.log("Last 100 chars actual:", text.slice(-100));
-
-        // Find first difference
-        for (let i = 0; i < Math.min(files["large.txt"].length, text.length); i++) {
-          if (files["large.txt"][i] !== text[i]) {
-            console.log(`First difference at index ${i}:`);
-            console.log(`Expected: "${files["large.txt"][i]}" (code: ${files["large.txt"].charCodeAt(i)})`);
-            console.log(`Actual: "${text[i]}" (code: ${text.charCodeAt(i)})`);
-            console.log(`Context around difference: "${files["large.txt"].slice(Math.max(0, i - 10), i + 10)}"`);
-            console.log(`Actual context: "${text.slice(Math.max(0, i - 10), i + 10)}"`);
-            break;
-          }
-        }
-        throw new Error("large.txt is not the same");
-      }
+      expectSameText(await res.text(), files["large.txt"]);
 
       expect(res.headers.get("Content-Length")).toBe(LARGE_SIZE.toString());
 
@@ -245,7 +234,7 @@ describe("Bun.file in serve routes", () => {
       const res = await fetch(new URL(`/json.json`, server.url));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ message: "test", number: 42 });
-      expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
+      expect(res.headers.get("Content-Type")).toBe("application/json;charset=utf-8");
     });
 
     it("serves nested file", async () => {
@@ -267,7 +256,7 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("");
       expect(res.headers.get("Content-Length")).toBe("13"); // "Hello, World!" length
-      expect(res.headers.get("Content-Type")).toMatch(/text\/plain/);
+      expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
     });
 
     it("supports GET requests", async () => {
@@ -369,6 +358,8 @@ describe("Bun.file in serve routes", () => {
         });
 
         expect(res.status).toBe(200);
+        expect(res.headers.get("Content-Length")).toBe("13");
+        expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
       });
     });
 
@@ -392,18 +383,25 @@ describe("Bun.file in serve routes", () => {
     });
 
     it("ignores If-Modified-Since for non-GET/HEAD requests", async () => {
-      const res1 = await fetch(new URL(`/hello.txt`, server.url));
+      // `/hello.txt` only takes GET and HEAD, so a POST to it goes to the
+      // fallback handler. `/hello-blob.txt` takes every method.
+      const res1 = await fetch(new URL(`/hello-blob.txt`, server.url));
       const lastModified = res1.headers.get("Last-Modified");
+      expect(lastModified).not.toBeEmpty();
+      const ifModifiedSince = new Date(Date.parse(lastModified!) + 10000).toISOString();
 
-      const res2 = await fetch(new URL(`/hello.txt`, server.url), {
-        method: "POST",
-        headers: {
-          "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toISOString(),
-        },
+      const get = await fetch(new URL(`/hello-blob.txt`, server.url), {
+        headers: { "If-Modified-Since": ifModifiedSince },
       });
+      expect(get.status).toBe(304);
+      expect(await get.text()).toBe("");
 
-      // Should not return 304 for POST
-      expect(res2.status).not.toBe(304);
+      const post = await fetch(new URL(`/hello-blob.txt`, server.url), {
+        method: "POST",
+        headers: { "If-Modified-Since": ifModifiedSince },
+      });
+      expect(post.status).toBe(200);
+      expect(await post.text()).toBe("Hello, World!");
     });
 
     describe.each(["/hello.txt", "/hello-blob.txt"])("If-None-Match on %s", path => {
@@ -434,7 +432,7 @@ describe("Bun.file in serve routes", () => {
             },
           });
           expect(res.status).toBe(200);
-          if (method === "GET") expect(await res.text()).toBe("Hello, World!");
+          expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
         });
 
         it("still 304s for If-None-Match: * when If-Modified-Since is also present", async () => {
@@ -479,6 +477,8 @@ describe("Bun.file in serve routes", () => {
 
     // RFC 9110 §13.2.2 steps 1–2: If-Match / If-Unmodified-Since evaluate
     // first and short-circuit with 412 before If-None-Match / If-Modified-Since.
+    // fetch() reads no body for HEAD, so the "" expected for HEAD shows only
+    // what the client exposes. It cannot see body bytes a server puts on the wire.
     describe.each(["GET", "HEAD"])("If-Match / If-Unmodified-Since (%s)", method => {
       it("If-Match: non-matching tag on a file route with ETag → 412", async () => {
         const res = await fetch(new URL(`/with-etag.txt`, server.url), {
@@ -495,7 +495,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Match": '"custom-etag"' },
         });
         expect(res.status).toBe(200);
-        if (method === "GET") expect(await res.text()).toBe("Hello, World!");
+        expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
       });
 
       it("If-Match: * on a file route without a stored ETag → 200", async () => {
@@ -504,6 +504,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Match": "*" },
         });
         expect(res.status).toBe(200);
+        expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
       });
 
       it("If-Match: tag list on a file route without a stored ETag → 412", async () => {
@@ -521,6 +522,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Match": 'W/"custom-etag"' },
         });
         expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
       });
 
       it("If-Unmodified-Since earlier than mtime → 412", async () => {
@@ -540,6 +542,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Unmodified-Since": lm! },
         });
         expect(res.status).toBe(200);
+        expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
       });
 
       it("If-Match failure + If-None-Match match → 412 (not 304)", async () => {
@@ -548,6 +551,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Match": '"zz"', "If-None-Match": '"custom-etag"' },
         });
         expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
       });
 
       it("If-Match failure + Range → 412 (no Content-Range)", async () => {
@@ -566,6 +570,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Match": '"custom-etag"', "If-Unmodified-Since": "Mon, 01 Jan 2001 00:00:00 GMT" },
         });
         expect(res.status).toBe(200);
+        expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
       });
     });
 
@@ -585,7 +590,7 @@ describe("Bun.file in serve routes", () => {
   });
 
   describe("Stress testing", () => {
-    test.each(["hello.txt", "large.txt"])(
+    test.each(["hello.txt", "large.txt"] as const)(
       "concurrent requests for %s",
       async filename => {
         const batchSize = 16;
@@ -599,13 +604,9 @@ describe("Bun.file in serve routes", () => {
             }),
           );
 
-          const results = await Promise.all(promises);
-
-          // Verify all responses are identical
-          const expected = results[0];
-          for (const result of results) {
-            expect(result?.length).toBe(expected.length);
-            expect(result).toBe(expected);
+          // Every response is the file, byte for byte.
+          for (const result of await Promise.all(promises)) {
+            expectSameText(result, files[filename]);
           }
         }
 
@@ -826,7 +827,7 @@ describe("Bun.file in serve routes", () => {
       const res = await fetch(new URL(`/hello.txt`, server.url), { method: "HEAD" });
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Length")).toBe("13");
-      expect(res.headers.get("Content-Type")).toMatch(/text\/plain/);
+      expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
       expect(res.headers.get("Last-Modified")).not.toBeNull();
       expect(await res.text()).toBe("");
     });
@@ -840,7 +841,12 @@ describe("Bun.file in serve routes", () => {
       // Abort immediately
       controller.abort();
 
-      await expect(promise).rejects.toThrow(/abort/i);
+      const error = await promise.then(
+        () => null,
+        e => e,
+      );
+      expect(error).toBeInstanceOf(DOMException);
+      expect(error.name).toBe("AbortError");
     });
   });
 
@@ -867,17 +873,17 @@ describe("Bun.file in serve routes", () => {
   describe.concurrent("Content-Type detection", () => {
     it("detects text/plain for .txt files", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url));
-      expect(res.headers.get("Content-Type")).toMatch(/text\/plain/);
+      expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
     });
 
     it("detects application/json for .json files", async () => {
       const res = await fetch(new URL(`/json.json`, server.url));
-      expect(res.headers.get("Content-Type")).toMatch(/application\/json/);
+      expect(res.headers.get("Content-Type")).toBe("application/json;charset=utf-8");
     });
 
     it("detects application/octet-stream for binary files", async () => {
       const res = await fetch(new URL(`/binary.bin`, server.url));
-      expect(res.headers.get("Content-Type")).toMatch(/application\/octet-stream/);
+      expect(res.headers.get("Content-Type")).toBe("application/octet-stream");
     });
   });
 
@@ -938,8 +944,11 @@ describe("Bun.file in serve routes", () => {
     it("ignores Range for non-GET/HEAD methods", async () => {
       // RFC 9110 §14.2: Range is only defined for GET.
       const res = await fetch(new URL(path, server.url), { method: "POST", headers: { Range: "bytes=0-3" } });
-      expect(res.status).not.toBe(206);
-      expect(res.headers.get("content-range")).toBeNull();
+      expect({
+        status: res.status,
+        contentRange: res.headers.get("content-range"),
+        body: await res.text(),
+      }).toEqual({ status: 200, contentRange: null, body });
     });
   });
 
@@ -990,9 +999,7 @@ describe("Bun.file in serve routes", () => {
       const res = await fetch(new URL("/slice-escape", server.url), { headers: { Range: "bytes=200-220" } });
       const bytes = new Uint8Array(await res.arrayBuffer());
       // Range must be ignored for sliced blobs: serve the 100-byte slice, never bytes 200-220.
-      expect(bytes.length).toBe(100);
-      expect(bytes[0]).toBe(0);
-      expect(bytes[99]).toBe(99);
+      expect(bytes).toEqual(Uint8Array.from({ length: 100 }, (_, i) => i));
       expect(res.headers.get("content-range")).not.toContain("/256");
     });
   });
@@ -1386,6 +1393,7 @@ process.exit(0);
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("file-response-started\nstill-serving");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 }, 30_000);
 
@@ -1520,9 +1528,10 @@ test("file route serves a burst of concurrent requests after reloads", async () 
 // kernel (its tail parked in the userspace socket buffer), the first sendfile
 // round must wait for that tail to flush; otherwise file bytes overtake it and
 // the client sees file bytes interleaved before the end of the headers. The
-// big x-pad header makes the partial header send happen on most iterations,
-// and the separate client process supplies the concurrent reads that open
-// kernel buffer space between the header write and the sendfile call.
+// big x-pad header is far larger than the kernel send buffer, so every header
+// write is partial, and the separate client processes supply the concurrent
+// reads that open kernel buffer space between the header write and the
+// sendfile call.
 test.skipIf(!isLinux)(
   "sendfile does not overtake a buffered response header tail",
   async () => {
@@ -1532,19 +1541,22 @@ test.skipIf(!isLinux)(
     // server thread, which is sticky per process; fresh client processes re-roll
     // it, so several short-lived clients catch what one long-lived client can
     // miss.
-    const ITERATIONS_PER_CLIENT = 16;
+    const ITERATIONS_PER_CLIENT = 8;
     const CLIENTS_PER_WAVE = 3;
     const WAVES = 3;
 
     using dir = tempDir("serve-sendfile-tail", {
       "client-fixture.ts": `
-      // One GET per fresh connection. Reads with plain blocking recv(2) via
-      // FFI: when response bytes land, the kernel wakes the parked task and
-      // sends the window-update ACK from kernel context within microseconds,
-      // which is what opens kernel send-buffer space right after the server's
-      // partial header write. The file is all 0xEE; headers are ASCII, so any
-      // 0xEE before the header terminator means sendfile bytes jumped ahead of
-      // the header tail.
+      // One GET per fresh connection, read with plain blocking recv(2) via
+      // FFI. SO_RCVBUF pins a receive window far below the header block, so
+      // the server's header write always stalls with most of the block parked
+      // in userspace, and each recv() of a full window sends a window-update
+      // ACK from kernel context within microseconds. Those ACKs open kernel
+      // send-buffer space at a high rate, so one of them lands between the
+      // server's partial header write and its first sendfile call on a large
+      // share of the connections. The file is all 0xEE and the header block
+      // is ASCII, so any 0xEE before the header terminator means sendfile
+      // bytes jumped ahead of the header tail.
       import { dlopen, ptr } from "bun:ffi";
 
       const port = Number(process.env.PORT);
@@ -1579,15 +1591,29 @@ test.skipIf(!isLinux)(
       // struct timeval { i64 sec; i64 usec } for SO_RCVTIMEO (SOL_SOCKET=1, 20)
       const timeo = new Uint8Array(16);
       new DataView(timeo.buffer).setBigInt64(0, 10n, true);
+      // SO_RCVBUF (SOL_SOCKET=1, 8). Setting it also turns off receive buffer
+      // autotuning, so the window does not depend on the host's tcp_rmem.
+      const rcvbuf = new Int32Array([16 * 1024]);
 
       const request = Buffer.from("GET /file HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
-      const recvBuf = new Uint8Array(256 * 1024);
+      const terminator = Buffer.from("\\r\\n\\r\\n");
+      const expectedPad = Buffer.alloc(padSize, "p");
+      const expectedBody = Buffer.alloc(fileSize, 0xee);
+      // A run of pad bytes that no other header can hold.
+      const padMarker = expectedPad.subarray(0, 64);
+      // The whole response: the pad, the file, and room for the other headers.
+      // Receiving straight into it, and checking the pad with equals(), keeps
+      // the per-recv work small, which keeps the window-update ACKs frequent.
+      const wire = Buffer.alloc(padSize + fileSize + 64 * 1024);
 
       function iteration(): { kind: string; detail?: string } {
         const fd = libc.socket(2, 1, 0); // AF_INET, SOCK_STREAM
         if (fd < 0) return { kind: "socket-failed" };
         try {
           if (libc.setsockopt(fd, 1, 20, ptr(timeo), 16) !== 0) {
+            return { kind: "setsockopt-failed" };
+          }
+          if (libc.setsockopt(fd, 1, 8, ptr(rcvbuf), 4) !== 0) {
             return { kind: "setsockopt-failed" };
           }
           if (libc.connect(fd, ptr(addr), 16) !== 0) {
@@ -1597,68 +1623,81 @@ test.skipIf(!isLinux)(
             return { kind: "send-failed" };
           }
 
-          // Read until header terminator + fileSize body bytes. The terminator
-          // is found incrementally (in corrupt runs it shows up after file
-          // bytes, but the byte count still adds up). The keep-alive socket
-          // never closes on its own, so an exact byte target is required.
-          const terminator = Buffer.from("\\r\\n\\r\\n");
-          const chunks: Buffer[] = [];
+          // Read until header terminator + fileSize body bytes. The keep-alive
+          // socket never closes on its own, so an exact byte target is
+          // required. Header bytes are verified as they arrive: a file byte
+          // before the header terminator already proves the corruption, and
+          // stopping there keeps the exact-length accounting from waiting out
+          // the receive timeout on the scrambled stream.
           let total = 0;
+          let padStart = -1;
+          let verified = 0; // wire offset up to which the x-pad value has been compared
           let hdrEnd = -1;
           let expected = padSize + fileSize; // lower bound until hdrEnd is known
-          let earlyFileByte = -1;
-          while (total < expected) {
-            const n = Number(libc.recv(fd, ptr(recvBuf), recvBuf.length, 0));
+          let corrupt = "";
+          while (total < expected && total < wire.length) {
+            const n = Number(libc.recv(fd, ptr(wire, total), Math.min(256 * 1024, wire.length - total), 0));
             if (n <= 0) break; // EOF, error, or SO_RCVTIMEO after a 10s stall
-            const chunk = Buffer.from(recvBuf.subarray(0, n));
-            if (hdrEnd === -1) {
-              // A file byte before the header terminator already proves the
-              // corruption; stop here or the exact-length accounting below
-              // would wait out the receive timeout on the scrambled stream.
-              const fileByte = chunk.indexOf(0xee);
-              // Search for the terminator across the previous chunk boundary.
-              const prev = chunks.length > 0 ? chunks[chunks.length - 1] : Buffer.alloc(0);
-              const tail = prev.subarray(prev.length - Math.min(prev.length, 3));
-              const window = Buffer.concat([tail, chunk]);
-              const found = window.indexOf(terminator);
+            total += n;
+            if (hdrEnd !== -1) continue;
+
+            if (padStart === -1) {
+              padStart = wire.subarray(0, total).indexOf(padMarker);
+              if (padStart === -1) {
+                if (total < 32 * 1024) continue;
+                return { kind: "no-pad", detail: "no x-pad value in the first " + total + " bytes" };
+              }
+              verified = padStart;
+            }
+            const padEnd = padStart + padSize;
+            if (verified < padEnd) {
+              const upto = Math.min(total, padEnd);
+              const want = expectedPad.subarray(verified - padStart, upto - padStart);
+              if (!wire.subarray(verified, upto).equals(want)) {
+                const at = wire.subarray(0, upto).indexOf(0xee, verified);
+                corrupt =
+                  at === -1
+                    ? "x-pad bytes differ in [" + verified + ", " + upto + ")"
+                    : "file byte at " + at + " inside the x-pad value";
+                break;
+              }
+              verified = upto;
+            }
+            if (verified === padEnd) {
+              const seen = wire.subarray(0, total);
+              const fileByte = seen.indexOf(0xee, padEnd);
+              const found = seen.indexOf(terminator, padEnd);
               // Legit only when the body start (terminator end) is at or
               // before the first file byte.
-              if (found !== -1 && (fileByte === -1 || found + 4 - tail.length <= fileByte)) {
-                hdrEnd = total - tail.length + found;
+              if (found !== -1 && (fileByte === -1 || found + 4 <= fileByte)) {
+                hdrEnd = found;
                 expected = hdrEnd + 4 + fileSize;
               } else if (fileByte !== -1) {
-                earlyFileByte = total + fileByte;
-                chunks.push(chunk);
-                total += n;
+                corrupt = "file byte at " + fileByte + " before the header terminator";
                 break;
               }
             }
-            chunks.push(chunk);
-            total += n;
           }
 
-          if (earlyFileByte !== -1) {
-            return {
-              kind: "corrupt",
-              detail: "file byte at " + earlyFileByte + " before the header terminator, read " + total,
-            };
-          }
-          const buf = Buffer.concat(chunks);
+          if (corrupt) return { kind: "corrupt", detail: corrupt + ", read " + total };
           if (hdrEnd === -1) return { kind: "no-header-end", detail: "got " + total };
-          const firstFile = buf.indexOf(0xee);
-          if (firstFile !== -1 && firstFile < hdrEnd) {
-            return {
-              kind: "corrupt",
-              detail: "file byte at " + firstFile + " before header end at " + hdrEnd + ", total " + total,
-            };
+          // Everything in the header block outside the pad.
+          const head = wire.toString("latin1", 0, padStart) + wire.toString("latin1", padStart + padSize, hdrEnd);
+          if (head.includes("\\xee")) {
+            return { kind: "corrupt", detail: "file byte before the x-pad value" };
           }
-          const body = buf.subarray(hdrEnd + 4);
+          if (!head.startsWith("HTTP/1.1 200 OK\\r\\n")) {
+            return { kind: "bad-status", detail: head.slice(0, 64) };
+          }
+          const contentLength = /^content-length: (\\d+)$/im.exec(head)?.[1];
+          if (contentLength !== String(fileSize)) {
+            return { kind: "bad-content-length", detail: String(contentLength) };
+          }
+          const body = wire.subarray(hdrEnd + 4, total);
           if (body.length !== fileSize) {
             return { kind: "bad-body-length", detail: body.length + " of " + fileSize + ", total " + total };
           }
-          for (let o = 0; o < body.length; o += 65536) {
-            if (body[o] !== 0xee) return { kind: "bad-body-byte", detail: "offset " + o + " is " + body[o] };
-          }
+          if (!body.equals(expectedBody)) return { kind: "bad-body-byte" };
           return { kind: "ok" };
         } finally {
           libc.close(fd);
@@ -1671,39 +1710,41 @@ test.skipIf(!isLinux)(
         const r = iteration();
         if (r.kind === "ok") ok++;
         else failures.push(r);
-        if (r.kind === "corrupt") break; // one corruption decides the verdict
+        if (r.kind !== "ok") break; // the first failure decides the verdict
       }
       console.log(JSON.stringify({ ok, failures }));
     `,
     });
     await Bun.write(join(String(dir), "file.bin"), Buffer.alloc(FILE_SIZE, 0xee));
 
-    const pad = Buffer.alloc(PAD_SIZE, "p").toString();
+    // Built once. A debug build takes about 70ms to validate a 16MB header
+    // value, and that is no part of the race.
+    const headers = new Headers({ "x-pad": Buffer.alloc(PAD_SIZE, "p").toString() });
     await using server = Bun.serve({
       port: 0,
       idleTimeout: 0,
       fetch() {
-        return new Response(Bun.file(join(String(dir), "file.bin")), {
-          headers: { "x-pad": pad },
-        });
+        return new Response(Bun.file(join(String(dir), "file.bin")), { headers });
       },
     });
 
-    const problems: unknown[] = [];
-    let cleanClients = 0;
-    for (let wave = 0; wave < WAVES && problems.length === 0; wave++) {
+    const clean = { stdout: JSON.stringify({ ok: ITERATIONS_PER_CLIENT, failures: [] }), stderr: "", exitCode: 0 };
+    for (let wave = 0; wave < WAVES; wave++) {
+      await using clients = new AsyncDisposableStack();
       const procs = Array.from({ length: CLIENTS_PER_WAVE }, () =>
-        Bun.spawn({
-          cmd: [bunExe(), join(String(dir), "client-fixture.ts")],
-          env: {
-            ...bunEnv,
-            PORT: String(server.port),
-            PAD_SIZE: String(PAD_SIZE),
-            FILE_SIZE: String(FILE_SIZE),
-            ITERATIONS: String(ITERATIONS_PER_CLIENT),
-          },
-          stderr: "pipe",
-        }),
+        clients.use(
+          Bun.spawn({
+            cmd: [bunExe(), join(String(dir), "client-fixture.ts")],
+            env: {
+              ...bunEnv,
+              PORT: String(server.port),
+              PAD_SIZE: String(PAD_SIZE),
+              FILE_SIZE: String(FILE_SIZE),
+              ITERATIONS: String(ITERATIONS_PER_CLIENT),
+            },
+            stderr: "pipe",
+          }),
+        ),
       );
       const results = await Promise.all(
         procs.map(async proc => {
@@ -1711,26 +1752,12 @@ test.skipIf(!isLinux)(
           return { stdout: stdout.trim(), stderr, exitCode };
         }),
       );
-      for (const { stdout, stderr, exitCode } of results) {
-        // Combined assert first, so a crashed client reports its exit code
-        // and raw output instead of a JSON parse error. stderr rides along
-        // for diagnostics but is not required to be empty.
-        expect({ exitCode, stdout, stderr }).toMatchObject({
-          exitCode: 0,
-          stdout: expect.stringContaining("{"),
-        });
-        const verdict = JSON.parse(stdout);
-        if (verdict.failures.length > 0 || verdict.ok !== ITERATIONS_PER_CLIENT) {
-          problems.push(verdict);
-        } else {
-          cleanClients++;
-        }
-      }
+      // The first failure decides the verdict, so the first wave that is not
+      // clean ends the test.
+      expect(results).toEqual(Array(CLIENTS_PER_WAVE).fill(clean));
     }
-    expect(problems).toEqual([]);
-    expect(cleanClients).toBe(WAVES * CLIENTS_PER_WAVE);
   },
-  90_000,
+  30_000,
 );
 
 // Unix-socket listeners reach the same Linux sendfile path as TCP (the

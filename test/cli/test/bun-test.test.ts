@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 describe("bun test", () => {
@@ -2090,5 +2090,78 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(Number(stdout.match(/OPEN_FDS=(\d+)/)?.[1])).toBeLessThan(N);
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a symlink that points back into the tree is scanned once", async () => {
+    using dir = tempDir("scanner-symlink-loop", {
+      "sub/a.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a"); });`,
+      "sub/deeper/b.test.ts": `import { test } from "bun:test"; test("b", () => { console.log("RAN b"); });`,
+    });
+    // sub/loop -> the scan root, sub/deeper/self -> sub/deeper
+    symlinkSync("..", join(String(dir), "sub", "loop"));
+    symlinkSync(".", join(String(dir), "sub", "deeper", "self"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.match(/RAN a/g)).toHaveLength(1);
+    expect(stdout.match(/RAN b/g)).toHaveLength(1);
+    expect(stderr).toContain("Ran 2 tests across 2 files.");
+    expect(exitCode).toBe(0);
+  });
+
+  // root bypasses permission checks, so the unreadable directory is only
+  // unreadable for a different user.
+  function hasNobodyUser(): boolean {
+    try {
+      return /^nobody:/m.test(readFileSync("/etc/passwd", "utf8"));
+    } catch {
+      return false;
+    }
+  }
+  const canUseRunuser =
+    isLinux &&
+    typeof process.getuid === "function" &&
+    process.getuid() === 0 &&
+    !!Bun.which("runuser") &&
+    hasNobodyUser();
+
+  test.skipIf(!canUseRunuser)("a directory that cannot be read is reported and fails the run", async () => {
+    using dir = tempDir("scanner-unreadable", {
+      "ok/a.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a"); });`,
+      "locked/b.test.ts": `import { test } from "bun:test"; test("b", () => { console.log("RAN b"); });`,
+    });
+    const root = String(dir);
+    chmodSync(root, 0o755);
+    chmodSync(join(root, "ok"), 0o755);
+    chmodSync(join(root, "ok", "a.test.ts"), 0o644);
+    chmodSync(join(root, "locked"), 0o000);
+
+    try {
+      await using proc = Bun.spawn({
+        cmd: ["runuser", "-m", "-u", "nobody", "--", bunExe(), "test"],
+        env: bunEnv,
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The readable part of the tree still runs.
+      expect(stdout).toContain("RAN a");
+      expect(stderr).toContain(" 1 pass");
+      expect(stderr).toContain(`could not scan "${join(root, "locked")}" for tests`);
+      expect(stderr).toContain("EACCES");
+      expect(stderr).toContain("1 directory could not be scanned for tests");
+      expect(exitCode).toBe(1);
+    } finally {
+      chmodSync(join(root, "locked"), 0o755);
+    }
   });
 });

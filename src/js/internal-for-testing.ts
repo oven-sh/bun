@@ -246,6 +246,13 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
+// For test/js/node/fs/glob.test.ts. Each require is lazy so that this module does not load internal/fs/glob.
+export const fsGlobInternals = {
+  compilePlainPattern: (pattern: string) => require("internal/fs/glob").compilePlainPattern(pattern),
+  createMatcher: (pattern: string) => require("internal/fs/glob").createMatcher(pattern),
+  isMinimatchLoaded: (): boolean => require("internal/fs/glob").isMinimatchLoaded(),
+};
+
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.

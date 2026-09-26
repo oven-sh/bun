@@ -3210,6 +3210,7 @@ declare module "bun" {
      * that absorbs a folded chunk exports the symbols other chunks import
      * from it. Requires `splitting: true`. CLI: `--min-chunk-size`. For browser
      * builds, where every chunk is a request, 16384 is a good value.
+     * Nothing folds into an entry point without `[hash]` in its name.
      *
      * @default 0 (disabled)
      */

@@ -32,6 +32,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { cares } from "./deps/cares.ts";
 import { BuildError } from "./error.ts";
 import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
@@ -135,6 +136,28 @@ export const workarounds: Workaround[] = [
       `In src/spawn_sys/posix_spawn.rs (Attr::set) and src/spawn_sys/spawn_process.rs ` +
       `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
       `drop the explanatory comments, and delete this entry.`,
+  },
+  {
+    id: "cares-dead-deferred-conn-close",
+    issue: "https://github.com/c-ares/c-ares/pull/1138 (introduced it in 1.34.7; no upstream issue as of 2026-09)",
+    description:
+      "c-ares never reaches the deferred connection close in process_read(): read_answers() " +
+      "returns ARES_EBADRESP whenever its buffer runs out. A TCP answer that is cut short then " +
+      "spins the event loop until the query times out. " +
+      "patches/cares/close-tcp-conn-on-partial-answer.patch does the close in read_answers().",
+    applies: () => true,
+    expectedToBeFixed: cfg => {
+      // Nothing upstream to key a version on yet, so every c-ares bump asks
+      // for a re-check. Set this to the new pin if the bug is still there.
+      const CHECKED_AT_CARES_COMMIT = "c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab";
+      const source = cares.source(cfg);
+      return source.kind === "github-archive" && source.commit !== CHECKED_AT_CARES_COMMIT;
+    },
+    cleanup:
+      `Remove the patch from the patches list in scripts/build/deps/cares.ts and run ` +
+      `test/js/node/dns/dns-tcp-partial-answer.test.ts. If it passes, upstream fixed it: delete ` +
+      `patches/cares/close-tcp-conn-on-partial-answer.patch and this entry. If it fails with ` +
+      `ETIMEOUT, keep the patch and update CHECKED_AT_CARES_COMMIT in this entry.`,
   },
 ];
 

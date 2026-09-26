@@ -1,0 +1,71 @@
+Close a TCP connection whose read side failed while a partial answer is buffered.
+
+c-ares 1.34.7 (c-ares/c-ares#1138) stopped closing a connection at once when
+a read fails while data is buffered. read_conn_packets() sets conn_error and
+process_read() is meant to close the connection after read_answers() has
+parsed what was buffered.
+
+That close is unreachable. The loop in read_answers() only ends when
+ares_buf_fetch_be16() or ares_buf_consume() runs out of data, which leaves
+status as ARES_EBADRESP, so process_read() always takes the early return
+before it looks at conn_error.
+
+When a DNS server sends part of a TCP frame and closes, the connection stays
+the server's tcp_conn until the query times out. The socket stays readable
+(EOF), so a level-triggered poll wakes up on every loop iteration and each
+recv() returns 0. Retries of the query are also written to the dead
+connection. 1.34.6 failed the same query with ECONNREFUSED at once.
+
+This patch moves the deferred close into read_answers(), between the parse
+loop and the requeue flush. The connection is known to be alive there
+(process_answer() never closes it), so no lookup by fd is needed after
+callbacks have run, and retries flushed afterwards open a new connection.
+
+--- a/src/lib/ares_process.c
++++ b/src/lib/ares_process.c
+@@ -674,7 +674,8 @@
+   return status;
+ }
+ 
+-static ares_status_t read_answers(ares_conn_t *conn, const ares_timeval_t *now)
++static ares_status_t read_answers(ares_conn_t *conn, ares_bool_t conn_error,
++                                  const ares_timeval_t *now)
+ {
+   ares_status_t   status;
+   ares_channel_t *channel  = conn->server->channel;
+@@ -725,6 +726,14 @@
+     ares_buf_tag_clear(conn->in_buf);
+   }
+ 
++  /* Bun: read_conn_packets() saw the connection fail with data still buffered
++   * and deferred the close to here.  Close before the flush so retries go to
++   * a new connection, and do not key this off status: the loop above always
++   * ends with a failure status once the buffer runs out. */
++  if (conn_error) {
++    handle_conn_error(conn, ARES_TRUE, ARES_ECONNREFUSED);
++  }
++
+ cleanup:
+   /* Flush requeue - re-dispatch retries and invoke deferred callbacks
+    * iteratively and safely */
+@@ -753,19 +762,7 @@
+     return status;
+   }
+ 
+-  status = read_answers(conn, now);
+-  if (status != ARES_SUCCESS) {
+-    return status;
+-  }
+-
+-  if (conn_error) {
+-    conn = ares_conn_from_fd(channel, read_fd);
+-    if (conn != NULL) {
+-      handle_conn_error(conn, ARES_TRUE, ARES_ECONNREFUSED);
+-    }
+-  }
+-
+-  return ARES_SUCCESS;
++  return read_answers(conn, conn_error, now);
+ }
+ 
+ /* If any queries have timed out, note the timeout and move them on. */

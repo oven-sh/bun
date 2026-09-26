@@ -2213,16 +2213,6 @@ pub mod cache {
         }
     }
 
-    impl From<Box<[u8]>> for Contents {
-        fn from(b: Box<[u8]>) -> Self {
-            if b.is_empty() {
-                Contents::Empty
-            } else {
-                Contents::Owned(b.into_vec())
-            }
-        }
-    }
-
     /// Adapter for the canonical `fs::read_file_contents` (returns
     /// `Cow<'buf,[u8]>` per the spec `PathContentsPair` shape). `Borrowed`
     /// always points into the per-thread `shared_buffer` on the

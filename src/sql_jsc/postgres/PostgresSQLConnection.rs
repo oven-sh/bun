@@ -1554,10 +1554,8 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// Move the head request behind every request whose bytes are already on
-    /// the wire and behind earlier re-queued retries. Replies are attributed
-    /// to the FIFO head, so a retry must not sit in front of an in-flight
-    /// request.
+    /// Move the head request behind every request already on the wire and
+    /// behind earlier re-queued retries. Replies are attributed to the head.
     fn requeue_for_retry(&self, request: &PostgresSQLQuery) {
         self.requests.with_mut(|q| {
             if !q
@@ -3031,9 +3029,7 @@ impl PostgresSQLConnection {
                         // The request still holds another ref; this cannot drop to 0.
                         self.evict_statement(stmt);
                     } else if invalidates
-                        // Only an answer to Bind reports a missing or stale
-                        // statement; after BindComplete the SQLSTATE comes from
-                        // the query itself and rows may have arrived.
+                        // After BindComplete the same SQLSTATE comes from the query.
                         && request.status.get() == QueryStatus::Binding
                         && !stmt.signature.prepared_statement_name.is_empty()
                         && matches!(
@@ -3041,16 +3037,13 @@ impl PostgresSQLConnection {
                             StatementStatus::Prepared | StatementStatus::Pending
                         )
                     {
-                        // Prepared: the server-side name is gone or stale.
-                        // Pending: a pipelined sibling's ErrorResponse already
-                        // reset it under a fresh name; this Bind named the old one.
+                        // Pending: a pipelined sibling already reset it under a fresh name.
                         let already_reset = stmt.status == StatementStatus::Pending;
                         if !already_reset {
                             // Evict so later queries with this signature re-prepare.
                             self.evict_statement(stmt);
                         }
-                        // Retry only when the session is idle (inside a
-                        // transaction the retry Parse would be rejected 25P02).
+                        // Inside a transaction block the re-Parse would get 25P02.
                         if !request.flags.get().reprepared
                             && self.tx_status.get() == protocol::TransactionStatusIndicator::I
                             && self.nonpipelinable_requests.get() == 0
@@ -3073,8 +3066,7 @@ impl PostgresSQLConnection {
                                 f.binary = false;
                             });
                             self.note_request_pending();
-                            // Siblings still on the wire answer first; the
-                            // re-Parse waits for the pipeline to drain.
+                            // The re-Parse waits for the siblings still on the wire.
                             self.requeue_for_retry(&request);
                             self.update_ref();
                             return Ok(());

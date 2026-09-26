@@ -67,11 +67,8 @@ impl Error {
 pub use bun_sql::shared::statement_status::Status;
 
 impl PostgresSQLStatement {
-    /// Reset to pre-Parse state under a fresh server-side name so `advance()`
-    /// re-Parses after a 26000/0A000 invalidation. The statement stays cached
-    /// as `Pending` while Binds under the previous name may still be on the
-    /// wire. `fields` and `parameters` stay: those siblings decode under them,
-    /// and the re-Parse's Describe replaces them.
+    /// Reset to `Pending` under a fresh name so `advance()` re-Parses after 26000/0A000.
+    /// `fields` and `parameters` stay for Binds still on the wire under the old name.
     pub(crate) fn reset_for_reprepare(&mut self, prepared_statement_id: u64) {
         self.status = Status::Pending;
         self.error_response = None;

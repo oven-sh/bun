@@ -664,3 +664,77 @@ describe("util.parseEnv", () => {
     expect(JSON.parse(JSON.stringify(parsed))).toEqual({ 0: "set", 2023: "y", A: "1", 4294967295: "notidx" });
   });
 });
+
+describe("util.diff", () => {
+  // Expected outputs verified against Node.js v26.3.0.
+  it("diffs strings", () => {
+    expect(util.diff("ABCABBA", "CBABAC")).toEqual([
+      [1, "A"],
+      [1, "B"],
+      [0, "C"],
+      [-1, "B"],
+      [0, "A"],
+      [0, "B"],
+      [1, "B"],
+      [0, "A"],
+      [-1, "C"],
+    ]);
+    expect(util.diff("kitten", "sitting")).toEqual([
+      [1, "k"],
+      [-1, "s"],
+      [0, "i"],
+      [0, "t"],
+      [0, "t"],
+      [1, "e"],
+      [-1, "i"],
+      [0, "n"],
+      [-1, "g"],
+    ]);
+    expect(util.diff("", "a")).toEqual([[-1, "a"]]);
+    expect(util.diff("a", "")).toEqual([[1, "a"]]);
+    expect(util.diff("same", "same")).toEqual([]);
+  });
+
+  it("diffs arrays of strings", () => {
+    expect(util.diff(["a", "b"], ["b", "c"])).toEqual([
+      [1, "a"],
+      [0, "b"],
+      [-1, "c"],
+    ]);
+    expect(util.diff(["1", "2", "3"], ["1", "3", "4"])).toEqual([
+      [0, "1"],
+      [1, "2"],
+      [0, "3"],
+      [-1, "4"],
+    ]);
+    expect(util.diff([], ["a"])).toEqual([[-1, "a"]]);
+    expect(util.diff(["a"], [])).toEqual([[1, "a"]]);
+    expect(util.diff([], [])).toEqual([]);
+  });
+
+  it("accepts a mix of string and array", () => {
+    expect(util.diff(["a"], "a")).toEqual([[0, "a"]]);
+    expect(util.diff("a", ["b"])).toEqual([
+      [1, "a"],
+      [-1, "b"],
+    ]);
+  });
+
+  it("returns [] for identical references without validating", () => {
+    const arr = ["a"];
+    expect(util.diff(arr, arr)).toEqual([]);
+    expect(util.diff(null, null)).toEqual([]);
+  });
+
+  it("validates the arguments", () => {
+    expect(() => util.diff(1, "a")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => util.diff("a", null)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    try {
+      util.diff(["a", 1], ["a"]);
+      expect.unreachable();
+    } catch (e) {
+      expect(e.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(e.message).toContain('"actual[1]"');
+    }
+  });
+});

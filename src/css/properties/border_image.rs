@@ -583,6 +583,18 @@ impl BorderImageHandler {
         self.repeat = None;
     }
 
+    /// A complete unprefixed `border-image` is buffered as this block's first `border-image` output.
+    pub(crate) fn will_flush_shorthand(&self) -> bool {
+        self.has_any
+            && self.flushed_properties.is_empty()
+            && self.vendor_prefix.contains(VendorPrefix::NONE)
+            && self.source.is_some()
+            && self.slice.is_some()
+            && self.width.is_some()
+            && self.outset.is_some()
+            && self.repeat.is_some()
+    }
+
     pub(crate) fn will_flush(&self, property: &Property) -> bool {
         match property {
             Property::BorderImageSource(_)

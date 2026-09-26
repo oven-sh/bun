@@ -1016,7 +1016,6 @@ impl<'a> LinkerContext<'a> {
         let entry_point_kinds: *const [EntryPoint::Kind] =
             std::ptr::from_ref(self.graph.files.items_entry_point_kind());
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
-        let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
         let file_entry_bits: *mut [AutoBitSet] = self.graph.files.items_entry_bits_mut();
 
         // SAFETY: see block comment above — disjoint SoA columns, stable slabs
@@ -1031,7 +1030,6 @@ impl<'a> LinkerContext<'a> {
             css_reprs,
             parts,
             parts_live,
-            distances,
             file_entry_bits,
         ) = unsafe {
             (
@@ -1041,7 +1039,6 @@ impl<'a> LinkerContext<'a> {
                 &*css_reprs,
                 &mut *parts,
                 &mut *parts_live,
-                &mut *distances,
                 &mut *file_entry_bits,
             )
         };
@@ -1092,7 +1089,6 @@ impl<'a> LinkerContext<'a> {
             }
 
             let mut ctx = CodeSplitCtx {
-                distances,
                 file_entry_bits,
                 queue: std::collections::VecDeque::new(),
             };
@@ -1103,7 +1099,7 @@ impl<'a> LinkerContext<'a> {
             // first before determining which entry points can reach which files.
             for i in 0..entry_points_len {
                 let entry_point = entry_points[i];
-                self.mark_file_reachable_for_code_splitting(&mut ctx, entry_point, i, 0);
+                self.mark_file_reachable_for_code_splitting(&mut ctx, entry_point, i);
             }
         }
 
@@ -2872,9 +2868,8 @@ pub enum TreeShakeWork {
 }
 
 pub(crate) struct CodeSplitCtx<'r> {
-    pub(crate) distances: &'r mut [u32],
     pub(crate) file_entry_bits: &'r mut [AutoBitSet],
-    pub(crate) queue: std::collections::VecDeque<(crate::IndexInt, u32)>,
+    pub(crate) queue: std::collections::VecDeque<crate::IndexInt>,
 }
 
 impl<'a> LinkerContext<'a> {
@@ -2883,21 +2878,12 @@ impl<'a> LinkerContext<'a> {
         ctx: &mut CodeSplitCtx<'_>,
         source_index: crate::IndexInt,
         entry_points_count: usize,
-        distance: u32,
     ) {
-        // BFS over the import graph from one entry point. Every edge has unit
-        // weight, so FIFO order makes the first dequeue of a file carry its
-        // shortest distance from this entry point, and re-enqueued already-
-        // visited files can be skipped on their entry bit alone. That keeps
-        // the work at O(V+E). esbuild (and the earlier recursive port here)
-        // runs the same fixpoint as LIFO DFS with a `traverseAgain`
-        // relaxation, which reaches the same `distances` / entry bits but
-        // does O(V*E) work when shorter paths are discovered late on
-        // diamond-shaped DAGs.
+        // Every file that loading the entry point loads gets its bit. The order of visits does not matter.
         debug_assert!(ctx.queue.is_empty());
-        ctx.queue.push_back((source_index, distance));
+        ctx.queue.push_back(source_index);
 
-        while let Some((source_index, distance)) = ctx.queue.pop_front() {
+        while let Some(source_index) = ctx.queue.pop_front() {
             if !self.graph.files_live.is_set(source_index as usize) {
                 continue;
             }
@@ -2910,15 +2896,10 @@ impl<'a> LinkerContext<'a> {
             }
             bits.set(entry_points_count);
 
-            // Track the minimum distance to an entry point
-            if distance < ctx.distances[source_index as usize] {
-                ctx.distances[source_index as usize] = distance;
-            }
-            let out_dist = distance + 1;
             let (file_entry_bits, queue) = (&ctx.file_entry_bits, &mut ctx.queue);
             self.for_each_file_loaded_by(source_index, |other| {
                 if !file_entry_bits[other as usize].is_set(entry_points_count) {
-                    queue.push_back((other, out_dist));
+                    queue.push_back(other);
                 }
             });
         }

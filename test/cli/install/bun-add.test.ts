@@ -2999,3 +2999,114 @@ it("bun add --trust keeps the new package when another --trust package is alread
     },
   });
 });
+
+describe("deprecated latest dist-tag", () => {
+  const packageJSON = { name: "foo", version: "0.0.1" };
+
+  async function runAdd(args: string[]) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", ...args],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    return { out, err, exitCode };
+  }
+
+  it("fails when latest is a deprecated prerelease and no stable version exists", async () => {
+    const urls: string[] = [];
+    setHandler(
+      dummyRegistry(urls, {
+        "0.0.5-rc.123456789": { as: "0.0.5", deprecated: "bootstrap placeholder" },
+        latest: "0.0.5-rc.123456789",
+      }),
+    );
+    await writeFile(join(package_dir, "package.json"), JSON.stringify(packageJSON));
+
+    const { out, err, exitCode } = await runAdd(["baz"]);
+    expect(err).toContain('No version matching "latest" found for specifier "baz"');
+    expect(out).not.toContain("installed");
+    expect(exitCode).toBe(1);
+    expect(urls).toEqual([`${root_url}/baz`]);
+  });
+
+  it("falls back to the highest non-deprecated stable version when latest is deprecated", async () => {
+    const urls: string[] = [];
+    setHandler(
+      dummyRegistry(urls, {
+        "0.0.3": {},
+        "0.0.5": { deprecated: "broken release" },
+        latest: "0.0.5",
+      }),
+    );
+    await writeFile(join(package_dir, "package.json"), JSON.stringify(packageJSON));
+
+    const { out, err, exitCode } = await runAdd(["baz"]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed baz@0.0.3");
+    expect(exitCode).toBe(0);
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      ...packageJSON,
+      dependencies: { baz: "^0.0.3" },
+    });
+  });
+
+  it("falls back to a stable version when latest is a deprecated prerelease", async () => {
+    const urls: string[] = [];
+    setHandler(
+      dummyRegistry(urls, {
+        "0.0.3": {},
+        "0.0.5-rc.123456789": { as: "0.0.5", deprecated: "use the stable release" },
+        latest: "0.0.5-rc.123456789",
+      }),
+    );
+    await writeFile(join(package_dir, "package.json"), JSON.stringify(packageJSON));
+
+    const { out, err, exitCode } = await runAdd(["baz"]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed baz@0.0.3");
+    expect(exitCode).toBe(0);
+  });
+
+  it("still installs a prerelease latest that is not deprecated", async () => {
+    const urls: string[] = [];
+    setHandler(
+      dummyRegistry(urls, {
+        "0.0.3": {},
+        "0.0.5-rc.123456789": { as: "0.0.5" },
+        latest: "0.0.5-rc.123456789",
+      }),
+    );
+    await writeFile(join(package_dir, "package.json"), JSON.stringify(packageJSON));
+
+    const { out, err, exitCode } = await runAdd(["baz"]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed baz@0.0.5-rc.123456789");
+    expect(exitCode).toBe(0);
+  });
+
+  it("still follows an explicit dist-tag that points at a deprecated version", async () => {
+    const urls: string[] = [];
+    const registry = dummyRegistry(urls, {
+      "0.0.3": {},
+      "0.0.5-rc.123456789": { as: "0.0.5", deprecated: "bootstrap placeholder" },
+      latest: "0.0.5-rc.123456789",
+    });
+    setHandler(async request => {
+      const response = await registry(request);
+      if (request.url.endsWith(".tgz")) return response;
+      const manifest = await response.json();
+      manifest["dist-tags"].rc = "0.0.5-rc.123456789";
+      return Response.json(manifest);
+    });
+    await writeFile(join(package_dir, "package.json"), JSON.stringify(packageJSON));
+
+    const { out, err, exitCode } = await runAdd(["baz@rc"]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed baz@0.0.5-rc.123456789");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -830,6 +830,46 @@ describe("minimum-release-age", () => {
           });
         }
 
+        // TEST PACKAGE: deprecated-latest-package (`latest` tag -> deprecated
+        // prerelease; the only non-deprecated release is too recent; the older
+        // stable release is deprecated but old enough).
+        if (url.pathname === "/deprecated-latest-package") {
+          return Response.json({
+            name: "deprecated-latest-package",
+            "dist-tags": { latest: "2.0.0-rc.1" },
+            versions: {
+              "1.0.0": {
+                name: "deprecated-latest-package",
+                version: "1.0.0",
+                deprecated: "old broken release",
+                dist: {
+                  tarball: `${mockRegistryUrl}/deprecated-latest-package/-/deprecated-latest-package-1.0.0.tgz`,
+                },
+              },
+              "1.2.0": {
+                name: "deprecated-latest-package",
+                version: "1.2.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/deprecated-latest-package/-/deprecated-latest-package-1.2.0.tgz`,
+                },
+              },
+              "2.0.0-rc.1": {
+                name: "deprecated-latest-package",
+                version: "2.0.0-rc.1",
+                deprecated: "bootstrap placeholder",
+                dist: {
+                  tarball: `${mockRegistryUrl}/deprecated-latest-package/-/deprecated-latest-package-2.0.0-rc.1.tgz`,
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(30),
+              "1.2.0": daysAgo(0.04),
+              "2.0.0-rc.1": daysAgo(30),
+            },
+          });
+        }
+
         // Serve tarballs
         if (url.pathname.includes(".tgz")) {
           // Match both regular and scoped package tarballs
@@ -1240,6 +1280,36 @@ describe("minimum-release-age", () => {
       // Should NOT error with "No version matching"
       expect(stderr.toLowerCase()).not.toContain("no version matching");
       expect(stderr.toLowerCase()).not.toContain("blocked by minimum-release-age");
+    });
+  });
+
+  describe("deprecated latest tag", () => {
+    test("falls back to an older deprecated stable when newer releases are too recent", async () => {
+      using dir = tempDir("deprecated-latest-min-age", {
+        "package.json": JSON.stringify({
+          dependencies: { "deprecated-latest-package": "latest" },
+        }),
+        "bunfig.toml": Bun.TOML.stringify({
+          install: {
+            minimumReleaseAge: 2 * SECONDS_PER_DAY,
+            registry: mockRegistryUrl,
+          },
+        }),
+      });
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("deprecated-latest-package@1.0.0");
+      expect(exitCode).toBe(0);
     });
   });
 

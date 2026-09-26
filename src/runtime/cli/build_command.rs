@@ -156,6 +156,21 @@ impl BuildCommand {
         // included files with this change — sits in the graph unexecuted until
         // something (e.g. a computed `import()`) resolves its path at runtime.
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_include.is_empty() {
+            // Expansion appends non-HTML entries, which would silently turn the
+            // all-HTML `--target=browser` mode below into a plain compile.
+            if user_requested_browser_target
+                && !this_transpiler.options.entry_points.is_empty()
+                && this_transpiler
+                    .options
+                    .entry_points
+                    .iter()
+                    .all(|e| strings::has_suffix_comptime(e, b".html"))
+            {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> cannot use --compile --target browser with --include"
+                );
+                Global::exit(1);
+            }
             match expand_compile_includes(&ctx.bundler_options.compile_include) {
                 Ok(mut extra) => {
                     let existing = core::mem::take(&mut this_transpiler.options.entry_points);
@@ -1373,7 +1388,28 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
         }
 
         if has_glob_metachar(trimmed) {
-            let mut walker = match bun_sys::walker_skippable::walk(cwd, &[], GLOB_SKIP_DIRS) {
+            // Walk only the glob's literal leading directories (`./a/b/*.js` walks
+            // `a/b`, not the whole cwd); a leading `./` is not part of the match.
+            let pattern = trimmed.strip_prefix(b"./").unwrap_or(trimmed);
+            let mut prefix_len = 0usize;
+            let mut pos = 0usize;
+            for part in pattern.split(|&c| c == b'/') {
+                if has_glob_metachar(part) || pos + part.len() >= pattern.len() {
+                    break;
+                }
+                pos += part.len() + 1;
+                prefix_len = pos;
+            }
+            let prefix = &pattern[..prefix_len.saturating_sub(1)];
+            let walk_dir = match bun_sys::open_dir_for_iteration(
+                cwd,
+                if prefix.is_empty() { b"." } else { prefix },
+            ) {
+                Ok(d) => d,
+                Err(e) => return Err(fail(trimmed, e)),
+            };
+            let _close = scopeguard::guard(walk_dir, |fd| fd.close());
+            let mut walker = match bun_sys::walker_skippable::walk(walk_dir, &[], GLOB_SKIP_DIRS) {
                 Ok(w) => w,
                 Err(_) => bun_core::out_of_memory(),
             };
@@ -1406,8 +1442,17 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
                 #[cfg(not(windows))]
                 let rel: Vec<u8> = entry.path.as_bytes().to_vec();
 
-                if bun_glob::r#match(trimmed, &rel).matches() {
-                    out.push(rel.into_boxed_slice());
+                let full: Vec<u8> = if prefix.is_empty() {
+                    rel
+                } else {
+                    let mut f = Vec::with_capacity(prefix.len() + 1 + rel.len());
+                    f.extend_from_slice(prefix);
+                    f.push(b'/');
+                    f.extend_from_slice(&rel);
+                    f
+                };
+                if bun_glob::r#match(pattern, &full).matches() {
+                    out.push(full.into_boxed_slice());
                     matched += 1;
                 }
             }

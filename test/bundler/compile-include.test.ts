@@ -130,6 +130,43 @@ describe.concurrent("compile --include", () => {
   );
 
   test(
+    "a glob walks from its literal directory prefix and matches only files under it",
+    async () => {
+      using dir = tempDir("compile-include-glob-prefix", {
+        "index.ts": /* ts */ `
+          import { join } from "path";
+          const results: Record<string, string> = {};
+          for (const rel of ["a/b/x.js", "a/b/c/y.js", "a/z.js", "other/w.js"]) {
+            try {
+              results[rel] = (await import(join(import.meta.dirname, rel))).default;
+            } catch {
+              results[rel] = "missing";
+            }
+          }
+          console.log(JSON.stringify(results));
+        `,
+        "a/b/x.js": `export default "x";`,
+        "a/b/c/y.js": `export default "y";`,
+        "a/z.js": `export default "z";`,
+        "other/w.js": `export default "w";`,
+      });
+
+      // No leading "./" and a two-level literal prefix: only a/b/*.js matches.
+      await compile(String(dir), ["--include", "a/b/*.js"]);
+      const { stdout, stderr, code } = await run(String(dir));
+      expect(stderr.trim()).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({
+        "a/b/x.js": "x",
+        "a/b/c/y.js": "missing",
+        "a/z.js": "missing",
+        "other/w.js": "missing",
+      });
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
     "a computed import() of a file that was NOT --include'd still fails the same way it does today (negative control)",
     async () => {
       using dir = tempDir("compile-include-negative-control", {
@@ -167,13 +204,17 @@ describe.concurrent("compile --include", () => {
       using dir = tempDir("compile-include-bytecode", {
         "index.ts": /* ts */ `
           import { join } from "path";
-          const mod = await import(join(import.meta.dirname, "plugins", "target.js"));
-          console.log(JSON.stringify({ value: mod.default }));
+          // --bytecode emits CJS, which has no top-level await.
+          async function main() {
+            const mod = await import(join(import.meta.dirname, "plugins", "target.js"));
+            console.log(JSON.stringify({ value: mod.default }));
+          }
+          main();
         `,
         "plugins/target.js": `export default "included-value";`,
       });
 
-      await compile(String(dir), ["--include", "./plugins/target.js", "--bytecode"]);
+      await compile(String(dir), ["--include=./plugins/target.js", "--bytecode"]);
       const { stdout, stderr, code } = await run(String(dir));
       expect(stderr.trim()).toBe("");
       expect(code).toBe(0);

@@ -59,6 +59,7 @@ typedef int (*lazy_sqlite3_finalize_type)(sqlite3_stmt* pStmt);
 typedef void (*lazy_sqlite3_free_type)(void*);
 typedef int (*lazy_sqlite3_get_autocommit_type)(sqlite3*);
 typedef int (*lazy_sqlite3_total_changes_type)(sqlite3*);
+typedef sqlite3_int64 (*lazy_sqlite3_total_changes64_type)(sqlite3*);
 typedef int (*lazy_sqlite3_config_type)(int, ...);
 typedef int (*lazy_sqlite3_open_v2_type)(const char* filename, sqlite3** ppDb, int flags, const char* zVfs);
 typedef int (*lazy_sqlite3_prepare_v2_type)(sqlite3* db, const char* zSql, int nByte, sqlite3_stmt** ppStmt, const char** pzTail);
@@ -185,6 +186,7 @@ inline lazy_sqlite3_extended_errcode_type lazy_sqlite3_extended_errcode;
 inline lazy_sqlite3_error_offset_type lazy_sqlite3_error_offset;
 inline lazy_sqlite3_bind_parameter_name_type lazy_sqlite3_bind_parameter_name;
 inline lazy_sqlite3_total_changes_type lazy_sqlite3_total_changes;
+inline lazy_sqlite3_total_changes64_type lazy_sqlite3_total_changes64;
 inline lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
 inline lazy_sqlite3_exec_type lazy_sqlite3_exec;
 inline lazy_sqlite3_limit_type lazy_sqlite3_limit;
@@ -281,6 +283,7 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_error_offset lazy_sqlite3_error_offset
 #define sqlite3_bind_parameter_name lazy_sqlite3_bind_parameter_name
 #define sqlite3_total_changes lazy_sqlite3_total_changes
+#define sqlite3_total_changes64 lazy_sqlite3_total_changes64
 #define sqlite3_last_insert_rowid lazy_sqlite3_last_insert_rowid
 #define sqlite3_exec lazy_sqlite3_exec
 #define sqlite3_limit lazy_sqlite3_limit
@@ -433,6 +436,7 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
     lazy_sqlite3_error_offset = (lazy_sqlite3_error_offset_type)dlsym(sqlite3_handle, "sqlite3_error_offset");
     lazy_sqlite3_bind_parameter_name = (lazy_sqlite3_bind_parameter_name_type)dlsym(sqlite3_handle, "sqlite3_bind_parameter_name");
     lazy_sqlite3_total_changes = (lazy_sqlite3_total_changes_type)dlsym(sqlite3_handle, "sqlite3_total_changes");
+    lazy_sqlite3_total_changes64 = (lazy_sqlite3_total_changes64_type)dlsym(sqlite3_handle, "sqlite3_total_changes64");
     lazy_sqlite3_last_insert_rowid = (lazy_sqlite3_last_insert_rowid_type)dlsym(sqlite3_handle, "sqlite3_last_insert_rowid");
     lazy_sqlite3_exec = (lazy_sqlite3_exec_type)dlsym(sqlite3_handle, "sqlite3_exec");
     lazy_sqlite3_limit = (lazy_sqlite3_limit_type)dlsym(sqlite3_handle, "sqlite3_limit");
@@ -504,6 +508,12 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
     if (!lazy_sqlite3_changes64) {
         lazy_sqlite3_changes64 = [](sqlite3* db) -> sqlite3_int64 {
             return static_cast<sqlite3_int64>(lazy_sqlite3_changes(db));
+        };
+    }
+    // sqlite3_total_changes64 is also 3.37.0+.
+    if (!lazy_sqlite3_total_changes64) {
+        lazy_sqlite3_total_changes64 = [](sqlite3* db) -> sqlite3_int64 {
+            return static_cast<sqlite3_int64>(lazy_sqlite3_total_changes(db));
         };
     }
 

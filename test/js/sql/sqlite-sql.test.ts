@@ -2727,6 +2727,27 @@ describe("Triggers and Views", () => {
     const alerts2 = await sql`SELECT * FROM reorder_alerts`;
     expect(alerts2).toHaveLength(1);
   });
+
+  test("count is the rows that the statement changes itself, not the rows that a trigger or FTS5 writes", async () => {
+    await sql`CREATE TABLE t (a)`;
+    await sql`CREATE TABLE log (x)`;
+    await sql`CREATE TRIGGER tr AFTER INSERT ON t BEGIN
+      INSERT INTO log VALUES (new.a);
+      INSERT INTO log VALUES (-new.a);
+    END`;
+    await sql`CREATE VIRTUAL TABLE ft USING fts5(a, b)`;
+
+    const inserted = await sql`INSERT INTO t VALUES (1), (2)`;
+    const indexed = await sql`INSERT INTO ft VALUES ('alpha beta', 'gamma')`;
+    // The COMMIT makes FTS5 write its pending rows. Those writes are not rows of the COMMIT.
+    const inTransaction = await sql.unsafe("BEGIN; INSERT INTO ft VALUES ('delta', 'epsilon'); COMMIT;");
+    expect({ inserted: inserted.count, indexed: indexed.count, inTransaction: inTransaction.count }).toEqual({
+      inserted: 2,
+      indexed: 1,
+      inTransaction: 1,
+    });
+    expect(await sql`SELECT x FROM log ORDER BY rowid`.values()).toEqual([[1], [-1], [2], [-2]]);
+  });
 });
 
 describe("Indexes and Query Optimization", () => {

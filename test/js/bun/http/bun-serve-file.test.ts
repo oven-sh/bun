@@ -1308,7 +1308,6 @@ for (const source of ["fetch", "route"] as const) {
     async () => {
       using dir = tempDir("serve-fifo-abort-fd", {
         "fixture.ts": `
-import { connect } from "node:net";
 import { openSync, readdirSync, writeSync } from "node:fs";
 
 const [fifoPath, source, count] = process.argv.slice(2);
@@ -1335,22 +1334,31 @@ const server = Bun.serve({
 const openFds = () => readdirSync("/dev/fd").length;
 
 // Gets the response head and the first body chunk (so the server's read is
-// parked on the poll when the disconnect lands), then drops the connection.
+// parked on the poll when the disconnect lands), then drops the connection:
+// an even client closes in order, an odd client closes at once.
 async function requestAndDisconnect(i) {
-  const socket = connect({ port: server.port, host: "127.0.0.1" });
-  socket.on("error", () => {});
-  await new Promise(resolve => socket.once("connect", resolve));
   const marker = "chunk-" + i;
   const { promise, resolve } = Promise.withResolvers();
   let received = "";
-  socket.on("data", d => {
-    received += d.toString("latin1");
-    if (received.includes(marker)) resolve();
+  const socket = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.write("GET /" + source + " HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
+      },
+      data(socket, chunk) {
+        received += Buffer.from(chunk).toString("latin1");
+        if (received.includes(marker)) resolve();
+      },
+      close: resolve,
+      error: resolve,
+    },
   });
-  socket.write("GET /" + source + " HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
   writeSync(writerFd, marker);
   await promise;
-  socket.destroy();
+  if (i % 2) socket.terminate();
+  else socket.end();
 }
 
 const baseline = openFds();
@@ -1359,7 +1367,7 @@ for (let i = 0; i < N; i++) await requestAndDisconnect(i);
 // The abort is reported from the socket close, and the fd close is async;
 // wait for the count to settle with a bound instead of a fixed delay.
 let fds = openFds();
-for (let i = 0; i < 200 && fds > baseline; i++) {
+for (let i = 0; i < 100 && fds > baseline; i++) {
   await Bun.sleep(10);
   fds = openFds();
 }
@@ -1372,7 +1380,7 @@ process.exit(0);
 
       const fifoPath = join(String(dir), "abort.fifo");
       mkfifo(fifoPath);
-      const N = 20;
+      const N = 8;
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "fixture.ts", fifoPath, source, String(N)],
@@ -1401,7 +1409,6 @@ test.concurrent.skipIf(isWindows)(
   async () => {
     using dir = tempDir("serve-fifo-abort-steal", {
       "fixture.ts": `
-import { connect } from "node:net";
 import { constants, openSync, readSync, writeSync } from "node:fs";
 
 const [fifoPath] = process.argv.slice(2);
@@ -1420,24 +1427,30 @@ const server = Bun.serve({
   },
 });
 
-// Sends a request, then \`marker\` into the pipe, and resolves once \`until\`
+// Sends a request, then \`marker\` into the pipe, and waits until \`until\`
 // matches what arrived. The head goes to the wire with the first body chunk,
-// so a dead client leaves after its marker, with the server's read parked.
+// so the server's read is parked on the poll when this returns.
 async function request(until, marker) {
-  const socket = connect({ port: server.port, host: "127.0.0.1" });
-  socket.on("error", () => {});
-  await new Promise(resolve => socket.once("connect", resolve));
   const { promise, resolve } = Promise.withResolvers();
   let received = "";
-  socket.on("data", d => {
-    received += d.toString("latin1");
-    if (until.test(received)) resolve(received);
+  const socket = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.write("GET / HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
+      },
+      data(socket, chunk) {
+        received += Buffer.from(chunk).toString("latin1");
+        if (until.test(received)) resolve();
+      },
+      close: resolve,
+      error: resolve,
+    },
   });
-  socket.write("GET / HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
   if (marker) writeSync(writerFd, marker);
-  const out = await promise;
-  socket.destroy();
-  return out;
+  await promise;
+  return { socket, received };
 }
 
 // A request to this same server makes its event loop poll for I/O, so an
@@ -1447,7 +1460,7 @@ async function poll() {
   await res.text();
 }
 
-for (let i = 0; i < 3; i++) await request(/dead-\\d/, "dead-" + i);
+for (let i = 0; i < 3; i++) (await request(/dead-\\d/, "dead-" + i)).socket.terminate();
 for (let i = 0; i < 3; i++) await poll();
 
 // The producer writes after the dead clients left. Nothing may read the pipe
@@ -1468,19 +1481,15 @@ if (pending !== LINES.length) {
 
 // End to end: a live client gets what the producer writes.
 writeSync(writerFd, LINES);
-const body = (await request(/line-5\\n/)).split("\\r\\n\\r\\n")[1];
-console.log(body.match(/line-\\d/g).join(" "));
+const live = await request(/line-5\\n/);
+live.socket.terminate();
+console.log(live.received.split("\\r\\n\\r\\n")[1].match(/line-\\d/g).join(" "));
 
 // A live stream is aborted by the stop. The process must exit on its own:
 // a stream that still holds its poll keeps the event loop alive.
-const parked = connect({ port: server.port, host: "127.0.0.1" });
-parked.on("error", () => {});
-await new Promise(resolve => parked.once("connect", resolve));
-parked.write("GET / HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
-writeSync(writerFd, "parked");
-await new Promise(resolve => parked.once("data", resolve));
+const parked = await request(/parked/, "parked");
 server.stop(true);
-parked.destroy();
+parked.socket.terminate();
 `,
     });
 

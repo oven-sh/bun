@@ -802,6 +802,20 @@ pub mod posix_spawn {
         }
     }
 
+    /// Ends and reaps a child that nothing watches and nothing will: the spawn that made it
+    /// fails after `posix_spawn` returned. SIGKILL comes first because a child that waits
+    /// on a pipe this process holds would block the reap forever.
+    #[cfg(unix)]
+    pub fn kill_and_reap(pid: pid_t) -> sys::Result<WaitPidResult> {
+        // SAFETY: `pid` is a child of this process that has not been reaped, so the number
+        // still names that child.
+        match errno(unsafe { system::kill(pid, system::SIGKILL) }) {
+            Errno::SUCCESS => wait4(pid, 0, None),
+            // Do not wait for a child that got no signal.
+            e => sys::Result::Err(sys::Error::from_code_int(e.0, sys::Tag::kill)),
+        }
+    }
+
     // Higher-tier re-exports (`Process`/`Status`/`spawn_process`/`sync`/
     // `Windows*`) live in `bun_spawn::posix_spawn::bun_spawn`, which augments
     // this module — they need event-loop types this `-sys` crate cannot name.

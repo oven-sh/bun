@@ -126,6 +126,19 @@ static int should_fail(long op, int fd, struct epoll_event *event) {
   return op == failing_op && (event->events & EPOLLIN) && ioctl(fd, TIOCGPTN, &pty_number) == 0;
 }
 
+// FAIL_KILL=1: this process may not send SIGKILL (EPERM), as under an LSM policy.
+#include <signal.h>
+static int (*real_kill)(pid_t, int);
+
+int kill(pid_t pid, int sig) {
+  if (sig == SIGKILL && getenv("FAIL_KILL")) {
+    errno = EPERM;
+    return -1;
+  }
+  if (!real_kill) real_kill = (int (*)(pid_t, int))dlsym(RTLD_NEXT, "kill");
+  return real_kill(pid, sig);
+}
+
 long syscall(long number, ...) {
   va_list ap;
   va_start(ap, number);
@@ -143,13 +156,15 @@ long syscall(long number, ...) {
 
 // The argument selects what to construct; the report is the error it threw
 // plus how many fds and Subprocess/Terminal wrappers outlive it, relative to a
-// baseline taken just before. Both classes create their prototype (which
-// heapStats counts under the class name) lazily, so the baseline is taken
-// after materializing it. Releases that happen asynchronously (the child's
-// pidfd once its exit is reaped, a wrapper that becomes collectable only then)
-// get a bounded window; whatever is still there when it lapses is reported.
+// baseline taken just before, and every child process it still has. Both
+// classes create their prototype (which heapStats counts under the class name)
+// lazily, so the baseline is taken after materializing it. Releases that happen
+// asynchronously (the child's pidfd once its exit is reaped, a wrapper that
+// becomes collectable only then) get a bounded window; whatever is still there
+// when it lapses is reported.
 const FIXTURE = /* js */ `
-import { readdirSync } from "node:fs";
+import { spawn as spawnChildProcess } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
 import { heapStats } from "bun:jsc";
 const kind = process.argv[2];
 const openFds = () => readdirSync("/proc/self/fd").length;
@@ -157,6 +172,22 @@ const wrappers = () => {
   const counts = heapStats().objectTypeCounts;
   return (counts.Subprocess ?? 0) + (counts.Terminal ?? 0);
 };
+// /proc/<pid>/stat is "pid (name) state ppid ...". State Z is a child that
+// exited and was never reaped; any other state is a child that still runs.
+const children = () =>
+  readdirSync("/proc").flatMap(pid => {
+    if (!/^[0-9]+$/.test(pid)) return [];
+    let stat;
+    try {
+      stat = readFileSync("/proc/" + pid + "/stat", "utf8");
+    } catch {
+      return [];
+    }
+    const nameEnd = stat.lastIndexOf(")");
+    const [state, ppid] = stat.slice(nameEnd + 2).split(" ");
+    if (Number(ppid) !== process.pid) return [];
+    return [{ pid: Number(pid), is: stat.slice(stat.indexOf("(") + 1, nameEnd) + ":" + state }];
+  });
 
 // Parked on globalThis so the baseline keeps counting it: a local that is never
 // read again is not kept alive across the awaits below.
@@ -189,6 +220,13 @@ try {
     case "stdin-pipe":
       Bun.spawn({ cmd: ["true"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
       break;
+    case "stdin-pipe-running":
+      Bun.spawn({ cmd: ["sleep", "100"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+      break;
+    case "child-process":
+      // The default stdio is a pipe for stdin, stdout and stderr.
+      spawnChildProcess("sleep", ["100"]);
+      break;
     case "stdin-buffer":
       Bun.spawn({ cmd: ["true"], stdin: Buffer.from("data"), stdout: "ignore", stderr: "ignore" });
       break;
@@ -208,12 +246,20 @@ try {
 } catch (e) {
   error = { code: e.code, message: e.message };
 }
+// With FAIL_KILL the child cannot be ended, so it is reported, not waited for.
+const childrenLeft = () => !process.env.FAIL_KILL && children().length > 0;
 const deadline = performance.now() + 2000;
-while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.now() < deadline) {
+while ((openFds() > fdBaseline || wrappers() > wrapperBaseline || childrenLeft()) && performance.now() < deadline) {
   Bun.gc(true);
   await Bun.sleep(5);
 }
-console.log(JSON.stringify({ error, write, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
+const left = children();
+console.log(JSON.stringify({ error, write, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline, children: left.map(child => child.is) }));
+for (const child of left) {
+  try {
+    process.kill(child.pid, "SIGTERM");
+  } catch {}
+}
 `;
 
 let dir: ReturnType<typeof tempDir> | undefined;
@@ -254,11 +300,37 @@ async function runFixture(kind: string, env: Record<string, string> = {}) {
 describe.skipIf(!isLinux || !cc)(
   "a pipe writer whose event loop registration fails leaves its fd to the caller",
   () => {
-    test.concurrent("Bun.spawn with stdin: 'pipe' closes the stdin pipe exactly once", async () => {
-      expect(await runFixture("stdin-pipe")).toEqual({
-        // The spawn bindings report a failed stdin setup generically, so only
-        // the fact that it threw is pinned down here.
-        report: { error: { message: expect.any(String) }, leakedFds: 0, leakedWrappers: 0 },
+    // The child exists by the time its stdin writer fails to register. The
+    // spawn throws, so nothing can ever kill or reap that child later: it has
+    // to be gone, and reaped, when the throw arrives. "true" would be left as
+    // a zombie, "sleep" as a running orphan.
+    test.concurrent.each([
+      ["Bun.spawn with stdin: 'pipe' closes the stdin pipe exactly once and reaps a child that exited", "stdin-pipe"],
+      ["Bun.spawn with stdin: 'pipe' kills and reaps a child that is still running", "stdin-pipe-running"],
+      ["node:child_process spawn() throws the error and leaves no child", "child-process"],
+    ])("%s", async (_, kind) => {
+      expect(await runFixture(kind)).toEqual({
+        report: {
+          error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          leakedFds: 0,
+          leakedWrappers: 0,
+          children: [],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The reap blocks, so it must not start for a child that got no SIGKILL:
+    // it would last for as long as that child runs.
+    test.concurrent("Bun.spawn with stdin: 'pipe' does not wait for a child it cannot kill", async () => {
+      expect(await runFixture("stdin-pipe-running", { FAIL_KILL: "1" })).toEqual({
+        report: {
+          error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
+          leakedFds: 0,
+          leakedWrappers: 0,
+          children: ["sleep:S"],
+        },
         stderr: "",
         exitCode: 0,
       });
@@ -275,6 +347,7 @@ describe.skipIf(!isLinux || !cc)(
             error: { code: "ENOSPC", message: "ENOSPC: no space left on device, epoll_ctl" },
             leakedFds: 0,
             leakedWrappers: 0,
+            children: [],
           },
           stderr: "",
           exitCode: 0,
@@ -284,7 +357,12 @@ describe.skipIf(!isLinux || !cc)(
 
     test.concurrent("new Bun.Terminal() closes the pty fds exactly once", async () => {
       expect(await runFixture("terminal")).toEqual({
-        report: { error: { message: "Failed to start terminal writer" }, leakedFds: 0, leakedWrappers: 0 },
+        report: {
+          error: { message: "Failed to start terminal writer" },
+          leakedFds: 0,
+          leakedWrappers: 0,
+          children: [],
+        },
         stderr: "",
         exitCode: 0,
       });
@@ -306,7 +384,12 @@ describe.skipIf(!isLinux || !cc)("a Bun.Terminal whose reader fails to register 
       ["Bun.spawn() with terminal options", "spawn-terminal"],
     ])("%s throws and releases the pty", async (_, kind) => {
       expect(await runFixture(kind, { FAIL_EPOLL_CTL: mode })).toEqual({
-        report: { error: { message: "Failed to start terminal reader" }, leakedFds: 0, leakedWrappers: 0 },
+        report: {
+          error: { message: "Failed to start terminal reader" },
+          leakedFds: 0,
+          leakedWrappers: 0,
+          children: [],
+        },
         stderr: "",
         exitCode: 0,
       });
@@ -327,7 +410,7 @@ describe.skipIf(!isLinux || !cc)("a Bun.Terminal whose writer fails to re-arm it
     ["a write behind queued bytes", "terminal-write-twice", "1"],
   ])("%s releases the terminal", async (_, kind, skip) => {
     expect(await runFixture(kind, { FAIL_EPOLL_CTL: "pty-writer-mod", FAIL_EPOLL_CTL_SKIP: skip })).toEqual({
-      report: { error: null, write: { closed: true, drains: 0 }, leakedFds: 0, leakedWrappers: 0 },
+      report: { error: null, write: { closed: true, drains: 0 }, leakedFds: 0, leakedWrappers: 0, children: [] },
       stderr: "",
       exitCode: 0,
     });

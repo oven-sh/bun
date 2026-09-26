@@ -116,8 +116,6 @@ pub enum Error {
     CouldntReadCurrentDirectory,
     #[error("FailedToGetTempPath")]
     FailedToGetTempPath,
-    #[error("UnexpectedCreatingStdin")]
-    UnexpectedCreatingStdin,
     #[error("UnableToEncode")]
     UnableToEncode,
     #[error("InvalidHeaderName")]
@@ -405,7 +403,6 @@ impl Error {
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
-            Self::UnexpectedCreatingStdin => "UnexpectedCreatingStdin",
             Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",

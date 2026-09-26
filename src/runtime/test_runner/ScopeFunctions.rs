@@ -143,10 +143,10 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     // `create_unbound`, and the body re-enters JS (get_length / array_iterator /
     // bind / enqueue) which can form fresh `&ScopeFunctions` to the same object.
     let this: &ScopeFunctions = unsafe { &*this_ptr.cast_const() };
-    let line_no = jest::capture_test_line_number(frame, global);
 
     let buntest_strong = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;
     let bun_test_ptr = buntest_strong.get();
+    let line_no = jest::capture_test_line_number(frame, global, bun_test_ptr.file_id);
 
     let callback_mode: CallbackMode = match this.cfg.self_mode {
         SelfMode::Skip | SelfMode::Todo => CallbackMode::Allow,

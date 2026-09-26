@@ -124,6 +124,8 @@ bun test --shard=3/3   # machine 3
 
 Every machine sorts the discovered test files by path and takes a deterministic slice, so together the shards cover each file exactly once with no coordination. Without `--timings`, file `i` of the sorted list goes to shard `(i mod n) + 1` — balanced by file count, not by how long files take.
 
+`--shard` composes with [`--changed`](/test/index#run-only-affected-tests-with---changed). Bun applies the changed-files filter first, then sorts and slices what remains. Give every shard the same commit sha in `--changed=<ref>` so that each one filters the same set of files.
+
 ### Balancing with `--timings`
 
 File count is a poor proxy for duration: one shard can end up with all the slow integration tests. Give `bun test` a record of how long each file takes and it cuts shards by total time instead, keeping neighbouring files (which share imports) together:

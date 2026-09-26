@@ -933,6 +933,29 @@ const html = await Bun.file(path.join(publicDir, "index.html")).text();
 
 Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Bun embeds only regular files; it skips symlinks and empty subdirectories inside the tree.
 
+### Embed lazily loaded modules
+
+`--asset` embeds raw bytes: an embedded file is read with `fs`/`Bun.file()`, never executed as code. Use `--include <path|glob>` (CLI only for now) when you instead want a file embedded as a **module** — transpiled the same way any statically-imported file is, optionally compiled to bytecode with `--bytecode` — that a *computed* `import()` or `require()` can still resolve at runtime, even though the bundler cannot see the specifier at build time.
+
+This matters for plugin-style code, where the module to load is only known by name at runtime:
+
+```ts index.ts icon="/icons/typescript.svg"
+import { join } from "node:path";
+
+const pluginName = process.argv[2]; // not knowable at build time
+const plugin = await import(join(import.meta.dirname, "plugins", `${pluginName}.js`));
+```
+
+```bash terminal icon="terminal"
+bun build --compile ./index.ts --include ./plugins --outfile myapp
+```
+
+An `--include`d file is embedded under its path relative to the current directory, preserved exactly (unlike `--asset`, which roots a directory's tree at its own basename) — so a computed `import()`/`require()` built from `import.meta.dirname` or a relative path finds it. A directory argument is included recursively; a glob (any argument containing `*`, `?`, `[`, or `{`) is matched against every file under the current directory (`node_modules` and `.git` are always skipped). Pass `--include` multiple times, mixing files, directories, and globs freely.
+
+An included file is **not** executed when the executable starts — only when something actually imports it, the same way any other module reachable exclusively through a dynamic `import()` behaves. If nothing ever imports it at runtime, its top-level code never runs.
+
+`--include` and `--asset` require `--compile` and are independent of each other: use `--asset` for data files you read, `--include` for code you conditionally load.
+
 You can also embed individual files via the `with { type: "file" }` import attribute or, for files that use the `file` loader (images, fonts, and so on) as well as `.wasm` and `.node` files, by adding them as extra entry points. Bun renames imported assets according to `--asset-naming` (default `[name]-[hash].[ext]`):
 
 ```ts

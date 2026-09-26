@@ -240,6 +240,11 @@ pub struct BundlerOptions {
     /// `--compile-jit-policy`: JSC tier-up threshold scale baked into the executable (1 = normal).
     pub compile_jit_policy: f32,
     pub compile_assets: Vec<Box<[u8]>>,
+    /// `--include <path|glob>`: raw, unexpanded arguments. Expanded into extra
+    /// bundler entry points (directory recursion / glob matching happens against
+    /// the real filesystem, so it can't happen here in the pure CLI-parsing layer)
+    /// by `build_command::expand_compile_includes`.
+    pub compile_include: Vec<Box<[u8]>>,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }
@@ -299,6 +304,7 @@ impl Default for BundlerOptions {
             compile_executable_path: None,
             compile_jit_policy: 1.0,
             compile_assets: Vec::new(),
+            compile_include: Vec::new(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
         }

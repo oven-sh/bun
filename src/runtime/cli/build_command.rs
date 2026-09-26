@@ -140,6 +140,36 @@ impl BuildCommand {
             this_transpiler.options.ignore_module_resolution_errors = true;
         }
 
+        // `--include`: expand path/dir/glob arguments against the real filesystem
+        // and append the results to `entry_points`, *before* `first_entry_point`
+        // (below) is captured, so an included file can never become entry 0 (the
+        // module the executable runs at startup) and so root-dir / naming
+        // computed later from `entry_points` already accounts for them. This
+        // reuses the existing multiple-entry-point machinery end to end: each
+        // included file gets a normal `OutputKind::EntryPoint` chunk (parsed,
+        // resolved, bundled, optionally bytecode-compiled) that the standalone
+        // graph writer embeds under `$bunfs` with its path preserved — see
+        // `StandaloneModuleGraph::compile`, which picks exactly one file (the
+        // first `EntryPoint`-kind output) as `entry_point_id`, the module that
+        // actually runs when the executable starts. Every other embedded
+        // `EntryPoint`/`Chunk` output — additional user-specified entries today,
+        // included files with this change — sits in the graph unexecuted until
+        // something (e.g. a computed `import()`) resolves its path at runtime.
+        if ctx.bundler_options.compile && !ctx.bundler_options.compile_include.is_empty() {
+            match expand_compile_includes(&ctx.bundler_options.compile_include) {
+                Ok(mut extra) => {
+                    let existing = core::mem::take(&mut this_transpiler.options.entry_points);
+                    let mut entry_points: Vec<Box<[u8]>> = Vec::from(existing);
+                    entry_points.append(&mut extra);
+                    this_transpiler.options.entry_points = entry_points.into_boxed_slice();
+                }
+                Err(msg) => {
+                    bun_core::pretty_errorln!("<r><red>error<r><d>:<r> {}", msg);
+                    Global::exit(1);
+                }
+            }
+        }
+
         // Note: clone the first entry point so `outfile` can borrow owned
         // storage instead of `this_transpiler.options.entry_points[0]`, which
         // would otherwise hold an immutable borrow of `this_transpiler` across
@@ -295,6 +325,12 @@ impl BuildCommand {
                 if !ctx.bundler_options.compile_assets.is_empty() {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> cannot use --compile --target browser with --asset"
+                    );
+                    Global::exit(1);
+                }
+                if !ctx.bundler_options.compile_include.is_empty() {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> cannot use --compile --target browser with --include"
                     );
                     Global::exit(1);
                 }
@@ -1280,6 +1316,189 @@ fn print_summary(
     );
     Output::print_elapsed_stdout_trim(bundle_elapsed as f64);
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
+}
+
+/// `--include <path|glob>`: expand each raw argument into concrete file paths
+/// against the real filesystem (a directory expands recursively; an argument
+/// containing a glob metacharacter — `*`, `?`, `[`, `{` — is matched with
+/// `bun_glob` against every file under the cwd, same matcher `test_command.rs`
+/// and `pm_diff_command.rs` already use for CLI-supplied patterns; anything
+/// else is a literal path). The result is meant to be appended to the
+/// bundler's `entry_points`, *not* collected the way `collect_compile_assets`
+/// collects `--asset`: an include is a module (parsed, resolved, bundled,
+/// optionally bytecode-compiled — everything an entry point already gets),
+/// not raw bytes, and unlike an asset's dest path (which is rooted at the
+/// asset argument's own basename, discarding any parent directories) an
+/// include's path is preserved in full relative to the cwd, because that is
+/// what makes a computed `import(join(import.meta.dirname, "…"))` elsewhere
+/// in the included file's own directory tree resolve correctly.
+pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<[u8]>>, String> {
+    use bun_sys::EntryKind;
+
+    #[cfg(not(windows))]
+    const GLOB_SKIP_DIRS: &[&bun_paths::OSPathSlice] = &[b"node_modules", b".git"];
+    #[cfg(windows)]
+    const GLOB_SKIP_DIRS: &[&bun_paths::OSPathSlice] =
+        &[bun_core::w!("node_modules"), bun_core::w!(".git")];
+
+    fn has_glob_metachar(p: &[u8]) -> bool {
+        p.iter()
+            .any(|&b| matches!(b, b'*' | b'?' | b'[' | b'{'))
+    }
+
+    fn trim_trailing_slashes(p: &[u8]) -> &[u8] {
+        let mut a = p;
+        while matches!(a.last(), Some(b'/') | Some(b'\\')) {
+            a = &a[..a.len() - 1];
+        }
+        a
+    }
+
+    let fail = |path: &[u8], err: bun_sys::Error| -> String {
+        format!(
+            "failed to read --include path {}: {}",
+            bun_fmt::quote(path),
+            err.with_path(path),
+        )
+    };
+
+    let cwd = Fd::cwd();
+    let mut out: Vec<Box<[u8]>> = Vec::new();
+    let mut zbuf = bun_paths::path_buffer_pool::get();
+
+    for include in includes {
+        let trimmed = trim_trailing_slashes(include);
+        if trimmed.is_empty() {
+            return Err("--include argument must not be empty".to_string());
+        }
+
+        if has_glob_metachar(trimmed) {
+            let mut walker = match bun_sys::walker_skippable::walk(cwd, &[], GLOB_SKIP_DIRS) {
+                Ok(w) => w,
+                Err(_) => bun_core::out_of_memory(),
+            };
+            walker.resolve_unknown_entry_types = true;
+            let mut matched = 0usize;
+            loop {
+                let entry = match walker.next() {
+                    Ok(Some(e)) => e,
+                    Ok(None) => break,
+                    Err(e) => return Err(fail(trimmed, e)),
+                };
+                if entry.kind != EntryKind::File {
+                    continue;
+                }
+                #[cfg(windows)]
+                let rel: Vec<u8> = {
+                    let mut rel_buf = bun_paths::path_buffer_pool::get();
+                    let rel_z = bun_paths::string_paths::from_w_path(
+                        &mut rel_buf[..],
+                        entry.path.as_slice(),
+                    );
+                    let mut rel = rel_z.as_bytes().to_vec();
+                    for b in rel.iter_mut() {
+                        if *b == b'\\' {
+                            *b = b'/';
+                        }
+                    }
+                    rel
+                };
+                #[cfg(not(windows))]
+                let rel: Vec<u8> = entry.path.as_bytes().to_vec();
+
+                if bun_glob::r#match(trimmed, &rel).matches() {
+                    out.push(rel.into_boxed_slice());
+                    matched += 1;
+                }
+            }
+            if matched == 0 {
+                return Err(format!(
+                    "--include glob {} matched no files",
+                    bun_fmt::quote(trimmed),
+                ));
+            }
+            continue;
+        }
+
+        if trimmed.len() >= zbuf.len() {
+            return Err(fail(
+                trimmed,
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open),
+            ));
+        }
+        let n = trimmed.len();
+        zbuf[..n].copy_from_slice(trimmed);
+        zbuf[n] = 0;
+        let trimmed_z = bun_core::ZStr::from_buf(&zbuf[..], n);
+
+        let st = match bun_sys::stat(trimmed_z) {
+            Ok(st) => st,
+            Err(e) => return Err(fail(trimmed, e)),
+        };
+
+        if bun_core::S::ISDIR(st.st_mode as _) {
+            let dir = match bun_sys::open_dir_for_iteration(cwd, trimmed) {
+                Ok(d) => d,
+                Err(e) => return Err(fail(trimmed, e)),
+            };
+            let _close = scopeguard::guard(dir, |fd| fd.close());
+            let mut walker = match bun_sys::walker_skippable::walk(dir, &[], &[]) {
+                Ok(w) => w,
+                Err(_) => bun_core::out_of_memory(),
+            };
+            walker.resolve_unknown_entry_types = true;
+            let mut any = false;
+            loop {
+                let entry = match walker.next() {
+                    Ok(Some(e)) => e,
+                    Ok(None) => break,
+                    Err(e) => return Err(fail(trimmed, e)),
+                };
+                if entry.kind != EntryKind::File {
+                    continue;
+                }
+                #[cfg(windows)]
+                let rel: Vec<u8> = {
+                    let mut rel_buf = bun_paths::path_buffer_pool::get();
+                    let rel_z = bun_paths::string_paths::from_w_path(
+                        &mut rel_buf[..],
+                        entry.path.as_slice(),
+                    );
+                    let mut rel = rel_z.as_bytes().to_vec();
+                    for b in rel.iter_mut() {
+                        if *b == b'\\' {
+                            *b = b'/';
+                        }
+                    }
+                    rel
+                };
+                #[cfg(not(windows))]
+                let rel: Vec<u8> = entry.path.as_bytes().to_vec();
+
+                let mut dest = Vec::with_capacity(trimmed.len() + 1 + rel.len());
+                dest.extend_from_slice(trimmed);
+                dest.push(b'/');
+                dest.extend_from_slice(&rel);
+                out.push(dest.into_boxed_slice());
+                any = true;
+            }
+            if !any {
+                return Err(format!(
+                    "--include directory {} contains no files",
+                    bun_fmt::quote(trimmed),
+                ));
+            }
+        } else if bun_core::S::ISREG(st.st_mode as _) {
+            out.push(trimmed.to_vec().into_boxed_slice());
+        } else {
+            return Err(format!(
+                "--include {} is not a regular file, directory, or glob",
+                bun_fmt::quote(trimmed),
+            ));
+        }
+    }
+
+    Ok(out)
 }
 
 pub(crate) fn collect_compile_assets(

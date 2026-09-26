@@ -368,6 +368,209 @@ describe("Histogram", () => {
       assert.strictEqual(h.count, 0);
     });
 
+    test("createHistogram rejects a number option that is not an integer", () => {
+      for (const name of ["lowest", "highest", "figures"]) {
+        // 2.5 is inside the range of every option, so only the integer check can reject it.
+        for (const value of [2.5, NaN, Infinity, -Infinity]) {
+          assert.throws(() => createHistogram({ [name]: value }), {
+            name: "RangeError",
+            code: "ERR_OUT_OF_RANGE",
+            message: `The value of "options.${name}" is out of range. It must be an integer. Received ${value}`,
+          });
+        }
+      }
+      assert.throws(() => createHistogram({ lowest: 2, highest: 4.5 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.highest" is out of range. It must be an integer. Received 4.5',
+      });
+    });
+
+    test("createHistogram range of lowest and highest", () => {
+      createHistogram({ lowest: 1, highest: 2 });
+      createHistogram({ lowest: 2, highest: 4 });
+      createHistogram({ highest: Number.MAX_SAFE_INTEGER });
+
+      assert.throws(() => createHistogram({ lowest: 2 ** 53 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message:
+          'The value of "options.lowest" is out of range. It must be >= 1 && <= 9007199254740991. Received 9_007_199_254_740_992',
+      });
+      assert.throws(() => createHistogram({ highest: 2 ** 53 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message:
+          'The value of "options.highest" is out of range. It must be >= 2 && <= 9007199254740991. Received 9_007_199_254_740_992',
+      });
+      assert.throws(() => createHistogram({ lowest: 2, highest: 3 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.highest" is out of range. It must be >= 4 && <= 9007199254740991. Received 3',
+      });
+
+      // 2 * lowest is above Number.MAX_SAFE_INTEGER, so no number is a valid highest.
+      assert.throws(() => createHistogram({ lowest: 2 ** 52, highest: 2 ** 53, figures: 1 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message:
+          'The value of "options.highest" is out of range. It must be >= 9007199254740992 && <= 9007199254740991. Received 9_007_199_254_740_992',
+      });
+      assert.throws(() => createHistogram({ lowest: 2 ** 53 - 1 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message:
+          'The value of "options.highest" is out of range. It must be >= 18014398509481982 && <= 9007199254740991. Received 9_007_199_254_740_991',
+      });
+    });
+
+    // Node v26.3.0 aborts when hdr_init() rejects the options. Node v26.9.0 throws this error.
+    test("createHistogram with options that HdrHistogram rejects", { skip: !process.versions.bun }, () => {
+      for (const options of [
+        { lowest: 2 ** 51, highest: 2 ** 53 - 1, figures: 5 },
+        { lowest: 2n ** 60n, highest: 2n ** 63n - 1n, figures: 3 },
+      ]) {
+        assert.throws(() => createHistogram(options), {
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "Invalid histogram options",
+        });
+      }
+    });
+
+    test("createHistogram validates lowest, then highest, then figures", () => {
+      assert.throws(() => createHistogram({ lowest: 0, highest: 1.5, figures: 9 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.lowest" is out of range. It must be >= 1 && <= 9007199254740991. Received 0',
+      });
+      assert.throws(() => createHistogram({ highest: 1.5, figures: 9 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.highest" is out of range. It must be an integer. Received 1.5',
+      });
+      assert.throws(() => createHistogram({ figures: 9 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.figures" is out of range. It must be >= 1 && <= 5. Received 9',
+      });
+      assert.throws(() => createHistogram({ lowest: 1.5, highest: "x" }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.lowest" is out of range. It must be an integer. Received 1.5',
+      });
+    });
+
+    test("createHistogram option of the wrong type", () => {
+      for (const name of ["lowest", "highest", "figures"]) {
+        assert.throws(() => createHistogram({ [name]: "x" }), {
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "options.${name}" property must be of type number. Received type string ('x')`,
+        });
+      }
+      assert.throws(() => createHistogram({ figures: 3n }), {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.figures" property must be of type number. Received type bigint (3n)',
+      });
+    });
+
+    test("createHistogram with a BigInt lowest and highest", () => {
+      createHistogram({ lowest: 5n, highest: 10n });
+
+      // The int64 maximum: https://github.com/openclaw/openclaw/issues/143800
+      const h = createHistogram({ lowest: 1_000n, highest: 2n ** 63n - 1n, figures: 3 });
+      h.record(2n ** 62n);
+      assert.strictEqual(h.count, 1);
+      assert.strictEqual(h.exceeds, 0);
+
+      // As numbers, lowest rounds up to 2 ** 53 + 4, and 2 * lowest is then above highest.
+      const lowest = 2n ** 53n + 3n;
+      createHistogram({ lowest, highest: 2n * lowest, figures: 1 });
+
+      assert.throws(() => createHistogram({ lowest: 1n, highest: 2n, figures: 2.5 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.figures" is out of range. It must be an integer. Received 2.5',
+      });
+    });
+
+    // Node v26.3.0 throws a TypeError from `2 * lowest` when only one of lowest and highest is a
+    // BigInt. Node main accepts the mix (nodejs/node@c327212373), and so does Bun.
+    test("createHistogram with a BigInt and a number", { skip: !process.versions.bun }, () => {
+      createHistogram({ lowest: 1n });
+      createHistogram({ lowest: 5n, highest: 10 });
+      createHistogram({ lowest: 5, highest: 10n });
+
+      const h = createHistogram({ highest: 2n ** 60n });
+      h.record(2n ** 59n);
+      assert.strictEqual(h.exceeds, 0);
+
+      assert.throws(() => createHistogram({ lowest: 5n, highest: 9 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.highest" is out of range. It must be >= 2 * options.lowest (10n). Received 9',
+      });
+      assert.throws(() => createHistogram({ lowest: 5, highest: 9n }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.highest" is out of range. It must be >= 2 * options.lowest (10n). Received 9n',
+      });
+      assert.throws(() => createHistogram({ lowest: 1.5, highest: 10n }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.lowest" is out of range. It must be an integer. Received 1.5',
+      });
+      assert.throws(() => createHistogram({ lowest: 1n, highest: 2 ** 53 }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message:
+          'The value of "options.highest" is out of range. It must be >= 1 && <= 9007199254740991. Received 9_007_199_254_740_992',
+      });
+    });
+
+    // Node v26.3.0 aborts in hdr_init() for a BigInt outside int64, and throws ERR_INVALID_ARG_VALUE
+    // for a BigInt highest below 2n * lowest. These are the errors of Node main (nodejs/node@c327212373).
+    test("createHistogram with a BigInt that is out of range", { skip: !process.versions.bun }, () => {
+      for (const name of ["lowest", "highest"]) {
+        for (const [value, received] of [
+          [0n, "0n"],
+          [-1n, "-1n"],
+          [2n ** 63n, "9_223_372_036_854_775_808n"],
+        ]) {
+          assert.throws(() => createHistogram({ [name]: value }), {
+            name: "RangeError",
+            code: "ERR_OUT_OF_RANGE",
+            message: `The value of "options.${name}" is out of range. It must be >= 1n && <= 9223372036854775807n. Received ${received}`,
+          });
+        }
+      }
+      assert.throws(() => createHistogram({ lowest: 5n, highest: 9n }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "options.highest" is out of range. It must be >= 2 * options.lowest (10n). Received 9n',
+      });
+      assert.throws(() => createHistogram({ lowest: 0n, highest: 0n }), {
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message:
+          'The value of "options.lowest" is out of range. It must be >= 1n && <= 9223372036854775807n. Received 0n',
+      });
+    });
+
+    test("a histogram cannot be constructed with new", () => {
+      const { constructor } = createHistogram();
+      assert.strictEqual(constructor.length, 0);
+      for (const args of [[], [1.5, NaN, 2.5]]) {
+        assert.throws(() => new constructor(...args), {
+          name: "TypeError",
+          code: "ERR_ILLEGAL_CONSTRUCTOR",
+          message: "Illegal constructor",
+        });
+      }
+    });
+
     test("percentile validation", () => {
       const h = createHistogram();
       h.record(50);

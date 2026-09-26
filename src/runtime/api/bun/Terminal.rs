@@ -1496,9 +1496,9 @@ impl Terminal {
 
         // StreamingWriter::write() buffers any bytes it couldn't flush
         // synchronously, so the full input has been accepted on every non-error
-        // return. The per-arm counts are sync-flushed bytes (and on a buffered
-        // writer can even exceed `input_len` when prior data drains), so
-        // returning them would make callers re-send an already-queued tail.
+        // return. A `Pending` or partial count is the bytes that reached the fd,
+        // not the bytes accepted, so returning it would make callers re-send an
+        // already-queued tail.
         match write_result {
             bun_io::WriteResult::Err(err) => {
                 Err(global_object.throw_value(err.to_js(global_object)))

@@ -1153,6 +1153,9 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
 //
 // The child blocks in a synchronous read of stdin between its two writes, so no event-loop turn can tell the sink
 // about the hang-up first: the second write() is the one that finds out, with the first still pending.
+//
+// Not on Windows: a write to a pipe whose reader is alive is accepted whole there and returns its byte count, so
+// there is no pending promise for a later write to fail beside.
 it.skipIf(isWindows)("a write() that fails while another is pending rejects the pending promise once", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -1193,3 +1196,80 @@ try {
   expect(stderr).toBe("caught EPIPE, same promise: true\n");
   expect(exitCode).toBe(0);
 });
+
+// A chunk below the writer's chunk size is buffered and reported as written. The next, larger write sends the
+// buffer and itself to the fd together, and used to report all of it: the buffered bytes were counted twice.
+// The fourth write is not ASCII, which takes the writer's Latin-1 path.
+it.concurrent("a write() that flushes earlier buffered chunks reports its own bytes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const sink = Bun.stdout.writer();
+const counts = [
+  sink.write("a"),
+  sink.write(Buffer.alloc(40000, "b").toString()),
+  sink.write(new Uint8Array(7)),
+  sink.write(Buffer.alloc(40000, "é").toString()),
+];
+await sink.flush();
+console.error(JSON.stringify(counts));
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, stdoutLength: stdout.length }).toEqual({
+    stderr: JSON.stringify([1, 40000, 7, 40000]) + "\n",
+    stdoutLength: 1 + 40000 + 7 + 40000,
+  });
+  expect(exitCode).toBe(0);
+});
+
+// A CLI that writes lines without awaiting them and is piped into `head -1`: after the reader is gone its short
+// writes are buffered, the flush fails from the event loop, and the sink finishes. Later writes return `true`
+// and the script runs to its end. A rejected Promise per later write would be held by nobody, and the script
+// would die of an unhandled rejection instead.
+//
+// Not on Windows, where this script has always died that way: a write goes to the pipe at once there, so each
+// one fails on the spot with a rejected Promise of its own.
+it.concurrent.skipIf(isWindows)(
+  "writes that are not awaited keep the script running after the reader has gone",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+const sink = Bun.stdout.writer();
+sink.write("first\\n");
+sink.flush();
+require("node:fs").readSync(0, Buffer.alloc(1));
+for (let batch = 0; batch < 20; batch++) {
+  for (let i = 0; i < 50; i++) sink.write("line " + i + "\\n");
+  await new Promise(resolve => setImmediate(resolve));
+}
+console.error("finished");
+`,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const reader = proc.stdout.getReader();
+    await reader.read();
+    await reader.cancel();
+    proc.stdin.write("x");
+    await proc.stdin.end();
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("finished\n");
+    expect(exitCode).toBe(0);
+  },
+);

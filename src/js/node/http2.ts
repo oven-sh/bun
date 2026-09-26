@@ -4670,15 +4670,14 @@ class ServerHttp2Session extends Http2Session {
 
   settings(settings: Settings, callback?) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
-    if (callback !== undefined && typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
     // node treats an omitted/undefined settings object as an empty update.
     if (settings === undefined) settings = {} as Settings;
     // Validate the caller-supplied object FIRST so null / arrays / primitives
     // still throw ERR_INVALID_ARG_TYPE — spreading ({ ...null }) would hide
     // these from the type guard in validateSettings.
     validateSettings(settings);
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1559-L1564
+    if (callback) validateFunction(callback, "callback");
     // RFC 9113 §6.5.2: a server MUST NOT advertise SETTINGS_ENABLE_PUSH != 0.
     // Force-override whatever the caller passes so a mid-connection SETTINGS
     // frame stays compliant (the initial SETTINGS frame already clamps this
@@ -5610,12 +5609,11 @@ class ClientHttp2Session extends Http2Session {
 
   settings(settings: Settings, callback?) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
-    if (callback !== undefined && typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
     // node treats an omitted/undefined settings object as an empty update.
     if (settings === undefined) settings = {} as Settings;
     validateSettings(settings);
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1559-L1564
+    if (callback) validateFunction(callback, "callback");
     // node: when more SETTINGS are submitted than maxOutstandingSettings allows un-ACKed, the
     // session is destroyed with ERR_HTTP2_MAX_PENDING_SETTINGS_ACK (surfaced via 'error').
     this.#pendingSettingsAckCount++;
@@ -6570,11 +6568,10 @@ class Http2Server extends (net.Server as unknown as Http2ServerBase) {
   }
 
   setTimeout(ms, callback) {
-    if (callback !== undefined && typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3502-L3509
     this.timeout = ms;
-    if (typeof callback === "function") {
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
       this.on("timeout", callback);
     }
     return this;
@@ -6693,11 +6690,10 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
     return super.emit(event, ...args);
   }
   setTimeout(ms, callback) {
-    if (callback !== undefined && typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3460-L3467
     this.timeout = ms;
-    if (typeof callback === "function") {
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
       this.on("timeout", callback);
     }
     return this;

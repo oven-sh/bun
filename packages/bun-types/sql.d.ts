@@ -449,10 +449,52 @@ declare module "bun" {
     }
 
     /**
-     * A pending SQL query. Extends `Promise`, so it can be awaited, and adds
-     * methods to control how it runs.
+     * Metadata properties present on the array a query resolves to. They are
+     * non-enumerable, so `console.log` does not print them.
+     *
+     * A query that produces several result sets (for example `.simple()`
+     * with several statements, or a MySQL `CALL`) resolves to a plain array
+     * of result arrays instead. The metadata is on each inner array, not on
+     * the outer one.
      */
-    interface Query<T> extends Promise<T> {
+    interface ResultMetadata {
+      /**
+       * The number of rows in the result set. On PostgreSQL and SQLite, a
+       * write without `RETURNING` reports the number of affected rows here
+       * instead. On MySQL it is always the number of rows returned, so it is
+       * `0` for a plain `INSERT`, `UPDATE`, or `DELETE`. On SQLite, a
+       * write whose `affectedRows` is `null` reports `0` here.
+       */
+      count: number | null;
+      /**
+       * The SQL command that produced this result, such as `"SELECT"` or
+       * `"UPDATE"`. `null` on MySQL, whose protocol does not report it.
+       */
+      command: string | null;
+      /**
+       * The number of rows an `INSERT`, `UPDATE`, `DELETE`, `REPLACE`
+       * (SQLite and MySQL), or `MERGE` (PostgreSQL) changed. `0` for
+       * statements that do not write. This is the portable way to read the
+       * affected-row count on every adapter. On SQLite, `null` when the
+       * count is unknown, for example a write wrapped in a CTE or an
+       * `INSERT ... SELECT` without `RETURNING`. On PostgreSQL, a write
+       * inside a CTE under a top-level `SELECT` reports `0`: the server
+       * tags the whole statement `SELECT`.
+       */
+      affectedRows: number | bigint | null;
+      /**
+       * The row id of the last inserted row on MySQL and SQLite. `null` on
+       * PostgreSQL; use `RETURNING` there.
+       */
+      lastInsertRowid: number | bigint | null;
+    }
+
+    /**
+     * A pending SQL query. Extends `Promise`, so it can be awaited, and adds
+     * methods to control how it runs. The resolved array also carries
+     * {@link ResultMetadata}.
+     */
+    interface Query<T> extends Promise<T & ResultMetadata> {
       /**
        * True while the query is executing
        */

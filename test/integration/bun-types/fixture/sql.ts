@@ -92,7 +92,7 @@ expectType(
     return [await txn<[9]>`SELECT 9`, await txn<[10]>`SELECT 10`];
   });
 
-  expectType(tx).is<readonly [[9], [10]]>();
+  expectType(tx).is<readonly [[9] & Bun.SQL.ResultMetadata, [10] & Bun.SQL.ResultMetadata]>();
 }
 
 {
@@ -100,7 +100,7 @@ expectType(
     return [await txn<[9]>`SELECT 9`, await txn<[10]>`SELECT 10`];
   });
 
-  expectType(tx).is<readonly [[9], [10]]>();
+  expectType(tx).is<readonly [[9] & Bun.SQL.ResultMetadata, [10] & Bun.SQL.ResultMetadata]>();
 }
 
 {
@@ -108,7 +108,7 @@ expectType(
     return [await txn<[9]>`SELECT 9`, await txn<[10]>`SELECT 10`];
   });
 
-  expectType(tx).is<readonly [[9], [10]]>();
+  expectType(tx).is<readonly [[9] & Bun.SQL.ResultMetadata, [10] & Bun.SQL.ResultMetadata]>();
 }
 
 expectType(sql1.unsafe("SELECT * FROM users")).is<Bun.SQL.Query<any>>();
@@ -178,8 +178,8 @@ expectType(opts2).extends<Bun.SQL.Options>();
 const txCb = (async sql => [sql<[1]>`SELECT 1`]) satisfies Bun.SQL.TransactionContextCallback<unknown>;
 const spCb = (async sql => [sql<[2]>`SELECT 2`]) satisfies Bun.SQL.SavepointContextCallback<unknown>;
 
-expectType(await sql.begin(txCb)).is<[1][]>();
-expectType(await sql.begin(spCb)).is<[2][]>();
+expectType(await sql.begin(txCb)).is<([1] & Bun.SQL.ResultMetadata)[]>();
+expectType(await sql.begin(spCb)).is<([2] & Bun.SQL.ResultMetadata)[]>();
 
 expectType(queryA.cancel()).is<Bun.SQL.Query<any>>();
 expectType(queryA.simple()).is<Bun.SQL.Query<any>>();
@@ -194,11 +194,11 @@ expectType(queryNum.execute()).is<Bun.SQL.Query<number>>();
 expectType(queryNum.raw()).is<Bun.SQL.Query<number>>();
 expectType(queryNum.values()).is<Bun.SQL.Query<number>>();
 
-expectType(await queryNum.cancel()).is<number>();
-expectType(await queryNum.simple()).is<number>();
-expectType(await queryNum.execute()).is<number>();
-expectType(await queryNum.raw()).is<number>();
-expectType(await queryNum.values()).is<number>();
+expectType(await queryNum.cancel()).is<number & Bun.SQL.ResultMetadata>();
+expectType(await queryNum.simple()).is<number & Bun.SQL.ResultMetadata>();
+expectType(await queryNum.execute()).is<number & Bun.SQL.ResultMetadata>();
+expectType(await queryNum.raw()).is<number & Bun.SQL.ResultMetadata>();
+expectType(await queryNum.values()).is<number & Bun.SQL.ResultMetadata>();
 
 expectType<Bun.SQL.Options>({
   password: () => "hey",

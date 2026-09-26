@@ -463,54 +463,6 @@ reason = "external code table: serialized-failure wire format"
 [[override]]
 lint = "hawk::dead_public"
 crate = "bun_runtime"
-item = "bake::dev_server::serialized_failure::ErrorKind::JsErrorType"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: serialized-failure wire format"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "bake::dev_server::serialized_failure::ErrorKind::JsErrorRange"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: serialized-failure wire format"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "bake::dev_server::serialized_failure::ErrorKind::JsErrorExtra"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: serialized-failure wire format"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "bake::dev_server::serialized_failure::ErrorKind::JsPrimitiveException"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: serialized-failure wire format"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "bake::dev_server::serialized_failure::ErrorKind::JsPrimitive"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: serialized-failure wire format"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "bake::dev_server::serialized_failure::ErrorKind::JsAggregate"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: serialized-failure wire format"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
 item = "napi::napi_body::NapiStatus::string_expected"
 kind = "enum_variant"
 level = "expect"
@@ -595,11 +547,3 @@ item = "napi::napi_body::NapiStatus::would_deadlock"
 kind = "enum_variant"
 level = "expect"
 reason = "external code table: public N-API C ABI status values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_runtime"
-item = "webcore::bake_response::SSRKind::Regular"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: SSR kind tag consumed by generated code"

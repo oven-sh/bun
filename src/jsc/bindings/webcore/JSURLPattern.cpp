@@ -475,26 +475,15 @@ void JSURLPattern::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7URLPattern@WebCore@@6B@")[])();
-}
-#else
 extern "C" {
 extern void* _ZTVN7WebCore10URLPatternE[];
 }
-#endif
 template<std::same_as<URLPattern> T>
 static inline void verifyVTable(URLPattern* ptr)
 {
     if constexpr (std::is_polymorphic_v<T>) {
         const void* actualVTablePointer = getVTablePointer<T>(ptr);
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7URLPattern@WebCore@@6B@");
-#else
         void* expectedVTablePointer = &_ZTVN7WebCore10URLPatternE[2];
-#endif
 
         // If you hit this assertion you either have a use after free bug, or
         // URLPattern has subclasses. If URLPattern has subclasses that get passed

@@ -42,9 +42,7 @@
 #include "BunProcess.h"
 #include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/SourceProviderCache.h>
-#if ENABLE(REMOTE_INSPECTOR)
 #include <JavaScriptCore/RemoteInspectorServer.h>
-#endif
 
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
@@ -80,7 +78,6 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     // The debugger evaluates what its client sends, whatever the engine's eval setting.
     THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, {});
 
-#if ENABLE(REMOTE_INSPECTOR)
     static const char* defaultHost = "127.0.0.1\0";
     static uint16_t defaultPort = 9230; // node + 1
 
@@ -132,13 +129,6 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     }
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-#else
-    throwVMError(globalObject, scope,
-        createTypeError(
-            globalObject,
-            "Remote inspector is not enabled in this build of Bun"_s));
-    return JSC::JSValue::encode(JSC::jsUndefined());
-#endif
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionDescribe);

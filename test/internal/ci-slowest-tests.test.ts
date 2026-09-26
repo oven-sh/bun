@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, existsSync, readFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
+import { fetchBuildkite } from "../../scripts/buildkite-fetch.mjs";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
-import { parseLog } from "../../scripts/ci-slowest-tests";
+import { fetchLog, parseLog, type Job } from "../../scripts/ci-slowest-tests";
 import { parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
 
 // Buildkite prefixes each line with an APC timestamp: ESC `_bk;t=<ms>` BEL.
@@ -192,5 +196,256 @@ describe("scripts/update-test-durations.mjs parseLog", () => {
       ["test/js/node/test/parallel/p1.js", 3],
       ["test/js/node/test/parallel/p2.js", 500],
     ]);
+  });
+});
+
+// Stands in for api.buildkite.com. `respond` gets the job id from
+// `/jobs/<id>/log.txt` and the count of requests for that job so far.
+function logServer(respond: (id: string, hit: number, req: Request) => Response) {
+  const hits: Record<string, number> = {};
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const id = new URL(req.url).pathname.split("/")[2];
+      hits[id] = (hits[id] ?? 0) + 1;
+      return respond(id, hits[id], req);
+    },
+  });
+  return {
+    hits,
+    job: (id: string, name = ":debian: 13 x64 - test-bun"): Job => ({
+      id,
+      name,
+      raw_log_url: `${server.url}jobs/${id}/log.txt`,
+    }),
+    [Symbol.dispose]: () => void server.stop(true),
+  };
+}
+
+const refuse = (status: number, headers: Record<string, string> = {}) => new Response("", { status, headers });
+
+// The 429 that api.buildkite.com sent on 2026-09-14 when the per-user limit was
+// used up and the organization window had just reset. It has no Retry-After,
+// and `RateLimit-Reset` is for the limit that was not exceeded.
+const rateLimited = (reset: number) =>
+  Response.json(
+    {
+      message: `You have exceeded your rest_user API rate limit. Please wait ${reset} seconds before making more requests.`,
+      scope: "rest_user",
+      limit: 200,
+      current: 200,
+      reset,
+    },
+    {
+      status: 429,
+      headers: {
+        "RateLimit-Scope": "rest",
+        "RateLimit-Remaining": "195",
+        "RateLimit-Reset": "60",
+        "RateLimit-User-Scope": "rest_user",
+        "RateLimit-User-Remaining": "0",
+        "RateLimit-User-Reset": `${reset}`,
+      },
+    },
+  );
+
+// `sleep` records the wait and returns at once, so no test waits for real.
+function recordWaits() {
+  const waits: number[] = [];
+  return { waits, options: { token: "secret", sleep: async (ms: number) => void waits.push(ms) } };
+}
+
+describe("scripts/buildkite-fetch.mjs fetchBuildkite", () => {
+  test("sends the token and waits out a 429", async () => {
+    const authorizations: (string | null)[] = [];
+    using api = logServer((id, hit, req) => {
+      authorizations.push(req.headers.get("authorization"));
+      return hit === 1 ? rateLimited(7) : new Response("the log");
+    });
+
+    const { waits, options } = recordWaits();
+    const response = await fetchBuildkite(api.job("a").raw_log_url, options);
+    expect(await response.text()).toBe("the log");
+    // `reset` counts whole seconds, so the wait is one second more.
+    expect({ waits, hits: api.hits, authorizations }).toEqual({
+      waits: [8000],
+      hits: { a: 2 },
+      authorizations: ["Bearer secret", "Bearer secret"],
+    });
+  });
+
+  test.each<[string, () => Response, number[]]>([
+    ["the reset of the limit that was exceeded", () => rateLimited(36), [37_000, 37_000]],
+    ["Retry-After on a 429 that has one", () => refuse(429, { "Retry-After": "7" }), [8000, 8000]],
+    ["an exponential backoff on a 429 with no hint", () => refuse(429), [1000, 2000]],
+    ["Retry-After on a 503", () => refuse(503, { "Retry-After": "2" }), [3000, 3000]],
+    [
+      "an exponential backoff on a 502 from a proxy",
+      () => new Response("<html>Bad Gateway</html>", { status: 502, headers: { "RateLimit-Reset": "30" } }),
+      [1000, 2000],
+    ],
+    [
+      "an exponential backoff on an HTTP-date Retry-After",
+      () => refuse(429, { "Retry-After": "Mon, 14 Sep 2026 06:00:00 GMT" }),
+      [1000, 2000],
+    ],
+    ["maxWaitMs and one second at most", () => rateLimited(3600), [61_000, 61_000]],
+  ])("waits for %s", async (_, refusal, expected) => {
+    using api = logServer((id, hit) => (hit <= 2 ? refusal() : new Response("the log")));
+
+    const { waits, options } = recordWaits();
+    const response = await fetchBuildkite(api.job("a").raw_log_url, options);
+    expect(await response.text()).toBe("the log");
+    expect({ waits, hits: api.hits }).toEqual({ waits: expected, hits: { a: 3 } });
+  });
+
+  // update-parallel-allowlist.mjs allows 8 retries. Uncapped, its last backoff is 128 s.
+  test("caps the exponential backoff at maxWaitMs", async () => {
+    using api = logServer((id, hit) => (hit <= 8 ? refuse(500) : new Response("the log")));
+
+    const { waits, options } = recordWaits();
+    const response = await fetchBuildkite(api.job("a").raw_log_url, { ...options, retries: 8 });
+    expect(await response.text()).toBe("the log");
+    expect(waits).toEqual([1000, 2000, 4000, 8000, 16_000, 32_000, 60_000, 60_000]);
+  });
+
+  test("gives up after 5 retries", async () => {
+    using api = logServer(() => rateLimited(1));
+
+    const { waits, options } = recordWaits();
+    const url = api.job("a").raw_log_url;
+    expect(await fetchBuildkite(url, options).catch(e => e.message)).toBe(`429 ${url} (6 attempts)`);
+    expect({ waits, hits: api.hits }).toEqual({ waits: [2000, 2000, 2000, 2000, 2000], hits: { a: 6 } });
+  });
+
+  test("does not retry a status that a retry cannot fix", async () => {
+    using api = logServer(() => Response.json({ message: "Not Found" }, { status: 404 }));
+
+    const { waits, options } = recordWaits();
+    const url = api.job("a").raw_log_url;
+    expect(await fetchBuildkite(url, options).catch(e => e.message)).toBe(`404 ${url}`);
+    expect({ waits, hits: api.hits }).toEqual({ waits: [], hits: { a: 1 } });
+  });
+});
+
+describe("scripts/ci-slowest-tests.ts fetchLog", () => {
+  test("stores a downloaded log in the cache and reads it from there the next time", async () => {
+    using cacheDir = tempDir("ci-slowest-cache", {});
+    using api = logServer((id, hit) => (hit === 1 ? rateLimited(7) : new Response("the log")));
+
+    const { waits, options } = recordWaits();
+    expect(await fetchLog(api.job("a"), String(cacheDir), options)).toBe("the log");
+    expect({ waits, hits: api.hits }).toEqual({ waits: [8000], hits: { a: 2 } });
+    expect(readFileSync(join(String(cacheDir), "a.log"), "utf8")).toBe("the log");
+
+    expect(await fetchLog(api.job("a"), String(cacheDir), options)).toBe("the log");
+    expect(api.hits).toEqual({ a: 2 });
+  });
+
+  test("leaves nothing in the cache when the download fails", async () => {
+    using cacheDir = tempDir("ci-slowest-cache", {});
+    using api = logServer(() => Response.json({ message: "Not Found" }, { status: 404 }));
+
+    const job = api.job("a");
+    const { options } = recordWaits();
+    expect(await fetchLog(job, String(cacheDir), options).catch(e => e.message)).toBe(`404 ${job.raw_log_url}`);
+    expect(existsSync(join(String(cacheDir), "a.log"))).toBe(false);
+  });
+});
+
+// The script gets the job list from `bk build view`, so these tests put a `bk`
+// on PATH that prints a canned build. The stand-in is a shell script.
+describe.skipIf(isWindows)("bun scripts/ci-slowest-tests.ts --json", () => {
+  const script = join(import.meta.dir, "../../scripts/ci-slowest-tests.ts");
+  const oneFileLog = (file: string, ms: number) => [bk(0, `--- [1/1] ${file}`), bk(ms, `--- End`)].join("\n");
+
+  function fixture(api: ReturnType<typeof logServer>) {
+    const dir = tempDir("ci-slowest", {
+      "bin/bk": `#!/bin/sh\ncat "$(dirname "$0")/../build.json"\n`,
+      "build.json": JSON.stringify({
+        jobs: [
+          api.job("a", ":debian: 13 x64 - test-bun"),
+          api.job("b", ":windows: 2019 x64 - test-bun"),
+          api.job("c", ":debian: 13 x64 - test-bun"),
+        ],
+      }),
+    });
+    chmodSync(join(String(dir), "bin/bk"), 0o755);
+    return dir;
+  }
+
+  async function run(dir: string, ...flags: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), script, "1234", "--json", ...flags],
+      env: {
+        ...bunEnv,
+        PATH: join(dir, "bin") + delimiter + bunEnv.PATH,
+        // The script keeps its log cache under os.tmpdir().
+        TMPDIR: join(dir, "tmp"),
+        BUILDKITE_TOKEN: "secret",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("retries a 429, reports a log that stays missing, and a re-run fetches only that log", async () => {
+    let bIsGone = true;
+    using api = logServer((id, hit) => {
+      if (id === "a") return hit === 1 ? rateLimited(0) : new Response(oneFileLog("test/a.test.ts", 1000));
+      if (id === "b") return bIsGone ? refuse(404) : new Response(oneFileLog("test/b.test.ts", 9000));
+      return new Response(oneFileLog("test/c.test.ts", 3000));
+    });
+    using dir = fixture(api);
+    const a = { file: "test/a.test.ts", maxMs: 1000, maxPlat: "debian 13 x64" };
+    const b = { file: "test/b.test.ts", maxMs: 9000, maxPlat: "windows 2019 x64" };
+    const c = { file: "test/c.test.ts", maxMs: 3000, maxPlat: "debian 13 x64" };
+
+    const partial = await run(String(dir));
+    expect(partial.stderr).toContain("  waiting 1s for Buildkite (rate limit or server error)\n");
+    expect(partial.stderr).toContain("  2/3 logs, 1 failed\n");
+    expect(partial.stderr).toEndWith(
+      "warning: 1 of 3 logs are missing, so the result is computed from partial data\n" +
+        "  missing: windows 2019 x64 (1)\n" +
+        "  run the same command again to fetch only the missing logs\n",
+    );
+    expect(JSON.parse(partial.stdout)).toEqual({
+      build: "1234",
+      count: 2,
+      top: [c, a],
+      jobs: 3,
+      jobsFailed: 1,
+      failedJobs: [{ id: "b", platform: "windows 2019 x64", error: `404 ${api.job("b").raw_log_url}` }],
+    });
+    expect(partial.exitCode).toBe(2);
+    expect(api.hits).toEqual({ a: 2, b: 1, c: 1 });
+
+    bIsGone = false;
+    const complete = await run(String(dir));
+    expect(complete.stderr).toContain("  3/3 logs\n");
+    expect(complete.stderr).not.toContain("warning");
+    expect(JSON.parse(complete.stdout)).toEqual({
+      build: "1234",
+      count: 3,
+      top: [b, c, a],
+      jobs: 3,
+      jobsFailed: 0,
+      failedJobs: [],
+    });
+    expect(complete.exitCode).toBe(0);
+    // "a" and "c" came from the cache.
+    expect(api.hits).toEqual({ a: 2, b: 2, c: 1 });
+  });
+
+  test.concurrent("--allow-partial keeps the report of a missing log and exits 0", async () => {
+    using api = logServer(id => (id === "b" ? refuse(404) : new Response(oneFileLog(`test/${id}.test.ts`, 1000))));
+    using dir = fixture(api);
+
+    const { stdout, stderr, exitCode } = await run(String(dir), "--allow-partial");
+    expect(stderr).toContain("warning: 1 of 3 logs are missing");
+    expect(JSON.parse(stdout)).toMatchObject({ count: 2, jobs: 3, jobsFailed: 1, failedJobs: [{ id: "b" }] });
+    expect(exitCode).toBe(0);
   });
 });

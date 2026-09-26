@@ -1950,7 +1950,7 @@ server.close();`,
       // A legal comment stays in the chunk as written, and a chunk that is not ASCII is stored as UTF-16.
       const legal = utf16 ? "/*! caf\u00e9\r a\u2028 b\u2029 c */\n" : "/*! a\r b */\n";
       using dir = tempDir("build-compile-line-starts", {
-        "app.js": `${legal}import { sourceHasLineStarts } from "bun:internal-for-testing";
+        "app.js": `${legal}import { internalModulesLoadedFromBytecode, sourceHasLineStarts } from "bun:internal-for-testing";
 import { toASCII } from "node:punycode";
 import { inOther } from "./other.js";
 function here() {
@@ -1960,7 +1960,8 @@ function here() {
 // A short source does without.
 globalThis.padding = "${Buffer.alloc(1024, "p")}";
 const before = [sourceHasLineStarts(here), sourceHasLineStarts(inOther), sourceHasLineStarts(toASCII)];
-console.log(JSON.stringify({ before, positions: [here(), inOther()] }));`,
+const fromBytecode = internalModulesLoadedFromBytecode();
+console.log(JSON.stringify({ before, fromBytecode, positions: [here(), inOther()] }));`,
         "other.js": `
 
 export function inOther() {
@@ -1978,10 +1979,19 @@ export function inOther() {
         target: "bun",
       });
       expect(result.success).toBe(true);
-      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      await using proc = Bun.spawn({
+        cmd: [outfile],
+        env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      const { before, positions } = JSON.parse(stdout.trim());
+      // A parse collects the line starts too, so that the code came out of the bytecode is a check of its own.
+      const lines = stderr.split("\n").filter(Boolean);
+      expect(lines.filter(line => !line.startsWith("[Disk Cache] "))).toEqual([]);
+      expect(lines.includes("[Disk Cache] Cache hit for sourceCode")).toBe(bytecode);
+      const { before, fromBytecode, positions } = JSON.parse(stdout.trim());
+      expect(fromBytecode > 0).toBe(bytecode);
       expect(before).toEqual([true, true, true]);
 
       // The positions, counted in the text the executable holds. A frame is where the call's arguments start.

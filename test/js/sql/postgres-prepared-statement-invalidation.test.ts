@@ -2,10 +2,12 @@
 // DEALLOCATE/DISCARD, or 0A000 "cached plan must not change result type" after
 // a schema change) used to stay Prepared in the per-connection statement cache,
 // so every later execution of that query bound the dead server-side name and
-// failed forever. The ErrorResponse handler now evicts the cached entry and,
-// when the failing exchange is the only one in flight, transparently
-// re-prepares under a fresh name and re-runs once. Only an error that answers
-// the Bind counts: after BindComplete the same SQLSTATE comes from the query.
+// failed forever. The ErrorResponse handler now evicts the cached entry,
+// re-prepares under a fresh name and re-runs each affected query once. A
+// pipelined sibling still on the wire gets its own ErrorResponse and is
+// re-queued behind the others, so a whole burst recovers. Only an error that
+// answers the Bind counts: after BindComplete the same SQLSTATE comes from the
+// query.
 import { SQL, randomUUIDv7 } from "bun";
 import { expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
@@ -13,9 +15,12 @@ import {
   listeningServer,
   pgAuthenticationOk,
   pgBindComplete,
+  pgBindParameters,
   pgCommandComplete,
   pgDataRow,
   pgErrorResponse,
+  pgMockServer,
+  pgParameterDescription,
   pgParseComplete,
   pgReadFrontendMessages,
   pgReadyForQuery,
@@ -90,17 +95,10 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       expect(await p()).toEqual([{ x: 1 }]);
 
       await sql`alter table ${sql(tbl)} add column y int default 9`.simple();
-      // Two Bind+Execute pipelined against the stale plan. Both were already
-      // on the wire when the first ErrorResponse arrives, so at least the
-      // first is surfaced; the second may be transparently re-prepared.
-      const [r0, r1] = await Promise.allSettled([p(), p()]);
-      expect(r0.status === "rejected" ? (r0.reason as any).errno : r0.value).toEqual(
-        r0.status === "rejected" ? "0A000" : [{ x: 1, y: 9 }],
-      );
-      expect(r1.status === "rejected" ? (r1.reason as any).errno : r1.value).toEqual(
-        r1.status === "rejected" ? "0A000" : [{ x: 1, y: 9 }],
-      );
-      // The connection must not be poisoned: the next execution succeeds.
+      // Two Bind+Execute pipelined against the stale plan. Both are already
+      // on the wire when the first ErrorResponse arrives; each is re-queued
+      // behind the other and re-run once under the fresh name.
+      expect(await Promise.all([p(), p()])).toEqual([[{ x: 1, y: 9 }], [{ x: 1, y: 9 }]]);
       // Before the fix this rejected with errno 0A000 forever.
       expect(await p()).toEqual([{ x: 1, y: 9 }]);
     } finally {
@@ -115,17 +113,37 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     expect(await q(1)).toEqual([{ v: 1 }]);
 
     await sql`discard all`.simple();
-    // Both Binds name the discarded statement and are normally on the wire
-    // together, in which case the first is surfaced as 26000 and the second
-    // may be transparently re-prepared once the first has settled. Each must
-    // settle either way, and neither may hang.
-    const settled = await Promise.allSettled([q(2), q(3)]);
-    expect(settled.map(r => (r.status === "rejected" ? (r.reason as any).errno : r.value))).toEqual(
-      settled.map((r, i) => (r.status === "rejected" ? "26000" : [{ v: i + 2 }])),
-    );
+    // Both Binds name the discarded statement and are on the wire together.
+    // Each gets its own 26000, and each is re-run once under the fresh name,
+    // in order.
+    expect(await Promise.all([q(2), q(3)])).toEqual([[{ v: 2 }], [{ v: 3 }]]);
 
     // Before the fix this rejected with errno 26000 forever.
     expect(await q(4)).toEqual([{ v: 4 }]);
+  });
+
+  test("a concurrent burst over an invalidated statement re-runs every query", async () => {
+    await container.ready;
+    await using sql = connect();
+    const tbl = "t_inv_" + randomUUIDv7("hex").replaceAll("-", "");
+    try {
+      await sql`create table ${sql(tbl)}(id int primary key, a int)`.simple();
+      await sql`insert into ${sql(tbl)} values (1, 1)`.simple();
+      const select = (n: number) => sql`select * from ${sql(tbl)} where id = ${n}`;
+      await Promise.all(Array.from({ length: 20 }, () => select(1)));
+
+      await sql`alter table ${sql(tbl)} add column b int`.simple();
+      // Twenty Bind+Execute for the stale plan are on the wire when the first
+      // 0A000 arrives. Every one of them is re-run under the fresh name, so
+      // a migration that lands under load does not fail a burst of requests.
+      // With the retry limited to the last request in flight, 19 of these
+      // rejected with errno 0A000.
+      const burst = await Promise.all(Array.from({ length: 20 }, () => select(1)));
+      expect(burst).toEqual(Array.from({ length: 20 }, () => [{ id: 1, a: 1, b: null }]));
+      expect(await select(1)).toEqual([{ id: 1, a: 1, b: null }]);
+    } finally {
+      await sql`drop table if exists ${sql(tbl)}`.simple();
+    }
   });
 
   test("a 0A000 raised by the query itself keeps the statement cached and is not retried", async () => {
@@ -317,6 +335,72 @@ test("postgres: a 26000 on Bind evicts the cached statement and re-prepares unde
     });
   } finally {
     server.close();
+  }
+});
+
+// Pipelined siblings: five Binds for the stale name are on the wire when the
+// first 26000 arrives, and a sixth query with a new statement text is queued
+// behind them. Every sibling is answered 26000 in turn, the client Parses the
+// fresh name once, re-runs all five in their original order, and only then
+// Parses the sixth.
+test("postgres: every pipelined Bind that hits 26000 is re-run once under one fresh name", async () => {
+  const parses: string[] = [];
+  let bindErrors = 0;
+  const known = new Set<string>();
+  let forgetAfterNextSync = true;
+  let bound: Buffer | null = null;
+  const mock = await pgMockServer((type, body) => {
+    switch (type) {
+      case "P": {
+        const name = body.subarray(0, body.indexOf(0)).toString("utf-8");
+        parses.push(name);
+        known.add(name);
+        return pgParseComplete();
+      }
+      case "D":
+        return [pgParameterDescription([25 /* text */]), pgRowDescription([{ name: "v", typeOid: 25 }])];
+      case "B": {
+        const afterPortal = body.indexOf(0) + 1;
+        const name = body.subarray(afterPortal, body.indexOf(0, afterPortal)).toString("utf-8");
+        if (!known.has(name)) {
+          bindErrors++;
+          bound = null;
+          return pgErrorResponse({ S: "ERROR", C: "26000", M: `prepared statement "${name}" does not exist` });
+        }
+        bound = pgBindParameters(body)[0]!;
+        return pgBindComplete();
+      }
+      case "E":
+        return bound === null ? undefined : [pgDataRow([bound]), pgCommandComplete("SELECT 1")];
+      case "S":
+        if (bound !== null && forgetAfterNextSync) {
+          // As if the backend ran DEALLOCATE ALL after the warm-up.
+          known.clear();
+          forgetAfterNextSync = false;
+        }
+        bound = null;
+        return pgReadyForQuery();
+    }
+  });
+
+  try {
+    await using sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1, idleTimeout: 5 });
+    const echo = (text: string) => sql`select ${text} as v`;
+    const other = (text: string) => sql`select ${text}::text as v`;
+    expect(await echo("0")).toEqual([{ v: "0" }]);
+
+    // Five Bind+Execute pipelined against the forgotten name, then a statement
+    // the server has never seen (its Parse waits for the pipeline to drain).
+    const results = await Promise.all([echo("1"), echo("2"), echo("3"), echo("4"), echo("5"), other("6")]);
+    expect({ results, bindErrors, parses: parses.length, uniqueNames: new Set(parses).size }).toEqual({
+      results: [[{ v: "1" }], [{ v: "2" }], [{ v: "3" }], [{ v: "4" }], [{ v: "5" }], [{ v: "6" }]],
+      bindErrors: 5,
+      // warm-up, the one re-Parse, then `other`
+      parses: 3,
+      uniqueNames: 3,
+    });
+  } finally {
+    mock.server.close();
   }
 });
 

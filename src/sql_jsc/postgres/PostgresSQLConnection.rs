@@ -1554,6 +1554,33 @@ impl PostgresSQLConnection {
         }
     }
 
+    /// Move the head request behind every request whose bytes are already on
+    /// the wire and behind earlier re-queued retries. Replies are attributed
+    /// to the FIFO head, so a retry must not sit in front of an in-flight
+    /// request.
+    fn requeue_for_retry(&self, request: &PostgresSQLQuery) {
+        self.requests.with_mut(|q| {
+            if !q.front().is_some_and(|f| core::ptr::eq(f.as_ptr(), request)) {
+                return;
+            }
+            let Some(head) = q.pop_front() else { return };
+            let at = q
+                .iter()
+                .position(|r| {
+                    r.status.get() == QueryStatus::Pending && !r.flags.get().reprepared
+                })
+                .unwrap_or(q.len());
+            debug_assert!(
+                q.iter().skip(at).all(|r| !matches!(
+                    r.status.get(),
+                    QueryStatus::Binding | QueryStatus::Running | QueryStatus::PartialResponse
+                )) && !self.flags.get().contains(ConnectionFlags::WAITING_TO_PREPARE),
+                "retry inserted ahead of a request that is on the wire"
+            );
+            q.insert(at, head);
+        });
+    }
+
     /// Remove the cache entry for `stmt` unless re-entrant JS already replaced it.
     fn evict_statement(&self, stmt: &PostgresSQLStatement) {
         let stmt_ptr: *const PostgresSQLStatement = core::ptr::from_ref(stmt);
@@ -2999,34 +3026,42 @@ impl PostgresSQLConnection {
                         );
                         // The request still holds another ref; this cannot drop to 0.
                         self.evict_statement(stmt);
-                    } else if stmt.status == StatementStatus::Prepared
-                        && invalidates
+                    } else if invalidates
+                        // Only an answer to Bind reports a missing or stale
+                        // statement; after BindComplete the SQLSTATE comes from
+                        // the query itself and rows may have arrived.
                         && request.status.get() == QueryStatus::Binding
                         && !stmt.signature.prepared_statement_name.is_empty()
+                        && matches!(
+                            stmt.status,
+                            StatementStatus::Prepared | StatementStatus::Pending
+                        )
                     {
-                        // Server-side named statement gone or stale: evict so
-                        // later queries with this signature re-prepare. The
-                        // server reports that in answer to Bind; after
-                        // BindComplete the same SQLSTATE comes from the query
-                        // itself, and rows of this request may have arrived.
-                        self.evict_statement(stmt);
-                        // Retry only when no other Bind/Execute responses are
-                        // already on the wire and the session is idle (inside a
+                        // Prepared: the server-side name is gone or stale.
+                        // Pending: a pipelined sibling's ErrorResponse already
+                        // reset it under a fresh name; this Bind named the old one.
+                        let already_reset = stmt.status == StatementStatus::Pending;
+                        if !already_reset {
+                            // Evict so later queries with this signature re-prepare.
+                            self.evict_statement(stmt);
+                        }
+                        // Retry only when the session is idle (inside a
                         // transaction the retry Parse would be rejected 25P02).
                         if !request.flags.get().reprepared
                             && self.tx_status.get() == protocol::TransactionStatusIndicator::I
-                            && self.pipelined_requests.get() <= 1
                             && self.nonpipelinable_requests.get() == 0
                         {
                             debug!("re-preparing invalidated statement (SQLSTATE {})", err);
                             self.finish_request(&request);
-                            let id = self.prepared_statement_id.get();
-                            self.prepared_statement_id.set(id + 1);
-                            stmt.reset_for_reprepare(id);
-                            if let Some(statement) = request.statement.get().as_ref() {
-                                let _ = self.statements.with_mut(|m| {
-                                    m.put(&statement.signature.name, Some(statement.clone()))
-                                });
+                            if !already_reset {
+                                let id = self.prepared_statement_id.get();
+                                self.prepared_statement_id.set(id + 1);
+                                stmt.reset_for_reprepare(id);
+                                if let Some(statement) = request.statement.get().as_ref() {
+                                    let _ = self.statements.with_mut(|m| {
+                                        m.put(&statement.signature.name, Some(statement.clone()))
+                                    });
+                                }
                             }
                             request.status.set(QueryStatus::Pending);
                             request.update_flags(|f| {
@@ -3034,11 +3069,12 @@ impl PostgresSQLConnection {
                                 f.binary = false;
                             });
                             self.note_request_pending();
+                            // Siblings still on the wire answer first; the
+                            // re-Parse waits for the pipeline to drain.
+                            self.requeue_for_retry(&request);
                             self.update_ref();
                             return Ok(());
                         }
-                        // Leave the statement Prepared so the last pipelined
-                        // sibling's ErrorResponse can still re-prepare it.
                     }
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.

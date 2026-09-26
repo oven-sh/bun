@@ -2687,6 +2687,93 @@ describe.concurrent("the final handshake flight and a write issued before the ha
     });
   });
 
+  // A socket that shut down while its handshake ran seals a flight that can
+  // never leave. It must not take the spill slot of the loop: the sockets
+  // after it still send their flight and their first write in one segment.
+  it("node:tls, after another socket shut down while its handshake ran", async () => {
+    const connections = 4;
+    const other = tls.createServer({ key: COMMON_CERT_.key, cert: COMMON_CERT_.cert, minVersion: "TLSv1.3" }, socket =>
+      socket.on("error", () => {}),
+    );
+    other.on("tlsClientError", () => {});
+    await once(other.listen(0, "127.0.0.1"), "listening");
+    // Holds the server's flight until the client's FIN arrived, and keeps the connection open.
+    const relayed: net.Socket[] = [];
+    const relay = net.createServer({ allowHalfOpen: true }, downstream => {
+      const upstream = net.connect({
+        port: (other.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        allowHalfOpen: true,
+      });
+      relayed.push(downstream, upstream);
+      const held: Buffer[] = [];
+      let sawClientFin = false;
+      downstream.on("data", data => upstream.write(data));
+      downstream.on("end", () => {
+        sawClientFin = true;
+        for (const data of held.splice(0)) downstream.write(data);
+      });
+      upstream.on("data", data => (sawClientFin ? downstream.write(data) : held.push(data)));
+      downstream.on("error", () => {});
+      upstream.on("error", () => {});
+    });
+    await once(relay.listen(0, "127.0.0.1"), "listening");
+    let result = {};
+    try {
+      const chunkCounts = await countClientChunks({}, async proxyPort => {
+        const script = `
+          const tls = require("node:tls");
+          const reported = Promise.withResolvers();
+          Bun.connect({
+            hostname: "127.0.0.1",
+            port: ${(relay.address() as AddressInfo).port},
+            tls: { rejectUnauthorized: false },
+            socket: {
+              open(socket) {
+                setImmediate(() => socket.shutdown());
+              },
+              handshake: () => reported.resolve(),
+              data() {},
+              close() {},
+              error() {},
+            },
+          })
+            .then(() => reported.promise)
+            .then(() => {
+              let left = ${connections};
+              (function next() {
+                if (left-- === 0) process.exit(0);
+                const socket = tls.connect({
+                  host: "127.0.0.1",
+                  port: ${proxyPort},
+                  rejectUnauthorized: false,
+                  minVersion: "TLSv1.3",
+                  maxVersion: "TLSv1.3",
+                });
+                socket.write("HELLO");
+                socket.resume();
+                socket.on("error", error => console.log("error:" + error.code));
+                socket.on("close", next);
+              })();
+            });
+        `;
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        result = { stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr };
+      });
+      expect({ ...result, chunkCounts }).toEqual({
+        stdout: "",
+        exitCode: 0,
+        failureDetail: "",
+        chunkCounts: Array(connections).fill(2),
+      });
+    } finally {
+      for (const socket of relayed) socket.destroy();
+      relay.close();
+      other.close();
+    }
+  });
+
   // With a handshake callback, open runs before the handshake. drain blocks
   // until the proxy has read everything sent so far, so a flight that left
   // before the handler's write is always its own chunk.

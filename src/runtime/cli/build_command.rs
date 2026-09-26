@@ -255,6 +255,11 @@ impl BuildCommand {
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
+        this_transpiler.options.optimize_bytecode = ctx.bundler_options.optimize_bytecode;
+        this_transpiler
+            .options
+            .bytecode_order
+            .clone_from(&ctx.bundler_options.bytecode_order);
         let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {
@@ -932,6 +937,9 @@ impl BuildCommand {
                         }
                         flags
                     },
+                    bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
+                        jit_policy: ctx.bundler_options.compile_jit_policy,
+                    },
                 ) {
                     Ok(r) => r,
                     Err(err) => {
@@ -1111,7 +1119,9 @@ impl BuildCommand {
                         options::OutputKind::ModuleInfo
                         | options::OutputKind::BuiltinBytecode
                         | options::OutputKind::BytecodeStringTable
-                        | options::OutputKind::ModuleInfoStringTable => "<d>",
+                        | options::OutputKind::BytecodePayload
+                        | options::OutputKind::ModuleInfoStringTable
+                        | options::OutputKind::PrelinkedModuleGraph => "<d>",
                         options::OutputKind::MetafileJson
                         | options::OutputKind::MetafileMarkdown => "<green>",
                     }))?;
@@ -1159,7 +1169,9 @@ impl BuildCommand {
                         options::OutputKind::ModuleInfo => "module info",
                         options::OutputKind::BuiltinBytecode => "builtin bytecode",
                         options::OutputKind::BytecodeStringTable => "bytecode strings",
+                        options::OutputKind::BytecodePayload => "bytecode payload",
                         options::OutputKind::ModuleInfoStringTable => "module info strings",
+                        options::OutputKind::PrelinkedModuleGraph => "module graph",
                         options::OutputKind::MetafileJson => "metafile json",
                         options::OutputKind::MetafileMarkdown => "metafile markdown",
                     }

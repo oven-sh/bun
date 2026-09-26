@@ -1214,6 +1214,7 @@ unsafe extern "C" {
     pub fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
     pub fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
     pub fn BIO_ctrl_pending(bio: *const BIO) -> usize;
+    pub fn BIO_reset(bio: *mut BIO) -> c_int;
     pub safe fn BIO_s_mem() -> *const BIO_METHOD;
     pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
     pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
@@ -1399,5 +1400,32 @@ unsafe extern "C" {
     pub fn SSL_get_certificate(ssl: *const SSL) -> *mut X509;
 
     pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
+    pub fn SSL_SESSION_up_ref(session: *mut SSL_SESSION) -> c_int;
     pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
+}
+
+/// Owns one `SSL_SESSION` reference; `SSL_SESSION_free`s it on drop.
+#[repr(transparent)]
+pub struct OwnedSslSession(core::ptr::NonNull<SSL_SESSION>);
+
+impl OwnedSslSession {
+    pub fn as_ptr(&self) -> *mut SSL_SESSION {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedSslSession {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { SSL_SESSION_free(self.0.as_ptr()) }
+    }
+}
+
+impl SSL_SESSION {
+    /// Take another reference on this session.
+    pub fn up_ref(&self) -> OwnedSslSession {
+        // SAFETY: `self` is live; the +1 is owned by the returned guard.
+        unsafe { SSL_SESSION_up_ref(self.as_mut_ptr()) };
+        OwnedSslSession(core::ptr::NonNull::from(self))
+    }
 }

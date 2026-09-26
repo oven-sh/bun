@@ -2262,6 +2262,10 @@ mod draft {
             )
             .map_err(fmt_err)?;
 
+            // Match process.memoryUsage().rss: mi_process_info reads resident_size on macOS.
+            let current_rss = bun_sys::self_process_memory_usage().unwrap_or(current_rss);
+            let peak_rss = bun_sys::self_process_peak_memory_usage().unwrap_or(peak_rss);
+
             // bun_fmt::bytes() — human-readable metadata, not the trace string.
             write!(
                 writer,
@@ -3101,10 +3105,10 @@ mod draft {
             let programs: &[&bun_core::ZStr] = if cfg!(windows) {
                 &[bun_core::zstr!("pdb-addr2line")]
             } else {
-                // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-21`
+                // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-23`
                 &[
                     bun_core::zstr!("llvm-symbolizer"),
-                    bun_core::zstr!("llvm-symbolizer-21"),
+                    bun_core::zstr!("llvm-symbolizer-23"),
                 ]
             };
             for &program in programs {

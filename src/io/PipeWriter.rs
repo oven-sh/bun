@@ -1141,13 +1141,6 @@ pub trait BaseWindowsPipeWriter: Sized {
         }
     }
 
-    fn get_fd(&self) -> Fd {
-        let Some(pipe) = self.source() else {
-            return Fd::INVALID;
-        };
-        pipe.get_fd()
-    }
-
     fn enable_keeping_process_alive(&mut self, event_loop: EventLoopHandle) {
         self.update_ref(event_loop, true);
     }
@@ -1819,6 +1812,7 @@ impl StreamBuffer {
     }
 
     pub fn write(&mut self, buffer: &[u8]) -> Result<(), OOM> {
+        self.compact();
         self.list.extend_from_slice(buffer);
         Ok(())
     }
@@ -1827,11 +1821,21 @@ impl StreamBuffer {
         self.cursor += amount;
     }
 
+    /// Drops the consumed prefix once it is at least as large as the unread tail.
+    fn compact(&mut self) {
+        if self.cursor == 0 || self.cursor < self.size() {
+            return;
+        }
+        self.list.drain(..self.cursor);
+        self.cursor = 0;
+    }
+
     pub fn write_assume_capacity(&mut self, buffer: &[u8]) {
         self.list.extend_from_slice(buffer);
     }
 
     pub fn ensure_unused_capacity(&mut self, capacity: usize) -> Result<(), OOM> {
+        self.compact();
         self.list.reserve(capacity);
         Ok(())
     }
@@ -1873,6 +1877,7 @@ impl StreamBuffer {
             }
         }
 
+        self.compact();
         let len = self.list.len();
         let list = mem::take(&mut self.list);
         self.list = bun_core::strings::allocate_latin1_into_utf8_with_list(list, len, buffer);
@@ -1885,6 +1890,7 @@ impl StreamBuffer {
         // calling
         // `convert_utf16_to_utf8_append` directly (its old shortcut) handed
         // simdutf a `Vec::new()` dangling pointer (`0x1`) and segfaulted.
+        self.compact();
         ByteVecExt::write_utf16(&mut self.list, buffer)?;
         Ok(())
     }

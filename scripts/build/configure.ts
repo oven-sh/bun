@@ -9,58 +9,52 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, globSync, mkdirSync, utimesSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { isBuildkite } from "../buildkite.ts";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
 import { generateCargoConfig } from "./cargo-config.ts";
+import { emitCodegen, registerCodegenRules } from "./codegen.ts";
+import { registerDirStamps } from "./compile.ts";
 import {
+  type CodegenConfig,
   type Config,
+  type JsToolchain,
+  type Mode,
   type OS,
   type PackageManager,
   type PartialConfig,
   type Toolchain,
   detectHost,
   findRepoRoot,
+  resolveCodegenConfig,
   resolveConfig,
 } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
+import { ensureNinja } from "./ninja-release.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
-import { quote, quoteArgs } from "./shell.ts";
-import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
+import { rustPlanFiles } from "./rust.ts";
+import { quote } from "./shell.ts";
+import {
+  checkImageTools,
+  findBun,
+  findCargo,
+  findMsvcLinker,
+  findNpm,
+  findSystemTool,
+  resolveLlvmToolchain,
+  writeToolIdentities,
+} from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 
-/**
- * Full toolchain discovery. Returns absolute paths to all required tools.
- *
- * `targetOs` (defaults to the host) decides which tool family is resolved —
- * a windows target needs the MSVC-style drivers (clang-cl, llvm-lib,
- * lld-link, llvm-rc) even from a linux/macOS host.
- *
- * Throws BuildError with a hint if a required tool is missing. Optional
- * tools (ccache, cargo if no rust deps needed) become `undefined`.
- */
-export function resolveToolchain(targetOs?: OS, packageManager: PackageManager = "bun"): Toolchain {
+/** The JavaScript tools: what the code generators run with, and all that `mode: "codegen"` looks for. */
+export function resolveJsToolchain(packageManager: PackageManager = "bun"): JsToolchain {
   const host = detectHost();
-  const llvm = resolveLlvmToolchain(host.os, host.arch, targetOs ?? host.os);
-
-  // cmake — ci.ts writes the artifact zips with `cmake -E tar`.
-  const cmake = findSystemTool("cmake", { required: true, hint: "Install cmake (>= 3.24)" });
-  if (cmake === undefined) throw new BuildError("unreachable: findSystemTool required=true returned undefined");
-
-  // cargo — required for lolhtml. Not found → build will fail at that dep
-  // with a clear "install rust" hint. We don't hard-fail here because
-  // someone might be testing a subset that doesn't need lolhtml.
-  const rust = findCargo(host.os);
-
-  // Windows: MSVC link.exe path (to prevent Git Bash's /usr/bin/link
-  // shadowing). Only needed when cargo builds with the msvc target.
-  const msvcLinker = host.os === "windows" ? findMsvcLinker(host.arch) : undefined;
-
   // esbuild path is relative to REPO ROOT, not process.cwd() — when
   // ninja's generator rule invokes reconfigure, cwd is the build dir.
   const repoRoot = findRepoRoot();
@@ -88,7 +82,7 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   // A codegen script that a module can also import runs its command line
   // only when import.meta.main is true. Node 24.2 added import.meta.main.
   // Before that it is undefined, and the script would write nothing. CI
-  // installs Node 26 (scripts/bootstrap.sh), so the minimum is 25.
+  // installs Node 26 (scripts/build/ci-images/spec.ts), so the minimum is 25.
   if (process.versions.bun === undefined) {
     const major = Number(process.versions.node.split(".")[0]);
     if (major < 25) {
@@ -97,20 +91,46 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
       });
     }
   }
-  const jsRuntimeArgv =
+  const q = (p: string) => quote(p, host.os === "windows");
+  const jsRuntime =
     process.versions.bun !== undefined
-      ? [process.execPath]
-      : [process.execPath, "--experimental-strip-types", "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON"];
-  const jsRuntime = quoteArgs(jsRuntimeArgv, host.os === "windows");
+      ? q(process.execPath)
+      : `${q(process.execPath)} --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON`;
+
+  return { bun, npm, jsRuntime, esbuild };
+}
+
+/**
+ * Full toolchain discovery. Returns absolute paths to all required tools.
+ *
+ * `targetOs` (defaults to the host) decides which tool family is resolved —
+ * a windows target needs the MSVC-style drivers (clang-cl, llvm-lib,
+ * lld-link, llvm-rc) even from a linux/macOS host.
+ *
+ * Throws BuildError with a hint if a required tool is missing. Optional
+ * tools (ccache, cargo if no rust deps needed) become `undefined`.
+ */
+export function resolveToolchain(targetOs?: OS, packageManager: PackageManager = "bun"): Toolchain {
+  const host = detectHost();
+  const llvm = resolveLlvmToolchain(host.os, host.arch, targetOs ?? host.os);
+
+  // cmake — required for nested dep builds.
+  const cmake = findSystemTool("cmake", { required: true, hint: "Install cmake (>= 3.24)" });
+  if (cmake === undefined) throw new BuildError("unreachable: findSystemTool required=true returned undefined");
+
+  // cargo — required for lolhtml. Not found → build will fail at that dep
+  // with a clear "install rust" hint. We don't hard-fail here because
+  // someone might be testing a subset that doesn't need lolhtml.
+  const rust = findCargo(host.os);
+
+  // Windows: MSVC link.exe path (to prevent Git Bash's /usr/bin/link
+  // shadowing). Only needed when cargo builds with the msvc target.
+  const msvcLinker = host.os === "windows" ? findMsvcLinker(host.arch) : undefined;
 
   return {
     ...llvm,
+    ...resolveJsToolchain(packageManager),
     cmake,
-    bun,
-    npm,
-    jsRuntime,
-    jsRuntimeArgv,
-    esbuild,
     cargo: rust?.cargo,
     cargoHome: rust?.cargoHome,
     rustupHome: rust?.rustupHome,
@@ -123,6 +143,8 @@ export interface ConfigureResult {
   output: BunOutput;
   /** Build.ninja absolute path. */
   ninjaFile: string;
+  /** The ninja to run the build with (ninja-release.ts): a path, or `ninja` for the one on PATH. */
+  ninja: string;
   /** Env vars the caller should set before spawning ninja. */
   env: Record<string, string>;
   /** Wall-clock ms for the configure pass. */
@@ -152,8 +174,24 @@ function configureInputs(cwd: string): string[] {
     .filter(f => !excluded.has(f))
     .map(f => resolve(buildDir, f));
   const deps = globSync("deps/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
+  // rust/: units.ts/emit.ts/plan.ts shape the per-crate edges and manifests at configure time (run.ts is build-time
+  // only, but one glob keeps the rule simple).
+  const rust = globSync("rust/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
-  return [...scripts, ...deps, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
+  // Versions the build uses (LLVM, Node.js, the sysroots) are written here.
+  const pins = resolve(buildDir, "ci-images", "spec.ts");
+
+  return [
+    ...scripts,
+    ...deps,
+    ...rust,
+    pins,
+    resolve(cwd, "scripts", "glob-sources.ts"),
+    resolve(cwd, "package.json"),
+    // The ELF link's export list is written from these (bun.ts linkImplicitInputs).
+    resolve(cwd, "src", "linker.lds"),
+    resolve(cwd, "src", "linker-freebsd.lds"),
+  ].sort();
 }
 
 /**
@@ -184,7 +222,7 @@ export interface ConfigureInput {
  * profiles.ts. Edits to a profile therefore take effect on the next
  * `ninja` in an existing build dir without `rm -rf`.
  */
-function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
+function emitGeneratorRule(n: Ninja, cfg: Config | CodegenConfig, input: ConfigureInput): void {
   const configFile = resolve(cfg.buildDir, "configure.json");
   const buildScript = resolve(cfg.cwd, "scripts", "build.ts");
 
@@ -212,8 +250,16 @@ function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
     outputs: [resolve(cfg.buildDir, "build.ninja")],
     rule: "regen",
     inputs: [configFile],
-    implicitInputs: configureInputs(cfg.cwd),
+    // The Rust plans: the per-crate edges are generated from them (rust.ts), so a changed plan — new lockfile,
+    // manifest, toolchain — must reconfigure. They are build outputs; when one is dirty ninja builds it first,
+    // reruns this edge, and restarts with the new manifest.
+    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? rustPlanFiles(cfg) : [])],
   });
+}
+
+/** Whether this graph compiles bun's Rust crates (and therefore has the plan edges emitRust registers): every build but `codegen`. */
+function buildsRust(cfg: Config | CodegenConfig): cfg is Config {
+  return cfg.mode !== "codegen";
 }
 
 /**
@@ -228,13 +274,8 @@ function ccacheEnv(cfg: Config): Record<string, string> {
     // source at different checkout locations shares cache entries.
     CCACHE_BASEDIR: cfg.cwd,
     CCACHE_NOHASHDIR: "1",
-    // Not CCACHE_FILECLONE: entries stored under it are raw files, and a hit
-    // on one is materialized by clone (APFS) or CopyFile (Windows), both of
-    // which keep the entry's mtime — the object comes out "older" than
-    // headers generated in the same run and the next build recompiles it.
-    // Embedded entries are written fresh. The namespace keeps the raw
-    // entries earlier builds stored from ever being hit again.
-    CCACHE_NAMESPACE: "bun",
+    // Copy-on-write for cache entries — near-free on btrfs/APFS/ReFS.
+    CCACHE_FILECLONE: "1",
     CCACHE_STATSLOG: resolve(cfg.buildDir, "ccache.log"),
   };
   if (!cfg.ci) {
@@ -258,57 +299,167 @@ function ccacheEnv(cfg: Config): Record<string, string> {
  * no buildDir is set, one is computed from the build type (build/debug,
  * build/release, etc).
  */
+/** Expand profile → PartialConfig. Overrides win. */
+function partialOf(input: ConfigureInput): PartialConfig {
+  return {
+    ...(input.profile !== undefined ? getProfile(input.profile) : {}),
+    ...(input.overrides ?? {}),
+  };
+}
+
+/** The mode an input asks for. `codegen` is configured by configureCodegen(), `full` by configure(). */
+export function modeOf(input: ConfigureInput): Mode {
+  const mode = partialOf(input).mode ?? "full";
+  if (mode !== "full" && mode !== "codegen") {
+    throw new BuildError(`Unknown mode: "${mode}"`, { hint: "Modes: full, codegen" });
+  }
+  return mode;
+}
+
+/** The Config an input stands for. Writes and fetches nothing: for configure, and for what only needs to find a build directory. */
+export function configOf(input: ConfigureInput): { cfg: Config; toolchain: Toolchain } {
+  const partial = partialOf(input);
+  const toolchain = resolveToolchain(partial.os, partial.packageManager);
+  return { cfg: resolveConfig(partial, toolchain), toolchain };
+}
+
+/** configOf() for `mode: "codegen"`: looks for the JavaScript tools only. */
+export function codegenConfigOf(input: ConfigureInput): CodegenConfig {
+  const partial = partialOf(input);
+  return resolveCodegenConfig(partial, resolveJsToolchain(partial.packageManager));
+}
+
+/** Write build.ninja (only if changed) and tell ninja's log that it is current. */
+async function writeManifest(
+  n: Ninja,
+  cfg: Pick<Config, "buildDir">,
+  ninja: string | undefined,
+  mark: (label: string) => void,
+): Promise<{ changed: boolean; ninjaPath: string }> {
+  const changed = await n.write();
+  const ninjaPath = resolve(cfg.buildDir, "build.ninja");
+  mark("n.write");
+
+  // build.ninja is also the output of the `regen` edge, whose inputs are the
+  // build scripts and configure.json. ninja compares those against the mtime
+  // it *recorded* for build.ninja when it last ran that edge itself, so after
+  // a script edit a manifest brought up to date here (outside ninja) still
+  // looks stale and ninja would run configure a second time on startup.
+  // Having just configured, the manifest is current as of now: stamp it and
+  // let `-t restat` record that. (Not when ninja is the one running us — it
+  // records its own edge — and nothing to record into in a fresh dir.)
+  if (ninja !== undefined) {
+    const now = new Date();
+    utimesSync(ninjaPath, now, now);
+    if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {
+      spawnSync(ninja, ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
+    }
+  }
+  mark("restat");
+  return { changed, ninjaPath };
+}
+
+/** What configureCodegen() returns: configure()'s result without the native half. */
+export interface CodegenConfigureResult<N extends string | undefined = string> {
+  cfg: CodegenConfig;
+  /** The ninja to run the build with (ninja-release.ts): a path, or `ninja` for the one on PATH. */
+  ninja: N;
+  /** Wall-clock ms for the configure pass. */
+  elapsed: number;
+}
+
 /**
- * `fromNinja`: this run is ninja's own `regen` edge replaying configure.json
- * (build.ts --config-file), as opposed to build.ts configuring before it
- * spawns ninja.
+ * configure() for `mode: "codegen"`: a graph of the code generators alone, whose default target is `codegen`.
+ * Looks for bun, the root install's esbuild and perl, and for no compiler, linker, cmake or cargo; writes no
+ * `.cargo/config.toml` and fetches no SDK or sysroot. It has a build directory of its own (`build/debug-codegen`);
+ * the type declarations go to `cfg.typesDir`, which every build directory shares.
  */
-export async function configure(input: ConfigureInput, fromNinja = false): Promise<ConfigureResult> {
+export function configureCodegen(input: ConfigureInput): Promise<CodegenConfigureResult> {
+  return generateCodegen(input, ensureNinja);
+}
+
+/** reconfigure() for `mode: "codegen"`: the `regen` replay, which resolves no ninja. */
+export async function reconfigureCodegen(input: ConfigureInput): Promise<void> {
+  await generateCodegen(input, async () => undefined);
+}
+
+async function generateCodegen<N extends string | undefined>(
+  input: ConfigureInput,
+  resolveNinja: (cfg: CodegenConfig) => Promise<N>,
+): Promise<CodegenConfigureResult<N>> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
     if (trace) process.stderr.write(`  ${label}: ${Math.round(performance.now() - start)}ms\n`);
   };
 
-  // Expand profile → PartialConfig. Overrides win — except localDeps, which
-  // is a list and accumulates (a profile may redirect a dep; a CLI
-  // `--local-deps=zstd=…` on top must add to that, not replace it; a repeated
-  // name still takes the CLI's path since later entries win).
-  const profile = input.profile !== undefined ? getProfile(input.profile) : {};
-  const overrides = (input.overrides ??= {});
-  // `--local-deps=WebKit` without a path is shorthand for
-  // `WebKit=$BUN_WEBKIT_PATH` (what `bun run build:local` passes). Resolved
-  // into the persisted overrides here, once, so ninja-driven reconfigures use
-  // the path this build dir was configured with regardless of the
-  // environment they run in. Every other dep spells its path out.
-  if (overrides.localDeps !== undefined) {
-    overrides.localDeps = overrides.localDeps
-      .split(",")
-      .map(entry => {
-        if (entry !== "WebKit") return entry;
-        const fromEnv = process.env.BUN_WEBKIT_PATH;
-        if (!fromEnv) {
-          throw new BuildError(
-            "--local-deps=WebKit needs a path: set $BUN_WEBKIT_PATH to your WebKit clone, or pass --local-deps=WebKit=<path>",
-            {
-              hint: "Clone oven-sh/WebKit somewhere outside vendor/ (vendor/WebKit is the build's own fetch of the pinned commit)",
-            },
-          );
-        }
-        return `WebKit=${fromEnv}`;
-      })
-      .join(",");
-  }
-  const partial: PartialConfig = { ...profile, ...overrides };
-  if (profile.localDeps !== undefined && overrides.localDeps !== undefined) {
-    partial.localDeps = `${profile.localDeps},${overrides.localDeps}`;
-  }
+  const cfg = codegenConfigOf(input);
+  mark("resolveCodegenConfig");
 
-  const toolchain = resolveToolchain(partial.os, partial.packageManager);
-  mark("resolveToolchain");
-  const cfg = resolveConfig(partial, toolchain);
+  const ninja = await resolveNinja(cfg);
+  mark("ensureNinja");
+
+  requirePerl();
+
+  const sources = globAllSources();
+  mark("globAllSources");
+
+  const n = new Ninja({ buildDir: cfg.buildDir });
+  registerDirStamps(n, cfg);
+  registerCodegenRules(n, cfg);
+  mkdirSync(cfg.buildDir, { recursive: true });
+  emitCodegen(n, cfg, sources);
+  mark("emitCodegen");
+  emitGeneratorRule(n, cfg, input);
+  n.default(["codegen"]);
+
+  await writeManifest(n, cfg, ninja, mark);
+  return { cfg, ninja, elapsed: Math.round(performance.now() - start) };
+}
+
+/** LUT codegen (create-hash-table.ts) shells out to a perl script; without perl it fails cryptically. */
+function requirePerl(): void {
+  if (findSystemTool("perl") === undefined) {
+    throw new BuildError("perl not found in PATH", {
+      hint: "LUT codegen (create-hash-table.ts) needs perl. Install it: apt install perl / brew install perl",
+    });
+  }
+}
+
+/** build.ts configuring before it spawns ninja: resolves the ninja to spawn (ninja-release.ts). */
+export function configure(input: ConfigureInput): Promise<ConfigureResult> {
+  return generate(input, ensureNinja);
+}
+
+/**
+ * ninja's own `regen` edge replaying configure.json (build.ts --config-file): rewrites build.ninja and what is
+ * written beside it. It runs inside the ninja that was chosen and starts none, so it does not look for one: asking
+ * whether the pinned ninja can run is a process spawned for an answer nobody reads, and on a machine that refuses
+ * to run it, a second refusal in the middle of the build.
+ */
+export async function reconfigure(input: ConfigureInput): Promise<void> {
+  await generate(input, async () => undefined);
+}
+
+async function generate<N extends string | undefined>(
+  input: ConfigureInput,
+  resolveNinja: (cfg: Config) => Promise<N>,
+): Promise<Omit<ConfigureResult, "ninja"> & { ninja: N }> {
+  const start = performance.now();
+  const trace = process.env.BUN_BUILD_TRACE === "1";
+  const mark = (label: string) => {
+    if (trace) process.stderr.write(`  ${label}: ${Math.round(performance.now() - start)}ms\n`);
+  };
+
+  const { cfg, toolchain } = configOf(input);
+  mark("resolveConfig");
 
   validateBunConfig(cfg);
+  // Not cfg.ci or cfg.buildkite: those are what a ci-* profile asks for, and a
+  // developer can build one (`bun run build:ci`) on a machine that is no image.
+  if (isBuildkite) {
+    checkImageTools(toolchain);
+  }
 
   // Darwin cross-compile: the SDK must exist before ninja runs (every compile
   // edge passes -isysroot) and before checkWorkarounds() (the darwin-cross
@@ -317,6 +468,11 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   // No-op otherwise.
   await ensureMacosSdk(cfg);
   mark("ensureMacosSdk");
+
+  // The ninja itself, before anything here runs one (the restat below) so every
+  // ninja that touches this build directory is the same one.
+  const ninja = await resolveNinja(cfg);
+  mark("ensureNinja");
 
   checkWorkarounds(cfg);
 
@@ -337,39 +493,14 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   // (the discovered clang++ from `tools.ts`) so a contributor running `cargo`
   // directly / rust-analyzer use the same toolchain the ninja build does.
   generateCargoConfig(cfg);
+  writeToolIdentities(cfg);
   mark("generateCargoConfig");
 
-  // Host tools the C++ side shells out to: perl (bun's LUT codegen and JSC's
-  // hash tables), and with JSC built from source ruby + python3 (its other
-  // generators) and zstd (packing the ICU data, where ICU is ours). Missing
-  // ones fail here with a hint rather than mid-build. rust-only/link-only run
-  // none of that — skip so split-CI steps don't need them on the rust box.
-  if (cfg.mode === "full" || cfg.mode === "cpp-only") {
-    const needed: [tool: string, why: string, when: boolean][] = [
-      ["perl", "LUT codegen (create-hash-table.ts) and JSC's hash tables", true],
-      ["ruby", "JavaScriptCore's offlineasm/bytecode generators", cfg.webkit === "source"],
-      [
-        "python3",
-        "JavaScriptCore's builtins/inspector/yarr generators",
-        cfg.webkit === "source" && cfg.host.os !== "windows",
-      ],
-      [
-        "python",
-        "JavaScriptCore's builtins/inspector/yarr generators",
-        cfg.webkit === "source" && cfg.host.os === "windows",
-      ],
-      ["zstd", "packing the ICU data (icu-data.ts)", cfg.webkit === "source" && !cfg.darwin],
-    ];
-    const missing = needed.filter(([tool, , when]) => when && findSystemTool(tool) === undefined);
-    if (missing.length > 0) {
-      throw new BuildError(`${missing.map(([t]) => t).join(", ")} not found in PATH`, {
-        hint:
-          missing.map(([tool, why]) => `${tool}: ${why}`).join("; ") +
-          `. Install with your package manager (e.g. apt install ${missing.map(([t]) => (t === "python" ? "python3" : t)).join(" ")} / brew install …); see CONTRIBUTING.md.`,
-      });
-    }
-  }
-  mark("validate+host-tools");
+  // Perl check: LUT codegen (create-hash-table.ts) shells out to the
+  // perl script from JSC. If perl is missing, codegen fails cryptically.
+  // Check here so the error is at configure time with a clear hint.
+  requirePerl();
+  mark("validate+perl");
 
   // Glob all source lists — one pass, consistent filesystem snapshot.
   const sources = globAllSources();
@@ -385,43 +516,18 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   mark("emitBun");
   emitGeneratorRule(n, cfg, input);
 
-  // Default targets. cpp-only sets its own default inside emitBun (archive,
-  // no smoke test). Full/link-only: `bun` phony (or stripped file); the
-  // smoke test and ClassInfo check ride along as validations of the link.
+  // Default targets: the `bun` phony (or stripped file); the smoke test
+  // rides along as a validation of the link.
   // Release builds produce both bun-profile and stripped bun; `bun` is the
   // stripped one. Debug produces bun-debug; `bun` is a phony pointing at it.
   // dsym: darwin release only — pulled into defaults so ninja actually builds
   // it (no other node depends on it, and unlike cmake's POST_BUILD it doesn't
   // auto-trigger).
-  if (output.exe !== undefined) {
-    const defaultTarget = output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun";
-    const targets = [defaultTarget];
-    if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
-    if (output.testFFI !== undefined) targets.push(n.rel(output.testFFI));
-    n.default(targets);
-  }
+  const targets = [output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun"];
+  if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
+  n.default(targets);
 
-  // Write build.ninja (only if changed).
-  const changed = await n.write();
-  const ninjaPath = resolve(cfg.buildDir, "build.ninja");
-  mark("n.write");
-
-  // build.ninja is also the output of the `regen` edge, whose inputs are the
-  // build scripts and configure.json. ninja compares those against the mtime
-  // it *recorded* for build.ninja when it last ran that edge itself, so after
-  // a script edit a manifest brought up to date here (outside ninja) still
-  // looks stale and ninja would run configure a second time on startup.
-  // Having just configured, the manifest is current as of now: stamp it and
-  // let `-t restat` record that. (Not when ninja is the one running us — it
-  // records its own edge — and nothing to record into in a fresh dir.)
-  if (!fromNinja) {
-    const now = new Date();
-    utimesSync(ninjaPath, now, now);
-    if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {
-      spawnSync("ninja", ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
-    }
-  }
-  mark("restat");
+  const { changed, ninjaPath } = await writeManifest(n, cfg, ninja, mark);
 
   // Pre-create all object file parent directories (ninja would create them
   // edge by edge; having the tree up front serves tools that read
@@ -433,11 +539,10 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   mark("mkdirAll");
 
   // Seed an empty symbol ordering file so the link flag always points at
-  // something. lld and Apple ld both treat an empty file as a no-op, which is
-  // exactly the unordered pass-1 link; a later `generateOrderFile()` overwrites
-  // it and ninja relinks (linkDepends lists it). Never clobber an existing one
-  // — that would throw away the file a release relink or a canary download
-  // just put there.
+  // something. Every linker treats an empty file as a no-op, which is the
+  // unordered link; `bun run orderfile` overwrites it and ninja relinks
+  // (linkDepends lists it). Never clobber an existing one — that would throw
+  // away the file CI just inherited.
   if (usesOrderFile(cfg) && !existsSync(orderFilePath(cfg))) {
     writeIfChanged(orderFilePath(cfg), "# no order file yet — an empty file is a no-op for the linker\n");
   }
@@ -448,5 +553,5 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");
 
-  return { cfg, output, ninjaFile, env: ccacheEnv(cfg), elapsed, changed, exe };
+  return { cfg, output, ninjaFile, ninja, env: ccacheEnv(cfg), elapsed, changed, exe };
 }

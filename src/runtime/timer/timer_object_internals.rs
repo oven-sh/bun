@@ -27,18 +27,20 @@ use super::{
 
 /// Data that TimerObject and ImmediateObject have in common.
 #[repr(C)]
-pub struct TimerObjectInternals {
+pub(crate) struct TimerObjectInternals {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`).
     pub(crate) id: i32,
     pub(crate) interval: Cell<u32>,
     pub this_value: JsCell<JsRef>,
     pub(crate) flags: Cell<Flags>,
-    /// `bun test --isolate` generation this timer was created in.
+    /// The context whose script created the timer.
+    pub(crate) context: bun_jsc::ContextId,
+    /// `VirtualMachine::test_isolation_generation` when it did.
     pub(crate) generation: u32,
 }
 
 impl TimerObjectInternals {
-    pub(crate) fn new(id: i32, kind: Kind, interval: u32, vm: &VirtualMachine) -> Self {
+    pub(crate) fn new(id: i32, kind: Kind, interval: u32, cx: &bun_jsc::JsThread<'_>) -> Self {
         let mut flags = Flags::default();
         flags.set_kind(kind);
         flags.set_epoch(timer_all().epoch());
@@ -47,7 +49,8 @@ impl TimerObjectInternals {
             interval: Cell::new(interval),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(flags),
-            generation: vm.test_isolation_generation,
+            context: cx.context().id(),
+            generation: cx.vm().test_isolation_generation,
         }
     }
 
@@ -75,7 +78,7 @@ impl TimerObjectInternals {
 // `bun_event_loop::EventLoopTimer::TimerFlags` so `bun_jsc::abort_signal::Timeout`
 // can name it without a forward dep on this crate. Re-exported here so existing
 // `TimerObjectInternals`/`All::update` callers see the same nominal type.
-pub use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
+pub(crate) use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
 
 // C++ symbol emitted from ImmediateList.cpp / setTimeout.cpp; already linked.
 unsafe extern "C" {
@@ -96,7 +99,7 @@ unsafe extern "C" {
 /// `refresh()`, the `_destroyed` getter), so all state is in `Cell`/`JsCell`.
 /// Methods that may drop the heap's ref (and with it possibly the last ref)
 /// take `ThisPtr<Self>`; after they release it `this` may be gone.
-pub trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static {
+pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static {
     fn internals(&self) -> &TimerObjectInternals;
     fn event_loop_timer(&self) -> &JsCell<EventLoopTimer>;
     /// The slot for the ref held while this timer is scheduled (see the
@@ -189,34 +192,43 @@ pub trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static {
     fn schedule(
         this: ThisPtr<Self>,
         timer: JSValue,
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         callback: JSValue,
         arguments: JSValue,
     ) {
         let internals = this.internals();
+        // Only a graph's context keeps a list of its timers. It is keyed by the
+        // slot: `jsc_hooks::cancel_timers` has only that address, and the
+        // slot's tag names the owner type.
+        if let Some(context) = cx.vm().as_graph_context(cx.context()) {
+            context.track_timer(
+                this.timer_ref().as_ptr().cast(),
+                bun_jsc::ContextTimer::Object,
+            );
+        }
+
         if internals.flags.get().kind() == Kind::SetImmediate {
-            JSImmediate::arguments_set_cached(timer, global, arguments);
-            JSImmediate::callback_set_cached(timer, global, callback);
+            JSImmediate::arguments_set_cached(timer, cx.global(), arguments);
+            JSImmediate::callback_set_cached(timer, cx.global(), callback);
             // Low tier stores `*mut ()` (§Dispatch); `__bun_run_immediate_task`
             // recovers the `ThisPtr<ImmediateObject>`.
-            global
-                .bun_vm()
+            cx.vm()
                 .event_loop_mut()
                 .enqueue_immediate_task(this.as_ptr().cast());
             this.set_enable_keeping_event_loop_alive(true);
             // ref'd by event loop
             Self::hold_heap_ref(this);
         } else {
-            JSTimeout::arguments_set_cached(timer, global, arguments);
-            JSTimeout::callback_set_cached(timer, global, callback);
+            JSTimeout::arguments_set_cached(timer, cx.global(), arguments);
+            JSTimeout::callback_set_cached(timer, cx.global(), callback);
             JSTimeout::idle_timeout_set_cached(
                 timer,
-                global,
+                cx.global(),
                 JSValue::js_number(f64::from(internals.interval.get())),
             );
             JSTimeout::repeat_set_cached(
                 timer,
-                global,
+                cx.global(),
                 if internals.flags.get().kind() == Kind::SetInterval {
                     JSValue::js_number(f64::from(internals.interval.get()))
                 } else {
@@ -225,12 +237,12 @@ pub trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static {
             );
 
             // this takes the heap's ref and sets _idleStart
-            Self::reschedule(this, timer, global);
+            Self::reschedule(this, timer, cx.global());
         }
 
         internals
             .this_value
-            .with_mut(|r| r.set_strong(timer, global));
+            .with_mut(|r| r.set_strong(timer, cx.global()));
     }
 
     /// `__bun_run_immediate_task` body. Returns `true` if an exception was
@@ -240,7 +252,7 @@ pub trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static {
         let cleared = s.flags.get().has_cleared_timer()
             // The VM's stop was requested: nothing more enters script (as `fire`).
             || vm.script_execution_status() != ScriptExecutionStatus::Running
-            || s.generation != vm.test_isolation_generation
+            || vm.has_outlived_its_script(s.context, s.generation)
             // unref'd setImmediate callbacks should only run if there are things
             // keeping the event loop alive other than setImmediates
             || (!s.flags.get().is_keeping_event_loop_alive()
@@ -318,7 +330,7 @@ pub trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static {
         let has_been_cleared = this.event_loop_timer_state() == EventLoopTimerState::CANCELLED
             || s.flags.get().has_cleared_timer()
             || vm.script_execution_status() != ScriptExecutionStatus::Running
-            || s.generation != vm.test_isolation_generation;
+            || vm.has_outlived_its_script(s.context, s.generation);
 
         this.set_event_loop_timer_state(EventLoopTimerState::FIRED);
 
@@ -545,7 +557,9 @@ pub trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static {
         }
 
         let now = Timespec::now(TimespecMockMode::AllowMockedTime);
-        let scheduled_time = now.add_ms(i64::from(internals.interval.get()));
+        // Only `Bun.sleep()` has an `interval` below 1.
+        let min_delay = timer_all().fake_timers.min_delay_ms();
+        let scheduled_time = now.add_ms(i64::from(internals.interval.get().max(min_delay)));
         let was_active = this.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
         if was_active {
             timer_all().remove(this.timer_ref());
@@ -609,6 +623,11 @@ pub trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static {
                     maps.set_timeout.swap_remove(&id);
                 }
             });
+        }
+
+        // The address `schedule()` tracked.
+        if let Some(context) = VirtualMachine::get().timer_context(self.internals().context) {
+            context.untrack_timer(self.timer_ref().as_ptr().cast());
         }
 
         // Without this a dropped-while-ref'd timer leaks `active_timer_count` /
@@ -768,9 +787,9 @@ pub trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static {
     }
 
     /// [`cancel`](Self::cancel) on behalf of something other than the timer
-    /// itself (VM teardown, the fake clock's `clear`), which may already have
-    /// popped the slot: also releases the heap's ref when `cancel()` finds the
-    /// slot no longer `ACTIVE`. May free `this`.
+    /// itself (VM teardown, a stopped graph context, the fake clock's `clear`),
+    /// which may already have popped the slot: also releases the heap's ref
+    /// when `cancel()` finds the slot no longer `ACTIVE`. May free `this`.
     fn release_heap_entry(this: ThisPtr<Self>) {
         let held = this.heap_ref().take();
         Self::cancel(this);

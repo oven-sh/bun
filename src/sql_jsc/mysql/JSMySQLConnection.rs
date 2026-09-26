@@ -56,6 +56,9 @@ pub struct JSMySQLConnection {
     // hot `vm()` deref is safe; `vm_mut()` routes through the canonical
     // `VirtualMachine::as_mut()` accessor.
     vm: BackRef<VirtualMachine>,
+    /// The context whose script made the connection: the socket it upgrades
+    /// to TLS joins that context's sockets too.
+    pub(crate) context: bun_jsc::ContextId,
     poll_ref: JsCell<KeepAlive>,
 
     // pub(crate): MySQLRequestQueue::advance reaches `connection.get().queue`
@@ -103,6 +106,13 @@ impl JSMySQLConnection {
             .get()
             .expect("JSMySQLConnection used before create_instance")
             .this_ptr()
+    }
+
+    pub fn server_identity(
+        &self,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        self.connection.get().server_identity(ssl)
     }
 
     /// Takes a ref on `self` now and releases it on drop (which may free
@@ -400,6 +410,8 @@ impl JSMySQLConnection {
         // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`
         // is the canonical safe escape hatch for `mysql_socket_group()`.
         let vm = global_object.bun_vm().as_mut();
+        // The connection is the calling script's.
+        let context = global_object.bun_vm().context_of_caller(callframe);
         let arguments = callframe.arguments();
         let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, vm, arguments)? else {
             return Ok(JSValue::ZERO);
@@ -446,6 +458,7 @@ impl JSMySQLConnection {
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
             vm: BackRef::new(global_object.bun_vm()),
+            context: context.id(),
             poll_ref: JsCell::new(KeepAlive::default()),
             connection: JsCell::new(my_sql_connection::MySQLConnection::init(
                 database,
@@ -477,7 +490,7 @@ impl JSMySQLConnection {
 
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
-            let group = vm.mysql_socket_group::<false>();
+            let group = vm.mysql_socket_group::<false>(context);
             let result = if !path.is_empty() {
                 SocketTCP::connect_unix_group(
                     group,
@@ -526,15 +539,10 @@ impl JSMySQLConnection {
     bun_jsc::cached_prop_hostfns! {
         crate::jsc::codegen::js_mysql_connection;
         lazy_array(get_queries => queries_get_cached, queries_set_cached),
-        (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
         (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
     }
 
     bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx);
-
-    pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.connection.get().status == my_sql_connection::Status::Connected)
-    }
 
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
@@ -613,6 +621,11 @@ impl JSMySQLConnection {
     pub(crate) fn can_execute_query(&self) -> bool {
         self.connection.get().queue.can_execute_query(self)
     }
+    /// Connecting or connected: not failed, and not closed.
+    #[inline]
+    pub(crate) fn is_active(&self) -> bool {
+        self.connection.get().is_active()
+    }
     #[inline]
     pub(crate) fn get_writer(&self) -> NewWriter<my_sql_connection::Writer> {
         self.connection.get().writer()
@@ -665,6 +678,7 @@ impl JSMySQLConnection {
         queries_array.ensure_still_alive();
         // self.global_object.queue_microtask(on_close, &[js_error, queries_array]);
         loop_.run_callback(
+            bun_event_loop::ContextId::NONE,
             on_close,
             &self.global_object,
             JSValue::UNDEFINED,

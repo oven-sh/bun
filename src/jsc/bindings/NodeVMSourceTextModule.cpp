@@ -124,11 +124,11 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return nullptr;
     }
 
-    // Decoding checks the format, the checksum and the source key. Linking would need
+    // Decoding checks the format and the source key. Linking would need
     // the module's JSModuleEnvironment, which does not exist yet.
     LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
     SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
-    Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});
+    Ref<CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(cachedData.span());
     if (decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode)))
         return ptr;
 
@@ -165,7 +165,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         return {};
     }
 
-    ModuleAnalyzer analyzer(globalObject, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
+    JSModuleLoader* loader = moduleLoader(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    ModuleAnalyzer analyzer(globalObject, loader, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
 
     RETURN_IF_EXCEPTION(scope, {});
     ASSERT(node != nullptr);
@@ -416,6 +418,10 @@ static bool isModuleGraphLinked(AbstractModuleRecord* root, String& missingSpeci
 
         const auto& loaded = record->loadedModules();
         for (const auto& request : record->requestedModules()) {
+            if (AbstractModuleRecord* dependency = record->prelinkedRequestedModule(request)) {
+                worklist.append(dependency);
+                continue;
+            }
             auto iter = loaded.find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
             if (iter == loaded.end()) {
                 missingSpecifier = request.m_specifier.string();
@@ -450,7 +456,10 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
 
     String missingSpecifier;
     if (!isModuleGraphLinked(record, missingSpecifier)) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, makeString("request for '"_s, missingSpecifier, "' is not in cache"_s));
+        // The specifier comes from the module's source, so from JS.
+        MessageBuilder message;
+        message.append("request for '"_s, missingSpecifier, "' is not in cache"_s);
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
         return {};
     }
 
@@ -546,6 +555,7 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_moduleRequestsArray);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
     visitor.append(vmModule->m_initializeImportMeta);
+    NodeVMScriptFetcher::visitSource(visitor, vmModule->m_sourceCode);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMSourceTextModule);

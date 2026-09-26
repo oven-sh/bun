@@ -11,11 +11,24 @@ import {
   runBunInstall,
   shellExe,
   tempDir,
+  tls as tlsCert,
   tmpdirSync,
 } from "harness";
-import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
+import {
+  ChildProcess,
+  exec,
+  execFile,
+  execFileSync,
+  execSync,
+  fork,
+  spawn,
+  spawnSync,
+  type StdioOptions,
+} from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
+import net from "node:net";
 import os from "node:os";
+import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -376,6 +389,53 @@ describe("spawn()", () => {
     expect(result.trim()).toBe("hello");
   });
 
+  // The child does not read stdin until the parent tells it to over IPC, so
+  // every write past the pipe buffer sits in the parent's sink when end() runs.
+  it("stdin.end(cb) and 'finish' wait for the backlog to drain", async () => {
+    const child = spawn(
+      bunExe(),
+      [
+        "-e",
+        `let n = 0;
+         process.on("message", () => {
+           process.stdin.on("data", d => { n += d.length; });
+           process.stdin.on("end", () => { process.stdout.write(String(n)); process.disconnect(); });
+         });`,
+      ],
+      { env: bunEnv, stdio: ["pipe", "pipe", "pipe", "ipc"] },
+    );
+    const collect = (stream: NodeJS.ReadableStream) =>
+      new Promise<string>(resolve => {
+        let out = "";
+        stream.on("data", d => (out += d));
+        stream.on("end", () => resolve(out));
+      });
+    const stdout = collect(child.stdout!);
+    const stderr = collect(child.stderr!);
+    const exited = new Promise<number | null>(resolve => child.on("exit", resolve));
+
+    // Node emits no 'drain' once end() has been called.
+    const order: string[] = [];
+    const chunk = Buffer.alloc(256 * 1024, 1);
+    for (let i = 0; i < 3; i++) child.stdin!.write(chunk);
+    child.stdin!.write(chunk, () => order.push("write"));
+    child.stdin!.on("drain", () => order.push("drain"));
+    child.stdin!.on("finish", () => order.push("finish"));
+    const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<void>();
+    child.stdin!.end(() => {
+      order.push("end");
+      onEnd();
+    });
+    child.on("exit", code => reject(new Error(`child exited with ${code} before end(cb) ran`)));
+    child.send("go");
+
+    await ended;
+    expect(await stderr).toBe("");
+    expect(await stdout).toBe(String(4 * chunk.length));
+    expect(order).toEqual(["write", "end", "finish"]);
+    expect(await exited).toBe(0);
+  });
+
   it("should allow us to timeout hanging processes", async () => {
     const child = spawn(shellExe(), ["-c", "sleep", "2"], { timeout: 3 });
     const start = performance.now();
@@ -590,6 +650,74 @@ describe("spawn()", () => {
       });
       expect(stdout).toBe("ok\n");
       expect(status).toBe(0);
+    });
+
+    describe("a socket as a stdio entry", () => {
+      // Both ends of an established loopback connection: the socket `connect` returns and the one `server`
+      // accepts for it.
+      async function bothEnds(server: net.Server, connect: (port: number) => net.Socket) {
+        const secure = server instanceof tls.Server;
+        const sockets: net.Socket[] = [];
+        const ends = {
+          sockets,
+          [Symbol.dispose]() {
+            for (const socket of sockets) socket.destroy();
+            server.close();
+          },
+        };
+        try {
+          server.listen(0, "127.0.0.1");
+          await once(server, "listening");
+          const connected = connect((server.address() as net.AddressInfo).port);
+          sockets.push(connected);
+          const [[accepted]] = await Promise.all([
+            once(server, secure ? "secureConnection" : "connection"),
+            once(connected, secure ? "secureConnect" : "connect"),
+          ]);
+          sockets.push(accepted);
+          return ends;
+        } catch (error) {
+          ends[Symbol.dispose]();
+          throw error;
+        }
+      }
+
+      // The descriptor under a TLS session carries TLS records: a child that reads it gets ciphertext, and
+      // what a child writes to it reaches the peer as a broken record. Node throws the same error.
+      // The message names the socket's class and nothing more: an inspected TLSSocket reaches the key and
+      // the passphrase of its server or of its connect options.
+      it("rejects a tls.TLSSocket", async () => {
+        using ends = await bothEnds(tls.createServer(tlsCert), port =>
+          tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }),
+        );
+        const rejection = expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "The argument 'stdio' is invalid. Received '[TLSSocket]'",
+        });
+        for (const socket of ends.sockets) {
+          for (const stdio of [
+            [socket, "ignore", "ignore"],
+            ["ignore", socket, "ignore"],
+          ] satisfies StdioOptions[]) {
+            const options = { env: bunEnv, stdio };
+            expect(() => spawn(bunExe(), ["-e", ""], options)).toThrow(rejection);
+            expect(() => spawnSync(bunExe(), ["-e", ""], options)).toThrow(rejection);
+          }
+        }
+      });
+
+      // Windows cannot give a child a socket as stdio: node throws ENOTSUP, Bun throws EBADF.
+      it.skipIf(isWindows)("accepts a net.Socket", async () => {
+        using ends = await bothEnds(net.createServer(), port => net.connect(port, "127.0.0.1"));
+        const closed = ends.sockets.map(socket =>
+          once(spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: [socket, "ignore", "inherit"] }), "close"),
+        );
+        expect(await Promise.all(closed)).toEqual([
+          [0, null],
+          [0, null],
+        ]);
+      });
     });
   });
 
@@ -880,14 +1008,73 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
   expect(signal).toBe("SIGTRAP");
 });
 
+// Signal numbers differ between Linux and macOS (SIGUSR1 is 10 on Linux and 30
+// on macOS), and SIGSTKFLT exists only on Linux. The reported name must be the
+// OS's name for the number the child died from, as in node.
+const platformSignals = (["SIGUSR1", "SIGUSR2", "SIGSTKFLT"] as const).filter(name => name in os.constants.signals);
+
+describe.skipIf(!isPosix)("exit signals are named with the OS's own numbering", () => {
+  it.concurrent.each(platformSignals)("child.kill(%s) exits with that signal", async name => {
+    const child = spawn("sleep", ["1000"], { stdio: "ignore" });
+    try {
+      await once(child, "spawn");
+      const exit = once(child, "exit");
+      expect(child.kill(name)).toBe(true);
+      expect(await exit).toEqual([null, name]);
+      expect(child.signalCode).toBe(name);
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
+  it.concurrent.each(platformSignals)("spawnSync({ killSignal: %s }) reports that signal", name => {
+    const { status, signal } = spawnSync("sleep", ["1000"], { stdio: "ignore", timeout: 1, killSignal: name });
+    expect({ status, signal }).toEqual({ status: null, signal: name });
+  });
+});
+
+// A Linux real-time signal has no name. Bun.spawn reports it as its number, but
+// node:child_process has only names, and it reports this death exactly as node
+// does (v26.3.0): 'exit' and 'close' get (0, null) because libuv's exit status
+// of a signaled process is 0, and spawnSync gives `signal: ""`.
+describe.skipIf(!isLinux)("an exit signal with no name is reported as node reports it", () => {
+  it.concurrent.each([40, 64])("spawn: 'exit' and 'close' after signal %d", async signal => {
+    const child = spawn("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
+    const [exit, close] = await Promise.all([once(child, "exit"), once(child, "close")]);
+    expect({ exit, close, exitCode: child.exitCode, signalCode: child.signalCode }).toEqual({
+      exit: [0, null],
+      close: [0, null],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  it.concurrent.each([40, 64])("spawnSync: signal after signal %d", signal => {
+    const { status, signal: reported } = spawnSync("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
+    expect({ status, signal: reported }).toEqual({ status: null, signal: "" });
+  });
+});
+
 it("spawnSync(does-not-exist)", () => {
   const x = spawnSync("does-not-exist");
   expect(x.error?.code).toEqual("ENOENT");
   expect(x.error.path).toEqual("does-not-exist");
-  expect(x.signal).toEqual(null);
-  expect(x.output).toEqual([null, null, null]);
-  expect(x.stdout).toEqual(null);
-  expect(x.stderr).toEqual(null);
+  // The rest of the result is what node returns when the process could not be spawned.
+  expect({
+    status: x.status,
+    signal: x.signal,
+    output: x.output,
+    pid: x.pid,
+    stdout: x.stdout,
+    stderr: x.stderr,
+  }).toEqual({
+    status: null,
+    signal: null,
+    output: null,
+    pid: 0,
+    stdout: undefined,
+    stderr: undefined,
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/32067
@@ -1345,6 +1532,82 @@ it("child.stdout.pause() after flowing stops native reads and blocks the child",
   } finally {
     c.kill();
   }
+});
+
+// child.stdout and child.stderr read ahead: `_read()` pushes each native pull
+// result synchronously, so while the stream flows Readable holds the next chunk
+// in its buffer when a 'data' listener runs. destroy() left that chunk there and
+// flow() emitted it after destroy() returned, with `destroyed === true`. Node's
+// child stdio is a net.Socket that pushes asynchronously, so no 'data' follows
+// destroy() there.
+it.concurrent.each(["stdout", "stderr"] as const)(
+  "child.%s.destroy() inside a 'data' listener stops 'data' and 'end'",
+  async name => {
+    const SIZE = 8 * 1024 * 1024;
+    const writer = `const s=process.${name};s.on('error',()=>process.exit(0));const c=Buffer.alloc(1<<16,97);let w=0;(function f(){while(w<${SIZE}){w+=c.length;if(!s.write(c)){s.once('drain',f);return}}})()`;
+    const c = spawn(bunExe(), ["-e", writer], {
+      stdio: ["ignore", name === "stdout" ? "pipe" : "ignore", name === "stderr" ? "pipe" : "ignore"],
+      env: bunEnv,
+    });
+    try {
+      const stream = c[name]!;
+      let bytes = 0;
+      let destroyed = false;
+      const afterDestroy: string[] = [];
+      stream.on("data", (d: Buffer) => {
+        if (destroyed) {
+          afterDestroy.push(`data(${d.length}) destroyed=${stream.destroyed}`);
+          return;
+        }
+        bytes += d.length;
+        // Destroy as soon as another chunk is already buffered behind this
+        // one: that is the chunk that used to follow destroy(). If the reader
+        // never gets ahead of this listener, destroy half way instead.
+        if (stream.readableLength > 0 || bytes >= SIZE / 2) {
+          destroyed = true;
+          stream.destroy();
+          c.kill();
+        }
+      });
+      stream.on("end", () => afterDestroy.push("end"));
+      await once(c, "close");
+      expect(afterDestroy).toEqual([]);
+      expect(destroyed).toBe(true);
+    } finally {
+      c.kill();
+    }
+  },
+);
+
+// The exec()/execFile() 'data' listener is a port of Node's: at the chunk that
+// crosses maxBuffer it destroys the stream, and it relies on no 'data' following
+// destroy(). The chunk that used to follow made `maxBuffer - (totalLen - length)`
+// negative, and slice(0, negative) appended most of it, so the callback got up
+// to a chunk more than maxBuffer. Whether a chunk is buffered at the crossing is
+// a race (about 1 run in 3 without the fix), so several run at once.
+describe.concurrent("execFile() maxBuffer against a fast writer", () => {
+  const maxBuffer = 1024 * 1024;
+  // 3 MiB in 64 KiB blocks, each block filled with its own letter. ASCII on
+  // purpose: the handler, like Node's, counts bytes but slices a string chunk by
+  // code units, so multi-byte output is over maxBuffer in bytes in Node too
+  // (Node v26.3.0, maxBuffer 1000000, 2-byte characters: 1016960 bytes).
+  const writer = `const s=process.stdout;s.on('error',()=>process.exit(0));let k=0;(function f(){while(k<48){if(!s.write(Buffer.alloc(1<<16,65+(k++%26)))){s.once('drain',f);return}}})()`;
+  const expected = Buffer.concat(
+    Array.from({ length: maxBuffer >> 16 }, (_, k) => Buffer.alloc(1 << 16, 65 + (k % 26))),
+  );
+
+  it.each(["buffer", "utf8"] as const)("truncates at exactly maxBuffer (encoding: %s)", async encoding => {
+    const runs = Array.from({ length: 4 }, () => {
+      const { promise, resolve } = Promise.withResolvers();
+      execFile(bunExe(), ["-e", writer], { maxBuffer, encoding, env: bunEnv }, (err, stdout) => {
+        resolve({ code: err?.code, length: stdout.length, isPrefix: expected.equals(Buffer.from(stdout)) });
+      });
+      return promise;
+    });
+    expect(await Promise.all(runs)).toEqual(
+      Array(4).fill({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", length: maxBuffer, isPrefix: true }),
+    );
+  });
 });
 
 // When spawn fails (ENOENT, bad cwd, etc.) the ChildProcess emits 'error' and

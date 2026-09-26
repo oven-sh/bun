@@ -173,9 +173,11 @@ declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
      * @param strategy Bun extension. Its `highWaterMark` (bytes, default 64 KiB) bounds how much
      * output one input chunk produces per step: the largest piece a reader receives per `read()`,
      * and how far decoding runs ahead of a slow reader. A chunk larger than that may produce up to
-     * its own size per step.
+     * its own size per step. Its `level` selects the compression level: 0-9 for the zlib formats,
+     * 0-11 for brotli (quality), 1-22 for zstd. Omitted means the format's default
+     * (zlib default, brotli 11, zstd 3).
      */
-    new (format: Bun.CompressionFormat, strategy?: { highWaterMark?: number }): CompressionStream;
+    new (format: Bun.CompressionFormat, strategy?: { highWaterMark?: number; level?: number }): CompressionStream;
   }
 >;
 
@@ -317,7 +319,7 @@ interface TextEncoder extends Bun.__internal.LibEmptyOrNodeUtilTextEncoder {
    * @param src The text to encode.
    * @param dest The array that receives the encoded bytes.
    */
-  encodeInto(src?: string, dest?: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult;
+  encodeInto(src: string, dest: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult;
 }
 declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoder",
@@ -727,6 +729,11 @@ interface ReadableStreamDefaultController<R = any> {
 }
 
 interface ReadableStreamDirectController {
+  /**
+   * Finish the stream. With no argument this flushes buffered bytes and ends,
+   * like {@link end}. With an `error`, the stream fails: buffered bytes are
+   * dropped and the consumer rejects with `error`.
+   */
   close(error?: Error): void;
   /**
    * Write a chunk directly to the destination.
@@ -741,6 +748,9 @@ interface ReadableStreamDirectController {
    *
    * The promise resolves once the destination has drained.
    * `await controller.flush(true)` is equivalent.
+   *
+   * Returns `0` once the destination has gone away (for example, the HTTP
+   * client disconnected).
    */
   write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
   end(): number | Promise<number>;
@@ -1188,10 +1198,19 @@ interface Console {
    * console.write("hello world!", "\n"); // "hello world!\n"
    * ```
    *
+   * When stdout cannot take the data right away (a pipe whose reader is slow),
+   * the data is buffered and a Promise is returned instead of a number. Await it
+   * to wait until the data has been written; it rejects if the write fails, for
+   * example with `EPIPE` when the reader has closed the pipe.
+   *
+   * ```ts
+   * await console.write(largeOutput);
+   * ```
+   *
    * @param data - The data to write
-   * @returns The number of bytes written
+   * @returns The number of bytes written, or a Promise of it when stdout is backed up
    */
-  write(...data: Array<string | ArrayBufferView | ArrayBuffer>): number;
+  write(...data: Array<string | ArrayBufferView | ArrayBuffer>): number | Promise<number>;
 
   /**
    * Clear the console
@@ -1763,7 +1782,11 @@ declare var PerformanceMeasure: Bun.__internal.UseLibDomIfAvailable<
 interface PerformanceObserver extends Bun.__internal.LibEmptyOrPerformanceObserver {}
 declare var PerformanceObserver: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceObserver",
-  { prototype: PerformanceObserver; new (): PerformanceObserver }
+  {
+    prototype: PerformanceObserver;
+    new (callback: import("node:perf_hooks").PerformanceObserverCallback): PerformanceObserver;
+    readonly supportedEntryTypes: readonly string[];
+  }
 >;
 
 interface PerformanceObserverEntryList extends Bun.__internal.LibEmptyOrPerformanceObserverEntryList {}
@@ -1932,7 +1955,14 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
  */
 interface BunFetchRequestInitTLS extends Bun.TLSOptions {
   /**
-   * Custom function to check the server identity
+   * Custom function to check the server identity. It runs after the
+   * certificate chain verifies. With `rejectUnauthorized: false` it still
+   * runs, but what it returns is ignored.
+   *
+   * A request that passes its own function opens a connection of its own and
+   * closes it afterwards. To verify once per connection and reuse it, put the
+   * function on a {@link Bun.FetchSession}.
+   *
    * @param hostname - The hostname of the server
    * @param cert - The certificate of the server
    * @returns An error if the server is unauthorized, otherwise undefined
@@ -1960,9 +1990,15 @@ interface BunFetchRequestInit extends RequestInit {
   verbose?: boolean;
 
   /**
-   * The proxy to send the request through, overriding the `http_proxy` and
-   * `HTTPS_PROXY` environment variables. Accepts a URL string, a URL instance,
-   * or an object with `url` and optional `headers`.
+   * The proxy to send the request through, overriding the `http_proxy`,
+   * `HTTPS_PROXY` and `ALL_PROXY` environment variables. Accepts a URL string,
+   * a URL instance, or an object with `url` and optional `headers` and
+   * `respectNoProxy`.
+   *
+   * `false` connects directly, ignoring the proxy environment variables.
+   *
+   * Hosts listed in `NO_PROXY` bypass the proxy unless `respectNoProxy` is
+   * `false`.
    *
    * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
    * precedence over credentials parsed from the proxy URL.
@@ -1986,23 +2022,21 @@ interface BunFetchRequestInit extends RequestInit {
    *    }
    *  }
    * });
+   *
+   * // Never use a proxy for this request
+   * const direct = await fetch("http://example.com", { proxy: false });
    * ```
    */
-  proxy?:
-    | string
-    | URL
-    | {
-        /**
-         * The proxy URL, as a string or a `URL`.
-         */
-        url: string | URL;
-        /**
-         * Custom headers to send to the proxy server.
-         * These headers are sent in the CONNECT request (for HTTPS targets)
-         * or in the proxy request (for HTTP targets).
-         */
-        headers?: Bun.HeadersInit;
-      };
+  proxy?: Bun.FetchProxyOption | undefined;
+
+  /**
+   * Take connection settings, and the keep-alive pool, from a
+   * {@link Bun.FetchSession}. Options given on the request take precedence over
+   * the session's; a request's `tls` replaces the session's `tls` as a whole.
+   *
+   * Not part of the Fetch API specification.
+   */
+  session?: Bun.FetchSession | undefined;
 
   /**
    * Override the default S3 options

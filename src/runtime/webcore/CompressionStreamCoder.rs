@@ -118,7 +118,7 @@ enum Backend {
 }
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-pub struct CompressionStreamCoder {
+pub(crate) struct CompressionStreamCoder {
     backend: Backend,
     /// Shared-ownership count: 1 for the JS cell (released by its finalizer /
     /// `nativeTransformReleaseState` via `CompressionStreamCoder__destroy`), plus 1 per in-flight
@@ -141,6 +141,9 @@ pub struct CompressionStreamCoder {
     high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
+    /// The context of the script that made the stream: its off-thread steps belong to it, also
+    /// the ones a native sink asks for.
+    context: bun_jsc::ContextId,
 }
 
 // SAFETY: the z_stream / Brotli*Instance / ZSTD_*Ctx handles are single-owner
@@ -190,6 +193,7 @@ impl CompressionStreamCoder {
         format: Format,
         decompress: bool,
         high_water_mark: usize,
+        level: Option<i32>,
     ) -> Result<Box<Self>, CodecError> {
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
@@ -200,7 +204,7 @@ impl CompressionStreamCoder {
                 let rc = unsafe {
                     zlib::deflateInit2_(
                         &raw mut *s,
-                        -1,
+                        level.unwrap_or(-1),
                         8, // Z_DEFLATED
                         format.window_bits(),
                         8, // default mem_level
@@ -239,6 +243,19 @@ impl CompressionStreamCoder {
                     brotli::BrotliEncoderCreateInstance(None, None, ptr::null_mut())
                 })
                 .ok_or(CodecError::Message("failed to initialize brotli encoder"))?;
+                if let Some(quality) = level {
+                    // SAFETY: `p` was just created and is exclusively owned here.
+                    let ok = brotli::BrotliEncoderSetParameter(
+                        unsafe { &mut *p.as_ptr() },
+                        brotli::BROTLI_PARAM_QUALITY,
+                        quality as u32,
+                    ) != 0;
+                    if !ok {
+                        // SAFETY: `p` was created above and not stored anywhere.
+                        unsafe { brotli::BrotliEncoderDestroyInstance(p.as_ptr()) };
+                        return Err(CodecError::Message("failed to set brotli quality"));
+                    }
+                }
                 Backend::BrotliEncode(p)
             }
             (Format::Brotli, true) => {
@@ -252,6 +269,17 @@ impl CompressionStreamCoder {
             (Format::Zstd, false) => {
                 let p = NonNull::new(zstd::ZSTD_createCCtx())
                     .ok_or(CodecError::Message("failed to initialize zstd encoder"))?;
+                if let Some(lvl) = level {
+                    // SAFETY: `p` was just created and is exclusively owned here.
+                    let rc = unsafe {
+                        zstd::ZSTD_CCtx_setParameter(p.as_ptr(), zstd::ZSTD_c_compressionLevel, lvl)
+                    };
+                    if zstd::ZSTD_isError(rc) != 0 {
+                        // SAFETY: `p` was created above and not stored anywhere.
+                        unsafe { zstd::ZSTD_freeCCtx(p.as_ptr()) };
+                        return Err(CodecError::Message("failed to set zstd level"));
+                    }
+                }
                 Backend::ZstdEncode(p)
             }
             (Format::Zstd, true) => {
@@ -268,6 +296,9 @@ impl CompressionStreamCoder {
             zstd_head_len: 0,
             high_water_mark,
             pending: None,
+            context: bun_jsc::virtual_machine::VirtualMachine::get()
+                .context_of_caller_no_frame()
+                .id(),
         }))
     }
 
@@ -751,16 +782,20 @@ impl AsyncInput {
 
 // ─── extern "C" surface (called from JSCompressionStream.cpp) ──────────────
 
+/// `level` (present when `has_level`) is range-checked by the caller; ignored for decompression.
 #[unsafe(no_mangle)]
-pub extern "C" fn CompressionStreamCoder__create(
+pub(crate) extern "C" fn CompressionStreamCoder__create(
     format: u8,
     decompress: bool,
     high_water_mark: usize,
+    has_level: bool,
+    level: i32,
 ) -> *mut CompressionStreamCoder {
     let Some(format) = Format::from_u8(format) else {
         return ptr::null_mut();
     };
-    match CompressionStreamCoder::new(format, decompress, high_water_mark.max(1)) {
+    let level = (has_level && !decompress).then_some(level);
+    match CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level) {
         Ok(b) => Box::into_raw(b),
         Err(_) => ptr::null_mut(),
     }
@@ -769,7 +804,7 @@ pub extern "C" fn CompressionStreamCoder__create(
 /// Releases the C++ cell's reference; see [`CompressionStreamCoder::ref_count`].
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
+pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
         // the cell's reference has not been released yet.
@@ -782,7 +817,7 @@ pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCo
 /// stepped again (with `input` null), or throws a `TypeError` and returns zero.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__transform(
+pub(crate) extern "C" fn CompressionStreamCoder__transform(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
     input: *const u8,
@@ -854,7 +889,7 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
 /// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__transformInto(
+pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
     input: *const u8,
@@ -891,7 +926,7 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
                     .write(&crate::webcore::streams::Result::Temporary(
                         bun_ptr::RawSlice::new(&out),
                     ))
-                    .to_js(global)
+                    .to_js(&global.js_thread_of_caller_no_frame())
             }
         }
         Err(e) => {
@@ -921,7 +956,7 @@ unsafe extern "C" {
 
 /// One step of a large `CompressionStream`/`DecompressionStream` chunk, run
 /// off the JS thread.
-pub struct CompressionAsyncCtx {
+pub(crate) struct CompressionAsyncCtx {
     /// See [`CompressionStreamCoder::ref_count`]. TransformStream serializes
     /// writes, so nothing else touches the coder while the pool has it.
     coder: bun_ptr::RefPtr<CompressionStreamCoder>,
@@ -938,7 +973,7 @@ pub struct CompressionAsyncCtx {
 unsafe impl Send for CompressionAsyncCtx {}
 
 #[derive(bun_jsc::JsAffine)]
-pub struct CompressionAsyncJs {
+pub(crate) struct CompressionAsyncJs {
     /// GC root for the `JSTransformStream` cell; its `m_asyncCodecInFlight`
     /// flag defers the eager ClearAlgorithms release while this task holds it,
     /// and its `m_codecPromise` WriteBarrier keeps the pending
@@ -991,7 +1026,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 /// input (the coder kept the tail).
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__transformAsync(
+pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
     stream_cell: JSValue,
@@ -1008,7 +1043,19 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
     let (input, pin) = AsyncInput::new(global, chunk, fallback);
-    let cx = global.js_thread();
+    // Called by script, the step is that script's; asked for by a native sink, it is the
+    // stream's maker's.
+    let vm = global.bun_vm();
+    let entered = if vm.jsc_vm().is_entered() {
+        None
+    } else {
+        // SAFETY: `this` is the live coder owned by the calling JS cell.
+        Some(vm.enter_context(unsafe { (*this).context }))
+    };
+    let cx = global.js_thread(match &entered {
+        Some(scope) => scope.context(),
+        None => vm.context_of_caller_no_frame(),
+    });
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,
         CompressionAsyncCtx {

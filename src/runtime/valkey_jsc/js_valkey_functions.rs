@@ -167,7 +167,7 @@ pub(crate) mod compile {
 macro_rules! cmd_noargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -191,7 +191,7 @@ macro_rules! cmd_noargs {
 macro_rules! cmd_key {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -223,7 +223,7 @@ macro_rules! cmd_key {
 macro_rules! cmd_key_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -269,7 +269,7 @@ macro_rules! cmd_key_varargs {
 macro_rules! cmd_key_value {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -308,7 +308,7 @@ macro_rules! cmd_key_value {
 macro_rules! cmd_key_value_value2 {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $arg2_name:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -357,7 +357,7 @@ macro_rules! cmd_strings_varargs {
     };
     ($fn_name:ident, $name:literal, $command:literal, $state:ident, $meta:expr) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -394,7 +394,7 @@ macro_rules! cmd_strings_varargs {
 macro_rules! cmd_key_value_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
         #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
+        pub(crate) fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
@@ -483,7 +483,11 @@ impl JSValkeyClient {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"get")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
@@ -2077,9 +2081,8 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _ = frame;
-
-        let new_client_ptr = this.clone_without_connecting(global)?;
+        // The duplicate is the calling script's, whoever made the original.
+        let new_client_ptr = this.clone_without_connecting(&global.js_thread_of_caller(frame))?;
         let new_client: &JSValkeyClient = &new_client_ptr;
 
         let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr.as_ptr(), global);

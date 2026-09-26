@@ -111,8 +111,10 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                 name = nameView.toString();
 
                 if (hasAnyPercentEncoded) {
-                    Bun::UTF8View utf8View(valueView);
-                    value = Bun::decodeURIComponentSIMD(utf8View.bytes());
+                    auto utf8View = Bun::UTF8View::tryCreate(valueView);
+                    if (!utf8View) [[unlikely]]
+                        return Exception { OutOfMemoryError };
+                    value = Bun::decodeURIComponentSIMD(utf8View->bytes());
                 } else {
                     value = valueView.toString();
                 }

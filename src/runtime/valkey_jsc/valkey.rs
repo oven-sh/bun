@@ -22,12 +22,12 @@ use super::valkey_command_body::{Args, Command};
 /// `RedisClient::method(…)` thunks against it. The actual host type is
 /// `JSValkeyClient` (sibling `js_valkey.rs`); re-export it under the codegen
 /// spelling here so the generated `pub use` and prototype thunks resolve.
-pub use super::js_valkey_body::JSValkeyClient as RedisClient;
+pub(crate) use super::js_valkey_body::JSValkeyClient as RedisClient;
 
 bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
-pub struct ConnectionFlags {
+pub(crate) struct ConnectionFlags {
     pub(crate) is_manually_closed: bool,
     pub(crate) is_selecting_db_internal: bool,
     pub(crate) enable_offline_queue: bool,
@@ -73,7 +73,7 @@ impl Default for ConnectionFlags {
 
 /// Valkey connection status
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Status {
+pub(crate) enum Status {
     /// No socket has been opened yet; the first `connect()`/`send()` opens one.
     /// Every later disconnect lands in `Disconnected` and goes through
     /// `reconnect()` instead.
@@ -86,7 +86,7 @@ pub enum Status {
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Protocol {
+pub(crate) enum Protocol {
     Standalone,
     StandaloneUnix,
     StandaloneTls,
@@ -94,7 +94,7 @@ pub enum Protocol {
 }
 
 bun_core::comptime_string_map! {
-    pub static PROTOCOL_MAP: Protocol = {
+    pub(crate) static PROTOCOL_MAP: Protocol = {
         b"valkey" => Protocol::Standalone,
         b"valkeys" => Protocol::StandaloneTls,
         b"valkey+tls" => Protocol::StandaloneTls,
@@ -119,7 +119,7 @@ impl Protocol {
 }
 
 #[derive(Default)]
-pub enum TLS {
+pub(crate) enum TLS {
     #[default]
     None,
     Enabled,
@@ -145,7 +145,7 @@ impl PartialEq for TLS {
 }
 
 /// Connection options for Valkey client
-pub struct Options {
+pub(crate) struct Options {
     pub(crate) idle_timeout_ms: u32,
     pub(crate) connection_timeout_ms: u32,
     pub(crate) enable_auto_reconnect: bool,
@@ -170,7 +170,7 @@ impl Default for Options {
     }
 }
 
-pub enum Address {
+pub(crate) enum Address {
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
 }
@@ -236,7 +236,7 @@ impl Address {
 }
 
 /// Core Valkey client implementation
-pub struct ValkeyClient {
+pub(crate) struct ValkeyClient {
     pub(crate) socket: AnySocket,
     pub(crate) status: Status,
 
@@ -284,7 +284,7 @@ enum SubscribeHandled {
     Fallthrough,
 }
 
-struct DeferredFailure {
+pub(crate) struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
     global_this: GlobalRef,
@@ -292,8 +292,8 @@ struct DeferredFailure {
     queue: command::entry::Queue,
 }
 
-impl bun_event_loop::ManagedTask::RunOnce for DeferredFailure {
-    fn run(self) -> JsResult<()> {
+impl DeferredFailure {
+    pub(crate) fn run(self) -> JsResult<()> {
         debug!("running deferred failure");
         let mut this = self;
         let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
@@ -304,14 +304,24 @@ impl bun_event_loop::ManagedTask::RunOnce for DeferredFailure {
             err,
         )
     }
-}
 
-impl DeferredFailure {
     fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
         VirtualMachine::get()
             .event_loop_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_boxed(self));
+            .enqueue_task(bun_event_loop::Task::from_boxed(self));
+    }
+}
+
+impl bun_event_loop::Taskable for DeferredFailure {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredFailure;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed at the enqueue site.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -594,7 +604,7 @@ impl ValkeyClient {
     ///
     /// `Err` when the close event left a termination pending, or, for a half-open socket whose `on_close`
     /// runs by hand here, whatever that left.
-    pub fn close(&mut self, code: uws::CloseCode) -> JsResult<()> {
+    pub(crate) fn close(&mut self, code: uws::CloseCode) -> JsResult<()> {
         if self.socket.is_closed() {
             return Ok(());
         }
@@ -641,7 +651,7 @@ impl ValkeyClient {
     }
 
     /// Handle connection closed event
-    pub fn on_close(&mut self) -> JsResult<()> {
+    pub(crate) fn on_close(&mut self) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
         // A partial reply can never complete now; left in place it counts as
@@ -649,8 +659,9 @@ impl ValkeyClient {
         self.read_buffer.clear_and_free();
         self.reply_scanner.reset();
 
-        // A manual close or a failure the client detected itself: no retry.
-        if self.flags.is_manually_closed || self.flags.failed {
+        // A manual close, a failure the client detected itself, or the script that made the client
+        // is gone (a disposed `Bun.ModuleGraph`'s): no retry, and what was queued is released.
+        if self.flags.is_manually_closed || self.flags.failed || self.parent().context_stopped() {
             debug!("skip reconnecting since the connection is manually closed or failed");
             self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
             self.on_valkey_close()?;

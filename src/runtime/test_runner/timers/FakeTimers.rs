@@ -16,8 +16,10 @@ unsafe extern "C" {
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
 }
 
-pub struct FakeTimers {
+pub(crate) struct FakeTimers {
     active: Cell<bool>,
+    /// Depth of [`FakeTimers::fire`] calls on the stack; each covers the callback and its microtask drain.
+    firing: Cell<u32>,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
     /// - peek/takeFirst (provided by TimerHeap)
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
@@ -29,6 +31,7 @@ impl Default for FakeTimers {
     fn default() -> Self {
         Self {
             active: Cell::new(false),
+            firing: Cell::new(0),
             timers: TimerHeap::new(InHeap::Fake),
         }
     }
@@ -151,6 +154,15 @@ impl FakeTimers {
         self.active.get()
     }
 
+    /// 1 while a fake timer's callback runs (sinon's `duringTick` rule): a zero-delay re-arm is due again in the drain that runs it.
+    pub(crate) fn min_delay_ms(&self) -> u32 {
+        if self.active.get() && self.firing.get() > 0 {
+            1
+        } else {
+            0
+        }
+    }
+
     fn activate(&self, js_now: f64, global: &JSGlobalObject) {
         self.active.set(true);
         CURRENT_TIME.set(global, &Timespec::EPOCH, Some(js_now));
@@ -213,7 +225,10 @@ impl FakeTimers {
             debug_assert!(now.eql(&prev.unwrap()) || now.greater(&prev.unwrap()));
         }
         CURRENT_TIME.set(global, &now, None);
+        let firing = &timer_all().fake_timers.firing;
+        firing.set(firing.get() + 1);
         let fired = crate::dispatch::fire_timer(next, &now, vm);
+        firing.set(firing.get() - 1);
         match fired {
             Ok(()) => Ok(()),
             Err(err) => bun_jsc::task::report_error_or_terminate(global, err)

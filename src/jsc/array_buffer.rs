@@ -461,6 +461,8 @@ impl ArrayBuffer {
         value.as_array_buffer(ctx).unwrap()
     }
 
+    /// Ownership of `bytes` transfers to JSC either way: above
+    /// `MAX_ARRAY_BUFFER_SIZE` the C++ side frees them and throws a RangeError.
     pub fn from_default_allocator(
         global: &JSGlobalObject,
         typed_array_type: JSType,
@@ -469,7 +471,7 @@ impl ArrayBuffer {
         match typed_array_type {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is
             // a mimalloc-backed buffer whose ownership transfers to JSC.
-            JSType::ArrayBuffer => Ok(unsafe {
+            JSType::ArrayBuffer => crate::call_zero_is_throw(global, || unsafe {
                 JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len())
             }),
             // `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct
@@ -1014,13 +1016,6 @@ impl Drop for MarkedArrayBuffer {
 }
 
 impl MarkedArrayBuffer {
-    pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
-        MarkedArrayBuffer {
-            owns_buffer: false,
-            buffer: ArrayBuffer::from_typed_array(ctx, value),
-        }
-    }
-
     pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
@@ -1038,14 +1033,6 @@ impl MarkedArrayBuffer {
         // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
         let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
-    }
-
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        let array_buffer = value.as_array_buffer(global)?;
-        Some(MarkedArrayBuffer {
-            buffer: array_buffer,
-            owns_buffer: false,
-        })
     }
 
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {

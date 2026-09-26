@@ -17,7 +17,7 @@ use crate::jsc_hooks::timer_all_opt;
 use bun_jsc::virtual_machine::VirtualMachine;
 
 // HOST_EXPORT(Bun__internal_ensureDateHeaderTimerIsEnabled, c)
-pub fn ensure_date_header_timer_is_enabled(loop_: &bun_uws::Loop) {
+pub(crate) fn ensure_date_header_timer_is_enabled(loop_: &bun_uws::Loop) {
     if VirtualMachine::get_or_null().is_none() {
         return;
     }

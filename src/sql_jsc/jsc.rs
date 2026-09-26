@@ -243,10 +243,16 @@ pub(crate) trait VirtualMachineSqlExt {
     fn timer_remove(&self, timer: TimerRef);
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
-    /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
-    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
+    /// `context`'s per-protocol uws [`bun_uws::SocketGroup`], for a new connection its script opens.
+    fn postgres_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup;
     /// See [`Self::postgres_socket_group`].
-    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
+    fn mysql_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup;
 }
 impl VirtualMachineSqlExt for VirtualMachine {
     #[inline]
@@ -269,14 +275,22 @@ impl VirtualMachineSqlExt for VirtualMachine {
         bun_io::js_vm_ctx()
     }
     #[inline]
-    fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+    fn postgres_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
-        self.rare_data().postgres_group::<SSL>(loop_)
+        self.client_socket_groups_in(context)
+            .postgres_group::<SSL>(loop_)
     }
     #[inline]
-    fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
+    fn mysql_socket_group<const SSL: bool>(
+        &mut self,
+        context: &bun_jsc::ScriptExecutionContext,
+    ) -> &mut bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
-        self.rare_data().mysql_group::<SSL>(loop_)
+        self.client_socket_groups_in(context)
+            .mysql_group::<SSL>(loop_)
     }
 }
 
@@ -326,6 +340,14 @@ pub mod api {
                 self.0
                     .as_ref()
                     .and_then(bun_http::SSLConfig::server_name_cstr)
+            }
+
+            /// [`server_name`](Self::server_name) as bytes; empty when unset.
+            pub(crate) fn server_name_bytes(&self) -> &[u8] {
+                match self.server_name() {
+                    Some(server_name) => server_name.to_bytes(),
+                    None => b"",
+                }
             }
 
             /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.

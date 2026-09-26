@@ -74,7 +74,6 @@ CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGloba
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg0);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1);
-CPP_DECL JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const EncodedSlice* arg3, uint32_t arg4);
 CPP_DECL void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0);
 CPP_DECL void WebCore__FetchHeaders__fastGet_(WebCore::FetchHeaders* arg0, unsigned char arg1, EncodedSlice* arg2);
 CPP_DECL bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char arg1);
@@ -124,7 +123,6 @@ CPP_DECL JSC::JSPromise* JSC__JSPromise__create(JSC::JSGlobalObject* arg0);
 CPP_DECL void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
-CPP_DECL JSC::EncodedJSValue JSC__JSPromise__rejectedPromiseValue(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 CPP_DECL void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, bool arg3);
 CPP_DECL void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
@@ -265,6 +263,8 @@ CPP_DECL void JSC__JSValue__toZigException(JSC::EncodedJSValue JSValue0, JSC::JS
 CPP_DECL size_t JSC__VM__blockBytesAllocated(JSC::VM* arg0);
 CPP_DECL void JSC__VM__collectAsync(JSC::VM* arg0, bool full);
 CPP_DECL void JSC__VM__collectAsyncIdle(JSC::VM* arg0);
+CPP_DECL bool JSC__VM__shrinkFootprintNow(JSC::VM* arg0);
+CPP_DECL void JSC__VM__setStartupJITDeferralScale(JSC::VM* arg0, double scale);
 CPP_DECL JSC::VM* JSC__VM__create(unsigned char HeapType0);
 CPP_DECL void JSC__VM__deleteAllCode(JSC::VM* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__drainMicrotasks(JSC::VM* arg0);
@@ -590,7 +590,7 @@ ZIG_DECL bool Bun__WebSocketClient__resume(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t arg1, const EncodedSlice* arg2);
 ZIG_DECL void Bun__WebSocketClient__finalize(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__dropConnectionWithoutCallback(WebSocketClient* arg0);
-ZIG_DECL WebSocketClient* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx);
+ZIG_DECL WebSocketClient* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx, const unsigned char* verifiedHostname, size_t verifiedHostnameLen);
 ZIG_DECL void Bun__WebSocketClient__writeBinaryData(WebSocketClient* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClient__writeString(WebSocketClient* arg0, const EncodedSlice* arg1, unsigned char arg2);
 ZIG_DECL size_t Bun__WebSocketClient__memoryCost(WebSocketClient* arg0);
@@ -606,7 +606,7 @@ ZIG_DECL bool Bun__WebSocketClientTLS__resume(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t arg1, const EncodedSlice* arg2);
 ZIG_DECL void Bun__WebSocketClientTLS__finalize(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__dropConnectionWithoutCallback(WebSocketClientTLS* arg0);
-ZIG_DECL WebSocketClientTLS* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx);
+ZIG_DECL WebSocketClientTLS* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, void* bufferedData, const PerMessageDeflateParams* arg5, void* customSSLCtx, const unsigned char* verifiedHostname, size_t verifiedHostnameLen);
 ZIG_DECL void Bun__WebSocketClientTLS__writeBinaryData(WebSocketClientTLS* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, const EncodedSlice* arg1, unsigned char arg2);
 ZIG_DECL size_t Bun__WebSocketClientTLS__memoryCost(WebSocketClientTLS* arg0);
@@ -768,9 +768,6 @@ CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC::CustomGetterSetter *arg
 BUN_DECLARE_HOST_FUNCTION(Bun__onResolveEntryPointResult);
 BUN_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
 
-
-BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onResolveRequestStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onRejectRequestStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onResolveRequestStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);

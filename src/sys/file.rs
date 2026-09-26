@@ -144,9 +144,6 @@ impl File {
     pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> {
         read(self.handle, buf)
     }
-    pub fn write(&self, buf: &[u8]) -> Maybe<usize> {
-        write(self.handle, buf)
-    }
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
         while !buf.is_empty() {
             let n = write(self.handle, buf)?;

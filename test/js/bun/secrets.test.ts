@@ -1,3 +1,4 @@
+import { dlopen, read } from "bun:ffi";
 import { expect, test } from "bun:test";
 import { isCI, isMacOS, isWindows } from "harness";
 
@@ -132,6 +133,70 @@ test.todoIf(isCI && !isWindows)("Bun.secrets API", async () => {
 
   // Clean up
   await Bun.secrets.delete({ service: testService, name: testUser });
+});
+
+// `persist` selects CREDENTIALW.Persist. Without it, set() writes CRED_PERSIST_ENTERPRISE.
+test.skipIf(!isWindows)("Bun.secrets.set() persist option selects the Credential Manager Persist value", async () => {
+  const CRED_TYPE_GENERIC = 1;
+  const CRED_PERSIST_LOCAL_MACHINE = 2;
+  const CRED_PERSIST_ENTERPRISE = 3;
+  // CREDENTIALW field offsets on 64-bit Windows.
+  const offsetofType = 4;
+  const offsetofCredentialBlobSize = 32;
+  const offsetofPersist = 48;
+
+  const advapi32 = dlopen("advapi32.dll", {
+    CredReadW: { args: ["ptr", "u32", "u32", "ptr"], returns: "i32" },
+    CredFree: { args: ["ptr"], returns: "void" },
+  });
+
+  const service = "bun-test-persist-" + Date.now();
+  const name = "test-name-" + Math.random();
+  const targetName = Buffer.from(`${service}/${name}\0`, "utf16le");
+
+  function readCredential() {
+    const out = new BigUint64Array(1);
+    expect(advapi32.symbols.CredReadW(targetName, CRED_TYPE_GENERIC, 0, out)).not.toBe(0);
+    const cred = Number(out[0]);
+    try {
+      return {
+        Type: read.u32(cred, offsetofType),
+        CredentialBlobSize: read.u32(cred, offsetofCredentialBlobSize),
+        Persist: read.u32(cred, offsetofPersist),
+      };
+    } finally {
+      advapi32.symbols.CredFree(cred);
+    }
+  }
+
+  try {
+    // Every set() replaces the whole entry, so each case also converts the entry the previous case wrote.
+    const cases = [
+      { options: {}, value: "default", Persist: CRED_PERSIST_ENTERPRISE },
+      { options: { persist: "local" }, value: "local-machine", Persist: CRED_PERSIST_LOCAL_MACHINE },
+      { options: { persist: "enterprise" }, value: "enterprise-again", Persist: CRED_PERSIST_ENTERPRISE },
+      { options: { persist: "local" }, value: "local-machine-again", Persist: CRED_PERSIST_LOCAL_MACHINE },
+      { options: {}, value: "default-after-local", Persist: CRED_PERSIST_ENTERPRISE },
+    ] as const;
+
+    for (const { options, value, Persist } of cases) {
+      await Bun.secrets.set({ service, name, value, ...options });
+      expect({ options, ...readCredential() }).toEqual({
+        options,
+        Type: CRED_TYPE_GENERIC,
+        CredentialBlobSize: Buffer.byteLength(value),
+        Persist,
+      });
+      expect(await Bun.secrets.get({ service, name })).toBe(value);
+    }
+
+    // The conversions leave one entry, not one per Persist value: one delete() removes it.
+    expect(await Bun.secrets.delete({ service, name })).toBe(true);
+    expect(await Bun.secrets.get({ service, name })).toBeNull();
+  } finally {
+    advapi32.close();
+    await Bun.secrets.delete({ service, name });
+  }
 });
 
 test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {

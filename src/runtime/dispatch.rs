@@ -15,7 +15,7 @@
 //!
 //! **Adding a variant** (do all four):
 //!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io::poll_tag`);
-//!   2. `impl bun_jsc::Taskable for YourType { const TAG; unsafe fn release_unrun(..) }`;
+//!   2. `impl bun_jsc::Taskable for YourType { const TAG; unsafe fn release_unrun(..); unsafe fn context(..) }`;
 //!   3. a `run_task` arm and a `release_task_unrun` arm here;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
@@ -23,9 +23,8 @@
 // sibling file so this hot-path module stays focused on the task/timer/poll
 // match loops.
 #[path = "dispatch_js2native.rs"]
-pub mod js2native;
+pub(crate) mod js2native;
 
-use bun_event_loop::ManagedTask::ManagedTask;
 use bun_event_loop::{Task, task_tag};
 
 // `FilePoll::on_update` dispatch is POSIX-only (the symbol is declared
@@ -85,6 +84,7 @@ use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
+use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::streams::Pending as StreamPending;
 
@@ -206,7 +206,7 @@ pub(crate) fn run_task(
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
             // its `Completion`; the erased entry runs `then` and frees it.
-            unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) }?;
+            unsafe { bun_jsc::job::complete_erased(task.ptr, global) }?;
         }
         task_tag::SendQueueDeferred => {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
@@ -275,6 +275,13 @@ pub(crate) fn run_task(
             // SAFETY: boxed in `on_raw_libuv_complete`; the arm consumes it.
             unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvCompleteHolder)) }.run();
         }
+        task_tag::ValkeyDeferredClose => {
+            // SAFETY: boxed at the enqueue site; the arm consumes it.
+            unsafe {
+                bun_core::heap::take(cast_ptr!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose))
+            }
+            .run();
+        }
         task_tag::StatWatcherTimerUpdate => {
             // SAFETY: boxed in `schedule_timer_update`; the arm consumes it.
             unsafe {
@@ -302,10 +309,144 @@ pub(crate) fn run_task(
                 ))
             }?;
         }
-        task_tag::ManagedTask => {
-            // SAFETY: `task.ptr` was produced by `heap::alloc` in `ManagedTask::new`
-            // and enqueued under `task_tag::ManagedTask`; `run` consumes/frees it.
-            unsafe { ManagedTask::run(cast_ptr!(ManagedTask)) }?;
+        task_tag::BundleV2PluginResolveAnswered => {
+            cast!(bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered).run();
+        }
+        task_tag::BundleV2PluginLoadAnswered => {
+            cast!(bun_bundler::bundle_v2::api::JSBundler::LoadAnswered).run();
+        }
+        task_tag::BundleV2PluginLoadDeferred => {
+            cast!(bun_bundler::bundle_v2::api::JSBundler::LoadDeferred).run();
+        }
+        task_tag::BundleV2ParseTaskResult => {
+            // SAFETY: boxed by the parse worker; `on_complete` consumes it.
+            unsafe {
+                bun_bundler::parse_task::on_complete(cast_ptr!(bun_bundler::parse_task::Result))
+            };
+        }
+        task_tag::FetchTaskletRequestDrain => {
+            crate::webcore::fetch::FetchTaskletRequestDrain::run(cast_ptr!(
+                crate::webcore::fetch::FetchTaskletRequestDrain
+            ));
+        }
+        task_tag::HTMLRewriterBackgroundPull => {
+            crate::api::html_rewriter::RewriterPipe::run_background_pull(cast_ptr!(
+                crate::api::html_rewriter::RewriterPipe
+            ))?;
+        }
+        task_tag::RunTestsTask => {
+            // SAFETY: boxed in `run_next_tick`; the arm consumes it.
+            unsafe { bun_core::heap::take(cast_ptr!(crate::test_runner::bun_test::RunTestsTask)) }
+                .call()?;
+        }
+        task_tag::ValkeyDeferredFailure => {
+            // SAFETY: boxed at the enqueue site; the arm consumes it.
+            unsafe { bun_core::heap::take(cast_ptr!(crate::valkey_jsc::valkey::DeferredFailure)) }
+                .run()?;
+        }
+        task_tag::DnsErrorDeferred => {
+            // SAFETY: boxed in `reject_later`; the arm consumes it.
+            unsafe {
+                bun_core::heap::take(cast_ptr!(crate::dns_jsc::cares_jsc::ErrorDeferredTask))
+            }
+            .run()?;
+        }
+        task_tag::HandledPromise => {
+            // SAFETY: boxed in `handle_handled_promise`; the arm consumes it.
+            unsafe {
+                bun_core::heap::take(cast_ptr!(
+                    bun_jsc::virtual_machine_exports::HandledPromiseTask
+                ))
+            }
+            .run();
+        }
+        task_tag::GraphContextStopAgain => {
+            // `ptr` packs the `ContextId`, not a pointer.
+            bun_jsc::virtual_machine::GraphContextStopAgain::run(
+                vm,
+                bun_jsc::ContextId::from_raw(task.ptr as usize as u32),
+            );
+        }
+        task_tag::DeadContextStopAgain => {
+            // SAFETY: the VM that queued this task on its own loop.
+            unsafe {
+                bun_jsc::virtual_machine::DeadContextStopAgain::run(cast_ptr!(
+                    bun_jsc::virtual_machine::DeadContextStopAgain
+                ))
+            };
+        }
+        task_tag::GraphContextStopAndFree => {
+            // SAFETY: queued by `release_graph_context`; still registered.
+            unsafe {
+                bun_jsc::virtual_machine::GraphContextStopAndFree::run(
+                    vm,
+                    cast_ptr!(bun_jsc::virtual_machine::GraphContextStopAndFree),
+                )
+            };
+        }
+        task_tag::HTTPAppClose => {
+            crate::server::AppCloseTask::<false>::run(cast_ptr!(
+                crate::server::AppCloseTask<false>
+            ));
+        }
+        task_tag::HTTPSAppClose => {
+            crate::server::AppCloseTask::<true>::run(cast_ptr!(crate::server::AppCloseTask<true>));
+        }
+        task_tag::HTTPServerDeinit => {
+            // SAFETY: the unique owning server pointer `schedule_deinit` queued.
+            unsafe {
+                crate::server::ServerDeinitTask::<false, false>::run(cast_ptr!(
+                    crate::server::ServerDeinitTask<false, false>
+                ))
+            };
+        }
+        task_tag::HTTPSServerDeinit => {
+            // SAFETY: the unique owning server pointer `schedule_deinit` queued.
+            unsafe {
+                crate::server::ServerDeinitTask::<true, false>::run(cast_ptr!(
+                    crate::server::ServerDeinitTask<true, false>
+                ))
+            };
+        }
+        task_tag::DebugHTTPServerDeinit => {
+            // SAFETY: the unique owning server pointer `schedule_deinit` queued.
+            unsafe {
+                crate::server::ServerDeinitTask::<false, true>::run(cast_ptr!(
+                    crate::server::ServerDeinitTask<false, true>
+                ))
+            };
+        }
+        task_tag::DebugHTTPSServerDeinit => {
+            // SAFETY: the unique owning server pointer `schedule_deinit` queued.
+            unsafe {
+                crate::server::ServerDeinitTask::<true, true>::run(cast_ptr!(
+                    crate::server::ServerDeinitTask<true, true>
+                ))
+            };
+        }
+        #[cfg(windows)]
+        task_tag::CopyFileWindowsMkdirp => {
+            // SAFETY: the live copy `on_mkdirp_complete_concurrent` posted.
+            unsafe {
+                crate::webcore::blob::copy_file::CopyFileWindowsMkdirp::run(cast_ptr!(
+                    crate::webcore::blob::copy_file::CopyFileWindowsMkdirp<'_>
+                ))
+            };
+        }
+        #[cfg(windows)]
+        task_tag::WriteFileWindowsMkdirp => {
+            // SAFETY: the live write `on_mkdirp_complete_concurrent` posted.
+            unsafe {
+                crate::webcore::blob::write_file::WriteFileWindowsMkdirp::run(cast_ptr!(
+                    crate::webcore::blob::write_file::WriteFileWindowsMkdirp
+                ))
+            };
+        }
+        #[cfg(windows)]
+        task_tag::ChromePipeEvent => {
+            // SAFETY: boxed in `PipeEvent::post`; the arm consumes it.
+            unsafe { bun_core::heap::take(cast_ptr!(crate::webview::chrome_process::QueuedEvent)) }
+                .deliver()?;
         }
         task_tag::CppTask => {
             cast!(CppTask).run(global)?;
@@ -344,6 +485,9 @@ pub(crate) fn run_task(
         }
         task_tag::S3HttpDownloadStreamingTask => {
             S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
+        }
+        task_tag::S3UploadWriterCollected => {
+            S3UploadWriterCollected::run(cast_ptr!(S3UploadWriterCollected))?;
         }
 
         // ── napi ─────────────────────────────────────────────────────────
@@ -408,7 +552,8 @@ pub(crate) fn run_task(
         for_each_fs_uv_op!(__fs_pat) => {
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
-                    $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
+                    // SAFETY: §Dispatch — tag identifies pointee. The task frees itself, so it takes the raw pointer.
+                    $(task_tag::$tag => unsafe { fs_async::$ty::run_from_js_thread(cast_ptr!(fs_async::$ty)) }?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.
                     _ => unsafe { core::hint::unreachable_unchecked() },
                 }};
@@ -582,7 +727,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 60,
+    task_tag::COUNT == 83,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -604,6 +749,26 @@ pub(crate) fn tick_queue_with_count(
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
+        // A task continues what the script of some context started: it runs inside that context
+        // (what it opens next, and the script it calls, are that context's), and once that context
+        // has stopped it is released unrun. Not live either: the context of a file
+        // `bun test --isolate` has since retired (the swap was that file's exit), and any context
+        // once the VM was asked to stop (a parent's terminate() while the worker still ticks).
+        let _context = match task.context() {
+            bun_event_loop::ContextId::NONE => None,
+            context => {
+                let vm = global.bun_vm();
+                let entered = vm.enter_context(context);
+                if !(vm.script_allowed() && vm.is_context_live(context)) {
+                    __bun_release_task_unrun(task);
+                    if global.has_exception() {
+                        report_error_or_terminate(global, bun_jsc::JsError::Thrown)?;
+                    }
+                    continue;
+                }
+                Some(entered)
+            }
+        };
         match run_task(task, el, vm, global) {
             Ok(RunTaskResult::Continue) => {}
             Ok(RunTaskResult::EarlyReturn) => {
@@ -1340,7 +1505,39 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release!(crate::api::js_bundle_completion_task::JSBundleCompletionTask)
         }
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
-        task_tag::ManagedTask => release!(ManagedTask),
+        task_tag::BundleV2PluginResolveAnswered => {
+            release!(bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered)
+        }
+        task_tag::BundleV2PluginLoadAnswered => {
+            release!(bun_bundler::bundle_v2::api::JSBundler::LoadAnswered)
+        }
+        task_tag::BundleV2PluginLoadDeferred => {
+            release!(bun_bundler::bundle_v2::api::JSBundler::LoadDeferred)
+        }
+        task_tag::BundleV2ParseTaskResult => release!(bun_bundler::parse_task::Result),
+        task_tag::FetchTaskletRequestDrain => {
+            release!(crate::webcore::fetch::FetchTaskletRequestDrain)
+        }
+        task_tag::HTMLRewriterBackgroundPull => {
+            release!(crate::api::html_rewriter::RewriterPipeBackgroundPull)
+        }
+        task_tag::RunTestsTask => release!(crate::test_runner::bun_test::RunTestsTask),
+        task_tag::ValkeyDeferredFailure => release!(crate::valkey_jsc::valkey::DeferredFailure),
+        task_tag::DnsErrorDeferred => release!(crate::dns_jsc::cares_jsc::ErrorDeferredTask),
+        task_tag::HandledPromise => release!(bun_jsc::virtual_machine_exports::HandledPromiseTask),
+        task_tag::GraphContextStopAgain => {
+            release!(bun_jsc::virtual_machine::GraphContextStopAgain)
+        }
+        task_tag::DeadContextStopAgain => release!(bun_jsc::virtual_machine::DeadContextStopAgain),
+        task_tag::GraphContextStopAndFree => {
+            release!(bun_jsc::virtual_machine::GraphContextStopAndFree)
+        }
+        task_tag::HTTPAppClose => release!(crate::server::AppCloseTask<false>),
+        task_tag::HTTPSAppClose => release!(crate::server::AppCloseTask<true>),
+        task_tag::HTTPServerDeinit => release!(crate::server::ServerDeinitTask<false, false>),
+        task_tag::HTTPSServerDeinit => release!(crate::server::ServerDeinitTask<true, false>),
+        task_tag::DebugHTTPServerDeinit => release!(crate::server::ServerDeinitTask<false, true>),
+        task_tag::DebugHTTPSServerDeinit => release!(crate::server::ServerDeinitTask<true, true>),
         task_tag::NapiAsyncWork => release!(napi_async_work),
         task_tag::NapiFinalizerTask => release!(NapiFinalizerTask),
         task_tag::NativePromiseContextDeferredDerefTask => {
@@ -1362,6 +1559,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::RuntimeTranspilerStore => release!(RuntimeTranspilerStore),
         task_tag::S3HttpDownloadStreamingTask => release!(S3HttpDownloadStreamingTask),
         task_tag::S3HttpSimpleTask => release!(S3HttpSimpleTask),
+        task_tag::S3UploadWriterCollected => release!(S3UploadWriterCollected),
         task_tag::SendQueueDeferred => release!(crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => release!(ServerAllConnectionsClosedTask),
         task_tag::ShellAsync => release!(crate::shell::dispatch_tasks::ShellAsyncTask),
@@ -1383,6 +1581,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::ShellAsyncCpTask => release!(crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release!(StreamPending),
         task_tag::ThreadSafeFunction => release!(ThreadSafeFunction),
+        task_tag::ValkeyDeferredClose => {
+            release!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
+        }
         // ── Windows-only producers ───────────────────────────────────────
         task_tag::GetAddrInfoLibuvComplete => {
             #[cfg(windows)]
@@ -1393,6 +1594,24 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::WindowsNamedPipeContext => {
             #[cfg(windows)]
             release!(crate::socket::WindowsNamedPipeContext);
+            #[cfg(not(windows))]
+            unreachable!("windows-only tag");
+        }
+        task_tag::CopyFileWindowsMkdirp => {
+            #[cfg(windows)]
+            release!(crate::webcore::blob::copy_file::CopyFileWindowsMkdirp<'_>);
+            #[cfg(not(windows))]
+            unreachable!("windows-only tag");
+        }
+        task_tag::WriteFileWindowsMkdirp => {
+            #[cfg(windows)]
+            release!(crate::webcore::blob::write_file::WriteFileWindowsMkdirp);
+            #[cfg(not(windows))]
+            unreachable!("windows-only tag");
+        }
+        task_tag::ChromePipeEvent => {
+            #[cfg(windows)]
+            release!(crate::webview::chrome_process::QueuedEvent);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }

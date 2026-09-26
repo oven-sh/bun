@@ -163,7 +163,7 @@ private:
     {
     }
 
-    bool shouldIgnoreRequestToFulfill() const { return isEmpty(); }
+    bool shouldIgnoreRequestToFulfill() const { return isEmpty() || !canInvokeCallback(); }
 
     JSC::JSPromise* deferred() const { return guarded(); }
 

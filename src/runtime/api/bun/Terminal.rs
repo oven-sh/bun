@@ -10,7 +10,9 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_void};
+#[cfg(not(windows))]
+use core::ffi::c_int;
+use core::ffi::c_void;
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -39,26 +41,26 @@ bun_output::declare_scope!(Terminal, hidden);
 // Generated bindings — `jsc.Codegen.JSTerminal`. The `.classes.ts` codegen
 // emits `crate::generated_classes::js_Terminal` with `from_js`/`to_js` and the
 // cached-value accessors; re-export here so callers continue to spell `js::*`.
-pub use self::js::to_js;
-pub mod js {
-    pub use crate::generated_classes::js_Terminal::{
+pub(crate) use self::js::to_js;
+pub(crate) mod js {
+    pub(crate) use crate::generated_classes::js_Terminal::{
         data_get_cached, data_set_cached, drain_get_cached, drain_set_cached, exit_get_cached,
         exit_set_cached, from_js, get_constructor, to_js,
     };
 
     /// Typed accessor for the `values:` slots.
-    pub mod gc {
+    pub(crate) mod gc {
         use bun_jsc::{JSGlobalObject, JSValue};
 
         #[derive(Clone, Copy)]
-        pub enum GcValue {
+        pub(crate) enum GcValue {
             Data,
             Exit,
             Drain,
         }
 
         #[inline]
-        pub fn get(which: GcValue, this_value: JSValue) -> Option<JSValue> {
+        pub(crate) fn get(which: GcValue, this_value: JSValue) -> Option<JSValue> {
             match which {
                 GcValue::Data => super::data_get_cached(this_value),
                 GcValue::Exit => super::exit_get_cached(this_value),
@@ -101,7 +103,7 @@ pub mod js {
 // `&*this` (shared); all field mutation routes through the cells.
 #[bun_jsc::JsClass(no_construct, no_finalize)]
 #[derive(bun_ptr::RefCounted)]
-pub struct Terminal {
+pub(crate) struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
 
     /// The master side of the PTY (original fd, used for ioctl operations)
@@ -141,19 +143,16 @@ pub struct Terminal {
     /// Reader for receiving data from the terminal
     reader: JsCell<IOReader>,
 
-    /// This value reference for GC tracking
-    /// - weak: allows GC when idle
-    /// - strong: prevents GC when actively connected
+    /// The JS wrapper, which roots the callbacks in its cached slots. Strong
+    /// until no callback can fire, then weak (`maybe_downgrade_after_eof`).
     this_value: JsCell<JsRef>,
 
     /// State flags
     flags: Cell<Flags>,
 
-    /// The streaming writer has accepted bytes it hasn't flushed to the fd
-    /// yet. Set by `write()` from `has_pending_data()`; cleared when
-    /// `on_write` observes `Drained` so POSIX can fire the `drain` callback
-    /// (Windows fires it from `on_writable`). Also gates the post-EOF
-    /// downgrade in `maybe_downgrade_after_eof`.
+    /// The writer holds bytes it has not flushed to the fd yet, so a `drain`
+    /// is still owed. Gates the post-EOF downgrade in
+    /// `maybe_downgrade_after_eof`.
     writer_has_buffered: Cell<bool>,
 
     /// This PTY's own raw-mode state (mode + saved termios), so one terminal
@@ -169,29 +168,31 @@ bitflags::bitflags! {
         const FINALIZED      = 1 << 1;
         const RAW_MODE       = 1 << 2;
         const READER_STARTED = 1 << 3;
-        const CONNECTED      = 1 << 4;
-        const READER_DONE    = 1 << 5;
-        const WRITER_DONE    = 1 << 6;
+        const READER_DONE    = 1 << 4;
+        const WRITER_DONE    = 1 << 5;
         /// Set once an inline-created terminal is attached to a spawn; blocks
         /// reuse. Windows: the ConDrv `\Reference` handle is released at spawn.
         /// POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
-        const INLINE_SPAWNED = 1 << 7;
+        const INLINE_SPAWNED = 1 << 6;
+        /// The `exit` callback has run (or was skipped). The wrapper stays
+        /// strong until then; see `maybe_downgrade_after_eof`.
+        const EXIT_DISPATCHED = 1 << 7;
     }
 }
 
 /// `bun.io.StreamingWriter(@This(), struct { onClose, onWritable, onError, onWrite })`
 /// — the anon-struct of callback decls is the `PosixStreamingWriterParent` /
 /// `WindowsStreamingWriterParent` trait impls at the bottom of this file.
-pub type IOWriter = StreamingWriter<Terminal>;
+pub(crate) type IOWriter = StreamingWriter<Terminal>;
 
 /// Poll type alias for FilePoll Owner registration
 #[cfg(not(windows))]
 pub(crate) type Poll = IOWriter;
 
-pub type IOReader = BufferedReader;
+pub(crate) type IOReader = BufferedReader;
 
 /// Options for creating a Terminal
-pub struct Options {
+pub(crate) struct Options {
     pub(crate) cols: u16,
     pub(crate) rows: u16,
     pub(crate) data_callback: Option<JSValue>,
@@ -474,23 +475,25 @@ impl Terminal {
             }
         }
 
-        // Start reader with the read fd - adds a ref
+        // Start reader with the read fd. The reader's ref is taken first: when
+        // the poll registration fails, POSIX `start()` calls `on_reader_error`,
+        // which releases that ref, and still returns Ok.
+        terminal.ref_();
         match terminal
             .reader
             .with_mut(|r| r.start(pty_result.read_fd, true))
         {
             sys::Result::Err(_) => {
-                // Reader never started: closeInternal skips reader.close() but
-                // runs writer.close() → onWriterClose → deref (2→1). Then drop
-                // the initial ref (1→0).
+                // No callback ran: the reader took neither read_fd nor its ref.
                 terminal.read_fd.get().close();
                 terminal.read_fd.set(Fd::INVALID);
-                terminal.close_internal();
                 terminal.deref_();
-                return Err(InitError::ReaderStartFailed);
+                return Err(terminal.fail_reader_start());
+            }
+            sys::Result::Ok(()) if terminal.flags.get().contains(Flags::READER_DONE) => {
+                return Err(terminal.fail_reader_start());
             }
             sys::Result::Ok(()) => {
-                terminal.ref_();
                 #[cfg(unix)]
                 {
                     terminal.reader.with_mut(|r| {
@@ -510,6 +513,10 @@ impl Terminal {
         // SAFETY: the reader cell is live for the terminal's lifetime; `read`
         // is the raw re-entrancy-safe entry (its dispatch runs user JS).
         unsafe { IOReader::read(terminal.reader.as_ptr()) };
+        // The first read can end the reader too: EOF, a read error, or a failed re-arm.
+        if terminal.flags.get().contains(Flags::READER_DONE) {
+            return Err(terminal.fail_reader_start());
+        }
 
         // Get or create the JS wrapper
         let this_value = existing_js_value.unwrap_or_else(|| js::to_js(parent_ptr, global_object));
@@ -538,6 +545,17 @@ impl Terminal {
             terminal: unsafe { bun_ptr::BackRef::from_raw_mut(parent_ptr) },
             js_value: this_value,
         })
+    }
+
+    /// `init_terminal` error path for a reader that finished before the
+    /// terminal reached JS, with the reader's ref already released.
+    /// `close_internal` closes what is still open (a writer that is still
+    /// open releases its ref through `on_writer_close`), then the initial ref
+    /// is dropped, which may free `self`.
+    fn fail_reader_start(&self) -> InitError {
+        self.close_internal();
+        self.deref_();
+        InitError::ReaderStartFailed
     }
 
     /// Constructor for Terminal - called from JavaScript
@@ -764,7 +782,7 @@ impl Terminal {
     }
 }
 
-pub struct PtyResult {
+pub(crate) struct PtyResult {
     pub(crate) master: Fd,
     pub(crate) read_fd: Fd,
     pub(crate) write_fd: Fd,
@@ -799,7 +817,8 @@ fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 // OpenPtyTermios is required for the openpty() extern signature even though we pass null.
 // Kept for type correctness of the C function declaration.
 #[repr(C)]
-pub struct OpenPtyTermios {
+#[cfg(not(windows))]
+pub(crate) struct OpenPtyTermios {
     pub c_iflag: u32,
     pub c_oflag: u32,
     pub c_cflag: u32,
@@ -809,9 +828,11 @@ pub struct OpenPtyTermios {
     pub c_ospeed: u32,
 }
 
-pub use bun_core::Winsize;
+#[cfg(not(windows))]
+pub(crate) use bun_core::Winsize;
 
-pub type OpenPtyFn = unsafe extern "C" fn(
+#[cfg(not(windows))]
+pub(crate) type OpenPtyFn = unsafe extern "C" fn(
     amaster: *mut c_int,
     aslave: *mut c_int,
     name: *mut u8,
@@ -1441,6 +1462,12 @@ impl Terminal {
             return Ok(JSValue::js_number(0.0));
         }
 
+        // The write side is gone, so queuing these bytes would only re-root the
+        // wrapper below for a drain that cannot come.
+        if self.flags.get().contains(Flags::WRITER_DONE) {
+            return Ok(JSValue::js_number(input_len as f64));
+        }
+
         // Suppress drain firing from the synchronous on_write calls that
         // StreamingWriter::write() makes while we still hold the `with_mut`
         // borrow; it is restored from `has_pending_data()` immediately after.
@@ -1449,6 +1476,9 @@ impl Terminal {
             let r = w.write(bytes);
             (r, w.has_pending_data())
         });
+        // The writer can close inside `write()` and keep the bytes; no drain follows them.
+        let writer_done = self.flags.get().contains(Flags::WRITER_DONE);
+        let has_pending = has_pending && !writer_done;
         self.writer_has_buffered.set(has_pending);
         if has_pending {
             // Keep the wrapper rooted for the pending drain dispatch; a write
@@ -1458,7 +1488,7 @@ impl Terminal {
         // A second write() can drain what an earlier one buffered; on_write saw
         // the cleared flag, so fire drain here (outside `with_mut`).
         #[cfg(unix)]
-        if had_buffered && !has_pending {
+        if had_buffered && !has_pending && !writer_done {
             self.on_writer_ready();
         }
         #[cfg(not(unix))]
@@ -1746,6 +1776,7 @@ impl Terminal {
             if let Some(callback) = js::gc::get(js::GcValue::Drain, this_jsvalue) {
                 let global_this = self.global();
                 global_this.bun_vm().event_loop_mut().run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global_this,
                     this_jsvalue,
@@ -1768,17 +1799,25 @@ impl Terminal {
     fn on_write(&self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
         let _ = amount;
-        // POSIX: `PosixStreamingWriter` never dispatches `on_ready`; detect the
-        // buffered→drained transition here instead. Windows fires the drain
-        // callback from `on_writable`, so only record the drained state (a
-        // stale flag would block `maybe_downgrade_after_eof` forever).
-        #[cfg(unix)]
-        if status == WriteStatus::Drained && self.writer_has_buffered.replace(false) {
-            self.on_writer_ready();
-        }
-        #[cfg(not(unix))]
-        if matches!(status, WriteStatus::Drained | WriteStatus::EndOfFile) {
-            self.writer_has_buffered.set(false);
+        match status {
+            WriteStatus::Pending => {}
+            // `PosixStreamingWriter` never dispatches `on_ready`, so POSIX
+            // fires `drain` off this transition. Windows fires it from
+            // `on_writable` and only records the state here.
+            WriteStatus::Drained => {
+                let had_buffered = self.writer_has_buffered.replace(false);
+                #[cfg(unix)]
+                if had_buffered {
+                    self.on_writer_ready();
+                }
+                #[cfg(not(unix))]
+                let _ = had_buffered;
+            }
+            // The writer closed its fd, so no drain can follow.
+            WriteStatus::EndOfFile => {
+                self.writer_has_buffered.set(false);
+                self.maybe_downgrade_after_eof();
+            }
         }
     }
 
@@ -1802,30 +1841,49 @@ impl Terminal {
         if self.flags.get().contains(Flags::READER_DONE) {
             return;
         }
-        self.update_flags(|f| {
-            f.insert(Flags::READER_DONE);
-            f.remove(Flags::CONNECTED);
-        });
-        // EOF from master - downgrade to weak ref to allow GC.
+        self.update_flags(|f| f.insert(Flags::READER_DONE));
+        #[cfg(unix)]
+        self.finish_io_after_eof();
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
-            self.maybe_downgrade_after_eof();
             self.call_exit_callback(exit_code, None);
         }
+        // The wrapper stayed strong for `exit`; only a pending `drain` needs
+        // it from here on.
+        self.update_flags(|f| f.insert(Flags::EXIT_DISPATCHED));
+        self.maybe_downgrade_after_eof();
         self.deref_();
     }
 
-    /// Downgrade `this_value` once no further callback can fire: reader hit
-    /// EOF *and* the writer has no buffered data awaiting a `drain` dispatch.
-    /// The wrapper's cached callback slots are the only GC root of the
-    /// callbacks, so downgrading with a drain still pending lets GC collect
-    /// the wrapper before `on_writer_ready` dispatches through it.
+    /// Finish both ends of the PTY once the reader is done, so `exit` is the
+    /// last callback. A pty master reports neither side's hangup the way a
+    /// pipe does: Linux answers a write with EAGAIN instead of EPIPE, and a
+    /// read with EIO instead of EOF. Left alone, the writer waits for a drain
+    /// that cannot come and the reader delivers echo after `exit`.
+    #[cfg(unix)]
+    fn finish_io_after_eof(&self) {
+        // EOF closes the reader itself, a read error does not.
+        if !self.reader.get().is_done() {
+            self.reader.with_mut(|r| r.close());
+            self.read_fd.set(Fd::INVALID);
+        }
+        // `end()` dispatches `on_writer_close`, which sets `WRITER_DONE`.
+        if !self.flags.get().contains(Flags::WRITER_DONE) {
+            self.writer.with_mut(|w| w.end());
+            self.write_fd.set(Fd::INVALID);
+        }
+    }
+
+    /// Downgrade `this_value` once no further callback can fire: `exit` has
+    /// been dispatched and no `drain` is owed. Downgrading earlier would let
+    /// GC collect the wrapper, and with it the callbacks it roots, before the
+    /// last dispatch goes through it.
     ///
     /// Reads only `Cell` fields, never `self.writer`: callers include
     /// writer-parent callbacks that run while a writer borrow is live.
     fn maybe_downgrade_after_eof(&self) {
         let flags = self.flags.get();
-        if !flags.contains(Flags::READER_DONE) || flags.contains(Flags::FINALIZED) {
+        if !flags.contains(Flags::EXIT_DISPATCHED) || flags.contains(Flags::FINALIZED) {
             return;
         }
         if !flags.contains(Flags::WRITER_DONE) && self.writer_has_buffered.get() {
@@ -1855,6 +1913,7 @@ impl Terminal {
         };
 
         global_this.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
             callback,
             global_this,
             this_jsvalue,
@@ -1874,13 +1933,6 @@ impl Terminal {
 
         if self.flags.get().contains(Flags::FINALIZED) {
             return true;
-        }
-
-        // First data received - upgrade to strong ref (connected)
-        if !self.flags.get().contains(Flags::CONNECTED) {
-            self.update_flags(|f| f.insert(Flags::CONNECTED));
-            let global = self.global();
-            self.this_value.with_mut(|v| v.upgrade(global));
         }
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
@@ -1922,6 +1974,7 @@ impl Terminal {
         // Each chunk's `data` callback is its own top-level call: reported and
         // reading continues, as a stream 'data' listener that throws does.
         global_this.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
             callback,
             global_this,
             this_jsvalue,

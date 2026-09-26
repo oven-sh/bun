@@ -133,7 +133,7 @@ macro_rules! us_dispatch_shims {
         /// buffer must be valid for the duration of the call).
         #[unsafe(no_mangle)]
         #[allow(clippy::unused_unit)]
-        pub unsafe extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
+        pub(crate) unsafe extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
             match $lookup($recv).$field {
                 Some(f) => {
                     // SAFETY: `f` is the vtable callback for this socket kind; loop.c
@@ -251,6 +251,71 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
     // duration of this call.
     let slice = unsafe { core::slice::from_raw_parts(data, len) };
     crate::dispatch::fold(TLSSocket::on_session(tls, slice));
+}
+
+/// The name check of the verify step, routed to the owner of the socket in the handshake: a `US_IDENTITY_*` verdict.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn us_dispatch_server_identity(
+    s: *mut us_socket_t,
+    ssl: *mut bun_boringssl_sys::SSL,
+) -> c_int {
+    use bun_boringssl::ServerIdentity::Unchecked;
+    use bun_ptr::ThisPtr;
+    let s_ref = us_socket_t::opaque_mut(s);
+    let ssl = bun_boringssl_sys::SSL::opaque_mut(ssl);
+    let verdict = match s_ref.kind() {
+        SocketKind::BunSocketTls => s_ref
+            .ext::<Option<ThisPtr<super::NewSocket<true>>>>()
+            .map_or(Unchecked, |tls| tls.server_identity(ssl)),
+        SocketKind::HttpClientTls => s_ref
+            .ext::<Option<core::ptr::NonNull<c_void>>>()
+            .map_or(Unchecked, |ext| {
+                bun_http::http_context::Handler::<true>::server_identity(ext.as_ptr(), ssl)
+            }),
+        SocketKind::WsClientUpgradeTls => s_ref
+            .ext::<Option<ThisPtr<handlers::WSUpgradeClient<true>>>>()
+            .map_or(Unchecked, |client| client.server_identity(ssl)),
+        SocketKind::PostgresTls => s_ref
+            .ext::<Option<ThisPtr<bun_sql_jsc::postgres::PostgresSQLConnection>>>()
+            .map_or(Unchecked, |connection| connection.server_identity(ssl)),
+        SocketKind::MysqlTls => s_ref
+            .ext::<Option<ThisPtr<bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection>>>()
+            .map_or(Unchecked, |connection| connection.server_identity(ssl)),
+        SocketKind::ValkeyTls => s_ref
+            .ext::<Option<ThisPtr<crate::valkey_jsc::js_valkey::JSValkeyClient>>>()
+            .map_or(Unchecked, |client| {
+                crate::valkey_jsc::js_valkey::SocketHandler::<true>::server_identity(&client, ssl)
+            }),
+        _ => Unchecked,
+    };
+    verdict as c_int
+}
+
+/// BoringSSL's new-session callback, routed to the owner of the socket in `SSL_read`: 1 asks for `us_dispatch_session`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn us_dispatch_new_session(
+    s: *mut us_socket_t,
+    session: *mut bun_boringssl_sys::SSL_SESSION,
+) -> c_int {
+    let s_ref = us_socket_t::opaque_mut(s);
+    match s_ref.kind() {
+        SocketKind::HttpClientTls => {
+            bun_http::session_cache::on_new_session(s_ref, session);
+            0
+        }
+        SocketKind::BunSocketTls => {
+            type TLSSocket = super::NewSocket<true>;
+            let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+                return 0;
+            };
+            tls.set_latest_session(
+                core::ptr::NonNull::new(session)
+                    .map(|session| bun_boringssl_sys::SSL_SESSION::opaque_ref(session.as_ptr())),
+            );
+            1
+        }
+        _ => 0,
+    }
 }
 
 /// Hands an NSS key-log line parked by the keylog callback to the JS

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { EventEmitter, once } from "events";
 import { bunEnv, bunExe, isDebug } from "harness";
-import { createServer } from "http";
+import { createServer, request } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
@@ -333,6 +333,36 @@ describe("WebSocketServer", () => {
 
     new WebSocket("ws://localhost:" + wss.address().port);
     await promise;
+  });
+
+  // websockets/ws test/websocket-server.test.js
+  it("handles data passed along with the upgrade request", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<{ data: unknown; isBinary: boolean }>();
+    const wss = new WebSocketServer({ port: 0 }, () => {
+      const req = request({
+        port: (wss.address() as AddressInfo).port,
+        headers: {
+          Connection: "Upgrade",
+          Upgrade: "websocket",
+          "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+          "Sec-WebSocket-Version": 13,
+        },
+      });
+      req.on("error", reject);
+      // The text frame "Hello", masked with a zero key.
+      req.write(Buffer.concat([Buffer.from([0x81, 0x85, 0, 0, 0, 0]), Buffer.from("Hello")]));
+      req.end();
+    });
+    wss.on("connection", ws => {
+      ws.on("message", (data, isBinary) => resolve({ data, isBinary }));
+      ws.on("close", code => reject(new Error(`closed with ${code} before the message`)));
+    });
+
+    try {
+      expect(await promise).toEqual({ data: Buffer.from("Hello"), isBinary: false });
+    } finally {
+      wss.close();
+    }
   });
 
   describe("binaryType", () => {
@@ -1187,7 +1217,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
 
   // Sends `request` to a node:http server over a raw TCP connection and hands
   // back what the server's 'upgrade' listener received.
-  async function receiveUpgrade(request: string, server = createServer()) {
+  async function receiveUpgrade(request: string | Buffer, server = createServer()) {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const upgrade = once(server, "upgrade");
@@ -1417,6 +1447,105 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     expect(upgrade.socket.listenerCount("error")).toBe(errorListenersBefore + 1);
     chat.close();
     other.close();
+  });
+
+  // A client that does not wait for the 101 can get frames to the server before
+  // the upgrade. The npm package parses them: it unshifts the 'upgrade' event's
+  // head into the socket and reads frames from the socket stream.
+  describe("frames that arrive before the 101", () => {
+    // FIN + text, masked with a zero key.
+    const text = (payload: string) =>
+      Buffer.concat([Buffer.from([0x81, 0x80 | payload.length, 0, 0, 0, 0]), Buffer.from(payload)]);
+    const requestAndEarlyFrame = () => Buffer.concat([Buffer.from(upgradeRequest()), text("early")]);
+
+    // Every message the connections of `wss` received, up to "later". Rejects
+    // if a connection closes first.
+    function messagesOf(wss: WebSocketServer) {
+      const messages: string[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+      // A test that fails before it awaits this must not add an unhandled rejection.
+      promise.catch(() => {});
+      wss.on("connection", ws => {
+        ws.on("message", data => {
+          messages.push(String(data));
+          if (String(data) === "later") resolve(messages);
+        });
+        ws.on("close", code => reject(new Error(`closed with ${code} after ${JSON.stringify(messages)}`)));
+      });
+      return promise;
+    }
+
+    // Sends "later" once the 101 is in, then waits for the server to see it.
+    async function sendLater(upgrade: Awaited<ReturnType<typeof receiveUpgrade>>, messages: Promise<string[]>) {
+      expect(await upgrade.received("\r\n\r\n")).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+      upgrade.client.write(text("later"));
+      return await messages;
+    }
+
+    it("are delivered when handleUpgrade() runs inside the 'upgrade' event", async () => {
+      const server = createServer();
+      const wss = new WebSocketServer({ server });
+      const messages = messagesOf(wss);
+
+      await using upgrade = await receiveUpgrade(requestAndEarlyFrame(), server);
+
+      expect(await sendLater(upgrade, messages)).toEqual(["early", "later"]);
+      wss.close();
+    });
+
+    // node:http on Node reads a body that the upgrade request declares as the
+    // request's body. Here the body is dropped. It is never frames.
+    it("are not taken from a body of the upgrade request", async () => {
+      const server = createServer();
+      const wss = new WebSocketServer({ server });
+      const messages = messagesOf(wss);
+
+      await using upgrade = await receiveUpgrade(upgradeRequest({ body: '{"hello":"world"}' }), server);
+
+      expect(await sendLater(upgrade, messages)).toEqual(["later"]);
+      wss.close();
+    });
+
+    // https://github.com/oven-sh/bun/issues/43149: a handleUpgrade() in a later
+    // task hands the connection to the native WebSocket without the bytes that
+    // node:http received before it (head, or data of the socket).
+    it.todo("are delivered when handleUpgrade() runs in a later task", async () => {
+      const wss = new WebSocketServer({ noServer: true });
+      const messages = messagesOf(wss);
+
+      await using upgrade = await receiveUpgrade(requestAndEarlyFrame());
+      await new Promise(resolve => setImmediate(resolve));
+      wss.handleUpgrade(upgrade.req, upgrade.socket, upgrade.head, ws => wss.emit("connection", ws, upgrade.req));
+
+      expect(await sendLater(upgrade, messages)).toEqual(["early", "later"]);
+    });
+
+    it.todo("are delivered when verifyClient answers in a later task", async () => {
+      const server = createServer();
+      const wss = new WebSocketServer({
+        server,
+        verifyClient: (_info: unknown, callback: (verified: boolean) => void) => setImmediate(() => callback(true)),
+      });
+      const messages = messagesOf(wss);
+
+      await using upgrade = await receiveUpgrade(requestAndEarlyFrame(), server);
+
+      expect(await sendLater(upgrade, messages)).toEqual(["early", "later"]);
+      wss.close();
+    });
+
+    it.todo("are delivered when they arrive in a read of their own before handleUpgrade()", async () => {
+      const wss = new WebSocketServer({ noServer: true });
+      const messages = messagesOf(wss);
+
+      await using upgrade = await receiveUpgrade(upgradeRequest());
+      upgrade.client.write(text("early"));
+      // 'readable' leaves the bytes in the socket for handleUpgrade().
+      await once(upgrade.socket, "readable");
+      wss.handleUpgrade(upgrade.req, upgrade.socket, upgrade.head, ws => wss.emit("connection", ws, upgrade.req));
+
+      expect(await sendLater(upgrade, messages)).toEqual(["early", "later"]);
+    });
   });
 
   it("throws when called twice with the same socket", async () => {

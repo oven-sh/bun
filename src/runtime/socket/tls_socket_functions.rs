@@ -104,8 +104,6 @@ pub(super) mod ffi {
 
         // ── SSL_SESSION ───────────────────────────────────────────────────
         pub(crate) safe fn SSL_get_session(ssl: &SSL) -> *mut SSL_SESSION;
-        // Borrowed from the SSL's ex_data; no caller-side precondition.
-        pub(crate) safe fn us_ssl_get_new_session(ssl: &SSL) -> *mut SSL_SESSION;
         // Both handles are opaque-ZST refs (`UnsafeCell` body); BoringSSL bumps
         // `session`'s refcount internally — no caller-side precondition.
         pub(crate) safe fn SSL_set_session(ssl: &SSL, session: &SSL_SESSION) -> c_int;
@@ -171,10 +169,6 @@ pub(super) mod ffi {
         // declare them `safe fn` here and route callers through
         // `SSL::opaque_ref` (panics on null, which every site already guards).
         pub(crate) safe fn SSL_is_init_finished(ssl: &SSL) -> c_int;
-        /// Installs the inline-reject verify recorder (usockets openssl.c);
-        /// the BIO hook + handshake drive then keep a rejected client's
-        /// Finished off the wire and fail the handshake with the X509 verdict.
-        pub(crate) safe fn us_internal_ssl_set_inline_reject(ssl: &SSL);
         pub(crate) safe fn SSL_get_peer_cert_chain(ssl: &SSL) -> *mut struct_stack_st_X509;
         pub(crate) safe fn SSL_get0_alpn_selected(
             ssl: &SSL,
@@ -1074,10 +1068,13 @@ pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResul
 /// The session Node's `getSession()`/`getTLSTicket()` read: the one most
 /// recently delivered to the new-session callback (the only place BoringSSL
 /// surfaces a TLS 1.3 NewSessionTicket), falling back to the SSL's own.
-fn current_session(ssl: &boringssl::SSL) -> *mut ffi::SSL_SESSION {
-    let new = ffi::us_ssl_get_new_session(ssl);
-    if !new.is_null() {
-        return new;
+fn current_session(this: &This, ssl: &boringssl::SSL) -> *mut ffi::SSL_SESSION {
+    if let Some(latest) = this.latest_session.get() {
+        return latest.as_ptr().cast();
+    }
+    let latest = this.socket.get().wrapper_latest_session();
+    if !latest.is_null() {
+        return latest.cast();
     }
     ffi::SSL_get_session(ssl)
 }
@@ -1090,7 +1087,7 @@ pub(super) fn get_session(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    let session = current_session(boringssl::SSL::opaque_ref(ssl_ptr));
+    let session = current_session(this, boringssl::SSL::opaque_ref(ssl_ptr));
     if session.is_null() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -1171,7 +1168,7 @@ pub(super) fn get_tls_ticket(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    let session = current_session(boringssl::SSL::opaque_ref(ssl_ptr));
+    let session = current_session(this, boringssl::SSL::opaque_ref(ssl_ptr));
     if session.is_null() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -1280,12 +1277,14 @@ pub(super) fn set_verify_mode(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // we always allow and check the SSL certificate after the handshake or renegotiation
-    ffi::SSL_set_verify(
-        boringssl::SSL::opaque_ref(ssl_ptr),
-        verify_mode,
-        Some(always_allow_ssl_verify_callback),
-    );
+    let ssl = boringssl::SSL::opaque_ref(ssl_ptr);
+    if !acts_as_server && reject_unauthorized && ffi::SSL_is_init_finished(ssl) == 0 {
+        // The same in-handshake chain check as for a client that rejects from the start.
+        this.socket.get().set_inline_reject();
+    } else {
+        // we always allow and check the SSL certificate after the handshake or renegotiation
+        ffi::SSL_set_verify(ssl, verify_mode, Some(always_allow_ssl_verify_callback));
+    }
     Ok(JSValue::UNDEFINED)
 }
 

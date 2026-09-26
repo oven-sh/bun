@@ -14,7 +14,7 @@ use bun_threading::Guarded;
 
 /// `EventLoopTimer.next`'s type; the low tier re-exports `bun_core::Timespec`.
 pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
-pub use bun_event_loop::EventLoopTimer::{
+pub(crate) use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, State as EventLoopTimerState, Tag as EventLoopTimerTag, TimerHeap,
     TimerOwner, TimerRef,
 };
@@ -28,7 +28,7 @@ use crate::jsc::virtual_machine::VirtualMachine;
 // `$rust(Timer.rs, …)` → `crate::<dir>::<file>` path-mapping.
 
 #[path = "Timer.rs"]
-pub mod timer;
+pub(crate) mod timer;
 
 // ─── impl_timer_object! ──────────────────────────────────────────────────────
 // Shared scaffold for `TimeoutObject` / `ImmediateObject`: both are a
@@ -55,7 +55,7 @@ macro_rules! impl_timer_object {
     ($T:ident, $tag:ident, $js_name:literal) => {
         #[::bun_jsc::JsClass(name = $js_name)]
         #[derive(::bun_ptr::RefCounted)]
-        pub struct $T {
+        pub(crate) struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
             pub event_loop_timer: ::bun_ptr::JsCell<super::EventLoopTimer>,
             pub internals: super::TimerObjectInternals,
@@ -79,35 +79,34 @@ macro_rules! impl_timer_object {
             /// allocate → wrap in the JS cell → schedule → inspector
             /// `did_schedule_async_call`. The per-type `init` fn picks
             /// `kind`/`interval` and forwards here.
-            pub fn init_with(
-                global: &::bun_jsc::JSGlobalObject,
+            pub(crate) fn init_with(
+                cx: &::bun_jsc::JsThread<'_>,
                 id: i32,
                 kind: super::Kind,
                 interval: u32,
                 callback: ::bun_jsc::JSValue,
                 arguments: ::bun_jsc::JSValue,
             ) -> ::bun_jsc::JSValue {
-                let vm = global.bun_vm();
                 let timer = ::bun_ptr::RefPtr::new(Self {
                     ref_count: ::bun_ptr::RefCount::init(),
                     event_loop_timer: ::bun_ptr::JsCell::new(super::EventLoopTimer::init_paused(
                         super::EventLoopTimerTag::$tag,
                     )),
-                    internals: super::TimerObjectInternals::new(id, kind, interval, vm),
+                    internals: super::TimerObjectInternals::new(id, kind, interval, cx),
                     heap_ref: ::core::cell::Cell::new(None),
                 });
                 // `timer`'s ref moves to the JS wrapper (released via `finalize`).
-                let js_value = Self::to_js_nonnull(timer.as_non_null(), global);
+                let js_value = Self::to_js_nonnull(timer.as_non_null(), cx.global());
                 debug_assert!(
                     <Self as ::bun_jsc::JsClass>::from_js(js_value) == Some(timer.as_ptr()),
                     concat!($js_name, "__create ABI mismatch"),
                 );
                 let this = timer.into_this_ptr();
                 let _keep = ::bun_jsc::EnsureStillAlive(js_value);
-                <Self as super::TimerObject>::schedule(this, js_value, global, callback, arguments);
-                if vm.is_inspector_enabled() {
+                <Self as super::TimerObject>::schedule(this, js_value, cx, callback, arguments);
+                if cx.vm().is_inspector_enabled() {
                     ::bun_jsc::Debugger::did_schedule_async_call(
-                        global,
+                        cx.global(),
                         ::bun_jsc::Debugger::AsyncCallType::DOMTimer,
                         super::ID { id, kind: kind.big() }.async_id(),
                         kind != super::Kind::SetInterval,
@@ -119,7 +118,7 @@ macro_rules! impl_timer_object {
             // C-ABI shim (`${name}Class__construct`) is emitted by
             // `#[bun_jsc::JsClass]` via `host_fn_construct_result`; do not also
             // annotate with `#[host_fn]` here.
-            pub fn constructor(
+            pub(crate) fn constructor(
                 global: &::bun_jsc::JSGlobalObject,
                 _frame: &::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JsResult<*mut Self> {
@@ -127,7 +126,7 @@ macro_rules! impl_timer_object {
             }
 
             #[::bun_jsc::host_fn(method)]
-            pub fn to_primitive(
+            pub(crate) fn to_primitive(
                 this: ::bun_ptr::ThisPtr<Self>,
                 _global: &::bun_jsc::JSGlobalObject,
                 _frame: &::bun_jsc::CallFrame,
@@ -136,7 +135,7 @@ macro_rules! impl_timer_object {
             }
 
             #[::bun_jsc::host_fn(method)]
-            pub fn do_ref(
+            pub(crate) fn do_ref(
                 &self,
                 _global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
@@ -145,7 +144,7 @@ macro_rules! impl_timer_object {
             }
 
             #[::bun_jsc::host_fn(method)]
-            pub fn do_unref(
+            pub(crate) fn do_unref(
                 &self,
                 _global: &::bun_jsc::JSGlobalObject,
                 frame: &::bun_jsc::CallFrame,
@@ -154,7 +153,7 @@ macro_rules! impl_timer_object {
             }
 
             #[::bun_jsc::host_fn(method)]
-            pub fn has_ref(
+            pub(crate) fn has_ref(
                 &self,
                 _global: &::bun_jsc::JSGlobalObject,
                 _frame: &::bun_jsc::CallFrame,
@@ -165,12 +164,12 @@ macro_rules! impl_timer_object {
             /// `.classes.ts` `refCounted: true` — runs on the mutator thread
             /// during lazy sweep, before the wrapper's ref is dropped. Do not
             /// touch any `JSValue`/`Strong` content.
-            pub fn finalize(&self) {
+            pub(crate) fn finalize(&self) {
                 self.internals.this_value.with_mut(|r| r.finalize())
             }
 
             #[::bun_jsc::host_fn(getter)]
-            pub fn get_destroyed(
+            pub(crate) fn get_destroyed(
                 &self,
                 _global: &::bun_jsc::JSGlobalObject,
             ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
@@ -178,7 +177,7 @@ macro_rules! impl_timer_object {
             }
 
             #[::bun_jsc::host_fn(method)]
-            pub fn dispose(
+            pub(crate) fn dispose(
                 this: ::bun_ptr::ThisPtr<Self>,
                 _global: &::bun_jsc::JSGlobalObject,
                 _frame: &::bun_jsc::CallFrame,
@@ -192,16 +191,16 @@ macro_rules! impl_timer_object {
 pub(crate) use impl_timer_object;
 
 #[path = "TimeoutObject.rs"]
-pub mod timeout_object;
+pub(crate) mod timeout_object;
 
 #[path = "ImmediateObject.rs"]
-pub mod immediate_object;
+pub(crate) mod immediate_object;
 
 #[path = "DateHeaderTimer.rs"]
-pub mod date_header_timer;
+pub(crate) mod date_header_timer;
 
 #[path = "EventLoopDelayMonitor.rs"]
-pub mod event_loop_delay_monitor;
+pub(crate) mod event_loop_delay_monitor;
 
 /// `clearTimeout(id)` lookup table: the object's `Drop` removes its entry, so
 /// every `BackRef` in here points at a live timer.
@@ -209,7 +208,7 @@ pub(crate) type IdMap<T> = ArrayHashMap<i32, BackRef<T, bun_ptr::Root>>;
 
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
 #[derive(Default)]
-pub struct Maps {
+pub(crate) struct Maps {
     pub(crate) set_timeout: IdMap<TimeoutObject>,
     pub(crate) set_interval: IdMap<TimeoutObject>,
     pub(crate) set_immediate: IdMap<ImmediateObject>,
@@ -223,7 +222,7 @@ pub(crate) use crate::test_runner::timers::fake_timers::FakeTimers;
 
 // ─── DateHeaderTimer / EventLoopDelayMonitor ─────────────────────────────────
 
-pub struct DateHeaderTimer {
+pub(crate) struct DateHeaderTimer {
     pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
 }
 bun_event_loop::impl_timer_owner!(DateHeaderTimer; from_timer_ptr => event_loop_timer);
@@ -265,7 +264,7 @@ impl DateHeaderTimer {
     }
 }
 
-pub struct EventLoopDelayMonitor {
+pub(crate) struct EventLoopDelayMonitor {
     /// Weak, so a leaked monitor does not pin the retired `--isolate` realm.
     /// `stop_active_handles` drops it before `~VM` (`All` outlives the heap).
     histogram: JsCell<bun_jsc::Weak<()>>,
@@ -366,20 +365,15 @@ impl EventLoopDelayMonitor {
 
 // ─── TimerObjectInternals / TimeoutObject / ImmediateObject ─────────────────
 
-pub mod timer_object_internals;
-pub use timer_object_internals::{Flags as TimerFlags, TimerObject, TimerObjectInternals};
+pub(crate) mod timer_object_internals;
+pub(crate) use timer_object_internals::{TimerObject, TimerObjectInternals};
 
-/// `jsc.WebCore.AbortSignal.Timeout` — real struct lives in `bun_jsc` (which
-/// this crate depends on). Re-exported here so `dispatch` resolves the same
-/// `event_loop_timer`/`flags` offsets the low tier wrote.
-pub use crate::jsc::abort_signal::Timeout as AbortSignalTimeout;
-
-pub use self::immediate_object::ImmediateObject;
-pub use self::timeout_object::TimeoutObject;
+pub(crate) use self::immediate_object::ImmediateObject;
+pub(crate) use self::timeout_object::TimeoutObject;
 
 /// A timer created by WTF code and invoked by Bun's event loop.
 #[path = "WTFTimer.rs"]
-pub mod wtf_timer;
+pub(crate) mod wtf_timer;
 pub(crate) use wtf_timer::WTFTimer;
 
 // ─── All ─────────────────────────────────────────────────────────────────────
@@ -446,7 +440,8 @@ impl All {
         id
     }
 
-    /// The epoch a freshly created JS timer starts with (see [`TimerFlags`]).
+    /// The epoch a freshly created JS timer starts with (see
+    /// [`bun_event_loop::EventLoopTimer::TimerFlags`]).
     #[inline]
     pub(crate) fn epoch(&self) -> u32 {
         self.epoch.get()
@@ -904,7 +899,7 @@ pub(crate) enum CountdownOverflowBehavior {
 // (also moved down) can name them without a `bun_runtime` dep — needed by
 // `bun_jsc::abort_signal::Timeout.flags`. `Kind::big()` lives next to the
 // type so `TimeoutObject`/`TimerObjectInternals` can call it as a method.
-pub use bun_event_loop::EventLoopTimer::{Kind, KindBig};
+pub(crate) use bun_event_loop::EventLoopTimer::{Kind, KindBig};
 
 /// Sized to be the same as one pointer.
 #[repr(C)]

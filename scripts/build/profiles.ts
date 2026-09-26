@@ -9,17 +9,15 @@
  *
  * ## Naming convention
  *
- * `<buildtype>[-<feature>]`
+ * `<buildtype>[-<webkit-mode>][-<feature>]`
  *
- *   debug              → Debug build (the default). JSC is compiled from the
- *                        pinned WEBKIT_VERSION like every other dep.
- *   release            → Release build (LTO, as CI ships)
- *                        (your own WebKit clone: either profile plus
- *                        `--local-deps=WebKit=<path>`; `bun run build:local`
- *                        passes `--local-deps=WebKit`, i.e. $BUN_WEBKIT_PATH)
+ *   debug              → Debug build, prebuilt WebKit (the default)
+ *   debug-local        → Debug build, local WebKit (you cloned vendor/WebKit/)
+ *   release            → Release build, prebuilt WebKit (LTO, as CI ships)
+ *   release-local      → Release build, local WebKit
  *   release-assertions → Release + runtime assertions enabled
  *   release-asan       → Release + address sanitizer
- *   ci-*               → CI-specific modes (cpp-only/link-only/full)
+ *   ci-build           → what CI runs: the full build, linked from an object archive
  *
  * If you don't specify a profile, `debug` is used.
  */
@@ -30,14 +28,22 @@ import { BuildError } from "./error.ts";
 export type ProfileName = keyof typeof profiles;
 
 export const profiles = {
-  /** Default local dev: debug build; JSC compiled from the pinned WEBKIT_VERSION. ASAN defaults on for supported platforms. */
+  /** Default local dev: debug + prebuilt WebKit. ASAN defaults on for supported platforms. */
   debug: {
     buildType: "Debug",
+    webkit: "prebuilt",
+  },
+
+  /** Debug with local WebKit (user clones vendor/WebKit/). */
+  "debug-local": {
+    buildType: "Debug",
+    webkit: "local",
   },
 
   /** Debug without ASAN — faster builds, less safety. */
   "debug-no-asan": {
     buildType: "Debug",
+    webkit: "prebuilt",
     asan: false,
   },
 
@@ -50,6 +56,7 @@ export const profiles = {
     os: "linux",
     arch: "aarch64",
     abi: "android",
+    webkit: "prebuilt",
   },
 
   "android-release": {
@@ -57,6 +64,7 @@ export const profiles = {
     os: "linux",
     arch: "aarch64",
     abi: "android",
+    webkit: "prebuilt",
   },
 
   /**
@@ -67,18 +75,21 @@ export const profiles = {
     buildType: "Debug",
     os: "freebsd",
     arch: "x64",
+    webkit: "prebuilt",
   },
 
   "freebsd-arm64": {
     buildType: "Debug",
     os: "freebsd",
     arch: "aarch64",
+    webkit: "prebuilt",
   },
 
   "freebsd-release": {
     buildType: "Release",
     os: "freebsd",
     arch: "x64",
+    webkit: "prebuilt",
   },
 
   /**
@@ -91,33 +102,45 @@ export const profiles = {
     buildType: "Debug",
     os: "windows",
     arch: "x64",
+    webkit: "prebuilt",
   },
 
   "windows-arm64": {
     buildType: "Debug",
     os: "windows",
     arch: "aarch64",
+    webkit: "prebuilt",
   },
 
   "windows-x64-release": {
     buildType: "Release",
     os: "windows",
     arch: "x64",
+    webkit: "prebuilt",
   },
 
   "windows-arm64-release": {
     buildType: "Release",
     os: "windows",
     arch: "aarch64",
+    webkit: "prebuilt",
   },
 
   /**
-   * Release build: the codegen CI ships (ThinLTO across bun, JSC and Rust; no
-   * PGO or symbol ordering — those are CI post-steps). `--lto=off` trades that
-   * for fast relinks while iterating.
+   * Release build: the codegen CI ships (ThinLTO across bun, the `-lto`
+   * WebKit prebuilt's bitcode and Rust; no PGO or symbol ordering — those are
+   * CI post-steps). `--lto=off` trades that for fast relinks while iterating.
    */
   release: {
     buildType: "Release",
+    webkit: "prebuilt",
+  },
+
+  /** Release with local WebKit. */
+  "release-local": {
+    buildType: "Release",
+    webkit: "local",
+    lto: false,
   },
 
   /**
@@ -127,6 +150,7 @@ export const profiles = {
    */
   "release-assertions": {
     buildType: "RelWithDebInfo",
+    webkit: "prebuilt",
     assertions: true,
     logs: true,
   },
@@ -139,56 +163,17 @@ export const profiles = {
    */
   "release-asan": {
     buildType: "Release",
+    webkit: "prebuilt",
     asan: true,
     assertions: true,
   },
 
-  /** CI: compile C++ to libbun.a only (parallelized with the cargo build). */
-  "ci-cpp-only": {
-    buildType: "Release",
-    mode: "cpp-only",
-    ci: true,
-    buildkite: true,
-  },
-
-  /**
-   * CI: compile libbun_runtime.a only. Target platform via --os/--arch
-   * overrides (cargo `--target <triple>`). Superseded in CI by
-   * `ci-rust-and-link`; kept for ad-hoc rust-only builds.
-   */
-  "ci-rust-only": {
-    buildType: "Release",
-    mode: "rust-only",
-    ci: true,
-    buildkite: true,
-  },
-
-  /** CI: link prebuilt objects downloaded from sibling BuildKite jobs. */
-  "ci-link-only": {
-    buildType: "Release",
-    mode: "link-only",
-    ci: true,
-    buildkite: true,
-  },
-
-  /**
-   * CI: cargo build + link on one machine. Polls the sibling build-cpp step
-   * for its archive/dep-lib artifacts, then links and packages. Saves an
-   * agent spawn vs rust-only → link-only. Resolves the full toolchain (link
-   * needs ld/strip/rc), unlike rust-only.
-   */
-  "ci-rust-and-link": {
-    buildType: "Release",
-    mode: "rust-and-link",
-    ci: true,
-    buildkite: true,
-  },
-
-  /** CI's build-bun step: the full release build (LTO by default) on one agent, then package + upload the zips. */
+  /** CI: a release build on one agent; build.ts packages and uploads the zips (scripts/build/ci.ts). */
   "ci-build": {
     buildType: "Release",
     ci: true,
     buildkite: true,
+    webkit: "prebuilt",
   },
 } as const satisfies Record<string, PartialConfig>;
 
@@ -197,9 +182,8 @@ export const profiles = {
  */
 /** Profiles that were removed, with what replaces them — a build dir configured under one says so on its next regen. */
 const retiredProfiles: Record<string, string> = {
-  "debug-local": "--profile=debug --local-deps=WebKit=<clone> (bun run build:local)",
-  "release-local": "--profile=release --local-deps=WebKit=<clone> (bun run build:release:local)",
   btg: "--profile=release (LTO is on by default now)",
+  "ci-release": "--profile=release --ci=on --buildkite=on (LTO is on by default now)",
 };
 
 export function getProfile(name: string): PartialConfig {

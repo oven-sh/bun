@@ -1026,8 +1026,18 @@ fn parse_binary_numeric<'a>(
         _ => return Err(crate::Error::InvalidSign),
     }
 
+    // Postgres sends every zero with no digit groups. `dscale` still carries
+    // the display scale, so a numeric(10, 4) zero is "0.0000".
     if ndigits == 0 {
-        return Ok(PGNummericString::Static(b"0"));
+        if dscale <= 0 {
+            return Ok(PGNummericString::Static(b"0"));
+        }
+        result.extend_from_slice(b"0.");
+        result.resize(
+            result.len() + usize::try_from(dscale).expect("int cast"),
+            b'0',
+        );
+        return Ok(PGNummericString::Dynamic(result.as_slice()));
     }
 
     // Add negative sign if needed

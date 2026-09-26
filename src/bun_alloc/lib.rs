@@ -1847,18 +1847,6 @@ impl BSSAppendable for &[u8] {
         dst[..self.len()].copy_from_slice(self);
     }
 }
-impl<const N: usize> BSSAppendable for [&[u8]; N] {
-    fn total_len(&self) -> usize {
-        self.iter().map(|s| s.len()).sum()
-    }
-    fn copy_into(&self, dst: &mut [u8]) {
-        let mut remainder = dst;
-        for val in self {
-            remainder[..val.len()].copy_from_slice(val);
-            remainder = &mut remainder[val.len()..];
-        }
-    }
-}
 impl BSSAppendable for &[&[u8]] {
     fn total_len(&self) -> usize {
         self.iter().map(|s| s.len()).sum()

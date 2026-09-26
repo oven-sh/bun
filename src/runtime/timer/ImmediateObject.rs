@@ -1,7 +1,7 @@
 use core::cell::Cell;
 
+use bun_jsc::JSValue;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue};
 use bun_ptr::{JsCell, RefPtr, ThisPtr};
 
 use super::{EventLoopTimer, IdMap, Kind, Maps, TimerObject, TimerObjectInternals};
@@ -34,12 +34,12 @@ impl TimerObject for ImmediateObject {
 
 impl ImmediateObject {
     pub(crate) fn init(
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         id: i32,
         callback: JSValue,
         arguments: JSValue,
     ) -> JSValue {
-        Self::init_with(global, id, Kind::SetImmediate, 0, callback, arguments)
+        Self::init_with(cx, id, Kind::SetImmediate, 0, callback, arguments)
     }
 
     /// Reached from `bun_jsc::event_loop` via `__bun_run_immediate_task`

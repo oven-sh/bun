@@ -8,7 +8,6 @@
 //! If `auto_delete` is true, the task is automatically deallocated when it's finished.
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
-use crate::ManagedTask;
 use bun_threading::UnboundedQueue;
 use bun_threading::unbounded_queue::{Link, Linked};
 
@@ -68,6 +67,14 @@ pub mod task_tag {
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
         BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
         BundleV2PluginLoad,       // bun.bundle_v2.Load (JS-thread hop)
+        BundleV2PluginResolveAnswered, // bun.bundle_v2.Resolve (hop back to the bundle's loop)
+        BundleV2PluginLoadAnswered, // bun.bundle_v2.Load (hop back to the bundle's loop)
+        BundleV2PluginLoadDeferred, // bun.bundle_v2.Load (`.defer()` notice to the bundle's loop)
+        BundleV2ParseTaskResult,  // bun.bundle_v2.ParseTask.Result
+        ChromePipeEvent,
+        CopyFileWindowsMkdirp,
+        WriteFileWindowsMkdirp,
+        DnsErrorDeferred,
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
         Close,
         CppTask,
@@ -75,13 +82,18 @@ pub mod task_tag {
         FetchTasklet,
         FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
+        FetchTaskletRequestDrain,
         FSWatchTask,
         GetAddrInfoLibuvComplete,
+        GraphContextStopAgain,
+        GraphContextStopAndFree,
+        DeadContextStopAgain,
+        HandledPromise,
         HotReloadTask,
+        HTMLRewriterBackgroundPull,
         WatchReloadTask,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,
-        ManagedTask,
         NapiAsyncWork,            // napi_async_work
         NapiFinalizerTask,
         NativePromiseContextDeferredDerefTask,
@@ -96,11 +108,19 @@ pub mod task_tag {
         Read,
         Readv,
         FlushPendingFileSinkTask,
+        RunTestsTask,
         RuntimeTranspilerStore,
         S3HttpDownloadStreamingTask,
         S3HttpSimpleTask,
+        S3UploadWriterCollected,  // MultiPartUpload (its `writer()` was collected before `end()`)
         SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
         ServerAllConnectionsClosedTask,
+        HTTPServerDeinit,
+        HTTPSServerDeinit,
+        DebugHTTPServerDeinit,
+        DebugHTTPSServerDeinit,
+        HTTPAppClose,
+        HTTPSAppClose,
         ShellAsync,
         ShellCondExprStatTask,
         ShellCpTask,
@@ -119,6 +139,8 @@ pub mod task_tag {
         ShellAsyncCpTask,
         StreamPending,
         ThreadSafeFunction,
+        ValkeyDeferredClose,
+        ValkeyDeferredFailure,
         WindowsNamedPipeContext,
         Write,
         Writev,
@@ -129,6 +151,35 @@ pub mod task_tag {
 pub struct Task {
     pub tag: TaskTag,
     pub ptr: *mut (),
+    // [`Task::context`], in the padding `tag` leaves.
+    context: ContextId,
+}
+const _: () = assert!(core::mem::size_of::<Task>() == 2 * core::mem::size_of::<usize>());
+
+/// Identifies a script execution context within its VM (`bun_jsc` hands them out, counting up).
+/// What outlived its context (a pool job, a queued task, a timer that was not swept) holds an id
+/// no live context has.
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Default, Debug)]
+pub struct ContextId(u32);
+
+impl ContextId {
+    /// No script's context. Never handed out to one.
+    pub const NONE: ContextId = ContextId(0);
+
+    /// `VirtualMachine::dead_context`'s, in every VM. Never handed out to another: the
+    /// identifiers contexts are given count up from 1.
+    pub const DEAD: ContextId = ContextId(u32::MAX);
+
+    #[inline]
+    pub const fn from_raw(raw: u32) -> ContextId {
+        ContextId(raw)
+    }
+
+    #[inline]
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
 }
 
 /// What it takes to be queued as a [`Task`]: a tag, and how the task is
@@ -161,6 +212,19 @@ pub trait Taskable {
     /// # Safety
     /// `this` came off the queue under `Self::TAG` and is not used afterwards.
     unsafe fn release_unrun(this: *mut Self);
+
+    /// Whose script the task continues: the context that was current when the work was started.
+    /// Required, so that no type can be queued without having decided it: [`Task::init`] asks
+    /// when the task is made and the task carries the answer. The event loop runs the task inside
+    /// that context, and [releases it unrun](Self::release_unrun) if the context (a
+    /// `Bun.ModuleGraph`'s) has stopped. [`ContextId::NONE`]: no script's. The task runs whenever
+    /// the VM runs script, inside nothing: work that serves the whole realm, and a step of a
+    /// larger operation that enters its own context before it reaches script (the impl says
+    /// which, and where).
+    ///
+    /// # Safety
+    /// `this` is the [`Task::ptr`] about to be queued, live.
+    unsafe fn context(this: *const Self) -> ContextId;
 }
 
 impl TaskTag {
@@ -171,17 +235,30 @@ impl TaskTag {
 }
 
 impl Task {
+    /// For a tag whose `ptr` is not a `*mut T` (it packs an integer, or the payload is erased);
+    /// everything else goes through [`init`](Self::init).
     #[inline]
-    pub const fn new(tag: TaskTag, ptr: *mut ()) -> Task {
-        Task { tag, ptr }
+    pub const fn new(tag: TaskTag, ptr: *mut (), context: ContextId) -> Task {
+        Task { tag, ptr, context }
+    }
+
+    /// Whose script the task continues: what its type's [`Taskable::context`] said when the task
+    /// was made. The event loop checks it before it runs the task.
+    #[inline]
+    pub const fn context(&self) -> ContextId {
+        self.context
     }
 
     /// The type→tag table is the [`Taskable`] trait; the per-type impl
-    /// supplies `T::TAG`.
+    /// supplies `T::TAG`, and says whose script the task continues.
     // Takes `*mut T` directly; `&mut T` coerces at call sites.
+    // The precondition is the queue's own: the event loop dereferences `ptr` when it runs the task.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn init<T: Taskable>(ptr: *mut T) -> Task {
-        Task::new(T::TAG, ptr.cast::<()>())
+        // SAFETY: `ptr` is what is about to be queued, which is all `Taskable::context` asks for
+        // (a task is made to be queued: its type's fields are set by then).
+        Task::new(T::TAG, ptr.cast::<()>(), unsafe { T::context(ptr) })
     }
 
     /// Build a [`Task`] from an owned `Box<T>`. The dispatch arm for `T::TAG`
@@ -190,18 +267,10 @@ impl Task {
     /// callers use instead of open-coding `heap::alloc`.
     #[inline]
     pub fn from_boxed<T: Taskable>(task: Box<T>) -> Task {
-        Task::new(T::TAG, bun_core::heap::into_raw(task).cast::<()>())
+        Task::init(bun_core::heap::into_raw(task))
     }
 }
 
-// Taskable impls for the low-tier task wrappers defined in this crate.
-impl Taskable for crate::ManagedTask::ManagedTask {
-    const TAG: TaskTag = task_tag::ManagedTask;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — a queued ManagedTask is the heap box `new*` made.
-        unsafe { crate::ManagedTask::ManagedTask::release(this) }
-    }
-}
 // ────────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -286,16 +355,6 @@ impl ConcurrentTask {
         Self::create(Task::init(task))
     }
 
-    // callback returns `JsResult<()>` to match `ManagedTask::new`'s stored ABI;
-    // callers that have a `fn(*mut T)` should wrap it as `|p| { f(p); Ok(()) }` at the call site.
-    pub fn from_callback<T>(
-        ptr: *mut T,
-        callback: fn(*mut T) -> crate::JsResult<()>,
-    ) -> core::ptr::NonNull<ConcurrentTask> {
-        bun_core::mark_binding!();
-        Self::create(ManagedTask::ManagedTask::new(ptr, callback))
-    }
-
     pub fn from<T: Taskable>(
         &mut self,
         of: *mut T,
@@ -327,20 +386,14 @@ impl ConcurrentTask {
     }
 
     /// A weak poster got `task` back because the target VM has closed: free
-    /// it if it is a heap task (`create*`); an intrusive one belongs to its
-    /// container.
+    /// the carrier if it is a heap one (`create*`); an intrusive one belongs to
+    /// its container. What the task points at stays the poster's.
     ///
     /// # Safety
     /// `task` was just refused and is not queued anywhere.
     pub unsafe fn release_refused(task: core::ptr::NonNull<ConcurrentTask>) {
         // SAFETY: fn contract.
-        let inner = unsafe { Self::into_task(task) };
-        // A callback task (`from_callback`, `ManagedTask::new*`) owns a heap
-        // `ManagedTask` behind `task.ptr` as well.
-        if inner.tag == crate::task_tag::ManagedTask {
-            // SAFETY: as above; refused ⇒ ours.
-            unsafe { crate::ManagedTask::ManagedTask::release(inner.ptr.cast()) };
-        }
+        let _ = unsafe { Self::into_task(task) };
     }
 
     /// Returns whether this task should be automatically deallocated after execution.

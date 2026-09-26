@@ -56,13 +56,13 @@ pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     runner.bun_test_root.clone_active_file()
 }
 
-pub use super::done_callback::DoneCallback;
+pub(crate) use super::done_callback::DoneCallback;
 
-pub mod js_fns {
+pub(crate) mod js_fns {
     use super::*;
 
     #[derive(Clone, Copy)]
-    pub enum Signature<'a> {
+    pub(crate) enum Signature<'a> {
         ScopeFunctions(&'a ScopeFunctions::ScopeFunctions),
         Str(&'static [u8]),
     }
@@ -347,15 +347,15 @@ pub mod js_fns {
 /// `Rc<T>` does **not** wrap `T` in `UnsafeCell`, so the previous
 /// `Rc::as_ptr(&rc) as *mut T` + write was UB. The payload now lives in an
 /// explicit `UnsafeCell` so all writes go through interior-mutable provenance.
-pub type BunTestPtr = Rc<BunTestCell>;
-pub type BunTestPtrWeak = Weak<BunTestCell>;
-pub type BunTestPtrOptional = Option<Rc<BunTestCell>>;
+pub(crate) type BunTestPtr = Rc<BunTestCell>;
+pub(crate) type BunTestPtrWeak = Weak<BunTestCell>;
+pub(crate) type BunTestPtrOptional = Option<Rc<BunTestCell>>;
 
 /// `UnsafeCell` newtype so `Rc<BunTestCell>` permits mutation of the shared
 /// `BunTest` (`UnsafeCell` is required for any write reachable through a
 /// shared/`*const` path).
 #[repr(transparent)]
-pub struct BunTestCell(UnsafeCell<BunTest>);
+pub(crate) struct BunTestCell(UnsafeCell<BunTest>);
 
 impl BunTestCell {
     #[inline]
@@ -374,7 +374,7 @@ impl BunTestCell {
     /// for long-lived handles that span re-entrant calls.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn get(&self) -> &mut BunTest {
+    pub(crate) fn get(&self) -> &mut BunTest {
         // SAFETY: `UnsafeCell` interior; single-threaded JS VM. See contract above.
         unsafe { &mut *self.0.get() }
     }
@@ -410,7 +410,7 @@ pub(crate) unsafe fn buntest_as_mut(ptr: &BunTestPtr) -> &mut BunTest {
     ptr.get()
 }
 
-pub struct BunTestRoot {
+pub(crate) struct BunTestRoot {
     // gpa dropped — global mimalloc
     pub(crate) active_file: BunTestPtrOptional,
     pub(crate) hook_scope: Box<DescribeScope>,
@@ -600,7 +600,7 @@ impl Drop for BunTestRoot {
 }
 
 #[derive(Copy, Clone)]
-pub struct FirstLast {
+pub(crate) struct FirstLast {
     pub(crate) first: bool,
     pub(crate) last: bool,
 }
@@ -615,7 +615,7 @@ pub enum Phase {
     Done,
 }
 
-pub struct BunTest {
+pub(crate) struct BunTest {
     pub(crate) bun_test_root: bun_ptr::BackRef<BunTestRoot>,
     pub(crate) in_run_loop: bool,
     // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
@@ -719,7 +719,7 @@ impl BunTest {
         }
     }
 
-    pub fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {
+    pub(crate) fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);
 
@@ -886,18 +886,11 @@ impl BunTest {
             debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
             return; // but just in case
         };
-        let done_callback_test = bun_core::heap::into_raw(Box::new(RunTestsTask {
+        let task = jsc::Task::from_boxed(Box::new(RunTestsTask {
             weak: Weak::clone(weak),
             global_this: GlobalRef::from(global_this),
             phase,
         }));
-        fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
-            // `this` was `heap::into_raw`'d above (always non-null) and is
-            // invoked exactly once by `ManagedTask`.
-            RunTestsTask::call(NonNull::new(this).unwrap())
-        }
-        // `new_owned`: if the task never runs (VM teardown), the queue drainer frees `done_callback_test`.
-        let task = jsc::ManagedTask::ManagedTask::new_owned::<RunTestsTask>(done_callback_test, call_erased);
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
         strong.get().wants_wakeup = true;
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
@@ -1135,7 +1128,7 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
+        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,
@@ -1405,7 +1398,7 @@ bun_jsc::jsc_host_abi! {
 // Clone/Copy: bitwise OK — `entry` is a non-owning erased borrow of an
 // `ExecutionEntry` owned by `BunTest::execution`.
 #[derive(Copy, Clone)]
-pub struct EntryData {
+pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
     pub(crate) remaining_repeat_count: i64,
@@ -1415,7 +1408,7 @@ pub struct EntryData {
 // `DescribeScope` whose lifetime spans the async boundary (see field note);
 // `EntryData.entry` likewise borrows.
 #[derive(Clone, Copy)]
-pub enum RefDataValue {
+pub(crate) enum RefDataValue {
     Start,
     Collection {
         // A borrowed `&'a DescribeScope` cannot work here: the pointer is stored
@@ -1489,7 +1482,7 @@ impl fmt::Display for RefDataValue {
 
 // Intrusive single-thread refcount.
 #[derive(bun_ptr::RefCounted)]
-pub struct RefData {
+pub(crate) struct RefData {
     pub(crate) buntest_weak: BunTestPtrWeak,
     pub(crate) phase: RefDataValue,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
@@ -1509,7 +1502,7 @@ impl RefData {
     }
 }
 
-pub struct RunTestsTask {
+pub(crate) struct RunTestsTask {
     pub(crate) weak: BunTestPtrWeak,
     // `GlobalRef` (not a borrow): the JSGlobalObject is stored across the task
     // tick, and the VM keeps it alive until shutdown.
@@ -1517,15 +1510,9 @@ pub struct RunTestsTask {
     pub(crate) phase: RefDataValue,
 }
 impl RunTestsTask {
-    /// `ManagedTask` callback ABI: `fn(*mut T) -> JsResult<()>`. The pointer
-    /// was `heap::alloc`'d in `run_next_tick`; reconstitute and drop here.
-    ///
-    /// `this` must be the pointer produced by `heap::into_raw` in
-    /// `run_next_tick`; ownership is consumed (the box is dropped on return).
-    pub fn call(this: NonNull<RunTestsTask>) -> JsResult<()> {
-        // SAFETY: `this` was produced by `heap::into_raw` in `run_next_tick` and
-        // is invoked exactly once by `ManagedTask`; ownership is reclaimed here.
-        let this = unsafe { bun_core::heap::take(this.as_ptr()) };
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn call(self: Box<Self>) -> JsResult<()> {
+        let this = self;
         // Box drops at end of scope; the Weak drops with it.
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
         if let Err(e) = BunTest::run(&strong, &this.global_this) {
@@ -1547,6 +1534,18 @@ impl RunTestsTask {
     }
 }
 
+impl bun_event_loop::Taskable for RunTestsTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::RunTestsTask;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed in `run_next_tick`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum HandleUncaughtExceptionResult {
     #[strum(serialize = "hide_error")]
@@ -1559,10 +1558,10 @@ pub enum HandleUncaughtExceptionResult {
     ShowUnhandledErrorInDescribe,
 }
 
-pub type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_fifo::DynamicBuffer<RefDataValue>>;
+pub(crate) type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_fifo::DynamicBuffer<RefDataValue>>;
 // bun.LinearFifo(.Dynamic) → second generic is the buffer strategy.
 
-pub enum StepResult {
+pub(crate) enum StepResult {
     Waiting { timeout: Timespec },
     Complete,
 }
@@ -1578,10 +1577,10 @@ enum Advance {
     Exit,
 }
 
-pub use super::collection::Collection;
+pub(crate) use super::collection::Collection;
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum ConcurrentMode {
+pub(crate) enum ConcurrentMode {
     #[default]
     Inherit,
     No,
@@ -1589,7 +1588,7 @@ pub enum ConcurrentMode {
 }
 
 #[derive(Copy, Clone, Default)]
-pub struct BaseScopeCfg {
+pub(crate) struct BaseScopeCfg {
     pub(crate) self_concurrent: ConcurrentMode,
     pub(crate) self_mode: ScopeMode,
     pub(crate) self_only: bool,
@@ -1623,7 +1622,7 @@ impl BaseScopeCfg {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub enum ScopeMode {
+pub(crate) enum ScopeMode {
     #[default]
     Normal,
     Skip,
@@ -1646,7 +1645,7 @@ impl ScopeMode {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum Only {
+pub(crate) enum Only {
     No,
     Contains,
     Yes,
@@ -1663,7 +1662,7 @@ impl Only {
     }
 }
 
-pub struct BaseScope {
+pub(crate) struct BaseScope {
     pub(crate) parent: Option<*mut DescribeScope>,
     pub name: Option<Box<[u8]>>,
     pub(crate) concurrent: bool,
@@ -1723,7 +1722,7 @@ impl BaseScope {
 }
 // deinit: only frees `name` → Box<[u8]> drops automatically; no explicit Drop needed.
 
-pub struct DescribeScope {
+pub(crate) struct DescribeScope {
     pub(crate) base: BaseScope,
     pub(crate) entries: Vec<TestScheduleEntry>,
     // The `Box` is load-bearing: `Order.rs` derives `*mut ExecutionEntry` from
@@ -1843,7 +1842,7 @@ impl DescribeScope {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum HookTag {
+pub(crate) enum HookTag {
     BeforeAll,
     BeforeEach,
     AfterEach,
@@ -1851,7 +1850,7 @@ pub enum HookTag {
 }
 
 #[derive(Copy, Clone, Default)]
-pub struct ExecutionEntryCfg {
+pub(crate) struct ExecutionEntryCfg {
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
     pub(crate) has_done_parameter: bool,
@@ -1862,13 +1861,13 @@ pub struct ExecutionEntryCfg {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum AddedInPhase {
+pub(crate) enum AddedInPhase {
     Preload,
     Collection,
     Execution,
 }
 
-pub struct ExecutionEntry {
+pub(crate) struct ExecutionEntry {
     pub(crate) base: BaseScope,
     pub callback: Option<Strong>,
     /// 0 = unlimited timeout
@@ -1953,7 +1952,7 @@ impl ExecutionEntry {
 }
 // destroy → Drop: callback (Strong) and base.name (Box) drop automatically.
 
-pub enum TestScheduleEntry {
+pub(crate) enum TestScheduleEntry {
     Describe(Box<DescribeScope>),
     TestCallback(Box<ExecutionEntry>),
 }
@@ -1969,8 +1968,8 @@ impl TestScheduleEntry {
 
 // Module aliases so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
 // resolve as module paths without per-reference rewrites.
-pub use super::execution as Execution;
-pub use super::debug;
-pub use super::scope_functions as ScopeFunctions;
-pub use super::order as Order;
+pub(crate) use super::execution as Execution;
+pub(crate) use super::debug;
+pub(crate) use super::scope_functions as ScopeFunctions;
+pub(crate) use super::order as Order;
 

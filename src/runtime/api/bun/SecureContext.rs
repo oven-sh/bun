@@ -26,7 +26,7 @@ use bun_uws as uws;
 /// Re-export the codegen-emitted module so
 /// `$rust(SecureContext.rs, js.getConstructor)` in
 /// `generated_js2native.rs` resolves as `secure_context::js::get_constructor`.
-pub use crate::generated_classes::js_SecureContext as js;
+pub(crate) use crate::generated_classes::js_SecureContext as js;
 
 // Codegen (`.classes.ts`) wires `to_js`/`from_js`/`from_js_direct` via this derive.
 // `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated
@@ -34,7 +34,7 @@ pub use crate::generated_classes::js_SecureContext as js;
 // (it round-trips `m_ctx` as `void*`).
 #[bun_jsc::JsClass]
 #[repr(C)]
-pub struct SecureContext {
+pub(crate) struct SecureContext {
     /// The one `SSL_CTX` reference this wrapper owns.
     pub ctx: boringssl::OwnedSslCtx,
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach

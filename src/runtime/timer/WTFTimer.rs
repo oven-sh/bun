@@ -20,7 +20,7 @@ const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
 
 bun_opaque::opaque_ffi! {
     /// This is `WTF::RunLoop::TimerBase` from WebKit — opaque FFI handle.
-    pub struct RunLoopTimer;
+    pub(crate) struct RunLoopTimer;
 }
 
 impl RunLoopTimer {
@@ -36,7 +36,7 @@ impl RunLoopTimer {
 /// A timer created by WTF code and invoked by Bun's event loop. Owned (boxed)
 /// by the C++ `RunLoop::TimerBase` that `WTFTimer__create`d it; `update` /
 /// `cancel` may arrive from any thread.
-pub struct WTFTimer {
+pub(crate) struct WTFTimer {
     /// `Timer::All` of the VM whose JS thread created this timer. Live while
     /// `script_execution_context_id` is valid; a C++ `RunLoop::TimerBase` can
     /// outlive `RuntimeState` (which holds `All`) on Worker teardown, so
@@ -186,7 +186,7 @@ impl Drop for WTFTimer {
 /// `VirtualMachine` (a `JSC::VM` on a bundler thread generating bytecode, say): the timer then never fires, which
 /// `RunLoop::TimerBase` accepts.
 // HOST_EXPORT(WTFTimer__create, c)
-pub fn create(
+pub(crate) fn create(
     run_loop_timer: core::ptr::NonNull<crate::timer::wtf_timer::RunLoopTimer>,
 ) -> Option<Box<crate::timer::WTFTimer>> {
     if !VirtualMachine::is_loaded() {
@@ -213,18 +213,18 @@ pub fn create(
 }
 
 // HOST_EXPORT(WTFTimer__update, c)
-pub fn update(this: &crate::timer::WTFTimer, seconds: f64, repeat: bool) {
+pub(crate) fn update(this: &crate::timer::WTFTimer, seconds: f64, repeat: bool) {
     this.update(seconds, repeat);
 }
 
 /// Frees `this`.
 // HOST_EXPORT(WTFTimer__deinit, c)
-pub fn deinit(this: Box<crate::timer::WTFTimer>) {
+pub(crate) fn deinit(this: Box<crate::timer::WTFTimer>) {
     drop(this);
 }
 
 // HOST_EXPORT(WTFTimer__cancel, c)
-pub fn cancel(this: &crate::timer::WTFTimer) {
+pub(crate) fn cancel(this: &crate::timer::WTFTimer) {
     this.cancel();
 }
 

@@ -168,10 +168,7 @@ impl MySQLRequestQueue {
                 if let Err(err) = req.run(connection) {
                     debug!("run failed");
                     connection.on_error(Some(req.get()), err);
-                    if offset == 0 {
-                        queue.discard_if_head(req);
-                    }
-                    offset += 1;
+                    // `on_error` completed the request: the branch above retires it.
                     continue;
                 }
                 if req.is_being_prepared() {

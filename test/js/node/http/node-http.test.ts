@@ -297,6 +297,30 @@ describe("node:http", () => {
       server2.close();
     });
 
+    // Node reads a null port as an omitted one. Two servers on one fixed default port cannot both listen.
+    describe.each([
+      ["http", () => createServer(() => {})],
+      ["https", () => createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert }, () => {})],
+    ])("%s: should assign a random port when null", (_module, create) => {
+      it.each([
+        ["listen(null)", (server: Server) => server.listen(null)],
+        ["listen({ port: null })", (server: Server) => server.listen({ port: null })],
+        ["listen(null, host)", (server: Server) => server.listen(null, "127.0.0.1")],
+      ])("%s", async (_form, listenOn) => {
+        const server1 = create();
+        const server2 = create();
+        try {
+          await Promise.all([once(listenOn(server1), "listening"), once(listenOn(server2), "listening")]);
+          const { port: port1 } = server1.address() as AddressInfo;
+          const { port: port2 } = server2.address() as AddressInfo;
+          expect(port1).not.toEqual(port2);
+        } finally {
+          server1.close();
+          server2.close();
+        }
+      });
+    });
+
     it("option method should be uppercase (#7250)", async () => {
       try {
         var server = createServer((req, res) => {

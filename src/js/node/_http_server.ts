@@ -584,8 +584,8 @@ Server.prototype.listen = function () {
   }
 
   // Bun defaults to port 3000.
-  // Node defaults to port 0.
-  if (port === undefined && !socketPath) {
+  // Node defaults to port 0, and reads a null port as an omitted one.
+  if (port == null && !socketPath) {
     port = 0;
   }
 

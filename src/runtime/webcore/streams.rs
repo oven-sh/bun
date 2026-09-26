@@ -2283,12 +2283,34 @@ pub struct NetworkSink {
     /// failure callback can reject with the original JS error (e.g. S3
     /// `NoSuchKey`) instead of the generic `UnknownError` passed to `fail()`.
     pub(crate) upstream_error: jsc::strong::Optional,
+    /// A `writer()` failure that found no `flush()`/`end()` promise. The next one rejects with it.
+    pub(crate) unreported_failure: Option<UploadFailure>,
     pub(crate) ended: bool,
     pub(crate) done: bool,
     /// `s3file.writer()`: the box is referenced by the JS wrapper (`finalize`) and by the upload's
     /// completion callback; whichever lets go last frees it. 0 = owned elsewhere
     /// (`S3UploadStreamWrapper`).
     pub(crate) writer_holders: core::cell::Cell<u8>,
+}
+
+/// An owned `S3Error` plus the path. Bytes, not a JS error: the upload can fail at VM teardown.
+pub(crate) struct UploadFailure {
+    code: Box<[u8]>,
+    message: Box<[u8]>,
+    path: Option<Box<[u8]>>,
+}
+
+impl UploadFailure {
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+        crate::webcore::s3::client::s3_error_to_js(
+            &bun_s3_signing::error::S3Error {
+                code: &self.code,
+                message: &self.message,
+            },
+            global,
+            self.path.as_deref(),
+        )
+    }
 }
 
 impl Default for NetworkSink {
@@ -2301,6 +2323,7 @@ impl Default for NetworkSink {
             pending: WritablePending::default(),
             end_promise: JSPromiseStrong::default(),
             upstream_error: jsc::strong::Optional::empty(),
+            unreported_failure: None,
             ended: false,
             done: false,
             writer_holders: core::cell::Cell::new(0),
@@ -2424,6 +2447,9 @@ impl NetworkSink {
         if self.flush_promise.has_value() {
             return bun_sys::Result::Ok(self.flush_promise.value());
         }
+        if let Some(rejected) = self.take_unreported_failure(cx.global()) {
+            return bun_sys::Result::Ok(rejected);
+        }
         if self.done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 cx.global(),
@@ -2447,6 +2473,22 @@ impl NetworkSink {
         self.pending.run();
         self.source.close(None);
         self.finalize();
+    }
+
+    /// The `writer()` upload failed with neither `flush_promise` nor `end_promise` pending.
+    pub(crate) fn fail_unreported(&mut self, err: &bun_s3_signing::error::S3Error<'_>) {
+        self.unreported_failure = Some(UploadFailure {
+            code: Box::from(err.code),
+            message: Box::from(err.message),
+            path: self.path().map(Box::from),
+        });
+        self.abort();
+    }
+
+    /// A rejected promise for `unreported_failure`, which it clears: a failure is reported once.
+    fn take_unreported_failure(&mut self, global_this: &JSGlobalObject) -> Option<JSValue> {
+        let failure = self.unreported_failure.take()?;
+        Some(JSPromise::rejected_promise(global_this, failure.to_js(global_this)).to_js())
     }
 
     /// The upload queue is full. Native ByteStream/FileReader pumps match on
@@ -2653,11 +2695,15 @@ impl NetworkSink {
         unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref(wrapper) };
     }
 
-    pub(crate) fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+    pub(crate) fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
         if self.end_promise.has_value() {
             // we are already waiting for the end
             return bun_sys::Result::Ok(self.end_promise.value());
+        }
+        // After `end()`: a request that cannot be signed fails the upload inside it.
+        if let Some(rejected) = self.take_unreported_failure(cx.global()) {
+            return bun_sys::Result::Ok(rejected);
         }
         if self.task.is_some() && !self.done {
             // we need to wait for the task to end

@@ -4,8 +4,8 @@ use bun_semver::String;
 use bun_semver::string::Builder as StringBuilderNs;
 
 use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _};
-use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile::{DependencySlice, PackageIDSlice};
 use crate::lockfile_real::{CatalogMap, Lockfile};
 use crate::{PackageID, PackageNameHash, ResolutionTag};
 
@@ -32,12 +32,26 @@ pub(crate) fn lockfile_lists_workspace_path(lockfile: &Lockfile, workspace_path:
         .any(|path| path.slice(string_bytes) == workspace_path)
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct Recorded {
+    pub(crate) dependencies: DependencySlice,
+    pub(crate) resolutions: PackageIDSlice,
+}
+
+pub(crate) struct Survivor {
+    pub(crate) name: String,
+    pub(crate) to_dependencies: DependencySlice,
+    pub(crate) recorded: Recorded,
+}
+
 pub(crate) fn exit_if_survivor_depends_on_missing(
     from_lockfile: &Lockfile,
     missing: &[PackageID],
+    recorded_root: Recorded,
     to_lockfile: &Lockfile,
     to_root_dependencies: DependencySlice,
-    survivors: &[(String, DependencySlice)],
+    survivors: &[Survivor],
+    frozen_link_workspace_packages: Option<bool>,
     silent: bool,
 ) {
     let pkgs = from_lockfile.packages.slice();
@@ -48,14 +62,49 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
     let to_buf = to_lockfile.buffers.string_bytes.as_slice();
     let to_deps = to_lockfile.buffers.dependencies.as_slice();
 
-    let missing_target = |dep: &Dependency| -> Option<PackageID> {
-        if dep.version.tag != DependencyVersionTag::Workspace {
-            return None;
-        }
+    let from_deps = from_lockfile.buffers.dependencies.as_slice();
+    let from_resolutions = from_lockfile.buffers.resolutions.as_slice();
+
+    let missing_target = |dep: &Dependency, recorded: Recorded| -> Option<PackageID> {
+        let workspace_name_hash = match dep.version.tag {
+            DependencyVersionTag::Workspace => dep.name_hash,
+            DependencyVersionTag::Npm => {
+                let link_workspace_packages = frozen_link_workspace_packages?;
+                let npm = dep.version.npm();
+                let name_hash = StringBuilderNs::string_hash(npm.name.slice(to_buf));
+                crate::lockfile_real::linked_workspace_path(
+                    link_workspace_packages,
+                    &from_lockfile.workspace_paths,
+                    &from_lockfile.workspace_versions,
+                    name_hash,
+                    &npm.version,
+                    to_buf,
+                    from_buf,
+                )?;
+                // bun.lock written with `linkWorkspacePackages = false` binds this range to the registry.
+                let bound_elsewhere = recorded
+                    .dependencies
+                    .get(from_deps)
+                    .iter()
+                    .zip(recorded.resolutions.get(from_resolutions))
+                    .any(|(from_dep, &bound)| {
+                        from_dep.name_hash == dep.name_hash
+                            && from_dep.behavior == dep.behavior
+                            && pkg_res
+                                .get(bound as usize)
+                                .is_some_and(|res| res.tag != ResolutionTag::Workspace)
+                    });
+                if bound_elsewhere {
+                    return None;
+                }
+                name_hash
+            }
+            _ => return None,
+        };
         missing
             .iter()
             .copied()
-            .find(|&id| name_hashes[id as usize] == dep.name_hash)
+            .find(|&id| name_hashes[id as usize] == workspace_name_hash)
     };
 
     let mut found = false;
@@ -63,7 +112,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
         if dep.behavior.is_workspace() {
             continue;
         }
-        let Some(target) = missing_target(dep) else {
+        let Some(target) = missing_target(dep, recorded_root) else {
             continue;
         };
         found = true;
@@ -79,9 +128,9 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
         );
     }
 
-    for (name, slice) in survivors {
-        for dep in slice.get(to_deps) {
-            let Some(target) = missing_target(dep) else {
+    for survivor in survivors {
+        for dep in survivor.to_dependencies.get(to_deps) {
+            let Some(target) = missing_target(dep, survivor.recorded) else {
                 continue;
             };
             found = true;
@@ -92,7 +141,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
             debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> workspace <b>\"{}\"<r> depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
-                BStr::new(name.slice(to_buf)),
+                BStr::new(survivor.name.slice(to_buf)),
                 BStr::new(names[target].slice(from_buf)),
                 BStr::new(pkg_res[target].workspace().slice(from_buf)),
             );

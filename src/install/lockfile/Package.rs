@@ -1357,7 +1357,7 @@ impl Diff {
         }
 
         let mut missing_workspaces: Vec<PackageID> = Vec::new();
-        let mut survivors: Vec<(String, DependencySlice)> = Vec::new();
+        let mut survivors: Vec<lockfile::pruned_workspaces::Survivor> = Vec::new();
         for (i, from_dep) in from_deps.iter().enumerate() {
             let found = 'found: {
                 let prev_i = to_i;
@@ -1517,9 +1517,17 @@ impl Diff {
                             .dependencies
                             .get(to_lockfile.buffers.dependencies.as_slice())
                             .into();
-                        survivors.push((workspace_pkg.name, workspace_pkg.dependencies));
 
                         let from_pkg = from_lockfile.packages.get(from_resolutions[i] as usize);
+                        survivors.push(lockfile::pruned_workspaces::Survivor {
+                            name: workspace_pkg.name,
+                            to_dependencies: workspace_pkg.dependencies,
+                            recorded: lockfile::pruned_workspaces::Recorded {
+                                dependencies: from_pkg.dependencies,
+                                resolutions: from_pkg.resolutions,
+                            },
+                        });
+
                         let diff = Self::generate_inner(
                             pm,
                             log,
@@ -1613,9 +1621,17 @@ impl Diff {
             lockfile::pruned_workspaces::exit_if_survivor_depends_on_missing(
                 &*from_lockfile,
                 &missing_workspaces,
+                lockfile::pruned_workspaces::Recorded {
+                    dependencies: from.dependencies,
+                    resolutions: from.resolutions,
+                },
                 &*to_lockfile,
                 to.dependencies,
                 &survivors,
+                pm.options
+                    .enable
+                    .frozen_lockfile()
+                    .then_some(pm.options.link_workspace_packages),
                 pm.options.log_level.is_silent(),
             );
         }
@@ -1890,6 +1906,7 @@ impl Package<u64> {
                     workspace_versions,
                     name_hash,
                     &dependency_version.npm().version,
+                    buf,
                     buf,
                 ) {
                     let path = workspace_path.sliced(buf);

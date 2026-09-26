@@ -1768,6 +1768,79 @@ it("readdir with { encoding: 'buffer' } returns Buffer entries", async () => {
   ).toEqual(expected);
 });
 
+// Node returns Dirent objects (not bare Buffers) when both options are set,
+// with `name` as a Buffer. `parentPath` follows the type of the path argument
+// in node; only the string-argument case (string `parentPath`) is covered here.
+it("readdir with { withFileTypes: true, encoding: 'buffer' } returns Dirent with Buffer names", async () => {
+  using dir = tempDir("readdir-buffer-dirent", { "a.txt": "", "sub/b.txt": "" });
+  const summarize = (entries: any[]) =>
+    entries
+      .map(e => ({
+        ctor: e.constructor.name,
+        nameIsBuffer: Buffer.isBuffer(e.name),
+        name: e.name.toString("utf8"),
+        isFile: e.isFile(),
+        isDirectory: e.isDirectory(),
+        parentPathIsString: typeof e.parentPath === "string",
+      }))
+      .sort((a, b) => (a.name < b.name ? -1 : 1));
+  const expected = [
+    { ctor: "Dirent", nameIsBuffer: true, name: "a.txt", isFile: true, isDirectory: false, parentPathIsString: true },
+    { ctor: "Dirent", nameIsBuffer: true, name: "sub", isFile: false, isDirectory: true, parentPathIsString: true },
+  ];
+  const expectedRecursive = [
+    ...expected,
+    { ctor: "Dirent", nameIsBuffer: true, name: "b.txt", isFile: true, isDirectory: false, parentPathIsString: true },
+  ].sort((a, b) => (a.name < b.name ? -1 : 1));
+
+  expect(summarize(readdirSync(String(dir), { withFileTypes: true, encoding: "buffer" }))).toEqual(expected);
+  expect(summarize(readdirSync(String(dir), { withFileTypes: true, encoding: "buffer", recursive: true }))).toEqual(
+    expectedRecursive,
+  );
+  expect(summarize(await promises.readdir(String(dir), { withFileTypes: true, encoding: "buffer" }))).toEqual(expected);
+  expect(
+    summarize(await promises.readdir(String(dir), { withFileTypes: true, encoding: "buffer", recursive: true })),
+  ).toEqual(expectedRecursive);
+});
+
+it.skipIf(!isLinux)(
+  "readdir with { withFileTypes: true, encoding: 'buffer' } preserves non-UTF-8 name bytes",
+  async () => {
+    using dir = tempDir("readdir-buffer-dirent-bytes", {});
+    const name = Buffer.from([0x63, 0x61, 0x66, 0xe9]);
+    writeFileSync(Buffer.concat([Buffer.from(String(dir) + "/"), name]), "");
+    mkdirSync(join(String(dir), "sub"));
+    writeFileSync(Buffer.concat([Buffer.from(join(String(dir), "sub") + "/"), name]), "");
+
+    const summarize = (entries: any[]) =>
+      entries
+        .map(e => ({
+          nameIsBuffer: Buffer.isBuffer(e.name),
+          nameHex: e.name.toString("hex"),
+          isFile: e.isFile(),
+          parentPath: relative(String(dir), e.parentPath),
+        }))
+        .sort((a, b) => a.parentPath.localeCompare(b.parentPath) || a.nameHex.localeCompare(b.nameHex));
+    const top = { nameIsBuffer: true, nameHex: name.toString("hex"), isFile: true, parentPath: "" };
+    const subDir = { nameIsBuffer: true, nameHex: Buffer.from("sub").toString("hex"), isFile: false, parentPath: "" };
+    const nested = { nameIsBuffer: true, nameHex: name.toString("hex"), isFile: true, parentPath: "sub" };
+
+    const flat = { withFileTypes: true, encoding: "buffer" } as const;
+    const recursive = { ...flat, recursive: true } as const;
+    expect({
+      sync: summarize(readdirSync(String(dir), flat)),
+      async: summarize(await promises.readdir(String(dir), flat)),
+      syncRecursive: summarize(readdirSync(String(dir), recursive)),
+      asyncRecursive: summarize(await promises.readdir(String(dir), recursive)),
+    }).toEqual({
+      sync: [top, subDir],
+      async: [top, subDir],
+      syncRecursive: [top, subDir, nested],
+      asyncRecursive: [top, subDir, nested],
+    });
+  },
+);
+
 // The error cleanup path previously called MarkedArrayBuffer.destroy() on
 // structs stored by-value inside the entries ArrayList, which passed interior
 // ArrayList pointers to the allocator (freeing entries.items.ptr for index 0 and

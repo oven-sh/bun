@@ -178,6 +178,11 @@ fn parse_array(
         types::Tag::box_array => b';',
         _ => b',',
     };
+    // a bare JSON keyword must end where the element ends: {[null5]} and {truetrue} are malformed
+    let ends_element = |rest: &[u8]| {
+        rest.first()
+            .is_some_and(|&b| b == closing_brace || b == separator)
+    };
 
     while !slice.is_empty() {
         let ch = slice[0];
@@ -386,13 +391,22 @@ fn parse_array(
                             }
                             return Err(AnyPostgresError::UnsupportedArrayFormat);
                         }
+                        // array_out quotes a top-level JSON null, so it is only bare inside an unquoted JSON array: {[null]}
+                        b'n' if is_json_sub_array => {
+                            if slice.starts_with(b"null") && ends_element(&slice[4..]) {
+                                array.push(SQLDataCell::null());
+                                slice = try_slice(slice, 4);
+                                continue;
+                            }
+                            return Err(AnyPostgresError::UnsupportedArrayFormat);
+                        }
                         b'f' => {
                             // false
                             if array_type == types::Tag::json_array || array_type == types::Tag::jsonb_array {
                                 if slice.len() < 5 {
                                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
-                                if &slice[0..5] == b"false" {
+                                if &slice[0..5] == b"false" && ends_element(&slice[5..]) {
                                     array.push(SQLDataCell::bool(false));
                                     slice = try_slice(slice, 5);
                                     continue;
@@ -410,7 +424,7 @@ fn parse_array(
                                 if slice.len() < 4 {
                                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
-                                if &slice[0..4] == b"true" {
+                                if &slice[0..4] == b"true" && ends_element(&slice[4..]) {
                                     array.push(SQLDataCell::bool(true));
                                     slice = try_slice(slice, 4);
                                     continue;
@@ -445,6 +459,14 @@ fn parse_array(
                         }
                         b'-' | b'0'..=b'9' => {
                             // parse number, detect float, int, if starts with - it can be -Infinity or -Infinity
+                            // a float or JSON number is a double with or without a '.': 1e-07, -0, 12345678901
+                            let is_double_array = matches!(
+                                array_type,
+                                types::Tag::float4_array
+                                    | types::Tag::float8_array
+                                    | types::Tag::json_array
+                                    | types::Tag::jsonb_array
+                            );
                             let mut is_negative = false;
                             let mut is_float = false;
                             let mut current_idx: usize = 0;
@@ -465,8 +487,9 @@ fn parse_array(
                                         // end of element
                                         break;
                                     }
-                                    b'e' => {
-                                        if !is_float {
+                                    // float8out prints 1e-07 and 1e+20 with no '.', and json keeps the exponent as typed (1E5)
+                                    b'e' | b'E' => {
+                                        if !is_float && !is_double_array {
                                             return Err(AnyPostgresError::UnsupportedArrayFormat);
                                         }
                                         if has_exponent {
@@ -543,9 +566,11 @@ fn parse_array(
                                 return Err(AnyPostgresError::UnsupportedArrayFormat);
                             }
                             let element = &slice[0..current_idx];
-                            if is_float || array_type == types::Tag::float8_array {
+                            if is_float || is_double_array {
+                                // full match: the scanner above lets "1e", "1e+-5" and "-" through
                                 array.push(SQLDataCell::float8(
-                                    bun_core::parse_double(element).unwrap_or(f64::NAN),
+                                    bun_core::fmt::parse_f64(element)
+                                        .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
                                 ));
                                 slice = try_slice(slice, current_idx);
                                 continue;

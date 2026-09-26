@@ -16,6 +16,7 @@ export const prestartMap = {
   "js/sql/local-sql": ["postgres_tls"],
   "js/sql/sql.test": ["postgres_plain"],
   "js/sql/sql-postgres-datetime": ["postgres_plain"],
+  "js/sql/postgres-array-number-text": ["postgres_plain"],
   "js/sql/postgres-binary-numeric": ["postgres_plain"],
   "js/sql/postgres-multi-statement-fields": ["postgres_plain"],
   "js/sql/postgres-simple-query-pipeline": ["postgres_plain"],

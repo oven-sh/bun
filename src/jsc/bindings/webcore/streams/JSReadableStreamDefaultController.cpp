@@ -382,7 +382,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onRSDefaultControllerPullFulfilled,
     controller->m_pulling = false;
     if (controller->m_pullAgain) {
         controller->m_pullAgain = false;
-        readableStreamDefaultControllerCallPullIfNeeded(globalObject, controller);
+        readableStreamDefaultControllerCallPullIfNeeded(globalObject, controller, MayDefer::No);
         RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(jsUndefined());
@@ -473,7 +473,7 @@ namespace WebStreams {
 using namespace JSC;
 using namespace WebCore;
 
-void readableStreamDefaultControllerCallPullIfNeeded(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
+void readableStreamDefaultControllerCallPullIfNeeded(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, MayDefer mayDefer)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -485,9 +485,16 @@ void readableStreamDefaultControllerCallPullIfNeeded(JSGlobalObject* globalObjec
     }
     ASSERT(!controller->m_pullAgain);
     controller->m_pulling = true;
+    auto* runtime = JSStreamsRuntime::from(globalObject);
+    // A link's pull algorithm reads from the next stream, which pulls its own source, and so on. With the
+    // stack nearly used up (see streamLinkMustDefer), act as if this pull settled at once and another is
+    // wanted: the fulfillment handler then pulls from a microtask.
+    if (mayDefer == MayDefer::Yes && controller->m_algorithms.linksAnotherStream() && streamLinkMustDefer(vm)) [[unlikely]] {
+        controller->m_pullAgain = true;
+        return queueStreamsMicrotask(globalObject, runtime->onRSDefaultControllerPullFulfilled(), jsUndefined(), controller);
+    }
     JSPromise* pullPromise = performDefaultControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
-    auto* runtime = JSStreamsRuntime::from(globalObject);
     // A non-thenable return, or an already-fulfilled promise from an internal pull arm,
     // completed synchronously: queue the upon-fulfillment handler directly, saving the
     // wrapper promise and performPromiseThen reactions while keeping the spec's microtask

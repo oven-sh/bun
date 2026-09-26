@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug } from "harness";
 import { parseArgs } from "node:util";
 
 describe("parseArgs", () => {
@@ -1102,7 +1102,9 @@ describe("parseArgs extra tests", () => {
 
     test("100 mixed several times", () => {
       let result;
-      for (let i = 0; i < 1000; ++i) {
+      // 1000 iterations take about 10s under a debug ASAN build.
+      const iterations = isDebug || isASAN ? 100 : 1000;
+      for (let i = 0; i < iterations; ++i) {
         result = parseArgs({
           allowPositionals: true,
           strict: false,

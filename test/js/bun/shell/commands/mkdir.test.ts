@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readdirSync, realpathSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // A relative operand was joined onto the cwd in a fixed 4096-byte buffer, so an
@@ -17,7 +18,7 @@ test("operands longer than the path buffers are reported, not a crash", async ()
     const long = Buffer.alloc(5000, "a").toString();
     // Past the path buffer on every platform, Windows included.
     const huge = Buffer.alloc(100_000, "h").toString();
-    // Longer than the buffers as written, but normalizes down to one component.
+    // Longer than PATH_MAX as written, a single component once normalized.
     const dotSlashes = Buffer.alloc(6000, "./").toString();
     const run = async (...args: string[]) => {
       const { exitCode, stderr } = await $\`mkdir \${args}\`.quiet();
@@ -64,14 +65,73 @@ test("operands longer than the path buffers are reported, not a crash", async ()
     parents: failed(join(cwd, long)),
     huge: { exitCode: 1, stderr: tooLong(join(cwd, huge)) },
     mixed: { ...failed(join(cwd, long)), shortCreated: true },
-    dotSlashes: { exitCode: 0, stderr: "", created: true },
-    // An absolute operand is not normalized (`..` through a symlink means
-    // something else to the kernel), so like the kernel and coreutils, mkdir
-    // bounds it as written. On Windows it fits the much larger buffer and the
-    // fs layer normalizes it while converting it to a wide path, so it works.
+    // An operand is not normalized (`..` through a symlink means something
+    // else to the kernel), so like the kernel and coreutils, mkdir bounds it
+    // as written. Windows resolves `.`/`..` in the path string itself, and
+    // there the operand fits the much larger buffer, so it works.
+    dotSlashes: isWindows
+      ? { exitCode: 0, stderr: "", created: true }
+      : { ...failed(`${cwd}/${dotSlashes}normalized`), created: false },
     absoluteDotSlashes: isWindows
       ? { exitCode: 0, stderr: "", created: true }
       : { ...failed(`${dir}/${dotSlashes}as-written`), created: false },
   });
+  expect(exitCode).toBe(0);
+});
+
+// The operand reaches the kernel as written (prefixed with the shell cwd when
+// relative). Folding `link/..` or `missing/..` out of the string first named a
+// different directory than the one every other program sees. Windows resolves
+// `..` in the path string itself, before any symlink, so it has only one view.
+test.skipIf(isWindows)("operands are created where the kernel resolves them", async () => {
+  using dir = tempDir("mkdir-kernel-path", {
+    "d/c.txt": "",
+    "other/sub/.keep": "",
+  });
+  symlinkSync("../other/sub", join(String(dir), "d", "link"));
+  const fixture = /* ts */ `
+    import { $ } from "bun";
+    $.nothrow();
+    const run = async (...args: string[]) => {
+      const { exitCode, stdout, stderr } = await $\`mkdir \${args}\`.quiet();
+      return { exitCode, stdout: stdout.toString().split("\\n").sort(), stderr: stderr.toString() };
+    };
+    console.log(JSON.stringify({
+      // d/link/.. is other/, not d/
+      throughLink: await run("d/link/../made"),
+      throughLinkParents: await run("-p", "d/link/../deep/er"),
+      // coreutils creates the missing component, then follows the real ".."
+      missingParent: await run("-pv", "d/missing/../beside"),
+      missing: await run("d/nothere/../x"),
+      notDir: await run("d/c.txt/../y"),
+      empty: await run(""),
+    }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const cwd = realpathSync(String(dir));
+  const ok = { exitCode: 0, stdout: [""], stderr: "" };
+  expect(JSON.parse(stdout)).toEqual({
+    throughLink: ok,
+    throughLinkParents: ok,
+    missingParent: {
+      exitCode: 0,
+      stdout: ["", `${cwd}/d/missing`, `${cwd}/d/missing/../beside`],
+      stderr: "",
+    },
+    missing: { exitCode: 1, stdout: [""], stderr: `mkdir: ${cwd}/d/nothere/../x: No such file or directory\n` },
+    notDir: { exitCode: 1, stdout: [""], stderr: `mkdir: ${cwd}/d/c.txt/../y: Not a directory\n` },
+    empty: { exitCode: 1, stdout: [""], stderr: "mkdir: No such file or directory\n" },
+  });
+  expect(readdirSync(join(String(dir), "d")).sort()).toEqual(["beside", "c.txt", "link", "missing"]);
+  expect(readdirSync(join(String(dir), "other")).sort()).toEqual(["deep", "made", "sub"]);
+  expect(readdirSync(join(String(dir), "other", "deep"))).toEqual(["er"]);
   expect(exitCode).toBe(0);
 });

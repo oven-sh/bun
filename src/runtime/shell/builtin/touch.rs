@@ -2,7 +2,7 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, parse_flags, shell_join_cwd, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -263,22 +263,10 @@ impl ShellTouchTask {
     /// utimes() the path; on ENOENT
     /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
     pub(crate) fn run_from_thread_pool(this: &mut ShellTouchTask) {
-        use bun_paths::resolve_path::{self, Platform, platform};
         use bun_sys::FdExt as _;
-        // We have to give an absolute path. An operand that does not fit the
-        // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
-        // for it like for any other operand.
-        let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
-            // Re-terminate (`filepath` is the bare argv bytes without the
-            // trailing NUL).
-            resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[&this.filepath])
-        } else {
-            resolve_path::join_z_spill::<platform::Auto>(
-                &mut spill,
-                &[&this.cwd_path, &this.filepath],
-            )
-        };
+        // `utimens`/`open` resolve relative paths against the process cwd, not the shell's.
+        let filepath = shell_join_cwd(&this.cwd_path, &this.filepath);
+        let filepath = filepath.as_zstr();
 
         // Call the bun_sys layer directly (uv_fs_utime on Windows) to avoid
         // the heavyweight NodeFS state.

@@ -2680,6 +2680,13 @@ pub mod parse_worker {
         };
         // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
         let task_ctx = unsafe { task.ctx() };
+        // SAFETY: `resolver` points into the worker-owned transpiler (see above); no
+        // other `&mut` derived from it is live here.
+        opts.source_has_no_directory = task.path.name().dir_is_root_without_drive()
+            && (task_ctx
+                .file_map
+                .is_some_and(|map| map.contains(task.path.text))
+                || !unsafe { &mut *resolver }.is_file_in_root(&task.path));
         let module_type = opts.module_type;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.

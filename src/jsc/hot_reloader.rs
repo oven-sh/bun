@@ -419,10 +419,10 @@ impl MainFile {
             ..Default::default()
         };
 
-        if let Some(dir) = bun_core::dirname(file) {
-            debug_assert!(bun_core::is_slice_in_buffer(dir, file));
-            debug_assert!(file.len() > dir.len() + 1);
-            main.dir = &file[0..dir.len() + 1];
+        // The watcher hashes the parent directory of a watched file the same way.
+        let name = Fs::PathName::init(file);
+        if !name.dir.is_empty() {
+            main.dir = name.dir_with_trailing_slash();
             main.dir_hash = Watcher::get_hash(main.dir);
         }
 

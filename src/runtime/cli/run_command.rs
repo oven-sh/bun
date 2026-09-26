@@ -1834,10 +1834,11 @@ impl RunCommand {
         let mut package_json_dir: &[u8] = b"";
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
-            if root_dir_info.package_json.is_none() {
+            let name = package_json.source.path.name();
+            // `/` does not go into PATH.
+            if root_dir_info.package_json.is_none() && !name.dir_is_root_without_drive() {
                 // no trailing slash
-                package_json_dir =
-                    strings::without_trailing_slash(package_json.source.path.name().dir);
+                package_json_dir = strings::without_trailing_slash(name.dir);
             }
         }
 

@@ -683,8 +683,8 @@ void ImportMetaObject::finishCreation(VM& vm)
 
         if (dirname.endsWith(PLATFORM_SEP_s)) {
             dirname = dirname.substring(0, dirname.length() - 1);
-        } else if (dirname.contains(PLATFORM_SEP)) {
-            dirname = dirname.substring(0, dirname.reverseFind(PLATFORM_SEP));
+        } else if (size_t length = dirnameLength(dirname); length != WTF::notFound) {
+            dirname = dirname.substring(0, length);
         }
 
         init.set(jsString(init.vm, dirname));

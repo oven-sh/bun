@@ -735,6 +735,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // borrowck.
                         let log = p.lexer.log();
                         let source = p.source;
+                        let source_has_no_directory = p.options.source_has_no_directory;
                         let Ok(macro_result) = p
                             .options
                             .macro_context
@@ -742,9 +743,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("macro_context")
                             .call(
                                 record_path_text,
-                                source.path.source_dir(),
                                 log,
                                 source,
+                                source_has_no_directory,
                                 record_range,
                                 expr,
                                 name,
@@ -2334,6 +2335,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // borrowck.
                 let log = p.lexer.log();
                 let source = p.source;
+                let source_has_no_directory = p.options.source_has_no_directory;
                 let macro_result = match p
                     .options
                     .macro_context
@@ -2341,9 +2343,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .expect("macro_context")
                     .call(
                         record_path_text,
-                        source.path.source_dir(),
                         log,
                         source,
+                        source_has_no_directory,
                         record_range,
                         copied,
                         name,

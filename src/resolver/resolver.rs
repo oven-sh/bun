@@ -4140,6 +4140,37 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
+    /// Whether `path` is a file on disk directly in a filesystem root (`/main.js`).
+    pub fn is_file_in_root(&mut self, path: &Fs::Path<'_>) -> bool {
+        let name = path.name();
+        if !name.dir_is_root() || !path.is_file() {
+            return false;
+        }
+        let Some(dir) = self.read_dir_info_ignore_error(name.dir) else {
+            return false;
+        };
+        // The key of a module can end in a `?query`.
+        let without_query = strings::index_of_char_usize(name.filename, b'?')
+            .map_or(name.filename, |i| &name.filename[..i]);
+        for filename in [name.filename, without_query] {
+            if let Some(query) = dir.get_entry(self.generation, filename) {
+                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `kind()` is serialized on the per-entry mutex.
+                return unsafe { query.entry().kind(self.rfs_ptr(), self.store_fd) }
+                    == Fs::file_system::EntryKind::File;
+            }
+        }
+        false
+    }
+
+    /// Where the imports of `path` resolve from. Directly in `/`, that is `/` only for a file on disk (not `/entry.js`, `/app`).
+    pub fn source_dir_for_imports<'p>(&mut self, path: &Fs::Path<'p>) -> &'p [u8] {
+        if path.name().dir_is_root_without_drive() && !self.is_file_in_root(path) {
+            return b"./";
+        }
+        path.source_dir()
+    }
+
     // NOTE: `follow_symlinks` is `true` at every call
     // site, so it's dropped here; `enable_logging` is a plain runtime parameter
     // (it gates one cold error-formatting branch) so this large dir-walk function
@@ -4165,12 +4196,7 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
-        // `PathName::init` leaves `.dir` empty when the separator is the
-        // leading one (e.g. `/a.js`) or the path has no separator at all
-        // (virtual/plugin specifiers). Callers like `finalize_result` pass
-        // that `.dir` straight through and already treat `None` as "skip",
-        // so return it here instead of walking the cache with an empty key.
-        // https://github.com/oven-sh/bun/issues/30429
+        // `PathName::init` leaves `.dir` empty for a path with no separator (virtual/plugin specifiers). #30429
         if input_path.is_empty() {
             return Ok(None);
         }

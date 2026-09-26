@@ -38,7 +38,6 @@ namespace URLPatternUtilities {
 struct Token;
 enum class TokenType : uint8_t;
 struct URLPatternStringOptions;
-struct URLPatternInit;
 }
 
 enum class URLPatternConstructorStringParserState : uint8_t { Init,

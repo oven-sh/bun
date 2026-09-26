@@ -425,6 +425,12 @@ function onUpgradedClose(self, connection) {
 function destroyWhenUpgradedCloses(self, connection) {
   connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
 }
+// Node's wrap 'error' -> _emitTLSError. Not for a net.Socket: a listener there makes its close synthesize ECONNRESET.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+function forwardUpgradedError(self, connection) {
+  if (!(connection instanceof Socket)) connection.on("error", err => self._emitTLSError(err));
+}
 // The wrapped socket reports nothing and closes with the TLS socket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
 function closeWithTLSSocket(self, raw) {
   const tlsSocket = raw[kAdoptedTLSRaw];
@@ -1182,8 +1188,11 @@ const ServerHandlers = {
           // no tlsClientError - Node's onServerSocketSecure never emits it
           // there and test-tls-sni-option asserts mustNotCall on it for the
           // authorized=false cases.
-          self[kerrorEmitted] = true;
-          server?.emit("tlsClientError", verifyError, self);
+          // Node reports a connection once: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1234-L1240
+          if (!self[kerrorEmitted]) {
+            self[kerrorEmitted] = true;
+            server?.emit("tlsClientError", verifyError, self);
+          }
           // A rejected peer is torn down with the verification error, so
           // 'close' reports hadError === true. The internal 'error' listener
           // installed by the TLSSocket constructor (node's _init) keeps this
@@ -2213,6 +2222,7 @@ Socket.prototype.connect = function connect(...args) {
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
+          forwardUpgradedError(this, connection);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2266,6 +2276,7 @@ Socket.prototype.connect = function connect(...args) {
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
+                forwardUpgradedError(this, connection);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2575,6 +2586,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     connection.on("end", events[1]);
     connection.on("drain", events[2]);
     connection.on("close", events[3]);
+    forwardUpgradedError(this, connection);
     this[kupgraded] = connection;
     this._handle = result;
     return;
@@ -2605,6 +2617,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       connection.on("end", events[1]);
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
+      forwardUpgradedError(this, connection);
       this._handle = result;
       this.emit(kUpgradeAttached);
       return;
@@ -4034,9 +4047,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       options.servername = tls.serverName;
       options[kSocketClass] = TLSSocketClass;
       contexts = tls.contexts;
-      if (!tls.requestCert) {
-        tls.rejectUnauthorized = false;
-      }
     } else {
       options[kSocketClass] = Socket;
     }
@@ -4360,6 +4370,11 @@ function listenInCluster(
       // The primary owns the socket file; the adopted fd only needs to report it from address().
       server[kClusterUnixPath] = path;
       try {
+        // The reply is asynchronous: a setSecureContext() or addContext() made since listen() counts.
+        if (tls) {
+          tls = server[bunTlsSymbol](port, hostname, false)[0];
+          contexts = tls.contexts;
+        }
         server[kRealListen](
           undefined,
           port,

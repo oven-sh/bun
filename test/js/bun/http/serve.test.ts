@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  bunRun,
   dumpStats,
   emptyProcessMaxRSS,
   isAndroid,
@@ -3346,6 +3347,25 @@ it.concurrent(
     expect(res.text()).resolves.toBe("Hello, World!");
   },
   20_000,
+);
+
+it.concurrent(
+  "TLS: reaps every zero-byte pre-handshake connection in a burst",
+  async () => {
+    const result = await bunRun(join(import.meta.dirname, "serve-tls-prehandshake-reap-fixture.ts"), {
+      TLS_CERT: tls.cert,
+      TLS_KEY: tls.key,
+      N: "300",
+      DEADLINE_MS: "22000",
+    });
+    expect(result).toSpawn();
+    const { opened, held } = JSON.parse(result.stdout);
+    // Windows' accept backlog may drop part of the burst; the invariant is
+    // that every connection that did complete is reaped.
+    expect(opened).toBeGreaterThanOrEqual(100);
+    expect(held).toBe(0);
+  },
+  40_000,
 );
 
 it.concurrent("#6462", async () => {

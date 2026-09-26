@@ -1202,7 +1202,7 @@ impl FetchTasklet {
     }
 
     /// `Ok` when the callback approved the certificate; `Err(Some(error))`
-    /// with what it returned or threw; `Err(None)` when there was no
+    /// with the reason when it did not; `Err(None)` when there was no
     /// certificate to show it.
     fn run_check_server_identity(
         &mut self,
@@ -1246,15 +1246,30 @@ impl FetchTasklet {
             &[js_hostname, js_cert],
         ) {
             Ok(v) => v,
-            Err(e) => global_object.take_exception(e),
+            Err(e) => return Err(Some(global_object.take_exception(e))),
         };
 
         // > Returns <Error> object [...] on failure
-        if check_result.is_any_error() {
+        // Any object counts: a DOMException or a util.inherits() error is not an ErrorInstance cell.
+        if check_result.is_object() && check_result.as_any_promise().is_none() {
             return Err(Some(check_result));
         }
+        // Like Node, fail on any other truthy value, a Promise included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671-L1688
+        if check_result.to_boolean() {
+            let received = JSGlobalObject::determine_specific_type(&global_object, check_result)
+                .map_err(|e| Some(global_object.take_exception(e)))?;
+            return Err(Some(
+                global_object
+                    .err(
+                        jsc::ErrorCode::INVALID_RETURN_VALUE,
+                        format_args!(
+                            "Expected undefined or an Error to be returned from the \"tls.checkServerIdentity\" function but got {received}."
+                        ),
+                    )
+                    .to_js(),
+            ));
+        }
         // > On success, returns <undefined>
-        // We treat any non-error value as a success.
         Ok(())
     }
 
@@ -1607,9 +1622,6 @@ impl FetchTasklet {
             }
             http::Error::Cert(http::CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256) => {
                 BunString::static_("Suite B: cannot sign P-384 with P-256")
-            }
-            http::Error::Cert(http::CertError::HOSTNAME_MISMATCH) => {
-                BunString::static_("Hostname mismatch")
             }
             http::Error::Cert(http::CertError::EMAIL_MISMATCH) => {
                 BunString::static_("Email address mismatch")

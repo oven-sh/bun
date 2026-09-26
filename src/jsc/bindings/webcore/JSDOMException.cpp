@@ -236,8 +236,6 @@ void JSDOMException::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, DOMException>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
 
 JSObject* JSDOMException::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -319,8 +317,6 @@ void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = uncheckedDowncast<JSDOMException>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    // if (thisObject->scriptExecutionContext())
-    //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 

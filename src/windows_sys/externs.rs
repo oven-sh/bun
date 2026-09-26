@@ -553,7 +553,7 @@ pub struct RUNTIME_FUNCTION {
     pub UnwindData: DWORD,
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy)]
 pub struct M128A {
     pub Low: u64,
@@ -1429,6 +1429,7 @@ unsafe extern "system" {
 unsafe extern "system" {
     pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;
 
+    #[cfg_attr(bun_portable, library = "ws2_32")]
     pub fn GetHostNameW(lpBuffer: PWSTR, nSize: c_int) -> BOOL;
 
     pub fn SetEnvironmentVariableW(lpName: LPCWSTR, lpValue: LPCWSTR) -> BOOL;

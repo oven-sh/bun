@@ -965,6 +965,8 @@ pub mod waiter_thread_posix {
     use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
     use bun_event_loop::task_tag;
     use bun_threading::UnboundedQueue;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    use core::sync::atomic::AtomicBool;
 
     pub struct WaiterThreadPosix {
         pub(crate) started: AtomicU32,
@@ -1341,19 +1343,44 @@ pub mod waiter_thread_posix {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
+                // Set before the sigaction: a JS listener change after it must install `wakeup` again.
+                HANDLES_SIGCHLD.store(true, Ordering::SeqCst);
+                // Two threads can be here. The lock makes the last sigaction use the last flag value.
+                let _lock = RELOAD_HANDLERS_LOCK.lock();
+                let js_listens = JS_LISTENS_FOR_SIGCHLD.load(Ordering::SeqCst);
                 // SAFETY: sigaction with a valid handler.
                 unsafe {
                     let mut current_mask: libc::sigset_t = bun_core::ffi::zeroed();
                     libc::sigemptyset(&raw mut current_mask);
                     libc::sigaddset(&raw mut current_mask, libc::SIGCHLD);
-                    let act = libc::sigaction {
+                    let mut act = libc::sigaction {
                         sa_sigaction: wakeup as *const () as usize,
                         sa_mask: current_mask,
                         sa_flags: libc::SA_NOCLDSTOP,
                         sa_restorer: None,
                     };
+                    if js_listens {
+                        // A JS listener also hears a stopped or continued child, as with pidfd.
+                        act.sa_flags &= !libc::SA_NOCLDSTOP;
+                    }
                     libc::sigaction(libc::SIGCHLD, &raw const act, core::ptr::null_mut());
                 }
+            }
+        }
+
+        /// Main thread. Call it before the SIGCHLD disposition changes for a JS listener.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub fn set_js_listens_for_sigchld(listens: bool) {
+            JS_LISTENS_FOR_SIGCHLD.store(listens, Ordering::SeqCst);
+        }
+
+        /// Main thread. The SIGCHLD disposition changed for a JS listener: `wakeup` takes it back.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub fn on_sigchld_disposition_changed() {
+            if HANDLES_SIGCHLD.load(Ordering::SeqCst) {
+                Self::reload_handlers();
+                // A child that exited while `wakeup` was not the handler did not wake the thread.
+                wake();
             }
         }
     }
@@ -1380,11 +1407,37 @@ pub mod waiter_thread_posix {
         Ok(())
     }
 
+    /// `wakeup` is the SIGCHLD handler, or the waiter thread is about to install it.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    extern "C" fn wakeup(_: c_int) {
+    static HANDLES_SIGCHLD: AtomicBool = AtomicBool::new(false);
+
+    /// `process.on("SIGCHLD")` has a listener. SIGCHLD has one disposition, so `wakeup` forwards to it.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    static JS_LISTENS_FOR_SIGCHLD: AtomicBool = AtomicBool::new(false);
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    static RELOAD_HANDLERS_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe extern "C" {
+        /// `bun_jsc`: queues the signal for the `process.on(<signal>)` listeners. Async-signal-safe.
+        safe fn Bun__onPosixSignal(number: c_int);
+    }
+
+    /// Makes the waiter thread call `wait4` for each process again.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn wake() {
         let one: [u8; 8] = (1usize).to_ne_bytes();
-        // eventfd is write-once in init() before this handler is installed.
+        // eventfd is write-once in init() before the waiter thread starts.
         let _ = bun_sys::write(instance_ref().eventfd, &one).unwrap_or(0);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    extern "C" fn wakeup(signal: c_int) {
+        wake();
+        if JS_LISTENS_FOR_SIGCHLD.load(Ordering::SeqCst) {
+            Bun__onPosixSignal(signal);
+        }
     }
 
     pub(crate) fn loop_() {

@@ -1325,6 +1325,15 @@ function onSocketTLSError(err) {
   }
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1246-L1257
+function onSocketTLSClose(hadError) {
+  if (hadError) return;
+  if (!this._controlReleased && !this[kerrorEmitted]) {
+    this[kerrorEmitted] = true;
+    this.server?.emit("tlsClientError", new ConnResetException("socket hang up"), this);
+  }
+}
+
 function onHandshakeTimeout() {
   this._emitTLSError($ERR_TLS_HANDSHAKE_TIMEOUT());
 }
@@ -1347,6 +1356,7 @@ function initAcceptedTLSSocket(server, socket) {
   socket[kerrorEmitted] = false;
   socket.on("_tlsError", onSocketTLSError);
   socket.on("error", onSocketTLSError);
+  socket.on("close", onSocketTLSClose);
   const handshakeTimeout = server._handshakeTimeout;
   if (!(handshakeTimeout > 0)) return;
   // The deadline surfaces as the socket's own 'timeout' event with

@@ -219,6 +219,14 @@ impl<'a> Graph<'a> {
         &mut self.build_graphs[target]
     }
 
+    /// The last entry of the asset's `additional_files`. A `SourceIndex` entry can come before it.
+    pub(crate) fn asset_output_file(&self, source_index: usize) -> &options::OutputFile {
+        match self.input_files.items_additional_files()[source_index].last() {
+            Some(&AdditionalFile::OutputFile(id)) => &self.additional_output_files[id as usize],
+            _ => bun_core::Output::panic(format_args!("Internal error: missing asset file")),
+        }
+    }
+
     /// Schedule a task to be run on the JS thread which resolves the promise of
     /// each `.defer()` called in an onLoad plugin.
     ///

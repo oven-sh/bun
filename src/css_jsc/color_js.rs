@@ -210,6 +210,38 @@ fn zero_if_none(component: f32) -> f32 {
     if component.is_nan() { 0.0 } else { component }
 }
 
+/// The VM's scratch arena for one call; `Drop` hands it back on every exit path.
+struct ScratchArena<'a> {
+    global: &'a JSGlobalObject,
+    arena: Option<Arena>,
+}
+
+impl<'a> ScratchArena<'a> {
+    fn take(global: &'a JSGlobalObject) -> Self {
+        let arena = global.bun_vm().as_mut().rare_data().take_scratch_arena();
+        Self {
+            global,
+            arena: Some(arena),
+        }
+    }
+
+    fn get(&self) -> &Arena {
+        self.arena.as_ref().expect("held until drop")
+    }
+}
+
+impl Drop for ScratchArena<'_> {
+    fn drop(&mut self) {
+        if let Some(arena) = self.arena.take() {
+            self.global
+                .bun_vm()
+                .as_mut()
+                .rare_data()
+                .put_back_scratch_arena(arena);
+        }
+    }
+}
+
 pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::symbol::Map as SymbolMap;
     use bun_core::Utf8Bytes;
@@ -241,6 +273,8 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         break 'brk OutputColorFormat::Css;
     };
     let input: Utf8Bytes;
+    // Shared by the parse and the print of one call.
+    let mut scratch: Option<ScratchArena> = None;
 
     let parsed_color: css::CssColorParseResult = 'brk: {
         if args[0].is_number() {
@@ -324,10 +358,10 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
         input = args[0].to_utf8(global)?;
 
-        // MimallocArena::new() calls mi_heap_new(), so defer creation to the
-        // paths that actually allocate.
-        let arena = Arena::new();
-        let mut parser_input = css::ParserInput::new(input.slice(), &arena);
+        let arena = scratch
+            .get_or_insert_with(|| ScratchArena::take(global))
+            .get();
+        let mut parser_input = css::ParserInput::new(input.slice(), arena);
         let mut parser = css::Parser::new(
             &mut parser_input,
             None,
@@ -599,13 +633,15 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             }
 
             // Fallback to CSS string output
-            let arena = Arena::new();
+            let arena = scratch
+                .get_or_insert_with(|| ScratchArena::take(global))
+                .get();
             let mut dest: Vec<u8> = Vec::new();
 
             let symbols = SymbolMap::init_list(Default::default());
             let mut printer = css::Printer::new(
-                &arena,
-                bun_alloc::ArenaVec::<u8>::new_in(&arena),
+                arena,
+                bun_alloc::ArenaVec::<u8>::new_in(arena),
                 &mut dest,
                 &css::PrinterOptions::default(),
                 None,

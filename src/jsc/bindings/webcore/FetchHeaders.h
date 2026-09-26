@@ -119,10 +119,14 @@ public:
     FetchHeaders(Guard, HTTPHeaderMap&&);
     explicit FetchHeaders(const FetchHeaders&);
 
+private:
+    // Before m_updateCounter, m_guard takes the 4 bytes that follow the reference count.
+    Guard m_guard;
+
+public:
     uint64_t m_updateCounter { 0 };
 
 private:
-    Guard m_guard;
     HTTPHeaderMap m_headers;
 };
 

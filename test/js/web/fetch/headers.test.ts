@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
-import { jscDescribe } from "bun:jsc";
+import { estimateShallowMemoryUsageOf, jscDescribe } from "bun:jsc";
 import { isDebug, withoutAggressiveGC } from "harness";
 
 beforeAll(() => {
@@ -263,8 +263,9 @@ describe("Headers", () => {
     // combined value with makeString(), so N appends copied O(N^2) bytes:
     // 200,000 appends took 1.8s and 400,000 took 9.4s on a release build, where
     // Node takes 0.5s for 400,000. A combined value under 4 KB is still one
-    // exact-fit string. Past that it moves into a builder that grows in place.
-    // Every case below runs in both states, and the last one measures the cost.
+    // exact-fit string. Past that, the header map keeps a builder for the value
+    // and the value grows in place. Every case below runs in both states, and
+    // the last one measures the cost.
     describe("with a name that repeats", () => {
       const COUNT = 100;
       describe.each([
@@ -315,6 +316,63 @@ describe("Headers", () => {
           expect(headers.get("x-repeated")).toBeNull();
         });
 
+        test("delete() then append() starts a new value", () => {
+          const headers = filled();
+          const before = headers.get("x-repeated");
+          headers.delete("x-repeated");
+          headers.append("x-repeated", "again");
+          headers.append("x-repeated", "more");
+          expect(headers.get("x-repeated")).toBe("again, more");
+          expect(before).toBe(joined(COUNT));
+        });
+
+        test("set() with the string that get() returned keeps the value", () => {
+          const headers = filled();
+          headers.set("x-repeated", headers.get("x-repeated")!);
+          headers.append("x-repeated", "next");
+          expect(headers.get("x-repeated")).toBe(`${joined(COUNT)}, next`);
+        });
+
+        test("two names that hold one string grow apart", () => {
+          const headers = filled();
+          headers.set("x-other", headers.get("x-repeated")!);
+          headers.append("x-other", "b");
+          headers.append("x-repeated", "a");
+          headers.append("x-other", "d");
+          headers.append("x-repeated", "c");
+          expect(headers.toJSON()).toEqual({
+            "x-repeated": `${joined(COUNT)}, a, c`,
+            "x-other": `${joined(COUNT)}, b, d`,
+          });
+        });
+
+        test("several names grow in turn", () => {
+          const headers = new Headers();
+          for (let i = 0; i < COUNT; i++) {
+            for (const name of ["x-first", "accept", "x-second", "cookie"]) headers.append(name, valueAt(i));
+          }
+          expect(headers.toJSON()).toEqual({
+            "x-first": joined(COUNT),
+            "accept": joined(COUNT),
+            "x-second": joined(COUNT),
+            "cookie": joined(COUNT, "; "),
+          });
+        });
+
+        // The reported size counts the spare room of a value that grows. A
+        // header that is gone, or that set() replaced, must not leave any.
+        test("delete() and set() release what the value held", () => {
+          const size = (headers: Headers) => estimateShallowMemoryUsageOf(headers);
+          const deleted = filled();
+          expect(size(deleted)).toBeGreaterThan(size(new Headers()) + joined(COUNT).length);
+          deleted.delete("x-repeated");
+          expect(size(deleted)).toBe(size(new Headers()));
+
+          const replaced = filled();
+          replaced.set("x-repeated", "only");
+          expect(size(replaced)).toBe(size(new Headers([["x-repeated", "only"]])));
+        });
+
         test("a copy does not change when the original keeps appending", () => {
           const original = filled();
           const copy = new Headers(original);
@@ -350,6 +408,67 @@ describe("Headers", () => {
         });
       });
 
+      // Each program mixes the operations above at random, on up to three
+      // Headers objects that are copies of each other, and a plain Map of
+      // name to joined value says what every read must return.
+      test("seeded random programs give what a model gives", () => {
+        const names = ["x-a", "x-b", "accept", "cookie"];
+        const wide = (s: string) => (s.length > 1 ? Buffer.from(s, "utf16le").toString("utf16le") : s);
+        const join = (model: Map<string, string>, name: string, value: string) =>
+          model.set(name, model.has(name) ? model.get(name) + (name === "cookie" ? "; " : ", ") + value : value);
+
+        for (let program = 0; program < 12; program++) {
+          let state = program * 7919 + 17;
+          const random = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+          const pick = <T>(list: T[]) => list[(random() * list.length) | 0];
+          const value = (i: number) => {
+            const text = `v${i}-${Buffer.alloc(pick([1, 31, 300, 1500, 5000]), "a").toString()}`;
+            return random() < 0.2 ? wide(text) : text;
+          };
+
+          const live = [{ headers: new Headers(), model: new Map<string, string>() }];
+          const held: [string, string][] = [];
+          for (let i = 0; i < 150; i++) {
+            const { headers, model } = pick(live);
+            const name = pick(names);
+            const operation = random();
+            if (operation < 0.55) {
+              const appended = value(i);
+              headers.append(name, appended);
+              join(model, name, appended);
+            } else if (operation < 0.65) {
+              const replaced = value(i);
+              headers.set(name, replaced);
+              model.set(name, replaced);
+            } else if (operation < 0.75) {
+              const other = pick(names);
+              const shared = headers.get(other);
+              if (shared !== null) {
+                headers.set(name, shared);
+                model.set(name, model.get(other)!);
+              }
+            } else if (operation < 0.83) {
+              headers.delete(name);
+              model.delete(name);
+            } else if (operation < 0.93) {
+              const read = headers.get(name);
+              if (read !== null) held.push([read, model.get(name)!]);
+            } else {
+              live[live.length < 3 ? live.length : (random() * 3) | 0] = {
+                headers: new Headers(headers),
+                model: new Map(model),
+              };
+            }
+          }
+
+          for (const { headers, model } of live) {
+            expect(headers.toJSON()).toEqual(Object.fromEntries(model));
+            for (const name of names) expect(headers.get(name)).toBe(model.get(name) ?? null);
+          }
+          for (const [read, expected] of held) expect(read).toBe(expected);
+        }
+      });
+
       // set() is the baseline. It makes the same number of calls with the same
       // name and the same value, so it pays the same conversion, validation and
       // lookup cost per call, and it never combines. The ratio of the two is
@@ -363,39 +482,52 @@ describe("Headers", () => {
       // Back-to-back runs in one process cancel machine speed out of each
       // ratio, and the median over the repetitions discards a repetition that
       // another process disturbed.
-      test("append costs about as much per call as set", () => {
+      describe("cost", () => {
         const VALUE = Buffer.alloc(8192, "x").toString();
-        const CALLS = 1000;
         const repetitions = isDebug ? 3 : 5;
 
-        function timeAppend() {
+        function time(method: "append" | "set", names: string[], calls: number) {
           const headers = new Headers();
           const started = performance.now();
-          for (let i = 0; i < CALLS; i++) headers.append("x-repeated", VALUE);
+          for (let i = 0; i < calls; i++) {
+            for (const name of names) headers[method](name, VALUE);
+          }
           const elapsed = performance.now() - started;
-          expect(headers.get("x-repeated")!.length).toBe(CALLS * VALUE.length + (CALLS - 1) * 2);
+          const length = method === "append" ? calls * VALUE.length + (calls - 1) * 2 : VALUE.length;
+          for (const name of names) expect(headers.get(name)!.length).toBe(length);
           return elapsed;
         }
 
-        function timeSet() {
-          const headers = new Headers();
-          const started = performance.now();
-          for (let i = 0; i < CALLS; i++) headers.set("x-repeated", VALUE);
-          const elapsed = performance.now() - started;
-          expect(headers.get("x-repeated")!.length).toBe(VALUE.length);
-          return elapsed;
+        function medianRatio(numerator: () => number, denominator: () => number) {
+          const ratios = withoutAggressiveGC(() => {
+            denominator();
+            numerator();
+            const measured: number[] = [];
+            for (let i = 0; i < repetitions; i++) measured.push(numerator() / denominator());
+            return measured;
+          }) as number[];
+          ratios.sort((a, b) => a - b);
+          return ratios[ratios.length >> 1];
         }
 
-        const ratios = withoutAggressiveGC(() => {
-          timeSet();
-          timeAppend();
-          const measured: number[] = [];
-          for (let i = 0; i < repetitions; i++) measured.push(timeAppend() / timeSet());
-          return measured;
-        }) as number[];
+        test("append costs about as much per call as set", () => {
+          const ratio = medianRatio(
+            () => time("append", ["x-repeated"], 1000),
+            () => time("set", ["x-repeated"], 1000),
+          );
+          expect(ratio).toBeLessThan(isDebug ? 4 : 8);
+        });
 
-        ratios.sort((a, b) => a - b);
-        expect(ratios[ratios.length >> 1]).toBeLessThan(isDebug ? 4 : 8);
+        // Each name has a builder of its own. If the names had to share one,
+        // every call would seed it again with a copy of the whole value, and
+        // this ratio would be over 100 and not about 3.
+        test("three names that grow in turn cost three times one name", () => {
+          const ratio = medianRatio(
+            () => time("append", ["x-first", "accept", "x-second"], 300),
+            () => time("append", ["x-repeated"], 300),
+          );
+          expect(ratio).toBeLessThan(8);
+        });
       });
     });
   });

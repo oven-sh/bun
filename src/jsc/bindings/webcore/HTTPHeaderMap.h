@@ -28,7 +28,6 @@
 
 #include "HTTPHeaderNames.h"
 #include <utility>
-#include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
@@ -43,96 +42,18 @@ namespace WebCore {
 // behavior.
 String lowercaseHeaderName(const String&);
 
-// One header's value, in one word: a StringImpl*, or past builderThreshold a StringBuilder* tagged in bit 0, so N appends copy O(N) bytes.
-class HeaderValue {
-public:
-    HeaderValue() = default;
-    HeaderValue(const String& value)
-        : HeaderValue(String { value })
-    {
-    }
-    HeaderValue(String&& value)
-        : m_bits(reinterpret_cast<uintptr_t>(value.releaseImpl().leakRef()))
-    {
-    }
-    HeaderValue(const HeaderValue& other)
-        : HeaderValue(other.string())
-    {
-    }
-    HeaderValue(HeaderValue&& other)
-        : m_bits(std::exchange(other.m_bits, 0))
-    {
-    }
-    HeaderValue& operator=(const HeaderValue& other) { return *this = HeaderValue(other); }
-    HeaderValue& operator=(HeaderValue&& other)
-    {
-        HeaderValue moved { WTF::move(other) };
-        std::swap(m_bits, moved.m_bits);
-        return *this;
-    }
-    ALWAYS_INLINE ~HeaderValue()
-    {
-        if (m_bits & builderTag) [[unlikely]]
-            deleteBuilder();
-        else if (auto* impl = reinterpret_cast<StringImpl*>(m_bits))
-            impl->deref();
-    }
-
-    ALWAYS_INLINE String string() const
-    {
-        if (m_bits & builderTag) [[unlikely]]
-            return builderString();
-        return reinterpret_cast<StringImpl*>(m_bits);
-    }
-
-    // False, with nothing stored, when the combined value would pass String::MaxLength.
-    ALWAYS_INLINE bool append(ASCIILiteral delimiter, const String& value)
-    {
-        if (!(m_bits & builderTag)) [[likely]] {
-            String current { reinterpret_cast<StringImpl*>(m_bits) };
-            if (static_cast<uint64_t>(current.length()) + delimiter.length() + value.length() < builderThreshold) {
-                *this = HeaderValue(makeString(WTF::move(current), delimiter, value));
-                return true;
-            }
-        }
-        return appendToBuilder(delimiter, value);
-    }
-    size_t memoryCost() const;
-
-    bool operator==(const HeaderValue& other) const { return string() == other.string(); }
-
-private:
-    // Below this length a join is one exact-fit makeString, as before, so a short value never pays for a builder.
-    static constexpr unsigned builderThreshold = 4096;
-    static constexpr uintptr_t builderTag = 1;
-    static_assert(alignof(StringImpl) > builderTag && alignof(StringBuilder) > builderTag);
-
-    explicit HeaderValue(std::unique_ptr<StringBuilder>&& builder)
-        : m_bits(reinterpret_cast<uintptr_t>(builder.release()) | builderTag)
-    {
-    }
-
-    StringBuilder* builder() const { return (m_bits & builderTag) ? reinterpret_cast<StringBuilder*>(m_bits & ~builderTag) : nullptr; }
-    NEVER_INLINE void deleteBuilder();
-    NEVER_INLINE String builderString() const;
-    NEVER_INLINE bool appendToBuilder(ASCIILiteral delimiter, const String& value);
-
-    uintptr_t m_bits { 0 };
-};
-static_assert(sizeof(HeaderValue) == sizeof(String), "an entry of HTTPHeaderMap must not grow");
-
 class HTTPHeaderMap {
 public:
     struct CommonHeader {
         HTTPHeaderName key;
-        HeaderValue value;
+        String value;
 
         bool operator==(const CommonHeader& other) const { return key == other.key && value == other.value; }
     };
 
     struct UncommonHeader {
         String key;
-        HeaderValue value;
+        String value;
 
         bool operator==(const UncommonHeader& other) const { return key == other.key && value == other.value; }
     };
@@ -211,7 +132,7 @@ public:
                 return false;
             m_keyValue.key = httpHeaderNameString(it->key).toStringWithoutCopying();
             m_keyValue.keyAsHTTPHeaderName = it->key;
-            m_keyValue.value = it->value.string();
+            m_keyValue.value = it->value;
             return true;
         }
         bool updateKeyValue(UncommonHeadersVector::const_iterator it)
@@ -220,7 +141,7 @@ public:
                 return false;
             m_keyValue.key = it->key;
             m_keyValue.keyAsHTTPHeaderName = std::nullopt;
-            m_keyValue.value = it->value.string();
+            m_keyValue.value = it->value;
             return true;
         }
 
@@ -280,7 +201,7 @@ public:
             return false;
 
         for (auto& commonHeader : a.m_commonHeaders) {
-            if (b.get(commonHeader.key) != commonHeader.value.string())
+            if (b.get(commonHeader.key) != commonHeader.value)
                 return false;
         }
 
@@ -290,7 +211,7 @@ public:
         }
 
         for (auto& uncommonHeader : a.m_uncommonHeaders) {
-            if (b.getUncommonHeader(uncommonHeader.key) != uncommonHeader.value.string())
+            if (b.getUncommonHeader(uncommonHeader.key) != uncommonHeader.value)
                 return false;
         }
 
@@ -309,9 +230,37 @@ public:
 private:
     WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
 
+    // The builders of the values that grew past growThreshold by add(). A copy of the map starts with none.
+    struct Growing {
+        Growing() = default;
+        Growing(const Growing&)
+        {
+        }
+        Growing(Growing&&) = default;
+        Growing& operator=(const Growing&)
+        {
+            builders = nullptr;
+            return *this;
+        }
+        Growing& operator=(Growing&&) = default;
+
+        std::unique_ptr<Vector<StringBuilder, 1>> builders;
+    };
+
+    // Under this length a join is one exact-fit makeString. From it on, the value grows in a builder: N joins copy O(N) bytes.
+    static constexpr unsigned growThreshold = 4096;
+
+    AddResult combine(String& stored, ASCIILiteral delimiter, const String& value);
+    AddResult combineLong(String& stored, ASCIILiteral delimiter, const String& value);
+    StringBuilder* builderOf(const String& stored);
+    void replace(String& stored, const String& value);
+    void forget(const String& stored);
+    void forgetSlow(const String& stored);
+
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;
     Vector<String, 0> m_setCookieHeaders;
+    Growing m_growing;
 };
 
 } // namespace WebCore

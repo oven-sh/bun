@@ -700,6 +700,7 @@ impl RunCommand {
 
         // A hard link made through a symlinked `bun.exe` (winget `Links`, mklink)
         // would link the reparse point, so link the file it resolves to.
+        let mut scratch = bun_paths::w_path_buffer_pool::get();
         let mut image_buf = bun_paths::w_path_buffer_pool::get();
         let launched = win::exe_path_w();
         let (image, image_stat): (&WStr, Option<bun_sys::Stat>) =
@@ -707,9 +708,10 @@ impl RunCommand {
             {
                 Ok(file) => {
                     let stat = file.stat().ok();
-                    match bun_sys::get_fd_path_w(file.fd(), &mut image_buf[..]) {
+                    match bun_sys::get_fd_path_w(file.fd(), &mut scratch[..]) {
                         Ok(resolved) => {
                             let len = resolved.len();
+                            image_buf[..len].copy_from_slice(resolved);
                             image_buf[len] = 0;
                             (WStr::from_buf(&image_buf[..], len), stat)
                         }

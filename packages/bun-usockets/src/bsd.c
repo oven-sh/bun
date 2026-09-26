@@ -23,6 +23,7 @@
 #include "internal/internal.h"
 #include "internal/fault_inject.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 

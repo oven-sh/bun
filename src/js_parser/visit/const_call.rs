@@ -130,11 +130,6 @@ fn is_plain_function(flags: flags::FunctionSet) -> bool {
     !flags.contains(flags::Function::IsAsync) && !flags.contains(flags::Function::IsGenerator)
 }
 
-/// `"use server"` and similar directives give the function a meaning a fold would drop.
-fn is_inert_directive(directive: &js_ast::S::Directive) -> bool {
-    directive.value.slice() == b"use strict"
-}
-
 /// No parameter runs code when the function is called.
 fn args_are_inert(args: &[G::Arg]) -> bool {
     args.iter()
@@ -278,13 +273,13 @@ impl ConstCalls {
     }
 
     /// What importers may fold: only function declarations, which exist before any module runs.
-    fn exports(&self, ast: &js_ast::Ast<'_>) -> ConstCallExports {
+    fn exports(calls: Option<&Self>, ast: &js_ast::Ast<'_>) -> ConstCallExports {
         let mut exports = ConstCallExports::default();
         let symbols = ast.symbols.as_slice();
         let records = ast.import_records.as_slice();
         for (alias, export) in ast.named_exports.iter() {
             let symbol = &symbols[export.ref_.inner_index() as usize];
-            if let Some(fact) = self.values.get(&export.ref_) {
+            if let Some(fact) = calls.and_then(|calls| calls.values.get(&export.ref_)) {
                 if symbol.kind == SymbolKind::HoistedFunction
                     && ast
                         .module_scope
@@ -345,9 +340,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             *steps -= 1;
             let flow = match stmt.data {
                 StmtData::SEmpty(_) | StmtData::SComment(_) => Flow::FallsThrough,
-                StmtData::SDirective(directive) if is_inert_directive(&directive) => {
-                    Flow::FallsThrough
-                }
                 StmtData::SReturn(ret) => match ret.value {
                     None => Flow::Returns(ConstCallValue::Undefined),
                     Some(value) => match ConstCallValue::of(&value.unwrap_inlined().data) {
@@ -553,12 +545,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// After `to_ast` of a file that the bundler parses for the lookup of its importers.
     pub(crate) fn send_const_call_exports(&self, ast: &js_ast::Ast<'_>) {
-        let (Some(exports), Some(calls)) = (self.options.const_call_exports, &self.const_calls)
-        else {
+        let Some(exports) = self.options.const_call_exports else {
             return;
         };
         if self.const_calls_enabled {
-            exports.set(Some(Box::new(calls.exports(ast))));
+            let calls = self.const_calls.as_deref();
+            exports.set(Some(Box::new(ConstCalls::exports(calls, ast))));
         }
     }
 

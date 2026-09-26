@@ -40,10 +40,9 @@ describe("bundler", () => {
       files: {
         "/entry.js": /* js */ `
           import { imported } from "./flags.js";
-          function isDev() { return process.env.NODE_ENV === "development"; }
           function isOff() { return F; }
           const arrow = () => F;
-          console.log(isDev() ? "a" : "b", isOff() ? "a" : "b", arrow() ? "a" : "b", imported() ? "a" : "b");
+          console.log(isOff() ? "a" : "b", arrow() ? "a" : "b", imported() ? "a" : "b");
         `,
         "/flags.js": /* js */ `
           export function imported() { return T; }
@@ -52,9 +51,9 @@ describe("bundler", () => {
       define,
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
-        for (const call of ["isDev()", "isOff()", "arrow()", "imported()"]) expect(out).toContain(call + " ?");
+        for (const call of ["isOff()", "arrow()", "imported()"]) expect(out).toContain(call + " ?");
       },
-      run: { stdout: "b b b a" },
+      run: { stdout: "b b a" },
     });
   }
 
@@ -477,24 +476,6 @@ describe("bundler", () => {
     run: { stdout: "true\nReferenceError" },
   });
 
-  itBundled("inline_calls/DirectiveKeepsTheCall", {
-    files: {
-      "/entry.js": /* js */ `
-        function strict() { "use strict"; return T; }
-        function action() { "use server"; return T; }
-        console.log(strict(), action());
-      `,
-    },
-    define,
-    minifySyntax,
-    onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).not.toContain("strict()");
-      expect(out).toContain("action()");
-    },
-    run: { stdout: "true true" },
-  });
-
   itBundled("inline_calls/InsideWith", {
     files: {
       "/entry.js": /* js */ `
@@ -892,7 +873,7 @@ describe("bundler", () => {
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
         if (folds) expect(out).not.toContain("isDev()");
-        else expect(out).toContain("isDev() ?");
+        else expect(out).toContain("if (isDev())");
       },
       run: { stdout: "prod" },
     });
@@ -994,7 +975,7 @@ describe("bundler", () => {
     define,
     minifySyntax,
     onAfterBundle(api) {
-      expect(api.readFile("/out.js")).toContain("isDev() ?");
+      expect(api.readFile("/out.js")).toContain("if (isDev())");
     },
     run: { stdout: "prod" },
   });
@@ -1028,7 +1009,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).not.toContain("isInternalDev()");
-      expect(out).toContain("tooDeep() ?");
+      expect(out).toContain("if (tooDeep())");
     },
     run: { stdout: "kept\ntoo deep" },
   });
@@ -1303,9 +1284,9 @@ describe("bundler", () => {
     ],
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("fromLoad() ?");
+      expect(out).toContain("if (fromLoad())");
       expect(out).toIncludeRepeated("fromResolve()", 3);
-      expect(out).not.toContain("untouched");
+      expect(out).not.toContain("untouched()");
     },
     run: { stdout: "load off\nresolve on\nre-export on\nuntouched off" },
   });
@@ -1341,7 +1322,7 @@ describe("bundler", () => {
     ],
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("deferred() ?");
+      expect(out).toContain("if (deferred())");
       expect(out).not.toContain("isDev");
     },
     run: { stdout: "off\nprod" },

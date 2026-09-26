@@ -131,12 +131,15 @@ impl<'a> Lookup<'a> {
         let exports = self.parse(path).map(Arc::new);
         bun_core::scoped_log!(
             const_call,
-            "{}: {} value(s), {} re-export(s)",
+            "{}: {} value(s), {} re-export(s), redirect: {}",
             bstr::BStr::new(path.text),
             exports.as_ref().map_or(0, |exports| exports.values.len()),
             exports
                 .as_ref()
-                .map_or(0, |exports| exports.reexports.len())
+                .map_or(0, |exports| exports.reexports.len()),
+            exports
+                .as_ref()
+                .is_some_and(|exports| exports.redirect.is_some())
         );
         let mut modules = self.ctx.const_call_modules.modules.lock();
         bun_core::handle_oom(modules.put(&key, exports.clone()));
@@ -170,6 +173,7 @@ impl<'a> Lookup<'a> {
             crate::transpiler::to_parser_jsx_pragma(options.jsx.clone()),
             loader,
         );
+        // What a function returns depends on the defines, the feature flags and the source. The other options decide only which files have an answer.
         parser_options.bundle = true;
         parser_options.tree_shaking = options.tree_shaking;
         parser_options.warn_about_unbundled_modules = false;
@@ -181,11 +185,15 @@ impl<'a> Lookup<'a> {
             .bundler_feature_flags
             .as_deref()
             .map(|flags| Box::new(bun_core::handle_oom(flags.clone())));
+        // A file that is only `module.exports = require()` is a redirect in the bundle too.
+        parser_options.features.allow_runtime = true;
+        parser_options.features.unwrap_commonjs_to_esm = options.output_format
+            == crate::options::Format::Esm
+            && bun_core::FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
         parser_options.const_call_exports = Some(&exports);
         parser_options.const_call_lookup =
             inner.as_ref().map(|inner| inner as &dyn ConstCallLookup);
 
-        // The file reports its own errors when the bundler parses it for the bundle.
         let mut log = bun_ast::Log::init();
         let parser =
             Parser::init(parser_options, &mut log, &source, &options.define, &arena).ok()?;

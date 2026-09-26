@@ -12,7 +12,7 @@
  */
 
 import { join } from "node:path";
-import { bunExeName, type Config } from "./config.ts";
+import { bunExeName, portableResourceDir, type Config } from "./config.ts";
 import { quote, slash } from "./shell.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
@@ -96,6 +96,31 @@ export const globalFlags: Flag[] = [
     flag: c => `--sysroot=${c.sysroot!}`,
     when: c => c.sysroot !== undefined,
     desc: "Cross-compile sysroot (target libc headers + libs)",
+  },
+  {
+    // A distribution's clang has a resource directory whose builtins archive
+    // is compiled for glibc, with a red zone; the sysroot brings its own.
+    flag: c => `-resource-dir=${portableResourceDir(c.sysroot!)}`,
+    when: c => c.portable,
+    desc: "Portable: clang builtin headers and compiler-rt from the sysroot",
+  },
+  {
+    // Without it a distribution's clang puts its own libc++ headers
+    // (configured for glibc) in front of the sysroot's.
+    flag: c => ["-stdlib=libc++", "-stdlib++-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
+    when: c => c.portable,
+    lang: "cxx",
+    desc: "Portable: the sysroot's libc++, and its headers only",
+  },
+  {
+    // The image's ABI (Config.portable): the same code also runs where
+    // nothing preserves memory below the stack pointer and where the segment
+    // registers are not the image's to set, so thread-locals go through
+    // __emutls_get_address (compiler-rt, over pthread keys) instead of
+    // %fs-relative instructions.
+    flag: ["-mno-red-zone", "-femulated-tls"],
+    when: c => c.portable,
+    desc: "Portable: no red zone, emulated thread-locals",
   },
   {
     // Windows cross-compile: clang-cl can't read the VS dev shell's INCLUDE
@@ -709,13 +734,18 @@ export const bunOnlyFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-fno-pie"],
-    when: c => c.unix && c.abi !== "android",
+    when: c => c.unix && c.abi !== "android" && !c.portable,
     desc: "No position-independent code (we're a final executable)",
   },
   {
     flag: "-fPIC",
     when: c => c.abi === "android",
     desc: "Android requires PIE since API 21; bionic's loader rejects non-PIE",
+  },
+  {
+    flag: "-fPIE",
+    when: c => c.portable,
+    desc: "Portable: the image is a static-pie, mapped wherever its host finds room",
   },
 
   // ─── Warnings-as-errors (unix) ───
@@ -831,6 +861,12 @@ export const defines: Flag[] = [
   },
 
   // ─── Platform ───
+  {
+    // The C/C++ side's `--cfg=bun_portable` (rust.ts).
+    flag: "BUN_PORTABLE=1",
+    when: c => c.portable,
+    desc: "Portable image: no syscall instruction outside libc, no dynamic loader",
+  },
   {
     flag: "_DARWIN_NON_CANCELABLE=1",
     when: c => c.darwin,
@@ -949,6 +985,14 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,-mllvm,-emulated-tls",
     when: c => linkLtoIsRustOnly(c) && c.abi === "android",
     desc: "Rust-only LTO in the link: emulated TLS, as rustc generates for Android",
+  },
+  {
+    // The same for the portable image, whatever the link's LTO covers: `-femulated-tls` and `-Z tls-model=emulated`
+    // are options of the two code generators, and for bitcode the code generator is the linker's. (The red zone is
+    // a function attribute, which the bitcode does carry.)
+    flag: "-Wl,-mllvm,-emulated-tls",
+    when: c => c.portable && linkRunsLto(c),
+    desc: "Portable: LTO in the link generates emulated TLS too",
   },
 
   {
@@ -1285,8 +1329,32 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: ["-lstdc++", "-lgcc"],
-    when: c => c.linux && c.abi === "musl",
+    when: c => c.linux && c.abi === "musl" && !c.portable,
     desc: "Dynamic C++ runtime on musl (static unavailable)",
+  },
+  {
+    // -static-pie: rcrt1.o relocates the image itself; no PT_INTERP, no
+    // DT_NEEDED. The runtimes are the sysroot's, compiled with the image's
+    // ABI flags: compiler-rt's builtins (which has __emutls_get_address)
+    // through -resource-dir, libc++/libc++abi/libunwind from usr/lib.
+    flag: c => [
+      `-resource-dir=${portableResourceDir(c.sysroot!)}`,
+      "-rtlib=compiler-rt",
+      "-unwindlib=libunwind",
+      "-stdlib=libc++",
+      "-static-pie",
+    ],
+    when: c => c.portable,
+    desc: "Portable: static-pie against the sysroot's musl, libc++ and compiler-rt",
+  },
+  {
+    // The image's hosts map the file themselves, and the coarsest unit one
+    // of them maps in is 64 KiB (Windows' allocation granularity). Segments
+    // aligned to that in memory and in the file, none sharing a page with
+    // another, can each be mapped with its own protection everywhere.
+    flag: ["-Wl,-z,max-page-size=65536", "-Wl,-z,separate-loadable-segments"],
+    when: c => c.portable,
+    desc: "Portable: loadable segments aligned to 64 KiB, none sharing a page",
   },
   {
     flag: c => [
@@ -1325,7 +1393,7 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
-    when: c => c.linux && c.abi !== "android",
+    when: c => c.linux && c.abi !== "android" && !c.portable,
     desc: "No PIE (we don't need ASLR; simpler codegen)",
   },
   {

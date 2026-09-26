@@ -17,6 +17,7 @@
 ///
 /// # Safety
 /// Arguments must be valid for the syscall identified by `nr`.
+#[cfg(not(bun_portable))]
 #[inline(always)]
 unsafe fn raw_syscall6(
     nr: usize,
@@ -73,6 +74,33 @@ unsafe fn raw_syscall6(
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     compile_error!("raw_syscall6: unsupported architecture");
+}
+
+/// The portable image has no syscall instruction outside libc, which is where
+/// its host answers: the same call through libc's `syscall()`, and its
+/// `-1` + `errno` turned back into the in-band `-errno` the callers decode.
+///
+/// # Safety
+/// Arguments must be valid for the syscall identified by `nr`.
+#[cfg(bun_portable)]
+#[inline(always)]
+unsafe fn raw_syscall6(
+    nr: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+    a5: usize,
+    a6: usize,
+) -> isize {
+    // SAFETY: forwarded — see fn doc. Every argument is register-sized, which
+    // is what `syscall()` reads its variadic arguments as.
+    let ret = unsafe { libc::syscall(nr as libc::c_long, a1, a2, a3, a4, a5, a6) };
+    if ret != -1 {
+        return ret as isize;
+    }
+    // SAFETY: `__errno_location` returns the calling thread's `errno`.
+    -(unsafe { *libc::__errno_location() } as isize)
 }
 
 #[unsafe(no_mangle)]

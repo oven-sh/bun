@@ -69,6 +69,7 @@ export function generateBuildOptionsRs(cfg: CodegenFields): string {
     "pub const ENABLE_TINYCC: bool = !cfg!(any(",
     `    target_os = "android",`,
     `    target_os = "freebsd",`,
+    "    bun_portable,",
     "));",
     "",
   ];

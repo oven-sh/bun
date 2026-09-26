@@ -71,6 +71,14 @@ export interface Config {
   arch: Arch;
   /** Linux-only. undefined on darwin/windows. */
   abi: Abi | undefined;
+  /**
+   * The "portable image" target (`--portable`): one static-pie musl executable per architecture that a small
+   * native host maps on Linux, macOS and Windows. It keeps the Linux ABI and the System V calling convention and
+   * gives up what the other two kernels cannot provide to foreign code: the red zone, native thread-local
+   * instructions (%fs/%gs), a dynamic loader, and syscall instructions outside libc. Implies `abi: "musl"`,
+   * a local WebKit and no TinyCC; `sysroot` is the portable sysroot (`--portable-sysroot`).
+   */
+  portable: boolean;
 
   // ─── Derived platform booleans (computed from os/arch) ───
   linux: boolean;
@@ -402,6 +410,14 @@ export interface PartialConfig {
   freebsdVersion?: string;
   /** Linux glibc sysroot (pinned old glibc/libstdc++). Only used when linux && abi=gnu. */
   linuxSysroot?: string;
+  /** Build the portable image (see `Config.portable`). linux-x64 only. */
+  portable?: boolean;
+  /**
+   * Sysroot of the portable image: static musl, libc++/libc++abi/libunwind, ICU and a clang resource directory
+   * (`clang-resource-dir/`) with compiler-rt builtins, all compiled with the image's ABI flags. Default:
+   * $BUN_PORTABLE_SYSROOT. Only used when portable.
+   */
+  portableSysroot?: string;
   /**
    * macOS SDK path (a MacOSX*.sdk directory). Only used when cross-compiling
    * for darwin from a non-darwin host; native darwin builds use xcrun.
@@ -679,6 +695,29 @@ function ndkHostTag(host: Host): string {
 }
 
 /**
+ * The clang resource directory of a portable sysroot: clang's builtin headers, and compiler-rt's builtins and
+ * crtbegin/crtend compiled with the image's ABI flags. The host clang's own resource directory cannot stand in for
+ * it: its builtins archive is compiled for glibc, with a red zone.
+ */
+export function portableResourceDir(sysroot: string): string {
+  return join(sysroot, "clang-resource-dir");
+}
+
+/**
+ * Replacements for the C library's memory functions that a portable sysroot may carry: every object in
+ * `usr/lib/portable-memfn/`. musl's memcpy/memmove/memset are `rep movs`/`rep stos` loops and its memcmp a byte
+ * loop; the link takes these objects as inputs of their own, so libc.a's members of the same name are never loaded.
+ */
+export function portableMemFunctionObjects(sysroot: string): string[] {
+  const dir = join(sysroot, "usr", "lib", "portable-memfn");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter(name => name.endsWith(".o"))
+    .sort()
+    .map(name => join(dir, name));
+}
+
+/**
  * Make the host clang able to link Android binaries by symlinking the
  * NDK's compiler-rt builtins + libunwind into clang's resource dir.
  *
@@ -764,7 +803,16 @@ export function sharedCacheDir(cwd: string): string {
  * and what build_options.rs is generated from. resolveConfig() and resolveCodegenConfig() both start from it.
  */
 function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js: JsToolchain) {
-  const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : undefined;
+  const portable = partial.portable ?? false;
+  if (portable) {
+    if (os !== "linux" || arch !== "x64") {
+      throw new BuildError(`--portable builds linux-x64 only, not ${os}-${arch}`);
+    }
+    if (partial.abi !== undefined && partial.abi !== "musl") {
+      throw new BuildError(`--portable is a musl target; it cannot be combined with --abi=${partial.abi}`);
+    }
+  }
+  const abi: Abi | undefined = portable ? "musl" : os === "linux" ? (partial.abi ?? detectLinuxAbi()) : undefined;
 
   const linux = os === "linux";
   const darwin = os === "darwin";
@@ -800,8 +848,10 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
   // darwin ASAN/UBSan runtime dylibs (libclang_rt.*_osx_dynamic.dylib).
   // Windows cross: force off. The host clang doesn't ship the windows
   // clang_rt.asan runtime libs, so the link would fail.
+  // Portable: force off. The sanitizer runtimes keep their state in native
+  // thread-locals and issue syscalls of their own.
   const asan =
-    abi === "android" || freebsd || darwinCross || (windows && host.os !== "windows")
+    abi === "android" || freebsd || darwinCross || (windows && host.os !== "windows") || portable
       ? false
       : (partial.asan ?? asanDefault);
 
@@ -822,8 +872,10 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
   // mode=codegen writes a manifest and a compile_commands.json with no native edges in them, so it gets a
   // directory of its own: build/debug is where clangd reads compile_commands.json.
   const codegenSuffix = partial.mode === "codegen" ? "-codegen" : "";
+  // The portable image shares neither objects nor flags with the host's own build of the same profile.
+  const portableSuffix = portable ? "-portable" : "";
   const defaultBuildDirName =
-    computeBuildDirName({ debug, release, asan, assertions }) + crossWindowsSuffix + codegenSuffix;
+    computeBuildDirName({ debug, release, asan, assertions }) + crossWindowsSuffix + portableSuffix + codegenSuffix;
   const buildDir =
     partial.buildDir !== undefined
       ? isAbsolute(partial.buildDir)
@@ -874,6 +926,7 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
     revision,
     nodejsVersion,
     abi,
+    portable,
     linux,
     darwin,
     windows,
@@ -929,7 +982,7 @@ export function resolveCodegenConfig(partial: PartialConfig, toolchain: JsToolch
   const host = detectHost();
   const os = partial.os ?? host.os;
   const arch = partial.arch ?? host.arch;
-  const { linux, darwin, windows, freebsd, darwinCross, buildType, release, ci, buildkite, asan, ...base } =
+  const { portable, linux, darwin, windows, freebsd, darwinCross, buildType, release, ci, buildkite, asan, ...base } =
     resolveBase(partial, host, os, arch, toolchain);
   return { ...base, mode: "codegen", host, os, x64: arch === "x64" };
 }
@@ -949,6 +1002,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const arch = partial.arch ?? compilerArch ?? host.arch;
   const {
     abi,
+    portable,
     linux,
     darwin,
     windows,
@@ -1005,7 +1059,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // on both repos pinning the same LLVM: tools.ts enforces LLVM_VERSION on
   // clang and ld.lld (a native macOS link runs that clang's libLTO; lld-link
   // and ld64.lld are looked up beside it but not version-checked).
-  const ltoDefault = release && !assertions && !asan;
+  // Portable: off unless asked for. Its WebKit is always built locally, and a link that runs ThinLTO over JSC,
+  // bun's C++ and the crates has not been tried for this target; the crates alone are optimised in the link.
+  const ltoDefault = release && !assertions && !asan && !portable;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
   // Android, FreeBSD: not enabled (never built that way; untested).
@@ -1097,7 +1153,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // TinyCC: off on Android (no upstream bionic support; FFI cc() falls back
   // to dlopen-only) and FreeBSD (oven-sh/tinycc has no FreeBSD target).
-  const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
+  // Portable: off. bun:ffi binds what TinyCC compiles to symbols of shared
+  // libraries, and a static image has no dynamic loader to open one with.
+  if (portable && partial.tinycc === true) {
+    throw new BuildError("--portable cannot be combined with --tinycc=on");
+  }
+  const tinycc = partial.tinycc ?? !(abi === "android" || freebsd || portable);
 
   const valgrind = partial.valgrind ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
@@ -1182,6 +1243,43 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       // No compiler-rt symlinking needed (unlike Android): FreeBSD's base
       // ships libgcc.a (which IS compiler-rt builtins, renamed for compat)
       // in /usr/lib, and clang's freebsd driver finds it via --sysroot.
+    }
+  }
+
+  // ─── Portable image ───
+  // Host clang + --target/--sysroot like the other cross targets. The sysroot is not a distribution's: everything
+  // in it (musl, libc++, compiler-rt, ICU) has to be compiled with the image's ABI flags, so it is built for the
+  // purpose and named explicitly.
+  if (portable) {
+    const given = partial.portableSysroot ?? process.env.BUN_PORTABLE_SYSROOT;
+    if (given === undefined || given === "") {
+      throw new BuildError("--portable requires the portable sysroot", {
+        hint: "Pass --portable-sysroot=<path> or set BUN_PORTABLE_SYSROOT",
+      });
+    }
+    sysroot = isAbsolute(given) ? given : resolve(cwd, given);
+    crossTarget = `${x64 ? "x86_64" : "aarch64"}-linux-musl`;
+    const rustTriple = `${x64 ? "x86_64" : "aarch64"}-unknown-linux-musl`;
+    const required = [
+      join(sysroot, "usr", "lib", "libc.a"),
+      join(sysroot, "usr", "lib", "rcrt1.o"),
+      join(sysroot, "usr", "lib", "libc++.a"),
+      join(sysroot, "usr", "lib", "libunwind.a"),
+      join(sysroot, "usr", "lib", "libicuuc.a"),
+      join(sysroot, "usr", "include", "c++", "v1"),
+      join(portableResourceDir(sysroot), "include"),
+      join(portableResourceDir(sysroot), "lib", rustTriple, "libclang_rt.builtins.a"),
+    ];
+    const missing = required.filter(p => !existsSync(p));
+    if (missing.length > 0) {
+      throw new BuildError(`the portable sysroot at ${sysroot} is incomplete`, {
+        hint: `Missing:\n  ${missing.join("\n  ")}`,
+      });
+    }
+    if (partial.webkit === "prebuilt") {
+      throw new BuildError("--portable requires a locally built WebKit", {
+        hint: "The prebuilt WebKit archives are compiled with native thread-locals and a red zone. Drop --webkit=prebuilt and set $BUN_WEBKIT_PATH (or clone oven-sh/WebKit to vendor/WebKit).",
+      });
     }
   }
 
@@ -1334,6 +1432,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     os,
     arch,
     abi,
+    portable,
     linux,
     darwin,
     windows,
@@ -1342,7 +1441,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     x64,
     arm64,
     host,
-    canRunOnHost: os === host.os && arch === host.arch && (!linux || abi === (detectLinuxAbi() ?? abi)),
+    // The portable image is a static executable: any Linux kernel of its architecture runs it, whatever the host's libc.
+    canRunOnHost:
+      os === host.os && arch === host.arch && (!linux || portable || abi === (detectLinuxAbi() ?? abi)),
     exeSuffix,
     objSuffix,
     libPrefix,
@@ -1372,7 +1473,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     timeTrace: partial.timeTrace ?? false,
     ci,
     buildkite,
-    webkit: partial.webkit ?? "prebuilt",
+    webkit: partial.webkit ?? (portable ? "local" : "prebuilt"),
     localDeps: parseLocalDeps(partial.localDeps, cwd),
     packageManager,
     cwd,
@@ -1751,6 +1852,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }
+  if (cfg.portable) features.push("portable");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

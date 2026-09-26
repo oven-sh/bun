@@ -1,0 +1,17 @@
+--- a/src/alloc.c	2026-09-26 02:35:02.272793680 +0000
++++ b/src/alloc.c	2026-09-26 02:35:02.287699287 +0000
+@@ -270,8 +270,14 @@
+ // Main allocation functions
+ 
+ mi_decl_nodiscard extern inline mi_decl_restrict void* mi_theap_malloc(mi_theap_t* theap, size_t size) mi_attr_noexcept {
++  #if MI_THEAP_INITASNULL
++  // Bun: mi_new, mi_new_n, mi_mallocn and mi_strdup pass _mi_theap_default() here, which in the TLS models that
++  // start a thread with a NULL theap (pthread keys, TLS slots) is NULL until the thread has allocated.
++  return _mi_theap_malloc_zero(theap, size, false, 0, NULL);
++  #else
+   mi_assert(theap!=NULL);
+   return mi_theap_malloc_zero_nonnull(theap, size, false, 0, NULL);
++  #endif
+ }
+ 
+ mi_decl_nodiscard mi_decl_restrict void* mi_malloc(size_t size) mi_attr_noexcept {

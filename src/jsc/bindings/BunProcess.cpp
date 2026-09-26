@@ -546,6 +546,18 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     Bun__process_dlopen_count++;
 
+#if defined(BUN_PORTABLE)
+    // The portable image is one static executable: it has no dynamic loader,
+    // and its libc's dlopen() only ever fails. Say so, with the addon's name.
+    {
+        WTF::StringBuilder msg;
+        msg.append("Cannot load native addon "_s);
+        msg.append(filename);
+        msg.append(": this build of Bun is one static executable and cannot load shared libraries."_s);
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg.toString());
+    }
+#endif
+
 #if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);
     HMODULE handle = Bun__LoadLibraryBunString(&filename_str);

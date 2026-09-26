@@ -41,7 +41,7 @@ export const WEBKIT_VERSION = "35e8970dfd926abf6661c9d356f5d60d8f611c9b";
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { Config } from "../config.ts";
+import { portableResourceDir, type Config } from "../config.ts";
 import { computeCpuTargetFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
 import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
@@ -250,7 +250,19 @@ export const webkit: Dependency = {
     // -no-pie rides along in CMAKE_C_FLAGS so try_compile() probes link on
     // PIE-default distros — without it the driver still passes -pie and the
     // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
-    if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
+    if (cfg.unix && cfg.abi !== "android" && !cfg.portable) optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
+    // Portable: the image's target, sysroot and ABI flags (flags.ts globalFlags has the same, with the reasons).
+    // Not a cmake cross-compile: the host's kernel runs what the probes link, a static executable.
+    if (cfg.portable) {
+      optFlags.push(
+        `--target=${cfg.crossTarget!}`,
+        `--sysroot=${cfg.sysroot!}`,
+        `-resource-dir=${portableResourceDir(cfg.sysroot!)}`,
+        "-mno-red-zone",
+        "-femulated-tls",
+        "-fPIE",
+      );
+    }
     if (cfg.lto) optFlags.push("-flto=thin");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
@@ -284,6 +296,8 @@ export const webkit: Dependency = {
     } else if (cfg.freebsd && cfg.sysroot !== undefined) {
       const inc = join(cfg.sysroot, "usr", "include");
       cxxOptFlagStr += ` -nostdlibinc -isystem ${join(inc, "c++", "v1")} -isystem ${inc}`;
+    } else if (cfg.portable) {
+      cxxOptFlagStr += ` -stdlib=libc++ -stdlib++-isystem ${join(cfg.sysroot!, "usr", "include", "c++", "v1")}`;
     }
     const args: Record<string, string> = {
       CMAKE_C_FLAGS: optFlagStr,
@@ -324,6 +338,14 @@ export const webkit: Dependency = {
       // PT_LOAD. Android (PIE) overrides via the -fPIC in optFlags above
       // never being suppressed there.
       ...(cfg.abi !== "android" ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
+      // Portable: what WebKit's build links for itself (the LLInt offset extractors, cmake's probes) is linked the
+      // way the image is. ICU is the sysroot's: static, compiled with the image's ABI flags.
+      ...(cfg.portable
+        ? {
+            CMAKE_EXE_LINKER_FLAGS: `--ld-path=${cfg.ld} -static-pie -rtlib=compiler-rt -unwindlib=libunwind`,
+            ICU_ROOT: join(cfg.sysroot!, "usr"),
+          }
+        : {}),
       PORT: "JSCOnly",
       ENABLE_STATIC_JSC: "ON",
       USE_THIN_ARCHIVES: "OFF",
@@ -347,7 +369,9 @@ export const webkit: Dependency = {
 
     const spec: NestedCmakeBuild = {
       kind: "nested-cmake",
-      targets: ["jsc"],
+      // Portable: the libraries, without the jsc shell. The shell links the mimalloc WebKit vendors, which is
+      // configured by WebKit's build and not for emulated TLS (deps/mimalloc.ts).
+      targets: cfg.portable ? ["JavaScriptCore", "WTF", "bmalloc"] : ["jsc"],
       args,
       // Release local WebKit keeps debug info so JSC crashes symbolicate.
       // LTO stays plain Release (debug info + LTO bloats significantly).

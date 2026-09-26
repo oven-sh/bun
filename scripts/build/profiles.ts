@@ -144,6 +144,19 @@ export const profiles = {
   },
 
   /**
+   * The portable image (config.ts `portable`): one static-pie musl executable, WebKit built locally with the
+   * image's ABI flags. Requires --portable-sysroot (or $BUN_PORTABLE_SYSROOT) and a WebKit checkout
+   * ($BUN_WEBKIT_PATH or vendor/WebKit).
+   */
+  portable: {
+    buildType: "Release",
+    os: "linux",
+    arch: "x64",
+    portable: true,
+    webkit: "local",
+  },
+
+  /**
    * Release + assertions + logs. RelWithDebInfo → cargo `release` profile
    * with `debug-assertions = true` (runtime safety checks), matching the
    * old cmake build:assert script.

@@ -24,6 +24,10 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
+  // Portable: in the pthread-key TLS model (below) the default heap of a thread that has not allocated yet is
+  // NULL, and mi_new/mi_new_n/mi_mallocn hand it to mi_theap_malloc, which does not accept NULL.
+  patches: cfg => (cfg.portable ? ["patches/mimalloc/portable-theap-null-in-new.patch"] : []),
+
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
     //   ASAN:    OFF — ASAN interceptors must see the real malloc.
@@ -76,6 +80,10 @@ export const mimalloc: Dependency = {
     if (cfg.linux) defines.MI_DEFAULT_ALLOW_THP = 0;
 
     if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
+    // Portable: mimalloc keeps its default heap in a compiler thread-local, which under -femulated-tls is a call
+    // to compiler-rt's __emutls_get_address, which allocates a thread's block with malloc, which is mimalloc:
+    // the first allocation never returns. A pthread key holds the heap instead. (MI_PRIM_THREAD_ID is in cflags.)
+    if (cfg.portable) defines.MI_TLS_MODEL_PTHREADS = 1;
     if (override) defines.MI_MALLOC_OVERRIDE = true;
 
     if (cfg.debug) {
@@ -111,7 +119,12 @@ export const mimalloc: Dependency = {
     // addons because musl's static TLS block is fixed-size. ELF/Mach-O
     // only — clang-cl doesn't recognize -ftls-model (COFF has no TLS
     // models; mimalloc's cmake gates it behind NOT WIN32 too).
-    if (!cfg.windows) {
+    // Portable: no native TLS, so no model of it. The thread id mi_free compares is the thread pointer, which
+    // mimalloc reads with inline `mov %fs:0` under MI_LIBC_MUSL; its hook for another source names pthread_self.
+    // A bare token, like MI_CMAKE_BUILD_TYPE above.
+    if (cfg.portable) {
+      cflags.push("-DMI_PRIM_THREAD_ID=pthread_self");
+    } else if (!cfg.windows) {
       cflags.push(cfg.abi === "musl" ? "-ftls-model=local-dynamic" : "-ftls-model=initial-exec");
     }
 

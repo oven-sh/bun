@@ -24,7 +24,7 @@ import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations, exportList, shimExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
-import { bunExeName, shouldStrip, type Config } from "./config.ts";
+import { bunExeName, portableMemFunctionObjects, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
@@ -73,10 +73,13 @@ function systemLibs(cfg: Config): string[] {
       // The static path needs to be the actual file path for lld to find it;
       // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets
       // found in lib search paths, -latomic.so doesn't exist so we use -latomic.
-      if (cfg.staticLibatomic) {
-        libs.push("-l:libatomic.a");
-      } else {
-        libs.push("-latomic");
+      // Portable: none. libatomic is GCC's; the sysroot's runtime is compiler-rt.
+      if (!cfg.portable) {
+        if (cfg.staticLibatomic) {
+          libs.push("-l:libatomic.a");
+        } else {
+          libs.push("-latomic");
+        }
       }
     }
     // Linux local WebKit: link system ICU (prebuilt bundles its own).
@@ -455,7 +458,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // turn reference JSC/WTF, depLibs satisfies those. Every `#[no_mangle]`
   // export the C++ side touches is reached from those roots.
   const shims = emitShims(n, cfg);
-  const linkObjects = [...(archive !== undefined ? [archive] : allObjects), ...rustObjects, ...windowsRes];
+  // Portable: the sysroot's replacements for libc's memory functions. Link inputs of their own, so that they define
+  // memcpy and the rest before any archive is read and libc.a's members of the same name are never loaded.
+  const memFunctions = cfg.portable ? portableMemFunctionObjects(cfg.sysroot!) : [];
+  const linkObjects = [
+    ...(archive !== undefined ? [archive] : allObjects),
+    ...rustObjects,
+    ...windowsRes,
+    ...memFunctions,
+  ];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,

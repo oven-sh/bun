@@ -12,7 +12,8 @@ pub type TCCErrorFunc = Option<unsafe extern "C" fn(opaque: *mut c_void, msg: *c
 pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char);
 
 // `libtcc.a` is only built where `cfg.tinycc` is true (`scripts/build/config.ts`):
-// not Android, not FreeBSD (the vendored fork doesn't support those targets).
+// not Android, not FreeBSD (the vendored fork doesn't support those targets),
+// not the portable image (`bun_portable`: no dynamic loader to bind against).
 // On those platforms these `extern "C"` decls would be undefined at link:
 // `bun_runtime::ffi::ffi_body::{Source::add,
 // CompileC::compile}` are reachable from `extern "C"` JS bindings and the
@@ -30,12 +31,12 @@ macro_rules! tcc_externs {
         mod raw {
             use super::*;
 
-            #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
+            #[cfg(not(any(target_os = "android", target_os = "freebsd", bun_portable)))]
             unsafe extern "C" {
                 $($(#[$attr])* pub(super) fn $name($($arg: $ty),*) $(-> $ret)?;)*
             }
             $(
-                #[cfg(any(target_os = "android", target_os = "freebsd"))]
+                #[cfg(any(target_os = "android", target_os = "freebsd", bun_portable))]
                 #[allow(unused_variables, clippy::missing_safety_doc)]
                 pub(super) unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
                     unreachable!(concat!(

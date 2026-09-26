@@ -841,3 +841,46 @@ test("CONNECT: process exits after the tunnel socket is re-emitted as a connecti
     signalCode: null,
   });
 });
+
+// The client socket is unref'd, so only the server side of the tunnel can keep
+// the process alive. Like a Node socket, it does so until it reads EOF.
+test("CONNECT: an open tunnel keeps the process alive after the server closes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const http = require("node:http");
+       const server = http.createServer();
+       server.on("connect", (req, socket) => {
+         socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+         socket.on("data", data => socket.write(data));
+         socket.on("end", () => {
+           console.log("server end");
+           socket.end();
+         });
+         server.close();
+       });
+       server.listen(0, () => {
+         const req = http.request({ port: server.address().port, method: "CONNECT" });
+         req.on("connect", (res, client) => {
+           client.unref();
+           client.on("data", data => {
+             console.log("client got " + data);
+             client.end();
+           });
+           client.write("ping");
+         });
+         req.end();
+       });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "client got ping\nserver end\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

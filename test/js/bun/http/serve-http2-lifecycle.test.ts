@@ -42,13 +42,15 @@ describe("Bun.serve http2 + http3 on one port", () => {
     expect((await request(session, { ":path": "/reload" })).body.toString()).toBe("reloaded");
     expect((await request(session, { ":path": "/reloaded-route" })).body.toString()).toBe("after-reload");
     expect(await (await fetchH3(fx.port, "/reloaded-route")).text()).toBe("after-reload");
-    // graceful stop with one slow stream in flight on each transport
+    // graceful stop with one slow stream in flight on each transport. The h2
+    // session can close before slow3's body arrives over h3, so listen first.
+    const closed = new Promise<void>(r => session.once("close", () => r()));
     const slow2 = request(session, { ":path": "/slow?ms=300" });
     const slow3 = fetchH3(fx.port, "/slow?ms=300").then(r => r.text());
     expect((await request(session, { ":path": "/stop" })).body.toString()).toBe("stopping");
     expect((await slow2).body.toString()).toBe("slow");
     expect(await slow3).toBe("slow");
-    await new Promise<void>(r => session.once("close", () => r()));
+    await closed;
   }, 30000);
 
   test("http1: false with both h2 and h3", async () => {

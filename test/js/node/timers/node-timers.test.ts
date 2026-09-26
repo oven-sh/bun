@@ -1,6 +1,7 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
+import net, { type AddressInfo } from "node:net";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -340,4 +341,176 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
+});
+
+// Node's loop runs the poll (I/O callbacks), then the check phase
+// (setImmediate), then the timers. The caller of the loop checks its own
+// condition (a promise, an unhandled rejection, whether the loop is alive)
+// after the timers, before the next poll.
+describe.concurrent("event loop phases", () => {
+  async function run(cmd: string[], env: Record<string, string | undefined> = bunEnv, cwd?: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A connected loopback pair. `onData` runs in the client's first I/O callback.
+  const pair = `
+    const net = require("net");
+    function pair(onData) {
+      let serverSocket;
+      const server = net.createServer(socket => {
+        serverSocket = socket;
+        socket.write("go");
+      });
+      server.listen(0, () => {
+        const client = net.connect(server.address().port);
+        client.once("data", () => onData(client, server, serverSocket));
+      });
+    }
+    function busy(ms) {
+      const end = performance.now() + ms;
+      while (performance.now() < end) {}
+    }
+  `;
+
+  // On Windows, libuv runs the timers inside its poll, so the timer fires first there.
+  test.skipIf(isWindows)("an immediate queued by an I/O callback runs before a timer that came due in it", async () => {
+    const script = `${pair}
+      pair((client, server) => {
+        const order = [];
+        const done = () => order.length === 2 && (console.log(order.join(",")), client.destroy(), server.close());
+        setTimeout(() => (order.push("timeout"), done()), 1);
+        busy(5);
+        setImmediate(() => (order.push("immediate"), done()));
+      });
+    `;
+    expect(await run(["-e", script])).toEqual({ stdout: "immediate,timeout\n", stderr: "", exitCode: 0 });
+  });
+
+  test("a timer that came due in an I/O callback runs before a thread pool callback", async () => {
+    const script = `${pair}
+      const crypto = require("crypto");
+      pair((client, server) => {
+        const order = [];
+        const done = () => order.length === 2 && (console.log(order.join(",")), client.destroy(), server.close());
+        crypto.pbkdf2("a", "b", 1, 8, "sha256", () => (order.push("pool"), done()));
+        setTimeout(() => (order.push("timeout"), done()), 1);
+        busy(20);
+      });
+    `;
+    expect(await run(["-e", script])).toEqual({ stdout: "timeout,pool\n", stderr: "", exitCode: 0 });
+  });
+
+  // Node runs a thread pool callback in the poll phase, so the connect it
+  // starts completes in a later poll, after the check phase.
+  test("an immediate queued by a thread pool callback runs before the connect that callback started", async () => {
+    const script = `
+      const fs = require("fs");
+      const net = require("net");
+      const server = net.createServer(socket => socket.end());
+      server.listen(0, () => {
+        fs.stat(".", () => {
+          const order = [];
+          const client = net.connect(server.address().port, "127.0.0.1");
+          client.on("connect", () => order.push("connect"));
+          setImmediate(() => order.push("immediate"));
+          client.on("close", () => (console.log(order.join(",")), server.close()));
+        });
+      });
+    `;
+    expect(await run(["-e", script])).toEqual({ stdout: "immediate,connect\n", stderr: "", exitCode: 0 });
+  });
+
+  test("a due unref'd timer runs after an I/O callback unrefs the last handle", async () => {
+    const script = `${pair}
+      const order = [];
+      process.on("exit", () => console.log(order.join(",")));
+      pair((client, server, serverSocket) => {
+        setTimeout(() => order.push("timeout"), 1).unref();
+        busy(5);
+        client.unref();
+        serverSocket.unref();
+        server.unref();
+        order.push("unref");
+      });
+    `;
+    expect(await run(["-e", script])).toEqual({ stdout: "unref,timeout\n", stderr: "", exitCode: 0 });
+  });
+
+  // The 'unhandledRejection' listener runs only if the rejection is still
+  // unhandled when it is reported. The process then closes its sockets and exits.
+  test("a rejection in a timer is reported before the next I/O callback can handle it", async () => {
+    const script = `${pair}
+      const order = [];
+      process.on("unhandledRejection", error => order.push("unhandled: " + error.message));
+      process.on("exit", () => console.log(order.join(",")));
+      let rejected;
+      pair((client, server, serverSocket) => {
+        serverSocket.on("data", () => {
+          order.push("data");
+          rejected.catch(() => {});
+          client.destroy();
+          server.close();
+        });
+        setTimeout(() => {
+          client.write("x");
+          rejected = Promise.reject(new Error("rejected in a timer"));
+        }, 1);
+      });
+    `;
+    const { stdout, exitCode } = await run(["-e", script]);
+    expect(stdout).toBe("unhandled: rejected in a timer,data\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // `expect(promise).resolves` waits for a pending promise in a nested loop.
+  // There, an I/O callback does not drain the nextTick queue when it returns.
+  test("in a nested loop, a nextTick queued by an I/O callback runs before an immediate it queued", async () => {
+    const order: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const server = net.createServer(socket => socket.end("x"));
+    server.listen(0, () => {
+      const client = net.connect((server.address() as AddressInfo).port);
+      client.on("data", () => {
+        setImmediate(() => {
+          order.push("immediate");
+          client.destroy();
+          server.close();
+          resolve();
+        });
+        process.nextTick(() => order.push("tick"));
+      });
+    });
+    await expect(promise).resolves.toBeUndefined();
+    expect(order).toEqual(["tick", "immediate"]);
+  });
+
+  // A preload's promise is awaited by the loop's caller. The listening server
+  // keeps the loop active and the GC timer is off, so a poll that waited after
+  // the promise settled would not return before the test times out.
+  const preloadTest = (what: string, awaited: string) =>
+    test(`a preload that awaits ${what} does not wait for I/O before the entry point runs`, async () => {
+      using dir = tempDir("timers-phase-preload", {
+        "preload.mjs": `
+          import net from "node:net";
+          globalThis.server = net.createServer();
+          await new Promise(resolve => globalThis.server.listen(0, resolve));
+          await new Promise(resolve => ${awaited});
+        `,
+        "main.mjs": `
+          console.log("main");
+          globalThis.server.close();
+        `,
+      });
+      const env = { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" };
+      expect(await run(["--preload", "./preload.mjs", "./main.mjs"], env, String(dir))).toEqual({
+        stdout: "main\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  preloadTest("a timer", "setTimeout(resolve, 1)");
+  // On Windows the check phase runs before the poll, so this wait still parks there.
+  if (!isWindows) preloadTest("an immediate", "setImmediate(resolve)");
 });

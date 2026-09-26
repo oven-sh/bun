@@ -156,7 +156,7 @@ enum class CompressionFormat : uint8_t {
 enum class CodecStepEnd : uint8_t {
     Done = 0,
     More = 1, // the coder kept the tail of the chunk: step it again, with no input, before the next chunk
-    TrailingJunk = 2, // the output came ahead of trailing junk: deliver it, then throw the junk error
+    TrailingJunk = 2, // trailing junk follows the output: deliver it, then throw the junk error
 };
 
 // JSReadableStream Bun-mode members

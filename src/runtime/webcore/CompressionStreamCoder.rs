@@ -66,7 +66,7 @@ pub(crate) enum StepEnd {
     Done = 0,
     /// The codec stopped at the output cap: step again, with no input, before the next chunk.
     More = 1,
-    /// `out` was decoded ahead of trailing junk: the caller delivers it, then fails the chunk.
+    /// Trailing junk follows `out`: the caller delivers it, then fails the chunk with the junk error.
     TrailingJunk = 2,
 }
 
@@ -379,7 +379,7 @@ impl CompressionStreamCoder {
         }
     }
 
-    /// [`advance`](Self::advance) for the callers: a failed step has no output, and junk met after output ends the step.
+    /// [`advance`](Self::advance) for the callers: a failed step has no output, and trailing junk ends the step.
     fn step(
         &mut self,
         input: &[u8],
@@ -390,7 +390,7 @@ impl CompressionStreamCoder {
         match self.advance(input, finish, out) {
             Ok(false) => Ok(StepEnd::Done),
             Ok(true) => Ok(StepEnd::More),
-            Err(CodecError::TrailingJunk) if !out.is_empty() => Ok(StepEnd::TrailingJunk),
+            Err(CodecError::TrailingJunk) => Ok(StepEnd::TrailingJunk),
             Err(e) => {
                 out.clear();
                 Err(e)

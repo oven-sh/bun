@@ -470,7 +470,7 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
     }
     if (error && !thrown) {
         thrown = JSValue::decode(error);
-        if (stream->m_codecPromise)
+        if (outLen && stream->m_codecPromise)
             transformStreamKeepQueuedOutputReadable(vm, stream, thrown);
     }
 

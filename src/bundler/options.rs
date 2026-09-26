@@ -206,14 +206,8 @@ pub(crate) use bun_ast::Target;
 // module-level name for callers that pre-date it.
 pub use bun_ast::target::TARGET_MAP;
 
-pub(crate) const TARGET_MAIN_FIELD_NAMES: [&[u8]; 4] = [
-    b"browser",
-    b"module",
-    b"main",
-    // https://github.com/jsforum/jsforum/issues/5
-    // Older packages might use jsnext:main in place of module
-    b"jsnext:main",
-];
+// Re-export of the byte view in `bun_resolver::options`, kept under its pre-existing name.
+pub(crate) use bun_resolver::options::ALL_DEFAULT_MAIN_FIELD_NAMES as TARGET_MAIN_FIELD_NAMES;
 
 // Note that this means if a package specifies "module" and "main", the ES6
 // module will not be selected. This means tree shaking will not work when

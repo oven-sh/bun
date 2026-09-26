@@ -883,6 +883,18 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     dispatchExitInternal(globalObject, process, exitCode);
 }
 
+// `process._exiting`: the 'exit' listeners have started (or reallyExit ran).
+extern "C" bool Bun__Process__isExiting(Zig::GlobalObject* globalObject)
+{
+    return globalObject->hasProcessObject() && globalObject->processObject()->m_isExiting;
+}
+
+// `process.exitCode` is not undefined.
+extern "C" bool Bun__Process__hasExitCode(Zig::GlobalObject* globalObject)
+{
+    return globalObject->hasProcessObject() && globalObject->processObject()->m_isExitCodeObservable;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     double now = static_cast<double>(Bun__readOriginTimer(bunVM(lexicalGlobalObject)));

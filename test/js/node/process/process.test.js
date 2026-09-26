@@ -1025,6 +1025,118 @@ describe.concurrent(() => {
       expect(exitCode).toBe(1);
     });
 
+    it("is skipped after a fatal unhandled rejection from the last timer", async () => {
+      // The rejection is processed when the timers phase ends (Node's
+      // processTicksAndRejections), so the run is already failing when the loop
+      // is found drained: no 'beforeExit', and 'exit' listeners see code 1.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("beforeExit", () => console.log("beforeExit"));
+           process.on("exit", c => console.log("exit", c, process.exitCode));
+           setTimeout(() => Promise.reject(new Error("boom")), 1);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("exit 1 1\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("an async listener's continuation runs, and a throw from it is fatal", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let n = 0;
+           process.on("beforeExit", async () => { if (n++) return; await null; console.log("continued"); throw new Error("late"); });
+           process.on("exit", c => console.log("exit", c));`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("continued\nexit 1\n");
+      expect(stderr).toInclude("error: late");
+      expect(exitCode).toBe(1);
+    });
+
+    it("fires after the work an unhandledRejection listener scheduled from the last callback", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("unhandledRejection", e => {
+             console.log("unhandledRejection", e.message);
+             setTimeout(() => console.log("late work"), 1);
+           });
+           process.on("beforeExit", () => console.log("beforeExit"));
+           setImmediate(() => Promise.reject(new Error("boom")));`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("unhandledRejection boom\nlate work\nbeforeExit\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a rejection from work scheduled inside beforeExit is reported before beforeExit is re-emitted", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("unhandledRejection", e => console.log("unhandledRejection", e.message));
+           let scheduled = false;
+           process.on("beforeExit", () => {
+             console.log("beforeExit");
+             if (scheduled) return;
+             scheduled = true;
+             setImmediate(() => Promise.reject(new Error("late")));
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("beforeExit\nunhandledRejection late\nbeforeExit\n");
+      expect(stderr).not.toInclude("error: late");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a listener recovers from a rejection a beforeExit listener made, after a microtask hop", async () => {
+      // The 'unhandledRejection' listener reaches setTimeout only after a
+      // microtask (what an await compiles to); that checkpoint has to run before
+      // the loop is judged dead, and 'beforeExit' then fires a second time.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let n = 0;
+           process.on("beforeExit", () => {
+             console.log("beforeExit#" + ++n);
+             if (n === 1) Promise.reject(new Error("from beforeExit"));
+           });
+           process.on("unhandledRejection", () => {
+             console.log("handler");
+             Promise.resolve().then(() => setTimeout(() => console.log("recovered"), 1));
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "beforeExit#1\nhandler\nrecovered\nbeforeExit#2\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("still fires when an uncaughtException listener handled the throw", async () => {
       await using proc = Bun.spawn({
         cmd: [
@@ -2577,6 +2689,56 @@ describe("process.exitCode", () => {
       "",
       6,
     );
+  });
+
+  // Node exits at the rejection. Bun goes on while the entry's await is pending, and keeps the 1.
+  it("process.exit() after an unhandled rejection", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      await new Promise(resolve => setTimeout(() => { Promise.reject(new Error("boom")); setImmediate(resolve); }, 1));
+      process.exit();
+    `,
+      "exit 1 1\n",
+      1,
+    );
+  });
+
+  // Node's fatal-exception handler leaves process.exitCode alone once 'exit' is
+  // being emitted (process._exiting), and the process then exits with
+  // process.exitCode, or with 1 when that is still undefined.
+  describe.concurrent("an 'exit' listener that throws does not replace the exit code in effect", () => {
+    const listener = `process.on("exit", code => { console.log("exit", code, process.exitCode); throw new Error("cleanup failed"); });`;
+    it.each([
+      ["process.exitCode = 4", `process.exitCode = 4; ${listener}`, "exit 4 4\n", 4],
+      ["process.exitCode = 0", `process.exitCode = 0; ${listener}`, "exit 0 0\n", 0],
+      ["no exit code", listener, "exit 0 undefined\n", 1],
+      [
+        "process.exitCode set by the listener",
+        `process.on("exit", () => { process.exitCode = 9; throw new Error("cleanup failed"); });`,
+        "",
+        9,
+      ],
+      ["process.exit(7)", `${listener} process.exit(7);`, "exit 7 7\n", 7],
+      ["process.exit(0)", `${listener} process.exit(0);`, "exit 0 0\n", 0],
+      ["process.exit()", `${listener} process.exit();`, "exit 0 undefined\n", 1],
+      [
+        "process.exitCode = 4, then process.exit()",
+        `process.exitCode = 4; ${listener} process.exit();`,
+        "exit 4 4\n",
+        4,
+      ],
+      [
+        "an unhandled rejection, then process.exitCode set by the listener",
+        `process.on("exit", code => { console.log("exit", code, process.exitCode); process.exitCode = 98; throw new Error("cleanup failed"); });
+         Promise.reject(new Error("oops"));`,
+        "exit 1 1\n",
+        98,
+      ],
+      ["an uncaught exception", `${listener} setTimeout(() => { throw new Error("boom"); }, 1);`, "exit 1 1\n", 1],
+    ])("%s", async (_label, script, stdout, code) => {
+      await runInlineFixture(script, stdout, code);
+    });
   });
 });
 

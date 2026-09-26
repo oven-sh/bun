@@ -454,6 +454,8 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Bun__Process__isExiting(global: &JSGlobalObject) -> bool;
+    safe fn Bun__Process__hasExitCode(global: &JSGlobalObject) -> bool;
     safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -750,6 +752,8 @@ pub struct ExitHandler {
     /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
     /// See `VirtualMachine::exit_tears_down_napi_envs`.
     pub requested: bool,
+    /// `bun repl`: the errors a session reports do not decide its exit code.
+    pub interactive: bool,
 }
 
 impl ExitHandler {
@@ -816,6 +820,10 @@ impl ExitHandler {
         let _ = jsc::from_js_host_call_generic(global, || {
             Process__dispatchOnBeforeExit(global, exit_code)
         });
+        // Ticks-and-rejections checkpoint for the listeners, before the caller's loop-alive check.
+        if vm.event_loop_mut().drain_microtasks().is_ok() {
+            let _ = global.handle_rejected_promises();
+        }
     }
 }
 
@@ -2124,7 +2132,7 @@ impl VirtualMachine {
                 // code 7). Report it to the parent + arm termination via the
                 // normal path; process_exit() RETURNS on a worker, so the
                 // main-thread process_exit(7)+panic below would crash.
-                self.exit_handler.exit_code = 1;
+                self.fail_exit_code();
                 (self.on_unhandled_rejection)(self, global_object, err);
                 return false;
             }
@@ -2152,13 +2160,15 @@ impl VirtualMachine {
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
                 self.is_handling_uncaught_exception = false;
+                self.fail_exit_code();
+                let code = self.exit_handler.exit_code;
                 // SAFETY: see above.
-                unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+                unsafe { (hooks.process_exit)(global_object.as_ptr(), code) };
                 panic!("made it past process.exit()");
             }
             // TODO maybe we want a separate code path for uncaught exceptions
             self.unhandled_error_counter += 1;
-            self.exit_handler.exit_code = 1;
+            self.fail_exit_code();
             (self.on_unhandled_rejection)(self, global_object, err);
         }
         // Note: this reset must cover BOTH the FFI call and the
@@ -2759,9 +2769,9 @@ pub struct RuntimeHooks {
     pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
     /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
     /// the uSockets loop while it has active handles.
-    /// Separate slot because the body skips `runImminentGCTimer` /
-    /// `handleRejectedPromises` and falls through to `tickWithoutIdle` when
-    /// idle — folding it into `auto_tick` would change shutdown semantics.
+    /// Separate slot because the body skips `runImminentGCTimer` and falls
+    /// through to `tickWithoutIdle` when idle — folding it into `auto_tick`
+    /// would change shutdown semantics.
     pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
     /// wrapped `JSC::Exception`) to stderr via `ConsoleObject::Formatter`.
@@ -4431,8 +4441,25 @@ impl VirtualMachine {
             }
         }
         self.unhandled_error_counter += 1;
+        self.fail_exit_code();
         (self.on_unhandled_rejection)(self, global_object, reason);
         false
+    }
+
+    /// Exit code 1, unless 'exit' is being emitted: then the code in effect stands, as in Node.
+    fn fail_exit_code(&mut self) {
+        if self.exit_handler.interactive {
+            return;
+        }
+        // The VM's own global: the reporting global may be a node:vm context's.
+        let global = self.global();
+        // With no code chosen a worker exits 0 and the main thread 1.
+        if Bun__Process__isExiting(global)
+            && (!self.is_main_thread() || Bun__Process__hasExitCode(global))
+        {
+            return;
+        }
+        self.exit_handler.exit_code = 1;
     }
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.

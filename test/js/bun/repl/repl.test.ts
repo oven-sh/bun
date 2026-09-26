@@ -557,6 +557,32 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    // As in node's REPL, the session handled these: the exit code is process.exitCode, or 0.
+    test("errors reported during the session do not decide the exit code", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "Promise.reject(new Error('rejected')); 1",
+        "await new Promise(done => setTimeout(() => { done(); throw new Error('thrown'); }, 1)); 2",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["1", "2"]);
+      expect(stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual([
+        "error: rejected",
+        "error: thrown",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("process.exitCode decides the exit code after a reported error", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "Promise.reject(new Error('rejected')); 1",
+        "process.exitCode = 3",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["1", "3"]);
+      expect(stderr).toContain("error: rejected");
+      expect(exitCode).toBe(3);
+    });
+
     test("a throwing inspect hook does not crash the loop", async () => {
       // format2 catches custom-inspect throws internally, but we verify no exception
       // leaks (BUN_JSC_validateExceptionChecks in CI) and the loop continues.
@@ -955,6 +981,17 @@ describe.concurrent("Bun REPL", () => {
     test("-e drains event loop (timers fire before exit)", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "setTimeout(() => console.log('from timer'), 50)"]);
       expect(stdout).toBe("from timer\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e reports a rejection left by the last timer callback", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        "process.on('unhandledRejection', e => console.log('unhandledRejection', e.message));" +
+          "setTimeout(() => Promise.reject(new Error('late')), 1)",
+      ]);
+      expect(stdout).toBe("unhandledRejection late\n");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });

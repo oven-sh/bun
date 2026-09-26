@@ -1038,7 +1038,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
-static HashMap<int, String>* signalNumberToNameMap = nullptr;
+// A number can have several names: SIGABRT and SIGIOT, SIGIO and SIGPOLL.
+static HashMap<int, Vector<String, 2>>* signalNumberToNamesMap = nullptr;
 static HashMap<String, int>* signalNameToNumberMap = nullptr;
 
 // On windows, signals need to have a handle to the uv_signal_t. When sigaction is used, this is kept track globally for you.
@@ -1084,6 +1085,10 @@ static const NeverDestroyed<String>* getSignalNames()
         MAKE_STATIC_STRING_IMPL("SIGINFO"),
         MAKE_STATIC_STRING_IMPL("SIGSYS"),
         MAKE_STATIC_STRING_IMPL("SIGBREAK"),
+        MAKE_STATIC_STRING_IMPL("SIGSTKFLT"),
+        MAKE_STATIC_STRING_IMPL("SIGPOLL"),
+        MAKE_STATIC_STRING_IMPL("SIGUNUSED"),
+        MAKE_STATIC_STRING_IMPL("SIGPWR"),
     };
 
     return signalNames;
@@ -1096,7 +1101,7 @@ static void loadSignalNumberMap()
     std::call_once(signalNameToNumberMapOnceFlag, [] {
         auto signalNames = getSignalNames();
         signalNameToNumberMap = new HashMap<String, int>();
-        signalNameToNumberMap->reserveInitialCapacity(31);
+        signalNameToNumberMap->reserveInitialCapacity(35);
 #if OS(WINDOWS)
         // libuv-supported console-control signals on Windows:
         // CTRL_C_EVENT → SIGINT, CTRL_BREAK_EVENT → SIGBREAK,
@@ -1186,92 +1191,120 @@ static void loadSignalNumberMap()
 #ifdef SIGSYS
         signalNameToNumberMap->add(signalNames[30], SIGSYS);
 #endif
+#ifdef SIGSTKFLT
+        signalNameToNumberMap->add(signalNames[32], SIGSTKFLT);
+#endif
+#ifdef SIGPOLL
+        signalNameToNumberMap->add(signalNames[33], SIGPOLL);
+#endif
+#ifdef SIGUNUSED
+        signalNameToNumberMap->add(signalNames[34], SIGUNUSED);
+#endif
+#ifdef SIGPWR
+        // JSC suspends threads with it on Linux, so onDidChangeListeners never installs a handler for it.
+        signalNameToNumberMap->add(signalNames[35], SIGPWR);
+#endif
 #endif
     });
 }
 
-static void loadSignalNumberToNameMap()
+static void loadSignalNumberToNamesMap()
 {
-    static std::once_flag signalNumberToNameMapOnceFlag;
-    std::call_once(signalNumberToNameMapOnceFlag, [] {
+    static std::once_flag signalNumberToNamesMapOnceFlag;
+    std::call_once(signalNumberToNamesMapOnceFlag, [] {
         auto signalNames = getSignalNames();
-        signalNumberToNameMap = new HashMap<int, String>();
-        signalNumberToNameMap->reserveInitialCapacity(31);
-        signalNumberToNameMap->add(SIGHUP, signalNames[0]);
-        signalNumberToNameMap->add(SIGINT, signalNames[1]);
-        signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
-        signalNumberToNameMap->add(SIGILL, signalNames[3]);
+        signalNumberToNamesMap = new HashMap<int, Vector<String, 2>>();
+        signalNumberToNamesMap->reserveInitialCapacity(31);
+        auto add = [](int signalNumber, const String& signalName) {
+            signalNumberToNamesMap->add(signalNumber, Vector<String, 2>()).iterator->value.append(signalName);
+        };
+        add(SIGHUP, signalNames[0]);
+        add(SIGINT, signalNames[1]);
+        add(SIGQUIT, signalNames[2]);
+        add(SIGILL, signalNames[3]);
 #ifdef SIGTRAP
-        signalNumberToNameMap->add(SIGTRAP, signalNames[4]);
+        add(SIGTRAP, signalNames[4]);
 #endif
-        signalNumberToNameMap->add(SIGABRT, signalNames[5]);
+        add(SIGABRT, signalNames[5]);
 #ifdef SIGIOT
-        signalNumberToNameMap->add(SIGIOT, signalNames[6]);
+        add(SIGIOT, signalNames[6]);
 #endif
 #ifdef SIGBUS
-        signalNumberToNameMap->add(SIGBUS, signalNames[7]);
+        add(SIGBUS, signalNames[7]);
 #endif
-        signalNumberToNameMap->add(SIGFPE, signalNames[8]);
-        signalNumberToNameMap->add(SIGKILL, signalNames[9]);
+        add(SIGFPE, signalNames[8]);
+        add(SIGKILL, signalNames[9]);
 #ifdef SIGUSR1
-        signalNumberToNameMap->add(SIGUSR1, signalNames[10]);
+        add(SIGUSR1, signalNames[10]);
 #endif
-        signalNumberToNameMap->add(SIGSEGV, signalNames[11]);
+        add(SIGSEGV, signalNames[11]);
 #ifdef SIGUSR2
-        signalNumberToNameMap->add(SIGUSR2, signalNames[12]);
+        add(SIGUSR2, signalNames[12]);
 #endif
 #ifdef SIGPIPE
-        signalNumberToNameMap->add(SIGPIPE, signalNames[13]);
+        add(SIGPIPE, signalNames[13]);
 #endif
 #ifdef SIGALRM
-        signalNumberToNameMap->add(SIGALRM, signalNames[14]);
+        add(SIGALRM, signalNames[14]);
 #endif
-        signalNumberToNameMap->add(SIGTERM, signalNames[15]);
+        add(SIGTERM, signalNames[15]);
 #ifdef SIGCHLD
-        signalNumberToNameMap->add(SIGCHLD, signalNames[16]);
+        add(SIGCHLD, signalNames[16]);
 #endif
 #ifdef SIGCONT
-        signalNumberToNameMap->add(SIGCONT, signalNames[17]);
+        add(SIGCONT, signalNames[17]);
 #endif
 #ifdef SIGSTOP
-        signalNumberToNameMap->add(SIGSTOP, signalNames[18]);
+        add(SIGSTOP, signalNames[18]);
 #endif
 #ifdef SIGTSTP
-        signalNumberToNameMap->add(SIGTSTP, signalNames[19]);
+        add(SIGTSTP, signalNames[19]);
 #endif
 #ifdef SIGTTIN
-        signalNumberToNameMap->add(SIGTTIN, signalNames[20]);
+        add(SIGTTIN, signalNames[20]);
 #endif
 #ifdef SIGTTOU
-        signalNumberToNameMap->add(SIGTTOU, signalNames[21]);
+        add(SIGTTOU, signalNames[21]);
 #endif
 #ifdef SIGURG
-        signalNumberToNameMap->add(SIGURG, signalNames[22]);
+        add(SIGURG, signalNames[22]);
 #endif
 #ifdef SIGXCPU
-        signalNumberToNameMap->add(SIGXCPU, signalNames[23]);
+        add(SIGXCPU, signalNames[23]);
 #endif
 #ifdef SIGXFSZ
-        signalNumberToNameMap->add(SIGXFSZ, signalNames[24]);
+        add(SIGXFSZ, signalNames[24]);
 #endif
 #ifdef SIGVTALRM
-        signalNumberToNameMap->add(SIGVTALRM, signalNames[25]);
+        add(SIGVTALRM, signalNames[25]);
 #endif
 #ifdef SIGPROF
-        signalNumberToNameMap->add(SIGPROF, signalNames[26]);
+        add(SIGPROF, signalNames[26]);
 #endif
-        signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
+        add(SIGWINCH, signalNames[27]);
 #ifdef SIGIO
-        signalNumberToNameMap->add(SIGIO, signalNames[28]);
+        add(SIGIO, signalNames[28]);
 #endif
 #ifdef SIGINFO
-        signalNumberToNameMap->add(SIGINFO, signalNames[29]);
+        add(SIGINFO, signalNames[29]);
 #endif
 #ifdef SIGSYS
-        signalNumberToNameMap->add(SIGSYS, signalNames[30]);
+        add(SIGSYS, signalNames[30]);
 #endif
 #ifdef SIGBREAK
-        signalNumberToNameMap->add(SIGBREAK, signalNames[31]);
+        add(SIGBREAK, signalNames[31]);
+#endif
+#ifdef SIGSTKFLT
+        add(SIGSTKFLT, signalNames[32]);
+#endif
+#ifdef SIGPOLL
+        add(SIGPOLL, signalNames[33]);
+#endif
+#ifdef SIGUNUSED
+        add(SIGUNUSED, signalNames[34]);
+#endif
+#ifdef SIGPWR
+        add(SIGPWR, signalNames[35]);
 #endif
     });
 }
@@ -1279,19 +1312,29 @@ static void loadSignalNumberToNameMap()
 extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
     Process* process = globalObject->processObject();
+    auto& vm = JSC::getVM(globalObject);
 
-    loadSignalNumberToNameMap();
-    auto entry = signalNumberToNameMap->find(signalNumber);
-    // Identifier::fromString dereferences the null String of a missing key.
-    if (entry == signalNumberToNameMap->end()) [[unlikely]]
+    loadSignalNumberToNamesMap();
+    auto entry = signalNumberToNamesMap->find(signalNumber);
+    if (entry == signalNumberToNamesMap->end()) [[unlikely]]
         return false;
-    const String& signalName = entry->value;
-    Identifier signalNameIdentifier = Identifier::fromString(JSC::getVM(globalObject), signalName);
-    MarkedArgumentBuffer args;
-    args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
-    args.append(jsNumber(signalNumber));
 
-    return process->wrapped().emitForBindings(signalNameIdentifier, args);
+    // Every name that has a listener now gets the event, like Node's watcher per name: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/signal.js#L22-L41
+    Vector<Identifier, 2> eventNames;
+    for (const String& signalName : entry->value) {
+        Identifier eventName = Identifier::fromString(vm, signalName);
+        if (process->wrapped().hasEventListeners(eventName))
+            eventNames.append(eventName);
+    }
+
+    bool fired = false;
+    for (const Identifier& eventName : eventNames) {
+        MarkedArgumentBuffer args;
+        args.append(jsString(vm, eventName.string()));
+        args.append(jsNumber(signalNumber));
+        fired |= process->wrapped().emitForBindings(eventName, args);
+    }
+    return fired;
 }
 
 #if OS(WINDOWS)
@@ -1306,7 +1349,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 #endif
 {
 #if OS(WINDOWS)
-    if (signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()) [[unlikely]]
+    if (!signalNumberToNamesMap->contains(signalNumber)) [[unlikely]]
         return;
 
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
@@ -1583,6 +1626,21 @@ extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
 
+// The OS handler belongs to the signal number, so it serves the listeners of every name of that number.
+static int listenerCountForSignal(EventEmitter& eventEmitter, const Identifier& eventName, int signalNumber)
+{
+    int listenerCount = eventEmitter.listenerCount(eventName);
+    // Where the OS has no SIGINFO, "SIGINFO" is 255, and 255 has no names.
+    auto names = signalNumberToNamesMap->find(signalNumber);
+    if (names == signalNumberToNamesMap->end())
+        return listenerCount;
+    for (const String& signalName : names->value) {
+        if (signalName != eventName.string())
+            listenerCount += eventEmitter.listenerCount(Identifier::fromString(eventEmitter.scriptExecutionContext()->vm(), signalName));
+    }
+    return listenerCount;
+}
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (Bun__isMainThreadVM()) {
@@ -1625,14 +1683,14 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
         // Signal Handlers
         loadSignalNumberMap();
-        loadSignalNumberToNameMap();
+        loadSignalNumberToNamesMap();
 
         if (!signalToContextIdsMap) {
             signalToContextIdsMap = new HashMap<int, SignalHandleValue>();
         }
 
         if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
-            int listenerCount = eventEmitter.listenerCount(eventName);
+            int listenerCount = listenerCountForSignal(eventEmitter, eventName, signalNumber);
             // Mirror the count for the watcher thread's --watch-kill-signal check.
             Bun__onSignalListenerCountChanged(signalNumber, listenerCount);
 #if OS(LINUX)

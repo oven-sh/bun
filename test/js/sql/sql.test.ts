@@ -476,19 +476,19 @@ if (isDockerEnabled()) {
           // Query the data. The bound parameter makes Bind request binary
           // results (a parameterless statement is prepared and executed in one
           // round trip and gets text), which is what routes `time` through the
-          // binary decoder this test is about; the float4 sentinel proves the
-          // rows really arrived in binary (text "0.1" would decode to 0.1).
+          // binary decoder this test is about; the int4[] sentinel proves the
+          // rows really arrived in binary (a text array decodes to an Array).
           const result = await db`
       SELECT
         id,
         regular_time,
         time_with_tz,
-        0.1::real AS fmt
+        array[1]::int4[] AS fmt
       FROM bun_time_test
       WHERE id >= ${0}
       ORDER BY id
     `;
-          expect(result[0].fmt).toBe(Math.fround(0.1));
+          expect(result[0].fmt).toBeInstanceOf(Int32Array);
 
           // Verify that time values are returned as strings, not binary data
           expect(result[0].regular_time).toBe("09:00:00");
@@ -1027,6 +1027,49 @@ if (isDockerEnabled()) {
 
     test("Double", async () => {
       expect((await sql`select ${1.123456789} as x`)[0].x).toBe(1.123456789);
+    });
+
+    test("float4 reads the same on the binary and text protocols", async () => {
+      // A bound parameter makes the server send the row in binary, where a
+      // real is the raw 4-byte float; a parameterless query gets text, where
+      // the server prints the shortest decimal that round-trips. Widening the
+      // binary f32 with `as f64` gave 0.10000000149011612 for a stored 0.1.
+      // 61885352 and 45860248 are exactly representable as real; the shortest
+      // digits that parse back to them (6.188535e7, 4.586025e7) sit exactly
+      // halfway to a neighbour, and float4out never prints those.
+      const values =
+        "unnest(array[0.1, -0.1, 0.3, 1.5, -2.5, 1.0/3, 3.14159, 1e20, 3.4e38, 1e-40, 16777217, 123456.789, 61885352, 45860248, 0, 'NaN', 'Infinity', '-Infinity']::real[])";
+      const finite = [
+        0.1, -0.1, 0.3, 1.5, -2.5, 0.33333334, 3.14159, 1e20, 3.4e38, 1e-40, 16777216, 123456.79, 61885352, 45860248, 0,
+      ];
+      const expected = [...finite, NaN, Infinity, -Infinity];
+      const binary = await sql.unsafe(`select x from ${values} as x where $1 = 1`, [1]);
+      const text = await sql.unsafe(`select x from ${values} as x`);
+      expect(binary.map(row => row.x)).toEqual(expected);
+      expect(text.map(row => row.x)).toEqual(expected);
+      // A parameterless tagged template is prepared on first use and re-bound
+      // with known result fields after that, which used to flip it to binary.
+      for (let i = 0; i < 3; i++) {
+        expect((await sql`select 0.1::real as x, 61885352::real as y`)[0]).toEqual({ x: 0.1, y: 61885352 });
+      }
+      // A wide deterministic sample of f32 bit patterns across every exponent:
+      // the parameterized path must return exactly the number float4out prints
+      // (it does by construction while real is read as text; this guards a
+      // return to client-side conversion, which got ties and halfway cases
+      // wrong).
+      const bits = new Uint32Array(512);
+      let seed = 0x9e3779b9;
+      for (let i = 0; i < bits.length; i++) {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        bits[i] = seed;
+      }
+      const sample = Array.from(new Float32Array(bits.buffer)).filter(Number.isFinite);
+      // 9 significant digits always identify an f32, so these literals store
+      // exactly the sampled values.
+      const list = `unnest(array[${sample.map(v => v.toPrecision(9)).join(",")}]::real[])`;
+      const parameterized = await sql.unsafe(`select x, x::text as t from ${list} as x where $1 = 1`, [1]);
+      expect(parameterized.length).toBe(sample.length);
+      expect(parameterized.map(row => row.x)).toEqual(parameterized.map(row => Number(row.t)));
     });
 
     test("String", async () => {

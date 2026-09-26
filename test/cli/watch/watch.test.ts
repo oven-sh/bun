@@ -344,6 +344,41 @@ it("--watch forces a restart when the kill-signal handler itself never returns",
   await watchee.exited;
 }, 30000);
 
+// SIGIOT is a second name of SIGABRT in os.constants.signals. node accepts it, and
+// the reload runs the SIGABRT listeners. Before, it was "Unknown signal: SIGIOT".
+it.skipIf(isWindows)(
+  "--watch-kill-signal accepts an alias of a signal",
+  async () => {
+    using dir = tempDir("watch-kill-signal-alias", {
+      "alias.js": `
+        process.on("SIGABRT", () => console.log("SIGABRT listener"));
+        console.log("iter first");
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    watchee = spawn({
+      cmd: [bunExe(), "--watch", "--watch-kill-signal", "SIGIOT", "alias.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const { waitFor, release } = stdoutWaiter(watchee);
+
+    await waitFor("iter first");
+    await Bun.write(join(String(dir), "alias.js"), `console.log("iter second"); setInterval(() => {}, 1000);`);
+    await waitFor("SIGABRT listener");
+    await waitFor("iter second");
+
+    release();
+    watchee.kill("SIGKILL");
+    await watchee.exited;
+  },
+  30000,
+);
+
 // With colors enabled, a reload also clears the terminal. The forced reload
 // runs on the grace thread, which has its own thread-local Output state; the
 // clear used to write through that thread's never-initialized writers and

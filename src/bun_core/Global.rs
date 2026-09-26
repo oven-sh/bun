@@ -276,6 +276,8 @@ macro_rules! for_each_signal {
             SIGIO = libc::SIGIO, "I/O on asynchronous file descriptor is possible";
             #[cfg(any(target_os = "linux", target_os = "android"))]
             SIGPWR = libc::SIGPWR, "Power failure";
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            SIGINFO = libc::SIGINFO, "Information request";
             SIGSYS = libc::SIGSYS, "Bad system call";
         }
     };
@@ -295,6 +297,7 @@ macro_rules! for_each_signal {
             SIGKILL = 9, "Forced quit";
             SIGSEGV = 11, "Address boundary error";
             SIGTERM = 15, "Polite quit request";
+            SIGBREAK = 21, "Ctrl+Break";
             SIGWINCH = 28, "Window size change";
         }
     };
@@ -325,11 +328,11 @@ macro_rules! __define_signal_code {
                 match self { $($(#[$cfg])* Self::$name => $desc,)* }
             }
 
-            /// Name-bytes → variant.
+            /// Name-bytes → variant. An alias gives the variant of its number.
             /// 31-arm match; the optimizer turns it into a small string switch.
             #[inline]
             pub fn from_name(s: &[u8]) -> Option<SignalCode> {
-                match s { $($(#[$cfg])* _ if s == stringify!($name).as_bytes() => Some(Self::$name),)* _ => None }
+                match s { $($(#[$cfg])* _ if s == stringify!($name).as_bytes() => Some(Self::$name),)* _ => Self::from_alias(s) }
             }
         }
     };
@@ -337,6 +340,24 @@ macro_rules! __define_signal_code {
 for_each_signal!(__define_signal_code);
 
 impl SignalCode {
+    /// The second names in `os.constants.signals`: accepted by `from_name`, never reported.
+    const ALIASES: &'static [(&'static str, SignalCode)] = &[
+        #[cfg(unix)]
+        ("SIGIOT", Self::SIGABRT),
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        ("SIGPOLL", Self::SIGIO),
+        // glibc removed SIGUNUSED in 2.26.
+        #[cfg(any(target_env = "musl", target_os = "android"))]
+        ("SIGUNUSED", Self::SIGSYS),
+    ];
+
+    fn from_alias(s: &[u8]) -> Option<SignalCode> {
+        Self::ALIASES
+            .iter()
+            .find(|(alias, _)| alias.as_bytes() == s)
+            .map(|&(_, signal)| signal)
+    }
+
     /// `None` when this platform has no name for `n` (Linux real-time signals, macOS SIGEMT, 0).
     pub fn from_number(n: i32) -> Option<SignalCode> {
         Self::ALL.iter().copied().find(|signal| *signal as i32 == n)

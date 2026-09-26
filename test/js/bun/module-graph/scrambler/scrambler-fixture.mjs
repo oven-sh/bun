@@ -55,9 +55,6 @@ process.on("unhandledRejection", (reason, promise) => hear(tagOf(reason), HOST, 
 const path = import.meta.dir + "/cell-fixture.mjs";
 const hostCell = await import(path);
 const { tagOf } = hostCell;
-// Not Promise.any(): the error it rejects with has no stack of its own, so an uncaughtException handler is given
-// an ERR_UNHANDLED_REJECTION error in its place, which does not carry the tag.
-const { "Promise.any()": _, ...endingsThatReject } = hostCell.rejects;
 for (const [index, { handlers, maker }] of specs.entries()) {
   const options = {};
   for (const handler of handlers) {
@@ -100,7 +97,7 @@ function chain(id) {
   for (let depth = 1 + random(DEPTH); depth > 0; depth--)
     steps.push(random(4) === 0 ? { run: random(graphs.length) } : { hop: pick(hopNames), code: anyone() });
   const kind = random(3) === 0 ? "uncaughtException" : "unhandledRejection";
-  const forms = kind === "uncaughtException" ? hostCell.throws : endingsThatReject;
+  const forms = kind === "uncaughtException" ? hostCell.throws : hostCell.rejects;
   const form = pick(Object.keys(forms));
   const code = anyone();
   const described = () =>

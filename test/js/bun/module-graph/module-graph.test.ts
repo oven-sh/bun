@@ -1461,6 +1461,7 @@ describe("Bun.ModuleGraph — uncaughtException and unhandledRejection", () => {
       export const rejectThenCatch = (message, caught) => {
         const promise = Promise.reject(new Error(message));
         setTimeout(() => promise.catch(caught), 1);
+        return promise;
       };
       export const makeGraph = options => new Bun.ModuleGraph(options);
     `,
@@ -1518,6 +1519,36 @@ describe("Bun.ModuleGraph — uncaughtException and unhandledRejection", () => {
     });
   });
 
+  test("an error that was made with no script on the stack reaches uncaughtException as it is", async () => {
+    const dir = fixture({
+      "rejects.mjs": `
+        import { readFile } from "node:fs/promises";
+        export const rejects = {
+          "Promise.any()": () => void Promise.any([Promise.reject(new Error("an element"))]),
+          "readFile() of a file that does not exist": () => void readFile(import.meta.path + ".missing"),
+          "import() of a module that does not exist": () => void import(import.meta.path + ".missing.mjs"),
+        };
+      `,
+    });
+    const given: Record<string, unknown> = {};
+    using graph = new ModuleGraphClass({
+      uncaughtException: (error: any, origin) =>
+        void (given[error.errors ? "Promise.any()" : error.syscall ? "readFile()" : "import()"] = {
+          name: error.constructor.name,
+          code: error.code,
+          origin,
+        }),
+    });
+    const { rejects } = await graph.import(join(dir, "rejects.mjs"));
+    for (const run of Object.values(rejects)) graph.run(run as () => void);
+    await until(() => Object.keys(given).length === 3);
+    expect(given).toEqual({
+      "Promise.any()": { name: "AggregateError", code: undefined, origin: "unhandledRejection" },
+      "readFile()": { name: "Error", code: "ENOENT", origin: "unhandledRejection" },
+      "import()": { name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND", origin: "unhandledRejection" },
+    });
+  });
+
   test("the traps of a reason that is a Proxy run in the handler's context", async () => {
     const dir = fixture(files);
     const ran: string[] = [];
@@ -1551,8 +1582,12 @@ describe("Bun.ModuleGraph — uncaughtException and unhandledRejection", () => {
       "host.mjs": `
         const heard = [];
         process.on("unhandledRejection", reason => heard.push("process unhandledRejection: " + reason.message));
+        const names = new Map();
         const toldOfTheHosts = Promise.withResolvers();
-        process.on("rejectionHandled", () => { heard.push("process rejectionHandled"); toldOfTheHosts.resolve(); });
+        process.on("rejectionHandled", promise => {
+          heard.push("process rejectionHandled: " + names.get(promise));
+          if (names.get(promise) === "of the host") toldOfTheHosts.resolve();
+        });
         const caught = Promise.withResolvers();
         let left = 3;
         const count = () => { if (!--left) caught.resolve(); };
@@ -1562,10 +1597,10 @@ describe("Bun.ModuleGraph — uncaughtException and unhandledRejection", () => {
         };
         for (const [name, graph] of Object.entries(graphs)) {
           const app = await graph.import(import.meta.dir + "/errors.mjs");
-          graph.run(() => app.rejectThenCatch("of the graph with " + name, count));
+          names.set(graph.run(() => app.rejectThenCatch("of the graph with " + name, count)), "of the graph with " + name);
         }
-        (await import(import.meta.dir + "/errors.mjs")).rejectThenCatch("of the host", count);
-        // The host's is caught last, so by the time the process is told of it, it would have been told of the graphs'.
+        names.set((await import(import.meta.dir + "/errors.mjs")).rejectThenCatch("of the host", count), "of the host");
+        // The host's is caught last, so the process is told of it last.
         await caught.promise;
         await toldOfTheHosts.promise;
         console.log(JSON.stringify(heard.sort()));
@@ -1576,7 +1611,7 @@ describe("Bun.ModuleGraph — uncaughtException and unhandledRejection", () => {
     expect(JSON.parse(stdout)).toEqual([
       "graph uncaughtException: of the graph with uncaughtException",
       "graph unhandledRejection: of the graph with unhandledRejection",
-      "process rejectionHandled",
+      "process rejectionHandled: of the host",
       "process unhandledRejection: of the host",
     ]);
     expect(exitCode).toBe(0);

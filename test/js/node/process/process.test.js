@@ -1797,6 +1797,39 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
+  it("gives 'uncaughtException' an unhandled rejection's error as it is when it was made with no script on the stack", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--unhandled-rejections=throw",
+        "-e",
+        `
+          const { readFile } = require("node:fs/promises");
+          const rejects = [
+            () => void Promise.any([Promise.reject(new Error("an element"))]),
+            () => void readFile(__filename + ".missing"),
+          ];
+          const given = [];
+          process.on("uncaughtException", (error, origin) => {
+            given.push([error.constructor.name, error.code ?? "no code", origin]);
+            if (rejects.length) rejects.shift()();
+            else console.log(JSON.stringify(given));
+          });
+          rejects.shift()();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual([
+      ["AggregateError", "no code", "unhandledRejection"],
+      ["Error", "ENOENT", "unhandledRejection"],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   it("delivers many unhandledRejections in order, including ones queued from the handler", async () => {
     // Pins the observable behaviour: order is preserved, late .catch()
     // suppresses delivery, and a rejection raised from inside the handler is

@@ -1,8 +1,10 @@
+use core::cell::{Cell, RefCell};
+
 use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
 use crate::helpers;
 use crate::links::{BracketMatches, LabelLeave};
 use crate::parser::{self, Parser};
-use crate::types::{SpanType, TextType, VerbatimLine};
+use crate::types::{OFF, SpanType, TextType, VerbatimLine};
 
 /// Emphasis delimiter entry for CommonMark emphasis algorithm.
 pub(crate) const MAX_EMPH_MATCHES: usize = 6;
@@ -123,6 +125,55 @@ impl HtmlScanMemo {
     }
 }
 
+/// Backtick runs of the block's inline slice, sorted by `(length, start)`, once an opener found no closer.
+pub(crate) struct BacktickRuns {
+    built: Cell<bool>,
+    runs: RefCell<Vec<(OFF, OFF)>>,
+}
+
+impl BacktickRuns {
+    pub(crate) const fn new() -> BacktickRuns {
+        BacktickRuns {
+            built: Cell::new(false),
+            runs: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn clear(&self) {
+        self.built.set(false);
+    }
+
+    fn is_built(&self) -> bool {
+        self.built.get()
+    }
+
+    #[cold]
+    fn index(&self, block: &[u8]) {
+        debug_assert!(block.len() <= OFF::MAX as usize);
+        let mut runs = self.runs.borrow_mut();
+        runs.clear();
+        let mut pos: usize = 0;
+        while let Some(run_start) = bun_core::strings::index_of_char_pos(block, b'`', pos) {
+            let len = count_backticks(block, run_start);
+            runs.push((len as OFF, run_start as OFF));
+            pos = run_start + len;
+        }
+        runs.sort_unstable();
+        self.built.set(true);
+    }
+
+    /// Start of the first run of exactly `count` backticks within `from..to` of the block.
+    #[cold]
+    fn first_run(&self, count: usize, from: usize, to: usize) -> Option<usize> {
+        let runs = self.runs.borrow();
+        let key = (count as OFF, from as OFF);
+        let idx = runs.partition_point(|&run| run < key);
+        let &(len, pos) = runs.get(idx)?;
+        // `to` is the end of the block or the `]` that ends a link label, so it never splits a run.
+        (len as usize == count && pos as usize + count <= to).then_some(pos as usize)
+    }
+}
+
 impl Parser<'_> {
     /// Merge all lines into buffer with \n between them (unmodified),
     /// then process inlines on the merged text. Hard/soft breaks are detected
@@ -182,6 +233,8 @@ impl Parser<'_> {
         // Label frames below are subslices of `content`, so the memo stays
         // valid for them via `offset_within`.
         self.html_scan_memo.set(HtmlScanMemo::EMPTY);
+
+        self.backtick_runs.clear();
 
         // Bracket-pair map for the whole slice: link processing looks up the
         // ']' matching a '[' here instead of rescanning the rest of the slice
@@ -315,7 +368,9 @@ impl Parser<'_> {
                         self.emit_text(TextType::Normal, &content[text_start..i])?;
                     }
                     let count = count_backticks(content, i);
-                    if let Some(end_pos) = self.find_code_span_end(content, i + count, count) {
+                    if let Some(end_pos) =
+                        self.find_code_span_end(content, i + count, count, base, brackets.block)
+                    {
                         self.enter_span(SpanType::Code)?;
                         let code_content =
                             self.normalize_code_span_content(&content[i + count..end_pos]);
@@ -640,12 +695,24 @@ impl Parser<'_> {
 
     /// Find the matching closing backtick run. Returns end position of content (before closing ticks),
     /// or null if no matching closer found.
+    /// `start` is the end of the opening run. `content` is `block[base..]`, cut at the end of a link label.
+    #[inline(never)] // Inlined into the five scanners, it made their loops measurably slower.
     pub(crate) fn find_code_span_end(
         &self,
         content: &[u8],
         start: usize,
         count: usize,
+        base: usize,
+        block: &[u8],
     ) -> Option<usize> {
+        debug_assert!(content.get(start) != Some(&b'`'));
+        debug_assert!(content.as_ptr() == block[base..base + content.len()].as_ptr());
+        if self.backtick_runs.is_built() {
+            return self
+                .backtick_runs
+                .first_run(count, base + start, base + content.len())
+                .map(|pos| pos - base);
+        }
         let mut pos = start;
         while let Some(backtick_pos) = bun_core::strings::index_of_char_pos(content, b'`', pos) {
             pos = backtick_pos + 1;
@@ -656,6 +723,8 @@ impl Parser<'_> {
                 return Some(backtick_pos);
             }
         }
+        // R openers with no closer would walk R x bytes: index the block once so the rest binary-search.
+        self.backtick_runs.index(block);
         None
     }
 
@@ -681,7 +750,7 @@ impl Parser<'_> {
     pub(crate) fn collect_emphasis_delimiters(
         &mut self,
         content: &[u8],
-        brackets: &BracketMatches,
+        brackets: &BracketMatches<'_>,
         base: usize,
     ) {
         self.emph_delims.clear();
@@ -697,7 +766,9 @@ impl Parser<'_> {
             // Skip code spans
             if c == b'`' {
                 let count = count_backticks(content, i);
-                if let Some(end_pos) = self.find_code_span_end(content, i + count, count) {
+                if let Some(end_pos) =
+                    self.find_code_span_end(content, i + count, count, base, brackets.block)
+                {
                     i = end_pos + count;
                 } else {
                     i += count;

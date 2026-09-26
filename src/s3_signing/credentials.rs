@@ -294,10 +294,18 @@ impl S3Credentials {
         if matches!(content_disposition, Some(s) if s.is_empty()) {
             content_disposition = None;
         }
-        let mut content_type = sign_options.content_type;
-        if matches!(content_type, Some(s) if s.is_empty()) {
-            content_type = None;
-        }
+        // A signed header goes out in Trimall form so the wire bytes equal the signed bytes.
+        let content_type: Option<Box<[u8]>> = sign_options
+            .content_type
+            .map(|ct| {
+                if sign_query_option.is_some() {
+                    Box::from(ct)
+                } else {
+                    collapse_whitespace(ct)
+                }
+            })
+            .filter(|s| !s.is_empty());
+        let content_type = content_type.as_deref();
         let mut content_encoding = sign_options.content_encoding;
         if matches!(content_encoding, Some(s) if s.is_empty()) {
             content_encoding = None;
@@ -457,6 +465,7 @@ impl S3Credentials {
             content_disposition: content_disposition.is_some(),
             content_encoding: content_encoding.is_some(),
             content_md5: content_md5.is_some(),
+            content_type: content_type.is_some(),
             acl: acl.is_some(),
             request_payer,
             session_token: session_token.is_some(),
@@ -472,7 +481,7 @@ impl S3Credentials {
         let service_name: &str = "s3";
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
-        let mut tmp_buffer = [0u8; 4096];
+        let mut tmp_buffer = [0u8; 8192];
 
         let authorization: Box<[u8]> = 'brk: {
             // we hash the hash so we need 2 buffers
@@ -743,6 +752,7 @@ impl S3Credentials {
                     content_disposition,
                     content_encoding,
                     content_md5.as_deref(),
+                    content_type,
                     &host,
                     acl,
                     aws_content_hash,
@@ -810,6 +820,7 @@ impl S3Credentials {
             || content_md5.as_deref().is_some_and(contains_newline_or_cr)
             || content_disposition.is_some_and(contains_newline_or_cr)
             || content_encoding.is_some_and(contains_newline_or_cr)
+            || content_type.is_some_and(contains_newline_or_cr)
             || session_token.is_some_and(contains_newline_or_cr)
             || contains_newline_or_cr(region)
             || contains_newline_or_cr(&self.access_key_id)
@@ -886,6 +897,14 @@ impl S3Credentials {
             result._headers[result._headers_len as usize] =
                 pico_header_new(b"content-md5", &content_md5_value);
             result.content_md5 = content_md5_value;
+            result._headers_len += 1;
+        }
+
+        if let Some(ct) = content_type {
+            let content_type_value = Box::<[u8]>::from(ct);
+            result._headers[result._headers_len as usize] =
+                pico_header_new(b"content-type", &content_type_value);
+            result.content_type = content_type_value;
             result._headers_len += 1;
         }
 
@@ -975,6 +994,7 @@ pub struct SignResult {
     pub(crate) content_disposition: Box<[u8]>,
     pub(crate) content_encoding: Box<[u8]>,
     pub(crate) content_md5: Box<[u8]>,
+    pub(crate) content_type: Box<[u8]>,
     pub(crate) session_token: Box<[u8]>,
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
@@ -986,7 +1006,7 @@ pub struct SignResult {
 }
 
 impl SignResult {
-    pub const MAX_HEADERS: usize = 11;
+    pub const MAX_HEADERS: usize = 12;
 
     pub fn headers(&self) -> &[PicoHeader] {
         &self._headers[0..self._headers_len as usize]
@@ -1017,6 +1037,7 @@ impl Default for SignResult {
             content_disposition: Box::default(),
             content_encoding: Box::default(),
             content_md5: Box::default(),
+            content_type: Box::default(),
             session_token: Box::default(),
             acl: None,
             storage_class: None,
@@ -1037,7 +1058,7 @@ impl Drop for SignResult {
         zero_sensitive(&mut self.host);
         zero_sensitive(&mut self.authorization);
         zero_sensitive(&mut self.url);
-        // content_md5 is not sensitive; Box drop handles it.
+        // content_md5 and content_type are not sensitive; Box drop handles them.
     }
 }
 
@@ -1261,6 +1282,7 @@ pub(crate) struct SignedHeadersKey {
     pub content_disposition: bool,
     pub content_encoding: bool,
     pub content_md5: bool,
+    pub content_type: bool,
     pub acl: bool,
     pub request_payer: bool,
     pub session_token: bool,
@@ -1289,6 +1311,9 @@ impl SignedHeaders {
         }
         if key.content_md5 {
             push!(b"content-md5;");
+        }
+        if key.content_type {
+            push!(b"content-type;");
         }
         push!(b"host;");
         if key.acl {
@@ -1326,6 +1351,7 @@ impl CanonicalRequest {
         content_disposition: Option<&[u8]>,
         content_encoding: Option<&[u8]>,
         content_md5: Option<&[u8]>,
+        content_type: Option<&[u8]>,
         host: &[u8],
         acl: Option<&[u8]>,
         hash: &[u8],
@@ -1338,6 +1364,14 @@ impl CanonicalRequest {
         macro_rules! w {
             ($($arg:tt)*) => { core::fmt::Write::write_fmt(&mut c, format_args!($($arg)*))? };
         }
+        // `BStr` Display replaces invalid UTF-8 with U+FFFD; user header values go in as raw bytes.
+        macro_rules! header {
+            ($name:literal, $value:expr) => {{
+                w!(concat!($name, ":"));
+                bun_core::io::Write::write_all(&mut c, $value).map_err(|_| core::fmt::Error)?;
+                w!("\n");
+            }};
+        }
         // method, path, query
         w!(
             "{}\n{}\n{}\n",
@@ -1346,19 +1380,16 @@ impl CanonicalRequest {
             BStr::new(query)
         );
         if key.content_disposition {
-            w!(
-                "content-disposition:{}\n",
-                BStr::new(content_disposition.unwrap())
-            );
+            header!("content-disposition", content_disposition.unwrap());
         }
         if key.content_encoding {
-            w!(
-                "content-encoding:{}\n",
-                BStr::new(content_encoding.unwrap())
-            );
+            header!("content-encoding", content_encoding.unwrap());
         }
         if key.content_md5 {
             w!("content-md5:{}\n", BStr::new(content_md5.unwrap()));
+        }
+        if key.content_type {
+            header!("content-type", content_type.unwrap());
         }
         w!("host:{}\n", BStr::new(host));
         if key.acl {
@@ -1400,6 +1431,24 @@ impl CanonicalRequest {
 /// which would allow HTTP header injection if used in a header value.
 fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
+}
+
+/// SigV4 `Trimall`: trim spaces and tabs, collapse each inner run to one space.
+fn collapse_whitespace(value: &[u8]) -> Box<[u8]> {
+    let mut out = Vec::with_capacity(value.len());
+    let mut pending_space = false;
+    for &c in value {
+        if c == b' ' || c == b'\t' {
+            pending_space = !out.is_empty();
+        } else {
+            if pending_space {
+                out.push(b' ');
+                pending_space = false;
+            }
+            out.push(c);
+        }
+    }
+    out.into_boxed_slice()
 }
 
 fn is_valid_host_component(value: &[u8]) -> bool {

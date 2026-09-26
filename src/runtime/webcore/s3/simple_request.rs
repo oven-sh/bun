@@ -619,7 +619,7 @@ pub(crate) fn execute_simple_s3_request(
             request_payer: options.request_payer,
             content_hash: None,
             content_md5: None,
-            content_type: None,
+            content_type: options.content_type,
         },
         None,
     ) {
@@ -637,24 +637,14 @@ pub(crate) fn execute_simple_s3_request(
         }
     };
 
-    let headers = 'brk: {
-        let mut header_buffer = [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
-        if let Some(range_) = &options.range {
+    let headers = match &options.range {
+        Some(range_) => {
+            let mut header_buffer = [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
             let _headers =
                 result.mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", range_));
-            break 'brk Headers::from_pico_http_headers(_headers);
-        } else {
-            if let Some(content_type) = options.content_type {
-                if !content_type.is_empty() {
-                    let _headers = result.mix_with_header(
-                        &mut header_buffer,
-                        picohttp::Header::new(b"Content-Type", content_type),
-                    );
-                    break 'brk Headers::from_pico_http_headers(_headers);
-                }
-            }
-            break 'brk Headers::from_pico_http_headers(result.headers());
+            Headers::from_pico_http_headers(_headers)
         }
+        None => Headers::from_pico_http_headers(result.headers()),
     };
 
     let mut poll_ref = KeepAlive::init();

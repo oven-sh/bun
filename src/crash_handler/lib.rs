@@ -1512,13 +1512,17 @@ mod draft {
 
     #[cfg(unix)]
     impl FaultRegisters {
-        /// A fault next to `sp` is the guard page. Below: `push`/`call` and the
-        /// x86-64 red zone. Above: a frame allocated in one step, stack probes.
+        /// An overflow is a data access in the frame being entered: just below
+        /// `sp` (`push`/`call`, red zone) or above it in a frame allocated in one
+        /// step. Never an instruction fetch, never above the frame pointer.
         fn is_stack_overflow(self, fault_addr: usize) -> bool {
             const BELOW: usize = 4096;
             const ABOVE: usize = 256 * 1024;
-            fault_addr >= self.sp.saturating_sub(BELOW)
-                && fault_addr < self.sp.saturating_add(ABOVE)
+            let mut end = self.sp.saturating_add(ABOVE);
+            if self.fp >= self.sp {
+                end = end.min(self.fp);
+            }
+            fault_addr != self.pc && fault_addr >= self.sp.saturating_sub(BELOW) && fault_addr < end
         }
     }
 

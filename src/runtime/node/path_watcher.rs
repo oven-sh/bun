@@ -582,54 +582,72 @@ pub(crate) fn watch(
 // ────────────────────────────────────────────────────────────────────────────────
 
 /// Shared directory walk for Linux and Kqueue: call `cb` with (abs, rel, is_file)
-/// for every entry under `abs_dir`, depth-first pre-order. Iterative, with the
-/// open directories on a heap `Vec`: each level holds an 8 KiB `getdents` buffer,
-/// and a tree a few hundred levels deep overflowed the watcher thread's stack.
-/// `DIRS_ONLY` skips non-directories (inotify reports files on the parent's wd;
-/// kqueue needs an fd per file). Best-effort: an unreadable subdirectory just
-/// ends that branch (matches Node).
+/// for every entry under `abs_dir`, depth-first pre-order. Iterative: each open
+/// directory holds an 8 KiB `getdents` buffer, and recursing through a tree a few
+/// hundred levels deep overflowed the watcher thread's stack. `DIRS_ONLY` skips
+/// non-directories (inotify reports files on the parent's wd; kqueue needs an fd
+/// per file). Best-effort: an unreadable subdirectory just ends that branch
+/// (matches Node).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
     rel_dir: &[u8],
     cb: &mut impl FnMut(&ZStr, &[u8], bool),
 ) {
-    /// One open directory on the walk's stack.
-    struct Frame {
-        _close: sys::CloseOnDrop,
+    /// One depth of the walk. Its buffers serve every directory opened at that
+    /// depth, so a walk allocates per level reached, not per directory.
+    struct Level {
+        /// `Some` while a directory is open at this depth.
+        dir: Option<sys::CloseOnDrop>,
         /// Boxed: `IteratorResult.name` points into the iterator's inline buffer,
-        /// which must not move when `Vec<Frame>` grows.
+        /// which must not move when `levels` grows.
         it: Box<sys::dir_iterator::WrappedIterator>,
-        abs: ZBox,
-        rel: Box<[u8]>,
+        abs: Vec<u8>,
+        rel: Vec<u8>,
     }
 
-    impl Frame {
-        fn open(abs: &ZStr, rel: &[u8]) -> Option<Frame> {
-            let dfd =
-                sys::open(abs, sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC, 0).ok()?;
-            Some(Frame {
-                _close: sys::CloseOnDrop::new(dfd),
-                it: Box::new(sys::dir_iterator::iterate(dfd)),
-                abs: ZBox::from_bytes(abs.as_bytes()),
-                rel: Box::from(rel),
-            })
+    /// Open `abs` as the directory at `depth`. `false` when it cannot be opened.
+    fn enter(levels: &mut Vec<Level>, depth: &mut usize, abs: &ZStr, rel: &[u8]) -> bool {
+        let Ok(dfd) = sys::open(abs, sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC, 0)
+        else {
+            return false;
+        };
+        let it = sys::dir_iterator::iterate(dfd);
+        match levels.get_mut(*depth) {
+            Some(level) => *level.it = it,
+            None => levels.push(Level {
+                dir: None,
+                it: Box::new(it),
+                abs: Vec::new(),
+                rel: Vec::new(),
+            }),
         }
+        let level = &mut levels[*depth];
+        level.dir = Some(sys::CloseOnDrop::new(dfd));
+        level.abs.clear();
+        level.abs.extend_from_slice(abs.as_bytes());
+        level.rel.clear();
+        level.rel.extend_from_slice(rel);
+        *depth += 1;
+        true
     }
 
-    let Some(root) = Frame::open(abs_dir, rel_dir) else {
+    let mut levels: Vec<Level> = Vec::new();
+    let mut depth: usize = 0;
+    if !enter(&mut levels, &mut depth, abs_dir, rel_dir) {
         return;
-    };
-    let mut stack: Vec<Frame> = vec![root];
+    }
     let mut abs_buf = path::path_buffer_pool::get();
     let mut abs_spill: Vec<u8> = Vec::new();
     let mut rel_buf = path::path_buffer_pool::get();
     let mut rel_spill: Vec<u8> = Vec::new();
-    while let Some(frame) = stack.last_mut() {
-        let entry = match frame.it.next() {
+    while depth > 0 {
+        let level = &mut levels[depth - 1];
+        let entry = match level.it.next() {
             // End of this directory, or a read error: back up to the parent.
             Err(_) | Ok(None) => {
-                stack.pop();
+                level.dir = None;
+                depth -= 1;
                 continue;
             }
             Ok(Some(e)) => e,
@@ -643,23 +661,21 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         let child_abs = join_z_buf_spill::<platform::Posix>(
             abs_buf.as_mut_slice(),
             &mut abs_spill,
-            &[frame.abs.as_bytes(), name],
+            &[&level.abs, name],
         );
-        let child_rel: &[u8] = if frame.rel.is_empty() {
+        let child_rel: &[u8] = if level.rel.is_empty() {
             name
         } else {
             join_z_buf_spill::<platform::Posix>(
                 rel_buf.as_mut_slice(),
                 &mut rel_spill,
-                &[&frame.rel, name],
+                &[&level.rel, name],
             )
             .as_bytes()
         };
         cb(child_abs, child_rel, child_is_file);
         if !child_is_file {
-            if let Some(child) = Frame::open(child_abs, child_rel) {
-                stack.push(child);
-            }
+            enter(&mut levels, &mut depth, child_abs, child_rel);
         }
     }
 }

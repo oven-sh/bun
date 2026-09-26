@@ -491,9 +491,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
     }
 #if !OS(WINDOWS)
-    // VM construction ran WTF::SignalHandlers::finalize(), which installs the
-    // JIT's SIGSEGV/SIGBUS handler without SA_ONSTACK.
-    CrashHandler__keepSignalHandlersOnAltStack();
+    // The first VM construction ran WTF::SignalHandlers::finalize(), which
+    // installs the JIT's SIGSEGV/SIGBUS handler without SA_ONSTACK.
+    static std::once_flag keepSignalHandlersOnAltStack;
+    std::call_once(keepSignalHandlersOnAltStack, CrashHandler__keepSignalHandlersOnAltStack);
 #endif
     vmPtr->refSuppressingSaferCPPChecking();
     JSC::VM& vm = *vmPtr;

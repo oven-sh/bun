@@ -217,6 +217,45 @@ describe.if(isPosix)("native stack overflow is reported", () => {
     }
     expect(exitCode).not.toBe(0);
   });
+
+  // A fault close to the stack pointer is not always an overflow. An overflow
+  // is a data access in the frame being entered, so an instruction fetch and an
+  // access above the frame pointer keep the segmentation fault report and its
+  // address. Linux: the addresses come from /proc/self/maps.
+  describe.if(isLinux && !isASAN)("a fault near the stack pointer that is not an overflow keeps its address", () => {
+    const prelude = `
+      const { CFunction, read } = require("bun:ffi");
+      const maps = require("fs").readFileSync("/proc/self/maps", "utf8").split("\\n").filter(Boolean)
+        .map(line => ({ start: Number("0x" + line.split("-")[0]), end: Number("0x" + line.split(/[- ]/)[1]), name: line }));
+      const stack = maps.find(m => m.name.endsWith("[stack]"));
+      let past = stack.end;
+      for (let next; (next = maps.find(m => m.start === past)); ) past = next.end;
+      const crashAt = (address, crash) => {
+        require("fs").writeSync(1, address.toString(16).toUpperCase());
+        crash(address);
+      };
+    `;
+
+    test.concurrent.each([
+      [
+        "a call through a pointer into the stack",
+        `crashAt(stack.end - 4096, ptr => new CFunction({ ptr, args: [], returns: "void" })());`,
+      ],
+      ["a read past the top of the stack", `crashAt(past, ptr => read.u8(ptr, 0));`],
+    ])("%s", async (_, crash) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "-e", prelude + crash],
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [address, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(address).toMatch(/^[0-9A-F]+$/);
+      expect(stderr).toContain(`panic(main thread): Segmentation fault at address 0x${address}\n`);
+      expect(proc.signalCode).toBe("SIGSEGV");
+      expect(exitCode).not.toBe(0);
+    });
+  });
 });
 
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.

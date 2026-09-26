@@ -1,6 +1,7 @@
 // ListObjects, ListObjectsV2 and ListObjectVersions.
 
 import { describe, expect, test } from "bun:test";
+import { isDebug } from "harness";
 import { ObjectData, type ObjectVersion } from "../index.ts";
 import { expectError, expectStatus, start, toObject, xml, type TestServer } from "./helpers.ts";
 
@@ -588,7 +589,8 @@ describe("list", () => {
     await expect(s3({ continuationToken: "nope" })).rejects.toMatchObject(error);
   });
 
-  test("a bucket with 2400 keys lists in pages of 1000", async () => {
+  // A debug build of Bun needs too much time to write and to read the documents of 1000 keys.
+  test.skipIf(isDebug)("a bucket with 2400 keys lists in pages of 1000", async () => {
     await using t = start();
     const folders = Array.from({ length: 1200 }, (_, index) => `dir${String(index).padStart(4, "0")}/`);
     const keys = folders.flatMap(folder => [folder + "a", folder + "b"]);

@@ -8,6 +8,7 @@
 
 import { parseArgs } from "node:util";
 import { DEFAULT_CREDENTIALS, serve } from "./index.ts";
+import { warmUp } from "./src/warm-up.ts";
 
 const usage = `Usage: bun cli.ts [options]
 
@@ -17,7 +18,8 @@ const usage = `Usage: bun cli.ts [options]
   --secret-key <key>      Default: ${DEFAULT_CREDENTIALS.secretAccessKey}
   --session-token <token> Each request must send this token
   --region <name>         Refuse signatures for another region
-  --bucket <name>         Make this bucket at the start. Repeat it for more buckets
+  --bucket <name>         Make this bucket at the start. Repeat it for more buckets.
+                          <name>@<region> puts the bucket in another region
   --domain <name>         A host name for virtual-hosted-style requests. Default: localhost
   --log                   Print each request to stderr
   --exit-on-stdin-close   Stop when stdin closes. A parent process that gives the
@@ -63,7 +65,10 @@ const server = serve({
     sessionToken: values["session-token"],
   },
   region: values.region,
-  buckets: values.bucket,
+  buckets: values.bucket.map(bucket => {
+    const [name, region] = bucket.split("@");
+    return { name, region };
+  }),
   domains: values.domain,
   maxRequestLog: 0,
   onRequest: values.log
@@ -74,6 +79,7 @@ const server = serve({
     : undefined,
 });
 
+await warmUp();
 process.stdout.write(JSON.stringify({ ...server.clientOptions(), url: server.url, port: server.port }) + "\n");
 
 function stop(): void {

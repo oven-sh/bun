@@ -19,6 +19,12 @@ export interface CredentialOptions {
 
 export interface BucketOptions {
   name: string;
+  /**
+   * The region of the bucket. The default is the region of the server. The
+   * server answers `PermanentRedirect` to a request for a bucket in another
+   * region, as an endpoint of S3 does.
+   */
+  region?: string;
   versioning?: VersioningStatus;
   /** The account that owns the bucket. The default is the account of the first credential. */
   owner?: Owner;
@@ -94,6 +100,16 @@ type Server = Bun.Server<undefined>;
 const AMAZON_HOST = /^(?:(.+)\.)?s3(?:[.-][a-z0-9-]+)*\.amazonaws\.com(?:\.cn)?$/;
 /** The largest request body. An aws-chunked body is larger than the 5 GiB object that it carries. */
 const MAX_REQUEST_BODY_SIZE = 6 * 1024 * 1024 * 1024;
+
+/**
+ * True for the requests that an endpoint answers for a bucket of another
+ * region: CreateBucket, GetBucketLocation and the preflight request.
+ */
+function isForEachRegion(method: string, key: string | undefined, query: Query): boolean {
+  if (method === "OPTIONS") return true;
+  if (key !== undefined) return false;
+  return method === "PUT" ? query.parameters.length === 0 : query.has("location");
+}
 
 function hostWithoutPort(host: string): string {
   if (host.startsWith("[")) {
@@ -181,13 +197,14 @@ export class S3Server {
   createBucket(options: string | BucketOptions): Bucket {
     const {
       name,
+      region = this.region,
       versioning,
       owner = this.credentials.owner,
       objectLock,
     } = typeof options === "string" ? ({ name: options } as BucketOptions) : options;
     if (!isValidBucketName(name)) throw new Error(`"${name}" is not a valid bucket name`);
     if (this.buckets.has(name)) throw new Error(`The bucket "${name}" exists`);
-    const bucket = new Bucket(name, owner, this.region, this.#clock(), privateAcl(owner));
+    const bucket = new Bucket(name, owner, region, this.#clock(), privateAcl(owner));
     bucket.versioning = objectLock ? "Enabled" : versioning;
     bucket.objectLockEnabled = objectLock ?? false;
     this.buckets.set(name, bucket);
@@ -266,10 +283,6 @@ export class S3Server {
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.stop();
-  }
-
-  [Symbol.dispose](): void {
-    void this.stop();
   }
 
   /** Answers one request. */
@@ -364,6 +377,15 @@ export class S3Server {
       if (key === undefined) throw new S3Error("InvalidURI", { details: { URI: path } });
     }
 
+    const bucket = bucketName === undefined ? undefined : this.buckets.get(bucketName);
+    // S3 serves a bucket only at the endpoint of its region. It looks at the region before the signature.
+    if (bucket && bucket.region !== this.region && !isForEachRegion(request.method, key, query)) {
+      throw new S3Error("PermanentRedirect", {
+        details: { Endpoint: `${bucket.name}.s3.${bucket.region}.amazonaws.com`, Bucket: bucket.name },
+        headers: { "x-amz-bucket-region": bucket.region },
+      });
+    }
+
     // A preflight request of a browser carries no credentials.
     const authentication =
       request.method === "OPTIONS"
@@ -396,7 +418,7 @@ export class S3Server {
       authentication,
       sender: authentication.type === "anonymous" ? undefined : authentication.credential.owner,
       operation: "",
-      bucket: bucketName === undefined ? undefined : this.buckets.get(bucketName),
+      bucket,
     };
   }
 

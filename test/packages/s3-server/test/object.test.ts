@@ -2,7 +2,7 @@
 // RestoreObject and the tags and the ACL of an object. The tests of object lock are in versioning.test.ts.
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { tls } from "harness";
+import { isDebug, tls } from "harness";
 import type { RequestOptions } from "../index.ts";
 import { expectStatus, start, toObject, withoutDefaultType, xml, type TestServer } from "./helpers.ts";
 
@@ -128,7 +128,7 @@ function refuses(rows: Refused[]): void {
 }
 
 describe("PutObject", () => {
-  test("each metadata header makes the round trip and an overwrite replaces all of them", async () => {
+  test("each metadata header makes the round trip", async () => {
     await using t = startAt(CREATED);
     const metadata = {
       "cache-control": "max-age=60, public",
@@ -147,9 +147,12 @@ describe("PutObject", () => {
     const headers = { ...STORED, ...metadata, "content-length": "5", "x-amz-tagging-count": "2" };
     expect(await read(t, "GET", "meta")).toEqual(answer(200, headers, "hello"));
     expect(await read(t, "HEAD", "meta")).toEqual(answer(200, headers));
+  });
 
+  test("an upload without metadata gets the defaults, also when it replaces an object", async () => {
+    await using t = startAt(CREATED);
     // The names and the values of the user metadata have 2048 bytes.
-    await put(t, "meta", "", { "x-amz-meta-a": text(2000), "x-amz-meta-b": text(46) });
+    await put(t, "meta", "", { "x-amz-meta-a": text(2000), "x-amz-meta-b": text(46), "content-type": "text/plain" });
     await put(t, "meta", "");
     const defaults = { ...BINARY, "content-length": "0", "etag": '"d41d8cd98f00b204e9800998ecf8427e"' };
     expect(await read(t, "GET", "meta")).toEqual(answer(200, defaults));
@@ -570,7 +573,8 @@ describe("DeleteObject and DeleteObjects", () => {
     expect(keysOf(t)).toEqual(["kept"]);
   });
 
-  test("DeleteObjects takes 1000 keys", async () => {
+  // A debug build of Bun needs too much time to read and to write the documents of 1000 keys.
+  test.skipIf(isDebug)("DeleteObjects takes 1000 keys", async () => {
     await using t = start();
     const response = await t.client.fetch("POST", B, doc("delete", remove(many(1000))));
     const text = await response.text();

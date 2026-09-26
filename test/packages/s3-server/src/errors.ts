@@ -102,6 +102,10 @@ const errors = {
   NotImplemented: [501, "A header you provided implies functionality that is not implemented"],
   ObjectLockConfigurationNotFoundError: [404, "Object Lock configuration does not exist for this bucket"],
   OwnershipControlsNotFoundError: [404, "The bucket ownership controls were not found"],
+  PermanentRedirect: [
+    301,
+    "The bucket you are attempting to access must be addressed using the specified endpoint. Please send all future requests to this endpoint.",
+  ],
   PreconditionFailed: [412, "At least one of the pre-conditions you specified did not hold"],
   ReplicationConfigurationNotFoundError: [404, "The replication configuration was not found"],
   RequestTimeTooSkewed: [403, "The difference between the request time and the current time is too large."],

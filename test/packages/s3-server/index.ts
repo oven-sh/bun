@@ -23,10 +23,10 @@
 // - Bucket: CreateBucket, HeadBucket, DeleteBucket, GetBucketLocation,
 //   ListObjects, ListObjectsV2, ListObjectVersions, ListMultipartUploads
 // - Bucket configuration with an effect: versioning, ACL, policy, CORS,
-//   tagging, request payment, ownership controls, object lock
+//   tagging, request payment, ownership controls, public access block,
+//   object lock
 // - Bucket configuration that the server only keeps and returns: lifecycle,
-//   encryption, website, notification, logging, replication, accelerate,
-//   public access block
+//   encryption, website, notification, logging, replication, accelerate
 // - Object: PutObject, GetObject, HeadObject, DeleteObject, DeleteObjects,
 //   CopyObject, PostObject, GetObjectAttributes, RestoreObject, tagging, ACL,
 //   retention, legal hold
@@ -43,6 +43,8 @@
 // - A restore from an archive storage class completes immediately.
 // - A new bucket has ACLs enabled and has no public access block, which was
 //   the default of Amazon S3 until April 2023.
+// - The server is one endpoint. A bucket in another region than the server
+//   gets `PermanentRedirect`, and no endpoint serves it.
 // - The server does not run lifecycle rules, replication, notifications or
 //   website hosting, and it has no Signature Version 2 and no Signature
 //   Version 4A.

@@ -4,6 +4,14 @@ import { join } from "node:path";
 import { DEFAULT_CREDENTIALS, S3Server, serve, SigningClient, spawnServer, type RequestRecord } from "../index.ts";
 import { expectError, start, toObject, xml } from "./helpers.ts";
 
+/** True when the server answers at the URL. Another program can have the port after the server released it. */
+function answers(url: string): Promise<boolean> {
+  return fetch(url).then(
+    response => response.headers.has("x-amz-request-id"),
+    () => false,
+  );
+}
+
 describe("S3Server", () => {
   test("serve() listens on a free port with the default credentials", async () => {
     await using server = serve();
@@ -231,28 +239,29 @@ describe("S3Server", () => {
   });
 
   test("stop() closes the listener and keeps the buckets", async () => {
-    const server = serve({ buckets: ["kept"] });
+    await using server = serve({ buckets: ["kept"] });
     const url = server.url;
+    expect(await answers(url)).toBe(true);
     await server.stop();
-    expect(server.listening).toBe(false);
-    await expect(fetch(url)).rejects.toThrow();
+    expect([server.listening, await answers(url)]).toEqual([false, false]);
     expect([...server.buckets.keys()]).toEqual(["kept"]);
     server.listen();
     expect((await fetch(server.url + "/kept", { method: "HEAD" })).status).toBe(403);
-    await server.stop();
   });
 });
 
 describe.concurrent("the server as a process", () => {
   test("spawnServer() starts it and stop() ends it", async () => {
-    const server = await spawnServer({
-      bunExe: bunExe(),
-      env: bunEnv,
-      buckets: ["spawned"],
-      region: "ap-south-1",
-      credentials: { accessKeyId: "key", secretAccessKey: "secret" },
-    });
-    try {
+    let url: string;
+    {
+      await using server = await spawnServer({
+        bunExe: bunExe(),
+        env: bunEnv,
+        buckets: ["spawned", { name: "far", region: "eu-west-1" }],
+        region: "ap-south-1",
+        credentials: { accessKeyId: "key", secretAccessKey: "secret" },
+      });
+      url = server.url;
       expect(server.clientOptions("spawned")).toEqual({
         endpoint: server.url,
         accessKeyId: "key",
@@ -265,10 +274,21 @@ describe.concurrent("the server as a process", () => {
       expect(await client.file("key").text()).toBe("from another process");
       const wrongRegion = new Bun.S3Client({ ...server.clientOptions("spawned"), region: "us-east-1" });
       await expect(wrongRegion.file("key").text()).rejects.toMatchObject({ code: "AuthorizationHeaderMalformed" });
-    } finally {
-      await server.stop();
+      const far = new Bun.S3Client(server.clientOptions("far"));
+      await expect(far.file("key").text()).rejects.toMatchObject({ code: "PermanentRedirect" });
+      expect(await answers(url)).toBe(true);
     }
-    await expect(fetch(server.url)).rejects.toThrow();
+    expect(await answers(url)).toBe(false);
+  });
+
+  test("spawnServer() rejects when the program cannot start", async () => {
+    const options = { bunExe: bunExe(), env: bunEnv, stderr: "ignore" } as const;
+    await expect(spawnServer({ ...options, buckets: ["Not_A_Bucket_Name"] })).rejects.toThrow(
+      "The s3-server process ended before it listened",
+    );
+    await expect(spawnServer({ ...options, startTimeout: 1 })).rejects.toThrow(
+      "The s3-server process did not listen after 1 ms",
+    );
   });
 
   test("the program stops when its stdin closes", async () => {

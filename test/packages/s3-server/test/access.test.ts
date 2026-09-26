@@ -203,7 +203,8 @@ describe("a private bucket", () => {
     PUT /test-bucket/copy x-amz-copy-source=/test-bucket/key; DELETE /test-bucket/key?tagging;
     DELETE /test-bucket/key?versionId=null; POST /test-bucket/key?uploads`.split(/;\s+/);
   const operations: [name: string, requests: string[]][] = [
-    ["on the bucket and the objects", requests],
+    ["on the bucket", requests.filter(request => !request.includes("key"))],
+    ["on the objects", requests.filter(request => request.includes("key"))],
     ["that reads a configuration", configurations.map(name => `GET /test-bucket?${name}`)],
     ["that writes a configuration", configurations.map(name => `PUT /test-bucket?${name} x-amz-acl=public-read @tags`)],
     ["that removes a configuration", removable.split(" ").map(name => `DELETE /test-bucket?${name}`)],

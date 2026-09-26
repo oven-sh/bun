@@ -8,10 +8,15 @@ export interface SpawnOptions {
   /** The program that runs the server. The default is the Bun that runs the caller. */
   bunExe?: string;
   env?: Record<string, string | undefined>;
+  /** Where the errors of the server go. The default is the stderr of the caller. */
+  stderr?: "inherit" | "ignore";
   credentials?: Pick<CredentialOptions, "accessKeyId" | "secretAccessKey" | "sessionToken">;
   region?: string;
   domains?: string[];
-  buckets?: string[];
+  /** The buckets that exist at the start. A bucket can be in another region than the server. */
+  buckets?: (string | { name: string; region?: string })[];
+  /** How long the server can take until it listens, in milliseconds. The default is 60 seconds. */
+  startTimeout?: number;
 }
 
 export interface SpawnedServer extends AsyncDisposable {
@@ -41,7 +46,10 @@ export async function spawnServer(options: SpawnOptions = {}): Promise<SpawnedSe
   }
   if (options.region !== undefined) args.push("--region", options.region);
   for (const domain of options.domains ?? []) args.push("--domain", domain);
-  for (const bucket of options.buckets ?? []) args.push("--bucket", bucket);
+  for (const bucket of options.buckets ?? []) {
+    const { name, region } = typeof bucket === "string" ? { name: bucket, region: undefined } : bucket;
+    args.push("--bucket", region === undefined ? name : `${name}@${region}`);
+  }
 
   const child = Bun.spawn({
     cmd: [options.bunExe ?? process.execPath, join(import.meta.dir, "..", "cli.ts"), ...args],
@@ -49,35 +57,50 @@ export async function spawnServer(options: SpawnOptions = {}): Promise<SpawnedSe
     // The server stops when this pipe closes, also when this process ends without a call to stop().
     stdin: "pipe",
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: options.stderr ?? "inherit",
   });
-
-  // The first line of the output is a JSON object with the address of the server.
-  let output = "";
-  const decoder = new TextDecoder();
-  for await (const chunk of child.stdout) {
-    output += decoder.decode(chunk, { stream: true });
-    if (output.includes("\n")) break;
-  }
-  const newline = output.indexOf("\n");
-  if (newline === -1) {
-    throw new Error(`The s3-server process ended with code ${await child.exited} before it listened`);
-  }
-  const { url, port, ...client } = JSON.parse(output.slice(0, newline)) as {
-    url: string;
-    port: number;
-    endpoint: string;
-    accessKeyId: string;
-    secretAccessKey: string;
-    sessionToken?: string;
-    region?: string;
-  };
 
   const stop = async () => {
     child.stdin.end();
     child.kill();
     await child.exited;
   };
+
+  // A server that does not start must not let the caller wait without an end.
+  const startTimeout = options.startTimeout ?? 60_000;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill();
+  }, startTimeout);
+
+  let address: { url: string; port: number } & ReturnType<SpawnedServer["clientOptions"]>;
+  try {
+    // The first line of the output is a JSON object with the address of the server.
+    let output = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of child.stdout) {
+      output += decoder.decode(chunk, { stream: true });
+      if (output.includes("\n")) break;
+    }
+    const newline = output.indexOf("\n");
+    if (newline === -1) {
+      throw new Error(
+        timedOut
+          ? `The s3-server process did not listen after ${startTimeout} ms`
+          : "The s3-server process ended before it listened",
+      );
+    }
+    address = JSON.parse(output.slice(0, newline));
+  } catch (error) {
+    // The process must not stay when the start fails.
+    await stop();
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const { url, port, ...client } = address;
   return {
     url,
     port,

@@ -14,8 +14,9 @@ import { child, children, childText, parseXml, type XmlElement } from "../src/xm
 
 export { child, children, childText, parseXml, type XmlElement };
 
-// The server and the signing client are JavaScript. A debug build of Bun runs
-// them about 100 times slower than a release build.
+// The server and the client of these tests are JavaScript, which a debug build
+// of Bun runs about 100 times slower than a release build. CI does not run
+// debug builds and gives each test its time with `--timeout`.
 if (isDebug) setDefaultTimeout(60_000);
 
 /**

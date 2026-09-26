@@ -218,6 +218,41 @@ describe("a bucket", () => {
     ]);
   });
 
+  test("a bucket in another region than the endpoint is PermanentRedirect", async () => {
+    await using t = startAccounts({ buckets: ["test-bucket", { name: "far-bucket", region: "eu-west-1" }] });
+    const Message =
+      "The bucket you are attempting to access must be addressed using the specified endpoint. Please send all future requests to this endpoint.";
+    const redirect = { Code: "PermanentRedirect", Message, Endpoint: "far-bucket.s3.eu-west-1.amazonaws.com" };
+
+    const refused = await t.client.fetch("PUT", "/far-bucket/key", { body: "data" });
+    expect([refused.headers.get("x-amz-bucket-region"), refused.headers.get("location")]).toEqual(["eu-west-1", null]);
+    expect(await failure(refused, 301, "PermanentRedirect")).toEqual({ ...redirect, Bucket: "far-bucket" });
+    const head = await t.client.fetch("HEAD", "/far-bucket");
+    expect([head.status, head.headers.get("x-amz-bucket-region"), await head.text()]).toEqual([301, "eu-west-1", ""]);
+
+    // S3 looks at the region of the bucket before it looks at the signature.
+    const unknown = new SigningClient({ endpoint: t.server.url, accessKeyId: "AKIAUNKNOWN", secretAccessKey: "none" });
+    const client = new Bun.S3Client({ ...t.server.clientOptions("far-bucket"), ...CREDENTIALS[0] });
+    await expectSteps([
+      [() => outcome(t.client.fetch("GET", "/far-bucket/key")), "301 PermanentRedirect"],
+      [() => outcome(t.client.fetch("GET", "/far-bucket", { query: { "list-type": "2" } })), "301 PermanentRedirect"],
+      [() => outcome(t.client.fetch("DELETE", "/far-bucket")), "301 PermanentRedirect"],
+      [() => write(t.client, "/far-bucket", "versioning", element("VersioningConfiguration")), "301 PermanentRedirect"],
+      [() => outcome(t.client.fetch("GET", "/far-bucket/key", { anonymous: true })), "301 PermanentRedirect"],
+      [() => outcome(unknown.fetch("GET", "/far-bucket/key")), "301 PermanentRedirect"],
+      [() => outcome(unknown.fetch("GET", KEY)), "403 InvalidAccessKeyId"],
+      [
+        () => client.write("key", "data").then(String, error => `${error.name} ${error.code}`),
+        "S3Error PermanentRedirect",
+      ],
+      // Each endpoint tells the location of a bucket, and the name of the bucket is in use in each region.
+      [() => read(t.client, "/far-bucket", "location"), { LocationConstraint: "eu-west-1" }],
+      [() => outcome(t.client.fetch("PUT", "/far-bucket")), "409 BucketAlreadyOwnedByYou"],
+      [() => outcome(t.client.fetch("PUT", KEY, { body: "data" })), "200"],
+    ]);
+    expect(t.server.buckets.get("far-bucket")!.isEmpty).toBe(true);
+  });
+
   test("DeleteBucket needs a bucket without objects, versions and delete markers", async () => {
     await using t = startAccounts({ buckets: [{ name: "test-bucket", versioning: "Enabled" }] });
     const remove = (client = t.client) => outcome(client.fetch("DELETE", B));

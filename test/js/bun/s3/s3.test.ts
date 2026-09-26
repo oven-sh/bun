@@ -14,7 +14,11 @@ type S3Credentials = S3Options & {
 
 // The S3 server of test/packages/s3-server, in a process of its own. It needs
 // no container, so these tests run on each platform.
-const localServer = await spawnServer({ bunExe: bunExe(), env: bunEnv, buckets: ["buntest"] });
+const localServer = await spawnServer({
+  bunExe: bunExe(),
+  env: bunEnv,
+  buckets: ["buntest", { name: "buntest-us-west-1", region: "us-west-1" }],
+});
 afterAll(() => localServer.stop());
 const localCredentials: S3Credentials = {
   ...localServer.clientOptions("buntest"),
@@ -1152,10 +1156,14 @@ for (let credentials of allCredentials) {
           await Promise.all(
             [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
               try {
-                const s3file = fn("s3://bucket/credentials-test", {
-                  ...s3Options, // credentials and endpoint dont match
-                  endpoint: "s3.us-west-1.amazonaws.com",
-                });
+                const s3file =
+                  credentials.service === "s3-server"
+                    ? // The bucket is in another region than the endpoint.
+                      fn("s3://buntest-us-west-1/credentials-test", s3Options)
+                    : fn("s3://bucket/credentials-test", {
+                        ...s3Options, // credentials and endpoint dont match
+                        endpoint: "s3.us-west-1.amazonaws.com",
+                      });
                 await s3file.write("Hello Bun!");
                 expect.unreachable();
               } catch (e: any) {

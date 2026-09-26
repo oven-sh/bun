@@ -22,6 +22,8 @@ use bun_resolver::LINKED_BYTECODE_REGION_COUNT;
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
+use crate::native_libs::{self, NativeLibraryMember, NativeLibrarySet};
+
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
 
 // `bun_webcore::Blob` lives in a higher tier and `cached_blob` is only ever
@@ -63,6 +65,9 @@ pub struct StandaloneModuleGraph {
     /// point's static import closure, i.e. what loads before the first `import()`.
     pub startup_module_count: u32,
     pub runtime_options: RuntimeOptions,
+    /// Every embedded shared library (`Flags::HAS_NATIVE_LIBRARY_SET`); empty when the
+    /// executable carries none, or was built before the record existed.
+    pub native_library_set: NativeLibrarySet,
 }
 
 /// Runtime defaults chosen at build time (`Flags::HAS_RUNTIME_OPTIONS` record: `u32 flags`, `u32 value`).
@@ -940,11 +945,20 @@ bitflags::bitflags! {
         /// `bytecode_order::REGION_COUNT` regions ends (`u32` each; the first two regions are what the recorded run
         /// read). A module's `bytecode` then runs from its cache entry to the end of that payload.
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
-        // _padding: u19
+        /// After the linked-payload record: `u64 set_hash`, `u32 count`, then `count` x `{ u32 file_index,
+        /// u32 alias_index }` (`NativeLibrarySet`): every embedded shared library, so the runtime can mirror
+        /// the set to disk before `dlopen` without hashing it first.
+        const HAS_NATIVE_LIBRARY_SET        = 1 << 14;
+        // _padding: u17
     }
 }
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
+
+/// `Flags::HAS_NATIVE_LIBRARY_SET` record: `u64 set_hash`, `u32 count`, then the members.
+const NATIVE_LIBRARY_SET_HEADER: usize = size_of::<u64>() + size_of::<u32>();
+/// One member: `u32 file_index`, `u32 alias_index`.
+const NATIVE_LIBRARY_MEMBER_SIZE: usize = 2 * size_of::<u32>();
 
 unsafe extern "C" {
     fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
@@ -978,6 +992,7 @@ impl StandaloneModuleGraph {
                 prelinked_module_files: Vec::new(),
                 startup_module_count: 0,
                 runtime_options: RuntimeOptions::default(),
+                native_library_set: NativeLibrarySet::default(),
             });
         }
 
@@ -1180,6 +1195,41 @@ impl StandaloneModuleGraph {
             // refers to what lies before it, like a module's, so it cannot be decoded as a payload of its own either.
             builtin_bytecode.clear();
         }
+        let mut native_library_set = NativeLibrarySet::default();
+        if offsets.flags.contains(Flags::HAS_NATIVE_LIBRARY_SET)
+            && record_at + NATIVE_LIBRARY_SET_HEADER <= raw_len
+        {
+            let set_hash =
+                u64::from(read_u32(record_at)) | (u64::from(read_u32(record_at + 4)) << 32);
+            let count = read_u32(record_at + 8) as usize;
+            record_at += NATIVE_LIBRARY_SET_HEADER;
+            if count <= modules_list_count
+                && record_at + count * NATIVE_LIBRARY_MEMBER_SIZE <= raw_len
+            {
+                let members: Box<[NativeLibraryMember]> = (0..count)
+                    .map(|i| {
+                        let at = record_at + i * NATIVE_LIBRARY_MEMBER_SIZE;
+                        NativeLibraryMember {
+                            file_index: read_u32(at),
+                            alias_index: read_u32(at + 4),
+                        }
+                    })
+                    .collect();
+                record_at += count * NATIVE_LIBRARY_MEMBER_SIZE;
+                // An alias points at a member of this set that is not itself an alias.
+                let well_formed = members.iter().all(|m| {
+                    (m.file_index as usize) < modules_list_count
+                        && (m.alias_index == NativeLibrarySet::NO_ALIAS
+                            || members.iter().any(|target| {
+                                target.file_index == m.alias_index
+                                    && target.alias_index == NativeLibrarySet::NO_ALIAS
+                            }))
+                });
+                if well_formed {
+                    native_library_set = NativeLibrarySet { members, set_hash };
+                }
+            }
+        }
         let _ = record_at;
         let has_linked_bytecode_payload =
             offsets.flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD);
@@ -1329,6 +1379,7 @@ impl StandaloneModuleGraph {
             prelinked_module_files,
             startup_module_count: startup_module_count.min(module_count as u32),
             runtime_options,
+            native_library_set,
         })
     }
 
@@ -1450,6 +1501,70 @@ fn module_dest_path(output_file: &OutputFile) -> &[u8] {
     bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
 }
 
+/// `Flags::HAS_NATIVE_LIBRARY_SET`: every shared library among `module_files`, by name
+/// (`native_libs::is_shared_library_name`), whatever its loader. A member whose bytes equal
+/// another member's at a deeper path becomes an alias of it: the bundler hoists a required
+/// `.node` to the root as `[name]-[hash].node`, and the `--asset` tree carries the same
+/// addon next to the libraries it links. The runtime loads the copy with the neighbours,
+/// and the executable stores the bytes once.
+fn collect_native_library_set<'a>(module_files: &[&'a OutputFile]) -> NativeLibrarySet {
+    struct Candidate<'a> {
+        file_index: u32,
+        rel_name: &'a [u8],
+        depth: usize,
+        content_hash: u64,
+        alias_index: u32,
+    }
+    let mut candidates: Vec<Candidate> = Vec::new();
+    for (i, output_file) in module_files.iter().enumerate() {
+        let rel_name = module_dest_path(output_file);
+        if is_stored_as_string(output_file) || !native_libs::is_shared_library_name(rel_name) {
+            continue;
+        }
+        candidates.push(Candidate {
+            file_index: i as u32,
+            rel_name,
+            depth: strings::count_char(rel_name, b'/'),
+            content_hash: bun_wyhash::hash(output_file.value.as_slice()),
+            alias_index: NativeLibrarySet::NO_ALIAS,
+        });
+    }
+    for i in 0..candidates.len() {
+        for j in 0..i {
+            let (a, b) = (&candidates[i], &candidates[j]);
+            if a.depth == b.depth || a.content_hash != b.content_hash {
+                continue;
+            }
+            let (shallow, deep) = if a.depth < b.depth { (i, j) } else { (j, i) };
+            if candidates[shallow].alias_index != NativeLibrarySet::NO_ALIAS
+                || candidates[deep].alias_index != NativeLibrarySet::NO_ALIAS
+            {
+                continue;
+            }
+            let same_bytes = module_files[candidates[shallow].file_index as usize]
+                .value
+                .as_slice()
+                == module_files[candidates[deep].file_index as usize]
+                    .value
+                    .as_slice();
+            if same_bytes {
+                candidates[shallow].alias_index = candidates[deep].file_index;
+            }
+        }
+    }
+    let set_hash = native_libs::hash_set(candidates.iter().map(|c| (c.rel_name, c.content_hash)));
+    NativeLibrarySet {
+        members: candidates
+            .iter()
+            .map(|c| NativeLibraryMember {
+                file_index: c.file_index,
+                alias_index: c.alias_index,
+            })
+            .collect(),
+        set_hash,
+    }
+}
+
 /// Every region of the serialized graph is addressed by a `StringPointer`, a `u32` offset and
 /// length, so the graph has to fit in 4 GiB. A debug build can lower the limit through
 /// `BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES` so a test reaches it without a 4 GiB input.
@@ -1531,6 +1646,8 @@ pub(crate) fn to_bytes(
     string_builder.cap += TRAILER.len();
     string_builder.cap += 16 + 4 * size_of::<u32>();
     string_builder.cap += (2 + bun_bundler::bytecode_order::REGION_COUNT) * size_of::<u32>();
+    string_builder.cap +=
+        NATIVE_LIBRARY_SET_HEADER + NATIVE_LIBRARY_MEMBER_SIZE * output_files.len();
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
 
@@ -1573,6 +1690,7 @@ pub(crate) fn to_bytes(
         .iter()
         .position(|f| core::ptr::eq(*f, entry_point_file))
         .unwrap();
+    let native_library_set = collect_native_library_set(&module_files);
 
     // The internal-module bytecode and the string table go right after the
     // last startup module's bytecode, so everything a cold start decodes
@@ -1819,11 +1937,16 @@ pub(crate) fn to_bytes(
     }
 
     let mut source_hashes: Vec<u8> = Vec::with_capacity(modules.len() * size_of::<u32>());
-    for (module, output_file) in modules.iter_mut().zip(&module_files) {
+    for (i, (module, output_file)) in modules.iter_mut().zip(&module_files).enumerate() {
         let mut hash = 0u32;
         if is_stored_as_string(output_file) {
             (module.contents, module.encoding, hash) =
                 encode_text_module(&mut string_builder, output_file.value.as_slice());
+        } else if native_library_set
+            .member(i)
+            .is_some_and(|m| m.alias_index != NativeLibrarySet::NO_ALIAS)
+        {
+            // Same bytes as its alias target: stored once, below.
         } else {
             module.contents = string_builder.append_count_z(output_file.value.as_slice());
         }
@@ -1832,6 +1955,14 @@ pub(crate) fn to_bytes(
             hash = 0;
         }
         source_hashes.extend_from_slice(&hash.to_le_bytes());
+    }
+    for member in native_library_set
+        .members
+        .iter()
+        .filter(|m| m.alias_index != NativeLibrarySet::NO_ALIAS)
+    {
+        modules[member.file_index as usize].contents =
+            modules[member.alias_index as usize].contents;
     }
 
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
@@ -1913,6 +2044,20 @@ pub(crate) fn to_bytes(
         }
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_LINKED_BYTECODE_PAYLOAD;
+    }
+    if !native_library_set.is_empty() {
+        let members = &native_library_set.members;
+        let mut record: Vec<u8> = Vec::with_capacity(
+            NATIVE_LIBRARY_SET_HEADER + NATIVE_LIBRARY_MEMBER_SIZE * members.len(),
+        );
+        record.extend_from_slice(&native_library_set.set_hash.to_le_bytes());
+        record.extend_from_slice(&(members.len() as u32).to_le_bytes());
+        for member in members {
+            record.extend_from_slice(&member.file_index.to_le_bytes());
+            record.extend_from_slice(&member.alias_index.to_le_bytes());
+        }
+        let _ = string_builder.append_count(&record);
+        flags |= Flags::HAS_NATIVE_LIBRARY_SET;
     }
     if !target.is_host_platform()
         && output_files

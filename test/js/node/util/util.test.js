@@ -23,7 +23,7 @@
 
 import assert from "assert";
 import { exposedInternals } from "bun:internal-for-testing";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
@@ -662,5 +662,164 @@ describe("util.parseEnv", () => {
     parsed[0] = "set";
     expect(parsed[0]).toBe("set");
     expect(JSON.parse(JSON.stringify(parsed))).toEqual({ 0: "set", 2023: "y", A: "1", 4294967295: "notidx" });
+  });
+});
+
+// format, formatWithOptions, inspect and stripVTControlCharacters come from
+// internal/util/inspect, which loads on first use. Node exposes them as data
+// properties, so descriptor-based wrappers (sinon, spyOn) must see a `value`.
+describe("lazy inspect exports", () => {
+  const lazyKeys = ["format", "formatWithOptions", "inspect", "stripVTControlCharacters"];
+
+  it.concurrent("are data properties before the first read, and load inspect on that read", async () => {
+    const fixture = `
+      const { heapStats } = require("bun:jsc");
+      const util = require("node:util");
+      const functionsAfterRequire = heapStats().objectTypeCounts.Function;
+      const keys = ${JSON.stringify(lazyKeys)};
+      const shape = d => ({ value: typeof d.value, get: typeof d.get, writable: d.writable, enumerable: d.enumerable, configurable: d.configurable });
+      const before = keys.map(k => shape(Object.getOwnPropertyDescriptor(util, k)));
+      const functionsAfterRead = heapStats().objectTypeCounts.Function;
+      // the descriptor-based wrapper pattern
+      const d = Object.getOwnPropertyDescriptor(util, "inspect");
+      const out = d.value.call(util, { a: 1 });
+      console.log(JSON.stringify({
+        before,
+        out,
+        same: util.inspect === d.value && util.format === require("node:util").format,
+        custom: typeof util.inspect.custom,
+        loadedOnRead: functionsAfterRead - functionsAfterRequire > 20,
+        after: shape(Object.getOwnPropertyDescriptor(util, "inspect")),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const data = { value: "function", get: "undefined", writable: true, enumerable: true, configurable: true };
+    expect(JSON.parse(stdout)).toEqual({
+      before: [data, data, data, data],
+      out: "{ a: 1 }",
+      same: true,
+      custom: "symbol",
+      loadedOnRead: true,
+      after: data,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("spyOn works before the first read", async () => {
+    const fixture = `
+      const { spyOn } = require("bun:test");
+      const util = require("node:util");
+      const spy = spyOn(util, "format").mockReturnValue("mocked");
+      const mocked = util.format("%s", "x");
+      const calls = spy.mock.calls.length;
+      spy.mockRestore();
+      const d = Object.getOwnPropertyDescriptor(util, "format");
+      console.log(JSON.stringify({ mocked, calls, restored: util.format("%s!", "ok"), value: typeof d.value, get: typeof d.get }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      mocked: "mocked",
+      calls: 1,
+      restored: "ok!",
+      value: "function",
+      get: "undefined",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("spyOn works after the first read", () => {
+    expect(util.inspect({ a: 1 })).toBe("{ a: 1 }");
+    const spy = spyOn(util, "inspect").mockReturnValue("mocked");
+    try {
+      expect(util.inspect({ a: 1 })).toBe("mocked");
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(util.inspect({ a: 1 })).toBe("{ a: 1 }");
+    expect(Object.getOwnPropertyDescriptor(util, "inspect")).toEqual({
+      value: util.inspect,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  });
+
+  it("can be replaced through the descriptor, as sinon does", () => {
+    const original = Object.getOwnPropertyDescriptor(util, "stripVTControlCharacters");
+    expect(typeof original.value).toBe("function");
+    const stub = () => "stubbed";
+    Object.defineProperty(util, "stripVTControlCharacters", { ...original, value: stub });
+    try {
+      expect(util.stripVTControlCharacters("\u001b[31mx\u001b[0m")).toBe("stubbed");
+    } finally {
+      Object.defineProperty(util, "stripVTControlCharacters", original);
+    }
+    expect(util.stripVTControlCharacters("\u001b[31mx\u001b[0m")).toBe("x");
+  });
+
+  it.concurrent("can be replaced by assignment and deleted", async () => {
+    const fixture = `
+      const util = require("node:util");
+      const stub = () => "stubbed";
+      util.formatWithOptions = stub;
+      const replaced = util.formatWithOptions === stub && Object.getOwnPropertyDescriptor(util, "formatWithOptions").value === stub;
+      const deleted = delete util.inspect;
+      console.log(JSON.stringify({ replaced, deleted, gone: !("inspect" in util), keys: Object.keys(util).filter(k => k === "inspect" || k === "format") }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ replaced: true, deleted: true, gone: true, keys: ["format"] });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("stay read-only on a frozen util, as in node", async () => {
+    const fixture = `
+      const util = require("node:util");
+      Object.freeze(util);
+      const shape = d => ({ value: typeof d.value, writable: d.writable, enumerable: d.enumerable, configurable: d.configurable });
+      const before = shape(Object.getOwnPropertyDescriptor(util, "inspect"));
+      const first = util.inspect;
+      util.inspect = () => "replaced";
+      const after = shape(Object.getOwnPropertyDescriptor(util, "inspect"));
+      console.log(JSON.stringify({ frozen: Object.isFrozen(util), before, after, same: util.inspect === first, out: util.inspect({ a: 1 }) }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const readOnly = { value: "function", writable: false, enumerable: true, configurable: false };
+    expect(JSON.parse(stdout)).toEqual({
+      frozen: true,
+      before: readOnly,
+      after: readOnly,
+      same: true,
+      out: "{ a: 1 }",
+    });
+    expect(exitCode).toBe(0);
   });
 });

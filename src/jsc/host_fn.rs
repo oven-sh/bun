@@ -380,19 +380,6 @@ pub fn host_fn_static<R: IntoHostFnReturn>(
     host_fn_result(global, || f(global, callframe))
 }
 
-/// Static / class method, no exception scope. For `host`-shape exports whose
-/// impl returns bare `JSValue` (e.g. `Bun__drainMicrotasksFromJS`) — wrapping
-/// these in `to_js_host_call` would trip the return/exception biconditional
-/// when the body legitimately leaves an exception pending.
-#[inline]
-pub(crate) fn host_fn_static_passthrough(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
-) -> JSValue {
-    f(global, callframe)
-}
-
 /// Raw-pointer entry for `host`-shape exports whose `#[no_mangle]` thunk must
 /// keep `(*mut JSGlobalObject, *mut CallFrame)` params so the symbol coerces
 /// to [`JsHostFn`] when Rust passes it as a callback (e.g. `JSValue::then2`).
@@ -423,28 +410,6 @@ pub unsafe fn host_fn_static_raw<R: IntoHostFnReturn>(
         )
     };
     host_fn_static(global, callframe, f)
-}
-
-/// Raw-pointer entry for `host`-shape exports, no exception scope.
-/// See [`host_fn_static_raw`].
-///
-/// # Safety
-/// `global` and `callframe` must be non-null and valid for the duration of the
-/// call (guaranteed by the JSC host-function ABI for every `JsHostFn` thunk).
-#[inline]
-pub unsafe fn host_fn_static_passthrough_raw(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
-    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
-) -> JSValue {
-    // SAFETY: JSC host-function ABI — `global`/`callframe` are always non-null.
-    let (global, callframe) = unsafe {
-        (
-            JSGlobalObject::opaque_ref_nn(global),
-            CallFrame::opaque_ref_nn(callframe),
-        )
-    };
-    host_fn_static_passthrough(global, callframe, f)
 }
 
 /// Lazy property creator / free getter: `fn(&JSGlobalObject) -> R`. Used by

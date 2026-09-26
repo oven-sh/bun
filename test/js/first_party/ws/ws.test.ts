@@ -1449,6 +1449,41 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     other.close();
   });
 
+  // The 'upgrade' listener waits for a promise that a request on another connection
+  // resolves, so handleUpgrade() runs inside the read of that other connection.
+  it("does not stop the read of another connection that handleUpgrade() runs inside of", async () => {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      release();
+      req.resume().on("end", () => res.end(`${req.url};`));
+    });
+    const wss = new WebSocketServer({ noServer: true });
+    const connections: unknown[] = [];
+    server.on("upgrade", async (req, socket, head) => {
+      await released;
+      wss.handleUpgrade(req, socket, head, ws => connections.push(ws));
+    });
+
+    await using upgrade = await receiveUpgrade(upgradeRequest(), server);
+
+    // Two requests in one read. The first one has a body, and its listener releases the upgrade.
+    const other = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    other.on("error", () => {});
+    let responses = "";
+    other.on("data", chunk => (responses += chunk.toString("latin1")));
+    const otherClosed = new Promise<void>(resolve => other.once("close", resolve));
+    other.end(
+      "POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\n\r\nbody" +
+        "GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+    );
+    await otherClosed;
+
+    expect(responses.match(/\/\w+;/g)).toEqual(["/first;", "/second;"]);
+    expect(await upgrade.received("\r\n\r\n")).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+    expect(connections).toHaveLength(1);
+    wss.close();
+  });
+
   // A client that does not wait for the 101 can get frames to the server before
   // the upgrade. The npm package parses them: it unshifts the 'upgrade' event's
   // head into the socket and reads frames from the socket stream.
@@ -1485,6 +1520,24 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     it("are delivered when handleUpgrade() runs inside the 'upgrade' event", async () => {
       const server = createServer();
       const wss = new WebSocketServer({ server });
+      const messages = messagesOf(wss);
+
+      await using upgrade = await receiveUpgrade(requestAndEarlyFrame(), server);
+
+      expect(await sendLater(upgrade, messages)).toEqual(["early", "later"]);
+      wss.close();
+    });
+
+    // The nextTicks and promise jobs of the 'upgrade' listener run before the rest of the read.
+    it.each([
+      ["a promise job", (callback: (verified: boolean) => void) => void Promise.resolve().then(() => callback(true))],
+      ["a nextTick", (callback: (verified: boolean) => void) => process.nextTick(callback, true)],
+    ])("are delivered when verifyClient answers from %s", async (_name, answer) => {
+      const server = createServer();
+      const wss = new WebSocketServer({
+        server,
+        verifyClient: (_info: unknown, callback: (verified: boolean) => void) => answer(callback),
+      });
       const messages = messagesOf(wss);
 
       await using upgrade = await receiveUpgrade(requestAndEarlyFrame(), server);

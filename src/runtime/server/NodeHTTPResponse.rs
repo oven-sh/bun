@@ -1649,17 +1649,26 @@ impl NodeHTTPResponse {
             last
         );
         let body_was_pending = self.body_read_state.get() == BodyReadState::Pending;
-        // On the last chunk, keep `self` alive across the JS callback below.
+        // On the last chunk, keep `self` alive across the JS callbacks below.
         let _guard = last.then(|| self.ref_guard());
-        if last {
-            self.body_read_state.set(BodyReadState::Done);
-        }
 
         // "Armed" means a callable is cached — the slot holds an explicit
         // `undefined` between the dispatch reset and the reader's _read() arming
         // it, and a body arriving in that window used to be dropped outright.
-        let on_data_armed = js::on_data_get_cached(this_value).is_some_and(|cb| cb.is_cell());
-        if !on_data_armed && body_was_pending && event == AbortEvent::None {
+        let callback = js::on_data_get_cached(this_value).filter(|cb| cb.is_cell());
+        let vm = vm_get();
+        let global_this = vm.global();
+        let bytes = match callback {
+            Some(_) => self.get_bytes(global_this, chunk),
+            None => JSValue::UNDEFINED,
+        };
+        // Like Node's on_body then on_message_complete: the body stays pending until its own fin call.
+        let fin_follows_bytes = last && event == AbortEvent::None && !bytes.is_undefined();
+        if last && !fin_follows_bytes {
+            self.body_read_state.set(BodyReadState::Done);
+        }
+
+        if callback.is_none() && body_was_pending && event == AbortEvent::None {
             // No reader armed yet: pipelined request whose body arrived in the same parse burst
             // as its headers, before JS ran _read() to install ondata. Park it where pause parks;
             // the reader-arm drain picks it up. (Dumped requests move to Done first, never here.)
@@ -1671,14 +1680,9 @@ impl NodeHTTPResponse {
                     f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
                 }
             });
-        } else if let Some(callback) = js::on_data_get_cached(this_value) {
-            if callback.is_cell() {
-                let vm = vm_get();
-                let global_this = vm.global();
-                let event_loop = vm.event_loop_ref();
-
-                let bytes = self.get_bytes(global_this, chunk);
-
+        } else if let Some(callback) = callback {
+            let event_loop = vm.event_loop_ref();
+            let mut deliver = |bytes: JSValue, last: bool| {
                 event_loop.run_callback(
                     bun_event_loop::ContextId::NONE,
                     callback,
@@ -1690,6 +1694,18 @@ impl NodeHTTPResponse {
                         JSValue::js_number_from_int32(event as u8 as i32),
                     ],
                 );
+                // Node's on_body is a checkpoint; the exit of this nested callback was not one.
+                if !bytes.is_undefined() {
+                    let _ = event_loop.checkpoint_between_callbacks();
+                }
+            };
+            if fin_follows_bytes {
+                deliver(bytes, false);
+                // The reader that took the bytes takes the fin, even if res.destroy() released its slot.
+                self.body_read_state.set(BodyReadState::Done);
+                deliver(JSValue::UNDEFINED, true);
+            } else {
+                deliver(bytes, last);
             }
         }
 
@@ -2568,6 +2584,17 @@ impl Drop for NodeHTTPResponse {
 
         self.promise.with_mut(|p| p.deinit());
     }
+}
+
+/// One socket read is one scope, like Node's parser: its callbacks are nested, its end is the checkpoint.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__NodeHTTP__onReadBegin() {
+    vm_get().event_loop_ref().enter();
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__NodeHTTP__onReadEnd() {
+    vm_get().event_loop_ref().exit();
 }
 
 /// # Safety

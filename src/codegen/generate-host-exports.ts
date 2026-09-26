@@ -9,8 +9,8 @@
 //
 // Marker grammar (one line, immediately preceding `pub fn`):
 //
-//     // HOST_EXPORT(Bun__drainMicrotasksFromJS)
-//     pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame)
+//     // HOST_EXPORT(Bun__onResolveEntryPointResult)
+//     pub fn on_resolve_entry_point_result(global: &JSGlobalObject, callframe: &CallFrame)
 //         -> JsResult<JSValue> { … }
 //
 // Optional second arg selects the calling convention:
@@ -25,7 +25,7 @@
 //
 //   shape        impl signature                                          → thunk
 //   ──────────── ─────────────────────────────────────────────────────────────────
-//   host         (&JSGlobalObject, &CallFrame) -> JsResult<JSValue>|JSValue
+//   host         (&JSGlobalObject, &CallFrame) -> JsResult<JSValue>
 //                  → host_fn::host_fn_static(g, cf, path::name)
 //   lazy         (&JSGlobalObject) -> JsResult<JSValue>|JSValue
 //                  → host_fn::host_fn_lazy(g, path::name)
@@ -309,6 +309,10 @@ for (const { dir, crate } of scanRoots) {
         shape = "generic";
         abi ??= "c";
       }
+      if ((shape === "host" || shape === "reaction") && ret === "JSValue") {
+        errors.push(`${where}: a (global, callframe) export returns \`JsResult<JSValue>\`, not a bare \`JSValue\``);
+        continue;
+      }
 
       const fm = fileToMod.get(path.resolve(file));
       // Module path as seen from `bun_runtime::generated_host_exports`.
@@ -412,13 +416,7 @@ ${body}
 function emitThunk(e: Export): string {
   const impl = `${e.modPath}::${e.fnName}`;
   const loc = `${path.relative(repoRoot, e.file)}:${e.line}`;
-  // `JsResult<JSValue>` impls need `to_js_host_call` (exception-scope assert +
-  // panic barrier + Err→empty mapping). Plain-`JSValue` impls are bare
-  // host-call-ABI bodies (no exception-scope wrapper) — wrap them and you trip
-  // `assert_exception_presence_matches(false)` whenever the body legitimately
-  // leaves an exception pending while returning non-empty (e.g.
-  // `Bun__drainMicrotasksFromJS`). Match `#[bun_jsc::host_call]`: deref + call,
-  // no scope.
+  // A `JsResult<JSValue>` impl goes through `to_js_host_call`; a bare-`JSValue` lazy impl is called with no scope.
   const retIsJsResult = /^(?:bun_jsc::)?JsResult\s*<\s*JSValue\s*>$/.test(e.ret);
   switch (e.shape) {
     case "host": {
@@ -429,20 +427,17 @@ function emitThunk(e: Export): string {
       // thunk is `pub unsafe extern fn` (matches `JSHostFn`'s `unsafe`
       // qualifier) and routes through the `_raw` helper that derefs under a
       // documented safety contract — so no safe `pub fn` derefs a raw ptr.
-      const body = retIsJsResult
-        ? `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid.\n    unsafe { host_fn::host_fn_static_raw(g, cf, ${impl}) }`
-        : `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid.\n    unsafe { host_fn::host_fn_static_passthrough_raw(g, cf, ${impl}) }`;
+      const body = `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid.\n    unsafe { host_fn::host_fn_static_raw(g, cf, ${impl}) }`;
       return `
 // ${loc}
 ${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", body, /*unsafeFn*/ true)}`;
     }
     case "reaction": {
-      const wrap = retIsJsResult ? "host_fn::host_fn_static_raw" : "host_fn::host_fn_static_passthrough_raw";
       const body = `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid; the
     // trailing argument is the \`ctx\` this reaction was registered with via
     // \`JSValue::then\`, on which the registrant holds a ref until it runs.
     unsafe {
-        ${wrap}(g, cf, |g, cf| {
+        host_fn::host_fn_static_raw(g, cf, |g, cf| {
             let args = cf.arguments();
             let this = ::bun_ptr::ThisPtr::new(args[args.len() - 1].as_promise_ptr());
             ${impl}(this, g, cf)

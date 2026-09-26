@@ -37,6 +37,8 @@
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
+extern "C" void Bun__NodeHTTP__onReadBegin();
+extern "C" void Bun__NodeHTTP__onReadEnd();
 
 namespace uWS {
 
@@ -307,6 +309,27 @@ private:
         return us_socket_close(s, 0, nullptr);
     }
 
+    /* node:http compat: one read is one event loop scope; end() is its checkpoint (Node's kOnExecute). */
+    template <bool IsNodeHttp>
+    struct ReadScope {
+        bool open = false;
+        void begin() {
+            if constexpr (IsNodeHttp) {
+                Bun__NodeHTTP__onReadBegin();
+                open = true;
+            }
+        }
+        void end() {
+            if constexpr (IsNodeHttp) {
+                if (open) {
+                    open = false;
+                    Bun__NodeHTTP__onReadEnd();
+                }
+            }
+        }
+        ~ReadScope() { end(); }
+    };
+
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         // ref the socket to make sure we process it entirely before it is closed
@@ -414,6 +437,9 @@ private:
             auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
         }
+
+        ReadScope<IsNodeHttp> readScope;
+        readScope.begin();
 
         auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
@@ -670,6 +696,17 @@ private:
 
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
+        /* Inside the parse window and before the uncork: the socket is checked as after any callback. */
+        if constexpr (IsNodeHttp) {
+            if (!httpErrorStatusCode) {
+                readScope.end();
+                if (result.returnedData != nullptr
+                    && (httpContextData->upgradedWebSocket || us_socket_is_closed(s) || us_socket_is_shut_down(s))) {
+                    result = HttpParserResult::success(HttpParserResult::WHOLE_READ, nullptr);
+                }
+            }
+        }
+
         /* Mark that we are no longer parsing Http */
         httpContextData->flags.isParsingHttp = false;
         httpContextData->parsingSocket = prevParsingSocket;
@@ -683,6 +720,8 @@ private:
             if (IsNodeHttp && httpContextData->onClientError) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
+                /* Node emits 'clientError' from the callback that ends the read (kOnExecute). */
+                readScope.end();
                 if (!us_socket_is_closed(s)) {
                     /* Balance the parsing ref taken at the top of onData (the
                      * success path does this through returnedData). */
@@ -771,9 +810,7 @@ private:
              * request head in this read, and the HTTP parser stopped there. Give them to the
              * WebSocket now, as the loop would have for a read of its own. The parser counts a
              * body that the request declared as consumed, so that is never taken for frames.
-             * Not when upgradedWebSocket names another connection (upgrade() adopts in place,
-             * so ours is s): the field is per context, and a microtask of this dispatch, or an
-             * earlier upgrade from a request body handler, can set it. */
+             * upgrade() adopts in place, so the WebSocket is s. */
             unsigned int consumed = result.consumedBytes();
             if (consumed < (unsigned int) length && (us_socket_t *) asyncSocket == s
                 && !us_socket_is_closed(s) && !us_socket_is_shut_down(s)) {

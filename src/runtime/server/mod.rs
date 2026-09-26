@@ -1279,7 +1279,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             core::ptr::NonNull::new(this).expect("on_node_http_request: this non-null"),
         );
         let vm = this_ref.vm_mut();
-        let _entered = this_ref.vm().enter_event_loop_scope_without_checkpoint();
+        // Like Node's on_headers_complete, no checkpoint here: the scope of the read runs it.
+        let _entered = this_ref.vm().enter_event_loop_scope();
         // The listener and what it starts continue the script that made the server.
         let _context = this_ref.vm().enter_context(this_ref.context.get());
         req.set_yield(false);
@@ -1364,31 +1365,26 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Pending,
         }
         let mut strong_promise = jsc::StrongOptional::empty();
-        let mut needs_to_drain = true;
 
         let http_result = 'brk: {
             if let Some(err) = result.to_error() {
                 break 'brk HttpResult::Exception(err);
             }
 
+            // SAFETY: out-param written by `on_request_ffi`; checked non-null above.
+            let nhr_flags = unsafe { &*node_http_response }.flags.get();
+            if nhr_flags.contains(NhrFlags::TUNNELED) {
+                // Node emits 'upgrade' and 'connect' from the callback that ends the read.
+                let _ = this_ref.vm().event_loop_ref().drain_microtasks();
+                if global.has_exception() {
+                    break 'brk HttpResult::Exception(global.take_error(bun_jsc::JsError::Thrown));
+                }
+            }
+
             if let Some(promise) = result.as_any_promise() {
-                // One `status()` read; only re-read after `drain_microtasks`
-                // (which can settle a pending promise) actually runs.
-                let mut status = promise.status();
+                let status = promise.status();
                 if status == jsc::js_promise::Status::Pending {
                     strong_promise.set(global, result);
-                    needs_to_drain = false;
-                    // SAFETY: `vm` is the process-static VirtualMachine.
-                    unsafe { (*vm).drain_microtasks() };
-                    // The drain ran script: an exception it left (a termination
-                    // request landing in it) ends this dispatch like a throw
-                    // from the handler; nothing below may enter script over it.
-                    if global.has_exception() {
-                        break 'brk HttpResult::Exception(
-                            global.take_error(bun_jsc::JsError::Thrown),
-                        );
-                    }
-                    status = promise.status();
                 }
 
                 match status {
@@ -1530,12 +1526,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // Cleanup, hoisted out of scopeguards (no early
-        // returns above). Reverse-decl order: strong_promise, drain, deref.
+        // returns above). Reverse-decl order: strong_promise, deref.
         strong_promise.deinit();
-        if needs_to_drain {
-            // SAFETY: `vm` is the process-static VirtualMachine.
-            unsafe { (*vm).drain_microtasks() };
-        }
         if !is_async && !node_http_response.is_null() {
             // SAFETY: out-param ref taken in C++; synchronous path drops it.
             unsafe { &*node_http_response }.deref();

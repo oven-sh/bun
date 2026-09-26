@@ -425,6 +425,9 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
 
   const handle = this[kHandle];
   if (handle) {
+    // 'end' listeners still see `parser.incoming === req` (test-http-server-keepalive-end).
+    const parser = this.socket?.parser;
+    if (parser != null && parser.incoming === this) parser.incoming = null;
     // Native server path. The stream destroyer (internal/streams/destroy.ts)
     // assigns `req.socket = null` before calling destroy() to signal that the
     // connection must outlive the request so the response can still reply

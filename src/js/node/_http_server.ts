@@ -50,7 +50,7 @@ const {
   hasServerResponseFinished,
   NodeHTTPBodyReadState,
   eofInProgress,
-  drainMicrotasks,
+  completeIncomingMessage,
   setServerCustomOptions,
   setServerAppFlags,
   getMaxHTTPHeaderSize,
@@ -766,6 +766,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.upgrade = true;
             // Node frees the parser before handing the raw socket to 'connect'.
             releaseServerParserShim(socket, http_req);
+            // Node emits 'connect' after the read, so the message is complete by then.
+            completeIncomingMessage(http_req);
             server.emit("connect", http_req, socket, head);
             // Attach the internal close listener after the user's "connect"
             // handler ran: Node.js hands the socket over with no listeners and
@@ -847,7 +849,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           handle.ondata = onDataIncomingMessage.bind(http_req);
           handle.hasCustomOnData = false;
         }
-        drainMicrotasks();
 
         let pendingPromise: Promise<void> | undefined;
         let didFinish = false;
@@ -980,6 +981,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
+          // Node emits 'upgrade' after the read, so a message without a body is complete by then.
+          if (!hasBody) completeIncomingMessage(http_req);
           let upgradeHandled;
           try {
             upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
@@ -1036,6 +1039,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             server.emit("request", http_req, http_res);
           }
         }
+
+        // Node reports on_message_complete right after the listener of a message without a body returns.
+        if (!hasBody) completeIncomingMessage(http_req);
 
         socket.cork();
 
@@ -2413,10 +2419,15 @@ function stopServerResponsePerf(this: any) {
 // arm keep-alive) runs first because onResponseFinishHandleSocket's guards
 // read pre-detach state, then detach the socket and advance the pipeline.
 function emitResponseFinish() {
+  const req = this.req;
+  // Like Node's resOnFinish: a request that nothing reads is dumped when its response finishes.
+  if (req && !req._consuming && !req._readableState?.resumeScheduled) {
+    req._dump();
+  }
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
-  const socket = this.req?.socket ?? this.socket;
+  const socket = req?.socket ?? this.socket;
   onResponseFinishHandleSocket(socket?.server, socket, this);
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
@@ -2686,9 +2697,10 @@ function advanceResponsePipeline(server, socket) {
           handle.writeInformational(op[1], op[2]);
           if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
-          lastWriteResult = res.write(op[1], op[2], op[3]);
+          // The prototype's write()/end() buffered these; `res.write` can be a middleware's replacement.
+          lastWriteResult = ServerResponse.prototype.write.$call(res, op[1], op[2], op[3]);
         } else {
-          res.end(op[1], op[2], op[3]);
+          ServerResponse.prototype.end.$call(res, op[1], op[2], op[3]);
         }
       }
     } finally {
@@ -3152,6 +3164,8 @@ ServerResponse.prototype.writeContinue = function (cb) {
 ServerResponse.prototype.end = function (chunk, encoding, callback) {
   const handle = this[kHandle];
   if (handle?.aborted) {
+    // Like Node's end() on a destroyed connection: the message is finished, and no 'finish' follows.
+    this.finished = true;
     return this;
   }
 
@@ -3287,10 +3301,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
   this._header = " ";
-  const req = this.req;
-  if (!req._consuming && !req?._readableState?.resumeScheduled) {
-    req._dump();
-  }
   // The socket is NOT detached here: like Node.js, res.socket stays assigned
   // until the response 'finish' machinery runs (the dispatcher detaches it
   // right after a synchronously-finished handler returns, or via its 'finish'
@@ -3555,7 +3565,9 @@ Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
 
 Object.defineProperty(ServerResponse.prototype, "writableFinished", {
   get() {
-    return !!(this.finished && (!this[kHandle] || this[kHandle].finished));
+    const handle = this[kHandle];
+    // A connection that is gone has nothing left to flush, like Node's writableLength === 0.
+    return !!(this.finished && (!handle || handle.finished || handle.aborted));
   },
 });
 

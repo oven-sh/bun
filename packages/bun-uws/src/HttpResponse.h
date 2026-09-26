@@ -455,8 +455,8 @@ public:
             httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
         }
 
-        /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (httpContextData->flags.isParsingHttp) {
+        /* Only inside the parse of this socket: a promise job can upgrade it inside the parse of another one. */
+        if (httpContextData->parsingSocket == (us_socket_t *) this) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
         }

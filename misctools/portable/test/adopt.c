@@ -6,9 +6,17 @@
 // bun_adopt.c). Here the threads are made by the library of tests of the Linux test host, which calls
 // the callback the way Windows calls one: with the calling convention of Windows, on a thread of its own.
 //
-//   adopt.img                 exit code 42 and one line that starts with "adopt: "
-//   adopt.img no-check        the callback does not check: a thread of the host that runs it has to stop
-//                             the program, which shows that the check is what makes the other run pass
+// Who writes the check:
+//   the source        `callback`: what bun_portable_macros::win_abi writes into a function of Rust
+//   the compiler      `listed_callback`, and `bun_test::Callbacks::listed` of adopt_cpp.cpp: C and C++
+//                     whose source has no check. adopt.list names them, and the compiler is given the
+//                     list (build.ts): it calls the check of the C library at their entry.
+//   nobody            `unlisted_callback`, `bun_test::Callbacks::unlisted`, and `callback` with no-check
+//
+//   adopt.img [listed|listed-cpp]              exit code 42 and one line that starts with "adopt: "
+//   adopt.img no-check|unlisted|unlisted-cpp   nothing checks: a thread of the host that runs the callback
+//                                              has to stop the program, which shows that the check is
+//                                              what makes the other runs pass
 #define _GNU_SOURCE
 #include <errno.h>
 #include <pthread.h>
@@ -26,6 +34,9 @@ void *__bun_host_lookup(const char *library, const char *symbol);
 #define WIN64 __attribute__((ms_abi))
 typedef WIN64 long long Callback(void *context, long long thread, long long call);
 typedef WIN64 long long TestThreads(Callback *callback, void *context, long long threads, long long calls);
+// adopt_cpp.cpp
+Callback *adopt_cpp_callback(int listed);
+long long adopt_work(void *context, long long thread, long long call);
 
 #define HOST_THREADS 8
 #define CALLS 50
@@ -54,8 +65,8 @@ static void destructor(void *value) {
   free(value);
 }
 
-WIN64 static long long callback(void *context, long long thread, long long call) {
-  if (check) enter();
+// What a callback does: everything of it needs the thread pointer.
+long long adopt_work(void *context, long long thread, long long call) {
   if (context != (void *)&shared_calls) return -1000000;
 
   // errno is in the thread structure.
@@ -89,6 +100,19 @@ WIN64 static long long callback(void *context, long long thread, long long call)
   return thread * 100 + call;
 }
 
+WIN64 static long long callback(void *context, long long thread, long long call) {
+  if (check) enter();
+  return adopt_work(context, thread, call);
+}
+
+WIN64 static long long listed_callback(void *context, long long thread, long long call) {
+  return adopt_work(context, thread, call);
+}
+
+WIN64 static long long unlisted_callback(void *context, long long thread, long long call) {
+  return adopt_work(context, thread, call);
+}
+
 static void *image_thread(void *arg) {
   long long rounds = 0;
   while (!stop_image_threads) {
@@ -102,7 +126,14 @@ static void *image_thread(void *arg) {
 }
 
 int main(int argc, char **argv) {
-  if (argc > 1 && !strcmp(argv[1], "no-check")) check = 0;
+  const char *who = argc > 1 ? argv[1] : "source";
+  Callback *entered = callback;
+  if (!strcmp(who, "no-check")) check = 0;
+  else if (!strcmp(who, "listed")) entered = listed_callback;
+  else if (!strcmp(who, "unlisted")) entered = unlisted_callback;
+  else if (!strcmp(who, "listed-cpp")) entered = adopt_cpp_callback(1);
+  else if (!strcmp(who, "unlisted-cpp")) entered = adopt_cpp_callback(0);
+  else if (strcmp(who, "source")) return 2;
   if (pthread_key_create(&key, destructor)) return 1;
   TestThreads *test_threads = (TestThreads *)__bun_host_lookup("bun_host_test", "test_threads");
 
@@ -111,17 +142,17 @@ int main(int argc, char **argv) {
     // thread pointer, and the callback is an ordinary function.
     unsigned long ever = 0;
     long long sum = 0;
-    for (long long call = 0; call < CALLS; call++) sum += callback(&shared_calls, 0, call);
+    for (long long call = 0; call < CALLS; call++) sum += entered(&shared_calls, 0, call);
     unsigned long now = __bun_adopted_threads(&ever);
     int ok = sum == CALLS * (CALLS - 1) / 2 && now == 0 && ever == 0 && shared_calls == CALLS;
-    printf("adopt: mode=direct calls=%lld sum=%lld adopted_now=%lu adopted_ever=%lu\n", shared_calls, sum, now, ever);
+    printf("adopt: mode=direct check=%s calls=%lld sum=%lld adopted_now=%lu adopted_ever=%lu\n", who, shared_calls, sum, now, ever);
     return ok ? 42 : 1;
   }
 
   pthread_t image_threads[IMAGE_THREADS];
   for (int i = 0; i < IMAGE_THREADS; i++)
     if (pthread_create(&image_threads[i], 0, image_thread, &lock)) return 1;
-  long long sum = test_threads(callback, &shared_calls, HOST_THREADS, CALLS);
+  long long sum = test_threads(entered, &shared_calls, HOST_THREADS, CALLS);
   stop_image_threads = 1;
   int image_threads_ok = 0;
   for (int i = 0; i < IMAGE_THREADS; i++) {
@@ -134,7 +165,7 @@ int main(int argc, char **argv) {
   long long expected = 100ll * CALLS * (HOST_THREADS * (HOST_THREADS - 1) / 2) + (long long)HOST_THREADS * (CALLS * (CALLS - 1) / 2);
   int ok = sum == expected && now == 0 && ever == HOST_THREADS && destructors_ran == HOST_THREADS &&
            shared_calls == HOST_THREADS * CALLS && image_threads_ok == IMAGE_THREADS && !strcmp(name_of_this_thread, "unset");
-  printf("adopt: mode=hosted threads=%d calls=%lld sum=%lld expected=%lld adopted_now=%lu adopted_ever=%lu destructors=%d image_threads_ok=%d/%d main_tls=%s\n",
-         HOST_THREADS, shared_calls, sum, expected, now, ever, destructors_ran, image_threads_ok, IMAGE_THREADS, name_of_this_thread);
+  printf("adopt: mode=hosted check=%s threads=%d calls=%lld sum=%lld expected=%lld adopted_now=%lu adopted_ever=%lu destructors=%d image_threads_ok=%d/%d main_tls=%s\n",
+         who, HOST_THREADS, shared_calls, sum, expected, now, ever, destructors_ran, image_threads_ok, IMAGE_THREADS, name_of_this_thread);
   return ok ? 42 : 1;
 }

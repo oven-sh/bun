@@ -235,6 +235,22 @@ unsigned long __bun_adopted_threads(unsigned long *ever)
 	if (ever) *ever = adopted_ever;
 	return adopted_now;
 }
+
+/* The check of the slot, as a function: for C and C++ that the host OS calls.
+ * Their source does not say that they are entered from outside, so the
+ * compiler is told, with the list of their names, and writes a call of
+ * __sanitizer_cov_trace_pc at the entry of each function of the list and of
+ * no other (clang -fsanitize-coverage=func,trace-pc
+ * -fsanitize-coverage-allowlist=<list>). The name is the compiler's. */
+void __bun_thread_enter(void)
+{
+#ifdef __x86_64__
+	void *tp;
+	__asm__ ("mov %%gs:(%1),%0" : "=r"(tp) : "r"(__bun_tp_offset));
+	if (__builtin_expect(!tp, 0)) __bun_thread_adopt();
+#endif
+}
+weak_alias(__bun_thread_enter, __sanitizer_cov_trace_pc);
 `,
   );
 
@@ -369,6 +385,9 @@ void *__bun_host_lookup(const char *library, const char *symbol);
    On x86-64 the thread register of the check is gs on every host. */
 extern unsigned long __bun_tp_offset;
 void __bun_thread_adopt(void);
+/* The check and the adoption, for code whose entry the compiler writes the
+   call of: see bun_adopt.c. */
+void __bun_thread_enter(void);
 /* How many adopted threads there are now, and how many there were. */
 unsigned long __bun_adopted_threads(unsigned long *ever);
 

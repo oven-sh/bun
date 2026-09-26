@@ -70,7 +70,7 @@ function run(cmd: string[], options: { cwd?: string; env?: Record<string, string
 /** The flags of bun's C for the image (scripts/build/flags.ts, release), without link-time optimisation. */
 const cFlags = [
   `--config=${join(sysroot, "portable.cfg")}`,
-  "-march=nehalem", "-DNDEBUG", "-O2", "-fno-exceptions", "-fno-omit-frame-pointer", "-fno-stack-protector", "-fvisibility=hidden",
+  "-march=nehalem", "-DNDEBUG", "-O2", "-fno-exceptions", "-fno-omit-frame-pointer", "-fno-stack-protector", "-fstack-clash-protection", "-fvisibility=hidden",
   "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", "-std=gnu17",
   "-Wno-c23-extensions", "-Wno-nullability-completeness",
   `-I${join(repo, "packages")}`, `-I${join(repo, "packages/bun-usockets")}`, `-I${join(repo, "packages/bun-usockets/src")}`,
@@ -82,7 +82,7 @@ const cFlags = [
 const cxxFlags = [
   `--config=${join(sysroot, "portable.cfg")}`,
   "-march=nehalem", "-DNDEBUG", "-O2", "-fno-exceptions", "-fno-c++-static-destructors", "-fno-rtti", "-fno-omit-frame-pointer",
-  "-fno-stack-protector", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables",
+  "-fno-stack-protector", "-fstack-clash-protection", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables",
   "-ffunction-sections", "-fdata-sections", "-std=gnu++23", "-fconstexpr-steps=6000000", "-fconstexpr-depth=54",
   "-Wno-c23-extensions", "-Wno-c++23-lambda-attributes", "-Wno-nullability-completeness", "-Wno-character-conversion",
   `-I${join(repo, "packages")}`, `-I${join(repo, "packages/bun-usockets")}`, `-I${join(repo, "packages/bun-usockets/src")}`,
@@ -98,7 +98,7 @@ const cxxFlags = [
 /** The flags of c-ares in bun's build (scripts/build/deps/cares.ts), for the image. */
 const caresFlags = [
   `--config=${join(sysroot, "portable.cfg")}`,
-  "-march=nehalem", "-DNDEBUG", "-O2", "-fno-exceptions", "-fno-omit-frame-pointer", "-fno-stack-protector", "-fvisibility=hidden",
+  "-march=nehalem", "-DNDEBUG", "-O2", "-fno-exceptions", "-fno-omit-frame-pointer", "-fno-stack-protector", "-fstack-clash-protection", "-fvisibility=hidden",
   "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", "-Wno-c23-extensions",
   `-I${join(vendor, "cares/include")}`, `-I${join(vendor, "cares/src/lib")}`, `-I${join(vendor, "cares/src/lib/include")}`,
   `-I${join(portableBuild, "deps/cares")}`,

@@ -92,7 +92,7 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
       mkdirSync(dir, { recursive: true });
       copyFileSync(baseCdeps, join(dir, "libcdeps.a"));
       run([
-        `${llvm}/clang`, `--config=${join(sysroot, "portable.cfg")}`, "-O2", "-march=nehalem", "-fno-omit-frame-pointer", "-fno-stack-protector",
+        `${llvm}/clang`, `--config=${join(sysroot, "portable.cfg")}`, "-O2", "-march=nehalem", "-fno-omit-frame-pointer", "-fno-stack-protector", "-fstack-clash-protection",
         "-fvisibility=hidden", "-ffunction-sections", "-fdata-sections", "-Wall", "-Wextra", "-c", join(here, "src/shim.c"), "-o", join(dir, "shim.o"),
       ]);
       // The spike's archive has its own bun_restore_stdio and friends: the slice's are the ones to link.
@@ -141,6 +141,11 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
         `-Clink-arg=${join(work, "cdeps/libcdeps.a")}`,
         "-Clink-arg=-lc++", "-Clink-arg=-lclang_rt.builtins",
       ];
+      // cargo does not know the archives and the C library of the link: what it made of the program
+      // before goes, so that it links again.
+      const made = join(work, "target/image", triple, "release");
+      rmSync(join(made, "bun-fs-slice"), { force: true });
+      rmSync(join(made, "build/bun-fs-slice"), { recursive: true, force: true });
       run(
         ["cargo", "build", "--release", "--target", triple, "-Zbuild-std=std,core,alloc,panic_abort", "-Zbuild-std-features=panic-unwind,default"],
         {

@@ -5,7 +5,8 @@
 //   <out>/sysroot          musl 1.2.5 with the host table patch (libc/patch_musl.ts)
 //   <out>/threads.img      static-pie image, runs on linux as is (test/threads.c)
 //   <out>/linux_paths.img  second image, for test/run.sh (test/linux_paths.c)
-//   <out>/adopt.img        threads that the image did not create (test/adopt.c)
+//   <out>/adopt.img        threads that the image did not create (test/adopt.c, test/adopt_cpp.cpp,
+//                          and test/adopt.list: the functions whose check the compiler writes)
 //   <out>/host-linux       POSIX host in hosted mode, for testing the host path on linux
 // aarch64 only:
 //   <out>/builtins         compiler-rt builtins, built from source with the flags of the image
@@ -32,9 +33,12 @@ const runs = Number(process.env.RUNS ?? "1");
 const sys = join(out, "sysroot");
 const target = `${arch}-linux-musl`;
 // Windows x64 has no red zone. x18 is reserved on Windows (TEB) and macOS: the image never writes it.
+// A stack that Windows made grows through a guard page, one page at a time: a frame that is larger
+// than a page touches each of its pages in order (-fstack-clash-protection), as code that is
+// compiled for Windows does. The image runs on such a stack when a thread of Windows enters it.
 const imageFlags =
   arch === "x86_64"
-    ? ["-mno-red-zone", "-fno-stack-protector", "-fPIE"]
+    ? ["-mno-red-zone", "-fno-stack-protector", "-fstack-clash-protection", "-fPIE"]
     : ["-ffixed-x18", "-fno-stack-protector", "-fPIE"];
 const emulator = process.arch === (arch === "x86_64" ? "x64" : "arm64") ? [] : [`qemu-${arch}`];
 
@@ -77,7 +81,7 @@ if (!existsSync(join(sys, "lib/libc.a"))) {
   run(["bun", join(here, "libc/patch_musl.ts"), musl]);
   const tools = { AR: `${llvm}/llvm-ar`, RANLIB: `${llvm}/llvm-ranlib` };
   if (arch === "x86_64") {
-    const env = { ...tools, CC: `${llvm}/clang`, CFLAGS: "-O2 -mno-red-zone -fPIE -fno-stack-protector" };
+    const env = { ...tools, CC: `${llvm}/clang`, CFLAGS: "-O2 -mno-red-zone -fPIE -fno-stack-protector -fstack-clash-protection" };
     run(["./configure", `--prefix=${sys}`, "--disable-shared"], { cwd: musl, env, quiet: true });
   } else {
     const env = { ...tools, CC: cc.join(" "), CFLAGS: `-O2 ${imageFlags.join(" ")}` };
@@ -174,10 +178,17 @@ if (arch === "x86_64") {
 const headers = ["-nostdinc", "-isystem", join(sys, "include"), "-isystem", join(resource, "include")];
 const libraries = [`-L${join(sys, "lib")}`, "-lc", builtins, "-lc", join(sys, "lib/crtn.o")];
 
-/** test/<name>.c becomes <out>/<name>.img */
-function image(name: string) {
+/** test/<name>.c, and the other sources, become <out>/<name>.img */
+function image(name: string, more: { sources?: string[]; flags?: string[] } = {}) {
   const object = join(out, `${name}.o`);
-  run([...cc, "-O2", ...headers, "-femulated-tls", ...imageFlags, "-c", "-o", object, join(here, "test", `${name}.c`)]);
+  const flags = ["-O2", ...headers, "-femulated-tls", ...imageFlags, ...(more.flags ?? [])];
+  run([...cc, ...flags, "-c", "-o", object, join(here, "test", `${name}.c`)]);
+  const others = (more.sources ?? []).map(source => {
+    const other = join(out, `${source}.o`);
+    const cxx = source.endsWith(".cpp") ? ["-x", "c++", "-nostdinc++", "-fno-exceptions", "-fno-rtti"] : [];
+    run([...cc, ...cxx, ...flags, "-c", "-o", other, join(here, "test", source)]);
+    return other;
+  });
   run([
     `${llvm}/ld.lld`,
     "-static",
@@ -194,6 +205,7 @@ function image(name: string) {
     join(sys, "lib/rcrt1.o"),
     join(sys, "lib/crti.o"),
     object,
+    ...others,
     ...libraries,
   ]);
   // Apple Silicon maps code from a file only under a code signature. Last step.
@@ -201,8 +213,13 @@ function image(name: string) {
 }
 image("threads");
 image("linux_paths");
-// The check of the slot is written for x86-64 (gs).
-if (arch === "x86_64") image("adopt");
+// The check of the slot is written for x86-64 (gs). The compiler writes the call of the check at the
+// entry of the functions of the list, which is how C and C++ that the host OS calls get it.
+if (arch === "x86_64")
+  image("adopt", {
+    sources: ["adopt_cpp.cpp"],
+    flags: ["-fsanitize-coverage=func,trace-pc", `-fsanitize-coverage-allowlist=${join(here, "test/adopt.list")}`],
+  });
 
 if (arch === "x86_64") {
   run(["cc", "-O2", "-o", join(out, "host-linux"), join(here, "host/host_posix.c"), "-lpthread"]);
@@ -260,25 +277,37 @@ const probe = join(out, "probe.tmp");
 check(`${arch} threads direct`, [join(out, "threads.img"), probe], { exitCode: 42 });
 check(`${arch} threads hosted`, [join(out, "host-linux"), join(out, "threads.img"), probe], { exitCode: 42 });
 if (arch === "x86_64") {
-  check(`${arch} adopt direct`, [join(out, "adopt.img")], {
-    exitCode: 42,
-    output: /^adopt: mode=direct calls=50 sum=1225 adopted_now=0 adopted_ever=0$/m,
-  });
-  check(
-    `${arch} adopt hosted: 8 threads of the host call into the image`,
-    [join(out, "host-linux"), join(out, "adopt.img")],
-    {
+  // Who wrote the check of the callback: its source, or the compiler for a function of test/adopt.list.
+  for (const [who, what] of [
+    ["source", "the check is in the source"],
+    ["listed", "C, the compiler wrote the check"],
+    ["listed-cpp", "C++, the compiler wrote the check"],
+  ]) {
+    check(`${arch} adopt direct (${what})`, [join(out, "adopt.img"), who], {
       exitCode: 42,
-      output:
-        /^adopt: mode=hosted threads=8 calls=400 sum=149800 expected=149800 adopted_now=0 adopted_ever=8 destructors=8 image_threads_ok=4\/4 main_tls=unset$/m,
-    },
-  );
+      output: new RegExp(`^adopt: mode=direct check=${who} calls=50 sum=1225 adopted_now=0 adopted_ever=0$`, "m"),
+    });
+    check(
+      `${arch} adopt hosted: 8 threads of the host call into the image (${what})`,
+      [join(out, "host-linux"), join(out, "adopt.img"), who],
+      {
+        exitCode: 42,
+        output: new RegExp(
+          `^adopt: mode=hosted check=${who} threads=8 calls=400 sum=149800 expected=149800 adopted_now=0 adopted_ever=8 destructors=8 image_threads_ok=4/4 main_tls=unset$`,
+          "m",
+        ),
+      },
+    );
+  }
   // 139 is SIGSEGV: without the check the first use of the thread pointer is an address near 0.
-  check(
-    `${arch} adopt hosted, must fail: the callback does not check the slot`,
-    [join(out, "host-linux"), join(out, "adopt.img"), "no-check"],
-    { exitCode: 139 },
-  );
+  for (const [who, what] of [
+    ["no-check", "the source does not check"],
+    ["unlisted", "C that the list does not name"],
+    ["unlisted-cpp", "C++ that the list does not name"],
+  ])
+    check(`${arch} adopt hosted, must fail: ${what}`, [join(out, "host-linux"), join(out, "adopt.img"), who], {
+      exitCode: 139,
+    });
 }
 if (existsSync(probe)) rmSync(probe);
 process.exit(failed ? 1 : 0);

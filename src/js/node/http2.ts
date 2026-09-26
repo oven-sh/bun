@@ -33,8 +33,6 @@ const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
-const { $data } = require("node:fs/promises");
-const FileHandle = $data.FileHandle;
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
 const kStrictSingleValueFields = Symbol("strictSingleValueFields");
@@ -3001,22 +2999,36 @@ function tryClose(fd) {
   } catch {}
 }
 
+// node's respondWithFD() sends headers before it reads the fd and fails on the read; replay that.
+function failFdResponseAsStreamError(this: ServerHttp2Stream, headers, options) {
+  if (this.destroyed || this.closed) return;
+  if (!this.headersSent) {
+    try {
+      this.respond(headers, options);
+    } catch (err: any) {
+      this.destroy(err);
+      return;
+    }
+  }
+  this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
+}
+
 // Shared by respondWithFile (the stream owns the descriptor it opened: every terminal path closes
 // it exactly once) and respondWithFD (the caller owns the descriptor: nothing here may close it,
 // matching node's doSendFD).
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
   const ownsFd = this[kOwnsFd] === true;
+  // node's doSendFileFD and doSendFD stat before the headers; respondWithFD() without statCheck sent them already.
+  const statsBeforeHeaders = ownsFd || options.statCheck !== undefined;
   if (err) {
     if (ownsFd && err.code !== "EBADF") {
       tryClose(fd);
     }
 
-    if (onError) onError(err);
-    else {
-      this.respond(headers, options);
-      this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
-    }
+    if (!statsBeforeHeaders) failFdResponseAsStreamError.$call(this, headers, options);
+    else if (onError) onError(err);
+    else this.destroy(err);
     return;
   }
 
@@ -3031,11 +3043,9 @@ function doSendFileFD(options, fd, headers, err, stat) {
     ) {
       const err = isDirectory ? $ERR_HTTP2_SEND_FILE() : $ERR_HTTP2_SEND_FILE_NOSEEK();
       if (ownsFd) tryClose(fd);
-      if (onError) onError(err);
-      else {
-        this.respond(headers, options);
-        this.destroy(err);
-      }
+      if (statsBeforeHeaders && onError) onError(err);
+      else if (ownsFd) this.destroy(err);
+      else failFdResponseAsStreamError.$call(this, headers, options);
       return;
     }
 
@@ -3045,7 +3055,8 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
   if (this.destroyed || this.closed) {
     if (ownsFd) tryClose(fd);
-    this.destroy($ERR_HTTP2_INVALID_STREAM());
+    // node sent the no-statCheck headers already, so a close() after them is not an error.
+    if (statsBeforeHeaders) this.destroy($ERR_HTTP2_INVALID_STREAM());
     return;
   }
 
@@ -3070,7 +3081,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   // of response so check again for the HEADERS_SENT flag
   if (
     (typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers, options) === false) ||
-    this.headersSent
+    (statsBeforeHeaders && this.headersSent)
   ) {
     if (this[kOwnsFd] === true) tryClose(fd);
     return;
@@ -3081,26 +3092,30 @@ function doSendFileFD(options, fd, headers, err, stat) {
       statOptions.length < 0
         ? stat.size - +statOptions.offset
         : Math.min(stat.size - +statOptions.offset, statOptions.length);
-    // remove content-length header
-    for (let i in headers) {
-      if (i?.toLowerCase() === HTTP2_HEADER_CONTENT_LENGTH) {
-        delete headers[i];
-      }
-    }
-    headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
-  try {
-    this.respond(headers, options);
-  } catch (err) {
-    // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
-    // for the file never reaches a read stream, so close it here before the stream is destroyed.
-    if (this[kOwnsFd] === true) tryClose(fd);
-    if (typeof onError === "function") {
-      onError(err);
-    } else {
-      this.destroy(err);
+  if (statsBeforeHeaders) {
+    if (stat.isFile()) {
+      // remove content-length header
+      for (let i in headers) {
+        if (StringPrototypeToLowerCase.$call(i) === HTTP2_HEADER_CONTENT_LENGTH) {
+          delete headers[i];
+        }
+      }
+      headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
     }
-    return;
+    try {
+      this.respond(headers, options);
+    } catch (err) {
+      // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
+      // for the file never reaches a read stream, so close it here before the stream is destroyed.
+      if (this[kOwnsFd] === true) tryClose(fd);
+      if (typeof onError === "function") {
+        onError(err);
+      } else {
+        this.destroy(err);
+      }
+      return;
+    }
   }
 
   // The file is piped to the native stream directly below; its completion runs the regular
@@ -3361,7 +3376,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers?: HeadersObject | null, options?) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3421,7 +3436,7 @@ class ServerHttp2Stream extends Http2Stream {
         throw err;
       }
     }
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3470,13 +3485,22 @@ class ServerHttp2Stream extends Http2Stream {
       // node's processRespondWithFD runs synchronously when no statCheck is given: the
       // user-facing writable side is already closed by the time respondWithFD() returns, so a
       // stream.end() right after it is a no-op instead of ending the stream before the file.
+      try {
+        this.respond(headers, options);
+      } catch (err: any) {
+        this.destroy(err);
+        return;
+      }
       closeWritableForFileResponse(this);
+      try {
+        fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
+      } catch {
+        // node hands the descriptor to the native read, where an out-of-range one fails.
+        this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
+      }
+      return;
     }
-    if (fd instanceof FileHandle) {
-      fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));
-    } else {
-      fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
-    }
+    fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
   }
   additionalHeaders(headers?: HeadersObject | null) {
     if (this.destroyed || this.closed || this.session === undefined) {

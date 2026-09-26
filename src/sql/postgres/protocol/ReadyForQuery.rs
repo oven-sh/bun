@@ -1,8 +1,18 @@
 use super::new_reader::NewReader;
+use super::transaction_status_indicator::TransactionStatusIndicator;
 use crate::postgres::AnyPostgresError;
 
-#[derive(Default)]
-pub struct ReadyForQuery {}
+pub struct ReadyForQuery {
+    pub status: TransactionStatusIndicator,
+}
+
+impl Default for ReadyForQuery {
+    fn default() -> Self {
+        Self {
+            status: TransactionStatusIndicator::I,
+        }
+    }
+}
 
 impl ReadyForQuery {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
@@ -10,8 +20,9 @@ impl ReadyForQuery {
     ) -> Result<Self, AnyPostgresError> {
         reader.length()?;
 
-        // transaction status indicator
-        reader.int::<u8>()?;
-        Ok(Self {})
+        let status = reader.int::<u8>()?;
+        Ok(Self {
+            status: TransactionStatusIndicator(status),
+        })
     }
 }

@@ -62,3 +62,4 @@ pub use crate::postgres::protocol::sasl_initial_response::SASLInitialResponse;
 pub use crate::postgres::protocol::sasl_response::SASLResponse;
 pub use crate::postgres::protocol::stack_reader::StackReader;
 pub use crate::postgres::protocol::startup_message::StartupMessage;
+pub use crate::postgres::protocol::transaction_status_indicator::TransactionStatusIndicator;

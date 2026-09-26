@@ -16,7 +16,6 @@ use crate::{Chunk, Index, LinkerContext, Part, PartRange, WrapKind};
 use bun_ast::StoreRef;
 use bun_ast::binding::ToExprWrapper;
 use bun_ast::{B, Binding, E, Expr, G, Ref, S, Stmt};
-use bun_js_parser::lexer as js_lexer;
 
 use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
@@ -439,8 +438,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         }
                         _ => unreachable!(),
                     };
-                    if name == b"default" || name == b"__esModule" || !js_lexer::is_identifier(name)
-                    {
+                    if name == b"default" || name == b"__esModule" {
                         continue;
                     }
 

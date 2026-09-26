@@ -1,4 +1,4 @@
-import { bunRun, tempDirWithFiles } from "harness";
+import { bunRun, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 const fixture = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "require", ...segs);
@@ -80,6 +80,18 @@ describe("require(specifier)", () => {
         paths: expect.any(Array),
       });
       expect(main.filename).toContain(main.path);
+    });
+
+    // The transpiler rewrites `require.main === module`. The rewrite must keep
+    // the precedence of the original expression.
+    it.each(["index.cjs", "index.mjs"])("keeps its precedence inside a larger expression (%s)", async file => {
+      using dir = tempDir("require-main-precedence", {
+        [file]: `console.log(typeof (require.main === module), typeof (require.main !== module).toString(), [require.main !== module]);`,
+      });
+      const { stdout, stderr, exitCode } = await bunRun(path.join(String(dir), file));
+      expect(stderr).toBeEmpty();
+      expect(stdout).toBe("boolean string [ false ]");
+      expect(exitCode).toBe(0);
     });
   });
 });

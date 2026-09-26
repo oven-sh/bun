@@ -2550,6 +2550,7 @@ impl<'a> Transpiler<'a> {
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed
             // oven-sh/bun#15738.
             target: to_bundle_enums_target(self.options.target),
+            repl_mode: self.options.repl_mode,
             ..Default::default()
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(

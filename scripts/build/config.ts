@@ -1442,8 +1442,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     arm64,
     host,
     // The portable image is a static executable: any Linux kernel of its architecture runs it, whatever the host's libc.
-    canRunOnHost:
-      os === host.os && arch === host.arch && (!linux || portable || abi === (detectLinuxAbi() ?? abi)),
+    canRunOnHost: os === host.os && arch === host.arch && (!linux || portable || abi === (detectLinuxAbi() ?? abi)),
     exeSuffix,
     objSuffix,
     libPrefix,

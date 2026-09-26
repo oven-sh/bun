@@ -86,10 +86,12 @@ macro_rules! comptime_table {
     // stay in plain rodata even with the `&'static [u8]` help strings they point
     // at. Linux-only: the section-name syntax is ELF-specific. Use sparingly —
     // only `AUTO_TABLE` should take this arm; everything else passes `, cold`.
+    // Not in the portable image (`bun_portable`), which is position
+    // independent: see `AUTO_TABLE`.
     ($params:expr) => {
         $crate::comptime_table!(
             @build
-            { #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".rodata.startup"))] }
+            { #[cfg_attr(all(any(target_os = "linux", target_os = "android"), not(bun_portable)), unsafe(link_section = ".rodata.startup"))] }
             $params
         )
     };

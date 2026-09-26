@@ -421,7 +421,19 @@ function verifyElf(spec: VerifySpec): void {
         `PT_TLS ${tlsSegment ? "present" : "absent"}, expected ${expect.elf.tlsSegment ? "present" : "absent"}` +
           (tlsSegment ? ": some thread-locals are not emulated TLS" : ""),
       );
-    const props = [type, "nx-stack", "no-rwx", ...(relro ? ["relro"] : []), ...(bindNow ? ["bind-now"] : [])];
+    const interpreter = phdrs.some(b => /PT_INTERP/.test(field(b, "Type") ?? ""));
+    if (expect.elf.interpreter !== undefined && interpreter !== expect.elf.interpreter)
+      violations.push(
+        `PT_INTERP ${interpreter ? "present" : "absent"}, expected ${expect.elf.interpreter ? "present" : "absent"}`,
+      );
+    const props = [
+      type,
+      "nx-stack",
+      "no-rwx",
+      ...(relro ? ["relro"] : []),
+      ...(bindNow ? ["bind-now"] : []),
+      ...(expect.elf.interpreter === false && !interpreter ? ["static"] : []),
+    ];
     report("hardening", `${props.length} hardening properties`, violations, props);
   }
 

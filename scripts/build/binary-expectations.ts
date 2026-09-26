@@ -119,6 +119,8 @@ export interface BinaryExpectations {
     bindNow: boolean;
     /** A PT_TLS segment. Absent on Android: bun targets API 28, bionic has ELF TLS from 29, so every thread-local is emulated. */
     tlsSegment: boolean;
+    /** A PT_INTERP segment, i.e. a dynamic loader. Undefined = not checked. The portable image has none: it is static. */
+    interpreter?: boolean;
   };
   pe?: {
     /** Exact set of IMAGE_DLL_CHARACTERISTICS_* names. */
@@ -215,7 +217,10 @@ function runtimeInitializers(cfg: Config): string[] {
 
   // mimalloc's process attach hook: every target.
   const initializers = ["_ZL17mi_process_attachv"];
-  if (gnu || musl) {
+  if (cfg.portable) {
+    // clang_rt.crtbegin.o (compiler-rt's crt objects, from the portable sysroot).
+    initializers.push("__do_init");
+  } else if (gnu || musl) {
     // crtbegin.o (GCC's crt objects).
     initializers.push("frame_dummy");
   }
@@ -386,7 +391,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
       let neededLibs: string[];
       let maxSymbolVersions: Record<string, string>;
       let versionNames: string[] = [];
-      if (gnu) {
+      if (cfg.portable) {
+        // One static executable: libc, the C++ runtime and ICU are in it.
+        neededLibs = [];
+        maxSymbolVersions = {};
+      } else if (gnu) {
         neededLibs = ["libc.so.6", "libdl.so.2", "libm.so.6", "libpthread.so.0"];
         // The static ASan runtime links librt/libresolv, and on x64 it intercepts the one symbol
         // bun otherwise takes from the loader (__tls_get_addr); on aarch64 the stack-protector
@@ -428,12 +437,15 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           // executable (-fno-pic, see flags.ts). No RELRO / BIND_NOW anywhere:
           // flags.ts links `-z norelro -z lazy` (a startup-time choice from
           // the CMake era, kept as is); recorded so a change is deliberate.
-          type: android ? "DYN" : "EXEC",
+          // The portable image is a static-pie with every thread-local
+          // emulated, and without a dynamic loader.
+          type: android || cfg.portable ? "DYN" : "EXEC",
           execStack: false,
           rwxLoad: false,
           relro: false,
           bindNow: false,
-          tlsSegment: !android,
+          tlsSegment: !android && !cfg.portable,
+          ...(cfg.portable && { interpreter: false }),
         },
         debugInfo: { symtab: true, debugSections: true, compressed: true },
       };

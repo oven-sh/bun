@@ -54,6 +54,7 @@ impl Parser<'_> {
         let mut n_brothers: u32 = 0;
         let mut n_children: u32 = 0;
         let mut container = Container::default();
+        let mut hr_killer: OFF = 0;
         let prev_line_has_list_loosening_effect = self.last_line_has_list_loosening_effect;
 
         *line = Line::default();
@@ -283,14 +284,15 @@ impl Parser<'_> {
             // Check for thematic break
             if line.indent < self.code_indent_offset
                 && off < self.size
-                && (self.text[off as usize] == b'-'
-                    || self.text[off as usize] == b'_'
-                    || self.text[off as usize] == b'*')
+                && off >= hr_killer
+                && matches!(self.text[off as usize], b'-' | b'_' | b'*')
             {
-                if self.is_hr_line(off) {
+                let hr_result = self.is_hr_line(off);
+                if hr_result.is_hr {
                     line.r#type = LineType::Hr;
                     break;
                 }
+                hr_killer = hr_result.end;
             }
 
             // Check for brother container (another list item in same list)

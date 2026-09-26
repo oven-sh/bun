@@ -940,6 +940,14 @@ impl FontHandler {
                     return false;
                 }
             }
+            Property::Custom(val) => {
+                // Emit anything buffered before a sub-property that `font` resets, so
+                // it stays after a shorthand it was written after.
+                if val.name.is_unknown_any_of(UNTYPED_FONT_SUBPROPERTIES) {
+                    self.flush(dest, context);
+                }
+                return false;
+            }
             _ => return false,
         }
 
@@ -1144,3 +1152,26 @@ fn is_font_property(property_id: &crate::properties::PropertyId) -> bool {
             | PropertyId::Font
     )
 }
+
+/// Sub-properties that the `font` shorthand resets but that have no typed
+/// `Property` variant, so they reach the handler as `Property::Custom`.
+/// https://drafts.csswg.org/css-fonts-4/#font-prop
+/// `font-synthesis-*` and `-webkit-font-smoothing` are not sub-properties of
+/// `font` and are deliberately absent.
+const UNTYPED_FONT_SUBPROPERTIES: &[&[u8]] = &[
+    b"font-variant",
+    b"font-variant-ligatures",
+    b"font-variant-alternates",
+    b"font-variant-numeric",
+    b"font-variant-east-asian",
+    b"font-variant-position",
+    b"font-variant-emoji",
+    b"font-width",
+    b"font-size-adjust",
+    b"font-kerning",
+    b"font-feature-settings",
+    b"font-language-override",
+    b"font-optical-sizing",
+    b"font-variation-settings",
+    b"font-palette",
+];

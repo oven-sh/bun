@@ -25,7 +25,6 @@
   global                          GlobalObject_getGlobalThis                           PropertyCallback
 
   Bun                             GlobalObject::m_bunObject                            CellProperty|DontDelete|ReadOnly
-  File                            GlobalObject::m_JSDOMFileConstructor                 CellProperty
   crypto                          GlobalObject::m_cryptoObject                         CellProperty
   navigator                       GlobalObject::m_navigatorObject                      CellProperty
   performance                     GlobalObject::m_performanceObject                    CellProperty
@@ -33,6 +32,7 @@
 
   Blob                            GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBlob]                               ClassStructure
   Buffer                          GlobalObject::m_JSBufferClassStructure               ClassStructure
+  File                            GlobalObject::m_JSDOMFileClassStructure              ClassStructure
   BuildError                      GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
   BuildMessage                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
   Crypto                          GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSCrypto]                             ClassStructure

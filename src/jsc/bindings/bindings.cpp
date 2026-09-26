@@ -4232,6 +4232,12 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::Enco
     RETURN_IF_EXCEPTION(scope, );
 }
 
+// ECMA-262 IsArray: also true for a Proxy of an array. Throws for a revoked Proxy.
+extern "C" [[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__isArrayIncludingProxy(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject)
+{
+    return JSC::isArray(globalObject, JSC::JSValue::decode(value));
+}
+
 extern "C" bool JSC__JSValue__deleteProperty(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const EncodedSlice* key)
 {
     JSC::JSValue targetValue = JSC::JSValue::decode(target);

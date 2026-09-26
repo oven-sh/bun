@@ -891,6 +891,57 @@ describe("stringify", () => {
     expect(JSON5.stringify({ a: 1, b: 2 }, null, 2)).toEqual("{\n  a: 1,\n  b: 2,\n}");
     expect(JSON5.stringify([1, 2, 3], null, 2)).toEqual("[\n  1,\n  2,\n  3,\n]");
   });
+
+  // Array.isArray and JSON.stringify look through a Proxy (ECMA-262 IsArray). json5@2.2.3 uses Array.isArray.
+  describe("a Proxy of an array", () => {
+    test("is an array, not an object with index keys", () => {
+      const array = [1, "two", [3], { four: 4 }];
+      const proxy = new Proxy(array, {});
+      expect(Array.isArray(proxy)).toBe(true);
+
+      expect(JSON5.stringify(proxy)).toEqual("[1,'two',[3],{four:4}]");
+      expect(JSON5.stringify(proxy, null, 2)).toEqual(
+        "[\n  1,\n  'two',\n  [\n    3,\n  ],\n  {\n    four: 4,\n  },\n]",
+      );
+      expect(JSON5.stringify(new Proxy([], {}))).toEqual("[]");
+      // An array writes null for undefined and function items. An object would drop those keys.
+      expect(JSON5.stringify(new Proxy([undefined, () => {}, 1], {}))).toEqual("[null,null,1]");
+
+      // Nested in an object and in an array, and a Proxy of a Proxy.
+      const nested = { list: new Proxy(array, {}), deep: [new Proxy(new Proxy([1, 2], {}), {})] };
+      expect(JSON5.stringify(nested)).toEqual("{list:[1,'two',[3],{four:4}],deep:[[1,2]]}");
+      expect(JSON5.parse(JSON5.stringify(nested, null, 2))).toEqual({ list: array, deep: [[1, 2]] });
+    });
+
+    test("reads its length and its items through the get trap, like JSON.stringify", () => {
+      // "length" and every item exist only in the get trap.
+      const virtual = new Proxy([] as string[], {
+        get(target, key, receiver) {
+          if (key === "length") return 2;
+          if (key === "0") return "x";
+          if (key === "1") return "y";
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      expect(JSON.stringify(virtual)).toEqual('["x","y"]');
+      expect(JSON5.stringify(virtual)).toEqual("['x','y']");
+    });
+
+    test("that contains itself is a circular structure", () => {
+      const target: unknown[] = [];
+      const cycle = new Proxy(target, {});
+      target.push(cycle);
+      expect(() => JSON5.stringify(cycle)).toThrow("Converting circular structure to JSON5");
+    });
+
+    test("throws a TypeError when it is revoked", () => {
+      const { proxy, revoke } = Proxy.revocable([1], {});
+      revoke();
+      expect(() => JSON.stringify(proxy)).toThrow(TypeError);
+      expect(() => JSON5.stringify(proxy)).toThrow(TypeError);
+      expect(() => JSON5.stringify({ a: [proxy] }, null, 2)).toThrow(TypeError);
+    });
+  });
 });
 
 describe("comments in all structural positions", () => {

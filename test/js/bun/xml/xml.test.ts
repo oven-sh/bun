@@ -1,5 +1,6 @@
 import { XML } from "bun";
 import { describe, expect, test } from "bun:test";
+import { isDebug } from "harness";
 
 // Hand-written coverage beyond the W3C conformance suite (xml-test-suite.test.ts):
 // the JS-facing API surface, the two result shapes, Bun-specific input types,
@@ -921,6 +922,66 @@ describe("XML.stringify", () => {
     expect(() => XML.stringify(new String("<a/>") as any)).toThrow("expects an object");
   });
 
+  // Array.isArray and JSON.stringify look through a Proxy (ECMA-262 IsArray).
+  describe("a Proxy of an array", () => {
+    test("is an array in a compact object", () => {
+      const proxy = new Proxy(["1", "2"], {});
+      expect(Array.isArray(proxy)).toBe(true);
+
+      expect(XML.stringify({ a: { b: proxy } })).toBe("<a><b>1</b><b>2</b></a>");
+      expect(XML.stringify({ a: { b: proxy } }, null, 2)).toBe("<a>\n  <b>1</b>\n  <b>2</b>\n</a>");
+      expect(XML.stringify({ a: { b: new Proxy(new Proxy([{ c: "1" }], {}), {}) } })).toBe("<a><b><c>1</c></b></a>");
+      // An array that holds only skipped values is not content.
+      expect(XML.stringify({ a: { b: new Proxy([undefined], {}), c: new Proxy([], {}) } })).toBe("<a/>");
+    });
+
+    test("is an array as a node's children", () => {
+      expect(XML.stringify({ name: "a", children: new Proxy(["x", { name: "b" }], {}) })).toBe("<a>x<b/></a>");
+      expect(
+        XML.stringify({ name: "a", children: new Proxy([{ name: "b", children: new Proxy(["y"], {}) }], {}) }, null, 2),
+      ).toBe("<a>\n  <b>y</b>\n</a>");
+      expect(XML.stringify({ name: "a", children: new Proxy([], {}) })).toBe("<a/>");
+    });
+
+    test("gets the errors of an array", () => {
+      expect(() => XML.stringify(new Proxy([{ a: 1 }], {}) as any)).toThrow("expects an object");
+      expect(() => XML.stringify({ a: new Proxy(["1", "2"], {}) })).toThrow("cannot be an array");
+      expect(() => XML.stringify({ a: { b: [new Proxy(["x"], {})] } } as any)).toThrow("nested arrays");
+      expect(() => XML.stringify({ name: "a", children: [new Proxy(["nested"], {})] } as any)).toThrow(
+        "cannot contain arrays",
+      );
+      expect(() => XML.stringify({ name: "a", children: [], attributes: new Proxy([], {}) } as any)).toThrow(
+        "attributes must be an object",
+      );
+      const target: unknown[] = [];
+      const cycle = new Proxy(target, {});
+      target.push({ c: cycle });
+      expect(() => XML.stringify({ a: { b: cycle } } as any)).toThrow("Converting circular structure to XML");
+    });
+
+    test("reads its length and its items through the get trap, like JSON.stringify", () => {
+      // "length" and every item exist only in the get trap.
+      const virtual = new Proxy([] as string[], {
+        get(target, key, receiver) {
+          if (key === "length") return 2;
+          if (key === "0") return "x";
+          if (key === "1") return "y";
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      expect(JSON.stringify(virtual)).toBe('["x","y"]');
+      expect(XML.stringify({ a: { b: virtual } })).toBe("<a><b>x</b><b>y</b></a>");
+    });
+
+    test("throws a TypeError when it is revoked", () => {
+      const { proxy, revoke } = Proxy.revocable(["1"], {});
+      revoke();
+      expect(() => JSON.stringify(proxy)).toThrow(TypeError);
+      expect(() => XML.stringify({ a: { b: proxy } })).toThrow(TypeError);
+      expect(() => XML.stringify({ name: "a", children: proxy })).toThrow(TypeError);
+    });
+  });
+
   test("space indents element-only content and leaves text content inline", () => {
     // Repeated children inside mixed content stay inline too.
     expect(XML.stringify({ p: { "#text": "hi", b: ["1", "2"] } }, null, 2)).toBe("<p>hi<b>1</b><b>2</b></p>");
@@ -975,8 +1036,10 @@ describe("XML.stringify", () => {
 
   test("deep values are a catchable error", () => {
     // Must overflow on every build: release frames are far smaller than
-    // debug/ASAN ones, so use a depth no native stack survives.
-    const depth = 1_000_000;
+    // debug/ASAN ones, so use a depth no native stack survives. A debug build
+    // overflows below depth 3,000 (release: below 30,000) and builds each
+    // level about 50 times slower, so it gets a smaller depth.
+    const depth = isDebug ? 100_000 : 1_000_000;
     let deep: any = "x";
     for (let i = 0; i < depth; i++) deep = { a: deep };
     expect(() => XML.stringify(deep)).toThrow(RangeError);

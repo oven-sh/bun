@@ -298,7 +298,7 @@ impl<'a> Stringifier<'a> {
         *object_entry.value_ptr = AnchorAlias::init(origin);
         self.known_collection_roots.append(unwrapped);
 
-        if unwrapped.is_array() {
+        if unwrapped.is_array_including_proxy(global)? {
             let mut iter = unwrapped.array_iterator(global)?;
             while let Some(item) = iter.next()? {
                 if item.is_undefined() || item.is_symbol() || item.is_function() {
@@ -464,7 +464,7 @@ impl<'a> Stringifier<'a> {
             }
         }
 
-        if unwrapped.is_array() {
+        if unwrapped.is_array_including_proxy(global)? {
             let mut iter = unwrapped.array_iterator(global)?;
 
             if iter.len == 0 {

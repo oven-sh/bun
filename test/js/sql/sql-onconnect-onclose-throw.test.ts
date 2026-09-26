@@ -14,9 +14,11 @@
 //
 // The AsyncLocalStorage section at the end of the file covers the other
 // property of the same two callback invocations: they run in the async
-// context the SQL instance was created in (see that section's comment).
+// context the SQL instance was created in (see that section's comment). The
+// section after it covers the callback of sql.begin(), which runs in the
+// async context of its caller.
 
-import { SQL } from "bun";
+import { SQL, randomUUIDv7 } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -295,8 +297,9 @@ for (const [adapter, closedCode] of [
 // the SQL instance was created in: pool connections are opened by whichever
 // query happens to need one (and re-opened on retry) and closed by close(),
 // idle timeouts or the server, so no other context is well defined. Every
-// pool below is driven from a context other than the one it was created in,
-// so an implementation that inherits the caller's context fails these too.
+// pool in this section is driven from a context other than the one it was
+// created in, so an implementation that inherits the caller's context fails
+// these too.
 // ---------------------------------------------------------------------------
 
 const als = new AsyncLocalStorage<string>();
@@ -390,3 +393,129 @@ for (const [adapter, scheme, refusedCode] of [
     },
   );
 }
+
+// ---------------------------------------------------------------------------
+// AsyncLocalStorage in a transaction. The callback of sql.begin() and
+// sql.beginDistributed() belongs to one call, so it runs in the store of that
+// caller, not in the store the pool was created in. When no connection is
+// idle, begin() waits in the pool's queue and the pool calls back later: from
+// the socket's connect event on a cold pool (no store), or from whichever
+// transaction released the connection on a busy pool (the store of that
+// transaction's caller). The callback used to inherit that context.
+// ---------------------------------------------------------------------------
+
+function beginCallbackStoreTests(container: { ready: Promise<void> }, url: () => string) {
+  test("sql.begin() on a cold pool", async () => {
+    await container.ready;
+    await using sql = new SQL(url(), { max: 1 });
+    const seen: (string | undefined)[] = [];
+    // The first operation of the pool, so begin() has to wait for the connection to open.
+    await als.run("cold", () =>
+      sql.begin(async tx => {
+        seen.push(als.getStore());
+        await tx`SELECT 1`;
+        seen.push(als.getStore());
+      }),
+    );
+    // The connection is idle now, so begin() gets it synchronously.
+    await als.run("warm", () =>
+      sql.begin(async () => {
+        seen.push(als.getStore());
+      }),
+    );
+    expect(seen).toStrictEqual(["cold", "cold", "warm"]);
+  });
+
+  test("sql.begin() queued behind another caller's transaction", async () => {
+    await container.ready;
+    await using sql = new SQL(url(), { max: 1 });
+    await sql.connect();
+    const seen: Record<string, string | undefined> = {
+      first: "not called",
+      second: "not called",
+      secondAfterQuery: "not called",
+      outsideAnyStore: "not called",
+    };
+    // The only connection is idle, so this begin() gets it synchronously...
+    const first = als.run("first", () =>
+      sql.begin(async () => {
+        seen.first = als.getStore();
+      }),
+    );
+    // ...and these two are queued. Each gets the connection from the transaction before it.
+    const second = als.run("second", () =>
+      sql.begin(async tx => {
+        seen.second = als.getStore();
+        await tx`SELECT 1`;
+        seen.secondAfterQuery = als.getStore();
+      }),
+    );
+    const outsideAnyStore = als.exit(() =>
+      sql.begin(async () => {
+        seen.outsideAnyStore = als.getStore();
+      }),
+    );
+    await Promise.all([first, second, outsideAnyStore]);
+    expect(seen).toStrictEqual({
+      first: "first",
+      second: "second",
+      secondAfterQuery: "second",
+      outsideAnyStore: undefined,
+    });
+  });
+
+  test("sql.beginDistributed() on a cold pool", async () => {
+    await container.ready;
+    await using sql = new SQL(url(), { max: 1 });
+    let seen: string | undefined = "not called";
+    // The callback throws, so the transaction rolls back instead of leaving a prepared one behind.
+    const rollback = new Error("roll back");
+    const transaction = als.run("distributed", () =>
+      sql.beginDistributed(`als_${randomUUIDv7("hex")}`, async () => {
+        seen = als.getStore();
+        throw rollback;
+      }),
+    );
+    await expect(transaction).rejects.toBe(rollback);
+    expect(seen).toBe("distributed");
+  });
+
+  // Inside a Bun.ModuleGraph a queued begin() keeps the context the pool calls back in. What a
+  // disposed graph awaits never comes, so a transaction that runs as the graph would keep the
+  // connection of the host's pool for ever.
+  test("a Bun.ModuleGraph that is disposed during its queued sql.begin() does not keep the connection", async () => {
+    await container.ready;
+    using dir = tempDir("sql-begin-disposed-graph", { "app.mjs": "export const call = fn => fn();" });
+    await using sql = new SQL(url(), { max: 1 });
+    await sql.connect();
+    const graph = new Bun.ModuleGraph();
+    const app = await graph.import(path.join(String(dir), "app.mjs"));
+    const hold = Promise.withResolvers<void>();
+    const inTransaction = Promise.withResolvers<void>();
+    // The host holds the only connection, so the begin() of the graph's script is queued.
+    const holder = sql.begin(() => hold.promise);
+    graph.run(() =>
+      app.call(() => {
+        void sql.begin(async tx => {
+          await tx`SELECT 1`;
+          inTransaction.resolve();
+          // An immediate of a disposed graph never runs.
+          await new Promise(resolve => setImmediate(resolve));
+        });
+      }),
+    );
+    hold.resolve();
+    await holder;
+    await inTransaction.promise;
+    graph.dispose();
+    expect(await sql.begin(async tx => (await tx`SELECT 1 AS x`)[0].x)).toBe(1);
+  });
+}
+
+describeWithContainer("postgres: AsyncLocalStorage in a transaction", { image: "postgres_plain" }, container =>
+  beginCallbackStoreTests(container, () => `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`),
+);
+
+describeWithContainer("mysql: AsyncLocalStorage in a transaction", { image: "mysql_plain" }, container =>
+  beginCallbackStoreTests(container, () => `mysql://root@${container.host}:${container.port}/bun_sql_test`),
+);

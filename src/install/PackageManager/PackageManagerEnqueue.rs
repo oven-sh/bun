@@ -1793,7 +1793,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     // `enqueue_local_tarball` copies `dep_name` into the
                     // filename store.
                     let dep_name = this.lockfile.str_detached(&dependency.name);
-                    let integrity = this.pinned_integrity_for_tarball(&res);
+                    // A refreshed tarball may have new bytes; drop the pin so
+                    // `ExtractTarball::run` recomputes it, as the remote path does.
+                    let integrity = if this.should_refresh_tarball(id, invalid_package_id, res.tag) {
+                        Integrity::default()
+                    } else {
+                        this.pinned_integrity_for_tarball(&res)
+                    };
                     let task =
                         enqueue_local_tarball(this, task_id, id, dep_name, url, &res, &integrity);
                     this.task_batch.push(ThreadPool::Batch::from(task));

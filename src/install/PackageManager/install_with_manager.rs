@@ -46,6 +46,7 @@ use crate::package_manager_real::{
 };
 
 use super::security_scanner;
+use crate::package_manager_real::directories;
 
 pub fn install_with_manager(
     manager: &mut PackageManager,
@@ -685,6 +686,11 @@ pub fn install_with_manager(
         }
     };
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
+    // The planned scope holds pre-clean package ids. The install phase asks the
+    // scope again, so walk the cleaned lockfile.
+    if manager.named_update_reachable.is_some() {
+        crate::update_scope::plan_named(manager);
+    }
     if manager.subcommand == Subcommand::Update && !manager.options.dry_run {
         Output::flush();
         crate::update_transitive::warn_orphaned_patches(manager);
@@ -913,6 +919,8 @@ pub fn install_with_manager(
             }
         }
     };
+
+    directories::delete_displaced_cache_trees(manager);
 
     if log_level != Options::LogLevel::Silent {
         manager

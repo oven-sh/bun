@@ -791,6 +791,18 @@ pub fn write_tarball_integrity_tag(
     Ok(())
 }
 
+/// Deletes the cache trees that extractions swapped out this run.
+pub fn delete_displaced_cache_trees(this: &mut PackageManager) {
+    let trees = core::mem::take(this.displaced_cache_trees.get_mut());
+    if trees.is_empty() {
+        return;
+    }
+    let temp_dir = &get_temporary_directory(this).handle;
+    for tree in trees {
+        let _ = temp_dir.delete_tree(&tree);
+    }
+}
+
 pub fn remove_tarball_integrity_tag(cache_dir: Fd, folder_path: &[u8]) {
     let mut buf = bun_paths::path_buffer_pool::get();
     let _ = sys::unlinkat(cache_dir, tarball_integrity_tag_path(&mut buf, folder_path));

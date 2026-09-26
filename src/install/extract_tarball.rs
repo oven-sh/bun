@@ -713,7 +713,12 @@ impl ExtractTarball {
                 }
                 // When the cache folder already existed the rename exchanged the
                 // two trees, so the previous extraction now sits under `tmpname`.
-                let _ = tmpdir.delete_tree(tmpname.as_bytes());
+                if sys::directory_exists_at(tmpdir.fd(), tmpname).unwrap_or(false) {
+                    package_manager
+                        .displaced_cache_trees
+                        .lock()
+                        .push(Box::from(tmpname.as_bytes()));
+                }
             }
 
             // We return a resolved absolute absolute file path to the cache dir.

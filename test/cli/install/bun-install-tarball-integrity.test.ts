@@ -1793,6 +1793,59 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
     expect(await file(installedIndex).text()).toBe('module.exports = "VERSION_ONE";\n');
   });
 
+  it("--force with a new alias of a changed local tarball refreshes both rows", async () => {
+    // The new row names a path another row already pins. Under --force the
+    // fetch drops that pin, like the remote path does, instead of rejecting
+    // the changed bytes.
+    const v1 = buildTarball("VERSION_ONE");
+    const v2 = buildTarball("VERSION_TWO");
+    using dir = tempDir("issue-31864-local-alias-" + linker, {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "my-url-pkg": "./pkg.tgz" } }),
+      "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+    });
+    const tgzPath = join(String(dir), "pkg.tgz");
+    await writeFile(tgzPath, v1.tgz);
+    const spawnOpts = {
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe" as const,
+      stderr: "pipe" as const,
+    };
+    const install = async (...args: string[]) => {
+      await using proc = spawn({ cmd: [bunExe(), "install", ...args], ...spawnOpts });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { output: stdout + stderr, exitCode };
+    };
+
+    {
+      const { output, exitCode } = await install();
+      expect(output).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    await writeFile(tgzPath, v2.tgz);
+    await writeFile(
+      join(String(dir), "package.json"),
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "my-url-pkg": "./pkg.tgz", "my-url-pkg-alias": "./pkg.tgz" },
+      }),
+    );
+    {
+      const { output, exitCode } = await install("--force");
+      expect(output).not.toContain("error:");
+      expect(output).not.toContain("Integrity check failed");
+      expect(exitCode).toBe(0);
+    }
+    const nm = join(String(dir), "node_modules");
+    expect(await file(join(nm, "my-url-pkg", "index.js")).text()).toBe('module.exports = "VERSION_TWO";\n');
+    expect(await file(join(nm, "my-url-pkg-alias", "index.js")).text()).toBe('module.exports = "VERSION_TWO";\n');
+    const lockContent = await file(join(String(dir), "bun.lock")).text();
+    expect(lockContent).toContain(v2.integrity);
+    expect(lockContent).not.toContain(v1.integrity);
+  });
+
   it.skipIf(linker !== "isolated")(
     "keeps the lockfile pin for a global-store entry whose tarball left the cache",
     async () => {

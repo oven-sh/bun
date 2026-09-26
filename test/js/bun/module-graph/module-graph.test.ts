@@ -1519,7 +1519,7 @@ describe("Bun.ModuleGraph — uncaughtException and unhandledRejection", () => {
     });
   });
 
-  test("an error that was made with no script on the stack reaches uncaughtException as it is", async () => {
+  test("an error that has no stack of its own reaches uncaughtException as it is", async () => {
     const dir = fixture({
       "rejects.mjs": `
         import { readFile } from "node:fs/promises";
@@ -1527,13 +1527,22 @@ describe("Bun.ModuleGraph — uncaughtException and unhandledRejection", () => {
           "Promise.any()": () => void Promise.any([Promise.reject(new Error("an element"))]),
           "readFile() of a file that does not exist": () => void readFile(import.meta.path + ".missing"),
           "import() of a module that does not exist": () => void import(import.meta.path + ".missing.mjs"),
+          "new DOMException()": () => void Promise.reject(new DOMException("aborted", "AbortError")),
         };
       `,
     });
     const given: Record<string, unknown> = {};
     using graph = new ModuleGraphClass({
       uncaughtException: (error: any, origin) =>
-        void (given[error.errors ? "Promise.any()" : error.syscall ? "readFile()" : "import()"] = {
+        void (given[
+          error.errors
+            ? "Promise.any()"
+            : error.syscall
+              ? "readFile()"
+              : error.name === "AbortError"
+                ? "new DOMException()"
+                : "import()"
+        ] = {
           name: error.constructor.name,
           code: error.code,
           origin,
@@ -1541,11 +1550,12 @@ describe("Bun.ModuleGraph — uncaughtException and unhandledRejection", () => {
     });
     const { rejects } = await graph.import(join(dir, "rejects.mjs"));
     for (const run of Object.values(rejects)) graph.run(run as () => void);
-    await until(() => Object.keys(given).length === 3);
+    await until(() => Object.keys(given).length === 4);
     expect(given).toEqual({
       "Promise.any()": { name: "AggregateError", code: undefined, origin: "unhandledRejection" },
       "readFile()": { name: "Error", code: "ENOENT", origin: "unhandledRejection" },
       "import()": { name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND", origin: "unhandledRejection" },
+      "new DOMException()": { name: "DOMException", code: 20, origin: "unhandledRejection" },
     });
   });
 

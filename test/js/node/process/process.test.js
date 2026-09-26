@@ -1797,7 +1797,7 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
-  it("gives 'uncaughtException' an unhandled rejection's error as it is when it was made with no script on the stack", async () => {
+  it("gives 'uncaughtException' an unhandled rejection's error as it is when it has no stack of its own", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1808,6 +1808,7 @@ describe.concurrent(() => {
           const rejects = [
             () => void Promise.any([Promise.reject(new Error("an element"))]),
             () => void readFile(__filename + ".missing"),
+            () => void Promise.reject(new DOMException("aborted", "AbortError")),
           ];
           const given = [];
           process.on("uncaughtException", (error, origin) => {
@@ -1826,6 +1827,7 @@ describe.concurrent(() => {
     expect(JSON.parse(stdout)).toEqual([
       ["AggregateError", "no code", "unhandledRejection"],
       ["Error", "ENOENT", "unhandledRejection"],
+      ["DOMException", 20, "unhandledRejection"],
     ]);
     expect(exitCode).toBe(0);
   });

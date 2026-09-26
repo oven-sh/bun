@@ -239,12 +239,14 @@ impl<'a> BundleV2<'a> {
     }
 
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
-        // SAFETY: all three pointers are live for `'a` (set in `init`); the
-        // `client_transpiler` arm is only reached when bake populated it.
-        // Outside of server-components / dev-server,
-        // the only case that doesn't return the main transpiler is a
-        // browser-target request from a server-side build, which lazily
-        // spins up a client transpiler.
+        // SAFETY: all three pointers are live for `'a` (set in `init`). The
+        // server-components / dev-server arm below expects `client_transpiler` to
+        // be populated: by bake in `init`, or by `ensure_client_transpiler` on the
+        // HTML paths, the only source of browser-target requests in a CLI
+        // `--server-components` build (its main target is always server-side).
+        // Outside of those modes, the only case that doesn't return the main
+        // transpiler is a browser-target request from a server-side build, which
+        // lazily spins up a client transpiler.
         if !self.transpiler.options.server_components && self.linker.dev_server.is_none() {
             if target == Target::Browser && self.transpiler.options.target.is_server_side() {
                 if let Some(p) = self.client_transpiler {
@@ -260,11 +262,13 @@ impl<'a> BundleV2<'a> {
             }
             return &mut *self.transpiler;
         }
-        // SAFETY: all three pointers are live for `'a` (set in `init`); the
-        // `client_transpiler` arm is only reached when bake populated it.
+        // SAFETY: see above.
         unsafe {
             match target {
-                Target::Browser => self.client_transpiler.unwrap().assume_mut(),
+                Target::Browser => self
+                    .client_transpiler
+                    .expect("browser target requested before the client transpiler was set up")
+                    .assume_mut(),
                 Target::ServerComponentsSsr => &mut *self.ssr_transpiler,
                 _ => &mut *self.transpiler,
             }
@@ -1972,6 +1976,13 @@ pub mod bv2_impl {
                 unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
 
             ct.options.target = Target::Browser;
+            // The CLI seeds `import.meta.env` for the server graph; this graph is the browser.
+            if ct.options.server_components {
+                ct.options.define.insert(
+                    b"import.meta.env.SSR",
+                    crate::defines::DefineData::init_boolean(false),
+                )?;
+            }
             // Don't inherit SSR mode from the server target: the SSR pass
             // drops hook setter bindings, which is invalid for browser code.
             if ct.options.react_compiler.is_ssr() {
@@ -7716,16 +7727,14 @@ pub mod bv2_impl {
                     // `result.ast` is moved into `graph.ast` and `result.source` was
                     // swapped earlier, so snapshot the data the use-directive block
                     // needs *before* the move. Only paid for files that hit the SCB gate.
+                    // Without a framework ParseTask only lets "use client" through in the browser graph.
+                    let separate_ssr_graph = this
+                        .framework
+                        .as_ref()
+                        .and_then(|framework| framework.server_components.as_ref())
+                        .map(|sc| sc.separate_ssr_graph);
                     let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
-                        && {
-                            let separate = this
-                                .framework
-                                .as_ref()
-                                .unwrap()
-                                .server_components
-                                .as_ref()
-                                .unwrap()
-                                .separate_ssr_graph;
+                        && separate_ssr_graph.is_some_and(|separate| {
                             let is_client = result.use_directive == crate::UseDirective::Client;
                             let is_browser = result_ast_target == Target::Browser;
                             if separate {
@@ -7733,7 +7742,7 @@ pub mod bv2_impl {
                             } else {
                                 is_client != is_browser
                             }
-                        } {
+                        }) {
                         Some(result.ast.named_exports.clone().expect("oom"))
                     } else {
                         None
@@ -7756,19 +7765,12 @@ pub mod bv2_impl {
                         .expect("oom");
                     }
 
-                    if let Some(named_exports) = named_exports_for_scb {
+                    if let (Some(named_exports), Some(separate_ssr_graph)) =
+                        (named_exports_for_scb, separate_ssr_graph)
+                    {
                         if result.use_directive == crate::UseDirective::Server {
                             bun_core::todo_panic!("\"use server\"");
                         }
-
-                        let separate_ssr_graph = this
-                            .framework
-                            .as_ref()
-                            .unwrap()
-                            .server_components
-                            .as_ref()
-                            .unwrap()
-                            .separate_ssr_graph;
 
                         // `result.source` was swapped into
                         // `graph.input_files` earlier; re-borrow it from the SoA

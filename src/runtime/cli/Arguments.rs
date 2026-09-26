@@ -2644,20 +2644,19 @@ fn parse_build_command_options(
 
     if args.flag(b"--server-components") {
         ctx.bundler_options.server_components = true;
-        if let Some(target) = opts.target {
-            if !<bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                .is_server_side()
-            {
+        match opts.target {
+            None => opts.target = Some(api::Target::Bun),
+            Some(api::Target::Bun) => {}
+            // Server files import `Response` from `bun:app`, which only bun provides.
+            Some(target) => {
                 Output::err_generic(
-                    "Cannot use client-side --target={} with --server-components",
-                    format_args!(
-                        "{:?}",
+                    "--server-components requires --target=bun, got --target={}",
+                    (BStr::new(
                         <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                    ),
+                            .naming_placeholder(),
+                    ),),
                 );
                 Global::crash();
-            } else {
-                opts.target = Some(api::Target::Bun);
             }
         }
     }

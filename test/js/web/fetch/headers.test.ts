@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
+import { forceUTF16 } from "harness";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -715,16 +716,13 @@ describe("Headers", () => {
     });
 
     // An all-ASCII WTF string can still be stored as 16-bit, which takes a
-    // separate kernel. Force 16-bit storage by appending a code unit > 0xFF and
-    // slicing it back off, then run the same checks on the 16-bit path.
-    const to16 = (s: string) => (s + "\u0100").slice(0, -1);
-
+    // separate kernel; run the same checks on the 16-bit path.
     test("16-bit: matches a scalar reference across lengths and alignments", () => {
       const alphabet = "AZaz09@[]^_`{|}~-.Mm";
       for (let len = 0; len <= 160; len++) {
         let s = "";
         for (let i = 0; i < len; i++) s += alphabet[(i * 7 + len) % alphabet.length];
-        expect(lowercaseHeaderNameSIMD(to16(s))).toBe(scalarLower(s));
+        expect(lowercaseHeaderNameSIMD(forceUTF16(s))).toBe(scalarLower(s));
       }
     });
 

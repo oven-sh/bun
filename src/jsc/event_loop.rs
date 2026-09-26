@@ -1137,11 +1137,29 @@ impl EventLoop {
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        self.wait_for_promise_impl::<false>(promise)
+    }
+
+    /// [`Self::wait_for_promise`], or until a fatal error is counted during the wait (#22546).
+    pub fn wait_for_module_promise(
+        &mut self,
+        promise: *mut jsc::JSInternalPromise,
+    ) -> Result<(), jsc::Stopped> {
+        self.wait_for_promise_impl::<true>(jsc::AnyPromise::Internal(promise))
+    }
+
+    fn wait_for_promise_impl<const UNTIL_FATAL_ERROR: bool>(
+        &mut self,
+        promise: jsc::AnyPromise,
+    ) -> Result<(), jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
-        if promise.status() != PromiseStatus::Pending {
-            return Ok(());
-        }
-        while promise.status() == PromiseStatus::Pending {
+        // An error a `--preload` left behind does not count: the entry still has to load and start.
+        let errors_before = self.vm_ref().unhandled_error_counter;
+        let waiting = |this: &Self| {
+            promise.status() == PromiseStatus::Pending
+                && !(UNTIL_FATAL_ERROR && this.vm_ref().has_fatal_error_since(errors_before))
+        };
+        while waiting(self) {
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()
                 || self.global_ref().has_pending_termination_exception()
@@ -1149,7 +1167,7 @@ impl EventLoop {
                 return Err(jsc::Stopped);
             }
             self.tick();
-            if promise.status() == PromiseStatus::Pending {
+            if waiting(self) {
                 self.auto_tick();
             }
         }

@@ -1466,7 +1466,9 @@ impl Run<'_> {
         // Drop what transpiling and linking the entry graph left behind before settling into the event loop. A
         // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
         // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
+        // After a fatal error the run is over, and the tick would resume the top-level await that error cut short.
         if vm.standalone_module_graph.is_none()
+            && !vm.has_fatal_error()
             && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
         {
             vm.global().vm().release_weak_refs();
@@ -1515,6 +1517,8 @@ impl Run<'_> {
                         .unwrap_or(JSValue::UNDEFINED);
                     if let Some(promise) = result.as_any_promise() {
                         match promise.status() {
+                            // After a fatal error the run is over: no turn that would resume the script.
+                            PromiseStatus::Pending if vm.has_fatal_error() => break 'brk result,
                             PromiseStatus::Pending => {
                                 // C-ABI shims are emitted by
                                 // `generate-host-exports.ts` into

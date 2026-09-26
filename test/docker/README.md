@@ -289,6 +289,9 @@ A: Add it to docker-compose.yml and create a PR.
 **Q: How do I update a service version?**
 A: Edit docker-compose.yml and run `docker-compose pull`.
 
+**Q: What else does a change to a Dockerfile need?**
+A: Raise `prefetchTriggerVersion` in `scripts/build/ci-images/spec.ts`, so that the CI machine images bake again. Until then, each CI test machine builds the changed image before it starts the service. For `Dockerfile.minio` that is a compile of several minutes.
+
 **Q: Can I run tests in parallel?**
 A: Yes! Each service can handle multiple connections.
 

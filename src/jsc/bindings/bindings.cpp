@@ -885,9 +885,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     auto removeFromStack = WTF::makeScopeExit([&] {
         if (addToStack) {
             stack.removeAt(length);
-            while (gcBuffer.size() > originalGCBufferSize)
-                gcBuffer.removeLast();
         }
+        // Drops v1 and v2, and the pairs the object fast path collected.
+        gcBuffer.shrink(originalGCBufferSize);
     });
 
     JSCell* c1 = v1.asCell();
@@ -1093,8 +1093,28 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
             bool result = true;
             bool sameStructure = o2Structure->id() == o1Structure->id();
-            // Comparing values runs user getters that can rehash this PropertyTable mid-walk (use-after-free), so collect the pairs first and compare after.
-            MarkedArgumentBuffer pairs;
+            // Objects run user getters that can rehash this PropertyTable mid-walk (use-after-free) and ropes can throw, so only those pairs wait on gcBuffer.
+            const size_t pairsStart = gcBuffer.size();
+            // Pairs collected before two unequal primitives are still compared first, so an error from an earlier property wins, as in node.
+            bool primitivesDiffer = false;
+            auto settleOrCollect = [&](JSValue left, JSValue right) {
+                if (primitivesDiffer || left == right) {
+                    return;
+                }
+
+                bool needsDeepEquals = left.isObject() || right.isObject();
+                if (!needsDeepEquals && left.isString() && right.isString()) {
+                    needsDeepEquals = asString(left)->isRope() || asString(right)->isRope();
+                }
+                if (needsDeepEquals) {
+                    gcBuffer.appendWithCrashOnOverflow(left);
+                    gcBuffer.appendWithCrashOnOverflow(right);
+                    return;
+                }
+
+                // Two primitives: sameValue is the whole comparison, as it is at the top of Bun__deepEquals.
+                primitivesDiffer = !JSC::sameValue(globalObject, left, right);
+            };
             if (sameStructure) {
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
@@ -1115,9 +1135,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return false;
                     }
 
-                    pairs.appendWithCrashOnOverflow(left);
-                    pairs.appendWithCrashOnOverflow(right);
-                    return true;
+                    // Both sides have the same keys, so nothing after a mismatch can change the result.
+                    settleOrCollect(left, right);
+                    return !primitivesDiffer;
                 });
             } else {
                 size_t count = 0;
@@ -1154,8 +1174,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return false;
                     }
 
-                    pairs.appendWithCrashOnOverflow(left);
-                    pairs.appendWithCrashOnOverflow(right);
+                    // Keep walking after a mismatch: a key that only one side has is reported before any collected pair is compared.
+                    settleOrCollect(left, right);
                     return true;
                 });
 
@@ -1193,14 +1213,17 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return false;
             }
 
-            for (size_t i = 0; i < pairs.size(); i += 2) {
-                JSValue left = pairs.at(i);
-                JSValue right = pairs.at(i + 1);
+            const size_t pairsEnd = gcBuffer.size();
+            for (size_t i = pairsStart; i < pairsEnd; i += 2) {
+                JSValue left = gcBuffer.at(i);
+                JSValue right = gcBuffer.at(i + 1);
 
-                if (left == right) continue;
-                auto same = JSC::sameValue(globalObject, left, right);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (same) continue;
+                // Equal ropes settle without a new frame, which could be the one that does not fit the stack.
+                if (left.isString() && right.isString()) {
+                    bool same = asString(left)->equal(globalObject, asString(right));
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (same) continue;
+                }
 
                 auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1209,7 +1232,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            return true;
+            return !primitivesDiffer;
         }
     }
 

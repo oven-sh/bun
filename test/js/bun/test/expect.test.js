@@ -1840,6 +1840,45 @@ describe("expect()", () => {
     expect([1, 2, 3, 4]).not.toEqual([1, 2, 3]);
   });
 
+  // https://github.com/oven-sh/bun/issues/42539
+  test("toEqual() - objects with different Object.prototype.toString tags", () => {
+    const values = [
+      Promise.resolve(),
+      new WeakSet(),
+      new WeakMap(),
+      new DataView(new ArrayBuffer(8)),
+      new Response(),
+      new URL("http://a"),
+      Math,
+      new AbortController(),
+      {
+        get [Symbol.toStringTag]() {
+          return "Tagged";
+        },
+      },
+    ];
+    for (const value of values) {
+      expect(value).not.toEqual({});
+      expect({}).not.toEqual(value);
+      expect(value).not.toStrictEqual({});
+      expect({}).not.toStrictEqual(value);
+      expect(() => expect(value).toEqual({})).toThrow();
+      expect(() => expect({}).toEqual(value)).toThrow();
+    }
+    expect(Promise.resolve()).not.toEqual(new WeakSet());
+    expect(new WeakSet()).not.toEqual(Promise.resolve());
+
+    // the same tag still compares own enumerable properties
+    expect(Promise.resolve()).toEqual(Promise.resolve());
+    expect(new WeakMap()).toEqual(new WeakMap());
+    expect(Object.assign(new WeakMap(), { a: 1 })).not.toEqual(new WeakMap());
+    class A {}
+    expect(new A()).toEqual({});
+    expect({}).toEqual(new A());
+    expect(new A()).not.toStrictEqual({});
+    expect(Object.create(null)).toEqual({});
+  });
+
   test("toEqual() - private class fields", () => {
     class A {
       #three = 3;

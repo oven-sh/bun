@@ -614,13 +614,11 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* obj;
-    if (impl.size() + 1 <= JSFinalObject::maxInlineCapacity) {
-        obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), impl.size() + 1);
+    if (impl.size() <= JSFinalObject::maxInlineCapacity) {
+        obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), impl.size());
     } else {
         obj = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype());
     }
-
-    obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(lexicalGlobalObject->vm(), "URLSearchParams"_s), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | 0);
 
     RETURN_IF_EXCEPTION(throwScope, {});
     WTF::HashSet<String> seenKeys;

@@ -4098,6 +4098,10 @@ pub(crate) unsafe fn src_str(s: &[u8]) -> &'static [u8] {
 
 impl<'a> Tokenizer<'a> {
     pub(crate) fn init_with_arena(src: &'a [u8], arena: &'a Bump) -> Tokenizer<'a> {
+        debug_assert!(
+            strings::is_valid_utf8(src),
+            "CSS tokenizer input must be valid UTF-8 (see strings::replace_invalid_utf8)"
+        );
         Tokenizer {
             src,
             position: 0,
@@ -5159,6 +5163,57 @@ pub(crate) fn split_source_map(contents: &[u8]) -> Option<&[u8]> {
         }
     }
     None
+}
+
+/// Warns that `strings::replace_invalid_utf8` changed `source`, at the first replaced sequence.
+pub fn warn_invalid_utf8(log: &mut Log, source: &bun_ast::Source, first_invalid: usize) {
+    let range = bun_ast::Range {
+        loc: bun_ast::Loc {
+            start: i32::try_from(first_invalid).unwrap_or(i32::MAX),
+        },
+        len: REPLACEMENT_CHAR_UTF8.len() as i32,
+    };
+    match ignored_charset(&source.contents) {
+        Some(charset) => log.add_range_warning_fmt(
+            Some(source),
+            range,
+            format_args!(
+                "@charset \"{}\" was ignored, this file was read as UTF-8 and each invalid byte sequence was replaced with U+FFFD",
+                bstr::BStr::new(charset)
+            ),
+        ),
+        None => log.add_range_warning_fmt(
+            Some(source),
+            range,
+            format_args!(
+                "This file is not valid UTF-8, each invalid byte sequence was replaced with U+FFFD"
+            ),
+        ),
+    }
+}
+
+/// The label of a leading `@charset "…";` (the byte pattern of css-syntax-3 §3.2), unless it is empty or names UTF-8.
+fn ignored_charset(contents: &[u8]) -> Option<&[u8]> {
+    const UTF8_LABELS: [&[u8]; 6] = [
+        b"utf-8",
+        b"utf8",
+        b"unicode-1-1-utf-8",
+        b"unicode11utf8",
+        b"unicode20utf8",
+        b"x-unicode20utf8",
+    ];
+    let rest = contents[..contents.len().min(1024)].strip_prefix(b"@charset \"")?;
+    let end = strings::index_of_char_usize(rest, b'"')?;
+    if rest.get(end + 1) != Some(&b';')
+        || !rest[..end]
+            .iter()
+            .all(|b| matches!(b, 0x16..=0x21 | 0x23..=0x7F))
+    {
+        return None;
+    }
+    let label = strings::trim(&rest[..end], b" ");
+    (!label.is_empty() && !strings::eql_any_case_insensitive_ascii(label, &UTF8_LABELS))
+        .then_some(label)
 }
 
 // ───────────────────────────── Token ─────────────────────────────

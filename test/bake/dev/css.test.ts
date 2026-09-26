@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { type Dev, devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -482,6 +482,97 @@ devTest("multiple stylesheets importing same dependency", {
 
     await c1.style(".shared").color.expect.toBe("#ff0");
     await c2.style(".shared").color.expect.toBe("#ff0");
+
+    // The edit above re-bundled both stylesheets together. Each must keep its
+    // edge to `shared.css`, or the next edit reaches only one of them.
+    await dev.write(
+      "shared.css",
+      `
+        .shared { color: red; }
+      `,
+    );
+
+    await c1.style(".shared").color.expect.toBe("red");
+    await c2.style(".shared").color.expect.toBe("red");
+  },
+});
+devTest("stylesheets linked from one page both follow edits to a shared import", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["a.css", "b.css"],
+    }),
+    "a.css": `
+      @import "./shared.css";
+      .a { color: red; }
+    `,
+    "b.css": `
+      @import "./shared.css";
+      .b { color: blue; }
+    `,
+    "shared.css": `
+      .shared { color: green; }
+    `,
+  },
+  async test(dev) {
+    expect(await linkedStylesheetColors(dev, ".shared")).toEqual(["green", "green"]);
+
+    await dev.write("shared.css", `.shared { color: yellow; }`);
+    expect(await linkedStylesheetColors(dev, ".shared")).toEqual(["#ff0", "#ff0"]);
+
+    await dev.write("shared.css", `.shared { color: red; }`);
+    expect(await linkedStylesheetColors(dev, ".shared")).toEqual(["red", "red"]);
+  },
+});
+devTest("stylesheet that imports another linked stylesheet follows its edits", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["base.css", "theme.css"],
+    }),
+    "base.css": `
+      .base { color: green; }
+    `,
+    "theme.css": `
+      @import "./base.css";
+      .theme { color: blue; }
+    `,
+  },
+  async test(dev) {
+    expect(await linkedStylesheetColors(dev, ".base")).toEqual(["green", "green"]);
+
+    await dev.write("base.css", `.base { color: yellow; }`);
+    expect(await linkedStylesheetColors(dev, ".base")).toEqual(["#ff0", "#ff0"]);
+
+    await dev.write("base.css", `.base { color: red; }`);
+    expect(await linkedStylesheetColors(dev, ".base")).toEqual(["red", "red"]);
+  },
+});
+devTest("stylesheet imported by a linked stylesheet and by a script follows every edit", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["index.css"],
+      scripts: ["app.ts"],
+    }),
+    "index.css": `
+      @import "./util.css";
+      body { color: blue; }
+    `,
+    "app.ts": `
+      import "./util.css";
+    `,
+    "util.css": `
+      .util { color: green; }
+    `,
+  },
+  async test(dev) {
+    // The page links `util.css` twice: as the script's own chunk, and inlined
+    // at the top of the `index.css` chunk.
+    expect(await linkedStylesheetColors(dev, ".util")).toEqual(["green", "green"]);
+
+    await dev.write("util.css", `.util { color: yellow; }`);
+    expect(await linkedStylesheetColors(dev, ".util")).toEqual(["#ff0", "#ff0"]);
+
+    await dev.write("util.css", `.util { color: red; }`);
+    expect(await linkedStylesheetColors(dev, ".util")).toEqual(["red", "red"]);
   },
 });
 devTest("removing and re-adding css import", {
@@ -704,4 +795,23 @@ function extractCssUrl(backgroundImage: string): string {
     throw new Error("No url found in background-image: " + backgroundImage);
   }
   return url[2];
+}
+
+/**
+ * Fetches every stylesheet that "/" links (one bundled chunk per CSS root)
+ * and returns the `color` each chunk declares for `selector`.
+ */
+async function linkedStylesheetColors(dev: Dev, selector: string): Promise<string[]> {
+  const html = await dev.fetch("/").text();
+  const hrefs = Array.from(html.matchAll(/<link rel="stylesheet" href="([^"]+)">/g), m => m[1]);
+  return Promise.all(
+    hrefs.map(async href => {
+      const css = await dev.fetch(href).text();
+      const rule = css.match(new RegExp(`^${selector.replaceAll(".", "\\.")}\\s*\\{\\s*color:\\s*([^;]+);`, "m"));
+      if (!rule) {
+        throw new Error(`No ${selector} rule in ${href}:\n${css}`);
+      }
+      return rule[1];
+    }),
+  );
 }

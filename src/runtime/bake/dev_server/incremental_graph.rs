@@ -933,8 +933,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         debug_assert!(bundler_index.is_valid());
         debug_assert!(ctx.loaders[bundler_index.get() as usize].is_css());
 
-        // Queue avoids stack overflow; tracing bits in `process_edge_attachment`
-        // prevent infinite recursion.
+        // Every CSS root gets an edge to each transitive import. `Stop` from a
+        // file this root already attached ends `@import` cycles.
         let mut queue: Vec<bun_ast::Index> = Vec::new();
         queue.push(bundler_index);
 
@@ -988,23 +988,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
 
         // Locate the FileIndex from bundle_v2's Source.Index.
-        let (imported_file_index, kind): (FileIndex<SIDE>, FileKind) = 'brk: {
+        let imported_file_index: FileIndex<SIDE> = 'brk: {
             if ir_source_index.is_valid() {
-                let kind = if mode == EdgeAttachmentMode::Css {
-                    if ctx.loaders[ir_source_index.get() as usize].is_css() {
+                if let Some(i) = ctx.get_cached_index(SIDE, ir_source_index).unwrap::<SIDE>() {
+                    break 'brk i;
+                } else if mode == EdgeAttachmentMode::Css {
+                    let kind = if ctx.loaders[ir_source_index.get() as usize].is_css() {
                         FileKind::Css
                     } else {
                         FileKind::Asset
-                    }
-                } else {
-                    FileKind::Unknown
-                };
-                if let Some(i) = ctx.get_cached_index(SIDE, ir_source_index).unwrap::<SIDE>() {
-                    break 'brk (i, kind);
-                } else if mode == EdgeAttachmentMode::Css {
+                    };
                     let index = self.insert_empty(key, kind)?.index;
                     ctx.gts.resize(SIDE, index.get() as usize + 1)?;
-                    break 'brk (index, kind);
+                    break 'brk index;
                 }
             }
             match mode {
@@ -1012,7 +1008,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 EdgeAttachmentMode::Css => return Ok(EdgeAttachmentResult::Stop),
                 // Check IncrementalGraph for a file from a prior build.
                 EdgeAttachmentMode::JsOrHtml => match self.bundled_files.get_index(key) {
-                    Some(i) => (FileIndex::<SIDE>::init(i as u32), FileKind::Unknown),
+                    Some(i) => FileIndex::<SIDE>::init(i as u32),
                     None => return Ok(EdgeAttachmentResult::Continue),
                 },
             }
@@ -1020,22 +1016,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         debug_assert!((imported_file_index.get() as usize) < self.bundled_files.count());
 
-        // For CSS visiting CSS, prevent infinite recursion via tracing bits.
-        if mode == EdgeAttachmentMode::Css && kind == FileKind::Css {
-            if ctx
-                .gts
-                .bits(SIDE)
-                .is_set(imported_file_index.get() as usize)
-            {
-                return Ok(EdgeAttachmentResult::Stop);
-            }
-            ctx.gts.bits(SIDE).set(imported_file_index.get() as usize);
-        }
-
+        // `quick_lookup` is per file, so it doubles as this root's visited set
+        // (`ctx.gts` is shared by the whole bundle).
         let gop = quick_lookup.get_or_put(imported_file_index)?;
         if gop.found_existing {
             if gop.value_ptr.seen {
-                return Ok(EdgeAttachmentResult::Continue);
+                return Ok(EdgeAttachmentResult::Stop);
             }
             gop.value_ptr.seen = true;
             let ei = gop.value_ptr.edge_index;

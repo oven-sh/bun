@@ -175,7 +175,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     if (JSModuleGraph* graph = moduleObject->moduleGraph(); graph && code.provider()) {
         RefPtr<JSC::SourceProvider> provider = GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape());
         Zig::addCodeCoverageSourceID(vm, *provider);
-        code = SourceCode(WTF::move(provider), code.startOffset(), code.endOffset(), code.firstLine().oneBasedInt(), code.startColumn().oneBasedInt());
+        code = SourceCode(WTF::move(provider), code.startOffset(), code.endOffset());
     }
 
     // If an exception occurred somewhere else, we might have cleared the source code.

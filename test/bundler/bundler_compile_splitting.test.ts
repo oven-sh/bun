@@ -691,7 +691,12 @@ describe("bundler", () => {
         ["sourcemap", "out.map"],
         ["sourcemap", "tool.js.map"],
       ]);
-      expect(Object.keys(result.metafile!.outputs).sort()).toEqual(["./out", "./tool.js"]);
+      expect(Object.keys(result.metafile!.outputs).sort()).toEqual([
+        "./out",
+        "./out.map",
+        "./tool.js",
+        "./tool.js.map",
+      ]);
       expect(result.metafile!.outputs["./tool.js"].imports).toEqual([
         { path: "./out", kind: "dynamic-import" },
         { path: "./out", kind: "require-call" },

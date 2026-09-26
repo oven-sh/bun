@@ -1497,6 +1497,42 @@ describe("deno_task", () => {
     TestBuilder.command`echo $(echo 1)`.stdout("1\n").runAsTest("nested echo cmd subst");
     TestBuilder.command`echo $(echo 1 && echo 2)`.stdout("1 2\n").runAsTest("nested echo cmd subst with conditional");
     // TODO Sleep tests
+
+    // A command substitution inherits the stdin of the command it expands in.
+    // Inside a pipeline that is the pipe, not the stdin of the bun process.
+    // Spawn a child with data on its stdin so the wrong stdin is visible.
+    // One case per place that expands a word: command arguments, a subshell,
+    // an assignment statement, an assignment prefix, a redirect target, and
+    // a `[[ ]]` operand.
+    describe.each([
+      ["in a pipeline command", String.raw`echo hi | echo "[$(cat)]"`],
+      ["in a pipeline subshell", String.raw`echo hi | (echo "[$(cat)]")`],
+      ["in an assignment inside a pipeline subshell", String.raw`echo hi | (A=$(cat); echo "[$A]")`],
+      [
+        "in an assignment prefix of a pipeline command",
+        String.raw`echo hi | A=$(cat) ${bunExe()} -e 'console.log("[" + process.env.A + "]")'`,
+      ],
+      ["in a redirect target of a pipeline command", String.raw`echo hi | echo "[hi]" > $(cat).txt; cat hi.txt`],
+      ["in a [[ ]] operand of a pipeline", String.raw`echo hi | [[ $(cat) == hi ]] && echo "[hi]"`],
+      // The substitution drains the pipe. A later read of the same stdin gets EOF.
+      ["and a later cat sees EOF", String.raw`echo hi | (A=$(cat); cat; echo "[$A]")`],
+    ])("command substitution %s", (_, script) => {
+      test.concurrent("reads the pipe (#43052)", async () => {
+        using dir = tempDir("shell-cmdsubst-stdin", {});
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `const r = await Bun.$\`${script}\`.quiet(); process.stdout.write(r.stdout);`],
+          env: bunEnv,
+          cwd: String(dir),
+          stdin: new Blob(["FROM_PROCESS_STDIN\n"]),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("[hi]\n");
+        expect(exitCode).toBe(0);
+      });
+    });
   });
 
   describe("shell variables", async () => {

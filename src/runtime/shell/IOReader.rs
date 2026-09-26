@@ -129,6 +129,10 @@ impl IOReader {
         }
         #[cfg(windows)]
         {
+            // The shell owns `fd` and closes it in `Drop`, not the reader at EOF.
+            reader
+                .flags
+                .remove(bun_io::pipe_reader::WindowsFlags::CLOSE_HANDLE);
             reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
         }
         let this = std::sync::Arc::new_cyclic(|w| IOReader {
@@ -229,7 +233,12 @@ impl IOReader {
                 return Yield::suspended();
             }
             s.is_reading = true;
-            if let Err(e) = self.reader().start_with_current_pipe() {
+            let r = self.reader();
+            if r.source.is_none() {
+                // EOF took the `File`. The fd is still open.
+                r.set_source(bun_io::Source::File(bun_io::Source::open_file(s.fd)));
+            }
+            if let Err(e) = r.start_with_current_pipe() {
                 self.on_reader_error(&e);
             }
             Yield::suspended()
@@ -307,8 +316,8 @@ impl IOReader {
         self.set_reading(false);
         let s = self.state();
         s.raw_err = Some(err.clone());
-        // NOTE: reshaped for borrowck — copy out before dispatching.
-        let readers: Vec<ChildPtr> = s.readers.clone();
+        // The error ends every registration.
+        let readers: Vec<ChildPtr> = core::mem::take(&mut s.readers);
         let interp = s.interp;
         for r in readers {
             // Re-derive a fresh SystemError per callee (see
@@ -326,7 +335,8 @@ impl IOReader {
         let _keepalive = self.keepalive();
         self.set_reading(false);
         let s = self.state();
-        let readers: Vec<ChildPtr> = s.readers.clone();
+        // EOF ends every registration. A later `cat` registers again.
+        let readers: Vec<ChildPtr> = core::mem::take(&mut s.readers);
         let interp = s.interp;
         // `SystemError` isn't `Clone` yet, so we keep the source `sys::Error`
         // (which IS `Clone`) and re-derive a fresh `SystemError` per callee —
@@ -387,9 +397,13 @@ impl Drop for IOReader {
         if s.fd != Fd::INVALID {
             #[cfg(windows)]
             {
-                // windows reader closes the file descriptor
-                if r.source.is_some() && !r.source.as_ref().is_some_and(|src| src.is_closed()) {
+                if r.source.as_ref().is_some_and(|src| !src.is_closed()) {
+                    // The `File` closes the fd once any in-flight read completes.
+                    r.flags
+                        .insert(bun_io::pipe_reader::WindowsFlags::CLOSE_HANDLE);
                     r.close_impl::<false>();
+                } else {
+                    let _ = sys::close(s.fd);
                 }
             }
             #[cfg(not(windows))]

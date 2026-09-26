@@ -5548,3 +5548,20 @@ describe("requests pipelined in one read", () => {
     });
   });
 });
+
+// node:http reads "close" from Proxy-Connection too, like llhttp. That is not a Bun.serve default.
+it("Proxy-Connection: close does not end a Bun.serve connection", async () => {
+  using server = serve({ port: 0, fetch: req => new Response(new URL(req.url).pathname) });
+  const socket = connect(server.port, "127.0.0.1");
+  try {
+    let received = "";
+    socket.write(
+      "GET /a HTTP/1.1\r\nHost: x\r\nProxy-Connection: close\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    socket.on("data", chunk => (received += chunk));
+    await once(socket, "close");
+    expect(received.match(/\r\n\r\n\/[ab]/g)).toEqual(["\r\n\r\n/a", "\r\n\r\n/b"]);
+  } finally {
+    socket.destroy();
+  }
+});

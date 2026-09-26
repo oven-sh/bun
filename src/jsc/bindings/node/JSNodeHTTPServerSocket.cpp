@@ -568,103 +568,23 @@ static bool queuedResponsesHoldReads(uWS::NodeHttpResponseData<SSL>* httpRespons
     return httpResponseData->nodeHttpQueuedPipelinedCount > 0 && !httpResponseData->isConnectRequest;
 }
 
-/* node:http flood prevention, resume half. Parked pipelined requests (HttpParser::nodeHttpPausedSpill)
- * must replay before fresh reads (ordering) and not synchronously inside the resuming JS operation.
- * Deferred as an event-loop task rooting the JS socket; reads resume once the spill drains without re-pausing. */
+/* node:http flood prevention, resume half: unsent response bytes and queued responses hold the reads. */
 template<bool SSL>
-static void replayNodeHttpPausedSpill(us_socket_t* socket)
+static void onNodeHttpReadsResumable(us_socket_t* socket)
 {
     auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
-    httpResponseData->nodeHttpSpillReplayScheduled = false;
-    /* Let the replay's own parse loop run; HTTP_NODE_READS_PAUSED stays set so
-     * fresh socket bytes cannot race ahead of the spill. */
-    httpResponseData->nodeHttpParkAtNextBoundary = false;
-    WTF::Vector<char> spill = std::exchange(httpResponseData->nodeHttpPausedSpill, {});
-    if (!spill.isEmpty()) {
-        /* The parser's post-padded fence writes two bytes past the logical end. */
-        size_t spillLength = spill.size();
-        spill.grow(spillLength + LIBUS_RECV_BUFFER_PADDING);
-        us_socket_t* returned = uWS::HttpContext<SSL>::feedNodeHttpData(socket, spill.mutableSpan().data(), (int)spillLength);
-        if (!returned || us_socket_is_closed(returned)) {
-            return;
-        }
-        socket = returned;
-        httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
-    }
-    if (httpResponseData->nodeHttpParkAtNextBoundary) {
-        /* A dispatch during the replay hit backpressure again and re-parked
-         * the rest; stay paused until the next resumable event. */
-        return;
-    }
-    if (queuedResponsesHoldReads<SSL>(httpResponseData)
-        || reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0) {
-        /* The spill drained, but the pipeline has not: keep raw reads paused —
-         * the queue-drain / writable events re-enter the hook. */
+    if ((httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED)
+        && (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0 || queuedResponsesHoldReads<SSL>(httpResponseData))) {
         return;
     }
     endFloodPreventionPause<SSL>(socket, httpResponseData);
 }
 
-template<bool SSL>
-static void onNodeHttpReadsResumable(us_socket_t* socket)
-{
-    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
-    if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
-        /* Flood prevention owns the pause: outgoing backpressure holds everything (incidental
-         * resumes must not race fresh reads past the spill). Queued responses alone must NOT hold
-         * spill replay (their body may be in the spill — deadlock). Raw reads resume once both drain. */
-        if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0) {
-            return;
-        }
-        if (httpResponseData->nodeHttpPausedSpill.isEmpty()
-            && queuedResponsesHoldReads<SSL>(httpResponseData)) {
-            return;
-        }
-    }
-    if (httpResponseData->nodeHttpPausedSpill.isEmpty()) {
-        httpResponseData->nodeHttpParkAtNextBoundary = false;
-        endFloodPreventionPause<SSL>(socket, httpResponseData);
-        return;
-    }
-    if (httpResponseData->nodeHttpSpillReplayScheduled) {
-        return;
-    }
-    auto* cell = reinterpret_cast<JSNodeHTTPServerSocket*>(httpResponseData->socketData);
-    if (!cell) {
-        /* No JS wrapper to root a task on; replay in place. Reads are still
-         * paused, so ordering holds. */
-        replayNodeHttpPausedSpill<SSL>(socket);
-        return;
-    }
-    auto* globalObject = defaultGlobalObject(cell->globalObject());
-    WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
-    if (!scriptExecutionContext) {
-        replayNodeHttpPausedSpill<SSL>(socket);
-        return;
-    }
-    httpResponseData->nodeHttpSpillReplayScheduled = true;
-    JSC::Strong<JSNodeHTTPServerSocket> protectedSocket(globalObject->vm(), cell);
-    scriptExecutionContext->postTask([protectedSocket = std::move(protectedSocket)](WebCore::ScriptExecutionContext&) {
-        auto* self = protectedSocket.get();
-        us_socket_t* sock = self->socket;
-        if (!sock || us_socket_is_closed(sock)) {
-            return;
-        }
-        if (self->is_ssl) {
-            replayNodeHttpPausedSpill<true>(sock);
-        } else {
-            replayNodeHttpPausedSpill<false>(sock);
-        }
-    });
-}
-
-/* Pause edge (JS-driven, after the caller paused the socket): mark the socket-level
- * pause and tell the in-progress parse loop to park at the next request boundary. */
+/* Pause edge (JS-driven, after the caller paused the socket). */
 template<bool SSL>
 static void onNodeHttpReadsPaused(us_socket_t* socket)
 {
     auto* d = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
-    d->nodeHttpParkAtNextBoundary = true;
     d->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
 }
 
@@ -734,9 +654,6 @@ static bool startPipelinedResponseImpl(us_socket_t* socket, bool isAncient, bool
         httpResponseData->nodeHttpQueuedPipelinedCount--;
     }
     if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
-        // A pipeline advance while flood-paused: the hook replays parked
-        // request bytes once outgoing backpressure has flushed, and resumes
-        // raw reads only after both the queue and the spill drain.
         onNodeHttpReadsResumable<SSL>(socket);
     }
     return true;

@@ -3478,12 +3478,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // Socket already gone: like Node, 'prefinish' fires but 'finish' never does.
+    // Socket already gone: like Node, 'prefinish' fires but 'finish' never does, and the close of the socket aborts the request.
     this._header = " ";
-    const req = this.req;
-    if (!req._consuming && !req?._readableState?.resumeScheduled) {
-      req._dump();
-    }
     this.finished = true;
     process.nextTick(markResponseEndedNT, this);
     this.emit("prefinish");

@@ -185,9 +185,34 @@ for (const respond of ["write() and end()", "end(chunk)"]) {
   });
 }
 
+test("res.end() on a socket that the listener destroyed does not finish the response", async () => {
+  const events: string[] = [];
+  const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+  const server = http.createServer((req, res) => {
+    req.on("aborted", () => events.push("req aborted"));
+    req.on("error", (err: NodeJS.ErrnoException) => events.push(`req error ${err.code}`));
+    req.on("close", () => {
+      events.push("req close");
+      onClose();
+    });
+    res.on("finish", () => events.push("res finish"));
+    req.socket.destroy();
+    res.end("hi");
+  });
+  await withServer(server, async port => {
+    send(port, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", () => {});
+    await closed;
+  });
+  assert.deepStrictEqual(events, ["req aborted", "req error ECONNRESET", "req close"]);
+});
+
 describe("a connection given to the server with emit('connection')", () => {
-  async function withForwarder(server: http.Server, run: (port: number) => Promise<void>) {
-    const forwarder = createNetServer(socket => server.emit("connection", socket));
+  async function withForwarder(server: http.Server, run: (port: number) => Promise<void>, onRead = () => {}) {
+    const forwarder = createNetServer(socket => {
+      server.emit("connection", socket);
+      // Runs after the listener of the parser, so the request has taken the chunk.
+      socket.on("data", onRead);
+    });
     forwarder.listen(0, "127.0.0.1");
     await once(forwarder, "listening");
     try {
@@ -215,19 +240,47 @@ describe("a connection given to the server with emit('connection')", () => {
     assert.deepStrictEqual(events, ["end", "close"]);
   });
 
-  test("a body that nobody reads is dropped, not buffered", async () => {
-    const length = 4 * 1024 * 1024;
-    const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<number>();
+  test("a body that the listener reads is complete when the response ends first", async () => {
+    const { promise: responded, resolve: onResponse } = Promise.withResolvers<void>();
+    const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<string>();
     const server = http.createServer((req, res) => {
-      req.on("end", () => onEnd(req.readableLength));
-      res.end("ok");
+      let body = "";
+      req.on("data", chunk => {
+        body += chunk;
+        if (!res.writableEnded) res.end("ok");
+      });
+      req.on("end", () => onEnd(body));
     });
     await withForwarder(server, async port => {
-      const socket = send(port, `POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${length}\r\n\r\n`, reject);
-      socket.resume();
-      socket.end(Buffer.alloc(length, "x"));
-      assert.strictEqual(await ended, 0);
+      const socket = send(port, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nhello", reject);
+      socket.once("data", () => onResponse());
+      await responded;
+      socket.end("world");
+      assert.strictEqual(await ended, "helloworld");
     });
+  });
+
+  test("a body that nobody reads is dropped, not buffered", async () => {
+    const length = 4 * 1024 * 1024;
+    const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<void>();
+    let request: http.IncomingMessage | undefined;
+    let mostHeld = 0;
+    const server = http.createServer((req, res) => {
+      request = req;
+      req.on("end", onEnd);
+      res.end("ok");
+    });
+    await withForwarder(
+      server,
+      async port => {
+        const socket = send(port, `POST / HTTP/1.1\r\nHost: x\r\nContent-Length: ${length}\r\n\r\n`, reject);
+        socket.resume();
+        socket.end(Buffer.alloc(length, "x"));
+        await ended;
+      },
+      () => (mostHeld = Math.max(mostHeld, request?.readableLength ?? 0)),
+    );
+    assert.ok(mostHeld < length / 4, `the request held ${mostHeld} of ${length} bytes`);
   });
 });
 

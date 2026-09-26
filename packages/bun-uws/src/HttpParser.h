@@ -291,10 +291,10 @@ struct HttpResponseData;
             return std::string_view(nullptr, 0);
         }
 
-        /* RFC 9112 9.6: "close" is a case-insensitive token in the Connection list. */
-        bool hasConnectionClose()
+        /* RFC 9112 9.6: "close" is a case-insensitive token in the Connection list. Bun.serve does not read it from Proxy-Connection. */
+        bool hasConnectionClose(bool orProxyConnection)
         {
-            return hasConnectionToken("close");
+            return hasConnectionToken("close", orProxyConnection);
         }
 
         /* llhttp 9.4.2's Connection grammar for one field (Node 26): `lowerToken` is a whole item of the list, SP and HTAB around an item are skipped, and a control byte ends the list. */
@@ -334,13 +334,13 @@ struct HttpResponseData;
                 || (h.key.length() == 16 && !strncasecmp(h.key.data(), "proxy-connection", 16));
         }
 
-        bool hasConnectionToken(std::string_view lowerToken)
+        bool hasConnectionToken(std::string_view lowerToken, bool orProxyConnection = true)
         {
-            if (!bf.mightHave("connection") && !bf.mightHave("proxy-connection")) {
+            if (!bf.mightHave("connection") && !(orProxyConnection && bf.mightHave("proxy-connection"))) {
                 return false;
             }
             for (Header *h = headers; (++h)->key.length();) {
-                if (isConnectionField(*h) && fieldHasToken(*h, lowerToken)) {
+                if (isConnectionField(*h) && (orProxyConnection || h->key.length() == 10) && fieldHasToken(*h, lowerToken)) {
                     return true;
                 }
             }
@@ -670,7 +670,7 @@ struct HttpResponseData;
          * Transfer-Encoding field in the trailer section is rejected exactly like
          * llhttp does (it runs trailers through the same header state machine, so
          * the already-set F_CHUNKED collides), unless insecureHTTPParser is set
-         * (llhttp's LENIENT_CHUNKED_LENGTH / LENIENT_TRANSFER_ENCODING). An empty
+         * (llhttp's LENIENT_CHUNKED_LENGTH / LENIENT_TRANSFER_ENCODING, which "relaxed" does not set). An empty
          * section (bare CRLF, no trailers) is valid. Node counts trailer fields from
          * zero against server.maxHeadersCount (maxHeadersCount here, 0 = not set).
          *
@@ -678,7 +678,7 @@ struct HttpResponseData;
          * more valid fields than that followed by a malformed line is accepted where node
          * still errors; reaching it requires a deliberately padded (but size-capped)
          * section, and rejecting it would need a second scanning mode. */
-        static HttpParserError validateNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser, uint32_t maxHeadersCount) {
+        static HttpParserError validateNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser, bool useLenientTransferEncoding, uint32_t maxHeadersCount) {
             if (!section || section->size() <= 2) {
                 return HTTP_PARSER_ERROR_NONE;
             }
@@ -692,7 +692,7 @@ struct HttpResponseData;
             if (maxHeadersCount && count > maxHeadersCount) {
                 return HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE;
             }
-            if (!useInsecureHTTPParser) {
+            if (!useLenientTransferEncoding) {
                 for (unsigned i = 0; i < count; i++) {
                     std::string_view name = scratch[i].first;
                     if (name.length() == 14 && !strncasecmp(name.data(), "content-length", 14)) {
@@ -709,11 +709,6 @@ struct HttpResponseData;
     private:
         std::string fallback;
     public:
-        /* node:http flood prevention. HTTP_NODE_READS_PAUSED (state bit) = the socket's raw reads are
-         * paused and stays set through spill replay; this flag = "the parse loop running now must stop
-         * at the next request boundary and park the rest", cleared for replay so it can make progress. */
-        bool nodeHttpParkAtNextBoundary = false;
-        bool nodeHttpSpillReplayScheduled = false;
         /* node:http under LENIENT_TRANSFER_ENCODING: the current request's
          * Transfer-Encoding has no chunked final coding, so its body has no
          * framing. Every byte until the peer's FIN is body (llhttp's
@@ -721,7 +716,6 @@ struct HttpResponseData;
         bool nodeHttpBodyUntilEof = false;
         /* A request on this connection had Connection: close or was HTTP/1.0, or a Bun.serve response closed it (RFC 9112 9.6). */
         bool sawConnectionClose = false;
-        WTF::Vector<char> nodeHttpPausedSpill;
     private:
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
@@ -1235,16 +1229,6 @@ struct HttpResponseData;
                 consumedTotal += length;
                 return HttpParserResult::success(consumedTotal, returnedUser);
             }
-            /* node:http flood prevention: a dispatch earlier in this buffer paused reads.
-             * Stop at this request boundary, park the rest, report it as consumed so the
-             * caller does not spill it into the size-capped header fallback buffer. */
-            if constexpr (IsNodeHttp) {
-                if (nodeHttpParkAtNextBoundary) [[unlikely]] {
-                    nodeHttpPausedSpill.append(std::span<const char>(data, length));
-                    consumedTotal += length;
-                    return HttpParserResult::success(consumedTotal, user);
-                }
-            }
             /* RFC 9112 2.2: ignore empty lines (CRLF) received prior to the
              * request-line, like Node/llhttp - e.g. a stray "\r\n" sent on an
              * idle keep-alive connection must not be treated as a bad request.
@@ -1299,7 +1283,7 @@ struct HttpResponseData;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
-            if (req->isAncient() || req->hasConnectionClose()) {
+            if (req->isAncient() || req->hasConnectionClose(IsNodeHttp)) {
                 sawConnectionClose = true;
             }
             /* RFC 9112 6.3
@@ -1525,7 +1509,7 @@ struct HttpResponseData;
                         /* The fin dispatch completes the message: a malformed or
                          * framing-field trailer must fail it first (node: HPE_*). */
                         if (IsNodeHttp && chunk.length() == 0) {
-                            if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, maxHeadersCount)) [[unlikely]] {
+                            if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                             }
                         }
@@ -1623,7 +1607,7 @@ public:
                     /* The fin dispatch completes the message: a malformed or
                      * framing-field trailer must fail it first (node: HPE_*). */
                     if (IsNodeHttp && chunk.length() == 0) {
-                        if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, maxHeadersCount)) [[unlikely]] {
+                        if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                         }
                     }
@@ -1723,7 +1707,7 @@ public:
                             /* The fin dispatch completes the message: a malformed or
                              * framing-field trailer must fail it first (node: HPE_*). */
                             if (IsNodeHttp && chunk.length() == 0) {
-                                if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, maxHeadersCount)) [[unlikely]] {
+                                if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, useLenientTransferEncoding, maxHeadersCount)) [[unlikely]] {
                                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                                 }
                             }

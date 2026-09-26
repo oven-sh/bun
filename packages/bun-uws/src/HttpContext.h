@@ -118,13 +118,6 @@ private:
     static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_HTTP_TLS : US_SOCKET_KIND_UWS_HTTP; }
 
 public:
-    /* node:http flood prevention: re-feed parked request bytes through the same
-     * parse path fresh socket data takes. The caller guarantees the buffer has
-     * LIBUS_RECV_BUFFER_PADDING of writable slack past `length`. */
-    static us_socket_t *feedNodeHttpData(us_socket_t *s, char *data, int length) {
-        return onData<true>(s, data, length);
-    }
-
     us_socket_group_t *getSocketGroup() {
         return &group;
     }
@@ -411,9 +404,7 @@ private:
         /* Cork this socket */
         ((AsyncSocket<SSL> *) s)->cork();
 
-        /* Mark that we are inside the parser now. Save/restore the parsed
-         * socket: node:http's read replay can nest a parse inside another
-         * socket's dispatch. */
+        /* Mark that we are inside the parser now */
         httpContextData->flags.isParsingHttp = true;
         struct us_socket_t *prevParsingSocket = httpContextData->parsingSocket;
         httpContextData->parsingSocket = s;
@@ -522,16 +513,14 @@ private:
                  * drains and the backpressure flushes (startPipelinedResponse /
                  * onWritable). That pause is also Node's flood prevention for sync
                  * write()+end() handlers that back up the socket: the request
-                 * behind the backed-up response lands here and parks the rest. */
+                 * behind the backed-up response lands here. */
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PIPELINED_DISPATCH;
                 httpResponseData->nodeHttpQueuedPipelinedCount++;
                 /* A connection that owes a queued response is not idle (see markDone). */
                 httpResponseData->isIdle = false;
                 if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
+                    /* Like Node, the rest of this read is still parsed: the pause holds from the next read. */
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
-                    /* Also stop the request loop over the buffer being parsed
-                     * right now — pausing the socket alone cannot bound it. */
-                    httpResponseData->nodeHttpParkAtNextBoundary = true;
                     ((HttpResponse<SSL> *) s)->pause();
                 }
                 }
@@ -974,9 +963,6 @@ private:
          * new requests again. */
         if constexpr (IsNodeHttp) {
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
-                /* Parked pipelined requests must replay before fresh reads or the stream
-                 * reorders; the hook holds under backpressure and resumes raw reads only once
-                 * the queue and spill drain (JSNodeHTTPServerSocket.cpp). */
                 Bun__NodeHTTP__onReadsResumable(SSL, s);
             }
         }

@@ -467,6 +467,7 @@ function connectionListenerHTTP1(server, socket, options) {
     // socket - unless the pipelining read gate paused it (the gate's release
     // resumes it instead).
     req._read = function (_size) {
+      this._consuming = true;
       if (!socket._paused && socket.readable) socket.resume();
     };
 

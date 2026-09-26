@@ -193,9 +193,7 @@ unsafe extern "C" {
     safe fn Bun__getNodeHTTPResponseThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
     safe fn Bun__getNodeHTTPServerSocketThisValue(is_ssl: bool, socket: *mut c_void) -> JSValue;
 
-    // node:http flood prevention (JSNodeHTTPServerSocket.cpp): onReadsPaused marks the socket
-    // paused and tells the uWS request loop to park pipelined requests at the next boundary;
-    // onReadsResumable replays what was parked, in order, before resuming reads.
+    // node:http flood prevention (JSNodeHTTPServerSocket.cpp): unsent response bytes and queued responses hold a paused socket.
     safe fn Bun__NodeHTTP__onReadsPaused(ssl: core::ffi::c_int, socket: *mut c_void);
     safe fn Bun__NodeHTTP__onReadsResumable(ssl: core::ffi::c_int, socket: *mut c_void);
     // False when no read of this socket is being parsed.
@@ -415,7 +413,7 @@ impl PendingPinnedWrite {
 }
 
 /// Writes larger than this take the pinned zero-copy path; below it the cork
-/// buffer (`LoopData::CORK_BUFFER_SIZE` = 16KB) already handles the copy.
+/// buffer (`LoopData::CORK_COPY_MAX` = 16KB) already handles the copy.
 const PINNED_WRITE_THRESHOLD: usize = 16 * 1024;
 
 impl NodeHTTPResponse {
@@ -545,8 +543,7 @@ impl NodeHTTPResponse {
         {
             return;
         }
-        // Not a bare resume: parked pipelined requests replay first so the
-        // stream cannot reorder around them.
+        // Not a bare resume: flood prevention can still hold the reads.
         Bun__NodeHTTP__onReadsResumable(
             any_response_is_ssl(&raw) as core::ffi::c_int,
             raw.socket().cast(),

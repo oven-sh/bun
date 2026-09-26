@@ -639,9 +639,6 @@ describe("Transfer-Encoding without chunked on a CONNECT or Upgrade request", ()
   );
 });
 
-// Value lengths landing parseTrailerFields' 8-byte field-value scan on the
-// alignments where its last load reaches past the terminating CRLF CRLF: that
-// read leaves the heap allocation without the section's post-padding (ASAN).
 // llhttp sets F_CONNECTION_CLOSE from either field, so nothing behind this request is served.
 test.each(["Connection", "Proxy-Connection"])("%s: close ends the connection after the response", async field => {
   const urls: string[] = [];
@@ -667,6 +664,9 @@ test.each(["Connection", "Proxy-Connection"])("%s: close ends the connection aft
   }
 });
 
+// Value lengths landing parseTrailerFields' 8-byte field-value scan on the
+// alignments where its last load reaches past the terminating CRLF CRLF: that
+// read leaves the heap allocation without the section's post-padding (ASAN).
 test("chunked request trailers parse at every field-value scan boundary", async () => {
   const seen: { trailers: Record<string, string | string[] | undefined>; raw: string[] }[] = [];
   await using server = createServer((req, res) => {
@@ -910,6 +910,36 @@ test("insecureHTTPParser accepts Content-Length / Transfer-Encoding in trailers 
     const result = await promise;
     socket.destroy();
     expect(result).toEqual({ trailers: { [field.toLowerCase()]: value }, raw: [field, value] });
+  }
+});
+
+// llhttp gates these on LENIENT_CHUNKED_LENGTH and LENIENT_TRANSFER_ENCODING, which "relaxed" does not set.
+test.each([
+  ["Content-Length", "5", "HPE_INVALID_CONTENT_LENGTH"],
+  ["Transfer-Encoding", "chunked", "HPE_INVALID_TRANSFER_ENCODING"],
+])('httpValidation: "relaxed" rejects %s in trailers', async (field, value, code) => {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  await using server = createServer({ httpValidation: "relaxed" } as any, (req, res) => {
+    req.resume();
+    req.on("end", () => {
+      resolve("request completed");
+      res.end("ok");
+    });
+  });
+  server.on("clientError", (err: NodeJS.ErrnoException, socket) => {
+    socket.destroy();
+    resolve(err.code!);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  socket.on("error", () => {});
+  socket.write(
+    `POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nHELLO\r\n0\r\n${field}: ${value}\r\n\r\n`,
+  );
+  try {
+    expect(await promise).toBe(code);
+  } finally {
+    socket.destroy();
   }
 });
 

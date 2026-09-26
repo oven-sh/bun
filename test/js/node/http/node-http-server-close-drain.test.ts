@@ -564,10 +564,6 @@ test("closeAllConnections() after close() force-drains the withheld callback", a
   }
 });
 
-// Node frees the parser when it hands a socket to 'upgrade'/'connect', which
-// takes it off the list closeIdleConnections()/closeAllConnections() walk. After
-// close() those two must reap a plain keep-alive socket but leave an upgraded
-// one alone, while 'close' itself still waits for the upgraded socket to end.
 test("closeAllConnections() on a listening server destroys the connections and keeps the listener", async () => {
   const events: string[] = [];
   const server = createServer((req, res) => res.end("ok"));
@@ -582,13 +578,22 @@ test("closeAllConnections() on a listening server destroys the connections and k
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;
 
+  // Rejects when the server closes the connection first, so that a wrong close is not a timeout.
+  async function nextData(socket: ReturnType<typeof connect>) {
+    const closed = Promise.withResolvers<never>();
+    const onClose = () => closed.reject(new Error("the server closed the connection"));
+    socket.once("close", onClose);
+    try {
+      return String((await Promise.race([once(socket, "data"), closed.promise]))[0]);
+    } finally {
+      socket.off("close", onClose);
+    }
+  }
   async function open(head: string, until: string) {
     const socket = connect(port, "127.0.0.1");
     socket.on("error", () => {});
-    let received = "";
-    socket.on("data", chunk => (received += chunk));
     socket.write(head);
-    while (!received.includes(until)) await once(socket, "data");
+    for (let received = ""; !received.includes(until); ) received += await nextData(socket);
     return socket;
   }
 
@@ -605,7 +610,7 @@ test("closeAllConnections() on a listening server destroys the connections and k
     });
 
     upgraded.write("ping");
-    expect(String((await once(upgraded, "data"))[0])).toBe("echo ping");
+    expect(await nextData(upgraded)).toBe("echo ping");
     (await open(get, "ok")).destroy();
     expect(events).toEqual([]);
 
@@ -622,6 +627,10 @@ test("closeAllConnections() on a listening server destroys the connections and k
   }
 });
 
+// Node frees the parser when it hands a socket to 'upgrade'/'connect', which
+// takes it off the list closeIdleConnections()/closeAllConnections() walk. After
+// close() those two must reap a plain keep-alive socket but leave an upgraded
+// one alone, while 'close' itself still waits for the upgraded socket to end.
 test("closeIdleConnections()/closeAllConnections() after close() leave an upgraded socket open", async () => {
   const inHandler = Promise.withResolvers<void>();
   let releaseResponse!: () => void;

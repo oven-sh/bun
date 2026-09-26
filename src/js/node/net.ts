@@ -1324,7 +1324,6 @@ function onSocketTLSError(err) {
   }
 }
 
-// A connection that closes with no error while the server still owns it never finished its handshake.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1246-L1257
 function onSocketTLSClose(hadError) {
   if (hadError) return;

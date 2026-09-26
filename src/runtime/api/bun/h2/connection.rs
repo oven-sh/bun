@@ -1500,6 +1500,10 @@ impl Connection {
                 discard = true;
             }
             Some(st) => {
+                if st.state == State::ReservedRemote {
+                    self.data_on_reserved_stream(sink, hdr.stream_id);
+                    return StreamedDataStart::Fatal;
+                }
                 if !stream::can_receive_data(st.state) {
                     self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
                     if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
@@ -1617,6 +1621,7 @@ impl Connection {
         // below don't alias the streams map.
         enum DataDecision {
             Rst(ErrorCode),
+            ReservedStream,
             FlowControlViolation,
             Deliver(u32),
         }
@@ -1636,7 +1641,9 @@ impl Connection {
             // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
             None => DataDecision::Rst(ErrorCode::StreamClosed),
             Some(s) => {
-                if !stream::can_receive_data(s.state) {
+                if s.state == State::ReservedRemote {
+                    DataDecision::ReservedStream
+                } else if !stream::can_receive_data(s.state) {
                     DataDecision::Rst(ErrorCode::StreamClosed)
                 } else {
                     s.recv_window.on_data(consumed);
@@ -1658,6 +1665,10 @@ impl Connection {
                 // Surface the stream error (e.g. a peer protocol violation) to the embedder.
                 sink.on_stream_reset(hdr.stream_id, code.as_u32());
                 return false;
+            }
+            DataDecision::ReservedStream => {
+                self.data_on_reserved_stream(sink, hdr.stream_id);
+                return true;
             }
             DataDecision::FlowControlViolation => {
                 // nghttp2 (nghttp2_session_update_recv_stream_window_size): a stream flow-control
@@ -1701,6 +1712,16 @@ impl Connection {
             }
         }
         false
+    }
+
+    /// RFC 9113 §5.1 reserved (remote): DATA is a connection PROTOCOL_ERROR, as in nghttp2.
+    fn data_on_reserved_stream(&mut self, sink: &impl Sink, stream_id: u32) {
+        if let Some(s) = self.streams.get_mut(&stream_id) {
+            s.state = State::Closed;
+        }
+        // Session teardown in the embedder misses a promised stream: report this one first.
+        sink.on_stream_reset(stream_id, ErrorCode::InternalError.as_u32());
+        self.send_go_away(sink, ErrorCode::ProtocolError, b"DATA: stream in reserved");
     }
 
     /// RFC 9113 §8.1.1: once END_STREAM arrives, a request whose received DATA total contradicts

@@ -2060,6 +2060,8 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // Native dispatched streamError or aborted: it closed the stream and wrote the RST_STREAM if one was due.
+  NativeReset = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2226,8 +2228,9 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
-function rstNextTick(id: number, rstCode: number) {
-  const session = this as Http2Session;
+function rstNextTick(this: Http2Stream, session: Http2Session, id: number, rstCode: number) {
+  // Native drops this call only via the stream's table entry: evicted on the next read, absent for a pushed stream.
+  if ((this[bunHTTP2StreamStatus] & (StreamState.NativeClosed | StreamState.NativeReset)) !== 0) return;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
 // node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
@@ -2247,7 +2250,7 @@ function streamOnResume(this: Http2Stream) {
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
-  setImmediate(rstNextTick.bind(session, this.id, code));
+  setImmediate(rstNextTick.bind(this, session, this.id, code));
 }
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
@@ -2591,9 +2594,9 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
       } else if (this.writableFinished || code) {
-        setImmediate(rstNextTick.bind(session, this.#id, code));
+        setImmediate(rstNextTick.bind(this, session, this.#id, code));
       } else {
-        this.once("finish", rstNextTick.bind(session, this.#id, code));
+        this.once("finish", rstNextTick.bind(this, session, this.#id, code));
       }
       // node destroys the stream once both halves have finished; without this a stream closed
       // while idle never emits 'close'.
@@ -2680,11 +2683,10 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       session &&
       typeof this.#id === "number" &&
       !this[kNeverAnnounced] &&
-      // A cleanly closed stream the native side already freed has nothing to send:
-      // the deferred rstStream would be a guaranteed no-op host call per request.
-      (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
+      // Native already closed or reset the stream: nothing is left to send, whatever the rstCode.
+      (this[bunHTTP2StreamStatus] & (StreamState.NativeClosed | StreamState.NativeReset)) === 0
     ) {
-      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+      setImmediate(rstNextTick.bind(this, session, this.#id, rstCode));
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error
@@ -4071,6 +4073,7 @@ class ServerHttp2Session extends Http2Session {
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeReset;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
@@ -4083,6 +4086,7 @@ class ServerHttp2Session extends Http2Session {
     },
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
       if (!self || typeof stream !== "object") return;
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeReset;
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
@@ -5077,6 +5081,7 @@ class ClientHttp2Session extends Http2Session {
     ),
     aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {
       if (!self || typeof stream !== "object") return;
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeReset;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
@@ -5088,7 +5093,7 @@ class ClientHttp2Session extends Http2Session {
     }),
     streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
-
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeReset;
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),

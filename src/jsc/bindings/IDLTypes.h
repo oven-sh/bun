@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include "StringAdaptors.h"
 #include <JavaScriptCore/HandleTypes.h>
 #include <JavaScriptCore/Strong.h>
 #include <type_traits>
@@ -145,8 +144,6 @@ template<typename StringType> struct IDLString : IDLType<StringType> {
     static StringType nullValue() { return StringType(); }
     static bool isNullValue(const String& value) { return value.isNull(); }
     static bool isNullValue(const AtomString& value) { return value.isNull(); }
-    static bool isNullValue(const UncachedString& value) { return value.string.isNull(); }
-    static bool isNullValue(const OwnedString& value) { return value.string.isNull(); }
     static bool isNullValue(const URL& value) { return value.isNull(); }
     template<typename U> static U&& extractValueFromNullable(U&& value) { return std::forward<U>(value); }
 };

@@ -58,11 +58,6 @@ public:
         }
     }
 
-    bool isEmpty() const
-    {
-        return m_list.isEmpty();
-    }
-
 private:
     WTF::Vector<JSC::WriteBarrier<T>> m_list;
 };

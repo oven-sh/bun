@@ -104,12 +104,6 @@
 #include <limits>
 #include <algorithm>
 
-#if CPU(BIG_ENDIAN) || CPU(MIDDLE_ENDIAN) || CPU(NEEDS_ALIGNED_ACCESS)
-#define ASSUME_LITTLE_ENDIAN 0
-#else
-#define ASSUME_LITTLE_ENDIAN 1
-#endif
-
 namespace WebCore {
 
 using namespace JSC;
@@ -647,7 +641,6 @@ static bool ensureBufferCapacity(Vector<uint8_t>& buffer, size_t needed)
     return buffer.tryReserveCapacity(grown) || buffer.tryReserveCapacity(needed);
 }
 
-#if ASSUME_LITTLE_ENDIAN
 template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, T value)
 {
     if (!ensureBufferCapacity(buffer, buffer.size() + sizeof(value))) [[unlikely]]
@@ -655,18 +648,6 @@ template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, T va
     buffer.append(std::span { reinterpret_cast<uint8_t*>(&value), sizeof(value) });
     return true;
 }
-#else
-template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, T value)
-{
-    if (!ensureBufferCapacity(buffer, buffer.size() + sizeof(T))) [[unlikely]]
-        return false;
-    for (unsigned i = 0; i < sizeof(T); i++) {
-        buffer.append(value & 0xFF);
-        value >>= 8;
-    }
-    return true;
-}
-#endif
 
 template<> bool writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, uint8_t value)
 {
@@ -683,17 +664,7 @@ template<typename T> static bool writeLittleEndian(Vector<uint8_t>& buffer, cons
 
     if (!ensureBufferCapacity(buffer, buffer.size() + static_cast<size_t>(length) * sizeof(T))) [[unlikely]]
         return false;
-#if ASSUME_LITTLE_ENDIAN
     buffer.append(std::span { reinterpret_cast<const uint8_t*>(values), length * sizeof(T) });
-#else
-    for (unsigned i = 0; i < length; i++) {
-        T value = values[i];
-        for (unsigned j = 0; j < sizeof(T); j++) {
-            buffer.append(static_cast<uint8_t>(value & 0xFF));
-            value >>= 8;
-        }
-    }
-#endif
     return true;
 }
 
@@ -919,13 +890,6 @@ private:
                 write(FalseTag);
             return;
         }
-#if USE(BIGINT32)
-        if (value.isBigInt32()) {
-            write(BigIntTag);
-            dumpBigIntData(value);
-            return;
-        }
-#endif
 
         // Make any new primitive extension safe by throwing an error.
         code = SerializationReturnCode::DataCloneError;
@@ -954,30 +918,8 @@ private:
     void dumpBigIntData(JSValue value)
     {
         ASSERT(value.isBigInt());
-#if USE(BIGINT32)
-        if (value.isBigInt32()) {
-            dumpBigInt32Data(value.bigInt32AsInt32());
-            return;
-        }
-#endif
         dumpHeapBigIntData(uncheckedDowncast<JSBigInt>(value));
     }
-
-#if USE(BIGINT32)
-    void dumpBigInt32Data(int32_t integer)
-    {
-        write(static_cast<uint8_t>(integer < 0));
-        if (!integer) {
-            write(static_cast<uint32_t>(0)); // Length-in-uint64_t
-            return;
-        }
-        write(static_cast<uint32_t>(1)); // Length-in-uint64_t
-        int64_t value = static_cast<int64_t>(integer);
-        if (value < 0)
-            value = -value;
-        write(static_cast<uint64_t>(value));
-    }
-#endif
 
     void dumpHeapBigIntData(JSBigInt* bigInt)
     {
@@ -2408,7 +2350,6 @@ private:
         }
         return true;
     }
-#if ASSUME_LITTLE_ENDIAN
     template<typename T> static bool readLittleEndian(const uint8_t*& ptr, const uint8_t* end, T& value)
     {
         if (ptr > end - sizeof(value))
@@ -2422,22 +2363,6 @@ private:
         }
         return true;
     }
-#else
-    template<typename T> static bool readLittleEndian(const uint8_t*& ptr, const uint8_t* end, T& value)
-    {
-        if (ptr > end - sizeof(value))
-            return false;
-
-        if (sizeof(T) == 1)
-            value = *ptr++;
-        else {
-            value = 0;
-            for (unsigned i = 0; i < sizeof(T); i++)
-                value += ((T)*ptr++) << (i * 8);
-        }
-        return true;
-    }
-#endif
 
     bool read(bool& b)
     {
@@ -2542,18 +2467,8 @@ private:
         if ((end - ptr) < static_cast<int>(size))
             return false;
 
-#if ASSUME_LITTLE_ENDIAN
         str = String({ reinterpret_cast<const char16_t*>(ptr), length });
         ptr += length * sizeof(char16_t);
-#else
-        std::span<char16_t> characters;
-        str = String::createUninitialized(length, characters);
-        for (unsigned i = 0; i < length; ++i) {
-            uint16_t c;
-            readLittleEndian(ptr, end, c);
-            characters[i] = c;
-        }
-#endif
         return true;
     }
 
@@ -2588,18 +2503,8 @@ private:
         if ((end - ptr) < static_cast<int>(size))
             return false;
 
-#if ASSUME_LITTLE_ENDIAN
         str = Identifier::fromString(vm, { reinterpret_cast<const char16_t*>(ptr), length });
         ptr += length * sizeof(char16_t);
-#else
-        std::span<char16_t> characters;
-        str = String::createUninitialized(length, characters);
-        for (unsigned i = 0; i < length; ++i) {
-            uint16_t c;
-            readLittleEndian(ptr, end, c);
-            characters[i] = c;
-        }
-#endif
         return true;
     }
 
@@ -3499,9 +3404,6 @@ private:
             return JSValue();
 
         if (!lengthInUint64) {
-#if USE(BIGINT32)
-            return jsBigInt32(0);
-#else
             JSBigInt* bigInt = JSBigInt::tryCreateZero(m_lexicalGlobalObject->vm());
             if (!bigInt) [[unlikely]] {
                 fail();
@@ -3509,7 +3411,6 @@ private:
             }
             m_gcBuffer.appendWithCrashOnOverflow(bigInt);
             return bigInt;
-#endif
         }
 
         if (lengthInUint64 > static_cast<uint64_t>(m_end - m_ptr) / sizeof(uint64_t)) {
@@ -3517,36 +3418,6 @@ private:
             return JSValue();
         }
 
-#if USE(BIGINT32)
-        static_assert(sizeof(JSBigInt::Digit) == sizeof(uint64_t));
-        if (lengthInUint64 == 1) {
-            uint64_t digit64 = 0;
-            if (!read(digit64))
-                return JSValue();
-            if (sign) {
-                if (digit64 <= static_cast<uint64_t>(-static_cast<int64_t>(INT32_MIN)))
-                    return jsBigInt32(static_cast<int32_t>(-static_cast<int64_t>(digit64)));
-            } else {
-                if (digit64 <= INT32_MAX)
-                    return jsBigInt32(static_cast<int32_t>(digit64));
-            }
-            ASSERT(digit64 != 0);
-            JSBigInt* bigInt = JSBigInt::tryCreateWithLength(m_lexicalGlobalObject->vm(), 1);
-            if (!bigInt) {
-                fail();
-                return JSValue();
-            }
-            bigInt->setDigit(0, digit64);
-            bigInt->setSign(sign);
-            bigInt = bigInt->tryRightTrim(m_lexicalGlobalObject->vm());
-            if (!bigInt) {
-                fail();
-                return JSValue();
-            }
-            m_gcBuffer.appendWithCrashOnOverflow(bigInt);
-            return tryConvertToBigInt32(bigInt);
-        }
-#endif
         Vector<JSBigInt::Digit, 16> digits;
         if constexpr (sizeof(JSBigInt::Digit) == sizeof(uint64_t)) {
             digits.reserveInitialCapacity(lengthInUint64);

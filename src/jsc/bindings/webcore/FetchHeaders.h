@@ -55,7 +55,6 @@ public:
     using Init = std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>>;
     static ExceptionOr<Ref<FetchHeaders>> create(std::optional<Init>&&);
 
-    static Ref<FetchHeaders> create(Guard guard = Guard::None, HTTPHeaderMap&& headers = {}) { return adoptRef(*new FetchHeaders { guard, WTF::move(headers) }); }
     static Ref<FetchHeaders> create(const FetchHeaders& headers) { return adoptRef(*new FetchHeaders { headers }); }
 
     ExceptionOr<void> append(const String& name, const String& value);
@@ -88,7 +87,6 @@ public:
 
     class Iterator {
     public:
-        explicit Iterator(FetchHeaders&);
         Iterator(FetchHeaders&, bool lowerCaseKeys);
         std::optional<KeyValuePair<String, String>> next();
 

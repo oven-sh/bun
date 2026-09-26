@@ -89,11 +89,6 @@ Seconds Performance::reduceTimeResolution(Seconds seconds)
     return Seconds(reduced);
 }
 
-MonotonicTime Performance::monotonicTimeFromRelativeTime(DOMHighResTimeStamp relativeTime) const
-{
-    return m_timeOrigin + Seconds::fromMilliseconds(relativeTime);
-}
-
 PerformanceTiming* Performance::timing()
 {
     if (!m_timing)

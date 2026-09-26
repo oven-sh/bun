@@ -181,10 +181,6 @@ public:
         ASSERT(!isFull());
         m_queue.append(WTF::move(entry));
     }
-    void prepend(const WTF::AbstractLocker&, Entry&& entry)
-    {
-        m_queue.prepend(WTF::move(entry));
-    }
     // The returned reference is INVALID after any call that can run user JS or mutate the
     // queue — re-fetch.
     Entry& first() { return m_queue.first(); }

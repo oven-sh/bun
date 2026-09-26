@@ -37,14 +37,9 @@ const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject("Timed out"), 5000).unref();
-    server.listen({ port: 0 }, (err, hostname, port) => {
+    server.listen({ port: 0 }, () => {
       clearTimeout(timeout);
-
-      if (err) {
-        reject(err);
-      } else {
-        resolve(new URL(`${protocol}://${hostname}:${port}`));
-      }
+      resolve(new URL(`${protocol}://localhost:${(server.address() as AddressInfo).port}`));
     });
   });
 }
@@ -175,6 +170,27 @@ describe("node:http", () => {
       server.close();
       await once(server, "close");
       expect({ order, listeningAtOnce }).toEqual({ order: ["listening", "nextTick"], listeningAtOnce: true });
+    });
+
+    // Node's net.Server emits 'listening' with no arguments, and the listen() callback is a once('listening') listener.
+    describe.each([
+      ["http", () => createServer()],
+      ["https", () => createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert })],
+    ])("%s.Server", (_, create) => {
+      it("passes no arguments to the listen() callback or to 'listening' listeners", async () => {
+        const server = create();
+        const received: Record<string, unknown[]> = {};
+        server.on("listening", (...args) => (received.listener = args));
+        const { promise: called, resolve: onCallback } = Promise.withResolvers<void>();
+        server.listen(0, (...args) => {
+          received.callback = args;
+          onCallback();
+        });
+        await called;
+        server.close();
+        await once(server, "close");
+        expect(received).toEqual({ listener: [], callback: [] });
+      });
     });
 
     it("emits a listen() error on the next tick, before the event loop polls", async () => {
@@ -467,12 +483,12 @@ describe("node:http", () => {
           res.end("Hello World");
         }
       });
-      server.listen({ port: 0 }, (_, __, port) => {
+      server.listen({ port: 0 }, () => {
         var _done = (...args) => {
           server.close();
           done(...args);
         };
-        callback(server, port, _done);
+        callback(server, (server.address() as AddressInfo).port, _done);
       });
     }
 
@@ -1252,9 +1268,9 @@ describe("node:http", () => {
 
       const server = createServer((req, res) => {});
 
-      server.listen({ port: 0 }, (_err, host, port) => {
-        server_port = port;
-        server_host = host;
+      server.listen({ port: 0 }, () => {
+        server_port = (server.address() as AddressInfo).port;
+        server_host = "localhost";
 
         const signal = AbortSignal.timeout(5);
 
@@ -1296,9 +1312,9 @@ describe("node:http", () => {
       res.write(req.req === req ? "ok" : "fail");
       res.end();
     });
-    server.listen({ port: 0 }, async (_err, host, port) => {
+    server.listen({ port: 0 }, async () => {
       try {
-        const x = await fetch(`http://${host}:${port}`).then(res => res.text());
+        const x = await fetch(`http://localhost:${(server.address() as AddressInfo).port}`).then(res => res.text());
         expect(x).toBe("ok");
         done();
       } catch (error) {
@@ -1367,9 +1383,9 @@ describe("node:http", () => {
     const server = createServer((req, res) => {
       res.end();
     });
-    server.listen({ port: "0" }, async (_err, host, port) => {
+    server.listen({ port: "0" }, async () => {
       try {
-        await fetch(`http://${host}:${port}`).then(res => {
+        await fetch(`http://localhost:${(server.address() as AddressInfo).port}`).then(res => {
           expect(res.status).toBe(200);
           done();
         });
@@ -1446,7 +1462,7 @@ describe("server.address should be valid IP", () => {
   });
   it("should return null after close", done => {
     const server = createServer((req, res) => {});
-    server.listen(0, async (_err, host, port) => {
+    server.listen(0, async () => {
       try {
         expect(server.address()).not.toBeNull();
         server.close();
@@ -1459,7 +1475,7 @@ describe("server.address should be valid IP", () => {
   });
   it("test default hostname, issue#5850", done => {
     const server = createServer((req, res) => {});
-    server.listen(0, async (_err, host, port) => {
+    server.listen(0, async () => {
       try {
         const { address, family, port } = server.address();
         expect(port).toBeInteger();
@@ -1481,9 +1497,9 @@ describe("server.address should be valid IP", () => {
   });
   it.each([["localhost"], ["127.0.0.1"]])("test %s", (hostname, done) => {
     const server = createServer((req, res) => {});
-    server.listen(0, hostname, async (_err, host, port) => {
+    server.listen(0, hostname, async () => {
       try {
-        const { address, family } = server.address();
+        const { address, family, port } = server.address();
         expect(port).toBeInteger();
         expect(port).toBeGreaterThan(0);
         expect(port).toBeLessThan(65536);
@@ -1504,7 +1520,7 @@ describe("server.address should be valid IP", () => {
   it("test unix socket, issue#6413", done => {
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
     const server = createServer((req, res) => {});
-    server.listen(socketPath, async (_err, host, port) => {
+    server.listen(socketPath, async () => {
       try {
         expect(server.address()).toStrictEqual(socketPath);
         done();

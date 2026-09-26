@@ -106,6 +106,17 @@ test.concurrent("should not crash when closing sockets after upgrade", async () 
   expect().pass();
 });
 
+// ws forwards the 'listening' event of the http.Server it creates, which node emits with no arguments.
+test("a WebSocketServer passes no arguments to its constructor callback or to 'listening' listeners", async () => {
+  const received: Record<string, unknown[]> = {};
+  const wss = new WebSocketServer({ port: 0 }, (...args) => (received.callback = args));
+  wss.on("listening", (...args) => (received.listener = args));
+  await once(wss, "listening");
+  wss.close();
+  await once(wss, "close");
+  expect(received).toEqual({ listener: [], callback: [] });
+});
+
 // ws.close() on a server-side socket runs the native close callback before it
 // returns. A node:http 'request' or 'upgrade' handler that calls it must still
 // run to completion first: the nextTick and promise callbacks the handler

@@ -36,9 +36,9 @@ const server = createServer((_, response) => {
   response.write(expected);
   response.write("");
   response.end();
-}).listen(0, "localhost", async (err, hostname, port) => {
+}).listen(0, "localhost", async () => {
   try {
-    expect(err).toBeFalsy();
+    const { port } = server.address();
     expect(port).toBeGreaterThan(0);
 
     for (const char of chars) {
@@ -46,7 +46,7 @@ const server = createServer((_, response) => {
         expected = char + Buffer.alloc(size, "-").toString("utf8") + "x";
 
         try {
-          const url = `http://${hostname}:${port}`;
+          const url = `http://localhost:${port}`;
           const count = 20;
           const all = [];
           const batchSize = 20;

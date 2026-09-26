@@ -989,6 +989,129 @@ describe("copyFileSync", () => {
     await expect(fs.promises.copyFile(src, dest)).rejects.toThrow(expected);
   });
 
+  // libuv gives the destination its mode before it writes the data, so the
+  // kernel clears set-uid and set-gid on the write when the caller may not keep them.
+  it.skipIf(isWindows)("does not carry set-uid or set-gid over for an unprivileged caller", async () => {
+    using dir = tempDir("copyfile-set-id", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import fs from "node:fs";
+        import { promisify } from "node:util";
+
+        const write = (name, bytes, mode) => {
+          fs.writeFileSync(name, bytes);
+          fs.chmodSync(name, mode);
+        };
+        const mode = path => (fs.statSync(path).mode & 0o7777).toString(8);
+
+        // macOS refuses set-gid when the caller is not in the group of the file.
+        const setId = process.platform === "linux" ? 0o6000 : 0o4000;
+        write("small", "small", setId | 0o755);
+        // Above the macOS clonefile threshold.
+        write("large", Buffer.alloc(256 * 1024, "a"), setId | 0o755);
+        write("plain", "plain", 0o644);
+        // A multiple of the block size: FICLONE accepts a longer destination only then.
+        write("plain-aligned", Buffer.alloc(256 * 1024, "p"), 0o644);
+
+        if (process.getuid() === 0) {
+          // Root can keep the bits. Copy as an unprivileged uid instead. The paths are
+          // relative, so that uid needs no access to the parents of the cwd.
+          fs.chmodSync(".", 0o777);
+          process.seteuid(65534);
+        }
+
+        // New destinations come first: a failed FICLONE turns FICLONE off for the process.
+        fs.copyFileSync("small", "sync");
+        fs.copyFileSync("large", "sync-large");
+        fs.copyFileSync("small", "excl", fs.constants.COPYFILE_EXCL);
+        fs.copyFileSync("small", "ficlone", fs.constants.COPYFILE_FICLONE);
+        await promisify(fs.copyFile)("small", "callback");
+        await fs.promises.copyFile("small", "promises");
+
+        // Existing destinations, 22 bytes longer than the source: [source, old mode].
+        const existing = {
+          // Overwritten in place (or cloned), then cut.
+          "over-aligned": ["plain-aligned", 0o777],
+          "over-plain": ["plain", 0o777],
+          // Emptied before the new mode goes on: it adds readers, or it has set-uid.
+          "over-private": ["plain", 0o600],
+          "over-set-id": ["small", 0o777],
+        };
+        const overExisting = {};
+        for (const [dest, [src, oldMode]] of Object.entries(existing)) {
+          write(dest, Buffer.alloc(fs.statSync(src).size + 22, "o"), oldMode);
+          fs.copyFileSync(src, dest);
+          overExisting[dest] = [mode(dest), fs.readFileSync(dest).equals(fs.readFileSync(src))];
+        }
+
+        console.log(
+          JSON.stringify({
+            source: mode("small"),
+            sync: mode("sync"),
+            syncLarge: [mode("sync-large"), fs.statSync("sync-large").size],
+            excl: mode("excl"),
+            ficlone: mode("ficlone"),
+            callback: mode("callback"),
+            promises: mode("promises"),
+            overExisting,
+          }),
+        );
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      source: isLinux ? "6755" : "4755",
+      sync: "755",
+      syncLarge: ["755", 256 * 1024],
+      excl: "755",
+      ficlone: "755",
+      callback: "755",
+      promises: "755",
+      overExisting: {
+        "over-aligned": ["644", true],
+        "over-plain": ["644", true],
+        "over-private": ["644", true],
+        "over-set-id": ["755", true],
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("leaves the file alone when the source and the destination are the same file", async () => {
+    using dir = tempDir("copyfile-same-file", { "file.txt": "hello world" });
+    const file = join(String(dir), "file.txt");
+    const hardlink = join(String(dir), "hardlink.txt");
+    const symlink = join(String(dir), "symlink.txt");
+    fs.linkSync(file, hardlink);
+    symlinkSync(file, symlink);
+
+    for (const dest of [file, hardlink, symlink]) {
+      copyFileSync(file, dest);
+      copyFileSync(file, dest, fs.constants.COPYFILE_FICLONE);
+      await fs.promises.copyFile(file, dest);
+      // Without reflink support this used to fail and then unlink the destination,
+      // which is the source.
+      if (isLinux) copyFileSync(file, dest, fs.constants.COPYFILE_FICLONE_FORCE);
+      expect(readFileSync(file, "utf8")).toBe("hello world");
+      // The destination is still the same name for the same file.
+      expect({
+        content: readFileSync(dest, "utf8"),
+        sameInode: statSync(dest).ino === statSync(file).ino,
+        isSymlink: lstatSync(dest).isSymbolicLink(),
+      }).toEqual({ content: "hello world", sameInode: true, isSymlink: dest === symlink });
+    }
+  });
+
   // CopyFileW fails with ERROR_BAD_NET_NAME (or ERROR_BAD_NETPATH); neither is
   // in the Win32→errno table, so this is the UNKNOWN path.
   it.if(isWindows)("throws for a destination on a nonexistent UNC share", async () => {

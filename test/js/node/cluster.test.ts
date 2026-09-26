@@ -1371,3 +1371,47 @@ if (cluster.isPrimary) {
   });
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// node ends the process at the throw of an uncaught error that nothing takes.
+// What the listener queued before the throw does not run. Only 'exit'
+// listeners run. The queued timer ends the process with status 3: a build that
+// goes on after the report fails here and does not wait for the worker.
+test.concurrent(
+  "a worker 'message' listener that throws with no 'uncaughtException' listener ends the primary at the throw",
+  async () => {
+    using dir = tempDir("cluster-message-throw", {
+      "index.js": `
+      const cluster = require("node:cluster");
+      if (cluster.isPrimary) {
+        process.on("exit", code => console.log("exit", code));
+        cluster.fork().on("message", () => {
+          process.nextTick(() => console.log("TICK"));
+          setImmediate(() => console.log("IMMEDIATE"));
+          setTimeout(() => {
+            console.log("TIMER");
+            process.exit(3);
+          }, 0);
+          throw new Error("boom-cluster-message");
+        });
+      } else {
+        process.send("hi");
+        process.on("disconnect", () => process.exit(0));
+        setInterval(() => {}, 1e9);
+      }
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "exit 1\n",
+      stderr: expect.stringContaining("boom-cluster-message"),
+      exitCode: 1,
+    });
+  },
+);

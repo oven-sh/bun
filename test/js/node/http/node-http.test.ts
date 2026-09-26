@@ -4366,3 +4366,51 @@ describe("response header values are written as latin-1 bytes", () => {
     ]);
   });
 });
+
+// node ends the process at the throw of an uncaught error that nothing takes.
+// The tick, the immediate and the timer that the callback queued before the
+// throw do not run. Only 'exit' listeners run. The timer ends the process with
+// status 3: a build that goes on after the report fails here and does not wait
+// for the interval.
+describe("a server listener that throws with no 'uncaughtException' listener ends the process at the throw", () => {
+  const prelude = `
+    process.on("exit", code => console.log("exit", code));
+    function boom(label) {
+      process.nextTick(() => console.log("TICK"));
+      setImmediate(() => console.log("IMMEDIATE"));
+      setTimeout(() => {
+        console.log("TIMER");
+        process.exit(3);
+      }, 0);
+      throw new Error(label);
+    }
+    setInterval(() => {}, 1e9);
+  `;
+  it.concurrent.each([
+    [
+      "request",
+      `const http = require("http"); const s = http.createServer(() => boom("boom-request")); s.listen(0, "127.0.0.1", () => http.get({ port: s.address().port, host: "127.0.0.1" }).on("error", () => {}));`,
+    ],
+    [
+      "connection",
+      `const http = require("http"); const s = http.createServer(() => {}); s.on("connection", () => boom("boom-connection")); s.listen(0, "127.0.0.1", () => http.get({ port: s.address().port, host: "127.0.0.1" }).on("error", () => {}));`,
+    ],
+    [
+      "data",
+      `const http = require("http"); const s = http.createServer(req => req.on("data", () => boom("boom-data"))); s.listen(0, "127.0.0.1", () => { const r = http.request({ port: s.address().port, host: "127.0.0.1", method: "POST" }); r.on("error", () => {}); r.end("body"); });`,
+    ],
+  ])("%s", async (name, body) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "exit 1\n",
+      stderr: expect.stringContaining("boom-" + name),
+      exitCode: 1,
+    });
+  });
+});

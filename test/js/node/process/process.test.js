@@ -2966,6 +2966,81 @@ it("a handled uncaughtException keeps the event loop running", async () => {
   expect(exitCode).toBe(0);
 });
 
+// node ends the process at the report of an uncaught error that nothing takes:
+// only 'exit' listeners run after it, and the status is 1. boom() queues work
+// and then throws. The queued timer ends the process with status 3, so a build
+// that goes on after the report fails here and does not wait for the interval
+// or the pending top-level await.
+describe("a native callback that throws with no 'uncaughtException' listener ends the process at the throw", () => {
+  const prelude = file => `
+    ${file.endsWith(".mjs") ? `import crypto from "node:crypto";` : `const crypto = require("node:crypto");`}
+    process.on("exit", code => console.log("exit", code, process.exitCode));
+    function boom(label) {
+      process.nextTick(() => console.log("TICK"));
+      setImmediate(() => console.log("IMMEDIATE"));
+      setTimeout(() => {
+        console.log("TIMER");
+        process.exit(3);
+      }, 0);
+      throw new Error(label);
+    }
+    setInterval(() => {}, 1e9);
+  `;
+  it.concurrent.each([
+    {
+      name: "under a pending top-level await",
+      file: "index.mjs",
+      body: `
+        crypto.randomBytes(8, () => boom("boom-pending-await"));
+        await new Promise(() => {});
+      `,
+      stdout: "exit 1 1\n",
+      stderr: "boom-pending-await",
+    },
+    {
+      name: "after the listener that took an earlier error removed itself",
+      file: "index.cjs",
+      body: `
+        process.on("uncaughtException", function listener(error) {
+          console.log("listener", error.message);
+          process.off("uncaughtException", listener);
+          crypto.randomBytes(8, () => boom("boom-second"));
+        });
+        crypto.randomBytes(8, () => {
+          throw new Error("first");
+        });
+      `,
+      stdout: "listener first\nexit 1 1\n",
+      stderr: "boom-second",
+    },
+    {
+      name: "with status 1 when process.exitCode was set before",
+      file: "index.cjs",
+      body: `
+        process.exitCode = 42;
+        crypto.randomBytes(8, () => boom("boom-exit-code"));
+      `,
+      stdout: "exit 1 1\n",
+      stderr: "boom-exit-code",
+    },
+  ])("$name", async ({ file, body, stdout: expected, stderr: message }) => {
+    using dir = tempDir("uncaught-ends-at-the-throw", { [file]: prelude(file) + body });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), file],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expected,
+      stderr: expect.stringContaining(message),
+      exitCode: 1,
+    });
+  });
+});
+
 it("a throwing Bun.listen data handler with no error: handler keeps the server alive", async () => {
   using dir = tempDir("bun-listen-handler-throw", {
     "server.js": `

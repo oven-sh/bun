@@ -1484,3 +1484,48 @@ describe("module loading", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// The ws package on a node:http server: node ends the process at the throw of
+// a 'message' listener. What the listener queued before the throw does not
+// run. Only 'exit' listeners run. The queued timer ends the process with
+// status 3: a build that goes on after the report fails here and does not wait
+// for the server.
+it("a 'message' listener on a node:http server that throws with no 'uncaughtException' listener ends the process at the throw", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const { WebSocketServer, WebSocket } = require("ws");
+        process.on("exit", code => console.log("exit", code));
+        const server = http.createServer();
+        new WebSocketServer({ server }).on("connection", ws =>
+          ws.on("message", () => {
+            process.nextTick(() => console.log("TICK"));
+            setImmediate(() => console.log("IMMEDIATE"));
+            setTimeout(() => {
+              console.log("TIMER");
+              process.exit(3);
+            }, 0);
+            throw new Error("boom-ws-message");
+          }),
+        );
+        server.listen(0, "127.0.0.1", () => {
+          const client = new WebSocket("ws://127.0.0.1:" + server.address().port);
+          client.on("open", () => client.send("hi"));
+          client.on("error", () => {});
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "exit 1\n",
+    stderr: expect.stringContaining("boom-ws-message"),
+    exitCode: 1,
+  });
+});

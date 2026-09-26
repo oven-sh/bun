@@ -316,9 +316,10 @@ pub struct VirtualMachine {
     pub on_print_error_zig_exception_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
-    /// Set by `bun repl` so `uncaught_exception_fatal` stays at print-and-continue instead of
-    /// terminating the session. Node's REPL wraps evaluation in a domain for the same reason:
-    /// https://github.com/nodejs/node/blob/main/lib/repl.js
+    /// An unhandled report prints and returns; it does not end the process. Set by the interactive
+    /// `bun repl`, where node wraps evaluation in a domain for the same reason
+    /// (https://github.com/nodejs/node/blob/main/lib/repl.js), and by `bun build --app`, where a
+    /// report from one page must not stop the build.
     pub suppress_fatal_uncaught: bool,
     /// Set while `expect(fn).toThrow()` reads what `fn` rejects (`quiet_unhandled_rejections`). A
     /// rejection that arrives then goes to the hook. It is not a report and does not end the process.
@@ -1689,13 +1690,17 @@ impl VirtualMachine {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
 
+    /// Reports an uncaught error: the listeners get it, and when none of them takes it, the error is
+    /// printed and the main run ends with status 1 (node: `TriggerUncaughtException`). Every fold
+    /// ends here (`run_callback`, `report_error_or_terminate`, `dispatch::fold`), so a callback
+    /// that nobody classified exits and cannot leave a process that prints and continues.
     pub fn uncaught_exception(
         &mut self,
         global_object: &JSGlobalObject,
         err: JSValue,
         origin: UncaughtExceptionOrigin,
     ) -> bool {
-        self.uncaught_exception_impl(global_object, err, err, origin, Unhandled::KeepAlive)
+        self.uncaught_exception_impl(global_object, err, err, origin, Unhandled::Exit)
     }
 
     /// The report of a caller that goes on when no listener takes the error: `reportError()`, and
@@ -1709,15 +1714,6 @@ impl VirtualMachine {
         origin: UncaughtExceptionOrigin,
     ) -> bool {
         self.uncaught_exception_impl(global_object, err, err, origin, Unhandled::KeepAlive)
-    }
-
-    pub fn uncaught_exception_fatal(
-        &mut self,
-        global_object: &JSGlobalObject,
-        err: JSValue,
-        origin: UncaughtExceptionOrigin,
-    ) -> bool {
-        self.uncaught_exception_impl(global_object, err, err, origin, Unhandled::Exit)
     }
 
     /// `err` is what the listeners receive. `report` is what is printed, or handed to a worker's
@@ -3962,7 +3958,7 @@ impl VirtualMachine {
             }
             Mode::Strict => {
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                let _ = self.uncaught_exception_fatal(
+                let _ = self.uncaught_exception(
                     global_object,
                     wrapped,
                     UncaughtExceptionOrigin::Rejection,
@@ -3979,7 +3975,7 @@ impl VirtualMachine {
                     return;
                 }
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                if self.uncaught_exception_fatal(
+                if self.uncaught_exception(
                     global_object,
                     wrapped,
                     UncaughtExceptionOrigin::Rejection,

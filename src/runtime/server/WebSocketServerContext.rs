@@ -52,7 +52,10 @@ bitflags::bitflags! {
     pub struct HandlerFlags: u8 {
         const SSL             = 1 << 0;
         const PUBLISH_TO_SELF = 1 << 1;
-        // remaining 6 bits: padding
+        /// The server of `node:http` owns these handlers (the `ws` package). A throw from one of
+        /// them is an uncaught exception as in node. In a `Bun.serve` websocket the server goes on.
+        const NODE_HTTP_SERVER = 1 << 2;
+        // remaining 5 bits: padding
     }
 }
 
@@ -92,27 +95,31 @@ impl Handler {
         if global_object.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
+        let keep_alive = !self.flags.contains(HandlerFlags::NODE_HTTP_SERVER);
         if !on_error.is_empty_or_undefined_or_null() {
             // A top-level call of its own: what `error` throws is reported here.
-            global_object
-                .bun_vm()
-                .event_loop_mut()
-                .run_callback_keep_alive(
+            let event_loop = global_object.bun_vm().event_loop_mut();
+            let args = [error_value];
+            if keep_alive {
+                event_loop.run_callback_keep_alive(
                     on_error,
                     global_object,
                     JSValue::UNDEFINED,
-                    &[error_value],
+                    &args,
                 );
+            } else {
+                event_loop.run_callback(on_error, global_object, JSValue::UNDEFINED, &args);
+            }
             return Ok(());
         }
 
-        let _ = VirtualMachine::get()
-            .as_mut()
-            .uncaught_exception_keep_alive(
-                global_object,
-                error_value,
-                bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
-            );
+        let vm = VirtualMachine::get().as_mut();
+        let origin = bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception;
+        let _ = if keep_alive {
+            vm.uncaught_exception_keep_alive(global_object, error_value, origin)
+        } else {
+            vm.uncaught_exception(global_object, error_value, origin)
+        };
         Ok(())
     }
 

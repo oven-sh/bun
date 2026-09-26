@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -815,5 +815,43 @@ describe("crc32", () => {
     expect(() => zlib.crc32(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     // Omitted second arg defaults to value=0.
     expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
+  });
+});
+
+// node ends the process at the throw of an uncaught error that nothing takes.
+// The tick, the immediate and the timer that the callback queued before the
+// throw do not run. Only 'exit' listeners run. The timer ends the process with
+// status 3: a build that goes on after the report fails here and does not wait
+// for the interval.
+describe("a zlib stream callback that throws with no 'uncaughtException' listener ends the process at the throw", () => {
+  const prelude = `
+    process.on("exit", code => console.log("exit", code));
+    function boom(label) {
+      process.nextTick(() => console.log("TICK"));
+      setImmediate(() => console.log("IMMEDIATE"));
+      setTimeout(() => {
+        console.log("TIMER");
+        process.exit(3);
+      }, 0);
+      throw new Error(label);
+    }
+    setInterval(() => {}, 1e9);
+  `;
+  it.concurrent.each([
+    ["data", `const z = require("zlib").createGzip(); z.on("data", () => boom("boom-data")); z.end("hello");`],
+    ["write", `const z = require("zlib").createGzip(); z.resume(); z.write("hello", () => boom("boom-write"));`],
+  ])("%s", async (name, body) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "exit 1\n",
+      stderr: expect.stringContaining("boom-" + name),
+      exitCode: 1,
+    });
   });
 });

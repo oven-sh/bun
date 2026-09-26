@@ -659,4 +659,40 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  // An uncaught error ends a program at the report. The build is not that
+  // program: it prints the report of a page and writes its files.
+  test("an uncaught error of a page does not end the build", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-uncaught", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+Promise.reject(new Error("rejected-while-rendering"));
+process.nextTick(() => {
+  throw new Error("thrown-while-rendering");
+});
+
+export default function IndexPage() {
+  return <div>Hello World</div>;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+
+    // The code frame of one report shows the source of the other: match the report lines.
+    expect(stderr.toString()).toContain("error: rejected-while-rendering");
+    expect(stderr.toString()).toContain("error: thrown-while-rendering");
+    expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
+    expect(exitCode).toBe(0);
+  });
 });

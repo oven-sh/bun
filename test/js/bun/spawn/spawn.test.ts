@@ -1719,3 +1719,42 @@ it.if(parentThp() === "1")("spawned children keep the system THP policy", async 
   expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
   expect(exitCode).toBe(0);
 });
+
+// An onExit callback that throws is an uncaught error: with no
+// 'uncaughtException' listener the process ends at the throw. What the
+// callback queued before the throw does not run. Only 'exit' listeners run.
+// The queued timer ends the process with status 3: a build that goes on after
+// the report fails here and does not wait for the interval.
+it("an onExit callback that throws with no 'uncaughtException' listener ends the process at the throw", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.on("exit", code => console.log("exit", code));
+        setInterval(() => {}, 1e9);
+        Bun.spawn({
+          cmd: [process.execPath, "-e", ""],
+          onExit() {
+            process.nextTick(() => console.log("TICK"));
+            setImmediate(() => console.log("IMMEDIATE"));
+            setTimeout(() => {
+              console.log("TIMER");
+              process.exit(3);
+            }, 0);
+            throw new Error("boom-onExit");
+          },
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "exit 1\n",
+    stderr: expect.stringContaining("boom-onExit"),
+    exitCode: 1,
+  });
+});

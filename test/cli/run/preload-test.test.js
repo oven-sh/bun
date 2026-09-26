@@ -1,7 +1,7 @@
-import { spawnSync } from "bun";
+import { pathToFileURL, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 const preloadModule = `
@@ -210,4 +210,21 @@ plugin({
       expect(exitCode).toBe(1);
     }
   });
+});
+
+test("--preload accepts a single-slash file: URL (#39780)", () => {
+  using dir = tempDir("preload-one-slash", {
+    "preload.js": `console.log("preloaded");`,
+    "main.js": `console.log("main");`,
+  });
+  // WHATWG URL parsing normalizes file:/path to file:///path.
+  const oneSlash = pathToFileURL(join(String(dir), "preload.js")).href.replace("file://", "file:");
+  const { stderr, exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), "--preload", oneSlash, join(String(dir), "main.js")],
+    cwd: String(dir),
+    env: bunEnv,
+  });
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toBe("preloaded\nmain\n");
+  expect(exitCode).toBe(0);
 });

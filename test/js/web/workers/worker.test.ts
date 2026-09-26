@@ -37,6 +37,16 @@ describe("web worker", () => {
       expect(result).toEqual("hello world");
     });
 
+    test("single-slash file: URL for entry and preload (#39780)", async () => {
+      // WHATWG URL parsing normalizes file:/path to file:///path.
+      const oneSlash = (name: string) => new URL(name, import.meta.url).href.replace("file://", "file:");
+      const worker = new Worker(oneSlash("worker-fixture-preload-entry.js"), {
+        preload: oneSlash("worker-fixture-preload.js"),
+      });
+      const result = await waitForWorkerResult(worker, "hello world");
+      expect(result).toEqual("hello world");
+    });
+
     test("array of 2 strings", async () => {
       const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
         preload: [

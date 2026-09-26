@@ -124,7 +124,7 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
     Vector<BunString> preloadModules;
     preloadModules.reserveInitialCapacity(m_options.preloadModules.size());
     for (auto& str : m_options.preloadModules) {
-        if (str.startsWith("file://"_s)) {
+        if (str.startsWith("file:"_s)) {
             WTF::URL urlObject = WTF::URL(str);
             if (!urlObject.isValid())
                 return Exception { TypeError, makeString("Invalid file URL: \""_s, str, '"') };

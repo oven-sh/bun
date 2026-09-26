@@ -99,6 +99,24 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
+    /// Opens `<fish config dir>/completions`. A fresh fish install has the
+    /// config dir but not `completions/` (fish creates it on demand), so when
+    /// the parent exists the subdirectory is created first. Otherwise the
+    /// probe list falls through to system directories such as
+    /// `/etc/fish/completions`.
+    #[cfg(not(windows))]
+    fn open_fish_user_completions(completions_dir: &[u8]) -> Option<bun_sys::Fd> {
+        if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
+            return Some(d);
+        }
+        let fish_dir = bun_paths::dirname_simple(completions_dir);
+        let parent = bun_sys::open_dir_absolute(fish_dir).ok()?;
+        let created = bun_sys::mkdirat_z(parent, bun_core::ZStr::from_cstr(c"completions"), 0o755);
+        let _ = bun_sys::close(parent);
+        created.ok()?;
+        bun_sys::open_dir_absolute(completions_dir).ok()
+    }
+
     #[cfg(windows)]
     fn install_bunx_symlink_windows(_cwd: &[u8]) -> Result<(), crate::Error> {
         use bun_core::{WStr, w};
@@ -342,7 +360,7 @@ impl InstallCompletionsCommand {
                             let paths: [&[u8]; 2] = [config_dir, b"./fish/completions"];
                             completions_dir =
                                 resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
-                            if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
+                            if let Some(d) = Self::open_fish_user_completions(completions_dir) {
                                 break 'found d;
                             }
                         }
@@ -360,7 +378,7 @@ impl InstallCompletionsCommand {
                             let paths: [&[u8]; 2] = [home_dir, b"./.config/fish/completions"];
                             completions_dir =
                                 resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
-                            if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
+                            if let Some(d) = Self::open_fish_user_completions(completions_dir) {
                                 break 'found d;
                             }
                         }

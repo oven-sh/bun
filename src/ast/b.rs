@@ -143,6 +143,7 @@ impl B {
                 let original_name = ref_.get_symbol(symbol_table).original_name.slice();
                 raw(hasher, self.tag() as u8);
                 raw(hasher, original_name.len());
+                hasher.update(original_name);
             }
             B::BArray(array) => {
                 raw(hasher, self.tag() as u8);

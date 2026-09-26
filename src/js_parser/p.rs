@@ -8756,6 +8756,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         ctx.hasher.update(b"\x00");
+
+        self.react_refresh.last_hook_seen = Some(&raw const *hook_call);
     }
 
     pub(crate) fn handle_react_refresh_post_visit_function_body(

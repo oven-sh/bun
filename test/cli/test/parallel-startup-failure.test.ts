@@ -5,7 +5,7 @@
 // isolation from those unrelated timing-sensitive cases.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isAndroid, isDebug, isLinux, tempDir } from "harness";
 
 // The BUN_TEST_WORKER_EXIT_BEFORE_READY hook is compiled only into
 // debug/ASAN builds so a stray env var can't disable --parallel in release.
@@ -18,10 +18,15 @@ function makeDir(prefix: string) {
   });
 }
 
-async function runParallel(dir: string, mode: string) {
+// Without pidfd_open the exit of a worker reaches the coordinator through the waiter thread.
+// The flag is read when BUN_GARBAGE_COLLECTOR_LEVEL is set, and bunEnv sets it.
+const exitWatches: [suffix: string, env: Record<string, string>][] = [["", {}]];
+if (isLinux || isAndroid) exitWatches.push([" on the waiter thread", { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" }]);
+
+async function runParallel(dir: string, mode: string, env: Record<string, string> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2"],
-    env: { ...bunEnv, BUN_TEST_WORKER_EXIT_BEFORE_READY: mode },
+    env: { ...bunEnv, ...env, BUN_TEST_WORKER_EXIT_BEFORE_READY: mode },
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
@@ -39,16 +44,16 @@ async function runParallel(dir: string, mode: string) {
   return result as [string, string, number];
 }
 
-test.skipIf(!hasHook)(
-  "--parallel terminates when a worker exits before sending .ready",
-  async () => {
+test.skipIf(!hasHook).each(exitWatches)(
+  "--parallel terminates when a worker exits before sending .ready%s",
+  async (_suffix, env) => {
     // A worker that spawns OK but dies during init (before the IPC handshake)
     // has `inflight == None`, so the mid-file crash handling in reap_worker
     // never applied and the coordinator would respawn the slot forever with
     // no output (issue #40782). The run must terminate with a non-zero exit
     // after a bounded number of attempts.
     using dir = makeDir("parallel-pre-ready-exit");
-    const [, stderr, exitCode] = await runParallel(String(dir), "1");
+    const [, stderr, exitCode] = await runParallel(String(dir), "1", env);
     // Assert only on coordinator-generated output: try_reap gates on ipc.done
     // but not err.done, so the worker's own stderr line can race the reap and
     // be dropped before it's captured. The coordinator prints "exited during

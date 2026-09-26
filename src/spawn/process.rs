@@ -338,16 +338,21 @@ impl Process {
         // SAFETY: caller contract — adopts the queued +1 ref.
         let _guard = unsafe { RefPtr::from_raw(this) };
         // SAFETY: `_guard` keeps `this` live; `&mut` scoped to the poller unref.
-        unsafe {
-            if let Poller::WaiterThread(waiter) = &mut (*this).poller {
-                let ctx = event_loop_handle_to_ctx((*this).event_loop);
-                waiter.unref(ctx);
-                (*this).poller = Poller::Detached;
-            }
-        }
+        unsafe { (*this).end_waiter_thread_watch() };
         // SAFETY: `_guard` keeps `this` live; `&mut` scoped to this call (which
         // can fire the JS exit handler).
         unsafe { (*this).on_wait_pid(waitpid_result, rusage) };
+    }
+
+    /// The waiter thread reported the exit, so the watch ends. True when it was live until now.
+    #[cfg(unix)]
+    fn end_waiter_thread_watch(&mut self) -> bool {
+        let Poller::WaiterThread(waiter) = &mut self.poller else {
+            return false;
+        };
+        waiter.unref(event_loop_handle_to_ctx(self.event_loop));
+        self.poller = Poller::Detached;
+        true
     }
 
     /// # Safety
@@ -1059,6 +1064,14 @@ pub mod waiter_thread_posix {
             unsafe {
                 T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &self.rusage)
             };
+        }
+    }
+
+    impl ResultTask<Process> {
+        /// True on the first dispatch, which ends the watch: the loop is to poll before the exit is reported.
+        pub fn poll_first(&mut self) -> bool {
+            // SAFETY: `subprocess` holds the ref taken before `append()`.
+            unsafe { (*self.subprocess).end_waiter_thread_watch() }
         }
     }
 

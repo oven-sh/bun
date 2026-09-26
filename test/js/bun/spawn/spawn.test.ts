@@ -632,6 +632,119 @@ it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || (!isLinux
   192_000,
 );
 
+describe.skipIf(!isLinux && !isAndroid)("the waiter thread reports the exit of a child after", () => {
+  // Stays off the event loop until the child is dead and the waiter thread has posted its exit.
+  // It does not matter who reaps the child: a zombie counts as dead.
+  const prelude = /* js */ `
+    const { fork, spawn, spawnSync } = require("node:child_process");
+    const { readFileSync } = require("node:fs");
+    const events = [];
+    function waitForTheExitToBePosted(pid) {
+      for (;;) {
+        let stat;
+        try {
+          stat = readFileSync("/proc/" + pid + "/stat", "latin1");
+        } catch {
+          break;
+        }
+        // "<pid> (<comm>) <state> ...", and the thread count is the 18th field from the state.
+        const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+        if (fields[0] === "Z" && fields[17] === "1") break;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
+      }
+      // The waiter thread handles its children in spawn order.
+      spawnSync("true");
+    }
+    function afterReady(child) {
+      setTimeout(() => {
+        child.kill("SIGTERM");
+        waitForTheExitToBePosted(child.pid);
+      }, 0);
+    }
+  `;
+  // Says "ready", then answers SIGTERM with "last" and exits.
+  const ipcChild = /* js */ `
+    process.on("SIGTERM", () => process.send("last", () => process.exit(0)));
+    process.send("ready");
+    setInterval(() => {}, 1 << 30);
+  `;
+  const stdoutChild = `trap "printf last; exit" TERM; printf ready; while :; do sleep 0.01; done`;
+
+  async function run(parent: string) {
+    using dir = tempDir("waiter-thread-exit", { "parent.js": prelude + parent, "child.js": ipcChild });
+    await using proc = spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: String(dir),
+      // The flag is read when BUN_GARBAGE_COLLECTOR_LEVEL is set, and bunEnv sets it.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { events: stdout.trim(), exitCode };
+  }
+  const inOrder = { events: JSON.stringify(["ready", "last", "exit"]), exitCode: 0 };
+
+  it.concurrent("what the child wrote to its stdout", async () => {
+    const result = await run(/* js */ `
+      const child = spawn("sh", ["-c", ${JSON.stringify(stdoutChild)}], {
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      child.stdout.on("data", chunk => events.push(String(chunk)));
+      child.stdout.once("data", () => afterReady(child));
+      child.on("exit", () => events.push("exit"));
+      child.on("close", () => console.log(JSON.stringify(events)));
+    `);
+    expect(result).toEqual(inOrder);
+  });
+
+  it.concurrent("the IPC message of a child_process.fork() child", async () => {
+    const result = await run(/* js */ `
+      const child = fork("child.js");
+      child.on("message", message => events.push(message));
+      child.once("message", () => afterReady(child));
+      child.on("exit", () => events.push("exit"));
+      child.on("close", () => console.log(JSON.stringify(events)));
+    `);
+    expect(result).toEqual(inOrder);
+  });
+
+  it.concurrent.each(["json", "advanced"])("the IPC message of a Bun.spawn child (%s)", async serialization => {
+    const result = await run(/* js */ `
+      const child = Bun.spawn({
+        cmd: [process.execPath, "child.js"],
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "${serialization}",
+        ipc(message) {
+          events.push(message);
+          if (message === "ready") afterReady(child);
+        },
+        onExit() {
+          events.push("exit");
+          console.log(JSON.stringify(events));
+        },
+      });
+    `);
+    expect(result).toEqual(inOrder);
+  });
+
+  // The task that waits for the poll is all that keeps the loop alive here.
+  it.concurrent("nothing else, and still reports it", async () => {
+    const result = await run(/* js */ `
+      const child = Bun.spawn({
+        cmd: ["true"],
+        stdio: ["ignore", "ignore", "ignore"],
+        onExit() {
+          console.log(JSON.stringify(["exit"]));
+        },
+      });
+      waitForTheExitToBePosted(child.pid);
+    `);
+    expect(result).toEqual({ events: JSON.stringify(["exit"]), exitCode: 0 });
+  });
+});
+
 describe("spawn unref and kill should not hang", () => {
   const cmd = [shellExe(), "-c", "sleep 0.001"];
 

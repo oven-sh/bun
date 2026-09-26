@@ -6418,11 +6418,12 @@ impl<'a> Resolver<'a> {
                     if unsafe { entry.kind(rfs_ptr, self.store_fd) }
                         == Fs::file_system::EntryKind::File
                     {
+                        // `None` when it does not fit. `baseUrl`, `paths` and `extends` are
+                        // joined onto this path in path buffers, so such a config is skipped.
                         let parts = [path, b"tsconfig.json".as_slice()];
-                        tsconfig_path = Some(
-                            self.fs_ref()
-                                .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
-                        );
+                        tsconfig_path = self
+                            .fs_ref()
+                            .abs_buf_checked(&parts, bufs!(dir_info_uncached_filename));
                     }
                 }
                 if tsconfig_path.is_none() {
@@ -6435,10 +6436,9 @@ impl<'a> Resolver<'a> {
                             == Fs::file_system::EntryKind::File
                         {
                             let parts = [path, b"jsconfig.json".as_slice()];
-                            tsconfig_path = Some(
-                                self.fs_ref()
-                                    .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
-                            );
+                            tsconfig_path = self
+                                .fs_ref()
+                                .abs_buf_checked(&parts, bufs!(dir_info_uncached_filename));
                         }
                     }
                 }

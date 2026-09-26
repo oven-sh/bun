@@ -197,6 +197,9 @@ test.each(["http", "https"] as const)(
 
 test("closeIdleConnections() leaves a connection that has sent part of a request head", async () => {
   const server = createServer((req, res) => res.end("ok"));
+  let accepted = 0;
+  const allAccepted = Promise.withResolvers<void>();
+  server.on("connection", () => ++accepted === 3 && allAccepted.resolve());
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const { port } = server.address() as AddressInfo;
@@ -207,12 +210,11 @@ test("closeIdleConnections() leaves a connection that has sent part of a request
   for (const socket of [fresh, partial, barrier]) socket.on("error", () => {});
   try {
     const freshClosed = once(fresh, "close");
-    await Promise.all([once(fresh, "connect"), once(partial, "connect")]);
     partial.write("GET / HTTP/1.1\r\nHost: x\r\n");
     // The partial head was written first, so the server has read it when it answers this.
     barrier.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
     barrier.resume();
-    await once(barrier, "close");
+    await Promise.all([once(barrier, "close"), allAccepted.promise]);
 
     server.closeIdleConnections();
     await freshClosed;

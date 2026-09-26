@@ -1,7 +1,7 @@
 use bstr::BStr;
 
 use bun_core::ZBox;
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{EscapeControlChars, PathSep, escape_control_chars};
 use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
@@ -426,21 +426,22 @@ impl List {
         resolution_buf: &[u8],
         format_type: PrintFormat,
     ) {
+        let resolution = EscapeControlChars(resolution.fmt(resolution_buf, PathSep::Posix));
         let needle = bun_paths::NODE_MODULES_NEEDLE;
         if let Some(i) = strings::index_of(self.cwd.as_bytes(), needle) {
             bun_core::pretty!(
                 "<d>.{s}{s} @{f}<r>\n",
                 BStr::new(SEP_STR.as_bytes()),
-                BStr::new(strings::without_trailing_slash(
+                escape_control_chars(strings::without_trailing_slash(
                     &self.cwd.as_bytes()[i + 1..]
                 )),
-                resolution.fmt(resolution_buf, PathSep::Posix),
+                resolution,
             );
         } else {
             bun_core::pretty!(
                 "<d>{s} @{f}<r>\n",
-                BStr::new(strings::without_trailing_slash(self.cwd.as_bytes())),
-                resolution.fmt(resolution_buf, PathSep::Posix),
+                escape_control_chars(strings::without_trailing_slash(self.cwd.as_bytes())),
+                resolution,
             );
         }
 
@@ -451,12 +452,12 @@ impl List {
                     PrintFormat::Completed => bun_core::pretty!(
                         " <green>✓<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
                         BStr::new(name),
-                        BStr::new(script),
+                        escape_control_chars(script),
                     ),
                     PrintFormat::Untrusted => bun_core::pretty!(
                         " <yellow>»<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
                         BStr::new(name),
-                        BStr::new(script),
+                        escape_control_chars(script),
                     ),
                 }
             }

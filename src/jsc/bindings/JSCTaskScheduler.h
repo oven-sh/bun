@@ -35,7 +35,7 @@ public:
 public:
     // What was current when JSC registered the work.
     struct PendingWork {
-        // Its completion is posted to this loop.
+        // Its completion is posted to this loop, and the keep-alive it took there is released on it.
         BunLoopKind loopKind { BunLoopKind::Regular };
         // The identifier of the Bun.ModuleGraph context whose script asked for the work, or 0 for
         // the realm's own: the completion of a stopped one is dropped.

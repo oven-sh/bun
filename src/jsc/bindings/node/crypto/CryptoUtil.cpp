@@ -193,21 +193,31 @@ JSValue unsignedBigIntToBuffer(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
     RELEASE_AND_RETURN(scope, buffer);
 }
 
+// Node's encode(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/diffiehellman.js#L265-L269
 WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
 {
     BufferEncodingType res = BufferEncodingType::buffer;
-    if (encodingValue.isUndefinedOrNull() || !encodingValue.isString()) {
+    if (!encodingValue.toBoolean(globalObject)) {
         return res;
     }
 
-    WTF::String encodingString = encodingValue.toWTFString(globalObject);
+    // Buffer#toString coerces with `encoding += ''`: https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L790-L791
+    JSValue primitive = encodingValue.toPrimitive(globalObject);
+    RETURN_IF_EXCEPTION(scope, res);
+    WTF::String encodingString = primitive.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, res);
 
-    if (encodingString == "buffer"_s) {
+    if (encodingValue.isString() && encodingString == "buffer"_s) {
         return res;
     }
 
-    return parseEnumerationFromView<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
+    auto encoding = parseEnumerationFromView<BufferEncodingType>(encodingString);
+    if (!encoding) {
+        ERR::UNKNOWN_ENCODING(scope, globalObject, encodingValue);
+        return res;
+    }
+
+    return *encoding;
 }
 
 ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalObject, JSValue formatValue, WTF::ASCIILiteral optionName, std::optional<ncrypto::EVPKeyPointer::PKFormatType> defaultFormat)

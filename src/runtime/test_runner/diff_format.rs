@@ -28,6 +28,7 @@ impl<'a> DiffFormatter<'a> {
             add_newline: false,
             flush: false,
             quote_strings: true,
+            can_throw_stack_overflow: false,
         };
         let mut received_buf: Vec<u8> = Vec::new();
         JestPrettyFormat::format(

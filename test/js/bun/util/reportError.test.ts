@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
@@ -121,4 +121,45 @@ test("native error printer handles lone surrogates in message and stack frame na
   // Printer must not have crashed: normal uncaught-error exit (1), no signal.
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
+});
+
+// The uncaught exception printer used to recurse into a deeply nested value
+// until the native stack overflowed and the process died with SIGSEGV. Each
+// shape recurses through a different path: arrays through the value formatter,
+// a Proxy through its target (a tag the formatter does not track for circular
+// references), error.cause through the error printer itself.
+describe("native error printer survives a deeply nested uncaught value", () => {
+  // Depths are sized so that an unfixed printer overflows on every platform,
+  // including the 18 MB main thread stack of the macOS and Windows builds (Linux
+  // has 8 MB): a release build spends at least about 175 bytes of stack per
+  // array or Proxy level, so 18 MB holds at most about 105k of them, and
+  // several KB per error level. A fixed printer stops at the stack limit, so
+  // the depth does not change how much it prints.
+  const cases: [name: string, src: string][] = [
+    ["throw array", "let a = []; for (let i = 0; i < 150_000; i++) a = [a]; throw a;"],
+    ["reject with array", "let a = []; for (let i = 0; i < 150_000; i++) a = [a]; Promise.reject(a);"],
+    [
+      "throw Proxy chain",
+      "const handler = {}; let a = {}; for (let i = 0; i < 150_000; i++) a = new Proxy(a, handler); throw a;",
+    ],
+    [
+      "throw error.cause chain",
+      "let e = new Error('root'); for (let i = 0; i < 10_000; i++) e = new Error('wrap', { cause: e }); throw e;",
+    ],
+  ];
+
+  test.concurrent.each(cases)("%s", async (_, src) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "ignore",
+      // Everything that fits on the stack is still printed. For the array that
+      // is hundreds of megabytes of indentation on a release build, so don't
+      // pipe it; the assertion is that the printer gave up instead of crashing.
+      stderr: "ignore",
+    });
+    await proc.exited;
+    expect(proc.signalCode).toBeNull();
+    expect(proc.exitCode).toBe(1);
+  });
 });

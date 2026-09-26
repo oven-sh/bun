@@ -62,9 +62,10 @@ enum {
    thread pointer. aarch64 images send it (Linux has no syscall for that
    there), x86-64 images send arch_prctl. */
 #define N_set_tp 0x62756e01
-/* BUN_SYS_adopt_thread(tp, leave): the calling thread is not one that the
-   image created, and it has entered the image. tp becomes its thread
-   pointer, and when the thread ends leave(tp) is called on it. */
+/* BUN_SYS_adopt_thread(tp, leave, stack): the calling thread is not one that
+   the image created, and it has entered the image. tp becomes its thread
+   pointer, and when the thread ends leave(tp) is called on it. stack gets the
+   lowest address of the stack of the thread and its size. */
 #define N_adopt_thread 0x62756e02
 
 typedef int (*ImageThreadFn)(void *);
@@ -402,13 +403,30 @@ static void adopted_thread_ends(void *p) {
   slot_release();
   free(a);
 }
-static long host_adopt_thread(void *tp, ImageThreadFn leave) {
+static long host_adopt_thread(void *tp, ImageThreadFn leave, unsigned long *stack) {
   struct adopted_thread *a = malloc(sizeof *a);
   if (!a) return -L_ENOMEM;
   a->tp = tp;
   a->leave = leave;
   if (pthread_setspecific(adopted_key, a)) { free(a); return -L_ENOMEM; }
   slot_set(tp);
+  if (stack) {
+#if defined(__APPLE__)
+    size_t size = pthread_get_stacksize_np(pthread_self());
+    stack[0] = (unsigned long)pthread_get_stackaddr_np(pthread_self()) - size;
+    stack[1] = size;
+#else
+    pthread_attr_t attr;
+    void *low = 0;
+    size_t size = 0;
+    if (!pthread_getattr_np(pthread_self(), &attr)) {
+      pthread_attr_getstack(&attr, &low, &size);
+      pthread_attr_destroy(&attr);
+    }
+    stack[0] = (unsigned long)low;
+    stack[1] = size;
+#endif
+  }
   if (trace) fprintf(stderr, "[host] a thread of the host is adopted, thread pointer %p\n", tp);
   return 0;
 }
@@ -540,6 +558,48 @@ __attribute__((used)) static void *host_lookup(const char *library, const char *
     if (!strcmp(symbol, symbols[i].name)) return symbols[i].address;
   return 0;
 }
+#elif X18_HOST
+/* The arm64 Linux test host: test_threads as above. The calling convention is the one of the
+   image. What Windows does for every thread is done here for the threads of the test: x18 is the
+   block of the thread, whose slot is empty, when the thread enters the image. */
+typedef long long TestThreadCallback(void *, long long, long long);
+/* The image function returns to the caller of call_image3. */
+__attribute__((naked)) static long long call_image3(TestThreadCallback *fn, void *a, long long b, long long c, void *x18) {
+  __asm__("mov x18, x4\n mov x16, x0\n mov x0, x1\n mov x1, x2\n mov x2, x3\n br x16\n");
+}
+struct test_thread {
+  pthread_t thread;
+  TestThreadCallback *callback;
+  void *context;
+  long long number, calls, result;
+};
+static void *test_thread_main(void *p) {
+  struct test_thread *t = p;
+  slot_set(0);
+  for (long long call = 0; call < t->calls; call++) t->result += call_image3(t->callback, t->context, t->number, call, thread_x18());
+  return 0;
+}
+__attribute__((used)) static long long test_threads(TestThreadCallback *callback, void *context, long long threads, long long calls) {
+  FORGET_X18();
+  if (threads < 1 || threads > 64) return -1;
+  struct test_thread t[64];
+  long long started = 0, result = 0;
+  for (; started < threads; started++) {
+    t[started] = (struct test_thread){.callback = callback, .context = context, .number = started, .calls = calls};
+    if (pthread_create(&t[started].thread, 0, test_thread_main, &t[started])) break;
+  }
+  for (long long i = 0; i < started; i++) {
+    pthread_join(t[i].thread, 0);
+    result += t[i].result;
+  }
+  return started == threads ? result : -1;
+}
+IMAGE_ENTRY(test_threads)
+__attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
+  FORGET_X18();
+  if (macos_tp || strcmp(library, "bun_host_test") || strcmp(symbol, "test_threads")) return 0;
+  return (void *)test_threads_entry;
+}
 #else
 __attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
   (void)library; (void)symbol;
@@ -597,7 +657,7 @@ __attribute__((used)) static long host_syscall(long n, long a, long b, long c, l
       if (a == 0x1002) { slot_set((void *)b); r = 0; } else r = -L_EINVAL;
       break;
     case N_set_tp: slot_set((void *)a); r = 0; break;
-    case N_adopt_thread: r = host_adopt_thread((void *)a, (ImageThreadFn)b); break;
+    case N_adopt_thread: r = host_adopt_thread((void *)a, (ImageThreadFn)b, (unsigned long *)c); break;
     case N_futex: r = host_futex((int *)a, b, (int)c, (void *)d); break;
     case N_clock_gettime: {
       struct timespec ts;

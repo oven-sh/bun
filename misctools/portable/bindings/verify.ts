@@ -8,6 +8,9 @@
 //   bun verify.ts --libuv <checkout of libuv> --table --cc "clang --config=<directory>/windows-x64.cfg"
 //
 // compiles windows_layout.c to an object file that holds the facts as a table, and reads the table.
+// With --kernel-headers <km directory of the Windows Driver Kit> it does so a second time, against
+// the headers of the Driver Kit, for the facts that the first time left out: the structures of the NT
+// API. A fact that both have has to be the same in both.
 //
 // A structure, a field or a constant that the headers do not have stops the compiler. Its line in
 // windows_layout.c is behind an `#ifndef SKIP_..`, so this script defines that macro and compiles
@@ -46,29 +49,27 @@ function macroOf(line: number): string | undefined {
   return open[open.length - 1];
 }
 
-const skipped = new Set<string>();
-let compiled = false;
-let lastErrors = "";
-for (let round = 0; round < 40 && !compiled; round++) {
-  const command = [...cc, "-ferror-limit=0", "-w", `-I${join(libuv, "include")}`, ...[...skipped].map(m => `-D${m}`), ...(table ? ["-DBUN_LAYOUT_TABLE", "-c"] : []), "-o", exe, source];
-  const result = Bun.spawnSync(command, { stdout: "pipe", stderr: "pipe" });
-  if (result.exitCode === 0) {
-    compiled = true;
-    break;
+/** Compiles the program, leaving out what the headers do not have: the macros of what was left out. */
+function compile(flags: string[], output: string, what: string) {
+  const skipped = new Set<string>();
+  let lastErrors = "";
+  for (let round = 0; round < 40; round++) {
+    const command = [...cc, "-ferror-limit=0", "-w", ...flags, ...[...skipped].map(m => `-D${m}`), "-o", output, source];
+    const result = Bun.spawnSync(command, { stdout: "pipe", stderr: "pipe", maxBuffer: 1 << 28 });
+    if (result.exitCode === 0) return skipped;
+    lastErrors = result.stderr.toString();
+    const before = skipped.size;
+    for (const match of lastErrors.matchAll(/windows_layout\.c[:(](\d+)[:,)][^\n]*?(?:error|fatal error)/g)) {
+      const macro = macroOf(Number(match[1]));
+      if (macro) skipped.add(macro);
+    }
+    console.log(`${what}, round ${round + 1}: ${skipped.size} facts left out`);
+    if (skipped.size === before) break;
   }
-  lastErrors = result.stderr.toString();
-  const before = skipped.size;
-  for (const match of lastErrors.matchAll(/windows_layout\.c[:(](\d+)[:,)][^\n]*?(?:error|fatal error)/g)) {
-    const macro = macroOf(Number(match[1]));
-    if (macro) skipped.add(macro);
-  }
-  console.log(`round ${round + 1}: ${skipped.size} facts left out`);
-  if (skipped.size === before) break;
-}
-if (!compiled) {
   console.error(lastErrors.split("\n").slice(0, 40).join("\n"));
-  throw new Error("windows_layout.c does not compile, and no line that can be left out is the reason");
+  throw new Error(`windows_layout.c does not compile (${what}), and no line that can be left out is the reason`);
 }
+const skipped = compile([`-I${join(libuv, "include")}`, ...(table ? ["-DBUN_LAYOUT_TABLE", "-c"] : [])], exe, "the headers of the SDK and of libuv");
 /** The table `bun_layout_facts` of an object file for Windows (COFF), as the program would have printed it. */
 function factsOfTable(path: string) {
   const file = readFileSync(path);
@@ -115,9 +116,47 @@ function factsOfTable(path: string) {
   return { source: "headers", ...facts };
 }
 
+/** The same bits: a status is an unsigned number in one header and a signed one in the other. */
+function sameConstant(one: string, other: string) {
+  // A number of 32 bits with a sign arrives as 64 bits with the sign in every upper bit.
+  const [a, b] = [BigInt.asIntN(64, BigInt(one)), BigInt.asIntN(64, BigInt(other))];
+  const narrow = (n: bigint) => n >= -(1n << 31n) && n < 1n << 32n;
+  return BigInt.asUintN(64, a) === BigInt.asUintN(64, b) || (narrow(a) && narrow(b) && BigInt.asUintN(32, a) === BigInt.asUintN(32, b));
+}
+const kernelHeaders = option("--kernel-headers");
+if (kernelHeaders && !table) throw new Error("--kernel-headers needs --table: a program does not include the headers of the Driver Kit");
 let facts: any;
-if (table) facts = factsOfTable(exe);
-else {
+if (table) {
+  facts = factsOfTable(exe);
+  if (kernelHeaders) {
+    const object = join(work, "windows_layout.kernel.obj");
+    const skippedThere = compile(["-DBUN_LAYOUT_TABLE", "-DBUN_LAYOUT_KERNEL_HEADERS", "-D_AMD64_", "-idirafter", kernelHeaders, "-c"], object, "the headers of the Driver Kit");
+    const there = factsOfTable(object);
+    const disagree: string[] = [];
+    const from: string[] = [];
+    for (const [name, type] of Object.entries(there.types) as [string, any][]) {
+      const here = facts.types[name];
+      if (!here) {
+        facts.types[name] = type;
+        from.push(name);
+        continue;
+      }
+      if (here.size !== type.size || here.align !== type.align) disagree.push(`type ${name}`);
+      for (const [field, fact] of Object.entries(type.fields) as [string, any][]) {
+        if (!here.fields[field]) here.fields[field] = fact;
+        else if (here.fields[field].offset !== fact.offset || here.fields[field].size !== fact.size) disagree.push(`field ${name}.${field}`);
+      }
+    }
+    for (const [name, value] of Object.entries(there.constants) as [string, string][]) {
+      if (facts.constants[name] === undefined) facts.constants[name] = value;
+      else if (!sameConstant(facts.constants[name], value)) disagree.push(`constant ${name}`);
+    }
+    if (disagree.length) throw new Error(`the headers of the SDK and of the Driver Kit do not agree: ${disagree.join(", ")}`);
+    // Left out is what neither has.
+    for (const macro of [...skipped]) if (!skippedThere.has(macro)) skipped.delete(macro);
+    facts.from_the_driver_kit = from;
+  }
+} else {
   const run = Bun.spawnSync([exe], { stdout: "pipe", stderr: "inherit" });
   if (run.exitCode !== 0) throw new Error(`${exe}: exit code ${run.exitCode}`);
   facts = JSON.parse(run.stdout.toString());

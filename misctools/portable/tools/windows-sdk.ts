@@ -13,15 +13,21 @@
 //   Microsoft.Windows.SDK.CPP, Microsoft.Windows.SDK.CPP.x64   the Windows SDK (licence: aka.ms/WinSDKLicenseURL)
 //   VisualCppTools.Community.VS2017Layout                      vcruntime.h and the import libraries of the
 //                                                              C runtime (licence: go.microsoft.com/fwlink/?LinkId=831113)
+//   Microsoft.Windows.WDK.x64                                  the Windows Driver Kit, for its headers: the
+//                                                              structures of the NT API that bun's code for
+//                                                              Windows passes to ntdll are declared there
+//                                                              (licence: LICENSE.txt of the package)
 //
 // In <directory>:
-//   nupkg/, sdk/, sdk-x64/, vc/    the packages, and what is in them
+//   nupkg/, sdk/, sdk-x64/, vc/, wdk/   the packages, and what is in them
 //   headers.yaml                   clang's view of the header directories, in which a name matches in
 //                                  any case: the headers of Windows name each other in the case of a
 //                                  file system that does not tell them apart
 //   lib-x64/                       links to every library, by its name and by its name in lower case
 //   windows-x64.cfg                for `clang --config=<directory>/windows-x64.cfg`
-//   versions.json                  what was fetched
+//   versions.json                  what was fetched, and `kernel_headers`: the directory of ntifs.h, which
+//                                  is in clang's view and not in the configuration (a program for Windows
+//                                  does not include it; ../bindings/verify.ts does, to read layouts)
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -29,10 +35,12 @@ import { createHash } from "node:crypto";
 const sdkVersion = "10.0.26100.4654";
 const sdkDirectory = "10.0.26100.0";
 const toolsVersion = "14.11.25547";
+const driverKitVersion = "10.0.26100.4204";
 const packages = [
   { id: "microsoft.windows.sdk.cpp", version: sdkVersion, into: "sdk", sha256: "39173d78ec05c7c123928fd45f5f3b84d2933c1a87cec015c90227b30bc950bd" },
   { id: "microsoft.windows.sdk.cpp.x64", version: sdkVersion, into: "sdk-x64", sha256: "81d8682ff04ba4dc3c3757b749f88eb9d109bd17179c233d36b0c71780f2aad5" },
   { id: "visualcpptools.community.vs2017layout", version: toolsVersion, into: "vc", sha256: "248fcd153c85df1c1fab06041230a9ae44f8c6022337861dc61615e73bf4e4d6" },
+  { id: "microsoft.windows.wdk.x64", version: driverKitVersion, into: "wdk", sha256: "829fcd80aff6850e72193d56ef5d9c59414c8aa32aa4cb366419b146f4b6cf6a" },
 ];
 
 const directory = resolve(process.argv[2] ?? "");
@@ -69,7 +77,8 @@ for (const p of packages) {
 const sdkInclude = join(directory, "sdk/c/Include", sdkDirectory);
 const toolsInclude = join(directory, "vc/lib/native/include");
 const includes = [toolsInclude, ...["ucrt", "shared", "um", "winrt"].map(name => join(sdkInclude, name))];
-for (const path of includes) if (!existsSync(path)) throw new Error(`${path} is not in the package`);
+const kernelInclude = join(directory, "wdk/c/Include", sdkDirectory, "km");
+for (const path of [...includes, kernelInclude]) if (!existsSync(path)) throw new Error(`${path} is not in the package`);
 
 type Entry = { name: string; type: "file"; "external-contents": string } | { name: string; type: "directory"; contents: Entry[] };
 function entriesOf(path: string): Entry[] {
@@ -86,7 +95,7 @@ writeFileSync(
   JSON.stringify({
     version: 0,
     "case-sensitive": "false",
-    roots: includes.map(path => ({ name: path, type: "directory", contents: entriesOf(path) })),
+    roots: [...includes, kernelInclude].map(path => ({ name: path, type: "directory", contents: entriesOf(path) })),
   }) + "\n",
 );
 
@@ -130,6 +139,8 @@ writeFileSync(
     {
       windows_sdk: sdkVersion,
       visual_cpp_tools: toolsVersion,
+      windows_driver_kit: driverKitVersion,
+      kernel_headers: kernelInclude,
       packages: packages.map(p => ({ id: p.id, version: p.version, sha256: p.sha256 })),
       clang_configuration: configuration,
     },

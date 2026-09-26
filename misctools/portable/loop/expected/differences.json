@@ -7,6 +7,15 @@
     "code": "windows"
    },
    "why": "the host, and the code that the image takes for it"
+  },
+  "timer of uSockets": {
+   "only_here": {
+    "step": "timer of uSockets",
+    "fired": 1,
+    "not_early": true,
+    "ok": true
+   },
+   "why": "bun has a timer of uSockets on Windows only (bun_uws_sys::Timer). It is the last line."
   }
  },
  "darwin": {
@@ -18,6 +27,6 @@
   }
  },
  "not_run": {
-  "win32": "Nothing of this program has run on Windows when this file was written. The lines of the steps are expected to be the ones of Linux: a child that uv_process_kill ended is Signaled for bun (src/spawn/process.rs, on_exit_uv), and 16 MiB do not pass a loopback socket in one write on either system. A line that differs is a finding, not an accepted difference."
+  "win32": "Nothing of this program has run on Windows when this file was written. The lines of the steps are expected to be the ones of Linux: a child that uv_process_kill ended is Signaled for bun (src/spawn/process.rs, on_exit_uv), and 16 MiB do not pass a loopback socket in one write on either system. The program has one step more on Windows, the timer of uSockets, at the end. A line that differs is a finding, not an accepted difference."
  }
 }

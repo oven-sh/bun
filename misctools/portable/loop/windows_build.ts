@@ -41,5 +41,6 @@ export const host = {
   libraries: ["synchronization", "advapi32", "psapi", "user32", "iphlpapi", "userenv", "ws2_32", "dbghelp", "ole32", "shell32"],
 };
 
-/** What check_on_windows.c is compiled with. */
+/** What check_on_windows.c is compiled with, and check_on_windows.cpp by clang++. */
 export const headerCheckFlags = ["-fsyntax-only", "-D_WIN32_WINNT=0x0A00"];
+export const signatureCheckFlags = ["-fsyntax-only", "-std=c++17", "-D_WIN32_WINNT=0x0A00"];

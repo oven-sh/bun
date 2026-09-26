@@ -12,6 +12,9 @@
 //                 bun's code for Windows, and its first call of Windows has to stop it with a message
 //   imports       the import table has the functions of kernel32, ntdll and libuv that bun's file
 //                 system code for Windows calls, and none of them resolves on Linux
+//   convention    the compiler refuses an import that gives the host OS a callback with the calling
+//                 convention of the image, as an argument, in a structure, as a result
+//                 (../test/convention), and takes the one that gives it callbacks of Windows
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -80,6 +83,22 @@ check("imports", () => {
   return r.code === 1 && summary?.total === summary?.missing && summary.total > 100 && absent.length === 0 ? undefined : `exit code ${r.code}, ${JSON.stringify(summary)}, not in the table: ${JSON.stringify(absent)}`;
 });
 
+{
+  // Compiled once: what the compiler says does not change from one run to the next.
+  const cases: [string, boolean][] = [["good", true], ["argument", false], ["field", false], ["result", false]];
+  const wrong: string[] = [];
+  for (const [name, compiles] of cases) {
+    const checked = Bun.spawnSync(["cargo", "check", "--target", "x86_64-unknown-linux-musl"], {
+      cwd: join(tree, "test/convention"),
+      env: { ...process.env, RUSTFLAGS: `--cfg=bun_portable --cfg=case="${name}"`, CARGO_TARGET_DIR: join(work, "target/convention"), CARGO_BUILD_JOBS: process.env.JOBS ?? "8" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const refused = /the trait `OfTheHost` is not implemented for `unsafe extern "C" fn\(u32\) -> i32`/.test(checked.stderr.toString());
+    if (compiles ? checked.exitCode !== 0 : checked.exitCode === 0 || !refused) wrong.push(`${name}: exit code ${checked.exitCode}${compiles ? "" : refused ? "" : ", and not for the callback"}`);
+  }
+  results.push({ test: "convention: a callback of the image is not given to the host OS", passes: wrong.length ? 0 : 1, runs: 1, note: wrong.join("; ") || undefined });
+}
 for (const r of results) console.log(`${r.test}: ${r.passes} of ${r.runs}${r.note ? `   (${r.note.slice(0, 300)})` : ""}`);
 console.log(JSON.stringify(results));
 process.exit(results.every(r => r.passes === r.runs) ? 0 : 1);

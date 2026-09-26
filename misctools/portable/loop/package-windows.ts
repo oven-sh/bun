@@ -20,7 +20,7 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { headerCheckFlags, host as hostBuild, libuv } from "./windows_build.ts";
+import { headerCheckFlags, host as hostBuild, libuv, signatureCheckFlags } from "./windows_build.ts";
 
 const here = dirname(import.meta.path);
 const tree = resolve(here, "..");
@@ -44,10 +44,10 @@ for (const name of ["windows_layout.c", "verify.ts", "compare.ts"]) copyFileSync
 cpSync(join(here, "expected"), join(out, "expected"), { recursive: true });
 copyFileSync(join(here, "compare-run.ts"), join(out, "compare-run.ts"));
 const include = join(work, "usockets/windows-include");
-for (const name of ["bun_windows_c.h", "callbacks.h", "callbacks.list", "imports.s", "check_on_windows.c", "declared.json"]) copyFileSync(join(include, name), join(out, "windows-c", name));
+for (const name of ["bun_windows_c.h", "callbacks.h", "callbacks.list", "imports.s", "check_on_windows.c", "check_on_windows.cpp", "declared.json"]) copyFileSync(join(include, name), join(out, "windows-c", name));
 copyFileSync(join(checked, "layout.image.json"), join(out, "bindings/layout.image.json"));
 for (const name of [
-  "summary.json", "host.exe", "host-compile.log", "uv-compile.log", "check-windows-c.txt", "layout.headers.json", "layout-compare.txt",
+  "summary.json", "host.exe", "host-compile.log", "uv-compile.log", "check-windows-c.txt", "check-windows-cpp.txt", "layout.headers.json", "layout-compare.txt",
   "bun_loop_slice.img.imports-libraries.json",
 ])
   copyFileSync(join(checked, name), join(out, "checked-on-linux", name));
@@ -70,6 +70,7 @@ const continued = (flags: string[], perLine: number) => {
 };
 const layout = summary["layout of the bindings"];
 const headers = summary["headers of the C of the image"];
+const called = summary["functions that the C of the image calls"];
 writeFileSync(
   join(out, "commands.txt"),
   `The loop slice of the portable image on Windows (x64)
@@ -92,9 +93,12 @@ What was done on the machine that built the image, without running anything (che
   - steps 1 to 3 below: libuv compiled (0 errors), the host compiled and linked. checked-on-linux\\host.exe
     is that host, sha256 ${sha256(join(checked, "host.exe"))}. It has never run. If step 3 fails
     on your machine, the steps after it can be tried with it (copy it to host.exe), and please say so.
-  - step 4: ${headers.constants} constants, ${headers.sizes_and_offsets} sizes and offsets, ${headers.functions_declared} functions: no error.
-  - step 7, with the facts read from the object file instead of printed by the program:
-    ${layout.the_same} facts the same, ${layout.differ} differ, ${layout.not_compared} not compared (names these headers do not have).
+  - step 4: ${headers.constants} constants, ${headers.sizes_and_offsets} sizes and offsets: no error. The arguments and
+    results of ${called.functions} functions and ${called.callbacks} callbacks against the declarations: no error.
+  - step 7, with the facts read from the object file instead of printed by the program, and with
+    the headers of the Windows Driver Kit ${summary.windows_driver_kit} for the structures of the NT API
+    (${layout.types_from_the_driver_kit.length} of them: your run of step 7 leaves those out):
+    ${layout.the_same} facts the same, ${layout.differ} differ, ${layout.not_compared} not compared (names the headers do not have).
   - the ${total} imports: every one is in the import library of the SDK that the image names, or in the
     host's table of libuv.
   The same steps on your machine check your headers and your libuv, and steps 5 and 6 are the ones
@@ -138,6 +142,8 @@ ${libuv.patches.map(name => `    git -C libuv apply ..\\patches\\${name}`).join(
 
     cmd /c "clang ${headerCheckFlags.join(" ")} -Ilibuv\\include windows-c\\check_on_windows.c > check-windows-c.txt 2>&1"
     echo "exit code $LASTEXITCODE"                   # 0, and check-windows-c.txt has no "error"
+    cmd /c "clang++ ${signatureCheckFlags.join(" ")} -Ilibuv\\include windows-c\\check_on_windows.cpp > check-windows-cpp.txt 2>&1"
+    echo "exit code $LASTEXITCODE"                   # 0: the arguments and results of the functions
 
 5. every import of the image against this Windows (it binds each one and prints the ones that fail)
 
@@ -150,7 +156,9 @@ ${libuv.patches.map(name => `    git -C libuv apply ..\\patches\\${name}`).join(
     echo "exit code $LASTEXITCODE"                   # 0
     bun compare-run.ts run-windows.jsonl             # against expected\\linux.jsonl and expected\\differences.json
 
-   Expected: the seven lines of expected\\linux.jsonl, the first one with "os":"win32","code":"windows".
+   Expected: the seven lines of expected\\linux.jsonl, the first one with "os":"win32","code":"windows",
+   and one line more at the end, {"step":"timer of uSockets","fired":1,"not_early":true,"ok":true}:
+   a step that the program has on Windows only (expected\\differences.json).
    The child alone, the way the slice starts it:
     cmd /c "echo hello| .\\host.exe bun_loop_slice.img child answer"      # HELLO and a line on stderr, exit code 7
 
@@ -166,7 +174,7 @@ ${libuv.patches.map(name => `    git -C libuv apply ..\\patches\\${name}`).join(
     bun bindings\\compare.ts bindings\\layout.image.json layout.headers.json > layout-compare.txt
     Get-Content layout-compare.txt -Tail 1
 
-Please send back: check-windows-c.txt, imports-windows.jsonl, run-windows.jsonl, run-windows.stderr.txt,
+Please send back: check-windows-c.txt, check-windows-cpp.txt, imports-windows.jsonl, run-windows.jsonl, run-windows.stderr.txt,
 the output of compare-run.ts, layout.headers.json, layout-compare.txt, and the output of
 "clang --version". If the host does not compile: the messages of the compiler.
 

@@ -119,6 +119,42 @@ impl Import {
     }
 }
 
+/// What a function of the host OS can be given, and can give back: every type but the type of a pointer
+/// to a function with the calling convention of the image, and every type that holds one or points at
+/// one. The host OS calls what it is given with its own convention. The compiler checks each argument
+/// and the result of every import (`bun_portable_macros::imports` writes the check), through the
+/// structures that they point at: a callback that `win_abi` did not reach is found where the image is
+/// compiled, not where Windows calls it.
+///
+/// A trait that has an implementation for one type of pointers to functions has none of its own for
+/// the others with as many arguments, whatever their convention: so the pointers with the convention
+/// of Windows are given theirs here, up to 16 arguments, and the ones of the image have none. On arm64
+/// the two conventions are one, nothing is written, and every type is of the host.
+pub auto trait OfTheHost {}
+
+#[cfg(target_arch = "x86_64")]
+macro_rules! convention_of_the_host {
+    ($($abi:literal)*) => {
+        $(
+            convention_of_the_host!(@one $abi; ; A B C D E F G H I J K L M N O P);
+        )*
+    };
+    (@one $abi:literal; $($taken:ident)*; ) => {
+        impl<Result, $($taken),*> OfTheHost for extern $abi fn($($taken),*) -> Result {}
+        impl<Result, $($taken),*> OfTheHost for unsafe extern $abi fn($($taken),*) -> Result {}
+    };
+    (@one $abi:literal; $($taken:ident)*; $next:ident $($rest:ident)*) => {
+        impl<Result, $($taken),*> OfTheHost for extern $abi fn($($taken),*) -> Result {}
+        impl<Result, $($taken),*> OfTheHost for unsafe extern $abi fn($($taken),*) -> Result {}
+        convention_of_the_host!(@one $abi; $($taken)* $next; $($rest)*);
+    };
+}
+#[cfg(target_arch = "x86_64")]
+convention_of_the_host!("win64" "win64-unwind");
+
+/// Checks, when the image is compiled, that `T` is [`OfTheHost`].
+pub const fn of_the_host<T: ?Sized + OfTheHost>() {}
+
 /// The address of an import for the C of the image, whose imports are in the same table. Does not
 /// return if there is none.
 #[unsafe(no_mangle)]

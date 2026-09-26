@@ -213,13 +213,12 @@ function image(name: string, more: { sources?: string[]; flags?: string[] } = {}
 }
 image("threads");
 image("linux_paths");
-// The check of the slot is written for x86-64 (gs). The compiler writes the call of the check at the
-// entry of the functions of the list, which is how C and C++ that the host OS calls get it.
-if (arch === "x86_64")
-  image("adopt", {
-    sources: ["adopt_cpp.cpp"],
-    flags: ["-fsanitize-coverage=func,trace-pc", `-fsanitize-coverage-allowlist=${join(here, "test/adopt.list")}`],
-  });
+// The compiler writes the call of the check at the entry of the functions of the list, which is how C
+// and C++ that the host OS calls get it.
+image("adopt", {
+  sources: ["adopt_cpp.cpp"],
+  flags: ["-fsanitize-coverage=func,trace-pc", `-fsanitize-coverage-allowlist=${join(here, "test/adopt.list")}`],
+});
 
 if (arch === "x86_64") {
   run(["cc", "-O2", "-o", join(out, "host-linux"), join(here, "host/host_posix.c"), "-lpthread"]);
@@ -276,7 +275,7 @@ const probe = join(out, "probe.tmp");
 // Exit code 42 is a pass.
 check(`${arch} threads direct`, [join(out, "threads.img"), probe], { exitCode: 42 });
 check(`${arch} threads hosted`, [join(out, "host-linux"), join(out, "threads.img"), probe], { exitCode: 42 });
-if (arch === "x86_64") {
+{
   // Who wrote the check of the callback: its source, or the compiler for a function of test/adopt.list.
   for (const [who, what] of [
     ["source", "the check is in the source"],

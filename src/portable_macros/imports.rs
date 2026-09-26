@@ -260,6 +260,13 @@ fn wrapper(function: &Function, library: &str, block_attributes: &[Tokens]) -> T
     let types: Vec<&Tokens> = arguments.iter().map(|argument| &argument.ty).collect();
     let library = nul_terminated(library);
     let symbol = nul_terminated(symbol);
+    // The type of the result, without the arrow.
+    let result_type: Tokens = result.clone().into_iter().skip(2).collect();
+    let result_check = if result_type.is_empty() || result_type.to_string() == "!" {
+        quote!()
+    } else {
+        quote!(::bun_windows_sys::host_imports::of_the_host::<#result_type>();)
+    };
     quote! {
         #(#block_attributes)*
         #(#attributes)*
@@ -269,6 +276,10 @@ fn wrapper(function: &Function, library: &str, block_attributes: &[Tokens]) -> T
             #[unsafe(link_section = "bun_imports")]
             static IMPORT: ::bun_windows_sys::host_imports::Import =
                 ::bun_windows_sys::host_imports::Import::new(#library, #symbol);
+            const _: () = {
+                #(::bun_windows_sys::host_imports::of_the_host::<#types>();)*
+                #result_check
+            };
             // SAFETY: `address` returns the address the host resolved for this symbol, or does not return.
             // The function behind it has the signature of the declaration this was made from, and the
             // caller keeps that declaration's contract.

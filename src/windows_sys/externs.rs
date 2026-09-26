@@ -1143,7 +1143,10 @@ pub mod ws2_32 {
         pub sin6_scope_id: u32,
     }
 
-    #[repr(C)]
+    // `in6_addr` of in6addr.h is a union of 16 bytes and 8 words, so it is aligned to 2. A build for
+    // Windows keeps the declaration it had: where it is a field, a field of 4 bytes aligns the structure.
+    #[cfg_attr(not(bun_portable), repr(C))]
+    #[cfg_attr(bun_portable, repr(C, align(2)))]
     #[derive(Copy, Clone)]
     pub struct in6_addr {
         pub s6_addr: [u8; 16],

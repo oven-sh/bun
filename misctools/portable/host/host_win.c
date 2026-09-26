@@ -52,9 +52,10 @@ enum {
    thread pointer. aarch64 images send it (Linux has no syscall for that
    there), x86-64 images send arch_prctl. */
 #define N_set_tp 0x62756e01
-/* BUN_SYS_adopt_thread(tp, leave): the calling thread is not one that the
-   image created, and it has entered the image. tp becomes its thread
-   pointer, and when the thread ends leave(tp) is called on it. */
+/* BUN_SYS_adopt_thread(tp, leave, stack): the calling thread is not one that
+   the image created, and it has entered the image. tp becomes its thread
+   pointer, and when the thread ends leave(tp) is called on it. stack gets the
+   lowest address of the stack of the thread and its size. */
 #define N_adopt_thread 0x62756e02
 
 /* Offsets in the TEB, the same on x64 and on arm64. The image reads its thread
@@ -336,13 +337,19 @@ static VOID WINAPI adopted_thread_ends(PVOID p) {
   TlsSetValue(tp_slot, 0);
   HeapFree(GetProcessHeap(), 0, a);
 }
-static long long host_adopt_thread(void *tp, void *leave) {
+static long long host_adopt_thread(void *tp, void *leave, unsigned long long *stack) {
   struct adopted_thread *a = HeapAlloc(GetProcessHeap(), 0, sizeof *a);
   if (!a) return -L_ENOMEM;
   a->tp = tp;
   a->leave = (SYSV void (*)(void *))leave;
   if (!FlsSetValue(adopted_slot, a)) { HeapFree(GetProcessHeap(), 0, a); return -L_ENOMEM; }
   TlsSetValue(tp_slot, tp);
+  if (stack) {
+    ULONG_PTR low = 0, high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    stack[0] = low;
+    stack[1] = high - low;
+  }
   if (trace) fprintf(stderr, "[host] thread %lu is adopted, thread pointer %p\n", GetCurrentThreadId(), tp);
   return 0;
 }
@@ -423,7 +430,7 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
       if (a == 0x1002) { TlsSetValue(tp_slot, (void *)b); r = 0; } else r = -L_EINVAL;
       break;
     case N_set_tp: TlsSetValue(tp_slot, (void *)a); r = 0; break;
-    case N_adopt_thread: r = host_adopt_thread((void *)a, (void *)b); break;
+    case N_adopt_thread: r = host_adopt_thread((void *)a, (void *)b, (unsigned long long *)c); break;
     case N_futex: r = host_futex((int *)a, b, (int)c, (void *)d); break;
     case N_clock_gettime: r = host_clock_gettime(a, (void *)b); break;
     case N_getrandom: r = SystemFunction036((void *)a, (ULONG)b) ? b : -L_EIO; break;

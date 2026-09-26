@@ -160,10 +160,16 @@ void __bun_thread_adopt(void)
 	td->sysinfo = __sysinfo;
 	td->tid = __syscall(SYS_gettid);
 	td->next = td->prev = td;
-	if (__syscall(BUN_SYS_adopt_thread, TP_ADJ(td), __bun_thread_leave) < 0)
+	size_t stack[2] = { 0, 0 };
+	if (__syscall(BUN_SYS_adopt_thread, TP_ADJ(td), __bun_thread_leave, stack) < 0)
 		a_crash();
 
-	/* The thread has a thread pointer now. */
+	/* The thread has a thread pointer now. Its stack is the one its
+	 * maker gave it: pthread_getattr_np answers from these. */
+	if (stack[1]) {
+		td->stack = (void *)(stack[0] + stack[1]);
+		td->stack_size = stack[1];
+	}
 	sigset_t set;
 	__block_app_sigs(&set);
 	__tl_lock();
@@ -226,8 +232,10 @@ hidden void __bun_thread_leave(void *tp)
 	__restore_sigs(&set);
 	a_dec(&adopted_now);
 
-	/* The structure is in the mapping: nothing of it is read after this. */
-	__syscall(SYS_munmap, self->map_base, self->map_size);
+	/* The structure is in the mapping: nothing of it is read after this.
+	 * A mapping that stays is a leak for every thread that ends. */
+	if (__syscall(SYS_munmap, self->map_base, self->map_size))
+		a_crash();
 }
 
 unsigned long __bun_adopted_threads(unsigned long *ever)
@@ -248,6 +256,19 @@ void __bun_thread_enter(void)
 	void *tp;
 	__asm__ ("mov %%gs:(%1),%0" : "=r"(tp) : "r"(__bun_tp_offset));
 	if (__builtin_expect(!tp, 0)) __bun_thread_adopt();
+#else
+	/* arm64 has no register that is the thread's on every host: the
+	 * slot is found the way __get_tp finds it. */
+	uintptr_t base;
+	if (__bun_host.os == BUN_OS_LINUX) return;
+	if (__bun_host.os == BUN_OS_WINDOWS) {
+		__asm__ ("mov %0,x18" : "=r"(base));
+	} else {
+		__asm__ ("mrs %0,tpidrro_el0" : "=r"(base));
+		base &= -8UL;
+	}
+	if (__builtin_expect(!*(void **)(base + __bun_host.tcb_offset), 0))
+		__bun_thread_adopt();
 #endif
 }
 weak_alias(__bun_thread_enter, __sanitizer_cov_trace_pc);
@@ -349,10 +370,12 @@ function common() {
    aarch64 needs it because Linux has no syscall for that there (a program
    writes tpidr_el0 itself). x86_64 keeps using arch_prctl(ARCH_SET_FS). */
 #define BUN_SYS_set_tp 0x62756e01
-/* BUN_SYS_adopt_thread(tp, leave): the calling thread is one that the host or
-   its OS created, and it entered the image. Make tp its thread pointer, and
-   when the thread ends call leave(tp) on it, with the calling convention of
-   the image. A host that does not know the request answers -ENOSYS. */
+/* BUN_SYS_adopt_thread(tp, leave, stack): the calling thread is one that the
+   host or its OS created, and it entered the image. Make tp its thread
+   pointer, and when the thread ends call leave(tp) on it, with the calling
+   convention of the image. stack is two words that the host fills: the
+   lowest address of the stack of the thread, and its size, 0 if it does not
+   know them. A host that does not know the request answers -ENOSYS. */
 #define BUN_SYS_adopt_thread 0x62756e02
 
 struct bun_host {
@@ -382,7 +405,9 @@ void *__bun_host_lookup(const char *library, const char *symbol);
    or its OS calls on a thread of theirs checks the slot of the thread
    pointer first, and adopts the thread when the slot is empty:
        if (!*(void **)(thread register + __bun_tp_offset)) __bun_thread_adopt();
-   On x86-64 the thread register of the check is gs on every host. */
+   On x86-64 the thread register of the check is gs on every host. On arm64
+   it is the one of the host, x18 or tpidrro_el0, and the check is
+   __bun_thread_enter. */
 extern unsigned long __bun_tp_offset;
 void __bun_thread_adopt(void);
 /* The check and the adoption, for code whose entry the compiler writes the

@@ -19,7 +19,8 @@
 //
 // Where a binding is, on purpose, not the declaration of the header, this file says how the two are
 // compared: `cTypeNames` (another name), `partialViews` (the first fields only), `unionFields` (one
-// field for an anonymous union).
+// field for an anonymous union), `cTypes` (what C calls the type, a tag for one) and `cFields` (what
+// the header calls a field that bun gave another name). A fact keeps the name of the binding.
 //
 // What is read: every `pub` structure, union and constant of the three binding files that the image
 // has (an item under a `cfg` that the image does not meet is not in the image, and is left out).
@@ -59,6 +60,31 @@ const partialViews = new Set(["bun_windows_sys::TEB", "bun_windows_sys::PEB"]);
 const unionFields: Record<string, { after: string }> = {
   // union { NTSTATUS Status; PVOID Pointer; }; ULONG_PTR Information;
   "bun_windows_sys::IO_STATUS_BLOCK.Status": { after: "Information" },
+};
+/** How C names a type that has no name of its own in the headers: its tag. */
+const cTypes: Record<string, string> = {
+  addrinfo: "struct addrinfo",
+  sockaddr: "struct sockaddr",
+  sockaddr_in: "struct sockaddr_in",
+  sockaddr_in6: "struct sockaddr_in6",
+  sockaddr_storage: "struct sockaddr_storage",
+  in_addr: "struct in_addr",
+  in6_addr: "struct in6_addr",
+  uv__queue: "struct uv__queue",
+  uv__work: "struct uv__work",
+  uv_cpu_times_t: "struct uv_cpu_times_s",
+};
+/** The field of the header, for a field of a binding that has another name: `<type of C>.<field of the binding>`. */
+const cFields: Record<string, string> = {
+  "uv_timespec_t.sec": "tv_sec",
+  "uv_timespec_t.nsec": "tv_nsec",
+  "uv_timeval_t.sec": "tv_sec",
+  "uv_timeval_t.usec": "tv_usec",
+  "uv_stat_t.atim": "st_atim",
+  "uv_stat_t.mtim": "st_mtim",
+  "uv_stat_t.ctim": "st_ctim",
+  "uv_stat_t.birthtim": "st_birthtim",
+  "uv_timer_t.heap_node": "node.heap",
 };
 /** `loop` and `type` are keywords of Rust. */
 const cFieldNames: Record<string, string> = { loop_: "loop", type_: "type" };
@@ -284,16 +310,28 @@ function cProgram(types: Type[], constants: Constant[]): string {
 //       headers and does not run programs for Windows. verify.ts --table reads the table.
 // Each fact is behind an #ifndef SKIP_..: a name that the headers do not have is left out by
 // defining its macro, which verify.ts does from the messages of the compiler.
+//   .. -DBUN_LAYOUT_TABLE -DBUN_LAYOUT_KERNEL_HEADERS -D_AMD64_ -idirafter <km of the Windows Driver Kit>
+//       the same table from the headers of the Driver Kit, which declare the structures of the NT API
+//       (FILE_DIRECTORY_INFORMATION ..) that the headers of the SDK leave out. The two sets of headers
+//       do not go into one file, and every fact that these do not have is left out.
+#if defined(BUN_LAYOUT_KERNEL_HEADERS)
+#include <ntifs.h>
+#include <stddef.h>
+#else
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <winternl.h>
+#include <psapi.h>
 #endif
 #include <stddef.h>
 #include <stdio.h>
 #include <uv.h>
+#endif
 
+// A fact has the name that the binding has. The macros are also given what the headers call the type
+// and the field.
 #ifdef BUN_LAYOUT_TABLE
 #define BUN_LAYOUT_TYPE_LENGTH ${typeLength}
 #define BUN_LAYOUT_FIELD_LENGTH ${padded}
@@ -304,9 +342,9 @@ struct bun_layout_fact {
   unsigned long long first, second;
 };
 #define FACTS_BEGIN const struct bun_layout_fact bun_layout_facts[] = {
-#define TYPE_BEGIN(name) {'T', #name, "", sizeof(name), _Alignof(name)},
-#define FIELD(type, name) {'F', #type, #name, offsetof(type, name), sizeof(((type *)0)->name)},
-#define FIELD_OF_UNION(type, name, after) {'F', #type, #name, offsetof(type, name), offsetof(type, after) - offsetof(type, name)},
+#define TYPE_BEGIN(name, type) {'T', #name, "", sizeof(type), _Alignof(type)},
+#define FIELD(name, type, member, field) {'F', #name, #member, offsetof(type, field), sizeof(((type *)0)->field)},
+#define FIELD_OF_UNION(name, type, member, field, after) {'F', #name, #member, offsetof(type, field), offsetof(type, after) - offsetof(type, field)},
 #define TYPE_END
 #define CONSTANTS_BEGIN
 #define CONSTANT_SIGNED(name) {'S', #name, "", (unsigned long long)(long long)(name), 0},
@@ -318,10 +356,10 @@ static void comma(void) {
   if (!first) printf(",");
   first = 0;
 }
-#define TYPE_BEGIN(name) comma(); printf("\\n\\"" #name "\\":{\\"size\\":%zu,\\"align\\":%zu,\\"fields\\":{", sizeof(name), _Alignof(name)); first = 1;
-#define FIELD(type, name) comma(); printf("\\"" #name "\\":{\\"offset\\":%zu,\\"size\\":%zu}", offsetof(type, name), sizeof(((type *)0)->name));
+#define TYPE_BEGIN(name, type) comma(); printf("\\n\\"" #name "\\":{\\"size\\":%zu,\\"align\\":%zu,\\"fields\\":{", sizeof(type), _Alignof(type)); first = 1;
+#define FIELD(name, type, member, field) comma(); printf("\\"" #member "\\":{\\"offset\\":%zu,\\"size\\":%zu}", offsetof(type, field), sizeof(((type *)0)->field));
 /* A member of an anonymous union that the binding has as one field: the size is the union's. */
-#define FIELD_OF_UNION(type, name, after) comma(); printf("\\"" #name "\\":{\\"offset\\":%zu,\\"size\\":%zu}", offsetof(type, name), offsetof(type, after) - offsetof(type, name));
+#define FIELD_OF_UNION(name, type, member, field, after) comma(); printf("\\"" #member "\\":{\\"offset\\":%zu,\\"size\\":%zu}", offsetof(type, field), offsetof(type, after) - offsetof(type, field));
 #define TYPE_END printf("}}"); first = 0;
 #define CONSTANT_SIGNED(name) comma(); printf("\\n\\"" #name "\\":\\"%lld\\"", (long long)(name));
 #define CONSTANT_UNSIGNED(name) comma(); printf("\\n\\"" #name "\\":\\"%llu\\"", (unsigned long long)(name));
@@ -333,13 +371,15 @@ static void comma(void) {
 FACTS_BEGIN`);
   for (const type of types) {
     out.push(`#ifndef SKIP_TYPE_${type.c}`);
-    out.push(`  TYPE_BEGIN(${type.c})`);
+    const ofC = cTypes[type.c] ?? type.c;
+    out.push(`  TYPE_BEGIN(${type.c}, ${ofC})`);
     for (const field of type.fields) {
+      const fieldOfC = cFields[`${type.c}.${field.cName}`] ?? field.cName;
       out.push(`#ifndef SKIP_FIELD_${type.c}_${field.cName}`);
       out.push(
         field.unionBefore
-          ? `  FIELD_OF_UNION(${type.c}, ${field.cName}, ${field.unionBefore})`
-          : `  FIELD(${type.c}, ${field.cName})`,
+          ? `  FIELD_OF_UNION(${type.c}, ${ofC}, ${field.cName}, ${fieldOfC}, ${field.unionBefore})`
+          : `  FIELD(${type.c}, ${ofC}, ${field.cName}, ${fieldOfC})`,
       );
       out.push(`#endif`);
     }

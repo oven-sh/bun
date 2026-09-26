@@ -3,7 +3,8 @@
 //   bun compare-run.ts <output.jsonl> [--expected expected/linux.jsonl]
 //
 // The expected output is the one of Linux. On another host (the first line of the output names it)
-// the differences that expected/differences.json lists are accepted, and printed as such.
+// the differences that expected/differences.json lists are accepted, and printed as such. A step
+// that the program has on that host only is listed there with the whole line (`only_here`).
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -72,7 +73,16 @@ for (const want of expected) {
     console.log(`accepted   ${k}: ${rule.why}`);
   } else same++;
 }
-for (const extra of output.slice(at)) unexpected.push(`${key(extra)}: not expected`);
+for (const extra of output.slice(at)) {
+  const rule = forHost[key(extra)];
+  if (rule?.only_here && JSON.stringify(rule.only_here) === JSON.stringify(extra)) {
+    accepted++;
+    console.log(`accepted   ${key(extra)}: ${rule.why}`);
+  } else if (rule?.only_here) unexpected.push(`${key(extra)}: ${JSON.stringify(extra)}, expected ${JSON.stringify(rule.only_here)}`);
+  else unexpected.push(`${key(extra)}: not expected`);
+}
+for (const [name, rule] of Object.entries(forHost) as [string, any][])
+  if (rule.only_here && !output.some(line => key(line) === name)) unexpected.push(`${name}: missing, this host has the step`);
 for (const line of unexpected) console.log(`UNEXPECTED ${line}`);
 console.log(`host ${host}: ${same} steps as on Linux, ${accepted} accepted differences, ${unexpected.length} unexpected`);
 process.exit(unexpected.length ? 1 : 0);

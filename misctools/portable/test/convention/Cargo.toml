@@ -1,0 +1,18 @@
+# What the compiler says about a callback with the calling convention of the image that is given to
+# the host OS: bun_windows_sys::host_imports::OfTheHost. ../../slice/test.ts compiles each case.
+[workspace]
+
+[package]
+name = "convention_test"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bun_windows_sys = { path = "../../../../src/windows_sys" }
+bun_portable_macros = { path = "../../../../src/portable_macros" }
+
+[lints.rust]
+unexpected_cfgs = { level = "allow" }

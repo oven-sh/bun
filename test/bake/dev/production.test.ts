@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
-import { tempDirWithBakeDeps } from "../bake-harness";
+import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
@@ -365,6 +365,37 @@ export default function Docs() {
       .env(bunEnv)
       .throws(false);
     expect(stderr.toString()).toContain("Multiple pages matching the same route pattern is ambiguous");
+  });
+
+  // The bundler has no transform for these modules yet. The build used to abort
+  // in the parser instead of reporting the file.
+  test.each([
+    ["with a semicolon", `"use server";\nexport async function save() {\n  return "saved";\n}\n`],
+    ["without a semicolon", `'use server'\nexport async function save() {\n  return "saved";\n}\n`],
+  ])('a "use server" module is a build error (%s)', async (_, actions) => {
+    using dir = tempDir("bake-production-use-server", {
+      "app.ts": `export default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,
+      "routes/index.ts": `
+import "../actions";
+export default function () {
+  return new Response("Hello");
+}
+`,
+      "actions.ts": actions,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts", "--outdir", "./dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('error: "use server" is not supported yet');
+    expect(normalizePath(stderr)).toContain("/actions.ts:1:1");
+    expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
   });
 
   test("handles build with no pages directory without crashing", async () => {

@@ -3437,6 +3437,35 @@ function escapeXml(str: string): string {
     .replace(/'/g, "&apos;");
 }
 
+/**
+ * Temporary, for one build of the pull request that orders the agent after
+ * docker: when OpenRC started each service of an Alpine machine. Only names,
+ * states and times, and the configuration that decides the order.
+ */
+function printOpenRcBoot(title: string): void {
+  if (!isCI || !isLinux || getDistro() !== "alpine") {
+    return;
+  }
+  const scripts = [
+    "cat /proc/uptime; date -u '+%Y-%m-%d %H:%M:%S'",
+    // OpenRC keeps a link per service in the directory of its state, made when it entered that state.
+    'for state in starting started inactive failed; do for link in /run/openrc/$state/*; do [ -L "$link" ] && echo "$(stat -c \'%y\' "$link") $state $(basename "$link")"; done; done | sort',
+    "rc-status --all",
+    "ls /etc/runlevels/sysinit /etc/runlevels/boot /etc/runlevels/default",
+    "grep -v '^ *#' /etc/rc.conf | grep .",
+    "grep -v '^ *#' /etc/conf.d/chronyd /etc/chrony/chrony.conf | grep ':.'",
+    'for service in /etc/runlevels/default/*; do echo "$service"; sed -n \'/^[[:space:]]*depend()/,/^[[:space:]]*}/p\' "$service"; done',
+    "ls -la --full-time /run/docker.sock /run/docker.pid /run/chrony /run/cloud-init",
+    "cloud-init analyze show | tail -n 120",
+  ];
+  startGroup(title, () => {
+    for (const script of scripts) {
+      console.log(`$ ${script}`);
+      spawnSync("sh", ["-c", script], { stdio: "inherit", timeout: 30_000 });
+    }
+  });
+}
+
 async function main(): Promise<void> {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => onExit(signal));
@@ -3444,6 +3473,7 @@ async function main(): Promise<void> {
 
   if (!isQuiet) {
     printEnvironment();
+    printOpenRcBoot("OpenRC boot, at the start of the job");
   }
 
   // FIXME: Some DNS tests hang unless we set the DNS server to 8.8.8.8
@@ -3471,6 +3501,9 @@ async function main(): Promise<void> {
   if (doRunTests) {
     const results = await runTests();
     ok = results.every(({ ok }) => ok);
+  }
+  if (!isQuiet) {
+    printOpenRcBoot("OpenRC boot, at the end of the job");
   }
 
   let waitForUser = false;

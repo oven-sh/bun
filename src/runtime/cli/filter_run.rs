@@ -63,6 +63,8 @@ pub(crate) struct ProcessHandle<'a> {
     /// `remaining_scripts`, so a later pipe/exit event or the abort sweep
     /// cannot finish it twice.
     finished: bool,
+    /// The first failed read of a pipe. What the script wrote after it is lost, so the script counts as failed.
+    read_error: Option<sys::Error>,
     buffer: Vec<u8>,
 
     process: Option<ProcessInfo>,
@@ -256,9 +258,9 @@ impl<'a> ProcessHandle<'a> {
     }
 
     fn on_reader_error(&mut self, err: &sys::Error) {
-        let _ = err;
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
+        self.read_error.get_or_insert_with(|| err.clone());
         let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
         let state = unsafe { state_ref.get_mut() };
@@ -583,7 +585,12 @@ impl<'a> State<'a> {
                             .extend_from_slice(fmt!("<cyan>Running...<r>\n").as_bytes());
                     }
                     Status::Exited(exited) => {
-                        if exited.code == 0 {
+                        if RunCommand::script_failure_code(
+                            &proc.status,
+                            handle.read_error.is_some(),
+                        )
+                        .is_none()
+                        {
                             if let Some(end) = proc.end_time {
                                 let duration = end.duration_since(proc.start_time);
                                 let ms = duration.as_nanos() as f64 / 1_000_000.0;
@@ -681,18 +688,24 @@ impl<'a> State<'a> {
         if self.aborted {
             let _ = self.redraw(true);
         }
+        // After the last frame, which a line printed earlier would break up.
+        for handle in self.handles.iter() {
+            if let Some(err) = &handle.read_error {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: Failed to read <b>{}<r> script output from \"<b>{}<r>\" due to error <b>{} {}<r>",
+                    bstr::BStr::new(&handle.config.script_name),
+                    bstr::BStr::new(&handle.config.package_name),
+                    err.errno,
+                    bstr::BStr::new(err.name()),
+                );
+            }
+        }
         for handle in self.handles.iter() {
             if let Some(proc) = &handle.process {
-                match &proc.status {
-                    Status::Exited(exited) => {
-                        if exited.code != 0 {
-                            return exited.code;
-                        }
-                    }
-                    Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code();
-                    }
-                    _ => return 1,
+                if let Some(code) =
+                    RunCommand::script_failure_code(&proc.status, handle.read_error.is_some())
+                {
+                    return code;
                 }
             }
         }
@@ -996,6 +1009,7 @@ pub(crate) fn run_scripts_with_filter(
             buffer: Vec::new(),
             remaining_fds: 0,
             finished: false,
+            read_error: None,
             process: None,
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,

@@ -53,6 +53,8 @@ pub(crate) struct PipeReader<'a> {
     is_stderr: bool,
     /// Reached EOF or errored; no more chunks will arrive.
     ended: bool,
+    /// The failed read that ended this pipe. What the script wrote after it is lost, so the script counts as failed.
+    read_error: Option<bun_sys::Error>,
     line_buffer: Vec<u8>,
 }
 
@@ -64,6 +66,7 @@ impl<'a> PipeReader<'a> {
             handle: ptr::null_mut(),
             is_stderr,
             ended: false,
+            read_error: None,
             line_buffer: Vec::new(),
         }
     }
@@ -92,8 +95,9 @@ bun_io::impl_buffered_reader_parent! {
         let state = &mut *(*handle).state.cast_mut();
         let _ = state.maybe_finish(&mut *handle);
     };
-    on_reader_error = |this, _err| {
+    on_reader_error = |this, err| {
         (*this).ended = true;
+        (*this).read_error = Some(err);
         let handle = (*this).handle;
         let state = &mut *(*handle).state.cast_mut();
         let _ = state.maybe_finish(&mut *handle);
@@ -136,6 +140,10 @@ pub(crate) struct ProcessHandle<'a> {
 }
 
 impl<'a> ProcessHandle<'a> {
+    fn output_lost(&self) -> bool {
+        self.stdout_reader.read_error.is_some() || self.stderr_reader.read_error.is_some()
+    }
+
     fn start(&mut self) -> Result<(), Error> {
         // SAFETY: state is a backref into the `State` on `run`'s stack; lives for the whole loop.
         let state = unsafe { &mut *self.state.cast_mut() };
@@ -464,12 +472,25 @@ impl<'a> State<'a> {
 
         // Print exit status to stderr (status messages always go to stderr)
         let writer = Output::error_writer();
+        for pipe in [&handle.stdout_reader, &handle.stderr_reader] {
+            if let Some(err) = &pipe.read_error {
+                self.write_prefix(handle, writer)?;
+                writeln!(
+                    writer,
+                    "Failed to read {} due to error {} {}",
+                    if pipe.is_stderr { "stderr" } else { "stdout" },
+                    err.errno,
+                    bstr::BStr::new(err.name()),
+                )?;
+            }
+        }
         self.write_prefix(handle, writer)?;
 
         let slot = handle.process.as_ref().unwrap();
+        let failed = RunCommand::script_failure_code(&slot.status, handle.output_lost()).is_some();
         match &slot.status {
             Status::Exited(exited) => {
-                if exited.code != 0 {
+                if failed {
                     writeln!(writer, "Exited with code {}", exited.code)?;
                 } else {
                     if let Some(end) = slot.end_time {
@@ -495,12 +516,6 @@ impl<'a> State<'a> {
         }
 
         // Check if we should abort on error
-        let failed = match &slot.status {
-            Status::Exited(exited) => exited.code != 0,
-            Status::Signaled(_) => true,
-            _ => true,
-        };
-
         if failed && !self.no_exit_on_error {
             self.abort();
             return Ok(());
@@ -591,16 +606,10 @@ impl<'a> State<'a> {
     fn finalize(&self) -> u8 {
         for handle in self.handles.iter() {
             if let Some(proc) = &handle.process {
-                match &proc.status {
-                    Status::Exited(exited) => {
-                        if exited.code != 0 {
-                            return exited.code;
-                        }
-                    }
-                    Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code();
-                    }
-                    _ => return 1,
+                if let Some(code) =
+                    RunCommand::script_failure_code(&proc.status, handle.output_lost())
+                {
+                    return code;
                 }
             }
         }

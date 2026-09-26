@@ -261,6 +261,8 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) stdout: OutputReader,
     pub(crate) stderr: OutputReader,
     pub(crate) has_called_process_exit: bool,
+    /// A read of the current script's stdout or stderr failed, and bun closed that pipe under the script.
+    pub(crate) read_failed: bool,
     /// Stored as `BackRef` (not `&'a`) so
     /// callbacks may mutate manager state (`active_lifecycle_scripts`,
     /// `progress`, `scripts_node`) through the long-lived backref without
@@ -380,6 +382,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub(crate) fn on_reader_error(&mut self, err: &bun_sys::Error) {
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
+        self.read_failed = true;
 
         bun_core::pretty_errorln!(
             "<r><red>error<r>: Failed to read <b>{}<r> script output from \"<b>{}<r>\" due to error <b>{} {}<r>",
@@ -528,6 +531,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             (*this).current_script_index = next_script_index;
             (*this).has_called_process_exit = false;
+            (*this).read_failed = false;
 
             let mut copy_script: Vec<u8> = Vec::with_capacity(original_script.len() + 1);
             replace_package_manager_run(&mut copy_script, original_script)?;
@@ -846,15 +850,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             Status::Exited(exit) => {
                 if exit.code > 0 {
                     if self.optional {
-                        if let Some(ctx) = &self.ctx {
-                            let installer = ctx.installer_mut();
-                            installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                                .store(Step::Done as u32, Ordering::Release);
-                            installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                        }
-                        self.decrement_pending_script_tasks();
-                        self.deinit_and_delete_package();
-                        return;
+                        return self.skip_optional_package();
                     }
                     self.print_output();
                     bun_core::pretty_errorln!(
@@ -960,6 +956,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
             }
             Status::Signaled(signal) => {
+                // bun closed the pipe of a script whose output failed to read, so the SIGPIPE that follows is a failed script and not a signal for bun to die of.
+                #[cfg(unix)]
+                let closed_under_it =
+                    self.read_failed && signal == bun_core::SignalCode::SIGPIPE as u8;
+                #[cfg(not(unix))]
+                let closed_under_it = false;
+                if closed_under_it && self.optional {
+                    return self.skip_optional_package();
+                }
                 self.print_output();
                 let signal_code = bun_sys::SignalCode::from(signal);
 
@@ -970,19 +975,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 );
 
+                if closed_under_it {
+                    // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
+                    unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                    Output::flush();
+                    Global::exit(1);
+                }
                 Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(signal));
             }
             Status::Err(err) => {
                 if self.optional {
-                    if let Some(ctx) = &self.ctx {
-                        let installer = ctx.installer_mut();
-                        installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                            .store(Step::Done as u32, Ordering::Release);
-                        installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                    }
-                    self.decrement_pending_script_tasks();
-                    self.deinit_and_delete_package();
-                    return;
+                    return self.skip_optional_package();
                 }
 
                 bun_core::pretty_errorln!(
@@ -1043,6 +1046,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
+    /// The failed script of an optional dependency does not fail the install: the package is deleted and the install goes on. Frees `self`.
+    fn skip_optional_package(&mut self) {
+        if let Some(ctx) = &self.ctx {
+            let installer = ctx.installer_mut();
+            installer.store.entries.items_step()[ctx.entry_id.get() as usize]
+                .store(Step::Done as u32, Ordering::Release);
+            installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
+        }
+        self.decrement_pending_script_tasks();
+        self.deinit_and_delete_package();
+    }
+
     pub(crate) fn deinit_and_delete_package(&mut self) {
         if self.manager().options.log_level.is_verbose() {
             bun_core::warn!(
@@ -1096,6 +1111,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             stdout: OutputReader::init::<Self>(),
             stderr: OutputReader::init::<Self>(),
             has_called_process_exit: false,
+            read_failed: false,
             has_incremented_alive_count: false,
             started_at: 0,
             heap: io_heap::IntrusiveField::default(),

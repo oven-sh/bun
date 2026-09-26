@@ -799,6 +799,8 @@ where
 
     fn render_missing_invalid_response(&self, value: JSValue) {
         let class_name = value.get_class_info_name().unwrap_or(b"");
+        // Inspecting `value` runs user code (`[inspect.custom]`, `toString`) that can throw.
+        let mut inspect_error: Option<JSValue> = None;
 
         if let Some(server) = self.server.get() {
             // server is a BACKREF — valid while this RequestContext is alive
@@ -814,10 +816,17 @@ where
             } else if !value.is_empty() && !global_this.has_exception() {
                 let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
                 formatter.quote_strings = true;
-                bun_core::err_generic!(
-                    "Expected a Response object, but received '{}'",
-                    jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
-                );
+                let mut received: Vec<u8> = Vec::new();
+                match formatter.format_value::<false>(value, &mut received) {
+                    Ok(()) => bun_core::err_generic!(
+                        "Expected a Response object, but received '{}'",
+                        bstr::BStr::new(&received),
+                    ),
+                    Err(err) => {
+                        bun_core::err_generic!("Expected a Response object");
+                        inspect_error = Some(global_this.take_error(err));
+                    }
+                }
                 // `formatter` drops here.
             } else {
                 bun_core::err_generic!("Expected a Response object");
@@ -836,6 +845,11 @@ where
         // allocation alive across the re-entry; re-check the request state so
         // we never render onto a response that was ended underneath us.
         if self.is_aborted_or_ended() {
+            return;
+        }
+        if let Some(error) = inspect_error {
+            // Report it like an error the handler threw.
+            self.run_error_handler(error);
             return;
         }
         self.render_missing();

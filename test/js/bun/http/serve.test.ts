@@ -491,6 +491,199 @@ it("logs the invalid-response diagnostic when a synchronous fetch handler return
   expect(stderr).toContain("received '42'");
 });
 
+// The invalid-response diagnostic inspects the returned value, and that runs
+// user code. An exception from it belongs to that request, like a throw in the handler.
+describe.concurrent("a fetch handler returns a non-Response value whose inspection throws", () => {
+  const prelude = `
+    import { inspect } from "node:util";
+    const events = [];
+    const throwsOnInspect = message => ({ [inspect.custom]() { throw new Error(message); } });
+    const error = err => {
+      events.push("error(): " + err.message);
+      return new Response("error(): " + err.message, { status: 500 });
+    };
+  `;
+  const uncaughtListener = `
+    process.on("uncaughtException", err => events.push("uncaughtException: " + err.message));
+  `;
+
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + uncaughtListener + script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().startsWith("{") ? JSON.parse(stdout) : stdout, stderr, exitCode };
+  }
+
+  it("prints the short diagnostic and passes the error to error()", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      async function hit(label, firstResult) {
+        let calls = 0;
+        await using server = Bun.serve({
+          port: 0,
+          development: false,
+          routes: { "/:id": req => (calls++ === 0 ? firstResult(req) : new Response("ok")) },
+          error,
+        });
+        for (let i = 0; i < 2; i++) {
+          const res = await fetch(new URL("/1", server.url));
+          events.push(label + ": " + res.status + " " + JSON.stringify(await res.text()));
+        }
+      }
+      await hit("sync", () => throwsOnInspect("sync inspect"));
+      await hit("settled promise", async () => throwsOnInspect("settled promise inspect"));
+      await hit("pending promise", async () => {
+        await new Promise(resolve => setImmediate(resolve));
+        return throwsOnInspect("pending promise inspect");
+      });
+      await hit("request", req => {
+        req.params.nested = throwsOnInspect("request inspect");
+        return req;
+      });
+      console.log(JSON.stringify({ events }));
+    `);
+
+    expect({
+      stdout,
+      // The value could not be inspected, so each diagnostic is the short form on a line of its own.
+      diagnostics: stderr.match(/^error: Expected a Response object.*$/gm) ?? stderr,
+      exitCode,
+    }).toEqual({
+      stdout: {
+        events: ["sync", "settled promise", "pending promise", "request"].flatMap(label => [
+          `error(): ${label} inspect`,
+          `${label}: 500 "error(): ${label} inspect"`,
+          `${label}: 200 "ok"`,
+        ]),
+      },
+      diagnostics: new Array(4).fill("error: Expected a Response object"),
+      exitCode: 0,
+    });
+  });
+
+  it("does not pass the error to a request on another connection", async () => {
+    // Both requests reach the server in one event loop turn.
+    const { stdout, exitCode } = await run(`
+      import net from "node:net";
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        fetch(req) {
+          const { pathname } = new URL(req.url);
+          events.push("fetch " + pathname);
+          return pathname === "/bad" ? throwsOnInspect("inspect " + pathname) : new Response("ok");
+        },
+        error,
+      });
+      const paths = ["/bad", "/good"];
+      const sockets = await Promise.all(
+        paths.map(() => {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const socket = net.connect(server.port, "127.0.0.1", () => resolve(socket));
+          socket.on("error", reject);
+          return promise;
+        }),
+      );
+      const replies = sockets.map(socket => {
+        let reply = "";
+        socket.on("data", chunk => (reply += chunk));
+        return new Promise(resolve => socket.on("close", () => resolve(reply)));
+      });
+      sockets.forEach((socket, i) =>
+        socket.write("GET " + paths[i] + " HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n"),
+      );
+      const statusLines = (await Promise.all(replies)).map(reply => reply.split("\\r\\n")[0]);
+      const byPath = Object.fromEntries(paths.map((path, i) => [path, statusLines[i]]));
+      console.log(JSON.stringify({ statusLines: byPath, events: events.sort() }));
+    `);
+
+    expect({ stdout, exitCode }).toEqual({
+      stdout: {
+        statusLines: { "/bad": "HTTP/1.1 500 Internal Server Error", "/good": "HTTP/1.1 200 OK" },
+        events: ["error(): inspect /bad", "fetch /bad", "fetch /good"],
+      },
+      exitCode: 0,
+    });
+  });
+
+  it("does not crash the server when the next JavaScript to run is a new timer callback", async () => {
+    // The client is this process, so the timer callback is the first JavaScript the server runs after the request.
+    // The server has no "uncaughtException" listener.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        prelude +
+          `
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            development: false,
+            fetch(req) {
+              const { pathname } = new URL(req.url);
+              if (pathname === "/events") {
+                server.stop();
+                return Response.json(events);
+              }
+              setTimeout(() => {
+                events.push("timer");
+                console.log("timer");
+              }, 1);
+              return throwsOnInspect("inspect");
+            },
+            error,
+          });
+          console.log(server.port);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const lines = (async function* () {
+      let buffered = "";
+      for await (const chunk of proc.stdout) {
+        buffered += Buffer.from(chunk).toString();
+        for (let end; (end = buffered.indexOf("\n")) !== -1; buffered = buffered.slice(end + 1)) {
+          yield buffered.slice(0, end);
+        }
+      }
+    })();
+    const port = Number((await lines.next()).value);
+    const request = (path: string) =>
+      fetch(`http://127.0.0.1:${port}${path}`).then(
+        async res => ({ status: res.status, body: await res.text() }),
+        err => ({ failed: err.code ?? String(err) }),
+      );
+
+    const bad = await request("/");
+    const timerLine = (await lines.next()).value ?? "the server exited before the timer ran";
+    const events = await request("/events");
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect({
+      bad,
+      timerLine,
+      events,
+      diagnostics: stderr.match(/^error: Expected a Response object.*$/gm) ?? stderr,
+      exitCode,
+      signalCode: proc.signalCode,
+    }).toEqual({
+      bad: { status: 500, body: "error(): inspect" },
+      timerLine: "timer",
+      events: { status: 200, body: JSON.stringify(["error(): inspect", "timer"]) },
+      diagnostics: ["error: Expected a Response object"],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 it("request.signal works in trivial case", async () => {
   var aborty = new AbortController();
   var signaler = Promise.withResolvers();

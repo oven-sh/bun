@@ -20,13 +20,15 @@ describe("web worker", () => {
 
   describe("preload", () => {
     test("invalid file URL", async () => {
-      expect(() => new Worker("file://:!:!:!!!!", {})).toThrow(/Invalid file URL/);
-      expect(
-        () =>
-          new Worker(import.meta.url, {
-            preload: ["file://:!:!:!!!!", "file://:!:!:!!!!2"],
-          }),
-      ).toThrow(/Invalid file URL/);
+      // The entry point and each preload go through the same check: a SyntaxError, as for any
+      // script URL that does not parse.
+      for (const construct of [
+        () => new Worker("file://:!:!:!!!!", {}),
+        () => new Worker(import.meta.url, { preload: ["file://:!:!:!!!!", "file://:!:!:!!!!2"] }),
+      ]) {
+        expect(construct).toThrow(SyntaxError);
+        expect(construct).toThrow('Invalid URL: "file://:!:!:!!!!"');
+      }
     });
 
     test("string", async () => {
@@ -384,6 +386,28 @@ describe("web worker", () => {
     });
   });
 
+  // HTML: scriptURL is parsed first and a parse failure is a synchronous SyntaxError. Bun also
+  // accepts plain paths and module specifiers, so only a string that starts with a URL scheme is
+  // held to URL syntax; everything else goes to the resolver unchanged.
+  describe("script URL validation", () => {
+    test("a URL with a scheme that does not parse throws a SyntaxError", () => {
+      for (const url of ["http://[", "https://exa mple.com/worker.js", "file://:!:!:!!!!"]) {
+        expect(() => new Worker(url)).toThrow(SyntaxError);
+        expect(() => new Worker(import.meta.url, { preload: [url] })).toThrow(SyntaxError);
+      }
+    });
+
+    // A URL that parses (here with a scheme nothing can load) is not a constructor error: as in
+    // browsers the failure arrives later as an error event.
+    test("a URL that parses but cannot be loaded is reported through the error event", async () => {
+      const worker = new Worker("zzz://x/y.mjs");
+      const closed = once(worker, "close");
+      const [err] = await once(worker, "error");
+      expect(err.message).toContain("ModuleNotFound");
+      await closed;
+    });
+  });
+
   describe("error event", () => {
     test("is fired with a string of the error", async () => {
       const worker = new Worker("data:text/javascript,throw 5");
@@ -679,6 +703,8 @@ describe("web worker", () => {
     // after the request must release, not build script values under it.
     test("terminate() while fs.readFile completions keep arriving", async () => {
       using dir = tempDir("worker-readfile-churn", { "f.bin": Buffer.alloc(65536, 7) });
+      // Each round boots 4 workers; a debug build spends ~0.5s per round, so it runs fewer.
+      const rounds = isDebug ? 4 : 12;
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -687,7 +713,7 @@ describe("web worker", () => {
              let n = 0; (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => { n--; setImmediate(pump) }) } })();
              postMessage("busy")\`;
            const url = URL.createObjectURL(new Blob([src]));
-           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
+           for (let r = 0; r < ${rounds}; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
              const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), (r + i) % 10) })));
            console.log("PASS");`,
           path.join(String(dir), "f.bin"),

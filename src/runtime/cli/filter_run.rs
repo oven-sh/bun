@@ -64,6 +64,7 @@ pub(crate) struct ProcessHandle<'a> {
     /// cannot finish it twice.
     finished: bool,
     buffer: Vec<u8>,
+    github_relay: Output::GithubCommandRelay,
 
     process: Option<ProcessInfo>,
     options: SpawnOptions,
@@ -343,6 +344,26 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
+    /// Writes one child line with the `<package> <script>: ` prefix.
+    fn write_prefixed_line(
+        draw_buf: &mut Vec<u8>,
+        handle: &ProcessHandle<'a>,
+        line: &[u8],
+    ) -> crate::Result<()> {
+        if Output::is_github_action() && handle.github_relay.is_bare_line(line) {
+            draw_buf.extend_from_slice(line);
+            return Ok(());
+        }
+        write!(
+            draw_buf,
+            "{} {}: {}",
+            bstr::BStr::new(&handle.config.package_name),
+            bstr::BStr::new(&handle.config.script_name),
+            bstr::BStr::new(line),
+        )?;
+        Ok(())
+    }
+
     fn read_chunk(&mut self, handle: &mut ProcessHandle<'a>, chunk: &[u8]) -> crate::Result<()> {
         if self.pretty_output {
             handle.buffer.extend_from_slice(chunk);
@@ -355,13 +376,7 @@ impl<'a> State<'a> {
                     let i = i as usize;
                     handle.buffer.extend_from_slice(&content[0..i + 1]);
                     content = &content[i + 1..];
-                    write!(
-                        &mut self.draw_buf,
-                        "{} {}: {}",
-                        bstr::BStr::new(&handle.config.package_name),
-                        bstr::BStr::new(&handle.config.script_name),
-                        bstr::BStr::new(&handle.buffer),
-                    )?;
+                    Self::write_prefixed_line(&mut self.draw_buf, handle, &handle.buffer)?;
                     handle.buffer.clear();
                 } else {
                     handle.buffer.extend_from_slice(content);
@@ -371,13 +386,7 @@ impl<'a> State<'a> {
             while let Some(i) = strings::index_of_char(content, b'\n') {
                 let i = i as usize;
                 let line = &content[0..i + 1];
-                write!(
-                    &mut self.draw_buf,
-                    "{} {}: {}",
-                    bstr::BStr::new(&handle.config.package_name),
-                    bstr::BStr::new(&handle.config.script_name),
-                    bstr::BStr::new(line),
-                )?;
+                Self::write_prefixed_line(&mut self.draw_buf, handle, line)?;
                 content = &content[i + 1..];
             }
             if !content.is_empty() {
@@ -422,12 +431,8 @@ impl<'a> State<'a> {
             self.draw_buf.clear();
             // flush any remaining buffer
             if !handle.buffer.is_empty() {
-                writeln!(
-                    &mut self.draw_buf,
-                    "{}: {}",
-                    bstr::BStr::new(&handle.config.package_name),
-                    bstr::BStr::new(&handle.buffer),
-                )?;
+                Self::write_prefixed_line(&mut self.draw_buf, handle, &handle.buffer)?;
+                self.draw_buf.push(b'\n');
                 handle.buffer.clear();
             }
             // print exit status
@@ -961,7 +966,8 @@ pub(crate) fn run_scripts_with_filter(
         remaining_scripts: 0,
         draw_buf: Vec::new(),
         last_lines_written: 0,
-        pretty_output: {
+        // The redraw renderer never writes a line at column 0.
+        pretty_output: !Output::is_github_action() && {
             #[cfg(windows)]
             {
                 windows_is_terminal() && Output::enable_ansi_colors_stdout()
@@ -994,6 +1000,7 @@ pub(crate) fn run_scripts_with_filter(
             stdout: BufferedReader::init::<ProcessHandle>(),
             stderr: BufferedReader::init::<ProcessHandle>(),
             buffer: Vec::new(),
+            github_relay: Output::GithubCommandRelay::default(),
             remaining_fds: 0,
             finished: false,
             process: None,

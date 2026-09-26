@@ -1605,6 +1605,76 @@ describe.concurrent("unusual output", () => {
   });
 });
 
+// ─── GITHUB ACTIONS ANNOTATIONS ─────────────────────────────────────────────
+
+// The GitHub Actions runner only parses a workflow command at column 0. The
+// stateless commands must reach it bare. Group markers stay prefixed because
+// parallel scripts interleave and bare markers would be unpaired. Text
+// between ::stop-commands::<token> and ::<token>:: stays prefixed too.
+describe.concurrent("GitHub Actions annotations", () => {
+  const lines = [
+    "::group::a.test.ts:",
+    "plain line",
+    "::error file=a.test.ts,line=2,col=30,title=boom::Expected 2",
+    "::warning ::careful",
+    "::notice::note",
+    "::debug::dbg",
+    "::add-mask::s3cret",
+    "  ::error::indented",
+    "::stop-commands::tok",
+    "::error::suppressed",
+    "::tok::",
+    "::error::resumed",
+    "::endgroup::",
+  ];
+  const printer = `for (const l of ${JSON.stringify(lines)}) console.log(l); process.stderr.write("::error ::tail");`;
+  const pkg = JSON.stringify({ scripts: { gha: `${bunExe()} -e '${printer}'` } });
+
+  test.each([["--parallel"], ["--sequential"]])("%s writes annotation commands at column 0", async flag => {
+    using dir = tempDir("mr-gha-annotations", { "package.json": pkg });
+    const r = await runMulti(["run", flag, "gha"], String(dir), { GITHUB_ACTIONS: "true" });
+    expect(r.stdout.split("\n")).toEqual([
+      "gha | ::group::a.test.ts:",
+      "gha | plain line",
+      "::error file=a.test.ts,line=2,col=30,title=boom::Expected 2",
+      "::warning ::careful",
+      "::notice::note",
+      "::debug::dbg",
+      "::add-mask::s3cret",
+      "  ::error::indented",
+      "gha | ::stop-commands::tok",
+      "gha | ::error::suppressed",
+      "gha | ::tok::",
+      "::error::resumed",
+      "gha | ::endgroup::",
+      "",
+    ]);
+    expect(r.stderr).toMatch(/^::error ::tail$/m);
+    expectDone(r.stderr, "gha");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("FORCE_COLOR does not put a color escape before an annotation", async () => {
+    using dir = tempDir("mr-gha-color", { "package.json": pkg });
+    const r = await runMulti(["run", "--parallel", "gha"], String(dir), {
+      GITHUB_ACTIONS: "true",
+      FORCE_COLOR: "1",
+      NO_COLOR: undefined,
+    });
+    expect(r.stdout).toMatch(/^::error file=a\.test\.ts,line=2,col=30,title=boom::Expected 2$/m);
+    expect(r.stdout).toMatch(/^\x1b\[\d+mgha\x1b\[0m \| ::group::a\.test\.ts:$/m);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("annotation lines stay prefixed outside GitHub Actions", async () => {
+    using dir = tempDir("mr-gha-off", { "package.json": pkg });
+    const r = await runMulti(["run", "--parallel", "gha"], String(dir), { GITHUB_ACTIONS: "false" });
+    expectPrefixed(r.stdout, "gha", "::error file=a.test.ts,");
+    expect(r.stdout).not.toMatch(/^::error/m);
+    expect(r.exitCode).toBe(0);
+  });
+});
+
 // ─── SEQUENTIAL: DONE STATUS BETWEEN SCRIPTS ───────────────────────────────
 
 describe.concurrent("sequential: status messages between scripts", () => {

@@ -2150,14 +2150,10 @@ pub mod cache {
         /// drops. Stored as `Vec<u8>` (not `Box<[u8]>`) so a sentinel NUL can
         /// sit in spare capacity past `len`.
         Owned(Vec<u8>),
-        /// Bytes live in a caller-supplied `bun_alloc::Arena` (the per-call
-        /// `MimallocArena` from `ParseOptions.arena`). NOT freed on `deinit` —
+        /// Bytes live in a caller-supplied `bun_alloc::Arena` (the one
+        /// `Transpiler::parse` parses into). NOT freed on `deinit` —
         /// bulk-reclaimed by `mi_heap_destroy` when the arena drops. This is
-        /// the arena arm of
-        /// `read_file_with_allocator`: the
-        /// concurrent-transpiler path passes a per-job arena so the
-        /// 1.6 MB vite chunk source landed in the per-job arena, not the
-        /// worker thread's default mimalloc heap (which is never destroyed).
+        /// the arena arm of `read_file_with_allocator`.
         Arena {
             ptr: core::ptr::NonNull<u8>,
             len: usize,

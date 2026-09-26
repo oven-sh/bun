@@ -978,9 +978,67 @@ impl<'a> ParseResult<'a> {
     }
 }
 
+/// A parse that has done everything it can without an arena: the source is
+/// read, and `ParseOptions::runtime_transpiler_cache` holds the entry for it
+/// if there is one. [`Transpiler::finish_parse`] does the rest.
+pub struct BegunParse<'a> {
+    source: bun_ast::Source,
+    /// Owns the bytes `source.contents` borrows; see
+    /// [`ParseResult::source_contents_backing`].
+    source_contents_backing: resolver::cache::Contents,
+    loader: options::Loader,
+    rest: ParseRest<'a>,
+}
+
+/// What is left of a [`BegunParse`].
+enum ParseRest<'a> {
+    /// Nothing: only the file was asked for, it is blank, or it is a wasm
+    /// binary under a JavaScript loader.
+    Empty,
+    /// Nothing: the runtime transpiler cache has the output.
+    Cached {
+        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+    },
+    JavaScript {
+        opts: js_ast::ParserOptions<'a>,
+        macro_js_ctx: MacroJSCtx,
+        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+        path: bun_paths::fs::Path<'static>,
+        dirname_fd: FD,
+        allow_bytecode_cache: bool,
+    },
+    Data {
+        keep_json_and_toml_as_one_statement: bool,
+    },
+    Text,
+    Md,
+    Wasm {
+        path: bun_paths::fs::Path<'static>,
+    },
+}
+
+impl<'a> BegunParse<'a> {
+    #[inline]
+    fn empty(
+        source: bun_ast::Source,
+        loader: options::Loader,
+        source_contents_backing: resolver::cache::Contents,
+    ) -> Self {
+        BegunParse {
+            source,
+            source_contents_backing,
+            loader,
+            rest: ParseRest::Empty,
+        }
+    }
+
+    pub fn source(&self) -> &bun_ast::Source {
+        &self.source
+    }
+}
+
 /// Per-file inputs to the transpiler's parse step.
-pub struct ParseOptions<'a, 'b> {
-    pub arena: &'a Arena,
+pub struct ParseOptions<'b> {
     pub dirname_fd: FD,
     pub file_descriptor: Option<FD>,
 
@@ -1359,18 +1417,21 @@ impl<'a> Transpiler<'a> {
 
     pub fn parse(
         &mut self,
-        this_parse: ParseOptions<'a, '_>,
+        arena: &'a Arena,
+        this_parse: ParseOptions<'_>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
-        self.parse_maybe_return_file_only::<false>(this_parse, client_entry_point_)
+        self.parse_maybe_return_file_only::<false>(arena, this_parse, client_entry_point_)
     }
 
     pub fn parse_maybe_return_file_only<const RETURN_FILE_ONLY: bool>(
         &mut self,
-        this_parse: ParseOptions<'a, '_>,
+        arena: &'a Arena,
+        this_parse: ParseOptions<'_>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
         self.parse_maybe_return_file_only_allow_shared_buffer::<RETURN_FILE_ONLY, false>(
+            arena,
             this_parse,
             client_entry_point_,
         )
@@ -1381,12 +1442,39 @@ impl<'a> Transpiler<'a> {
         const USE_SHARED_BUFFER: bool,
     >(
         &mut self,
-        mut this_parse: ParseOptions<'a, '_>,
+        arena: &'a Arena,
+        this_parse: ParseOptions<'_>,
         // The only caller passes `EntryPoints::ClientEntryPoint`, so the
         // param is typed concretely.
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
-        let arena = this_parse.arena;
+        let begun = self
+            .begin_parse_maybe_return_file_only::<RETURN_FILE_ONLY, USE_SHARED_BUFFER>(
+                this_parse,
+                client_entry_point_,
+                Some(arena),
+            )?;
+        self.finish_parse(arena, begun)
+    }
+
+    /// Everything a parse does before it needs an arena: reads the source and
+    /// looks it up in `ParseOptions::runtime_transpiler_cache`, which holds
+    /// the entry afterwards if there is one. The file's bytes are read into
+    /// the heap.
+    pub fn begin_parse(&mut self, this_parse: ParseOptions<'_>) -> Option<BegunParse<'a>> {
+        self.begin_parse_maybe_return_file_only::<false, false>(this_parse, None, None)
+    }
+
+    fn begin_parse_maybe_return_file_only<
+        const RETURN_FILE_ONLY: bool,
+        const USE_SHARED_BUFFER: bool,
+    >(
+        &mut self,
+        mut this_parse: ParseOptions<'_>,
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
+        // Where a file's bytes are read into. `None` is the heap.
+        contents_arena: Option<&'a Arena>,
+    ) -> Option<BegunParse<'a>> {
         let dirname_fd = this_parse.dirname_fd;
         let file_descriptor = this_parse.file_descriptor;
         let path = this_parse.path;
@@ -1405,7 +1493,7 @@ impl<'a> Transpiler<'a> {
         // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
-        let source: &'a bun_ast::Source = arena.alloc('brk: {
+        let source: bun_ast::Source = 'brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
                 break 'brk virtual_source.clone();
             }
@@ -1469,18 +1557,17 @@ impl<'a> Transpiler<'a> {
                 break 'brk bun_ast::Source::init_path_string(path.text, contents);
             }
 
-            // Thread
-            // `this_parse.arena` (the per-call `MimallocArena` from
-            // `RuntimeTranspilerStore`) so the source bytes land in the
-            // job-scoped heap that `TranspilerJob::run` `mi_heap_destroy`s on
-            // return — not the worker thread's default mimalloc heap.
             let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
                 self.fs_mut(),
                 path.text,
                 dirname_fd,
                 USE_SHARED_BUFFER,
                 file_descriptor,
-                if USE_SHARED_BUFFER { None } else { Some(arena) },
+                if USE_SHARED_BUFFER {
+                    None
+                } else {
+                    contents_arena
+                },
             ) {
                 Ok(e) => e,
                 Err(err) => {
@@ -1500,11 +1587,11 @@ impl<'a> Transpiler<'a> {
                 *file_fd_ptr = entry.fd;
             }
             // `Source.contents: &'static [u8]` (the AST crate's `Str`
-            // convention). The bytes live either in the per-thread shared
-            // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
-            // drop) or in `this_parse.arena` (`Contents::Arena`, no-op drop —
-            // bulk-freed by `mi_heap_destroy` when the per-call arena is
-            // recycled). Thread the
+            // convention). The bytes live in the per-thread shared buffer
+            // (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op drop),
+            // in `contents_arena` (`Contents::Arena`, no-op drop —
+            // bulk-freed by `mi_heap_destroy` when the arena is recycled),
+            // or in the heap (`Contents::Owned`). Thread the
             // provenance-tagged backing alongside the `ParseResult` so it
             // drops when the result is recycled — no `mem::forget`
             // (PORTING.md §Forbidden patterns).
@@ -1522,40 +1609,29 @@ impl<'a> Transpiler<'a> {
                 Ok(s) => break 'brk s,
                 Err(_) => return None,
             }
-        });
+        };
 
         if RETURN_FILE_ONLY {
-            return Some(ParseResult::empty_with(
-                arena,
-                source.clone(),
-                loader,
-                source_backing,
-            ));
+            return Some(BegunParse::empty(source, loader, source_backing));
         }
 
         if source.contents.is_empty()
             || (source.contents.len() < 33 && strings::trim(&source.contents, b"\n\r ").is_empty())
         {
             if !loader.handles_empty_file() {
-                return Some(ParseResult::empty_with(
-                    arena,
-                    source.clone(),
-                    loader,
-                    source_backing,
-                ));
+                return Some(BegunParse::empty(source, loader, source_backing));
             }
         }
 
-        match loader {
+        let rest = match loader {
             options::Loader::Js
             | options::Loader::Jsx
             | options::Loader::Ts
             | options::Loader::Tsx => {
                 // wasm magic number
                 if source.is_web_assembly() {
-                    return Some(ParseResult::empty_with(
-                        arena,
-                        source.clone(),
+                    return Some(BegunParse::empty(
+                        source,
                         options::Loader::Wasm,
                         source_backing,
                     ));
@@ -1673,6 +1749,97 @@ impl<'a> Transpiler<'a> {
                     entries: this_parse.replace_exports,
                 };
 
+                if opts.load_from_runtime_transpiler_cache(&source) {
+                    ParseRest::Cached {
+                        runtime_transpiler_cache: rtc_ptr,
+                    }
+                } else {
+                    ParseRest::JavaScript {
+                        opts,
+                        macro_js_ctx: this_parse.macro_js_ctx,
+                        runtime_transpiler_cache: rtc_ptr,
+                        path,
+                        dirname_fd,
+                        allow_bytecode_cache: this_parse.virtual_source.is_none()
+                            && this_parse.allow_bytecode_cache,
+                    }
+                }
+            }
+            // TODO: use lazy export AST
+            options::Loader::Toml
+            | options::Loader::Yaml
+            | options::Loader::Json
+            | options::Loader::Jsonc
+            | options::Loader::Json5
+            | options::Loader::Xml => ParseRest::Data {
+                keep_json_and_toml_as_one_statement: this_parse.keep_json_and_toml_as_one_statement,
+            },
+            options::Loader::Text => ParseRest::Text,
+            options::Loader::Md => ParseRest::Md,
+            options::Loader::Wasm => ParseRest::Wasm { path },
+            options::Loader::Css => return None,
+            options::Loader::File
+            | options::Loader::Napi
+            | options::Loader::Base64
+            | options::Loader::Dataurl
+            | options::Loader::Bunsh
+            | options::Loader::Sqlite
+            | options::Loader::SqliteEmbedded
+            | options::Loader::Html => parse_unsupported_loader(loader, &path),
+        };
+
+        Some(BegunParse {
+            source,
+            source_contents_backing: source_backing,
+            loader,
+            rest,
+        })
+    }
+
+    /// Parses what [`Self::begin_parse`] read, into `arena`.
+    pub fn finish_parse(
+        &mut self,
+        arena: &'a Arena,
+        begun: BegunParse<'a>,
+    ) -> Option<ParseResult<'a>> {
+        let BegunParse {
+            source,
+            source_contents_backing: source_backing,
+            loader,
+            rest,
+        } = begun;
+        let source: &'a bun_ast::Source = arena.alloc(source);
+        let log: &mut bun_ast::Log = self.log_mut();
+
+        match rest {
+            ParseRest::Empty => Some(ParseResult::empty_with(
+                arena,
+                source.clone(),
+                loader,
+                source_backing,
+            )),
+            ParseRest::Cached {
+                runtime_transpiler_cache,
+            } => Some(ParseResult {
+                ast: bun_ast::Ast::empty_in(arena),
+                runtime_transpiler_cache,
+                source: source.clone(),
+                loader,
+                already_bundled: AlreadyBundled::None,
+                pending_imports: Default::default(),
+                empty: false,
+                source_contents_backing: source_backing,
+            }),
+            ParseRest::JavaScript {
+                mut opts,
+                macro_js_ctx,
+                runtime_transpiler_cache: rtc_ptr,
+                path,
+                dirname_fd,
+                allow_bytecode_cache,
+            } => {
+                let target = self.options.target;
+
                 if self.macro_context.is_none() {
                     let ctx = js_ast::Macro::MacroContext::init(self);
                     self.macro_context = Some(ctx);
@@ -1684,8 +1851,7 @@ impl<'a> Transpiler<'a> {
                 // `&mut` handed to the parser already carries the value.
                 if target != crate::options_impl::Target::BunMacro {
                     // SAFETY: `is_none()` check above guarantees `Some` here.
-                    self.macro_context.as_mut().unwrap().javascript_object =
-                        this_parse.macro_js_ctx;
+                    self.macro_context.as_mut().unwrap().javascript_object = macro_js_ctx;
                 }
                 // `crate::defines::Define` IS
                 // `bun_js_parser::defines::Define`. Hand the parser the real
@@ -1718,22 +1884,12 @@ impl<'a> Transpiler<'a> {
                     Ok(Some(r)) => r,
                     Ok(None) | Err(_) => return None,
                 };
-                return Some(match parsed {
+                Some(match parsed {
                     js_ast::Result::Ast(value) => ParseResult {
                         ast: *value,
                         source: source.clone(),
                         loader,
                         runtime_transpiler_cache: rtc_ptr,
-                        already_bundled: AlreadyBundled::None,
-                        pending_imports: Default::default(),
-                        empty: false,
-                        source_contents_backing: source_backing,
-                    },
-                    js_ast::Result::Cached => ParseResult {
-                        ast: bun_ast::Ast::empty_in(arena),
-                        runtime_transpiler_cache: rtc_ptr,
-                        source: source.clone(),
-                        loader,
                         already_bundled: AlreadyBundled::None,
                         pending_imports: Default::default(),
                         empty: false,
@@ -1758,9 +1914,7 @@ impl<'a> Transpiler<'a> {
                                 } else {
                                     AlreadyBundled::SourceCode
                                 };
-                                if this_parse.virtual_source.is_none()
-                                    && this_parse.allow_bytecode_cache
-                                {
+                                if allow_bytecode_cache {
                                     // No shared const for the bytecode extension
                                     // in `bun_core` yet, so inline the literal.
                                     const BYTECODE_EXT: &[u8] = b".jsc";
@@ -1809,59 +1963,36 @@ impl<'a> Transpiler<'a> {
                         empty: false,
                         source_contents_backing: source_backing,
                     },
-                });
+                })
             }
-            // TODO: use lazy export AST
-            options::Loader::Toml
-            | options::Loader::Yaml
-            | options::Loader::Json
-            | options::Loader::Jsonc
-            | options::Loader::Json5
-            | options::Loader::Xml => {
-                return parse_data_loader(
-                    source,
-                    loader,
-                    source_backing,
-                    arena,
-                    log,
-                    this_parse.keep_json_and_toml_as_one_statement,
-                );
-            }
-            options::Loader::Text => {
-                return parse_text_loader(source, loader, source_backing, arena);
-            }
-            options::Loader::Md => {
-                return parse_md_loader(source, loader, source_backing, arena, log);
-            }
-            options::Loader::Wasm => {
-                return parse_wasm_loader(
-                    source,
-                    loader,
-                    source_backing,
-                    arena,
-                    &path,
-                    self.options.target,
-                    log,
-                );
-            }
-            options::Loader::Css => {}
-            options::Loader::File
-            | options::Loader::Napi
-            | options::Loader::Base64
-            | options::Loader::Dataurl
-            | options::Loader::Bunsh
-            | options::Loader::Sqlite
-            | options::Loader::SqliteEmbedded
-            | options::Loader::Html => parse_unsupported_loader(loader, &path),
+            ParseRest::Data {
+                keep_json_and_toml_as_one_statement,
+            } => parse_data_loader(
+                source,
+                loader,
+                source_backing,
+                arena,
+                log,
+                keep_json_and_toml_as_one_statement,
+            ),
+            ParseRest::Text => parse_text_loader(source, loader, source_backing, arena),
+            ParseRest::Md => parse_md_loader(source, loader, source_backing, arena, log),
+            ParseRest::Wasm { path } => parse_wasm_loader(
+                source,
+                loader,
+                source_backing,
+                arena,
+                &path,
+                self.options.target,
+                log,
+            ),
         }
-
-        None
     }
 }
 
 // ---------------------------------------------------------------------------
 // Cold rare-loader parse paths, split out of
-// `Transpiler::parse_maybe_return_file_only_allow_shared_buffer` so the
+// `Transpiler::finish_parse` so the
 // data-format / markdown / wasm code they pull in lands in `.text.unlikely`
 // instead of being interleaved (post-LTO) with the hot JS/TS parse path.
 // ---------------------------------------------------------------------------
@@ -2962,7 +3093,6 @@ impl<'a> Transpiler<'a> {
                 };
 
                 let parse_opts = ParseOptions {
-                    arena: self.arena,
                     path: bun_paths::fs::Path::init(file_path_text),
                     loader,
                     dirname_fd,
@@ -2987,7 +3117,8 @@ impl<'a> Transpiler<'a> {
                     allow_bytecode_cache: false,
                 };
 
-                let Some(mut result) = self.parse(parse_opts, client_entry_point_) else {
+                let Some(mut result) = self.parse(self.arena, parse_opts, client_entry_point_)
+                else {
                     return Ok(None);
                 };
 

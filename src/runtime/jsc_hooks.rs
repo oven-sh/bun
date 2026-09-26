@@ -2508,10 +2508,10 @@ fn transpile_source_code_inner(
                         is_symlink: path.is_symlink,
                     }
                 };
+                // SAFETY: `arena_ptr` points at the `Box<Arena>` interior
+                // held by `arena_guard`; the guard outlives `parse_result`.
+                let arena: &bun_alloc::Arena = unsafe { &*arena_ptr };
                 let parse_options = ParseOptions {
-                    // SAFETY: `arena_ptr` points at the `Box<Arena>` interior
-                    // held by `arena_guard`; the guard outlives `parse_result`.
-                    arena: unsafe { &*arena_ptr },
                     path: parse_path,
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
@@ -2570,16 +2570,20 @@ fn transpile_source_code_inner(
                 let parse_result: Option<ParseResult> = if return_file_only {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe {
-                        (*jsc_vm)
-                            .transpiler
-                            .parse_maybe_return_file_only::<true>(parse_options, None)
+                        (*jsc_vm).transpiler.parse_maybe_return_file_only::<true>(
+                            arena,
+                            parse_options,
+                            None,
+                        )
                     }
                 } else {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe {
-                        (*jsc_vm)
-                            .transpiler
-                            .parse_maybe_return_file_only::<false>(parse_options, None)
+                        (*jsc_vm).transpiler.parse_maybe_return_file_only::<false>(
+                            arena,
+                            parse_options,
+                            None,
+                        )
                     }
                 };
 

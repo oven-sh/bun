@@ -228,7 +228,6 @@ use bun_ast::{Ast, Ref};
 // 4+ kilobyte memmoves. The other variants are already tiny.
 pub enum Result<'a> {
     AlreadyBundled(AlreadyBundled),
-    Cached,
     Ast(Box<Ast<'a>>),
 }
 

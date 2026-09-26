@@ -311,7 +311,42 @@ impl<'a> Options<'a> {
             hasher.update(b"udfcf=0");
         }
 
-        self.features.hash_for_runtime_transpiler(hasher);
+        self.features.hash_for_runtime_transpiler(hasher, self.ts);
+    }
+
+    /// Looks `source` up in `features.runtime_transpiler_cache`, which holds
+    /// the entry when this returns `true`. Reads only these options and the
+    /// source bytes, so the caller runs it before it has a lexer or an arena.
+    pub fn load_from_runtime_transpiler_cache(&self, source: &bun_ast::Source) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
+            if let Some(cache) = self.features.runtime_transpiler_cache_mut() {
+                // A `// @bun` file is `AlreadyBundled`. It is never transpiled,
+                // so it has no entry to read and none is written for it.
+                if self.features.dont_bundle_twice
+                    && Parser::has_bun_pragma(&source.contents).is_some()
+                {
+                    return false;
+                }
+
+                // `Path::is_node_module`/`is_jsx_file` live on the resolver
+                // `fs::Path` (not the logger stub) — their bodies are inlined here.
+                #[cfg(windows)]
+                const NM: &[u8] = b"\\node_modules\\";
+                #[cfg(not(windows))]
+                const NM: &[u8] = b"/node_modules/";
+                let name = source.path.name();
+                let is_node_module = strings::last_index_of(name.dir, NM).is_some();
+                let is_jsx_file = strings::has_suffix_comptime(name.filename, b".jsx")
+                    || strings::has_suffix_comptime(name.filename, b".tsx");
+                return cache.get(
+                    source,
+                    core::ptr::NonNull::from(self).cast::<()>(),
+                    self.jsx.parse && (!is_node_module || is_jsx_file),
+                );
+            }
+        }
+        false
     }
 
     // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
@@ -879,34 +914,8 @@ impl<'a> Parser<'a> {
 
         // Detect a leading "// @bun" pragma
         if p.options.features.dont_bundle_twice {
-            if let Some(pragma) = Self::has_bun_pragma(&source.contents, !hashbang.is_empty()) {
+            if let Some(pragma) = Self::has_bun_pragma(&source.contents) {
                 return Ok(crate::Result::AlreadyBundled(pragma));
-            }
-        }
-
-        // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
-        // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
-        #[cfg(not(target_arch = "wasm32"))]
-        if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
-            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                // `Path::is_node_module`/`is_jsx_file` live on the resolver
-                // `fs::Path` (not the logger stub) — their bodies are inlined here.
-                let path = &p.source.path;
-                #[cfg(windows)]
-                const NM: &[u8] = b"\\node_modules\\";
-                #[cfg(not(windows))]
-                const NM: &[u8] = b"/node_modules/";
-                let name = path.name();
-                let is_node_module = strings::last_index_of(name.dir, NM).is_some();
-                let is_jsx_file = strings::has_suffix_comptime(name.filename, b".jsx")
-                    || strings::has_suffix_comptime(name.filename, b".tsx");
-                if cache.get(
-                    p.source,
-                    core::ptr::NonNull::from(&p.options).cast::<()>(),
-                    p.options.jsx.parse && (!is_node_module || is_jsx_file),
-                ) {
-                    return Ok(crate::Result::Cached);
-                }
             }
         }
 
@@ -2537,11 +2546,9 @@ impl<'a> Parser<'a> {
         Ok(crate::Result::Ast(ast))
     }
 
-    // associated fn (was `&self` reading `self.lexer.source.contents`)
-    // because `_parse` consumes `self` by value and destructures it before this
-    // call site; the source contents are passed explicitly.
-    // called from gated `_parse` body above
-    fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
+    // Reads the source bytes alone, so that the transpiler cache lookup, which
+    // has no lexer, and `_parse` decide the same thing.
+    fn has_bun_pragma(contents: &[u8]) -> Option<crate::AlreadyBundled> {
         const BUN_PRAGMA: &[u8] = b"// @bun";
         let end = contents.len();
 
@@ -2553,7 +2560,7 @@ impl<'a> Parser<'a> {
         //   const myCode = 1;
         //   ```
         let mut cursor: usize = 0;
-        if has_hashbang {
+        if contents.starts_with(b"#!") {
             while contents[cursor] != b'\n' {
                 cursor += 1;
                 if cursor >= end {

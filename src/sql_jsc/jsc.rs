@@ -342,10 +342,12 @@ pub mod api {
                     .and_then(bun_http::SSLConfig::server_name_cstr)
             }
 
-            /// [`server_name`](Self::server_name) as bytes; empty when unset.
+            /// [`server_name`](Self::server_name) as the name a certificate carries: an IPv6 literal without its brackets. Empty when unset.
             pub(crate) fn server_name_bytes(&self) -> &[u8] {
                 match self.server_name() {
-                    Some(server_name) => server_name.to_bytes(),
+                    Some(server_name) => {
+                        bun_core::ip_address::strip_ipv6_brackets(server_name.to_bytes())
+                    }
                     None => b"",
                 }
             }
@@ -354,6 +356,14 @@ pub mod api {
             #[inline]
             pub(crate) fn reject_unauthorized(&self) -> i32 {
                 self.0.as_ref().map_or(0, |c| c.reject_unauthorized)
+            }
+
+            /// `server_name` as SNI. `None` when unset or an IP literal, bracketed or not (RFC 6066 section 3).
+            pub(crate) fn sni(&self) -> Option<&core::ffi::CStr> {
+                let name = self.server_name()?;
+                let bare = bun_core::ip_address::strip_ipv6_brackets(name.to_bytes());
+                let bracketed = bare.len() != name.to_bytes().len();
+                (!bracketed && !bun_core::ip_address::is_ip_address(bare)).then_some(name)
             }
 
             /// `SSLConfig.fromJS(vm, global, value)` — VM is accepted but

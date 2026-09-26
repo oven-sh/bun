@@ -311,7 +311,7 @@ impl MySQLConnection {
                 .expect("secure SSL_CTX must be set before upgradeToTLS")
                 .as_ptr(),
         );
-        let sni = self.tls_config.server_name();
+        let sni = self.tls_config.sni();
         // `Option<ThisPtr<T>>` is an 8-byte null-niche optional; using
         // `Option<*mut T>` here would request 16 bytes (separate discriminant)
         // and desync with the trampoline reader (uws_handlers.rs) which reads

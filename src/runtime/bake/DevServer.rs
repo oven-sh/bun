@@ -1396,13 +1396,13 @@ pub(crate) fn is_allowed_host_header(
     {
         return true;
     }
-    if let Some(crate::server::server_config::Address::Tcp {
-        hostname: Some(h), ..
-    }) = address
-    {
-        return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
+    use crate::server::server_config::Address;
+    match address {
+        Some(Address::Tcp {
+            hostname: Some(h), ..
+        }) => strings::eql_case_insensitive_ascii(host, h.as_bytes(), true),
+        Some(Address::Tcp { hostname: None, .. }) | Some(Address::Unix(_)) | None => false,
     }
-    false
 }
 
 /// `host[":" port]` / `"[" v6 "]" [":" port]` → host (brackets retained for IPv6).

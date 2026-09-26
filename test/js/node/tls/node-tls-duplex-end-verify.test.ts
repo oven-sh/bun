@@ -3,7 +3,7 @@
 import assert from "node:assert";
 import fs from "node:fs";
 import net from "node:net";
-import { Duplex } from "node:stream";
+import { Duplex, duplexPair } from "node:stream";
 import { test } from "node:test";
 import tls from "node:tls";
 
@@ -12,13 +12,37 @@ const cert = fs.readFileSync(new URL("./fixtures/agent1-cert.pem", import.meta.u
 // agent2 is signed by a CA that neither side trusts here, so it is the client certificate the server must refuse.
 const clientKey = fs.readFileSync(new URL("./fixtures/agent2-key.pem", import.meta.url));
 const clientCert = fs.readFileSync(new URL("./fixtures/agent2-cert.pem", import.meta.url));
+// The controls trust the peer: ca1 signed the server's certificate, and the client's certificate is its own issuer.
+const serverCA = fs.readFileSync(new URL("./fixtures/ca1-cert.pem", import.meta.url));
+const clientCA = clientCert;
 // Both runtimes refuse an untrusted client. Bun reports the certificate check to 'tlsClientError', Node reports how
 // the connection ended.
 const isBun = process.versions.bun !== undefined;
 
+// Resolves when this process has read what its sockets had received by the time of the call: a new connection that
+// the peer answers takes more turns of the event loop than a read that is already due.
+async function pendingReadsDone() {
+  const server = net.createServer(socket => socket.end("x"));
+  await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+  const socket = net.connect(server.address().port, "127.0.0.1");
+  await new Promise(answered => socket.once("data", answered));
+  socket.destroy();
+  server.close();
+}
+
+// Passes `flight` to `deliver` in `pieces` parts. The receiver has read each part before the next one leaves, so with
+// two pieces it reads the flight in two parts, split inside a record.
+async function inPieces(deliver, flight, pieces) {
+  const size = Math.ceil(flight.length / pieces);
+  for (let offset = 0; offset < flight.length; offset += size) {
+    if (offset > 0) await pendingReadsDone();
+    deliver(flight.subarray(offset, offset + size));
+  }
+}
+
 // A client wraps a Duplex in TLS and calls end() right after its first flight left, so the handshake is still running.
-// The server's certificate is not trusted. Returns the ordered events of the client.
-async function endMidHandshake(rejectUnauthorized) {
+// The server's certificate is not trusted, unless `trusted`. Returns the ordered events of the client.
+async function endMidHandshake(rejectUnauthorized, { pieces = 1, trusted = false } = {}) {
   const events = [];
   const { promise, resolve } = Promise.withResolvers();
   const server = tls.createServer({ key, cert }, socket => {
@@ -44,10 +68,19 @@ async function endMidHandshake(rejectUnauthorized) {
       callback();
     },
   });
-  raw.on("data", data => duplex.push(data));
-  raw.on("end", () => duplex.push(null));
-  raw.on("close", () => duplex.destroy());
-  const client = tls.connect({ socket: duplex, servername: "agent1", rejectUnauthorized });
+  let delivered = Promise.resolve();
+  raw.on("data", data => {
+    if (pieces === 1) duplex.push(data);
+    else delivered = delivered.then(() => inPieces(part => duplex.push(part), data, pieces));
+  });
+  raw.on("end", () => delivered.then(() => duplex.push(null)));
+  raw.on("close", () => delivered.then(() => duplex.destroy()));
+  const client = tls.connect({
+    socket: duplex,
+    servername: "agent1",
+    rejectUnauthorized,
+    ...(trusted && { ca: serverCA }),
+  });
   client.on("secureConnect", () => {
     events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
     // A connection that was let through must not keep this test waiting.
@@ -81,6 +114,24 @@ test("end() while the handshake runs still reports the failed check on the socke
   );
 });
 
+test("over a Duplex: the server's final flight arrives in two reads after end()", async () => {
+  const events = await endMidHandshake(false, { pieces: 2 });
+  const secureConnect = events.find(event => event.startsWith("secureConnect"));
+  assert.strictEqual(
+    secureConnect,
+    "secureConnect authorized=false authError=UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    events.join(", "),
+  );
+});
+
+for (const pieces of [1, 2]) {
+  test(`over a Duplex: end() while the handshake runs keeps a trusted certificate authorized, final flight in ${pieces} read(s)`, async () => {
+    const events = await endMidHandshake(true, { pieces, trusted: true });
+    const secureConnect = events.find(event => event.startsWith("secureConnect"));
+    assert.strictEqual(secureConnect, "secureConnect authorized=true authError=null", events.join(", "));
+  });
+}
+
 // The tests below put a TCP proxy between the two peers. The proxy acts on TLS records, not on TCP chunks, so the
 // moment of each step does not depend on how the kernel splits the byte stream.
 const CHANGE_CIPHER_SPEC = 0x14;
@@ -99,12 +150,21 @@ function eachRecord(socket, onRecord) {
 }
 
 // Starts `server` and a proxy in front of it. `wire(downstream, upstream)` connects the two sockets of each proxied
-// connection. Returns the port of the proxy and a function that closes everything.
-async function behindProxy(server, wire, proxyOptions = {}) {
+// connection. With `overDuplex` the server does not get a TCP socket: its transport is one end of a Duplex pair, and
+// `upstream` is the other end. Returns the port of the proxy and a function that closes everything.
+async function behindProxy(server, wire, proxyOptions = {}, overDuplex = false) {
   await new Promise(listening => server.listen(0, "127.0.0.1", listening));
   const proxied = [];
   const proxy = net.createServer(proxyOptions, downstream => {
-    const upstream = net.connect({ port: server.address().port, host: "127.0.0.1", ...proxyOptions });
+    let upstream;
+    if (overDuplex) {
+      const [transport, otherEnd] = duplexPair();
+      transport.on("error", () => {});
+      upstream = otherEnd;
+      server.emit("connection", transport);
+    } else {
+      upstream = net.connect({ port: server.address().port, host: "127.0.0.1", ...proxyOptions });
+    }
     proxied.push(downstream, upstream);
     upstream.on("error", () => {});
     downstream.on("error", () => {});
@@ -125,9 +185,9 @@ async function behindProxy(server, wire, proxyOptions = {}) {
 
 // The same shape on a plain TCP socket. The client calls end() when its last handshake flight left. The proxy holds
 // the server's final flight until the client's FIN arrived, so the handshake completes on a socket that is already
-// shut down. The proxy never forwards the FIN, so the server keeps writing. The server's certificate is not trusted.
-// Returns the ordered events of the client.
-async function endMidHandshakeOverTcp(maxVersion, rejectUnauthorized) {
+// shut down. The proxy never forwards the FIN, so the server keeps writing. The server's certificate is not trusted,
+// unless `trusted`. Returns the ordered events of the client.
+async function endMidHandshakeOverTcp(maxVersion, rejectUnauthorized, { pieces = 1, trusted = false } = {}) {
   const events = [];
   const { promise, resolve } = Promise.withResolvers();
   const server = tls.createServer({ key, cert, maxVersion }, socket => {
@@ -155,10 +215,10 @@ async function endMidHandshakeOverTcp(maxVersion, rejectUnauthorized) {
         }
         sawChangeCipherSpec ||= record[0] === CHANGE_CIPHER_SPEC;
       });
-      downstream.on("end", () => {
+      downstream.on("end", async () => {
+        await inPieces(part => downstream.write(part), Buffer.concat(held.splice(0)), pieces);
         clientEnded = true;
-        // One write, so the client reads the flight in one piece.
-        if (held.length > 0) downstream.write(Buffer.concat(held.splice(0)));
+        for (const chunk of held.splice(0)) downstream.write(chunk);
       });
       upstream.on("data", chunk => {
         if (ending && !clientEnded) held.push(chunk);
@@ -168,7 +228,14 @@ async function endMidHandshakeOverTcp(maxVersion, rejectUnauthorized) {
     { allowHalfOpen: true },
   );
 
-  client = tls.connect({ port, host: "127.0.0.1", servername: "agent1", rejectUnauthorized, maxVersion });
+  client = tls.connect({
+    port,
+    host: "127.0.0.1",
+    servername: "agent1",
+    rejectUnauthorized,
+    maxVersion,
+    ...(trusted && { ca: serverCA }),
+  });
   client.on("secureConnect", () => {
     events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
     setImmediate(() => client.destroy());
@@ -202,12 +269,37 @@ for (const maxVersion of ["TLSv1.2", "TLSv1.3"]) {
   });
 }
 
+// Our own FIN does not end a handshake that is still running. A flight that arrives in two reads completes it as well.
+for (const maxVersion of ["TLSv1.2", "TLSv1.3"]) {
+  test(`${maxVersion} on a TCP socket: the server's final flight arrives in two reads after end()`, async () => {
+    const events = await endMidHandshakeOverTcp(maxVersion, false, { pieces: 2 });
+    const secureConnect = events.find(event => event.startsWith("secureConnect"));
+    assert.strictEqual(
+      secureConnect,
+      "secureConnect authorized=false authError=UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      events.join(", "),
+    );
+  });
+
+  for (const pieces of [1, 2]) {
+    test(`${maxVersion} on a TCP socket: end() while the handshake runs keeps a trusted certificate authorized, final flight in ${pieces} read(s)`, async () => {
+      const events = await endMidHandshakeOverTcp(maxVersion, true, { pieces, trusted: true });
+      const secureConnect = events.find(event => event.startsWith("secureConnect"));
+      assert.strictEqual(secureConnect, "secureConnect authorized=true authError=null", events.join(", "));
+    });
+  }
+}
+
 // The server side of the same shape. A server that asks for a client certificate calls end() on its socket while the
 // handshake runs. The proxy holds the client's Certificate..Finished flight until the server's FIN arrived, so the
-// handshake completes on a socket that is already shut down. The client's certificate is not trusted.
-// With `afterHandshakeTimeout` the end() comes from the server's 'tlsClientError' listener, once the handshake
-// timeout was reported. Returns the ordered events of the server.
-async function serverEndMidHandshake(rejectUnauthorized, afterHandshakeTimeout = false) {
+// handshake completes on a socket that is already shut down. The client's certificate is not trusted, unless
+// `trusted`. With `afterHandshakeTimeout` the end() comes from the server's 'tlsClientError' listener, once the
+// handshake timeout was reported. Returns the ordered events of the server.
+async function serverEndMidHandshake(
+  rejectUnauthorized,
+  afterHandshakeTimeout = false,
+  { pieces = 1, trusted = false, overDuplex = false } = {},
+) {
   const events = [];
   const { promise, resolve } = Promise.withResolvers();
   let serverSocket;
@@ -220,6 +312,7 @@ async function serverEndMidHandshake(rejectUnauthorized, afterHandshakeTimeout =
       minVersion: "TLSv1.3",
       maxVersion: "TLSv1.3",
       ...(afterHandshakeTimeout && { handshakeTimeout: 50 }),
+      ...(trusted && { ca: clientCA }),
     },
     socket => {
       events.push(`secureConnection authorized=${socket.authorized} authError=${socket.authorizationError}`);
@@ -258,13 +351,14 @@ async function serverEndMidHandshake(rejectUnauthorized, afterHandshakeTimeout =
         if (held.length === 1 && !afterHandshakeTimeout) serverSocket.end();
       });
       upstream.on("data", chunk => downstream.write(chunk));
-      upstream.on("end", () => {
+      upstream.on("end", async () => {
+        await inPieces(part => upstream.write(part), Buffer.concat(held.splice(0)), pieces);
         serverEnded = true;
-        // One write, so the server reads the flight in one piece.
-        upstream.write(Buffer.concat(held.splice(0)));
+        for (const record of held.splice(0)) upstream.write(record);
       });
     },
     { allowHalfOpen: true },
+    overDuplex,
   );
 
   const client = tls.connect({
@@ -306,6 +400,87 @@ test("a server that end()s while the handshake runs does not accept an untrusted
     isBun ? "tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT" : "tlsClientError ECONNRESET",
   ]);
 });
+
+for (const overDuplex of [false, true]) {
+  const transport = overDuplex ? "over a Duplex" : "on a TCP socket";
+
+  test(`${transport}: a server that end()s reports the failed check of a flight that arrives in two reads`, async () => {
+    const events = await serverEndMidHandshake(false, false, { pieces: 2, overDuplex });
+    assert.strictEqual(
+      events[0],
+      "secureConnection authorized=false authError=DEPTH_ZERO_SELF_SIGNED_CERT",
+      events.join(", "),
+    );
+  });
+
+  test(`${transport}: a server that end()s does not accept an untrusted client certificate that arrives in two reads`, async () => {
+    assert.deepStrictEqual(await serverEndMidHandshake(true, false, { pieces: 2, overDuplex }), [
+      isBun ? "tlsClientError DEPTH_ZERO_SELF_SIGNED_CERT" : "tlsClientError ECONNRESET",
+    ]);
+  });
+
+  for (const pieces of [1, 2]) {
+    test(`${transport}: a server that end()s keeps a trusted client certificate authorized, flight in ${pieces} read(s)`, async () => {
+      assert.deepStrictEqual(await serverEndMidHandshake(true, false, { pieces, trusted: true, overDuplex }), [
+        "secureConnection authorized=true authError=null",
+        "data privileged-command authorized=true",
+      ]);
+    });
+  }
+}
+
+// A client can offer the session of an earlier connection. Its certificate check is not the check of a handshake that
+// the peer never answered.
+for (const maxVersion of ["TLSv1.2", "TLSv1.3"]) {
+  test(`${maxVersion}: end() before the handshake does not report the check of an offered session`, async () => {
+    const server = tls.createServer({ key, cert, maxVersion }, socket => {
+      socket.on("error", () => {});
+      socket.end("x");
+    });
+    await new Promise(listening => server.listen(0, "127.0.0.1", listening));
+    const first = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+    first.on("error", () => {});
+    let session;
+    first.on("session", ticket => (session = ticket));
+    await new Promise(connected => first.once("secureConnect", connected));
+    assert.strictEqual(first.authorizationError, "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    first.resume();
+    await new Promise(closed => first.once("close", closed));
+    // TLS 1.3 gives the session with the 'session' event only.
+    if (maxVersion === "TLSv1.2") session ??= first.getSession();
+    assert.ok(session?.length > 0, "the first connection gave no session to offer");
+    server.close();
+
+    // Accepts the connection and never answers.
+    const sawFin = Promise.withResolvers();
+    const accepted = [];
+    const silent = net.createServer({ allowHalfOpen: true }, socket => {
+      accepted.push(socket);
+      socket.on("data", () => {});
+      socket.on("error", () => {});
+      socket.on("end", sawFin.resolve);
+    });
+    await new Promise(listening => silent.listen(0, "127.0.0.1", listening));
+    const events = [];
+    const client = tls.connect({ port: silent.address().port, host: "127.0.0.1", rejectUnauthorized: false, session });
+    for (const event of ["secureConnect", "finish", "error", "close"]) {
+      client.on(event, arg => events.push(arg?.code ? `${event} ${arg.code}` : event));
+    }
+    client.on("connect", () => client.end());
+    try {
+      await Promise.all([new Promise(finished => client.once("finish", finished)), sawFin.promise]);
+      await pendingReadsDone();
+      assert.deepStrictEqual(
+        { events, authorized: client.authorized, authorizationError: client.authorizationError ?? null },
+        { events: ["finish"], authorized: false, authorizationError: null },
+      );
+    } finally {
+      client.destroy();
+      for (const socket of accepted) socket.destroy();
+      silent.close();
+    }
+  });
+}
 
 test("a server that end()s after a handshake timeout does not accept an untrusted client certificate", async () => {
   assert.deepStrictEqual(await serverEndMidHandshake(true, true), [

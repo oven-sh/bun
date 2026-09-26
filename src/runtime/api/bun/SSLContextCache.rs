@@ -117,7 +117,7 @@ impl SSLContextCache {
         // file I/O / cert parsing and on Windows the system-CA load — none of
         // which has a reason to serialize, and holding a non-reentrant SRWLock
         // across an SSL_CTX_free that *did* tombstone would self-deadlock.
-        let ctx = opts.create_ssl_context(err)?;
+        let ctx = opts.create_ssl_context_with_digest(&d, err)?;
 
         let _guard = self.mutex.lock_guard();
 

@@ -412,31 +412,6 @@ extern "C"
     }
   }
 
-  void uws_app_listen(int ssl, uws_app_t *app, int port,
-                      uws_listen_handler handler, void *user_data)
-  {
-    uws_app_listen_config_t config;
-    config.port = port;
-    config.host = nullptr;
-    config.options = 0;
-
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(port, [handler,
-                            user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-
-      uwsApp->listen(port, [handler,
-                            user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
-    }
-  }
-
   void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
                                   uint16_t port, int32_t options,
                                   uws_listen_handler handler, void *user_data)

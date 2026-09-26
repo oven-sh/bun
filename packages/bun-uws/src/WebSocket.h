@@ -73,7 +73,13 @@ public:
             return nullptr;
         }
 
-        return us_socket_close((us_socket_t *) this, 0, nullptr);
+        /* Callers rely on the close event having run on return, which code 0 does not give on TLS (CloseCode, src/uws_sys/us_socket_t.rs). */
+        us_socket_t *s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+        if (!us_socket_is_closed((us_socket_t *) this)) {
+            /* Parked behind the TLS ciphertext spill, which a peer that stopped reading never drains. */
+            s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+        }
+        return s;
     }
 
     enum SendStatus : int {

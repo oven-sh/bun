@@ -2,7 +2,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { writeFileSync } from "fs";
-import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -1592,6 +1592,92 @@ describe("a TLS socket over a Duplex transport follows that transport's teardown
   });
 });
 
+describe("a TLS socket over a Duplex transport reports that transport's error", () => {
+  // Node re-emits the transport's 'error' on its JSStreamSocket wrap, and
+  // TLSSocket._init routes the wrap's error through _emitTLSError:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+  // Without a listener on the transport, node:stream throws the error.
+
+  it.each(["client", "server", "tls.Server"])("a %s wrap listens for the transport's 'error'", side => {
+    const transport = new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+    let socket: TLSSocket | undefined;
+    try {
+      if (side === "client") {
+        socket = tls.connect({ socket: transport, rejectUnauthorized: false });
+      } else if (side === "server") {
+        socket = new TLSSocket(transport, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+      } else {
+        // The server makes the wrap, and the transport's close ends it.
+        tls.createServer(COMMON_CERT_).emit("connection", transport);
+      }
+      // Exactly one, like node's wrap: the forward to the TLS socket.
+      expect(transport.listenerCount("error")).toBe(1);
+    } finally {
+      socket?.destroy();
+      transport.destroy();
+    }
+  });
+
+  it("a transport error reaches the TLS socket and leaves the process alive", async () => {
+    // Out of process: with nothing listening on the transport the error is
+    // thrown, which takes the process down. Each line is what node v26.3.0 prints.
+    const fixture = join(import.meta.dir, "node-tls-duplex-transport-error-fixture.ts");
+    const { key, cert } = COMMON_CERT_;
+    const result = await bunRun(fixture, { KEY: key, CERT: cert });
+    expect(result).toEqual({
+      stdout: [
+        "client early: _tlsError:transport failed|error:transport failed|close:false",
+        "client late: _tlsError:transport failed|error:transport failed|close:false",
+        // A server wrap still owns its socket, so there is no 'error'.
+        "server early: _tlsError:transport failed|close:false",
+        "server late: _tlsError:transport failed|close:false",
+        // A tls.Server reports the '_tlsError' of its wrap as 'tlsClientError'.
+        "tls.Server early: tlsClientError:transport failed:TLSSocket|close:false",
+        "tls.Server late: tlsClientError:transport failed:TLSSocket|close:false",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  it("a transport error fails an https.request over the wrap", async () => {
+    // The http layer listens on the TLS socket only.
+    let started = false;
+    const transport = new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+        if (started) return;
+        started = true;
+        // The engine runs: this write is its ClientHello.
+        process.nextTick(() => transport.destroy(new Error("transport failed")));
+      },
+    });
+    const req = https.request({
+      host: "localhost",
+      path: "/",
+      createConnection: () => tls.connect({ socket: transport, rejectUnauthorized: false }),
+    });
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    req.on("error", err => events.push(`error:${err.message}`));
+    req.on("close", () => {
+      events.push(`close destroyed=${req.destroyed}`);
+      closed.resolve();
+    });
+    req.end();
+    await closed.promise;
+    expect(events).toEqual(["error:transport failed", "close destroyed=true"]);
+  });
+});
+
 it("delivers 'session' even when the data handler destroys the socket immediately", async () => {
   // The TLS1.3 NewSessionTickets ride in the same read pass as the response
   // bytes. If the parked session were only flushed after the data dispatch,
@@ -2756,6 +2842,17 @@ describe.each([
 
   it.skipIf(!exe)("end() finishes the writable side and sends the FIN", async () => {
     expect(await run("end")).toEqual({
+      log: ["connect secureConnecting=true", "finish"],
+      peerSawFin: true,
+      writableFinished: true,
+      readyState: "readOnly",
+      destroyed: false,
+    });
+  });
+
+  // A handshake that our own FIN ended is no reason to close a client that rejects unauthorized peers.
+  it.skipIf(!exe)("end() leaves a client that rejects unauthorized peers open for the peer's close", async () => {
+    expect(await run("end-strict")).toEqual({
       log: ["connect secureConnecting=true", "finish"],
       peerSawFin: true,
       writableFinished: true,

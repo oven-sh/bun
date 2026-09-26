@@ -338,6 +338,8 @@ struct us_socket_t {
   unsigned char ssl_verify_failed : 1;
   /* The owner checked the server's name inside this handshake. */
   unsigned char ssl_identity_checked : 1;
+  /* The peer sent a certificate chain in this handshake, and it was checked. */
+  unsigned char ssl_peer_chain_checked : 1;
   /* US_SNI_*: an async SNICallback has the handshake suspended. */
   unsigned char ssl_sni_pending : 2;
   /* Server-side socket adopted into TLS with its own SNICallback. */

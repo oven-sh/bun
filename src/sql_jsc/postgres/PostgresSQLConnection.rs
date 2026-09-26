@@ -446,7 +446,7 @@ impl PostgresSQLConnection {
                 .expect("secure SSL_CTX must be set before setupTLS")
                 .as_ptr(),
         );
-        let sni = self.tls_config.server_name();
+        let sni = self.tls_config.sni();
         // The ext slot is an 8-byte null-niche
         // optional pointer, `Option<ThisPtr<T>>`; using
         // `Option<*mut T>` here would request 16 bytes (separate discriminant)

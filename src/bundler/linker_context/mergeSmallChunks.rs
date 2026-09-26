@@ -259,6 +259,9 @@ fn fold(groups: &mut [Group], from: usize, into: usize) {
     };
     target.size += source.size;
     target.pure &= source.pure;
+    if target.target != source.target {
+        target.target = None;
+    }
     target.loaded.set_union(&source.loaded);
     for (t, s) in [
         (&mut target.deps, &mut source.deps),

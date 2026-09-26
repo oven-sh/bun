@@ -1,4 +1,5 @@
 #include "ErrorCode.h"
+#include "BunHostPath.h"
 #include "root.h"
 #include "headers.h"
 
@@ -94,10 +95,10 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     URL url;
     if (index != notFound) {
         StringView view = specifier;
-        url = URL::fileURLWithFileSystemPath(view.substring(0, index));
+        url = Bun::fileURLWithFileSystemPath(view.substring(0, index));
         url.setQuery(view.substring(index + 1));
     } else {
-        url = URL::fileURLWithFileSystemPath(specifier);
+        url = Bun::fileURLWithFileSystemPath(specifier);
     }
     return create(globalObject, url.string());
 }
@@ -410,7 +411,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         || specifier.startsWith(".\\"_s) || specifier.startsWith("..\\"_s) || specifier.startsWith("\\"_s)
 #endif
     ) {
-        auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
+        auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : Bun::fileURLWithFileSystemPath(fromWTFString);
         if (!fromURL.isValid()) {
             JSC::throwTypeError(globalObject, scope, "`parent` is not a valid Filepath / URL"_s);
             RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
@@ -440,7 +441,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     RETURN_IF_EXCEPTION(scope, {});
     if (isAbsolutePath(resultString)) {
         // file path -> url
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::URL::fileURLWithFileSystemPath(resultString).string())));
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, Bun::fileURLWithFileSystemPath(resultString).string())));
     }
     return JSValue::encode(result);
 }
@@ -537,7 +538,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         WTF::URL url(thisObject->url);
         auto mainKey = asString(mainPath)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
+        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(Bun::fileSystemPath(url), url.queryWithLeadingQuestionMark())));
     }
 
     if (!globalObject->scriptExecutionContext()->isMainThread())
@@ -647,12 +648,12 @@ void ImportMetaObject::finishCreation(VM& vm)
         auto scope = DECLARE_THROW_SCOPE(init.vm);
         ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
 
-        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+        WTF::URL url = isAbsolutePath(meta->url) ? Bun::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
         WTF::String path;
 
         if (url.isValid()) {
             if (url.protocolIsFile()) {
-                path = url.fileSystemPath();
+                path = Bun::fileSystemPath(url);
             } else {
                 path = url.path().toString();
             }
@@ -676,7 +677,7 @@ void ImportMetaObject::finishCreation(VM& vm)
         WTF::String dirname;
 
         if (url.protocolIsFile()) {
-            dirname = url.fileSystemPath();
+            dirname = Bun::fileSystemPath(url);
         } else {
             dirname = url.path().toString();
         }
@@ -696,7 +697,7 @@ void ImportMetaObject::finishCreation(VM& vm)
         WTF::String path;
 
         if (url.protocolIsFile()) {
-            path = url.fileSystemPath();
+            path = Bun::fileSystemPath(url);
         } else {
             path = url.path().toString();
         }
@@ -715,7 +716,7 @@ void ImportMetaObject::finishCreation(VM& vm)
 
         WTF::URL url(meta->url);
         if (url.protocolIsFile()) {
-            init.set(jsString(init.vm, url.fileSystemPath()));
+            init.set(jsString(init.vm, Bun::fileSystemPath(url)));
         } else {
             init.set(jsString(init.vm, url.path()));
         }

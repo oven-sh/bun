@@ -120,12 +120,17 @@ export function registerCodegenRules(n: Ninja, cfg: CodegenFields): void {
   // create-hash-table.ts) read these so a cross-compiled binary doesn't
   // ship with the build host's platform baked in.
   //
+  // TARGET_PLATFORM_AT_RUNTIME: the portable image runs on more than one
+  // platform, so the bundled JS modules read the platform when they run
+  // (replacements.ts). TARGET_PLATFORM stays what the native code is
+  // compiled for.
+  //
   // restat = 1 because most scripts use writeIfNotChanged(). Scripts that
   // don't (generate-jssink) always write → restat is a no-op for
   // them, no harm.
   const env = hostWin
     ? `set TARGET_PLATFORM=${platform}&& set TARGET_ARCH=${arch}&& `
-    : `TARGET_PLATFORM=${platform} TARGET_ARCH=${arch} `;
+    : `TARGET_PLATFORM=${platform} TARGET_ARCH=${arch} ${cfg.portable ? "TARGET_PLATFORM_AT_RUNTIME=1 " : ""}`;
   const codegenCommand = (runtime: string) =>
     hostWin ? `cmd /c "cd /d $cwd && ${env}${runtime} $args"` : `cd $cwd && ${env}${runtime} $args`;
   n.rule("codegen", {

@@ -1,4 +1,5 @@
 #include "BunPlugin.h"
+#include "BunHostPath.h"
 
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -651,7 +652,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         if (specifier.startsWith("file:"_s)) {
             URL fileURL = URL(url, specifier);
             if (fileURL.isValid()) {
-                specifier = fileURL.fileSystemPath();
+                specifier = Bun::fileSystemPath(fileURL);
                 specifierString = jsString(vm, specifier);
                 globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
                 return;
@@ -662,7 +663,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         }
 
         if (url.isValid() && url.protocolIsFile()) {
-            auto fromString = url.fileSystemPath();
+            auto fromString = Bun::fileSystemPath(url);
             BunString from = Bun::toString(fromString);
             // Not resolving is fine (mocking a module that does not exist yet); anything else thrown
             // while resolving (e.g. by an onResolve plugin) propagates.
@@ -683,7 +684,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                     globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
 
                     if (relativeURL.protocolIsFile())
-                        specifier = relativeURL.fileSystemPath();
+                        specifier = Bun::fileSystemPath(relativeURL);
                     else
                         specifier = relativeURL.string();
 
@@ -887,9 +888,9 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
         String joinedPath = path;
 
         if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
-            auto url = WTF::URL::fileURLWithFileSystemPath(from);
+            auto url = Bun::fileURLWithFileSystemPath(from);
             ASSERT(url.isValid());
-            joinedPath = URL(url, path).fileSystemPath();
+            joinedPath = Bun::fileSystemPath(URL(url, path));
         }
 
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;

@@ -87,6 +87,7 @@ function lazyCpus({ cpus, hostCpuCount }) {
 }
 
 // all logic based on `process.platform` and `process.arch` is inlined at bundle time
+// (the portable image reads `process.platform` when it runs: it has more than one)
 function bound(binding) {
   return {
     availableParallelism: function () {
@@ -121,11 +122,9 @@ function bound(binding) {
         ? "Windows_NT"
         : process.platform === "darwin"
           ? "Darwin"
-          : process.platform === "linux" || process.platform === "android"
-            ? "Linux"
-            : process.platform === "freebsd"
-              ? "FreeBSD"
-              : $bundleError("TODO: type");
+          : process.platform === "freebsd"
+            ? "FreeBSD"
+            : "Linux";
     },
     uptime: binding.uptime,
     userInfo: binding.userInfo,

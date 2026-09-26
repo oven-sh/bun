@@ -3,6 +3,7 @@
 
 #include "helpers.h"
 #include "JSEnvironmentVariableMap.h"
+#include "BunHostOS.h"
 
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -469,7 +470,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
     return true;
 }
 
-#if OS(WINDOWS)
+#if BUN_HOST_MAY_BE_WINDOWS
 extern "C" void Bun__Process__editWindowsEnvVar(const BunString*, const BunString*);
 
 // Windows Proxy set/defineProperty write path: DEP0104 + ToString via coerceEnvValue,
@@ -554,8 +555,8 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 // reaches the OS env too. `value == nullptr` deletes.
 static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& key, const String* value)
 {
-#if OS(WINDOWS)
-    if (!store || !store->isMainRooted())
+#if BUN_HOST_MAY_BE_WINDOWS
+    if (!Bun::hostIsWindows() || !store || !store->isMainRooted())
         return;
     BunString k = Bun::toString(key);
     BunString v = value ? Bun::toString(*value) : BunString { .tag = BunStringTag::Dead };
@@ -979,22 +980,29 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
-#if OS(WINDOWS)
-    // On Windows the windowsEnv Proxy intercepts every operation before the exotic
-    // method table, and its internal setup (Bun.inspect.custom symbol, toJSON) would hit
-    // the exotic put's symbol-key TypeError. Keep a plain object; semantics live in traps.
+    const bool isWindows = Bun::hostIsWindows();
     JSC::JSObject* object = nullptr;
-    if (count > 0 && count < 63) {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
-    } else {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype());
-    }
+#if BUN_HOST_MAY_BE_WINDOWS
+    JSArray* keyArray = nullptr;
+    if (isWindows) {
+        // On Windows the windowsEnv Proxy intercepts every operation before the exotic
+        // method table, and its internal setup (Bun.inspect.custom symbol, toJSON) would hit
+        // the exotic put's symbol-key TypeError. Keep a plain object; semantics live in traps.
+        if (count > 0 && count < 63) {
+            object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
+        } else {
+            object = constructEmptyObject(globalObject, globalObject->objectPrototype());
+        }
 
-    JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
-    RETURN_IF_EXCEPTION(scope, {});
-#else
-    auto* structure = JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
-    JSC::JSObject* object = JSEnvironmentVariableMap::create(vm, structure);
+        keyArray = constructEmptyArray(globalObject, nullptr, count);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+#endif
+#if BUN_HOST_MAY_BE_POSIX
+    if (!isWindows) {
+        auto* structure = JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+        object = JSEnvironmentVariableMap::create(vm, structure);
+    }
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
@@ -1011,8 +1019,9 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         size_t len = Bun__getEnvKey(list, i, &chars);
         // We can't really trust that the OS gives us valid UTF-8
         auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
-#if OS(WINDOWS)
-        keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
+#if BUN_HOST_MAY_BE_WINDOWS
+        if (isWindows)
+            keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
 #endif
         if (name == TZ) {
             hasTZ = true;
@@ -1027,11 +1036,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             continue;
         }
         ASSERT(len > 0);
-#if OS(WINDOWS)
-        String idName = name.convertToASCIIUppercase();
-#else
-        String idName = name;
-#endif
+        String idName = isWindows ? name.convertToASCIIUppercase() : name;
         Identifier identifier = Identifier::fromString(vm, idName);
 
         // CustomGetterSetter doesn't support indexed properties yet.
@@ -1081,31 +1086,31 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         vm,
         Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
 
-#if OS(WINDOWS)
-    auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);
+#if BUN_HOST_MAY_BE_WINDOWS
+    if (isWindows) {
+        auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);
 
-    JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSC::MarkedArgumentBuffer args;
-    args.append(object);
-    args.append(keyArray);
-    args.append(editWindowsEnvVar);
-    args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
-    args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
-    auto clientData = WebCore::clientData(vm);
-    JSC::CallData callData = JSC::getCallData(getSourceEvent);
-    NakedPtr<JSC::Exception> returnedException = nullptr;
-    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
-    RETURN_IF_EXCEPTION(scope, {});
+        JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSC::MarkedArgumentBuffer args;
+        args.append(object);
+        args.append(keyArray);
+        args.append(editWindowsEnvVar);
+        args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
+        args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
+        JSC::CallData callData = JSC::getCallData(getSourceEvent);
+        NakedPtr<JSC::Exception> returnedException = nullptr;
+        auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
+        RETURN_IF_EXCEPTION(scope, {});
 
-    if (returnedException) {
-        throwException(globalObject, scope, returnedException.get());
-        return jsUndefined();
+        if (returnedException) {
+            throwException(globalObject, scope, returnedException.get());
+            return jsUndefined();
+        }
+
+        RELEASE_AND_RETURN(scope, result);
     }
-
-    RELEASE_AND_RETURN(scope, result);
-#else
-    return object;
 #endif
+    return object;
 }
 }

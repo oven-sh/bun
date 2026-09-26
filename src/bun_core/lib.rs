@@ -40,6 +40,8 @@ pub mod heap;
 
 pub mod debug;
 pub mod env;
+pub mod host;
+pub use bun_alloc::host_fn;
 #[cfg(windows)]
 pub mod windows_sys;
 pub mod wtf;
@@ -249,7 +251,7 @@ pub mod feature_flags;
 /// these as the canonical `is_sep_*` set.
 pub mod path_sep {
     use crate::strings_impl::PathByte;
-    pub use bun_alloc::{SEP, SEP_STR};
+    pub use bun_alloc::{SEP, SEP_STR, sep, sep_str};
 
     // ─── u8 const fns (kept const for match-guard / const-eval callers) ─────
 
@@ -264,9 +266,17 @@ pub mod path_sep {
     /// Host-OS-native separator predicate: accepts `\` only when *compiled*
     /// for Windows. Use when matching against real on-disk paths (glob, joins,
     /// `which`, dirname).
+    #[cfg(not(bun_portable))]
     #[inline(always)]
     pub const fn is_sep_native(c: u8) -> bool {
         c == b'/' || (cfg!(windows) && c == b'\\')
+    }
+
+    /// The portable image: accepts `\` where the host is Windows.
+    #[cfg(bun_portable)]
+    #[inline(always)]
+    pub fn is_sep_native(c: u8) -> bool {
+        c == b'/' || (c == b'\\' && crate::host::is_windows())
     }
 
     // ─── PathByte-generic forms (u8 / u16) ──────────────────────────────────
@@ -283,7 +293,7 @@ pub mod path_sep {
 
     #[inline(always)]
     pub fn is_sep_native_t<T: PathByte>(c: T) -> bool {
-        if cfg!(windows) {
+        if crate::host::is_windows() {
             is_sep_any_t(c)
         } else {
             is_sep_posix_t(c)
@@ -297,6 +307,7 @@ pub mod path_sep {
     ///
     /// Sunk from `bun_paths::is_absolute` so tier-0 (`util::which`) and
     /// tier-2+ share a single impl.
+    #[cfg(not(bun_portable))]
     #[inline]
     pub const fn is_absolute_native(p: &[u8]) -> bool {
         #[cfg(not(windows))]
@@ -313,6 +324,19 @@ pub mod path_sep {
             }
             p.len() >= 3 && p[1] == b':' && is_sep_any(p[2])
         }
+    }
+
+    /// The portable image: the rule of the host.
+    #[cfg(bun_portable)]
+    #[inline]
+    pub fn is_absolute_native(p: &[u8]) -> bool {
+        if p.is_empty() {
+            return false;
+        }
+        if !crate::host::is_windows() {
+            return p[0] == b'/';
+        }
+        is_sep_any(p[0]) || (p.len() >= 3 && p[1] == b':' && is_sep_any(p[2]))
     }
 }
 
@@ -2287,7 +2311,7 @@ pub(crate) mod strings_impl {
     /// elsewhere.
     #[inline]
     pub fn basename(path: &[u8]) -> &[u8] {
-        if cfg!(windows) {
+        if crate::host::is_windows() {
             basename_windows(path)
         } else {
             basename_posix(path)
@@ -2299,7 +2323,7 @@ pub(crate) mod strings_impl {
     #[inline(always)]
     pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
         if slice.len() >= 2 {
-            if &slice[..2] == b"./" || (cfg!(windows) && &slice[..2] == b".\\") {
+            if &slice[..2] == b"./" || (crate::host::is_windows() && &slice[..2] == b".\\") {
                 return &slice[2..];
             }
         }

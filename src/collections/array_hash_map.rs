@@ -147,6 +147,33 @@ impl ArrayHashContext<[u8]> for CaseInsensitiveAsciiStringContext {
     }
 }
 
+/// The names of environment variables in the portable image: [`CaseInsensitiveAsciiStringContext`] where the
+/// host is Windows, [`StringContext`] on every other host. A process has one host, so a key hashes the same
+/// for as long as a map lives.
+#[cfg(bun_portable)]
+#[derive(Default, Clone, Copy)]
+pub struct HostEnvNameContext;
+
+#[cfg(bun_portable)]
+impl ArrayHashContext<[u8]> for HostEnvNameContext {
+    #[inline]
+    fn hash(&self, key: &[u8]) -> u32 {
+        if bun_core::host::is_windows() {
+            CaseInsensitiveAsciiStringContext::hash_bytes(key)
+        } else {
+            hash_string(key)
+        }
+    }
+    #[inline]
+    fn eql(&self, a: &[u8], b: &[u8], _b_index: usize) -> bool {
+        if bun_core::host::is_windows() {
+            bun_core::strings::eql_case_insensitive_ascii_check_length(a, b)
+        } else {
+            a == b
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // GetOrPutResult / Entry / Iterator
 // ──────────────────────────────────────────────────────────────────────────

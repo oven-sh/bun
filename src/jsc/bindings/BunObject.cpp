@@ -1,4 +1,5 @@
 #include "root.h"
+#include "BunHostPath.h"
 
 #include "JavaScriptCore/HeapProfiler.h"
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
@@ -758,7 +759,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
         RETURN_IF_EXCEPTION(throwScope, {});
         pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
 
-        auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
+        auto fileURL = Bun::fileURLWithFileSystemPath(pathString);
         auto object = WebCore::DOMURL::create(fileURL.string(), String());
         jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTF::move(object));
     }
@@ -867,44 +868,41 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
         return {};
     }
 
-// NOTE: On Windows, WTF::URL::fileSystemPath will handle UNC paths
-// (`file:\\server\share\etc` -> `\\server\share\etc`), so hostname check only
-// needs to happen on posix systems
-#if !OS(WINDOWS)
+    const bool isWindows = Bun::hostIsWindows();
+
+    // NOTE: On Windows, WTF::URL::fileSystemPath will handle UNC paths
+    // (`file:\\server\share\etc` -> `\\server\share\etc`), so hostname check only
+    // needs to happen on posix systems
+#if BUN_HOST_MAY_BE_POSIX
     // file://host/path is illegal if `host` is not `localhost`.
     // Should be `file:///` instead
-    if (url.host().length() > 0 && url.host() != "localhost"_s) [[unlikely]] {
-
-#if OS(DARWIN)
-        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "darwin"_s);
+    if (!isWindows && url.host().length() > 0 && url.host() != "localhost"_s) [[unlikely]] {
+        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, Bun::hostIsMac() ? "darwin"_s : "linux"_s);
         return {};
-#else
-        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "linux"_s);
-        return {};
-#endif
     }
 #endif
 
     // ban url-encoded slashes. '/' on posix, '/' and '\' on windows.
     const StringView p = url.path();
     if (p.contains('%')) {
-#if OS(WINDOWS)
-        if (p.contains("%2f"_s) || p.contains("%5c"_s) || p.contains("%2F"_s) || p.contains("%5C"_s)) {
+#if BUN_HOST_MAY_BE_WINDOWS
+        if (isWindows && (p.contains("%2f"_s) || p.contains("%5c"_s) || p.contains("%2F"_s) || p.contains("%5C"_s))) {
             Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded \\ or / characters"_s);
             return {};
         }
-#else
-        if (p.contains("%2f"_s) || p.contains("%2F"_s)) {
+#endif
+#if BUN_HOST_MAY_BE_POSIX
+        if (!isWindows && (p.contains("%2f"_s) || p.contains("%2F"_s))) {
             Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must not include encoded / characters"_s);
             return {};
         }
 #endif
     }
 
-    auto fileSystemPath = url.fileSystemPath();
+    auto fileSystemPath = Bun::fileSystemPath(url);
 
-#if OS(WINDOWS)
-    if (!isAbsolutePath(fileSystemPath)) {
+#if BUN_HOST_MAY_BE_WINDOWS
+    if (isWindows && !isAbsolutePath(fileSystemPath)) {
         Bun::ERR::INVALID_FILE_URL_PATH(scope, globalObject, "must be an absolute path"_s);
         return {};
     }

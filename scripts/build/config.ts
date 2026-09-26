@@ -957,6 +957,7 @@ export type CodegenFields = Pick<
   | "host"
   | "os"
   | "abi"
+  | "portable"
   | "x64"
   | "debug"
   | "cwd"
@@ -982,7 +983,7 @@ export function resolveCodegenConfig(partial: PartialConfig, toolchain: JsToolch
   const host = detectHost();
   const os = partial.os ?? host.os;
   const arch = partial.arch ?? host.arch;
-  const { portable, linux, darwin, windows, freebsd, darwinCross, buildType, release, ci, buildkite, asan, ...base } =
+  const { linux, darwin, windows, freebsd, darwinCross, buildType, release, ci, buildkite, asan, ...base } =
     resolveBase(partial, host, os, arch, toolchain);
   return { ...base, mode: "codegen", host, os, x64: arch === "x64" };
 }

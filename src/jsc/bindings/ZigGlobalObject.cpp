@@ -1,6 +1,8 @@
 #include "root.h"
+#include "BunHostPath.h"
 
 #include "ZigGlobalObject.h"
+#include "BunHostOS.h"
 #include "BunModuleRegistry.h"
 #include "BuiltinModuleKeys.h"
 #include "IsolatedModuleCache.h"
@@ -1816,23 +1818,23 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetUserAgent, (JSC::JSGlobalObject * g
 JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetPlatform, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     auto& vm = JSC::getVM(globalObject);
-// https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform
-// https://github.com/oven-sh/bun/issues/4588
-#if OS(DARWIN)
-    return JSValue::encode(JSC::jsString(vm, String("MacIntel"_s)));
-#elif OS(WINDOWS)
-    return JSValue::encode(JSC::jsString(vm, String("Win32"_s)));
-#elif OS(LINUX)
-    return JSValue::encode(JSC::jsString(vm, String("Linux x86_64"_s)));
-#elif OS(FREEBSD)
+    // https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform
+    // https://github.com/oven-sh/bun/issues/4588
+    switch (Bun::hostOS()) {
+    case Bun::HostOS::Mac:
+        return JSValue::encode(JSC::jsString(vm, String("MacIntel"_s)));
+    case Bun::HostOS::Windows:
+        return JSValue::encode(JSC::jsString(vm, String("Win32"_s)));
+    case Bun::HostOS::Linux:
+        return JSValue::encode(JSC::jsString(vm, String("Linux x86_64"_s)));
+    case Bun::HostOS::FreeBSD:
 #if CPU(ARM64)
-    return JSValue::encode(JSC::jsString(vm, String("FreeBSD arm64"_s)));
+        return JSValue::encode(JSC::jsString(vm, String("FreeBSD arm64"_s)));
 #else
-    return JSValue::encode(JSC::jsString(vm, String("FreeBSD amd64"_s)));
+        return JSValue::encode(JSC::jsString(vm, String("FreeBSD amd64"_s)));
 #endif
-#else
+    }
     return JSValue::encode(JSC::jsEmptyString(vm));
-#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobalObject*, JSC::CallFrame*))
@@ -2964,6 +2966,10 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     staticGlobals.append(GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     staticGlobals.append(GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0));
+#if defined(BUN_PORTABLE)
+    // What `process.platform` in a built-in module reads (src/codegen/replacements.ts).
+    staticGlobals.append(GlobalPropertyInfo(builtinNames.hostPlatformPrivateName(), JSC::jsString(vm, makeAtomString(Bun::hostPlatformName())), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0));
+#endif
     addStaticGlobals(staticGlobals.mutableSpan());
 
     // TODO: most/all of these private properties can be made as static globals.
@@ -3525,7 +3531,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                keyString = url.fileSystemPath();
+                keyString = Bun::fileSystemPath(url);
             } else {
                 keyString = moduleName;
             }
@@ -3660,7 +3666,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (sourceURL.isEmpty()) {
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
-        sourceOriginStringHolder = sourceURL.fileSystemPath();
+        sourceOriginStringHolder = Bun::fileSystemPath(sourceURL);
         auto query = sourceURL.queryWithLeadingQuestionMark();
         auto referrerKey = query.isEmpty()
             ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)
@@ -3689,7 +3695,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         if (moduleName.startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                moduleName = url.fileSystemPath();
+                moduleName = Bun::fileSystemPath(url);
             }
         }
 

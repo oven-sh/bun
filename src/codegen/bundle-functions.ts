@@ -419,6 +419,8 @@ export async function bundleBuiltinFunctions({ requireTransformer, typesDir }: B
   const combinedSourceCodeLength = combinedSourceCode.length;
 
   let additionalPrivateNames = new Set();
+  // The global that `process.platform` in a built-in becomes (replacements.ts platformDefine).
+  if (process.env.TARGET_PLATFORM_AT_RUNTIME) additionalPrivateNames.add("hostPlatform");
 
   function privateName(name) {
     additionalPrivateNames.add(name);

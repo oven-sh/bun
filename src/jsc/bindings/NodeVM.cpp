@@ -1,4 +1,5 @@
 #include "root.h"
+#include "BunHostPath.h"
 
 #include "JavaScriptCore/PropertySlot.h"
 #include "JavaScriptCore/ExecutableInfo.h"
@@ -663,7 +664,7 @@ const WTF::URL& sourceOriginURL(JSC::VM& vm, const String& filename)
 {
     auto& cache = WebCore::clientData(vm)->nodeVMSourceOriginCache();
     if (cache.url.isNull() || cache.filename != filename) {
-        cache.url = WTF::URL::fileURLWithFileSystemPath(filename);
+        cache.url = Bun::fileURLWithFileSystemPath(filename);
         // A copy: `filename` can be a slice of a large string, and that StringImpl keeps the whole string alive.
         cache.filename = filename.isolatedCopy();
     }

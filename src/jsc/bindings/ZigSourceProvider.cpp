@@ -1,4 +1,5 @@
 #include "root.h"
+#include "BunHostPath.h"
 
 #include "helpers.h"
 
@@ -38,7 +39,7 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
             return SourceOrigin(WTF::URL(makeString("builtin://"_s, sourceURL)));
         }
     }
-    return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
+    return SourceOrigin(Bun::fileURLWithFileSystemPath(sourceURL));
 }
 
 extern "C" int ByteRangeMapping__getSourceID(void* mappings);
@@ -89,7 +90,7 @@ Ref<SourceProvider> SourceProvider::create(
     const auto getSourceOrigin = [&]() -> SourceOrigin {
         auto originPath = resolvedSource.origin_path.transferToWTFString();
         if (!originPath.isEmpty())
-            return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(originPath));
+            return SourceOrigin(Bun::fileURLWithFileSystemPath(originPath));
         return toSourceOrigin(sourceURLString, isBuiltin);
     };
 

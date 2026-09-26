@@ -1280,10 +1280,14 @@ pub struct HashTableValue {
 // An issue with this exact implementation is unicode characters can technically appear in these
 // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
 // some strings collide.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(bun_portable)))]
 pub type HashTable = bun_collections::StringArrayHashMap<HashTableValue>;
 #[cfg(windows)]
 pub type HashTable = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<HashTableValue>;
+/// The portable image runs on Windows too: there the names are compared as Windows compares them.
+#[cfg(bun_portable)]
+pub type HashTable =
+    bun_collections::StringArrayHashMap<HashTableValue, bun_collections::HostEnvNameContext>;
 
 pub struct Map {
     pub map: HashTable,

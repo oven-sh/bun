@@ -1346,10 +1346,12 @@ pub mod waiter_thread_posix {
                     let mut current_mask: libc::sigset_t = bun_core::ffi::zeroed();
                     libc::sigemptyset(&raw mut current_mask);
                     libc::sigaddset(&raw mut current_mask, libc::SIGCHLD);
+                    // SA_RESTART: `wakeup` runs on whichever thread the kernel picks, and
+                    // without it that thread's interrupted blocking syscall fails with EINTR.
                     let act = libc::sigaction {
                         sa_sigaction: wakeup as *const () as usize,
                         sa_mask: current_mask,
-                        sa_flags: libc::SA_NOCLDSTOP,
+                        sa_flags: libc::SA_NOCLDSTOP | libc::SA_RESTART,
                         sa_restorer: None,
                     };
                     libc::sigaction(libc::SIGCHLD, &raw const act, core::ptr::null_mut());

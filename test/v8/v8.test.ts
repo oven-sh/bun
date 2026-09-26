@@ -474,6 +474,15 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("Exception::Error/TypeError create throwable Error objects", async () => {
       await checkSameOutput("test_v8_exception");
     });
+    // JSC::createError() asserts that the message is not empty, so these two only fail on a build with assertions.
+    it("Exception::Error/TypeError accept an empty message", async () => {
+      const output = await checkSameOutput("test_v8_exception_empty_message");
+      expect(output).toBe(['Error message = "" own = true', 'TypeError message = "" own = true'].join("\n"));
+    });
+    it("Isolate::ThrowError accepts an empty message", async () => {
+      const output = await checkSameOutput("test_v8_throw_error_empty_message");
+      expect(output).toBe('caught Error message = "" own = true');
+    });
   });
 
   describe("Aligned internal fields", () => {

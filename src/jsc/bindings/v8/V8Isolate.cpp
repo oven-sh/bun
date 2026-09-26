@@ -3,6 +3,7 @@
 #include "V8String.h"
 #include "shim/GlobalInternals.h"
 #include "ZigGlobalObject.h"
+#include "ErrorCode.h"
 #include "real_v8.h"
 #include "v8_compatibility_assertions.h"
 #include <JavaScriptCore/Error.h>
@@ -152,7 +153,7 @@ Local<Value> Isolate::ThrowError(Local<String> message)
     JSC::VM& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String wtfMessage = message->localToJSString()->value(m_globalObject);
-    JSC::JSObject* error = JSC::createError(m_globalObject, wtfMessage);
+    JSC::JSObject* error = Bun::createErrorAllowingEmptyMessage(m_globalObject, JSC::ErrorType::Error, wtfMessage);
     Local<Value> handle = currentHandleScope()->createLocal<Value>(vm, error);
     JSC::throwException(m_globalObject, scope, error);
     return handle;

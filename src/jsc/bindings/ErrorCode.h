@@ -89,6 +89,8 @@ JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, co
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, MessageBuilder& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);
+// `JSC::createError()` asserts that the message is not empty. A message from outside Bun (user code, an addon, SQLite) can be "".
+JSC::ErrorInstance* createErrorAllowingEmptyMessage(JSC::JSGlobalObject*, JSC::ErrorType, const WTF::String& message);
 // Throws ERR_INVALID_THIS describing `thisValue` ("…but received an instance of X"); if describing
 // the receiver itself throws (a `constructor`/`name` getter), that exception is left instead.
 void throwInvalidThisError(JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue thisValue, const ASCIILiteral typeName);

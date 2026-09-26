@@ -1321,6 +1321,37 @@ it.each([
   });
 });
 
+// Spawned: JSC::createError() asserts that the message is not empty, so a build with assertions aborted here.
+it("a trigger that raises an empty message throws a SQLiteError", async () => {
+  const src = `
+    import { Database } from "bun:sqlite";
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY)");
+    db.run("CREATE TRIGGER no_insert BEFORE INSERT ON foo BEGIN SELECT RAISE(ABORT, ''); END");
+    for (const insert of [() => db.run("INSERT INTO foo VALUES (1)"), () => db.query("INSERT INTO foo VALUES (1)").run()]) {
+      try {
+        insert();
+        console.log("did not throw");
+      } catch (e) {
+        console.log(JSON.stringify({ name: e.name, message: e.message, code: e.code }));
+      }
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const expected = '{"name":"SQLiteError","message":"","code":"SQLITE_CONSTRAINT_TRIGGER"}';
+  expect(stderr).toBe("");
+  expect(stdout.trim().split(/\r?\n/)).toEqual([expected, expected]);
+  expect(exitCode).toBe(0);
+});
+
 it("empty blob", () => {
   const db = new Database(":memory:");
   db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, blob BLOB)");

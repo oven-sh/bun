@@ -3,15 +3,19 @@
 // the loser of a Promise.race timeout) still receives a connection once one
 // frees up; nobody releases it, so the pool permanently shrinks and
 // sql.end() never resolves (issue #39451).
+//
+// Every test owns its pool, so the tests run concurrently. Most pools have
+// max: 1, which is what makes "the connection is busy" observable.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 
-describeWithContainer("postgres", { image: "postgres_plain" }, container => {
+describeWithContainer("postgres", { image: "postgres_plain", concurrent: true }, container => {
   const connect = (max = 1) =>
     new SQL(`postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`, { max });
   // pg_advisory_lock key; no other test takes it
   const LOCK_KEY = 39454;
+  const closed = { name: "PostgresError", code: "ERR_POSTGRES_CONNECTION_CLOSED", message: "Connection closed" };
 
   test("aborting a queued reserve() keeps the pool intact and lets end() resolve", async () => {
     await container.ready;
@@ -30,8 +34,9 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 
     // the aborted reservation must not have consumed the pool's only
     // connection: a query and a fresh reserve both succeed
-    expect((await sql`select 1 as x`)[0].x).toBe(1);
+    expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
     const again = await sql.reserve();
+    expect(await again`select 2 as x`).toEqual([{ x: 2 }]);
     again.release();
 
     // hangs forever if the aborted reserve still holds a connection
@@ -45,8 +50,12 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 
     const controller = new AbortController();
     const reason = new Error("gave up waiting");
+    const events: string[] = [];
     // registered before reserve(), so it runs first on dispatch
-    controller.signal.addEventListener("abort", e => e.stopImmediatePropagation());
+    controller.signal.addEventListener("abort", e => {
+      events.push("user listener");
+      e.stopImmediatePropagation();
+    });
     const pending = sql.reserve({ signal: controller.signal });
     controller.abort(reason);
     try {
@@ -54,6 +63,9 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     } finally {
       reserved.release();
     }
+    expect(events).toEqual(["user listener"]);
+
+    expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
     await sql.end();
   });
 
@@ -69,6 +81,8 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     controller.abort(reason);
     await expect(pending).rejects.toBe(reason);
     await ended;
+
+    await expect(sql.reserve()).rejects.toMatchObject(closed);
   });
 
   test("abort while the pool is still establishing its first connection", async () => {
@@ -81,7 +95,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     controller.abort(reason);
     await expect(pending).rejects.toBe(reason);
 
-    expect((await sql`select 2 as x`)[0].x).toBe(2);
+    expect(await sql`select 2 as x`).toEqual([{ x: 2 }]);
     await sql.end();
   });
 
@@ -92,7 +106,9 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     const reason = new Error("already aborted");
     await expect(sql.reserve({ signal: AbortSignal.abort(reason) })).rejects.toBe(reason);
 
+    // max is 1: this reserve() hangs if the rejected one took the connection
     const reserved = await sql.reserve();
+    expect(await reserved`select 1 as x`).toEqual([{ x: 1 }]);
     reserved.release();
     await sql.end();
   });
@@ -106,10 +122,12 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     controller.abort();
 
     try {
-      expect((await reserved`select 3 as x`)[0].x).toBe(3);
+      expect(await reserved`select 3 as x`).toEqual([{ x: 3 }]);
     } finally {
       reserved.release();
     }
+    // release() put the connection back, so a pool query gets it
+    expect(await sql`select 4 as x`).toEqual([{ x: 4 }]);
     await sql.end();
   });
 
@@ -118,8 +136,13 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     await using sql = connect();
 
     await expect(sql.reserve({ signal: 123 as unknown as AbortSignal })).rejects.toMatchObject({
+      name: "TypeError",
       code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "options.signal" property must be of type AbortSignal. Received type number (123)',
     });
+
+    // the rejected call did not take the pool's only connection
+    expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
     await sql.end();
   });
 
@@ -142,7 +165,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       // execute() binds a query to the pool's only connection synchronously.
       // Nothing yields before the `await` below, so the connection is busy
       // during the whole reserve / abort / query / reserve sequence.
-      const inflight = sql`select 1`.execute();
+      const inflight = sql`select 1 as x`.execute();
 
       const controller = new AbortController();
       const reason = new Error("gave up waiting");
@@ -150,8 +173,9 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       controller.abort(reason);
 
       const order: string[] = [];
-      const queryDone = sql`select 2 as x`.execute().then(() => {
+      const queryDone = sql`select 2 as x`.execute().then(rows => {
         order.push("query");
+        return rows;
       });
       const secondReserve = sql.reserve();
       await expect(aborted).rejects.toBe(reason);
@@ -160,8 +184,8 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       order.push("reserve");
       reserved.release();
 
-      await queryDone;
-      await inflight;
+      expect(await queryDone).toEqual([{ x: 2 }]);
+      expect(await inflight).toEqual([{ x: 1 }]);
       expect(order).toEqual(["query", "reserve"]);
       await sql.end();
     });
@@ -185,22 +209,24 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       // Each connection gets one query. reserve() holds the first busy
       // connection it sees, which is the one the blocked query went to.
       const blocked = sql`select pg_advisory_lock(${LOCK_KEY}::bigint)`.execute();
-      const quick = sql`select 1`.execute();
+      const quick = sql`select 1 as x`.execute();
       const firstReserve = sql.reserve();
 
       // only the quick connection can go idle, so it serves the reservation
       const reserved = await firstReserve;
-      await quick;
+      expect(await quick).toEqual([{ x: 1 }]);
 
       // No reservation is pending, so this query belongs on the blocked
       // connection at once, ahead of the reserve() issued right after it.
       const order: string[] = [];
-      const queryDone = sql`select 2 as x`.execute().then(() => {
+      const queryDone = sql`select 2 as x`.execute().then(rows => {
         order.push("query");
+        return rows;
       });
       const secondReserve = sql.reserve();
 
-      await locker`select pg_advisory_unlock(${LOCK_KEY}::bigint)`;
+      // true: the locker session held the lock until now
+      expect(await locker`select pg_advisory_unlock(${LOCK_KEY}::bigint) as unlocked`).toEqual([{ unlocked: true }]);
       await blocked;
 
       const reservedAgain = await secondReserve;
@@ -208,7 +234,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       reservedAgain.release();
       reserved.release();
 
-      await queryDone;
+      expect(await queryDone).toEqual([{ x: 2 }]);
       expect(order).toEqual(["query", "reserve"]);
       // closing the pool ends the session that now holds the lock
       await sql.end();

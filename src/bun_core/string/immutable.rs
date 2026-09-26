@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
-use bun_alloc::{AllocError, ArenaVec, ArenaVecExt, MimallocArena};
+use bun_alloc::{AllocError, MimallocArena};
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
@@ -1374,15 +1374,20 @@ pub fn replace_invalid_utf8<'a>(
             out_len += REPLACEMENT.len();
         }
     }
-    let mut out = ArenaVec::<u8>::with_capacity_in(out_len, arena);
+    // Not `ArenaVec<u8>`: an instance of its shared generics in this crate replaces the one `bun_ast` inlines.
+    let out = arena.alloc_slice_fill_copy(out_len, 0u8);
+    let mut at = 0;
     for chunk in bytes.utf8_chunks() {
-        out.extend_from_slice(chunk.valid().as_bytes());
+        let valid = chunk.valid().as_bytes();
+        out[at..at + valid.len()].copy_from_slice(valid);
+        at += valid.len();
         if !chunk.invalid().is_empty() {
-            out.extend_from_slice(REPLACEMENT);
+            out[at..at + REPLACEMENT.len()].copy_from_slice(REPLACEMENT);
+            at += REPLACEMENT.len();
         }
     }
-    debug_assert_eq!(out.len(), out_len);
-    (out.into_bump_slice(), first_invalid)
+    debug_assert_eq!(at, out_len);
+    (out, first_invalid)
 }
 
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;

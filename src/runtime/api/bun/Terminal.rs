@@ -1855,18 +1855,9 @@ impl Terminal {
         self.deref_();
     }
 
-    /// Finish both ends of the PTY once the reader is done, so `exit` is the
-    /// last callback. A pty master reports neither side's hangup the way a
-    /// pipe does: Linux answers a write with EAGAIN instead of EPIPE, and a
-    /// read with EIO instead of EOF. Left alone, the writer waits for a drain
-    /// that cannot come and the reader delivers echo after `exit`.
+    /// Ends the writer once the reader is done, so `exit` is the last callback: Linux answers a write to a hung-up pty master with EAGAIN, not EPIPE, and the writer would wait for a drain that cannot come.
     #[cfg(unix)]
     fn finish_io_after_eof(&self) {
-        // EOF closes the reader itself, a read error does not.
-        if !self.reader.get().is_done() {
-            self.reader.with_mut(|r| r.close());
-            self.read_fd.set(Fd::INVALID);
-        }
         // `end()` dispatches `on_writer_close`, which sets `WRITER_DONE`.
         if !self.flags.get().contains(Flags::WRITER_DONE) {
             self.writer.with_mut(|w| w.end());

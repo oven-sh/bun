@@ -473,12 +473,26 @@ impl PosixBufferedReader {
         vtable.on_reader_done();
     }
 
+    /// Ends the reader before the parent hears of the error, as EOF does: the writer on the other end gets EPIPE instead of blocking on a pipe nobody reads. With `CLOSE_HANDLE` off the parent owns the fd and releases it.
+    #[cold]
+    #[inline(never)]
+    fn release_on_error(&mut self) {
+        if !self.flags.contains(PosixFlags::CLOSE_HANDLE) || self.is_done() {
+            return;
+        }
+        self.handle.close(None, None::<fn(*mut c_void)>);
+        self.flags.insert(PosixFlags::IS_DONE);
+    }
+
     /// # Safety
     /// `this` is live; `on_reader_error` may free the parent embedding
     /// `*this`, so it runs with no borrow of `*this` live.
     pub unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        // SAFETY: caller contract; the (Copy) vtable is copied out first.
-        let vtable = unsafe { (*this).vtable };
+        // SAFETY: caller contract; the borrow ends at `;` and the (Copy) vtable is copied out before the dispatch.
+        let vtable = unsafe {
+            (*this).release_on_error();
+            (*this).vtable
+        };
         vtable.on_reader_error(err);
     }
 
@@ -496,10 +510,8 @@ impl PosixBufferedReader {
         match unsafe { (*this).try_register_poll() } {
             Ok(()) => true,
             Err(err) => {
-                // SAFETY: caller contract; (Copy) vtable copied out, no borrow
-                // of `*this` spans the (maybe-freeing) callback.
-                let vtable = unsafe { (*this).vtable };
-                vtable.on_reader_error(err);
+                // SAFETY: caller contract.
+                unsafe { Self::on_error(this, err) };
                 false
             }
         }

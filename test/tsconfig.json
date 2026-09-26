@@ -8,6 +8,7 @@
     "paths": {
       "harness": ["./harness.ts"],
       "mkfifo": ["./mkfifo.ts"],
+      "socketpair": ["./socketpair.ts"],
       "node-harness": ["./js/node/harness.ts"],
       "deno:harness": ["./js/deno/harness.ts"],
       "bun:internal-for-testing": ["../src/js/internal-for-testing.ts"],

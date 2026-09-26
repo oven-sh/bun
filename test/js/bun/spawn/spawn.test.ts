@@ -10,15 +10,19 @@ import {
   isBroken,
   isDebug,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
+  libcPathForDlopen,
   shellExe,
   tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
+import { unixSockets } from "socketpair";
 
 let tmp: string;
 
@@ -932,6 +936,49 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
       setImmediate(() => child.stdin.write("s"));
     `);
     expect(stdout).toBe("resume\nend " + (16 * 65536 + 3) + "\n");
+  });
+});
+
+// One wakeup of the parent can report the last bytes of a child's stdout and
+// the hangup together. The consumer of that stdout must still get every byte,
+// also when more bytes are unread than one read takes (256 KiB). The child
+// queues the bytes on its stdout socket and closes it while the parent is
+// blocked in a synchronous read, so the parent polls the socket only after
+// the hangup. A host whose limit for a socket buffer is too low skips the rows.
+const skipHungUpStdout = !(isLinux || isMacOS) || unixSockets(libcPathForDlopen()).limitIsBelow(270_000);
+describe.skipIf(skipHungUpStdout)("stdout bytes that are still unread when the child hangs up", () => {
+  it.concurrent.each([
+    ["Bun.write(file, proc.stdout)", "write"],
+    ["Bun.write(file, new Response(proc.stdout))", "write-response"],
+    ["new HTMLRewriter().transform(new Response(proc.stdout))", "rewriter"],
+    // Guards: a wrong end-of-stream label does not cut these short, or not in every run.
+    ["Bun.spawn({ stdin: proc.stdout })", "stdin"],
+    ["fetch(url, { body: proc.stdout })", "fetch"],
+    ["a shell capture", "shell"],
+  ])("%s gets all of them", async (_, consumer) => {
+    const length = 270_000;
+    using dir = tempDir("spawn-stdout-unread-at-hangup", {});
+    const fifo = join(String(dir), "hung-up.fifo");
+    mkfifo(fifo);
+
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "spawn-stdout-unread-at-hangup-fixture.ts"),
+        consumer,
+        fifo,
+        join(String(dir), "out.bin"),
+        String(length),
+      ],
+      env: { ...bunEnv, LIBC_PATH: libcPathForDlopen() },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ queued: length, received: length, intact: true });
+    expect(exitCode).toBe(0);
   });
 });
 

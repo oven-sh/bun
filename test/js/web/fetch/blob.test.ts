@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
@@ -824,4 +825,59 @@ test.each([
 ])("new Blob([], { type: %j }).slice().type", (type, expected) => {
   const blob = new Blob(["abc"], { type });
   expect(blob.slice(0, 1).type).toBe(expected);
+});
+
+// A slice shares the parent's bytes. It must not report them to the GC as a
+// new allocation, or each slice of a large Blob triggers a collection.
+// extraMemorySize is summed during marking, so a full GC precedes each sample.
+test("Blob.slice() does not report the shared bytes as extra memory", () => {
+  const size = 1 << 20;
+  const blob = new Blob([new Uint8Array(size)]);
+  Bun.gc(true);
+  const before = heapStats().extraMemorySize;
+  const slices: Blob[] = [];
+  for (let i = 0; i < 100; i++) {
+    slices.push(blob.slice(0, size));
+  }
+  Bun.gc(true);
+  const delta = heapStats().extraMemorySize - before;
+  expect(blob.size).toBe(size);
+  expect(slices.length).toBe(100);
+  expect(delta).toBeLessThan(size);
+});
+
+describe("a Blob that shares another Blob's bytes does not report them to the GC as newly allocated", () => {
+  const PAYLOAD = 1024 * 1024;
+  const COUNT = 256;
+  const source = new Blob([new Uint8Array(PAYLOAD)]);
+  const bytes = new Uint8Array(PAYLOAD);
+  const formData = new FormData();
+  formData.append("f", source, "f.bin");
+
+  // Right after a full GC, JSC allows at least 8 MiB of reported allocation
+  // before it collects again. COUNT wrappers that report only their own struct
+  // stay far below that, so none of them is collected. COUNT wrappers that each
+  // report PAYLOAD cross it every few iterations, and only the last few survive.
+  async function blobsSurviving(make: () => unknown): Promise<number> {
+    Bun.gc(true);
+    const before = heapStats().objectTypeCounts.Blob ?? 0;
+    for (let i = 0; i < COUNT; i++) await make();
+    return (heapStats().objectTypeCounts.Blob ?? 0) - before;
+  }
+
+  test.each([
+    ["blob.slice()", () => source.slice()],
+    ["new Blob([blob])", () => new Blob([source])],
+    ["formData.get()", () => formData.get("f")],
+    ["new Response(blob).blob()", () => new Response(source).blob()],
+  ])("%s", async (_, make) => {
+    expect(await blobsSurviving(make)).toBe(COUNT);
+  });
+
+  test.each([
+    ["new Blob([bytes])", () => new Blob([bytes])],
+    ["new Response(bytes).blob()", () => new Response(bytes).blob()],
+  ])("%s owns its bytes and still reports them", async (_, make) => {
+    expect(await blobsSurviving(make)).toBeLessThan(COUNT);
+  });
 });

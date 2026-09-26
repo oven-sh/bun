@@ -1,4 +1,4 @@
-import { describe, expect, jest, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, jest, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
@@ -715,4 +715,160 @@ test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the sou
   });
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// copy_file_range() can copy part of a file and then fail with an errno that
+// selects the fallback (rust-lang/rust#91152 saw it on a network share). An
+// LD_PRELOAD shim stands in for such a mount: the first call copies one chunk
+// of at most 4096 bytes and moves the offsets like the kernel does (the
+// caller's offsets, or the fd offsets when the pointers are null), and each
+// later call fails with EXDEV. Bun issues copy_file_range through syscall(2),
+// so the shim interposes syscall().
+const cc = isLinux ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
+
+const COPY_FILE_RANGE_SHIM_C = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+static long (*real_syscall)(long, long, long, long, long, long, long);
+static int copy_file_range_calls;
+
+static long partial_copy_file_range(int in, long long *off_in, int out, long long *off_out, size_t len) {
+  char buf[4096];
+  ssize_t n;
+  if (copy_file_range_calls++ > 0) {
+    dprintf(2, "shim: copy_file_range = EXDEV\\n");
+    errno = EXDEV;
+    return -1;
+  }
+  if (len > sizeof(buf)) len = sizeof(buf);
+  n = off_in ? pread(in, buf, len, *off_in) : read(in, buf, len);
+  if (n > 0) n = off_out ? pwrite(out, buf, (size_t)n, *off_out) : write(out, buf, (size_t)n);
+  if (n > 0) {
+    if (off_in) *off_in += n;
+    if (off_out) *off_out += n;
+  }
+  dprintf(2, "shim: copy_file_range = %zd\\n", n);
+  return n;
+}
+
+long syscall(long number, ...) {
+  va_list ap;
+  long a, b, c, d, e, f;
+  va_start(ap, number);
+  a = va_arg(ap, long);
+  b = va_arg(ap, long);
+  c = va_arg(ap, long);
+  d = va_arg(ap, long);
+  e = va_arg(ap, long);
+  f = va_arg(ap, long);
+  va_end(ap);
+  if (number == SYS_copy_file_range) {
+    return partial_copy_file_range((int)a, (long long *)b, (int)c, (long long *)d, (size_t)e);
+  }
+  if (!real_syscall) {
+    real_syscall = (long (*)(long, long, long, long, long, long, long))dlsym(RTLD_NEXT, "syscall");
+  }
+  return real_syscall(number, a, b, c, d, e, f);
+}
+`;
+
+describe.skipIf(!isLinux || !cc)("node:fs copy when copy_file_range fails after a partial copy", () => {
+  let dir: ReturnType<typeof tempDir> | undefined;
+  let shimPath: string;
+
+  beforeAll(async () => {
+    const source = Buffer.alloc(10000, "0123456789").toString();
+    dir = tempDir("cp-copy-file-range-partial", {
+      "shim.c": COPY_FILE_RANGE_SHIM_C,
+      "known-size.bin": source,
+      "tree/known-size.bin": source,
+      "longer-dest.bin": Buffer.alloc(20000, "x").toString(),
+    });
+    shimPath = join(String(dir), "shim.so");
+    await using ccProc = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+    if (ccExit !== 0) {
+      throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+    }
+  });
+
+  afterAll(() => {
+    dir?.[Symbol.dispose]();
+  });
+
+  // One child process per row, so each copy gets the shim's first call.
+  // Columns: name, code the child runs with `src` and `dest` defined, src, dest, file to compare inside a copied directory.
+  test.concurrent.each([
+    // copy_file_range is asked for the whole file.
+    ["cpSync(file)", "fs.cpSync(src, dest)", "known-size.bin", "cpSync.bin", ""],
+    ["copyFileSync(file)", "fs.copyFileSync(src, dest)", "known-size.bin", "copyFileSync.bin", ""],
+    ["promises.cp(file)", "await fs.promises.cp(src, dest)", "known-size.bin", "promises-cp.bin", ""],
+    ["promises.copyFile(file)", "await fs.promises.copyFile(src, dest)", "known-size.bin", "promises-copyFile.bin", ""],
+    // On Linux the directory walker is in JS and copies each file with copyFile.
+    [
+      "cpSync(dir, { recursive: true })",
+      "fs.cpSync(src, dest, { recursive: true })",
+      "tree",
+      "tree-copy",
+      "known-size.bin",
+    ],
+    // A procfs file reports st_size 0, so copy_file_range is called in page-size steps until EOF.
+    ["cpSync(file), source reports size 0", "fs.cpSync(src, dest)", "/proc/version", "cpSync-proc-version", ""],
+    [
+      "copyFileSync(file), source reports size 0",
+      "fs.copyFileSync(src, dest)",
+      "/proc/version",
+      "copyFileSync-proc-version",
+      "",
+    ],
+    // The destination is not truncated at open, so a count that is too large keeps old bytes.
+    ["cpSync(file) over a longer destination", "fs.cpSync(src, dest)", "known-size.bin", "longer-dest.bin", ""],
+  ])("%s", async (_name, run, srcName, destName, fileInDir) => {
+    const src = isAbsolute(srcName) ? srcName : join(String(dir), srcName);
+    const dest = join(String(dir), destName);
+    const script = `
+      const fs = require("node:fs");
+      const src = ${JSON.stringify(src)};
+      const dest = ${JSON.stringify(dest)};
+      ${run};
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath,
+        // A successful FICLONE returns before copy_file_range is tried.
+        BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const source = fs.readFileSync(join(src, fileInDir));
+    const stderrLines = stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
+    expect(stderrLines).toEqual([
+      `shim: copy_file_range = ${Math.min(source.length, 4096)}`,
+      "shim: copy_file_range = EXDEV",
+    ]);
+
+    const copy = fs.readFileSync(join(dest, fileInDir));
+    expect({ size: copy.length, equalsSource: copy.equals(source) }).toEqual({
+      size: source.length,
+      equalsSource: true,
+    });
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

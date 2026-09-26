@@ -1,12 +1,42 @@
 import type { S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
-import { describe, expect, it } from "bun:test";
+import type { TestOptions } from "bun:test";
+import { it as bunIt, describe, expect } from "bun:test";
 import child_process from "child_process";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
+
+// The R2 suite talks to a live Cloudflare endpoint which intermittently answers
+// 503 ServiceUnavailable / InternalError (the error body literally points at
+// cloudflarestatus.com). ~130 tests fire concurrently, so a brief outage reds
+// whichever few are in flight. MinIO (docker) runs the same suite without the
+// external dependency and keeps retry=0, so a real S3 regression still fails
+// there. For R2 only, let bun:test retry a failed test a few times so a
+// transient outage does not fail the lane.
+//
+// Large-transfer tests pass an explicit timeout above 30s. Those stay at
+// retry=0 because 4 x 100s would exceed the 180s per-file CI wall in
+// scripts/runner.node.mjs and SIGTERM the whole file; the 503 flake was
+// observed on the small/fast requests, and the slow-transfer timeouts are
+// covered by #35057.
+const it = bunIt;
+function itForService(service: string): typeof bunIt {
+  if (service !== "R2") return bunIt;
+  const withRetry = (opts?: number | TestOptions): number | TestOptions | undefined => {
+    if (typeof opts === "number") return opts > 30_000 ? opts : { timeout: opts, retry: 3 };
+    return { retry: 3, ...opts };
+  };
+  const wrap = (base: typeof bunIt): typeof bunIt => {
+    const w = ((label: string, fn?: any, opts?: number | TestOptions) =>
+      base(label, fn, withRetry(opts))) as typeof bunIt;
+    w.skipIf = cond => wrap(base.skipIf(cond));
+    return w;
+  };
+  return wrap(bunIt);
+}
 
 // Import docker-compose helper
 import * as dockerCompose from "../../../docker/index.ts";
@@ -59,6 +89,7 @@ describe.concurrent.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Sty
   if (!r2Credentials.endpoint) {
     return;
   }
+  const it = itForService("R2");
   const r2Url = new URL(r2Credentials.endpoint);
   // R2 do support virtual hosted style lets use it
   r2Url.hostname = `${r2Credentials.bucket}.${r2Url.hostname}`;
@@ -178,6 +209,7 @@ describe.concurrent.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Sty
 });
 for (let credentials of allCredentials) {
   describe.concurrent(`${credentials.service}`, () => {
+    const it = itForService(credentials.service);
     const s3Options: S3Options = {
       accessKeyId: credentials.accessKeyId,
       secretAccessKey: credentials.secretAccessKey,
@@ -1786,7 +1818,9 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The S3 client reads HTTP_PROXY from the environment without a target host, so NO_PROXY never
+      // exempts the localhost endpoint. Strip proxy vars so this test is independent of ambient config.
+      env: { ...bunEnv, HTTP_PROXY: undefined, http_proxy: undefined, HTTPS_PROXY: undefined, https_proxy: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });

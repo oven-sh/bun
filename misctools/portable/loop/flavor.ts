@@ -46,6 +46,8 @@ export type Done = {
   cfg: number;
   native: number;
   longs: number;
+  /** `long` in the declaration of a function that the C of the image defines: it stays 64 bits wide. */
+  longsOfTheImage: number;
   exports: string[];
   renamed: string[];
   imports: { symbol: string; library: string }[];
@@ -59,6 +61,7 @@ const newDone = (): Done => ({
   cfg: 0,
   native: 0,
   longs: 0,
+  longsOfTheImage: 0,
   exports: [],
   renamed: [],
   imports: [],
@@ -173,14 +176,64 @@ function everyNative(all: Token[], edits: Edits, rules: Rules, done: Done) {
   }
 }
 
+/** The blocks `extern ".." { .. }` of a file: the index of `extern`, the ABI as it is written, the index of `{`. */
+function externBlocks(all: Token[]) {
+  const out: { at: number; abi: string; open: number }[] = [];
+  for (let i = 0; i < all.length; i++) {
+    if (all[i].text !== "extern") continue;
+    let open = i + 1;
+    let abi = '"C"';
+    if (all[open]?.kind === "literal") {
+      abi = all[open].text;
+      open++;
+    }
+    if (all[open]?.text === "{" && all[open].partner >= 0) out.push({ at: i, abi, open });
+  }
+  return out;
+}
+
+/** Whether the host resolves the function that an item of an `extern` block of the code for Windows declares. */
+function isImported(item: ExternItem, abi: string, library: string, rules: Rules) {
+  return (
+    rules.os === "windows" &&
+    abi !== '"Rust"' &&
+    item.kind === "fn" &&
+    !item.variadic &&
+    !rules.ofImage.has(item.symbol) &&
+    !rules.ofFlavour.has(item.symbol) &&
+    isOfTheHost(item.symbol, abi, library !== "*")
+  );
+}
+
 /**
  * `long` has 32 bits on Windows and 64 in the image. In the code for Windows `c_long` and `c_ulong` are
  * the ones of Windows, `bun_windows_sys::{c_long, c_ulong}`, whatever module the source takes them from.
+ * A function that the image holds is not of Windows: its C was compiled by the compiler of the image,
+ * and its `long` is the one of the image.
  */
-function everyLong(all: Token[], edits: Edits, done: Done) {
+function everyLong(all: Token[], edits: Edits, rules: Rules, done: Done) {
   const isLong = (token: Token | undefined) =>
     token?.kind === "ident" && (token.text === "c_long" || token.text === "c_ulong");
+  const ofTheImage = new Set<number>();
+  for (const block of externBlocks(all)) {
+    const library = libraryOf(all, attributesBefore(all, headStart(all, block.at)));
+    for (const item of externItems(all, block.open)) {
+      if (item.kind !== "fn" || isImported(item, block.abi, library, rules)) continue;
+      for (let i = block.open + 1; i < all[block.open].partner; i++) {
+        if (all[i].start < item.start || all[i].end > item.end || !isLong(all[i])) continue;
+        let start = i;
+        while (all[start - 1]?.text === ":" && all[start - 2]?.text === ":") {
+          start -= 2;
+          if (all[start - 1]?.kind === "ident") start--;
+        }
+        for (let k = start; k <= i; k++) ofTheImage.add(k);
+        edits.replace(all[start].start, all[i].end, `::core::ffi::${all[i].text}`);
+        done.longsOfTheImage++;
+      }
+    }
+  }
   for (let i = 0; i < all.length; i++) {
+    if (ofTheImage.has(i)) continue;
     // use a::b::{.., c_long, ..};
     if (all[i].text === "use" && all[i].kind === "ident") {
       let end = i + 1;
@@ -398,16 +451,8 @@ function isOfTheHost(symbol: string, abi: string, namesLibrary: boolean) {
 /** `extern` blocks of the code for Windows: which function is the image's, the flavour's, the host's. */
 function everyExternBlock(all: Token[], source: string, edits: Edits, rules: Rules, done: Done) {
   const suffix = `__${rules.os}`;
-  for (let i = 0; i < all.length; i++) {
-    if (all[i].text !== "extern") continue;
-    let open = i + 1;
-    let abi = '"C"';
-    if (all[open]?.kind === "literal") {
-      abi = all[open].text;
-      open++;
-    }
-    if (all[open]?.text !== "{" || all[open].partner < 0) continue;
-    const head = headStart(all, i);
+  for (const { at, abi, open } of externBlocks(all)) {
+    const head = headStart(all, at);
     const attributes = attributesBefore(all, head);
     const attributeText = attributes.map(([from, to]) => source.slice(all[from].start, all[to].end));
     // A block that says itself what it imports.
@@ -419,7 +464,7 @@ function everyExternBlock(all: Token[], source: string, edits: Edits, rules: Rul
       // by it or not, has the name of the flavour: the same name in the flavour for POSIX is another
       // function.
       if (item.kind === "other" || rules.os !== "windows" || rules.ofImage.has(item.symbol)) continue;
-      if (abi !== '"Rust"' && item.kind === "fn" && !item.variadic && !rules.ofFlavour.has(item.symbol) && isOfTheHost(item.symbol, abi, library !== "*")) {
+      if (isImported(item, abi, library, rules)) {
         imported.push(item);
         continue;
       }
@@ -501,7 +546,7 @@ export function rewrite(source: string, rules: Rules, done: Done): string {
   };
   let text = source;
   if (rules.os === "windows") text = pass(text, (all, edits) => everyCfg(all, edits, done));
-  if (rules.os === "windows") text = pass(text, (all, edits) => everyLong(all, edits, done));
+  if (rules.os === "windows") text = pass(text, (all, edits) => everyLong(all, edits, rules, done));
   text = pass(text, (all, edits) => everyNative(all, edits, rules, done));
   text = pass(text, (all, edits) => exportsOf(all, rules.os === "windows" ? edits : undefined, `__${rules.os}`, done));
   text = pass(text, (all, edits) => everyCallback(all, edits, rules, done));

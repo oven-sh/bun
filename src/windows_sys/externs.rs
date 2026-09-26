@@ -1492,6 +1492,7 @@ pub const JobObjectExtendedLimitInformation: DWORD = 9;
 
 /// `WAITORTIMERCALLBACK` (`winnt.h`) — thread-pool callback for
 /// `RegisterWaitForSingleObject`. `TimerOrWaitFired` is `TRUE` on timeout.
+#[cfg_attr(bun_portable, bun_portable_macros::win_abi)]
 pub type WAITORTIMERCALLBACK =
     unsafe extern "system" fn(lpParameter: LPVOID, TimerOrWaitFired: BOOLEAN);
 /// `WT_EXECUTEONLYONCE` (`winnt.h`) — fire once; caller does not unregister.

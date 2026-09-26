@@ -62,7 +62,7 @@ pub const CRASH_HANDLER_SIGNALS: [c_int; 6] = [
 /// VEH handle returned by `AddVectoredExceptionHandler`, written by
 /// `bun_crash_handler::init()` on Windows. `raise_ignoring_panic_handler`
 /// removes it before re-raising so the signal goes to the OS default.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<core::ffi::c_void> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 

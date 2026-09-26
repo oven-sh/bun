@@ -35,6 +35,7 @@
 #include "ModuleGraph.h"
 #include "FormatStackTraceForJS.h"
 #include "headers.h"
+#include "BunString.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
 #include "JavaScriptCore/ScriptCallStackFactory.h"
@@ -3365,6 +3366,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
     return JSValue::encode(groups);
 }
 
+// The name comes from JS, so the message can pass `String::MaxLength`. It is then `RangeError: Out of memory`.
+static void throwUnknownCredential(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, ASCIILiteral prefix, const String& name)
+{
+    MessageBuilder message;
+    message.append(prefix, name);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+}
+
 static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
 {
     if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, "number or string"_s, value));
@@ -3372,18 +3381,19 @@ static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
 
     auto str = value.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto utf8 = str.utf8();
-    auto name = utf8.data();
     struct passwd pwd;
     struct passwd* pp = nullptr;
     char buf[8192];
 
-    if (getpwnam_r(name, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
-        return jsNumber(pp->pw_uid);
+    // An entry fits in `buf`, name included, and its name has no NUL, so no other name can match. nss-systemd aborts the process on a name of 4 MiB.
+    if (str.length() < sizeof(buf) && !str.contains(static_cast<char16_t>(0))) {
+        auto utf8 = str.utf8();
+        if (getpwnam_r(utf8.data(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+            return jsNumber(pp->pw_uid);
+        }
     }
 
-    auto message = makeString("User identifier does not exist: "_s, str);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+    throwUnknownCredential(throwScope, globalObject, "User identifier does not exist: "_s, str);
     return {};
 }
 
@@ -3394,18 +3404,19 @@ static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
 
     auto str = value.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto utf8 = str.utf8();
-    auto name = utf8.data();
     struct group pwd;
     struct group* pp = nullptr;
     char buf[8192];
 
-    if (getgrnam_r(name, &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
-        return jsNumber(pp->gr_gid);
+    // A name that cannot be in an entry cannot match: see maybe_uid_by_name.
+    if (str.length() < sizeof(buf) && !str.contains(static_cast<char16_t>(0))) {
+        auto utf8 = str.utf8();
+        if (getgrnam_r(utf8.data(), &pwd, buf, sizeof(buf), &pp) == 0 && pp != nullptr) {
+            return jsNumber(pp->gr_gid);
+        }
     }
 
-    auto message = makeString("Group identifier does not exist: "_s, str);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+    throwUnknownCredential(throwScope, globalObject, "Group identifier does not exist: "_s, str);
     return {};
 }
 
@@ -3581,7 +3592,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     if (user.isString()) {
         auto str = user.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        userNameUTF8 = str.utf8();
+        // initgroups(3) would stop at a NUL and act on the user that the prefix names.
+        if (str.contains(static_cast<char16_t>(0))) [[unlikely]] {
+            throwUnknownCredential(scope, globalObject, "User identifier does not exist: "_s, str);
+            return {};
+        }
+        userNameUTF8 = Bun::tryUTF8(globalObject, scope, str);
+        RETURN_IF_EXCEPTION(scope, {});
         userName = userNameUTF8.data();
     } else {
         uid_t uid = static_cast<uid_t>(user.toUInt32(globalObject));

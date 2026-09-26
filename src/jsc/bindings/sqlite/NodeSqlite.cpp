@@ -46,6 +46,7 @@ static constexpr bool lazy_sqlite3_has_session = true;
 
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
+#include "BunString.h"
 #include "JSDOMBinding.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "DOMIsoSubspaces.h"
@@ -413,11 +414,19 @@ static void jsValueToSqliteResult(JSGlobalObject* globalObject, sqlite3_context*
             sqlite3_result_error(ctx, "", 0);
             return;
         }
-        auto utf8 = str.utf8();
+        auto utf8 = Bun::UTF8View::tryCreate(str);
+        if (!utf8) [[unlikely]] {
+            // Transient ThrowScope: see sqliteValueToJS().
+            auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+            throwOutOfMemoryError(globalObject, scope);
+            scope.release();
+            sqlite3_result_error(ctx, "", 0);
+            return;
+        }
         // The *64 variants reject an over-INT_MAX length with SQLITE_TOOBIG
         // instead of narrowing it into `int` (a negative length is undefined
         // for the 32-bit bind/result API). Same in bindValue() below.
-        sqlite3_result_text64(ctx, utf8.data(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8);
+        sqlite3_result_text64(ctx, utf8->span().data(), utf8->span().size(), SQLITE_TRANSIENT, SQLITE_UTF8);
     } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         auto span = view->span();
         // sqlite3_result_blob64(nullptr, 0) sets NULL, not an empty BLOB —
@@ -1081,7 +1090,8 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     // honoured on any of those input types.
     int flags = SQLITE_OPEN_URI | (m_config.readOnly ? SQLITE_OPEN_READONLY : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE));
 
-    auto utf8 = m_location.utf8();
+    auto utf8 = Bun::tryUTF8(globalObject, scope, m_location);
+    RETURN_IF_EXCEPTION(scope, false);
     sqlite3* db = nullptr;
     int r = sqlite3_open_v2(utf8.data(), &db, flags, nullptr);
     if (r != SQLITE_OK) {
@@ -1293,7 +1303,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncExec, (JSGlobalObject * globalObject, Cal
     }
     auto sql = sqlVal.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto utf8 = sql.utf8();
+    auto utf8 = Bun::tryUTF8(globalObject, scope, sql);
+    RETURN_IF_EXCEPTION(scope, {});
     // Capture before the call: a UDF/authorizer re-entering close() nulls
     // m_db (deferred close) but the handle itself stays valid until this
     // frame's BusyScope unwinds, so read the error from it.
@@ -1344,7 +1355,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncPrepare, (JSGlobalObject * globalObject, 
         REQUIRE_DB_OPEN(self);
     }
 
-    auto utf8 = sql.utf8();
+    auto utf8 = Bun::tryUTF8(globalObject, scope, sql);
+    RETURN_IF_EXCEPTION(scope, {});
     sqlite3_stmt* stmt = nullptr;
     // utf8.data() is NUL-terminated (CString); -1 lets SQLite compute the
     // length and avoids narrowing a size_t into int. Capture the connection
@@ -1385,7 +1397,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLocation, (JSGlobalObject * globalObject,
         dbName = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    auto utf8 = dbName.utf8();
+    auto utf8 = Bun::tryUTF8(globalObject, scope, dbName);
+    RETURN_IF_EXCEPTION(scope, {});
     const char* filename = sqlite3_db_filename(self->connection(), utf8.data());
     if (filename == nullptr || filename[0] == '\0') {
         return JSValue::encode(jsNull());
@@ -1433,7 +1446,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalOb
     }
     auto path = pathVal.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    auto pathUtf8 = path.utf8();
+    auto pathUtf8 = Bun::tryUTF8(globalObject, scope, path);
+    RETURN_IF_EXCEPTION(scope, {});
 
     WTF::CString entryUtf8;
     const char* entryPtr = nullptr;
@@ -1444,7 +1458,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalOb
         }
         auto entry = entryVal.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        entryUtf8 = entry.utf8();
+        entryUtf8 = Bun::tryUTF8(globalObject, scope, entry);
+        RETURN_IF_EXCEPTION(scope, {});
         entryPtr = entryUtf8.data();
     }
 
@@ -1514,8 +1529,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
     // An options getter above may have re-entered close(); re-check before
     // handing SQLite the connection (Node segfaults here — Bun throws).
     REQUIRE_DB_OPEN(self);
+    auto nameUtf8 = Bun::tryUTF8(globalObject, scope, name);
+    RETURN_IF_EXCEPTION(scope, {});
     auto* udf = new NodeSqliteUDF(globalObject, fn, useBigIntArgs);
-    auto nameUtf8 = name.utf8();
     int r = sqlite3_create_function_v2(self->connection(), nameUtf8.data(), argc, textRep,
         udf, NodeSqliteUDF::xFunc, nullptr, nullptr, NodeSqliteUDF::xDestroy);
     if (r != SQLITE_OK) {
@@ -1614,8 +1630,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncAggregate, (JSGlobalObject * globalObject
 
     // An options getter above may have re-entered close().
     REQUIRE_DB_OPEN(self);
+    auto nameUtf8 = Bun::tryUTF8(globalObject, scope, name);
+    RETURN_IF_EXCEPTION(scope, {});
     auto* agg = new NodeSqliteAggregate(globalObject, startV, stepFn, resultFn, inverseFn, useBigIntArgs);
-    auto nameUtf8 = name.utf8();
     auto xInverse = inverseFn ? NodeSqliteAggregate::xInverse : nullptr;
     auto xValue = inverseFn ? NodeSqliteAggregate::xValue : nullptr;
     int r = sqlite3_create_window_function(self->connection(), nameUtf8.data(), argc, textRep, agg,
@@ -1686,14 +1703,16 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateSession, (JSGlobalObject * globalOb
 
     // An options getter above may have re-entered close().
     REQUIRE_DB_OPEN(self);
-    auto dbNameUtf8 = dbName.utf8();
+    auto dbNameUtf8 = Bun::tryUTF8(globalObject, scope, dbName);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto tableUtf8 = Bun::tryUTF8(globalObject, scope, table);
+    RETURN_IF_EXCEPTION(scope, {});
     sqlite3_session* pSession = nullptr;
     int r = sqlite3session_create(self->connection(), dbNameUtf8.data(), &pSession);
     if (r != SQLITE_OK) {
         throwSqliteReturnCodeError(globalObject, scope, self->connection(), r);
         return {};
     }
-    auto tableUtf8 = table.utf8();
     r = sqlite3session_attach(pSession, table.isEmpty() ? nullptr : tableUtf8.data());
     if (r != SQLITE_OK) {
         sqlite3session_delete(pSession);
@@ -1999,7 +2018,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSerialize, (JSGlobalObject * globalObject
         dbName = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    auto dbNameUtf8 = dbName.utf8();
+    auto dbNameUtf8 = Bun::tryUTF8(globalObject, scope, dbName);
+    RETURN_IF_EXCEPTION(scope, {});
 
     sqlite3_int64 size = 0;
     // Capture before the call: the authorizer fires from inside
@@ -2067,7 +2087,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
-    auto dbNameUtf8 = dbName.utf8();
+    auto dbNameUtf8 = Bun::tryUTF8(globalObject, scope, dbName);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // The opts.dbName [[Get]] above may have re-entered close(); re-check
     // before handing SQLite the connection (Node segfaults here).
@@ -2618,9 +2639,10 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
     } else if (value.isString()) {
         auto str = value.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        auto utf8 = str.utf8();
+        auto utf8 = Bun::UTF8View::tryCreate(globalObject, scope, str);
+        RETURN_IF_EXCEPTION(scope, false);
         // *64: see jsValueToSqliteResult().
-        r = sqlite3_bind_text64(m_stmt, index, utf8.data(), utf8.length(), SQLITE_TRANSIENT, SQLITE_UTF8);
+        r = sqlite3_bind_text64(m_stmt, index, utf8->span().data(), utf8->span().size(), SQLITE_TRANSIENT, SQLITE_UTF8);
     } else if (value.isNull()) {
         r = sqlite3_bind_null(m_stmt, index);
     } else if (value.isBigInt()) {
@@ -2699,12 +2721,14 @@ bool JSStatementSync::bindParams(JSGlobalObject* globalObject, ThrowScope& scope
             RETURN_IF_EXCEPTION(scope, false);
             for (auto& key : keys) {
                 WTF::String keyStr = key.string();
-                auto keyUtf8 = keyStr.utf8();
+                auto keyUtf8 = Bun::tryUTF8(globalObject, scope, keyStr);
+                RETURN_IF_EXCEPTION(scope, false);
                 int index = sqlite3_bind_parameter_index(m_stmt, keyUtf8.data());
                 if (index == 0 && m_allowBareNamedParams && m_bareNamedParams.has_value()) {
                     auto it = m_bareNamedParams->find(keyStr);
                     if (it != m_bareNamedParams->end()) {
-                        auto fullUtf8 = it->value.utf8();
+                        auto fullUtf8 = Bun::tryUTF8(globalObject, scope, it->value);
+                        RETURN_IF_EXCEPTION(scope, false);
                         index = sqlite3_bind_parameter_index(m_stmt, fullUtf8.data());
                     }
                 }
@@ -3651,7 +3675,8 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
             throwNodeState(globalObject, scope, "database is not open"_s);
             return nullptr;
         }
-        auto utf8 = sqlStr.utf8();
+        auto utf8 = Bun::tryUTF8(globalObject, scope, sqlStr);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         sqlite3_stmt* stmt = nullptr;
         // SQLITE_PREPARE_PERSISTENT: TagStore-cached statements are exactly
         // the "retained for a long time and probably reused many times" case
@@ -3963,6 +3988,13 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         return throwNodeState(globalObject, scope, "database is not open"_s);
     }
 
+    auto destPathUtf8 = Bun::tryUTF8(globalObject, scope, destPath);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto sourceNameUtf8 = Bun::tryUTF8(globalObject, scope, sourceName);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto targetNameUtf8 = Bun::tryUTF8(globalObject, scope, targetName);
+    RETURN_IF_EXCEPTION(scope, {});
+
     // All validation done — errors from here on reject the promise. We
     // throw on the scope (so the ThrowScope assertion machinery is
     // satisfied) then convert the pending exception into a rejected
@@ -3971,7 +4003,6 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(globalObject, scope)));
     };
 
-    auto destPathUtf8 = destPath.utf8();
     sqlite3* dest = nullptr;
     // The source db is already open (so this can never be the process's first
     // open), but keep the "config before any open" invariant local and free.
@@ -3987,8 +4018,6 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         return rejectWithPending();
     }
 
-    auto sourceNameUtf8 = sourceName.utf8();
-    auto targetNameUtf8 = targetName.utf8();
     sqlite3_backup* backup = sqlite3_backup_init(dest, targetNameUtf8.data(), sourceDb->connection(), sourceNameUtf8.data());
     if (backup == nullptr) {
         throwSqliteError(globalObject, scope, dest);

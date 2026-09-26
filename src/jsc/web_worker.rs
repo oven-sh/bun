@@ -1256,6 +1256,8 @@ fn on_unhandled_rejection(
     //
     // Instead end as `process.exit()` does: request the stop and unwind to `spin()`'s `shutdown()`.
     worker.exit();
+    // `exit()` has no VM while `shutdown()` runs the 'exit' listeners: this stops the ones left.
+    vm.handle_ref().request_termination();
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can

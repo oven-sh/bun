@@ -2221,6 +2221,24 @@ describe("an uncaught error at the end of a worker's life", () => {
       1,
     ],
     [
+      "throw in a timer while an interval keeps the loop alive",
+      `setInterval(() => {}, 1000); setTimeout(() => { throw new Error("R"); }, 5)`,
+      ["error:R"],
+      1,
+    ],
+    [
+      "rejection in a 'message' listener while its port keeps the loop alive",
+      `const { port1, port2 } = new MessageChannel(); port1.on("message", () => { Promise.reject(new Error("R")); }); port2.postMessage(0)`,
+      ["error:R"],
+      1,
+    ],
+    [
+      "throw in a 'message' listener while its port keeps the loop alive",
+      `const { port1, port2 } = new MessageChannel(); port1.on("message", () => { throw new Error("R"); }); port2.postMessage(0)`,
+      ["error:R"],
+      1,
+    ],
+    [
       "the worker's 'exit' listeners see code 1",
       `process.on("exit", c => parentPort.postMessage("exit:" + c + ":" + process.exitCode)); setTimeout(() => Promise.reject(new Error("R")), 5)`,
       ["error:R", "message:exit:1:1"],
@@ -2263,6 +2281,12 @@ describe("an uncaught error at the end of a worker's life", () => {
       `process.on("exit", () => { throw new Error("T"); }); process.exit(4)`,
       ["error:T"],
       4,
+    ],
+    [
+      "the 'exit' listeners after one that throws do not run",
+      `process.on("exit", () => { parentPort.postMessage("first"); throw new Error("T"); }); process.on("exit", () => parentPort.postMessage("second"))`,
+      ["error:T", "message:first"],
+      0,
     ],
     [
       "an 'uncaughtException' listener throwing for a throwing 'exit' listener",

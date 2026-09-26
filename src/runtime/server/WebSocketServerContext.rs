@@ -94,20 +94,25 @@ impl Handler {
         }
         if !on_error.is_empty_or_undefined_or_null() {
             // A top-level call of its own: what `error` throws is reported here.
-            global_object.bun_vm().event_loop_mut().run_callback(
-                on_error,
-                global_object,
-                JSValue::UNDEFINED,
-                &[error_value],
-            );
+            global_object
+                .bun_vm()
+                .event_loop_mut()
+                .run_callback_keep_alive(
+                    on_error,
+                    global_object,
+                    JSValue::UNDEFINED,
+                    &[error_value],
+                );
             return Ok(());
         }
 
-        let _ = VirtualMachine::get().as_mut().uncaught_exception(
-            global_object,
-            error_value,
-            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
-        );
+        let _ = VirtualMachine::get()
+            .as_mut()
+            .uncaught_exception_keep_alive(
+                global_object,
+                error_value,
+                bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+            );
         Ok(())
     }
 

@@ -1438,7 +1438,8 @@ impl Run<'_> {
                         bun_jsc::virtual_machine::UncaughtExceptionOrigin::EntryPointRejection
                     };
                     // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, origin);
+                    let handled =
+                        vm.uncaught_exception_keep_alive(unsafe { &*global }, result, origin);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 

@@ -631,7 +631,7 @@ impl<'a> Run<'a> {
             T::Error => {
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
                 let _ = unsafe {
-                    (*self.macro_.vm()).uncaught_exception(
+                    (*self.macro_.vm()).uncaught_exception_keep_alive(
                         self.global,
                         value,
                         bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
@@ -672,7 +672,7 @@ impl<'a> Run<'a> {
                     {
                         // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
                         let _ = unsafe {
-                            (*self.macro_.vm()).uncaught_exception(
+                            (*self.macro_.vm()).uncaught_exception_keep_alive(
                                 self.global,
                                 value,
                                 bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,

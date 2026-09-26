@@ -35,13 +35,44 @@ pub use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 /// `has_exception()`, or this fold runs beneath script) is taken now if no script is left to unwind.
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
+    fold(
+        global,
+        proof,
+        crate::virtual_machine::VirtualMachine::uncaught_exception,
+    )
+}
+
+/// `report_error_or_terminate` for a caller that goes on after the report (see
+/// `VirtualMachine::uncaught_exception_keep_alive`).
+#[cold]
+pub fn report_error_or_terminate_keep_alive(
+    global: &JSGlobalObject,
+    proof: JsError,
+) -> Result<(), Stopped> {
+    fold(
+        global,
+        proof,
+        crate::virtual_machine::VirtualMachine::uncaught_exception_keep_alive,
+    )
+}
+
+type Report = fn(
+    &mut crate::virtual_machine::VirtualMachine,
+    &JSGlobalObject,
+    crate::JSValue,
+    crate::virtual_machine::UncaughtExceptionOrigin,
+) -> bool;
+
+#[inline]
+fn fold(global: &JSGlobalObject, proof: JsError, report: Report) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
         crate::top_exception_scope::thrown(global);
         return Err(Stopped);
     }
     let vm = global.bun_vm();
-    let _ = vm.as_mut().uncaught_exception(
+    let _ = report(
+        vm.as_mut(),
         global,
         ex,
         crate::virtual_machine::UncaughtExceptionOrigin::Exception,

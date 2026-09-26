@@ -390,6 +390,15 @@ pub struct TestIsolationState {
     pub synthetic_allocation_limit: Option<usize>,
 }
 
+/// What the report of an uncaught error does when no listener takes the error.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Unhandled {
+    /// Print it and end the process with status 1, as node does.
+    Exit,
+    /// Print it and return to the caller.
+    KeepAlive,
+}
+
 /// How an uncaught error reached [`VirtualMachine::uncaught_exception`].
 #[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1686,7 +1695,20 @@ impl VirtualMachine {
         err: JSValue,
         origin: UncaughtExceptionOrigin,
     ) -> bool {
-        self.uncaught_exception_impl(global_object, err, err, origin, false)
+        self.uncaught_exception_impl(global_object, err, err, origin, Unhandled::KeepAlive)
+    }
+
+    /// The report of a caller that goes on when no listener takes the error: `reportError()`, and
+    /// the handlers of `Bun.serve` websockets, `Bun.listen`, `Bun.connect`, `Bun.udpSocket` and
+    /// `Bun.spawn` ipc. Each call site is counted in
+    /// test/internal/source-lints/keep-alive-report.inventory.json.
+    pub fn uncaught_exception_keep_alive(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: JSValue,
+        origin: UncaughtExceptionOrigin,
+    ) -> bool {
+        self.uncaught_exception_impl(global_object, err, err, origin, Unhandled::KeepAlive)
     }
 
     pub fn uncaught_exception_fatal(
@@ -1695,7 +1717,7 @@ impl VirtualMachine {
         err: JSValue,
         origin: UncaughtExceptionOrigin,
     ) -> bool {
-        self.uncaught_exception_impl(global_object, err, err, origin, true)
+        self.uncaught_exception_impl(global_object, err, err, origin, Unhandled::Exit)
     }
 
     /// `err` is what the listeners receive. `report` is what is printed, or handed to a worker's
@@ -1706,7 +1728,7 @@ impl VirtualMachine {
         err: JSValue,
         report: JSValue,
         origin: UncaughtExceptionOrigin,
-        fatal_exit: bool,
+        unhandled: Unhandled,
     ) -> bool {
         // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
         // to be an error may be its termination.
@@ -1769,7 +1791,7 @@ impl VirtualMachine {
             }
             // The field, not `is_main_thread()`: a macro VM on the bundler thread and the
             // debugger's VM have no worker either, and must not end the process.
-            if fatal_exit
+            if unhandled == Unhandled::Exit
                 && !self.suppress_fatal_uncaught
                 && !self.unhandled_rejections_quiet
                 && self.is_main_thread
@@ -3906,7 +3928,7 @@ impl VirtualMachine {
                         wrapped,
                         reason,
                         UncaughtExceptionOrigin::Rejection,
-                        true,
+                        Unhandled::Exit,
                     ) {
                         drain(self);
                         return;

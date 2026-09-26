@@ -45,7 +45,7 @@ bunx cowsay 'Hello, world!'   # execute a package
 
 Bun supports Linux (x64 & arm64), macOS (x64 & Apple Silicon), and Windows (x64 & arm64).
 
-> **Linux users** — Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
+> **Linux users** — Kernel version 5.6 or higher is strongly recommended. For older kernels, see the [installation docs](https://bun.com/docs/installation).
 
 > **x64 users** — if you see "illegal instruction" or similar errors, check our [CPU requirements](https://bun.com/docs/installation#cpu-requirements)
 

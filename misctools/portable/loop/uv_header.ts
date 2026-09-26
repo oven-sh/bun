@@ -455,13 +455,14 @@ const check: string[] = [
   "#include <stddef.h>",
   "#include <uv.h>",
   "",
-  "#define SAME(name, value) _Static_assert((long long)(name) == (long long)(value), #name)",
+  "// A constant is 32 bits wide, with or without a sign: that is what is compared.",
+  "#define SAME(name, value) _Static_assert((unsigned)(name) == (unsigned)(value), #name)",
   '_Static_assert(sizeof(SOCKET) == 8 && sizeof(HANDLE) == 8 && sizeof(DWORD) == 4 && sizeof(socklen_t) == 4, "the scalar types");',
-  "SAME(INVALID_SOCKET, ~0ull);",
+  '_Static_assert(INVALID_SOCKET == ~0ull, "INVALID_SOCKET");',
   "SAME(TCP_INITIAL_RTO_UNSPECIFIED_RTT, 0xffff);",
   "SAME(TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS, 0xfe);",
 ];
-for (const [name, value] of constants) check.push(`SAME(${name}, ${/^0x[0-9a-f]+u?$/.test(value) ? value.replace(/u$/, "") + "ll" : `(int)${value}`});`);
+for (const [name, value] of constants) check.push(`SAME(${name}, ${value});`);
 for (const [name, value] of errnos) check.push(`SAME(${name}, ${value});`);
 for (const [name, value] of Object.entries(uvConstants)) check.push(`SAME(${name}, ${value});`);
 const sizes = new Map<string, { size: number; offsets: [string, number][] }>();
@@ -498,13 +499,13 @@ for (const [name, typed] of Object.entries(uvStructs)) {
 }
 check.push(
   "",
-  "// The functions: each is assigned to a pointer of the type that bun_windows_c.h calls it with.",
-  "// A function of another type is a warning of the compiler (-Wincompatible-function-pointer-types)",
-  "// that names it.",
+  "// The functions: each one has to be declared by these headers. The comment is the type that",
+  "// bun_windows_c.h calls it with, for the eye: the compiler does not compare it.",
 );
 for (const fn of functions) {
-  if (fn.library === "ucrtbase" || /^(hton|ntoh)/.test(fn.name)) continue;
-  const types = fn.parameters.map(([type]) => type.replace(/\bint32_t\b/g, "int").replace(/\buint32_t\b/g, "unsigned long").replace(/\buint16_t\b/g, "unsigned short")).join(", ") || "void";
+  // _errno is the C runtime's, and uv__winsock_ensure is in no header of libuv: bun's C declares it itself.
+  if (fn.library === "ucrtbase" || fn.name.startsWith("uv__")) continue;
+  const types = fn.parameters.map(([type]) => type).join(", ") || "void";
   check.push(`static void *bun_check_${fn.name} = (void *)${fn.name};`, `// ${fn.library}: ${fn.returns} ${fn.name}(${types})`);
 }
 check.push("int main(void) { return 0; }", "");

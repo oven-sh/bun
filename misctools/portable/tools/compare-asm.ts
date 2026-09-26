@@ -16,7 +16,8 @@
 //      on as many CPUs
 //   4. per crate, a digest of every function: <work>/<triple>/<before|after>/<crate>.json
 // then it compares the digests and writes <work>/<triple>/report.json. A commit that was built before is not
-// built again (stamp.json in its directory). `--build none` compares what is there.
+// built again (stamp.json in its directory), unless a crate is wanted that it does not have: then all of its
+// crates are built again, in one build. `--build none` compares what is there.
 //
 // The crates are the packages of the workspace whose directory holds a file that differs between the two
 // commits, or the ones `--crates` names. A crate that only one of the commits has is reported and not compared.
@@ -317,11 +318,15 @@ if (process.argv[2] === "target") {
       if (JSON.stringify(stamp.inputs) === JSON.stringify(inputs)) built = stamp.crates;
       else rmSync(out, { recursive: true, force: true });
     }
-    const crates = wanted.filter(p => !(p.name in built));
-    if (crates.length === 0) {
+    if (wanted.every(p => p.name in built)) {
       console.log(`${label} (${revisions[label].slice(0, 10)}) for ${triple}: built before, kept`);
       continue;
     }
+    // All of them in one build, the ones that were built before too: a crate that cargo has built as a
+    // dependency and builds again for another set of packages gets another hash and a second file.
+    const crates = packages.filter(p => wanted.includes(p) || p.name in built);
+    rmSync(out, { recursive: true, force: true });
+    built = {};
     mkdirSync(join(out, "logs"), { recursive: true });
     console.log(`${label} (${revisions[label].slice(0, 10)}) for ${triple}: export`);
     rmSync(tree, { recursive: true, force: true });
@@ -393,7 +398,7 @@ if (process.argv[2] === "target") {
           CARGO_PROFILE_RELEASE_DEBUG: "false",
           GIT_SHA: revisions.before,
         },
-        log: join(out, "logs", `cargo-${Object.keys(built).length}.log`),
+        log: join(out, "logs", "cargo.log"),
       },
     );
     const seconds = Math.round((Date.now() - started) / 1000);

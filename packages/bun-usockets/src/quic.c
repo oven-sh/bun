@@ -1211,7 +1211,12 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     }
 
     lsquic_http_headers_t lh = { .count = (int) count, .headers = xh };
+    /* EAGAIN is lsquic's "an earlier header block is still unsent". Clear errno
+     * first: a stale EAGAIN from the UDP socket would turn a hard failure into
+     * a retry. */
+    errno = 0;
     int r = lsquic_stream_send_headers(s->stream, &lh, end_stream);
+    if (r != 0 && errno == EAGAIN) r = US_QUIC_SEND_HEADERS_RETRY;
     if (buf != stackbuf) us_free(buf);
     if (xh != stackh) us_free(xh);
     if (end_stream && r == 0) lsquic_stream_shutdown(s->stream, 1);

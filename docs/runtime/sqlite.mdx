@@ -491,6 +491,24 @@ SQLite supports signed 64-bit integers, but JavaScript only supports signed 53-b
 
 `bigint` input is supported everywhere, but by default `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, set the `safeIntegers` option to `true` when creating a `Database` instance. The option also validates that `bigint` values passed to `bun:sqlite` do not exceed 64 bits.
 
+`bun:sqlite` binds a `number` parameter as `INTEGER` when the value is a safe integer (`Number.isSafeInteger()`). It binds every other `number`, and `-0`, as a floating-point `REAL`. SQLite stores `NaN` as `NULL`.
+
+<Note>
+Bun v1.4.2 and earlier bound a safe integer as `REAL` when it was 2^51 or more, or less than -2^51. A `TEXT` column stored that value with a `.0` suffix, for example `'4503599627370497.0'`. A query that binds the same `number` compares it as `'4503599627370497'` and does not match that row. To convert the rows that an earlier version wrote, run a statement like this one for each affected table and column:
+
+```sql
+UPDATE users SET id = CAST(CAST(id AS REAL) AS INTEGER)
+WHERE id LIKE '%.0'
+  AND rtrim(substr(id, 1, length(id) - 2), '0123456789') IN ('', '-')
+  AND abs(CAST(id AS REAL)) BETWEEN 2251799813685248 AND 9007199254740991;
+```
+
+Run the statement before the upgraded application writes to the table. If a `PRIMARY KEY` or `UNIQUE` column already holds both forms of one value, SQLite rejects the statement and changes no rows. Merge or delete one row of each pair first.
+
+SQLite 3.51 and earlier stored 15 significant digits in that case, for example `'4.5035996273705e+15'`. Those rows do not hold the exact value.
+
+</Note>
+
 ### `safeIntegers: true`
 
 When `safeIntegers` is `true`, `bun:sqlite` returns integers as `bigint` types:

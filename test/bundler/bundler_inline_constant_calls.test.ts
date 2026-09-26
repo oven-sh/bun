@@ -1,105 +1,126 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
 import { itBundled } from "./expectBundled";
 
-// A call of a function that always returns one primitive folds to that value
-// while the file is visited, so the branch it guards folds like a `--define`.
-// Without `minifySyntax`, only a function that reads a `--define` or a
-// `feature()` value folds.
+// With `minifySyntax`, a call of a function that always returns `true`, `false`,
+// `null` or `undefined` folds to that value while the file is visited, so the
+// branch it guards folds like a `--define`.
 const define = { T: "true", F: "false" };
+const minifySyntax = true;
 
 describe("bundler", () => {
-  for (const minifySyntax of [false, true]) {
-    const suffix = minifySyntax ? "Minify" : "";
+  itBundled("inline_calls/BuildTimeValues", {
+    files: {
+      "/entry.js": /* js */ `
+        function isDev() { return process.env.NODE_ENV === "development"; }
+        function hasFlag() { if (FLAG) { return true; } return false; }
+        function nothing() { if (isDev()) return 1; }
+        function nil() { return isDev() ? 0 : null; }
+        function viaIf() { if (isDev()) return true; else { return false; } }
+        function empty() {}
+        if (isDev()) console.log("DROP dev");
+        if (hasFlag()) console.log("flag"); else console.log("DROP no flag");
+        if (viaIf()) console.log("DROP via if");
+        console.log(nothing(), nil(), empty(), isDev() ? "DROP" : "kept", !isDev());
+      `,
+    },
+    define: { "process.env.NODE_ENV": '"production"', FLAG: "true" },
+    minifySyntax,
+    dce: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("function");
+    },
+    run: { stdout: "flag\nundefined null undefined kept true" },
+  });
 
-    itBundled(`inline_calls/BuildTimeValues${suffix}`, {
+  // The switch is the one of the values of `const` declarations.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`inline_calls/${backend}/NotWithoutMinifySyntax`, {
+      backend,
       files: {
         "/entry.js": /* js */ `
+          import { imported } from "./flags.js";
           function isDev() { return process.env.NODE_ENV === "development"; }
-          function hasFlag() { if (FLAG) { return true; } return false; }
-          function nothing() { if (isDev()) return 1; }
-          function nil() { return isDev() ? 0 : null; }
-          function viaIf() { if (isDev()) return "dev"; else { return "prod"; } }
-          if (isDev()) console.log("DROP dev");
-          if (hasFlag()) console.log("flag"); else console.log("DROP no flag");
-          if (viaIf() === "dev") console.log("DROP string");
-          console.log(nothing(), nil(), isDev() ? "DROP" : "kept", !isDev());
+          function isOff() { return F; }
+          const arrow = () => F;
+          console.log(isDev() ? "a" : "b", isOff() ? "a" : "b", arrow() ? "a" : "b", imported() ? "a" : "b");
         `,
-      },
-      define: { "process.env.NODE_ENV": '"production"', FLAG: "true" },
-      minifySyntax,
-      dce: true,
-      onAfterBundle(api) {
-        expect(api.readFile("/out.js")).not.toContain("function");
-      },
-      run: { stdout: "flag\nundefined null kept true" },
-    });
-
-    itBundled(`inline_calls/PlainConstant${suffix}`, {
-      files: {
-        "/entry.js": /* js */ `
-          const arrow = () => false;
-          function yes() { return true; }
-          function nothing() {}
-          if (yes()) console.log("yes");
-          console.log(nothing(), arrow() ? "on" : "off");
-        `,
-      },
-      minifySyntax,
-      onAfterBundle(api) {
-        const out = api.readFile("/out.js");
-        for (const call of ["yes()", "nothing()", "arrow()"]) {
-          if (minifySyntax) expect(out).not.toContain(call);
-          else expect(out).toContain(call);
-        }
-      },
-      run: { stdout: "yes\nundefined off" },
-    });
-
-    itBundled(`inline_calls/DeadBranchIsNeverResolved${suffix}`, {
-      files: {
-        "/entry.js": /* js */ `
-          function isDev() { return F; }
-          if (isDev()) {
-            require("./does-not-exist");
-            import("./does-not-exist-either");
-          }
-          const tools = isDev() ? require("./also-missing") : null;
-          console.log(tools, isDev() && require("./missing-too"));
+        "/flags.js": /* js */ `
+          export function imported() { return T; }
         `,
       },
       define,
-      minifySyntax,
-      run: { stdout: "null false" },
-    });
-
-    // A function is one way to keep a specifier away from the bundler.
-    itBundled(`inline_calls/ImportSpecifierStaysOpaque${suffix}`, {
-      files: {
-        "/entry.js": /* js */ `
-          function name() { return NAME; }
-          const fromCall = name();
-          console.log(typeof name(), typeof fromCall);
-          if (process.argv.length > 99) {
-            require(name());
-            require.resolve(name());
-            import(name());
-            require(fromCall);
-          }
-        `,
-      },
-      define: { NAME: '"./not-on-disk.js"' },
-      minifySyntax,
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
-        expect(out).toContain("require(name())");
-        expect(out).toContain("require.resolve(name())");
-        expect(out).toContain("import(name())");
-        expect(out).toContain("require(fromCall)");
+        for (const call of ["isDev()", "isOff()", "arrow()", "imported()"]) expect(out).toContain(call + " ?");
       },
-      run: { stdout: "string string" },
+      run: { stdout: "b b b a" },
     });
   }
+
+  itBundled("inline_calls/OnlyTrueFalseNullUndefined", {
+    files: {
+      "/entry.js": /* js */ `
+        function mode() { return MODE; }
+        function count() { return COUNT; }
+        function big() { return 1n; }
+        function zero() { return 0; }
+        if (mode() === "dev") console.log("never");
+        console.log(count() > 1 ? "many" : "few", mode(), typeof big(), zero() ? "yes" : "no");
+      `,
+    },
+    define: { MODE: '"prod"', COUNT: "2" },
+    minifySyntax,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      for (const call of ["mode()", "count()", "big()", "zero()"]) expect(out).toContain(call);
+    },
+    run: { stdout: "many prod bigint no" },
+  });
+
+  itBundled("inline_calls/DeadBranchIsNeverResolved", {
+    files: {
+      "/entry.js": /* js */ `
+        function isDev() { return F; }
+        if (isDev()) {
+          require("./does-not-exist");
+          import("./does-not-exist-either");
+        }
+        const tools = isDev() ? require("./also-missing") : null;
+        console.log(tools, isDev() && require("./missing-too"));
+      `,
+    },
+    define,
+    minifySyntax,
+    run: { stdout: "null false" },
+  });
+
+  // A function is one way to keep a specifier away from the bundler.
+  itBundled("inline_calls/ImportSpecifierStaysOpaque", {
+    files: {
+      "/entry.js": /* js */ `
+        function useB() { return T; }
+        function load() {
+          return [
+            require(useB() ? "./b.js" : "./a.js"),
+            require.resolve(useB() ? "./b.js" : "./a.js"),
+            import(useB() ? "./b.js" : "./a.js"),
+          ];
+        }
+        console.log(typeof load, useB());
+      `,
+      "/a.js": `module.exports = "a";`,
+      "/b.js": `module.exports = "b";`,
+    },
+    define,
+    minifySyntax,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toIncludeRepeated("useB() ?", 3);
+      expect(out).toContain("console.log(typeof load, !0)");
+    },
+    run: { stdout: "function true" },
+  });
 
   itBundled("inline_calls/FeatureFlag", {
     files: {
@@ -113,6 +134,7 @@ describe("bundler", () => {
       `,
     },
     features: ["ON"],
+    minifySyntax,
     dce: true,
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
@@ -120,44 +142,6 @@ describe("bundler", () => {
       expect(out).not.toContain("hasOff");
     },
     run: { stdout: "on" },
-  });
-
-  itBundled("inline_calls/StringAndNumberFoldOnlyInACondition", {
-    files: {
-      "/entry.js": /* js */ `
-        function mode() { return MODE; }
-        function count() { return COUNT; }
-        if (mode() === "dev") console.log("DROP");
-        console.log(count() > 1 ? "many" : "DROP", mode(), count());
-      `,
-    },
-    define: { MODE: '"prod"', COUNT: "2" },
-    dce: true,
-    onAfterBundle(api) {
-      expect(api.readFile("/out.js")).toContain('console.log("many", mode(), count())');
-    },
-    run: { stdout: "many prod 2" },
-  });
-
-  itBundled("inline_calls/LongStringStaysInTheFunction", {
-    files: {
-      "/entry.js": /* js */ `
-        function long() { return LONG; }
-        function short() { return SHORT; }
-        if (long().length === 65) console.log("long");
-        if (short().length === 64) console.log("short");
-      `,
-    },
-    define: {
-      LONG: JSON.stringify(Buffer.alloc(65, "x").toString()),
-      SHORT: JSON.stringify(Buffer.alloc(64, "x").toString()),
-    },
-    onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).toContain("long().length");
-      expect(out).not.toContain("short()");
-    },
-    run: { stdout: "long\nshort" },
   });
 
   itBundled("inline_calls/UnusedImportIsDropped", {
@@ -173,6 +157,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     dce: true,
     onAfterBundle(api) {
       expect(api.readFile("/out.js")).not.toContain("heavy");
@@ -192,6 +177,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).not.toContain("nothing(");
@@ -209,16 +195,65 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).toContain("function yes()");
       expect(out).toContain("new yes");
       expect(out).toContain("yes.call(null)");
       expect(out).toContain("yes?.()");
-      expect(out).toContain("console.log(true,");
+      expect(out).toContain("console.log(!0,");
     },
     run: { stdout: "true true true true true 1 function" },
   });
+
+  // A value in place of the call makes \`a || b\` the same as \`b\`. As the target of a call, \`b\` has another \`this\`.
+  for (const flags of [{ minifySyntax }, { minifySyntax, minifyWhitespace: true, minifyIdentifiers: true }]) {
+    itBundled(`inline_calls/ThisOfACallTarget${flags.minifyWhitespace ? "Minify" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function off() { return F; }
+          function on() { return T; }
+          function nil() { return F ? 1 : null; }
+          const o = {
+            m() { return this === o ? "o" : String(this); },
+            tag(strings) { return this === o ? "o" : String(this); },
+          };
+          console.log(
+            (off() || o.m)(),
+            (on() && o.m)(),
+            (nil() ?? o.m)(),
+            (off(), o.m)(),
+            (on() ? o.m : 0)(),
+          );
+          console.log(
+            (off() || o.m)?.(),
+            (on() && o.m)?.(),
+            (nil() ?? o.m)?.(),
+            (off(), o.m)?.(),
+            (on() ? o.m : 0)?.(),
+          );
+          console.log(
+            (off() || o.tag)\`x\`,
+            (on() && o.tag)\`x\`,
+            (nil() ?? o.tag)\`x\`,
+            (off(), o.tag)\`x\`,
+          );
+          console.log(off() || o.m(), (off() || o).m());
+        `,
+      },
+      define,
+      ...flags,
+      run: {
+        stdout: [
+          "undefined undefined undefined undefined undefined",
+          "undefined undefined undefined undefined undefined",
+          "undefined undefined undefined undefined",
+          "o o",
+        ].join("\n"),
+      },
+    });
+  }
 
   itBundled("inline_calls/NotAConstantFunction", {
     files: {
@@ -242,6 +277,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       for (const name of ["asyncOne()", "genOne()", "withDefault()", "withPattern(", "readsState()", "twoValues(0)"]) {
@@ -263,10 +299,11 @@ describe("bundler", () => {
         `,
       },
       define,
+      minifySyntax,
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
         expect(out).toContain("console.log(above())");
-        expect(out).toContain("console.log(true)");
+        expect(out).toContain("console.log(!0)");
       },
       run: { stdout: "true\ntrue" },
     });
@@ -283,6 +320,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     run: { stdout: "function false" },
   });
 
@@ -298,12 +336,35 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).toContain("f()");
       expect(out).not.toContain("untouched");
     },
     run: { stdout: "true true true\nsecond second true" },
+  });
+
+  // A fold changes which code is dead, so the second attempt visits \`G\`, which the first did not.
+  itBundled("inline_calls/LateAssignmentInCodeThatAFoldKeeps", {
+    files: {
+      "/entry.js": /* js */ `
+        function F1() { return F; }
+        if (!F1()) {
+          (function () {
+            function G() { return F; var x; }
+            if (G()) console.log("g");
+            G = () => true;
+            if (G()) console.log("g is rebound");
+          })();
+        }
+        F1 = () => true;
+        console.log(F1() ? "f is rebound" : "DROP");
+      `,
+    },
+    define,
+    minifySyntax,
+    run: { stdout: "g is rebound\nf is rebound" },
   });
 
   itBundled("inline_calls/AssignmentInDestructuring", {
@@ -320,7 +381,25 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     run: { stdout: "true true true\n2 3 4" },
+  });
+
+  // \`--define HOOK=f\` makes an assignment to \`HOOK\` an assignment to \`f\`.
+  itBundled("inline_calls/AssignmentThroughADefine", {
+    files: {
+      "/entry.js": /* js */ `
+        function f() { return T; }
+        function g() { return T; }
+        console.log(f(), g());
+        HOOK = () => "rebound";
+        COUNTER++;
+        console.log(f(), typeof g);
+      `,
+    },
+    define: { ...define, HOOK: "f", COUNTER: "g" },
+    minifySyntax,
+    run: { stdout: "true true\nrebound number" },
   });
 
   itBundled("inline_calls/DirectEval", {
@@ -333,6 +412,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     run: { stdout: "true\n2" },
   });
 
@@ -352,6 +432,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     run: { stdout: "var a var b true" },
   });
 
@@ -370,10 +451,11 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     run: { stdout: "true false true" },
   });
 
-  // A `switch` body can be entered at any `case`, below the declaration.
+  // A \`switch\` body can be entered at any \`case\`, below the declaration.
   itBundled("inline_calls/ConstInASwitchBody", {
     files: {
       "/entry.js": /* js */ `
@@ -391,6 +473,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     run: { stdout: "true\nReferenceError" },
   });
 
@@ -403,6 +486,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).not.toContain("strict()");
@@ -422,6 +506,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     run: { stdout: "property\ntrue" },
   });
 
@@ -435,6 +520,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     run: { stdout: "true param inner" },
   });
 
@@ -450,6 +536,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     dce: true,
     run: { stdout: "kept" },
   });
@@ -460,18 +547,20 @@ describe("bundler", () => {
         const isOn = () => F;
         const isSet = function () { return T; };
         console.log(isOn() ? "DROP" : "off", isSet());
-        console.log(isLate());
+        function afterThePrefix() {}
         const isLate = () => T;
+        console.log(isLate());
       `,
     },
     define,
+    minifySyntax,
     dce: true,
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).not.toContain("isOn");
       expect(out).toContain("isLate()");
     },
-    run: { error: "ReferenceError: Cannot access 'isLate' before initialization." },
+    run: { stdout: "off true\ntrue" },
   });
 
   itBundled("inline_calls/ReadsAConstFromThePrefix", {
@@ -485,7 +574,7 @@ describe("bundler", () => {
         console.log(config, isDev());
       `,
     },
-    minifySyntax: true,
+    minifySyntax,
     dce: true,
     onAfterBundle(api) {
       expect(api.readFile("/out.js")).not.toContain("DEV");
@@ -505,6 +594,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     dce: true,
     format: "esm",
     onAfterBundle(api) {
@@ -523,6 +613,7 @@ describe("bundler", () => {
       `,
     },
     define: { "process.env.BUILD": '"public"' },
+    minifySyntax,
     dce: true,
     run: { stdout: "true false" },
   });
@@ -536,6 +627,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     dce: true,
     run: { stdout: "off" },
   });
@@ -549,10 +641,55 @@ describe("bundler", () => {
     },
     define,
     bundling: false,
-    minifySyntax: true,
+    minifySyntax,
     onAfterBundle(api) {
       expect(api.readFile("/out.js")).toContain("isOn()");
     },
+  });
+
+  // A second attempt would run the macro again.
+  itBundled("inline_calls/MacroImportKeepsTheCalls", {
+    files: {
+      "/entry.js": /* js */ `
+        import { version } from "./macro.js" with { type: "macro" };
+        function isOn() { return F; }
+        console.log(isOn() ? "on" : "off", version());
+      `,
+      "/macro.js": /* js */ `
+        export function version() { return "1.0"; }
+      `,
+    },
+    define,
+    minifySyntax,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("isOn() ?");
+    },
+    run: { stdout: "off 1.0" },
+  });
+
+  // The rule is for each file: only a file that the React Compiler reads keeps its calls.
+  itBundled("inline_calls/ReactCompilerKeepsTheCalls", {
+    backend: "api",
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { inTs } from "./plain.ts";
+        function isOn() { return F; }
+        console.log(isOn() ? "on" : "off", inTs());
+      `,
+      "/plain.ts": /* ts */ `
+        function isOn() { return F; }
+        export function inTs() { return isOn() ? "REMOVED" : "off"; }
+      `,
+    },
+    define,
+    minifySyntax,
+    reactCompiler: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("isOn() ?");
+      expect(out).not.toContain("REMOVED");
+    },
+    run: { stdout: "off off" },
   });
 
   itBundled("inline_calls/EnvironmentVariableTurnsItOff", {
@@ -569,6 +706,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       expect(out).toContain("isOff()");
@@ -577,9 +715,8 @@ describe("bundler", () => {
     run: { stdout: "no yes" },
   });
 
-  // Across files. The result of a file whose condition calls an import is held
-  // until the imported file is parsed. With a value, the file is parsed and
-  // visited again with it.
+  // Across files. When a condition calls an import, the worker that parses the file
+  // also parses the imported file, before it visits the file with the condition.
   for (const backend of ["cli", "api"] as const) {
     itBundled(`inline_calls/${backend}/CrossModule`, {
       backend,
@@ -589,7 +726,7 @@ describe("bundler", () => {
           if (isDev()) console.log("DROP dev");
           if (hasOn()) console.log("on");
           if (hasOff()) console.log("DROP off"); else console.log("not off");
-          console.log(isDev() ? "DROP" : "prod", version(), nothing());
+          if (!nothing()) console.log(isDev() ? "DROP" : "prod", version());
         `,
         // A TypeScript import that only folded calls use still runs the file.
         "/flags.ts": /* ts */ `
@@ -604,16 +741,17 @@ describe("bundler", () => {
       },
       define: { "process.env.NODE_ENV": '"production"' },
       features: ["ON"],
+      minifySyntax,
       dce: true,
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
-        for (const call of ["isDev()", "hasOn()", "hasOff()"]) expect(out).not.toContain(call);
-        expect(out).toContain('console.log("prod", version(), nothing())');
+        for (const call of ["isDev()", "hasOn()", "hasOff()", "nothing()"]) expect(out).not.toContain(call);
+        expect(out).toContain('console.log("prod", version())');
       },
-      run: { stdout: "flags run\non\nnot off\nprod 1.2.3 undefined" },
+      run: { stdout: "flags run\non\nnot off\nprod 1.2.3" },
     });
 
-    // Which file of a cycle is parsed first differs from run to run. The output must not.
+    // What a function returns depends on its file only, so files that import each other fold too.
     itBundled(`inline_calls/${backend}/CrossModuleImportCycle`, {
       backend,
       files: {
@@ -624,26 +762,22 @@ describe("bundler", () => {
         "/a.js": /* js */ `
           import { bFlag } from "./b";
           export function aFlag() { return T; }
-          console.log("a:", bFlag() ? "b on" : "b off");
+          console.log("a:", bFlag() ? "DROP" : "b off");
         `,
         "/b.js": /* js */ `
           import { aFlag } from "./a";
           export function bFlag() { return F; }
-          console.log("b:", aFlag() ? "a on" : "a off");
+          console.log("b:", aFlag() ? "a on" : "DROP");
         `,
         "/self.js": /* js */ `
           import { selfFlag as imported } from "./self";
           export function selfFlag() { return F; }
-          console.log("self:", imported() ? "on" : "off");
+          console.log("self:", imported() ? "DROP" : "off");
         `,
       },
       define,
-      onAfterBundle(api) {
-        const out = api.readFile("/out.js");
-        expect(out).toContain("aFlag()");
-        expect(out).toContain("bFlag()");
-        expect(out).toContain('selfFlag() ? "on"');
-      },
+      minifySyntax,
+      dce: true,
       run: { stdout: "b: a on\na: b off\nself: off" },
     });
   }
@@ -670,6 +804,7 @@ describe("bundler", () => {
         `,
       },
       define: { "process.env.NODE_ENV": '"production"' },
+      minifySyntax,
       splitting,
       outdir: "/out",
       dce: true,
@@ -695,41 +830,8 @@ describe("bundler", () => {
       `,
     },
     define: { "process.env.NODE_ENV": '"production"' },
+    minifySyntax,
     run: { stdout: "prod" },
-  });
-
-  itBundled("inline_calls/CrossModulePlainConstant", {
-    files: {
-      "/entry.js": /* js */ `
-        import { isOn } from "./flags.js";
-        if (isOn()) console.log("on");
-      `,
-      "/flags.js": /* js */ `
-        export function isOn() { return true; }
-      `,
-    },
-    onAfterBundle(api) {
-      expect(api.readFile("/out.js")).toContain("if (isOn())");
-    },
-    run: { stdout: "on" },
-  });
-
-  itBundled("inline_calls/CrossModulePlainConstantMinify", {
-    files: {
-      "/entry.js": /* js */ `
-        import { isOn } from "./flags.js";
-        if (isOn()) console.log("on"); else console.log("DROP");
-      `,
-      "/flags.js": /* js */ `
-        export function isOn() { return true; }
-      `,
-    },
-    minifySyntax: true,
-    dce: true,
-    onAfterBundle(api) {
-      expect(api.readFile("/out.js")).not.toContain("isOn");
-    },
-    run: { stdout: "on" },
   });
 
   itBundled("inline_calls/CrossModuleReExports", {
@@ -737,10 +839,12 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         import { isDevelopment, viaImport } from "./barrel";
         import isDefault, { isDev as renamed } from "./env";
+        import alsoDefault from "./env";
         if (isDevelopment()) console.log("DROP a");
         if (viaImport()) console.log("DROP b");
         if (isDefault()) console.log("DROP c");
         if (renamed()) console.log("DROP d");
+        if (alsoDefault()) console.log("DROP e");
         console.log("done");
       `,
       "/barrel.js": /* js */ `
@@ -754,6 +858,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     dce: true,
     onAfterBundle(api) {
       expect(api.readFile("/out.js")).not.toContain("isDev");
@@ -761,7 +866,7 @@ describe("bundler", () => {
     run: { stdout: "done" },
   });
 
-  // The chain ends at the file after `hops` files that only export the import again.
+  // The chain ends at the file after \`hops\` files that only export the import again.
   for (const [hops, folds] of [
     [8, true],
     [9, false],
@@ -783,16 +888,17 @@ describe("bundler", () => {
         `,
       },
       define,
+      minifySyntax,
       onAfterBundle(api) {
         const out = api.readFile("/out.js");
         if (folds) expect(out).not.toContain("isDev()");
-        else expect(out).toContain("if (isDev())");
+        else expect(out).toContain("isDev() ?");
       },
       run: { stdout: "prod" },
     });
   }
 
-  // `module.exports = require("./env.js")` alone is a redirect to the other file.
+  // \`module.exports = require("./env.js")\` alone is a redirect to the other file.
   itBundled("inline_calls/CrossModuleRedirect", {
     files: {
       "/entry.js": /* js */ `
@@ -812,24 +918,18 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     dce: true,
     run: { stdout: "app prod" },
   });
 
-  // Which records of a barrel are resolved depends on the order its importers finish.
-  // A re-export of one is not followed, so the output is the same for every run.
-  itBundled("inline_calls/CrossModuleOptimizedBarrel", {
+  itBundled("inline_calls/CrossModuleThroughAPackage", {
     files: {
       "/entry.js": /* js */ `
         import { isDev } from "flags";
         import { isDev as direct } from "flags/env.js";
-        import "./other-importer";
-        if (isDev()) console.log("dev"); else console.log("prod");
-        if (direct()) console.log("DROP");
-      `,
-      "/other-importer.js": /* js */ `
-        import { isDev } from "flags";
-        console.log(typeof isDev);
+        if (isDev()) console.log("DROP barrel"); else console.log("prod");
+        if (direct()) console.log("DROP direct");
       `,
       "/node_modules/flags/package.json": `{ "name": "flags", "main": "index.js", "sideEffects": false }`,
       "/node_modules/flags/index.js": /* js */ `
@@ -840,20 +940,44 @@ describe("bundler", () => {
         export function isDev() { return F; }
       `,
       "/node_modules/flags/unused.js": /* js */ `
-        export function unused() { return "never parsed"; }
+        export function unused() { return "never in the bundle"; }
       `,
     },
     define,
+    minifySyntax,
     dce: true,
     onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).toContain("if (isDev())");
-      expect(out).not.toContain("never parsed");
+      expect(api.readFile("/out.js")).not.toContain("never in the bundle");
     },
-    run: { stdout: "function\nprod" },
+    run: { stdout: "prod" },
   });
 
-  // Almost no file in a package gets a value, so a file in a package is not held for one.
+  // A package with a "module" and a "main" build can get its imports rewritten from one to the other.
+  itBundled("inline_calls/CrossModulePackageWithTwoBuilds", {
+    files: {
+      "/entry.js": /* js */ `
+        import { isDev } from "dual";
+        import { isDev as same } from "same";
+        require("dual");
+        console.log(isDev() ? "cjs build" : "esm build", same() ? "REMOVED" : "same off");
+      `,
+      "/node_modules/dual/package.json": `{ "name": "dual", "main": "./cjs.js", "module": "./esm.js" }`,
+      "/node_modules/dual/esm.js": `export function isDev() { return F; }`,
+      "/node_modules/dual/cjs.js": `exports.isDev = function () { return true; };`,
+      "/node_modules/same/package.json": `{ "name": "same", "main": "./index.js", "module": "./index.js" }`,
+      "/node_modules/same/index.js": `export function isDev() { return F; }`,
+    },
+    define,
+    minifySyntax,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("esm build");
+      expect(out).not.toContain("REMOVED");
+    },
+    run: { stdout: "cjs build same off" },
+  });
+
+  // Almost no file in a package calls a constant import, so a file in a package does not ask.
   itBundled("inline_calls/CrossModuleImporterInAPackage", {
     files: {
       "/entry.js": /* js */ `
@@ -868,52 +992,45 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     onAfterBundle(api) {
-      expect(api.readFile("/out.js")).toContain("if (isDev())");
+      expect(api.readFile("/out.js")).toContain("isDev() ?");
     },
     run: { stdout: "prod" },
   });
 
-  itBundled("inline_calls/CrossModuleChain", {
+  // The function of the imported file can return a call of an import of that file.
+  itBundled("inline_calls/CrossModuleWrapper", {
     files: {
       "/entry.js": /* js */ `
-        import { isInternalDev } from "./b";
+        import { isInternalDev, isInternal, tooDeep } from "./wrapper.js";
         if (isInternalDev()) console.log("DROP"); else console.log("kept");
+        if (isInternal()) require("./internal/does-not-exist");
+        if (tooDeep()) console.log("DROP at run time"); else console.log("too deep");
       `,
-      "/b.js": /* js */ `
-        import { isDev } from "./a";
+      "/wrapper.js": /* js */ `
+        import { isDev } from "./env.js";
+        import { viaWrapper } from "./wrapper2.js";
         export function isInternalDev() { return isDev() && INTERNAL; }
+        export function isInternal() { return isDev(); }
+        export function tooDeep() { return viaWrapper(); }
       `,
-      "/a.js": /* js */ `
+      "/wrapper2.js": /* js */ `
+        import { isDev } from "./env.js";
+        export function viaWrapper() { return isDev(); }
+      `,
+      "/env.js": /* js */ `
         export function isDev() { return !PRODUCTION; }
       `,
     },
     define: { PRODUCTION: "true", INTERNAL: "true" },
-    dce: true,
+    minifySyntax,
     onAfterBundle(api) {
-      expect(api.readFile("/out.js")).not.toContain("function");
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("isInternalDev()");
+      expect(out).toContain("tooDeep() ?");
     },
-    run: { stdout: "kept" },
-  });
-
-  // \`return isDev()\` in a top-level function makes the function a wrapper of the import.
-  itBundled("inline_calls/CrossModuleWrapper", {
-    files: {
-      "/entry.js": /* js */ `
-        import { isInternal } from "./wrapper.js";
-        if (isInternal()) require("./internal/does-not-exist");
-        console.log("app");
-      `,
-      "/wrapper.js": /* js */ `
-        import { isDev } from "./env.js";
-        export function isInternal() { return isDev(); }
-      `,
-      "/env.js": /* js */ `
-        export function isDev() { return F; }
-      `,
-    },
-    define,
-    run: { stdout: "app" },
+    run: { stdout: "kept\ntoo deep" },
   });
 
   itBundled("inline_calls/CrossModuleNotFolded", {
@@ -921,13 +1038,15 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         import { arrow, reassigned, usesState, letFn, off } from "./esm";
         import { cjsFlag } from "./cjs.cjs";
+        import { viaStar } from "./star";
         import * as ns from "./esm";
         if (arrow()) console.log("arrow");
         if (reassigned()) console.log("reassigned");
         if (usesState()) console.log("state");
         if (letFn()) console.log("let");
         if (cjsFlag()) console.log("cjs");
-        if (ns.usesState()) console.log("ns");
+        if (viaStar()) console.log("star");
+        if (ns.off()) console.log("never"); else console.log("ns");
         function shadows(off) { if (off()) console.log("parameter"); }
         shadows(() => true);
         if (off()) console.log("DROP");
@@ -940,51 +1059,25 @@ describe("bundler", () => {
         export function usesState() { return T && globalThis.flag === undefined; }
         export let letFn = function () { return T; };
         export function off() { return F; }
+        export function viaStar() { return T; }
+      `,
+      "/star.js": /* js */ `
+        export * from "./esm";
       `,
       "/cjs.cjs": /* js */ `
         exports.cjsFlag = function () { return T; };
       `,
     },
     define,
-    dce: true,
+    minifySyntax,
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      for (const call of ["arrow()", "reassigned()", "usesState()", "letFn()", "$cjsFlag()"]) {
-        expect(out).toContain("if (" + call);
+      for (const call of ["arrow()", "reassigned()", "usesState()", "letFn()", "$cjsFlag()", "viaStar()", "off()"]) {
+        expect(out).toContain(call);
       }
+      expect(out).not.toContain("DROP");
     },
-    run: { stdout: "arrow\nreassigned\nstate\nlet\ncjs\nns\nparameter" },
-  });
-
-  itBundled("inline_calls/CrossModuleDownstreamOfCycle", {
-    files: {
-      "/entry.js": /* js */ `
-        import { aFlag } from "./a";
-        console.log("entry:", aFlag() ? "a on" : "DROP");
-      `,
-      "/a.js": /* js */ `
-        import { bFlag } from "./b";
-        import { leaf } from "./leaf";
-        export function aFlag() { return T; }
-        console.log("a:", bFlag() ? "b on" : "b off", leaf() ? "DROP" : "leaf off");
-      `,
-      "/b.js": /* js */ `
-        import { aFlag } from "./a";
-        export function bFlag() { return F; }
-        console.log("b:", aFlag() ? "a on" : "a off");
-      `,
-      "/leaf.js": /* js */ `
-        export function leaf() { return F; }
-      `,
-    },
-    define,
-    dce: true,
-    onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).toContain("bFlag()");
-      expect(out).not.toContain("leaf()");
-    },
-    run: { stdout: "b: a on\na: b off leaf off\nentry: a on" },
+    run: { stdout: "arrow\nreassigned\nstate\nlet\ncjs\nstar\nns\nparameter" },
   });
 
   itBundled("inline_calls/CrossModuleUnresolvedImport", {
@@ -994,8 +1087,29 @@ describe("bundler", () => {
         if (flag()) console.log("x");
       `,
     },
+    minifySyntax,
     bundleErrors: {
       "/entry.js": ['Could not resolve: "./does-not-exist"'],
+    },
+  });
+
+  // The imported file reports its own errors, one time.
+  itBundled("inline_calls/CrossModuleErrorInTheImportedFile", {
+    files: {
+      "/entry.js": /* js */ `
+        import { flag } from "./broken";
+        if (flag()) console.log("x");
+      `,
+      "/broken.js": /* js */ `
+        export function flag() { return T; }
+        const twice = 1;
+        const twice = 2;
+      `,
+    },
+    define,
+    minifySyntax,
+    bundleErrors: {
+      "/broken.js": ['"twice" has already been declared'],
     },
   });
 
@@ -1011,6 +1125,7 @@ describe("bundler", () => {
       "/empty.js": "\n",
     },
     target: "bun",
+    minifySyntax,
     bundleErrors: {
       "/entry.js": ['No matching export in "empty.js" for import "flag"'],
     },
@@ -1035,6 +1150,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     run: { stdout: "json mapped prod" },
   });
 
@@ -1057,6 +1173,7 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     dce: true,
     run: { stdout: "view prod" },
   });
@@ -1078,12 +1195,13 @@ describe("bundler", () => {
         export const Fragment = "Fragment";
       `,
       "/node_modules/react/jsx-dev-runtime.js": /* js */ `
-        export const jsxDEV = () => { throw new Error("the second run lost the production JSX options"); };
+        export const jsxDEV = () => { throw new Error("the production JSX options are lost"); };
         export const Fragment = "Fragment";
       `,
     },
     env: { NODE_ENV: "production" },
     define: { ...define, "process.env.NODE_ENV": '"production"' },
+    minifySyntax,
     dce: true,
     run: { stdout: "prod" },
   });
@@ -1102,11 +1220,12 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     dce: true,
     run: { stdout: "true prod\n2" },
   });
 
-  // An error of the first visit can be in a branch that a value makes dead.
+  // The value is known before the only visit, so the error of a dead branch is never made.
   itBundled("inline_calls/CrossModuleErrorInADeadBranch", {
     files: {
       "/entry.js": /* js */ `
@@ -1120,19 +1239,38 @@ describe("bundler", () => {
       `,
     },
     define,
+    minifySyntax,
     run: { stdout: "app" },
   });
 
-  itBundled("inline_calls/CrossModulePluginCallee", {
+  test("inline_calls/CrossModuleInMemoryFiles", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/entry.js"],
+      files: {
+        "/entry.js": `
+          import { isDev } from "./env.js";
+          console.log(isDev() ? "dev" : "prod");
+        `,
+        "/env.js": `export function isDev() { return false; }`,
+      },
+      minify: { syntax: true },
+    });
+    expect(await result.outputs[0].text()).toContain('console.log("prod")');
+  });
+
+  // A plugin gives its answer on another thread, after the file with the condition is visited.
+  itBundled("inline_calls/CrossModulePlugins", {
     backend: "api",
     files: {
       "/entry.js": /* js */ `
         import { fromLoad } from "./loaded.js";
         import { fromResolve } from "virtual:flags";
         import { viaReExport } from "./re-export.js";
-        if (fromLoad()) console.log("DROP load"); else console.log("load off");
+        import { untouched } from "./untouched.js";
+        if (fromLoad()) console.log("DROP at run time"); else console.log("load off");
         if (fromResolve()) console.log("resolve on");
         if (viaReExport()) console.log("re-export on");
+        if (untouched()) console.log("DROP"); else console.log("untouched off");
       `,
       "/re-export.js": /* js */ `
         export { fromResolve as viaReExport } from "virtual:flags";
@@ -1143,8 +1281,12 @@ describe("bundler", () => {
       "/real-flags.js": /* js */ `
         export function fromResolve() { return T; }
       `,
+      "/untouched.js": /* js */ `
+        export function untouched() { return F; }
+      `,
     },
     define,
+    minifySyntax,
     plugins: [
       {
         name: "flags",
@@ -1161,31 +1303,36 @@ describe("bundler", () => {
     ],
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).not.toContain("fromLoad()");
-      expect(out).toContain("if (fromResolve())");
+      expect(out).toContain("fromLoad() ?");
       expect(out).toIncludeRepeated("fromResolve()", 3);
+      expect(out).not.toContain("untouched");
     },
-    run: { stdout: "load off\nresolve on\nre-export on" },
+    run: { stdout: "load off\nresolve on\nre-export on\nuntouched off" },
   });
 
-  itBundled("inline_calls/CrossModuleDeferredCallee", {
+  itBundled("inline_calls/CrossModuleDeferredLoad", {
     backend: "api",
     files: {
       "/entry.js": /* js */ `
         import { deferred } from "./deferred.js";
+        import { isDev } from "./env.js";
         if (deferred()) console.log("on"); else console.log("off");
+        if (isDev()) console.log("DROP"); else console.log("prod");
       `,
       "/deferred.js": /* js */ `
         export function deferred() { return F; }
       `,
+      "/env.js": /* js */ `
+        export function isDev() { return F; }
+      `,
     },
     define,
+    minifySyntax,
     plugins: [
       {
         name: "defer",
         setup(build) {
           build.onLoad({ filter: /deferred\.js$/ }, async ({ defer }) => {
-            // Resolves once every other file is parsed: the importer cannot wait for this one.
             await defer();
             return { contents: "export function deferred() { return F; }", loader: "js" };
           });
@@ -1193,8 +1340,10 @@ describe("bundler", () => {
       },
     ],
     onAfterBundle(api) {
-      expect(api.readFile("/out.js")).toContain("if (deferred())");
+      const out = api.readFile("/out.js");
+      expect(out).toContain("deferred() ?");
+      expect(out).not.toContain("isDev");
     },
-    run: { stdout: "off" },
+    run: { stdout: "off\nprod" },
   });
 });

@@ -910,7 +910,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     RETURN_IF_EXCEPTION(throwScope, {});
     MarkedArgumentBuffer args;
     args.append(jsNumber(Bun__getExitCode(bunVM(zigGlobal))));
-    JSC::call(globalObject, reallyExitVal, args, ""_s);
+    JSC::call(globalObject, reallyExitVal, process, args, "process.reallyExit is not a function"_s);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSC::JSValue::encode(jsUndefined());

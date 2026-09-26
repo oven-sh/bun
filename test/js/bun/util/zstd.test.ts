@@ -795,9 +795,8 @@ describe.concurrent("async compression of a resizable ArrayBuffer that shrinks a
 
   // A view allocated by length owns its bytes directly: it has no ArrayBuffer
   // until JS asks for one. The borrow adopts one so it has something to pin,
-  // and the pin makes the transfer below copy. Without it the transfer moves
-  // the storage to an owner nothing references and the pool thread reads the
-  // freed block.
+  // and the pin makes the transfer below copy. Without it `transfer(0)` frees
+  // the storage inside the call and the pool thread reads the freed block.
   it("a by-length typed array keeps its bytes when the caller transfers them mid-compress", async () => {
     await runInChild(
       /* js */ `

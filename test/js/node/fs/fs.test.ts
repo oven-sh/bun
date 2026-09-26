@@ -6782,7 +6782,8 @@ it("fs.read keeps filling a by-length view when its storage is transferred while
   // view owns its bytes directly and has no ArrayBuffer, so the borrow has to
   // adopt one before it can pin it. Without the pin, `view.buffer` makes an
   // ArrayBuffer nothing pins, the transfer moves the storage to an owner
-  // nothing references, and the pool thread writes into freed memory.
+  // nothing references, and the pool thread writes into memory that the next
+  // collection frees.
   const script = `
     import fs from "node:fs";
     import path from "node:path";

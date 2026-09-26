@@ -1186,15 +1186,16 @@ describe("hostile option objects", () => {
     expect(a.byteLength).toBe(0); // pin released with the task
   });
 
-  test("transfer + GC after the borrow does not free the bytes the pool thread reads", async () => {
-    // Without the pin, `.buffer` + transfer moves the storage to an
-    // ArrayBuffer nothing references and the collection frees it while the
-    // pool job may still read it. The assertion does not depend on catching
-    // that read in the act: the transfer either copies (pinned, `byteLength`
-    // stays) or detaches (`byteLength` 0). `Malloc=1` routes the Gigacage
-    // through system malloc, so ASAN reports the read too when the job is
-    // still running at the free. Windows is left alone: bmalloc's SystemHeap
-    // is unimplemented there and `Malloc=1` would RELEASE_BASSERT.
+  test("a transfer after the borrow does not free the bytes the pool thread reads", async () => {
+    // Without the pin a transfer of `.buffer` frees the storage while the pool
+    // job may still read it: `transfer(0)` frees it inside the call, and a
+    // same-length transfer hands it to an owner that the next collection
+    // sweeps. The assertion does not depend on catching the read in the act:
+    // the transfer either copies (pinned, `byteLength` stays) or detaches
+    // (`byteLength` 0). `Malloc=1` routes the Gigacage through system malloc,
+    // so ASAN reports the read too when the job is still running at the free.
+    // Windows is left alone: bmalloc's SystemHeap is unimplemented there and
+    // `Malloc=1` would RELEASE_BASSERT.
     const script = `
       import zlib from "node:zlib";
       const be32 = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
@@ -1214,16 +1215,26 @@ describe("hostile option objects", () => {
         chunk("IEND", Buffer.alloc(0)),
       ]);
       const want = Bun.hash(await new Bun.Image(new Uint8Array(png)).bytes());
-      const input = new Uint8Array(png);           // OversizeTypedArray: no ArrayBuffer yet
-      const decode = new Bun.Image(input).bytes(); // borrows input's storage for the pool
-      input.buffer.transfer(0);                    // storage moves to an unreferenced owner
-      Bun.gc(true);                                // ... which this collection sweeps
-      for (let k = 0; k < 8; k++) new Uint8Array(png.length).fill(0xee); // reuse the block
-      const decoded = await decode.then(
-        r => (Bun.hash(r) === want ? "same" : "different"),
-        e => "rejected:" + (e.code ?? e.message),
-      );
-      console.log(JSON.stringify({ pngBytes: png.length, byteLength: input.byteLength, decoded }));
+      const steal = {
+        "transfer(0)": ab => ab.transfer(0),
+        "structuredClone + gc": ab => {
+          structuredClone(ab, { transfer: [ab] });
+          Bun.gc(true);
+        },
+      };
+      const out = { pngBytes: png.length };
+      for (const [name, take] of Object.entries(steal)) {
+        const input = new Uint8Array(png);           // OversizeTypedArray: no ArrayBuffer yet
+        const decode = new Bun.Image(input).bytes(); // borrows input's storage for the pool
+        take(input.buffer);
+        for (let k = 0; k < 8; k++) new Uint8Array(png.length).fill(0xee); // reuse the block
+        const decoded = await decode.then(
+          r => (Bun.hash(r) === want ? "same" : "different"),
+          e => "rejected:" + (e.code ?? e.message),
+        );
+        out[name] = { byteLength: input.byteLength, decoded };
+      }
+      console.log(JSON.stringify(out));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -1239,12 +1250,11 @@ describe("hostile option objects", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const out = JSON.parse(stdout.trim());
-    expect(out.pngBytes).toBeGreaterThan(1000); // else the input is a FastTypedArray and gets duped
-    expect({ byteLength: out.byteLength, decoded: out.decoded }).toEqual({
-      byteLength: out.pngBytes, // pinned: the transfer copied and left `input` attached
-      decoded: "same",
-    });
+    const { pngBytes, ...vehicles } = JSON.parse(stdout.trim());
+    expect(pngBytes).toBeGreaterThan(1000); // else the input is a FastTypedArray and gets duped
+    // Pinned: each transfer copied and left `input` attached.
+    const pinned = { byteLength: pngBytes, decoded: "same" };
+    expect(vehicles).toEqual({ "transfer(0)": pinned, "structuredClone + gc": pinned });
     expect(exitCode).toBe(0);
   });
 

@@ -3601,8 +3601,8 @@ bool JSC__JSValue__asArrayBuffer(
 // (OversizeTypedArray) is adopted first: `possiblySharedBuffer()` wraps the
 // storage where it already is (`createAdopted`, no byte copy). Holding such a
 // view instead does not keep its storage alive: `view.buffer` makes an
-// ArrayBuffer no pin covers, a transfer re-homes the storage, and
-// `Heap::sweepArrayBuffers` frees it under the borrower.
+// ArrayBuffer no pin covers, and a transfer of it frees the storage under the
+// borrower, at once (`transfer(0)`) or when the new owner is collected.
 static bool pinStorage(JSC::JSValue value)
 {
     JSC::ArrayBuffer* buf = nullptr;

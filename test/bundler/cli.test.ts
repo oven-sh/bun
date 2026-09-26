@@ -973,6 +973,17 @@ describe.concurrent("bun build --server-components", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("keeps an explicit --target=node", async () => {
+    using dir = tempDir("sc-node-target", { "server.ts": `console.log("server");` });
+    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "--target=node", "server.ts");
+    expect(stderr).toBe("");
+    expect(stdout).toMatchInlineSnapshot(`
+      "// server.ts
+      console.log("server");"
+    `);
+    expect(exitCode).toBe(0);
+  });
+
   test("rejects a client-side --target", async () => {
     using dir = tempDir("sc-browser-target", { "server.ts": `console.log("server");` });
     const { stdout, stderr, exitCode } = await build(dir, "--server-components", "--target=browser", "server.ts");

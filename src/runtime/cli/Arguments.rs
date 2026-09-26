@@ -2659,7 +2659,9 @@ fn parse_build_command_options(
             }
         }
         // Needs a server-side main target: the CLI only creates a client transpiler for HTML.
-        opts.target = Some(api::Target::Bun);
+        if opts.target.is_none() {
+            opts.target = Some(api::Target::Bun);
+        }
     }
 
     if args.flag(b"--react-fast-refresh") {

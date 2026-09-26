@@ -976,10 +976,10 @@ impl RunCommand {
             ShimKind::Copy => {
                 // SAFETY: `src` and `buf[..=tmp_len]` are NUL-terminated wide strings.
                 if unsafe { win::CopyFileW(src.as_ptr(), buf.as_ptr(), 0) } == 0 {
-                    return Err(bun_sys::Error::from_win32(
-                        win::Win32Error::get(),
-                        bun_sys::Tag::copyfile,
-                    ));
+                    let err =
+                        bun_sys::Error::from_win32(win::Win32Error::get(), bun_sys::Tag::copyfile);
+                    let _ = bun_sys::unlink_w(WStr::from_buf(buf, tmp_len));
+                    return Err(err);
                 }
             }
         }

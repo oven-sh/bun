@@ -1141,6 +1141,8 @@ pub mod ssl_wrapper {
 
                 // SAFETY: write-only view of the unfilled tail; SSL_read only stores into it.
                 let available = unsafe { &mut buffer.as_bytes_mut()[read..] };
+                // An entry another operation on this thread left must not be taken for this read's.
+                boring_sys::ERR_clear_error();
                 // SAFETY: ssl is a live SSL*; available is a valid mutable slice.
                 let just_read = unsafe {
                     boring_sys::SSL_read(

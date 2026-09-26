@@ -1767,7 +1767,7 @@ pub fn init(
                             break;
                         };
                         let mut log = bun_ast::Log::init();
-                        let _ = match workspace_names.process_names_array(
+                        let processed = workspace_names.process_names_array(
                             &mut workspace_package_json_cache,
                             &mut log,
                             names,
@@ -1775,11 +1775,12 @@ pub fn init(
                             prop.loc,
                             None,
                             Package::WorkspaceMap::MissingWorkspace::Skip,
-                        ) {
-                            Ok(v) => v,
-                            Err(_) => break,
-                        };
+                        );
                         drop(log);
+                        // Still the root of its other members. The install reports the entry.
+                        if processed.is_err() && !workspace_names.rejected_outside_root {
+                            break;
+                        }
 
                         debug_assert_eq!(
                             workspace_names.keys().len(),

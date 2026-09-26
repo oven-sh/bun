@@ -755,27 +755,35 @@ impl Cmd {
                     if flags.duplicate_out() || flags.stdout() {
                         redirect_out(STDOUT_NO, redirect_stdout)?;
                     }
-                    if flags.duplicate_out() || flags.stderr() {
+                    if flags.stdout() && flags.stderr() {
+                        // `&>`: one pipe for both streams keeps their bytes in write order.
+                        stdio[STDERR_NO] = Stdio::Dup2(crate::api::bun_spawn::stdio::Dup2 {
+                            out: StdioKind::Stderr,
+                            to: StdioKind::Stdout,
+                        });
+                    } else if flags.duplicate_out() || flags.stderr() {
                         redirect_out(STDERR_NO, redirect_stderr)?;
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
-                    let blob = blob_ref.dupe();
+                    // `&> ${Bun.file(fd)}` sets stdout and stderr: both get the same fd.
                     if flags.stdin() {
                         stdio[STDIN_NO].extract_blob(
                             global,
-                            crate::webcore::blob::Any::Blob(blob),
+                            crate::webcore::blob::Any::Blob(blob_ref.dupe()),
                             STDIN_NO as i32,
                         )?;
-                    } else if flags.stdout() {
+                    }
+                    if flags.stdout() {
                         stdio[STDOUT_NO].extract_blob(
                             global,
-                            crate::webcore::blob::Any::Blob(blob),
+                            crate::webcore::blob::Any::Blob(blob_ref.dupe()),
                             STDOUT_NO as i32,
                         )?;
-                    } else if flags.stderr() {
+                    }
+                    if flags.stderr() {
                         stdio[STDERR_NO].extract_blob(
                             global,
-                            crate::webcore::blob::Any::Blob(blob),
+                            crate::webcore::blob::Any::Blob(blob_ref.dupe()),
                             STDERR_NO as i32,
                         )?;
                     }

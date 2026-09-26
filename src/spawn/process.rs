@@ -2248,6 +2248,11 @@ mod spawn_process_body {
             if dup_src == Some(u32::try_from(i).expect("int cast")) {
                 *result_stdio = WindowsStdioResult::Unavailable;
             } else if dup_tgt == Some(u32::try_from(i).expect("int cast")) {
+                // The dup target reads `dup_fds[0]`, so no result slot takes its pipe.
+                if let WindowsStdio::Buffer(pipe) = stdio_options[i] {
+                    // SAFETY: `create_zeroed_pipe` allocation that has no other owner.
+                    unsafe { uv::Pipe::close_and_destroy(*pipe) };
+                }
                 *result_stdio = WindowsStdioResult::BufferFd(Fd::from_uv(dup_fds[0]));
             } else {
                 match stdio_options[i] {

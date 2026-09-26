@@ -3575,7 +3575,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     BunString keyZ = Bun::toString(keyString);
     BunString referrerZ = Bun::toString(referrerString);
     BunString queryZ = BunStringEmpty;
-    Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
+    Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ, false);
     RETURN_IF_EXCEPTION(scope, {});
     if (!res.success) {
         throwException(scope, res.result.err, globalObject);
@@ -3695,7 +3695,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         BunString moduleNameZ = Bun::toString(moduleName);
         BunString sourceOriginZ = Bun::toString(sourceOriginStringHolder);
         BunString queryZ = BunStringEmpty;
-        Zig__GlobalObject__resolve(&res, globalObject, &moduleNameZ, &sourceOriginZ, &queryZ);
+        Zig__GlobalObject__resolve(&res, globalObject, &moduleNameZ, &sourceOriginZ, &queryZ, true);
         RETURN_IF_EXCEPTION(scope, JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
         if (!res.success) [[unlikely]] {
             throwException(scope, res.result.err, globalObject);

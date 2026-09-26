@@ -5030,9 +5030,11 @@ pub mod bv2_impl {
                             msgs: vec![msg],
                             ..Default::default()
                         };
+                        let loader =
+                            this.graph.input_files.items_loader()[load.source_index.get() as usize];
                         dev.handle_parse_task_failure(
                             crate::Error::Plugin,
-                            load.bake_graph(),
+                            failure_graph(loader, load.parse_task().known_target),
                             source.path.key_for_incremental_graph(),
                             &raw const temp_log,
                             this,
@@ -5781,6 +5783,7 @@ pub mod bv2_impl {
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
             let mut html_files: ArrayHashMap<Index, ()> = ArrayHashMap::new();
+            let mut failed_css_imported_on_server: ArrayHashMap<Index, ()> = ArrayHashMap::new();
 
             // Separate non-failing files into two lists: JS and CSS
             let js_reachable_files: &[Index] = 'reachable_files: {
@@ -5886,6 +5889,12 @@ pub mod bv2_impl {
                                     (*parts_col.add(record.source_index.get() as usize)).len()
                                 } == 0
                                 {
+                                    // Failed: not a CSS root, not a module dependency.
+                                    record.path.is_disabled = true;
+                                    if target != Target::Browser {
+                                        failed_css_imported_on_server
+                                            .put(record.source_index, ())?;
+                                    }
                                     record.source_index = Index::INVALID;
                                     continue;
                                 }
@@ -6092,6 +6101,7 @@ pub mod bv2_impl {
                         chunks,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
                         html_files,
+                        failed_css_imported_on_server,
                     },
                 )
                 .map_err(|_| AllocError)
@@ -6772,7 +6782,10 @@ pub mod bv2_impl {
                             // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
                             let log: &mut bun_ast::Log = unsafe {
                                 &mut *std::ptr::from_mut::<bun_ast::Log>(
-                                    self.log_for_resolution_failures(source.path.text, bake_graph),
+                                    self.log_for_resolution_failures(
+                                        source.path.text,
+                                        failure_graph(loader, target),
+                                    ),
                                 )
                             };
 
@@ -6800,7 +6813,8 @@ pub mod bv2_impl {
                                         dev.track_resolution_failure(
                                             source.path.text,
                                             import_record.path.text,
-                                            ctx.target.bake_graph(), // use the source file target not the altered one
+                                            // The source file target, not the altered one.
+                                            failure_graph(loader, ctx.target),
                                             loader,
                                         )
                                         .expect("oom");
@@ -6992,8 +7006,10 @@ pub mod bv2_impl {
                             // blocks an assertion failure because the DevServer
                             // reserves the HTML file's spot in IncrementalGraph for the
                             // route definition.
-                            let log =
-                                self.log_for_resolution_failures(source.path.text, bake_graph);
+                            let log = self.log_for_resolution_failures(
+                                source.path.text,
+                                failure_graph(loader, target),
+                            );
                             log.add_range_error_fmt(
                                 Some(source),
                                 import_record.range,
@@ -7872,10 +7888,12 @@ pub mod bv2_impl {
                                 [err.source_index.get() as usize]
                                 .path
                                 .text;
+                            let loader = this.graph.input_files.items_loader()
+                                [err.source_index.get() as usize];
                             dev_server
                                 .handle_parse_task_failure(
                                     err.err,
-                                    err.target.bake_graph(),
+                                    failure_graph(loader, err.target),
                                     abs_path,
                                     &raw const err.log,
                                     std::ptr::from_mut(this),
@@ -8271,6 +8289,17 @@ pub mod bv2_impl {
         pub chunks: &'a mut [Chunk],
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
         pub html_files: ArrayHashMap<Index, ()>,
+        /// Stylesheets that failed to build and that a server file imports.
+        pub failed_css_imported_on_server: ArrayHashMap<Index, ()>,
+    }
+
+    /// CSS lives in the client graph, whichever target imported it.
+    pub(crate) fn failure_graph(loader: Loader, target: options::Target) -> bake::Graph {
+        if loader == Loader::Css {
+            bake::Graph::Client
+        } else {
+            target.bake_graph()
+        }
     }
 
     pub(crate) fn generate_unique_key() -> u64 {

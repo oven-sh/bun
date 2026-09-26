@@ -318,6 +318,72 @@ it.skipIf(!isPosix)("does not busy-wait on the futex while git runs", async () =
   expect(proc.resourceUsage!.contextSwitches.voluntary).toBeLessThan(2000);
 });
 
+// https://github.com/oven-sh/bun/issues/7114
+// Unknown long flags after the template name were already skipped by the arg
+// parser, but unknown short flags aborted with "Invalid Argument '-t'" before
+// bun create ever dispatched to bunx / the local template.
+describe("forwards unknown flags past the template name (#7114)", () => {
+  it.each(["-t", "--template"])("local template with %s", async flag => {
+    using dir = tempDir("create-7114-local", {
+      "bun-create/tpl/index.js": "// hi\n",
+      "bun-create/tpl/package.json": JSON.stringify({ name: "tpl", version: "1.0.0" }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "tpl", join(String(dir), "dest"), flag, "tabs", "--no-git", "--no-install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_CREATE_DIR: join(String(dir), "bun-create") },
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("Invalid Argument");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Created");
+    expect(await exists(join(String(dir), "dest", "index.js"))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["-t", "tabs"],
+    ["-e", "with-router"],
+    ["-tabs", ""],
+  ])("create-* package receives %s %s", async (flag, value) => {
+    const argv = value ? [flag, value] : [flag];
+    using dir = tempDir("create-7114-bunx", {});
+
+    // 404 registry: if arg parsing succeeds, bun create dispatches to bunx
+    // which will hit this and fail on the package lookup (not on '-t').
+    const urls: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        urls.push(new URL(req.url).pathname);
+        return new Response("{}", { status: 404 });
+      },
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "issue-7114-pkg", "./dest", ...argv, "--yes"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_TMPDIR: String(dir),
+        TEMP: String(dir),
+        TMPDIR: String(dir),
+        npm_config_registry: `http://localhost:${server.port}/`,
+      },
+    });
+
+    const [, err] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("Invalid Argument");
+    expect(urls).toContain("/create-issue-7114-pkg");
+  });
+});
+
 it("should create template from local folder", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "test-template";

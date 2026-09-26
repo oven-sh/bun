@@ -118,30 +118,35 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 
   // The rejected query sends nothing, so no reply comes back to release the
   // event loop ref that the query took. The connection must release it itself.
-  test.each([false, true])("a script whose last query was rejected exits on its own (prepare: %p)", async prepare => {
-    await container.ready;
-    const script = `
-      const sql = new Bun.SQL({ url: process.env.DATABASE_URL, max: 1, prepare: ${prepare} });
-      await sql.connect();
-      // A later tick: the idle connection does not hold the process any more.
-      await new Promise(resolve => setImmediate(resolve));
-      const param = { toString() { throw new Error("boom from toString"); } };
-      console.log(await sql\`SELECT \${param}::text AS v\`.then(() => "resolved", e => e.message));
-    `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: { ...bunEnv, DATABASE_URL: url() },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // stderr is here so that a failure shows it. A sanitizer build can write to it.
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "boom from toString\n",
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
-  });
+  test.each([false, true])(
+    "a script whose last query was rejected exits on its own (prepare: %p)",
+    async prepare => {
+      await container.ready;
+      const script = `
+        const sql = new Bun.SQL({ url: process.env.DATABASE_URL, max: 1, prepare: ${prepare} });
+        await sql.connect();
+        // A later tick: the idle connection does not hold the process any more.
+        await new Promise(resolve => setImmediate(resolve));
+        const param = { toString() { throw new Error("boom from toString"); } };
+        console.log(await sql\`SELECT \${param}::text AS v\`.then(() => "resolved", e => e.message));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, DATABASE_URL: url() },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // stderr is here so that a failure shows it. A sanitizer build can write to it.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "boom from toString\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+    // On a loaded machine a debug build took 15 s to run the subprocess.
+    60_000,
+  );
 
   test("a query dispatched from inside a conversion that then fails gets its own row", async () => {
     await container.ready;

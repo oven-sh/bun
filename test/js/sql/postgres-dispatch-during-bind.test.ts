@@ -8,6 +8,10 @@ import path from "node:path";
 const fixture = path.join(import.meta.dir, "postgres-dispatch-during-bind-fixture.ts");
 const wireFixture = path.join(import.meta.dir, "postgres-dispatch-during-bind-wire-fixture.ts");
 
+// Every test starts a subprocess. On a loaded machine a debug build took 15 s to run one.
+// A fixture that hangs stops itself at 45 s, so the test reports what the fixture printed.
+const timeout = 60_000;
+
 const ok = (...rows: object[]) => ({ ok: rows });
 const closed = { err: "ERR_POSTGRES_CONNECTION_CLOSED" };
 const afterwards = ok({ ok: 1 });
@@ -231,10 +235,14 @@ async function run(fixture: string, expected: Record<string, object>, env: Recor
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   const url = () => `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
 
-  test.concurrent.each(Object.entries(groups))("%s", async (_, expected) => {
-    await container.ready;
-    await run(fixture, expected, { DATABASE_URL: url() });
-  });
+  test.concurrent.each(Object.entries(groups))(
+    "%s",
+    async (_, expected) => {
+      await container.ready;
+      await run(fixture, expected, { DATABASE_URL: url() });
+    },
+    timeout,
+  );
 
   // Neither query sends a byte, so no reply comes back to release the event loop ref of the nested query.
   test.concurrent.each([true, false])(
@@ -272,6 +280,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
         exitCode: 0,
       });
     },
+    timeout,
   );
 });
 
@@ -284,20 +293,28 @@ const wire = (nested: string, ...frames: string[]) => ({
 });
 const nestedBind = ["B(nested)", "E", "H", "S"];
 
-test.concurrent("wire order equals queue order: prepared statement", async () => {
-  await run(wireFixture, {
-    "prepared statement": wire("nested", "B(outer)", "E", "H", "S", ...nestedBind),
-    "prepared statement, nested query without parameters": wire(
-      "",
-      ...["B(outer)", "E", "H", "S", "P", "D", "B()", "E", "H", "S"],
-    ),
-    "prepared statement, nested simple query": wire("simple", "B(outer)", "E", "H", "S", "Q", "H"),
-  });
-});
+test.concurrent(
+  "wire order equals queue order: prepared statement",
+  async () => {
+    await run(wireFixture, {
+      "prepared statement": wire("nested", "B(outer)", "E", "H", "S", ...nestedBind),
+      "prepared statement, nested query without parameters": wire(
+        "",
+        ...["B(outer)", "E", "H", "S", "P", "D", "B()", "E", "H", "S"],
+      ),
+      "prepared statement, nested simple query": wire("simple", "B(outer)", "E", "H", "S", "Q", "H"),
+    });
+  },
+  timeout,
+);
 
-test.concurrent("wire order equals queue order: advance() encodes", async () => {
-  await run(wireFixture, {
-    "first execution": wire("nested", "P", "D", "S", "B(outer)", "E", "H", "S", ...nestedBind),
-    "prepare: false": wire("nested", "P", "D", "B(outer)", "E", "H", "S", "P", "D", ...nestedBind),
-  });
-});
+test.concurrent(
+  "wire order equals queue order: advance() encodes",
+  async () => {
+    await run(wireFixture, {
+      "first execution": wire("nested", "P", "D", "S", "B(outer)", "E", "H", "S", ...nestedBind),
+      "prepare: false": wire("nested", "P", "D", "B(outer)", "E", "H", "S", "P", "D", ...nestedBind),
+    });
+  },
+  timeout,
+);

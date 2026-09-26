@@ -5,8 +5,9 @@ import { SQL, type ReservedSQL } from "bun";
 import { drainMicrotasks } from "bun:jsc";
 import vm from "node:vm";
 
-// A broken build hangs in these scenarios. The process must not outlive the test that started it.
-setTimeout(() => process.exit(124), 30_000).unref();
+// A broken build hangs in these scenarios. The process stops before the timeout of its test,
+// and it does not outlive a test run that was killed.
+setTimeout(() => process.exit(124), 45_000).unref();
 
 const url = process.env.DATABASE_URL!;
 let sql!: SQL;

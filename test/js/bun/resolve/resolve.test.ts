@@ -1145,6 +1145,53 @@ it("resolves through many directories without corrupting the dir cache", async (
   expect(exitCode).toBe(0);
 }, 20_000);
 
+// The resolver's directory-entry cache keeps 2048 entries inline and then
+// spills into heap blocks of 512 entries each. A readdir that fails with
+// ENOTDIR occupies a cache slot like a real directory does, so paths below a
+// regular file fill the inline storage and several overflow blocks without
+// creating any directories. The real directories resolved after that land in
+// an overflow block; the second pass reads them back through the block index.
+it("resolves correctly once the dir cache spills into overflow blocks", async () => {
+  const FILLER = 2700;
+  const REAL = 40;
+  const files: Record<string, string> = { "f.js": "" };
+  for (let i = 0; i < REAL; i++) {
+    files[`r${i}/index.js`] = `module.exports = ${i};`;
+  }
+  files["index.js"] = `
+    const root = import.meta.dir.replaceAll("\\\\", "/");
+    let thrown = 0;
+    let ok = 0;
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < ${FILLER}; i++) {
+        try {
+          Bun.resolveSync("./f.js/d" + i + "/x", import.meta.dir);
+        } catch {
+          thrown++;
+        }
+      }
+      for (let i = 0; i < ${REAL}; i++) {
+        const resolved = Bun.resolveSync("./r" + i, import.meta.dir).replaceAll("\\\\", "/");
+        if (resolved === root + "/r" + i + "/index.js") ok++;
+      }
+    }
+    console.log(thrown, ok);
+  `;
+
+  await using dir = tempDir("dir-cache-overflow", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`${2 * FILLER} ${2 * REAL}\n`);
+  expect(exitCode).toBe(0);
+});
+
 // ASAN builds print a warning on stderr that has nothing to do with resolution.
 function stripAsanWarning(stderr: string): string {
   return stderr

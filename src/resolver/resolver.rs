@@ -4175,6 +4175,11 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
+        // A path with a null byte cannot name a real directory.
+        if strings::contains_char(input_path, 0) {
+            return Ok(None);
+        }
+
         #[cfg(windows)]
         {
             let win32_normalized_dir_info_cache_buf = bufs!(win32_normalized_dir_info_cache);

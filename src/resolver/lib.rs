@@ -1122,6 +1122,11 @@ pub mod fs {
 
         /// `open(path, O_DIRECTORY)`.
         pub(crate) fn open_dir(&self, unsafe_dir_string: &[u8]) -> crate::CrateResult<Fd> {
+            // open(2) would end the path at the null byte and open a different directory.
+            if bun_core::strings::contains_char(unsafe_dir_string, 0) {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+            }
+
             #[cfg(windows)]
             {
                 // NtCreateFile with FILE_DIRECTORY_FILE/FILE_LIST_DIRECTORY so
@@ -2338,6 +2343,11 @@ pub mod cache {
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
         ) -> crate::CrateResult<Entry> {
+            // open(2) would end the path at the null byte and open a different file.
+            if bun_core::strings::contains_char(path, 0) {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+            }
+
             let rfs = &_fs.fs;
 
             let will_close = rfs.need_to_close_files() && _file_handle.is_none();

@@ -502,6 +502,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         filename = fileURL.fileSystemPath();
     }
 
+    // dlopen() and LoadLibrary() would end the path at the null byte and load a different file.
+    if (filename.contains(static_cast<char16_t>(0))) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "filename"_s,
+            callFrame->uncheckedArgument(1), "must be a string without null bytes"_s);
+    }
+
     CString utf8;
 
     // Support embedded .node files

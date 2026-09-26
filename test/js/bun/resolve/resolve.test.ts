@@ -1961,3 +1961,65 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(exitCode).toBe(1);
   });
 });
+
+// open(2) ends a path at a null byte, so the resolver would look in a different directory than the path names.
+it.concurrent("a path with a null byte does not exist", async () => {
+  using dir = tempDir("resolve-null-byte", {
+    "sub/file.cjs": `module.exports = "read from the path before the null byte";`,
+    "node_modules/plain/index.js": `module.exports = "plain";`,
+    "node_modules/null-byte-in-main/package.json": JSON.stringify({
+      name: "null-byte-in-main",
+      main: "lib\0ignored/index.js",
+    }),
+    "node_modules/null-byte-in-main/lib/index.js": `module.exports = "read from the path before the null byte";`,
+    "entry.cjs": `
+      const { createRequire } = require("node:module");
+      const { join } = require("node:path");
+
+      const sub = join(__dirname, "sub");
+      const fromNullByteDirectory = createRequire(join(sub + "\\0ignored", "importer.cjs"));
+
+      function attempt(fn) {
+        try {
+          return fn();
+        } catch (error) {
+          return "threw: " + error.code;
+        }
+      }
+
+      console.log(
+        JSON.stringify({
+          root: __dirname,
+          withoutNullByte: attempt(() => Bun.resolveSync("./file.cjs", sub)),
+          resolveSyncParent: attempt(() => Bun.resolveSync("./file.cjs", sub + "\\0ignored")),
+          requireResolveParent: attempt(() => fromNullByteDirectory.resolve("./file.cjs")),
+          requireResolvePaths: attempt(() => require.resolve("./file.cjs", { paths: [sub + "\\0ignored"] })),
+          packageJsonMain: attempt(() => require("null-byte-in-main")),
+          // As from any directory that does not exist, a package is found from the parent directories.
+          packageFromParent: attempt(() => fromNullByteDirectory.resolve("plain")),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The fixture prints one line, so empty stdout means it crashed.
+  const { root, ...results } = stdout.trim() ? JSON.parse(stdout) : { crashed: stderr };
+  expect(results).toEqual({
+    withoutNullByte: join(root, "sub", "file.cjs"),
+    resolveSyncParent: "threw: ERR_MODULE_NOT_FOUND",
+    requireResolveParent: "threw: MODULE_NOT_FOUND",
+    requireResolvePaths: "threw: MODULE_NOT_FOUND",
+    packageJsonMain: "threw: MODULE_NOT_FOUND",
+    packageFromParent: join(root, "node_modules", "plain", "index.js"),
+  });
+  expect(exitCode).toBe(0);
+});

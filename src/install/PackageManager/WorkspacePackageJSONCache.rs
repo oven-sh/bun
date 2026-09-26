@@ -103,7 +103,7 @@ fn clone_root(
             json::add_too_deeply_nested_error(log, source, root.loc);
             Err(bun_parsers::Error::StackOverflow.into())
         }
-        Err(bun_ast::DeepCloneError::Alloc(err)) => Err(err.into()),
+        Err(bun_ast::DeepCloneError::Alloc(_)) => bun_core::out_of_memory(),
     }
 }
 

@@ -11,6 +11,7 @@
 #include <string.h>
 
 #define AT_BUN_HOST 0x62756e00
+#define AT_BUN_HOST_ENTRIES 0x62756e10
 #define PAGE 4096ull
 
 /* Calling convention of the image, and the Linux syscall numbers of its
@@ -68,7 +69,10 @@ struct bun_host {
   SYSV long long (*syscall)(long long, long long, long long, long long, long long, long long, long long);
   SYSV long long (*thread_create)(ImageThreadFn, void *, long long, void *, int *, void *, int *);
   SYSV void (*thread_exit)(void *, unsigned long long);
+  SYSV void *(*lookup)(const char *, const char *);
+  unsigned long long native_os;
 };
+#define BUN_HOST_ENTRIES (sizeof(struct bun_host) / sizeof(unsigned long long))
 
 struct host_thread {
   ImageThreadFn fn;
@@ -397,6 +401,34 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
   return r;
 }
 
+/* ---- functions of Windows for the image ----
+   The entry "lookup" of the host table. The program in the image calls what
+   it gets with the calling convention of Windows, so nothing is translated.
+   A library is a system DLL, named as in an import table ("kernel32",
+   "ntdll", "ws2_32"), and is loaded from the system directory only.
+   "libuv" is the libuv that is linked into this host (BUN_HOST_LIBUV, see
+   host_win_uv.c): libuv has no DLL. */
+#ifdef BUN_HOST_LIBUV
+void *bun_host_uv_lookup(const char *symbol);
+#else
+static void *bun_host_uv_lookup(const char *symbol) { (void)symbol; return 0; }
+#endif
+static SYSV void *host_lookup(const char *library, const char *symbol) {
+  void *address = 0;
+  if (!strcmp(library, "libuv")) {
+    address = bun_host_uv_lookup(symbol);
+  } else {
+    wchar_t name[260];
+    if (to_wide(library, name, 260) > 1) {
+      HMODULE module = GetModuleHandleW(name);
+      if (!module) module = LoadLibraryExW(name, 0, LOAD_LIBRARY_SEARCH_SYSTEM32);
+      if (module) address = (void *)GetProcAddress(module, symbol);
+    }
+  }
+  if (trace && (!address || trace > 1)) fprintf(stderr, "[host] lookup %s!%s = %p\n", library, symbol, address);
+  return address;
+}
+
 /* ---- image loading and start ---- */
 typedef struct { unsigned char ident[16]; uint16_t type, machine; uint32_t version; uint64_t entry, phoff, shoff; uint32_t flags; uint16_t ehsize, phentsize, phnum, shentsize, shnum, shstrndx; } Ehdr;
 typedef struct { uint32_t type, flags; uint64_t offset, vaddr, paddr, filesz, memsz, align; } Phdr;
@@ -494,6 +526,7 @@ int main(int argc, char **argv) {
   host.syscall = host_syscall;
   host.thread_create = host_thread_create;
   host.thread_exit = host_thread_exit;
+  host.lookup = host_lookup;
 
   size_t stack_size = 8u << 20;
   char *stack = (char *)(intptr_t)host_mmap(0, stack_size, 3, 0x22, -1);
@@ -516,7 +549,8 @@ int main(int argc, char **argv) {
   }
   *v++ = 0;
   uint64_t aux[] = {3, (uint64_t)(uintptr_t)image_ph, 4, sizeof(Phdr), 5, eh->phnum, 6, PAGE, 7, 0, 9, (uint64_t)(uintptr_t)(base + eh->entry),
-                    11, 0, 12, 0, 13, 0, 14, 0, 23, 0, 25, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host, 0, 0};
+                    11, 0, 12, 0, 13, 0, 14, 0, 23, 0, 25, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host,
+                    AT_BUN_HOST_ENTRIES, BUN_HOST_ENTRIES, 0, 0};
   memcpy(v, aux, sizeof aux);
 
   if (trace) fprintf(stderr, "[host] image %ld bytes at %p, entry %p, thread slot offset %#llx\n", size, base, base + eh->entry, host.tcb_offset);

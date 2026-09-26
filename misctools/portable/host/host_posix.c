@@ -30,6 +30,7 @@ int __ulock_wake(uint32_t operation, void *addr, uint64_t wake_value);
 #endif
 
 #define AT_BUN_HOST 0x62756e00
+#define AT_BUN_HOST_ENTRIES 0x62756e10
 extern char **environ;
 
 /* Linux syscall numbers and flag values of the architecture of the image.
@@ -66,12 +67,16 @@ typedef int (*ImageThreadFn)(void *);
 typedef long HostSyscall(long, long, long, long, long, long, long);
 typedef long HostThreadCreate(ImageThreadFn, void *, long, void *, int *, void *, int *);
 typedef void HostThreadExit(void *, unsigned long);
+typedef void *HostLookup(const char *, const char *);
 struct bun_host {
   unsigned long os, tcb_offset;
   HostSyscall *syscall;
   HostThreadCreate *thread_create;
   HostThreadExit *thread_exit;
+  HostLookup *lookup;
+  unsigned long native_os;
 };
+#define BUN_HOST_ENTRIES (sizeof(struct bun_host) / sizeof(unsigned long))
 
 /* ---- stack switch ---- */
 #if defined(__x86_64__)
@@ -253,6 +258,9 @@ static long to_linux_errno(int e) {
 }
 static long ret(long r) { return r < 0 ? to_linux_errno(errno) : r; }
 static int host_open_flags(long f) {
+#if defined(__linux__)
+  return (int)f;
+#endif
   int h = (int)(f & 3);
   if (f & 0x40) h |= O_CREAT;
   if (f & 0x80) h |= O_EXCL;
@@ -361,6 +369,73 @@ static void leave_thread(void *base, unsigned long size) {
 }
 __attribute__((used)) static void host_thread_exit(void *base, unsigned long size) { leave_thread(base, size); }
 
+/* ---- file system requests, Linux test host ----
+   The numbers and the structures are the ones of this kernel, so the request
+   is passed on as it is. A host on another OS has to translate each of them;
+   this host answers ENOSYS there. */
+#if defined(__linux__)
+static long forward_file_request(long n, long a, long b, long c, long d, long e, long f) {
+  switch (n) {
+#if defined(__x86_64__)
+    case SYS_stat: case SYS_lstat: case SYS_mkdir: case SYS_rmdir: case SYS_rename: case SYS_symlink: case SYS_readlink:
+    case SYS_chmod: case SYS_link: case SYS_sendfile:
+#endif
+    case SYS_fstat: case SYS_newfstatat: case SYS_statx: case SYS_pread64: case SYS_pwrite64: case SYS_preadv: case SYS_pwritev:
+    case SYS_mkdirat: case SYS_renameat: case SYS_renameat2: case SYS_symlinkat: case SYS_readlinkat: case SYS_linkat:
+    case SYS_ftruncate: case SYS_truncate: case SYS_getdents64: case SYS_fcntl: case SYS_getcwd: case SYS_chdir: case SYS_fchdir:
+    case SYS_fchmod: case SYS_fchmodat: case SYS_faccessat2: case SYS_copy_file_range: case SYS_fsync: case SYS_fdatasync:
+    case SYS_utimensat: case SYS_dup: case SYS_dup3: case SYS_umask: case SYS_statfs: case SYS_fstatfs:
+      return ret(syscall(n, a, b, c, d, e, f));
+    default:
+      return -L_ENOSYS;
+  }
+}
+#else
+static long forward_file_request(long n, long a, long b, long c, long d, long e, long f) {
+  (void)n; (void)a; (void)b; (void)c; (void)d; (void)e; (void)f;
+  return -L_ENOSYS;
+}
+#endif
+
+/* ---- functions of the host OS for the image ----
+   The entry "lookup" of the host table. macOS: the dynamic linker. Linux
+   needs none (the program in the image uses the libc of the image there), so
+   the test host only has a library of its own, "bun_host_test", with
+   functions in the calling convention of Windows x64: the image calls them
+   the way it calls Win32 on a Windows host. */
+#if defined(__APPLE__)
+#include <dlfcn.h>
+__attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
+  void *handle = library[0] ? dlopen(library, RTLD_LAZY | RTLD_LOCAL) : RTLD_DEFAULT;
+  return handle ? dlsym(handle, symbol) : 0;
+}
+#elif defined(__x86_64__)
+#define WIN64 __attribute__((ms_abi))
+struct test_pair { long long first, second; };
+typedef WIN64 long long TestCallback(void *, int, long long, unsigned, short, long long, double);
+WIN64 static long long test_sum6(int a, long long b, unsigned c, void *d, short e, long long f) {
+  return a + b * 10 + (long long)c * 100 + (long long)(intptr_t)d * 1000 + e * 10000 + f * 100000;
+}
+WIN64 static double test_mixed(double x, int y, double z, float w, long long v) { return x * 2 + y * 3 + z * 5 + w * 7 + (double)v * 11; }
+WIN64 static struct test_pair test_pair_by_value(struct test_pair p, long long add) { return (struct test_pair){p.second + add, p.first - add}; }
+WIN64 static long long test_callback(TestCallback *callback, void *context) { return callback(context, -1, 20000000000ll, 3000000000u, -4, 5, 6.5) + 1; }
+__attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
+  static const struct { const char *name; void *address; } symbols[] = {
+    {"test_sum6", (void *)test_sum6}, {"test_mixed", (void *)test_mixed},
+    {"test_pair_by_value", (void *)test_pair_by_value}, {"test_callback", (void *)test_callback},
+  };
+  if (strcmp(library, "bun_host_test")) return 0;
+  for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++)
+    if (!strcmp(symbol, symbols[i].name)) return symbols[i].address;
+  return 0;
+}
+#else
+__attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
+  (void)library; (void)symbol;
+  return 0;
+}
+#endif
+
 /* ---- syscalls ---- */
 __attribute__((used)) static long host_syscall(long n, long a, long b, long c, long d, long e, long f) {
   FORGET_X18();
@@ -390,9 +465,13 @@ __attribute__((used)) static long host_syscall(long n, long a, long b, long c, l
     case N_readv: r = ret(readv((int)a, (void *)b, (int)c)); break;
     case N_writev: r = ret(writev((int)a, (void *)b, (int)c)); break;
     case N_access: r = ret(access((const char *)a, (int)b)); break;
+#if defined(__linux__)
+    case N_faccessat: case N_unlinkat: r = ret(syscall(n, a, b, c, d)); break;
+#else
     case N_faccessat: r = ret(access((const char *)b, (int)c)); break;
-    case N_unlink: r = ret(unlink((const char *)a)); break;
     case N_unlinkat: r = ret(unlink((const char *)b)); break;
+#endif
+    case N_unlink: r = ret(unlink((const char *)a)); break;
     case N_sched_yield: sched_yield(); r = 0; break;
     case N_nanosleep: case N_clock_nanosleep: {
       const struct l_timespec *t = (void *)(n == N_nanosleep ? a : c);
@@ -424,7 +503,7 @@ __attribute__((used)) static long host_syscall(long n, long a, long b, long c, l
     case N_exit: leave_thread(0, 0); r = 0; break;
     case N_exit_group: _exit((int)a);
     case N_tkill: case N_tgkill: _exit(134);
-    default: r = -L_ENOSYS; break;
+    default: r = forward_file_request(n, a, b, c, d, e, f); break;
   }
   if (trace && (r == -L_ENOSYS || trace > 1)) fprintf(stderr, "[host] syscall %ld(%#lx, %#lx, %#lx) = %ld\n", n, a, b, c, r);
   return r;
@@ -434,6 +513,7 @@ __attribute__((used)) static long host_syscall(long n, long a, long b, long c, l
 IMAGE_ENTRY(host_syscall)
 IMAGE_ENTRY(host_thread_create)
 IMAGE_ENTRY(host_thread_exit)
+IMAGE_ENTRY(host_lookup)
 #define TABLE_ENTRY(name) name##_entry
 #else
 #define TABLE_ENTRY(name) name
@@ -521,6 +601,10 @@ int main(int argc, char **argv) {
   host.syscall = (HostSyscall *)TABLE_ENTRY(host_syscall);
   host.thread_create = (HostThreadCreate *)TABLE_ENTRY(host_thread_create);
   host.thread_exit = (HostThreadExit *)TABLE_ENTRY(host_thread_exit);
+  host.lookup = (HostLookup *)TABLE_ENTRY(host_lookup);
+#if defined(__linux__)
+  host.native_os = 1;
+#endif
   slot_set((void *)0x1122334455667788ull);
   if (slot_read(host.tcb_offset) != (void *)0x1122334455667788ull) { fprintf(stderr, "host: thread slot is not readable at offset %#lx of the thread register\n", host.tcb_offset); return 2; }
 
@@ -543,7 +627,8 @@ int main(int argc, char **argv) {
   *v++ = 0;
   /* AT_PAGESZ (6) is the page of the host: musl for aarch64 has no fixed page size, and macOS on arm64 has 16 KiB pages. */
   uint64_t aux[] = {3, (uint64_t)(uintptr_t)(base + eh->phoff), 4, sizeof(Phdr), 5, eh->phnum, 6, (uint64_t)host_page, 7, 0, 9, (uint64_t)(uintptr_t)(base + eh->entry),
-                    11, 0, 12, 0, 13, 0, 14, 0, 23, 0, 25, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host, 0, 0};
+                    11, 0, 12, 0, 13, 0, 14, 0, 23, 0, 25, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host,
+                    AT_BUN_HOST_ENTRIES, BUN_HOST_ENTRIES, 0, 0};
   memcpy(v, aux, sizeof aux);
   if (trace) fprintf(stderr, "[host] image %lld bytes at %p, host table os %lu, thread slot offset %#lx, host page %ld\n", (long long)st.st_size, (void *)base, host.os, host.tcb_offset, host_page);
   fflush(0);

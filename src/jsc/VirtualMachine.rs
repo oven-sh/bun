@@ -2838,6 +2838,19 @@ pub struct RuntimeHooks {
         value: JSValue,
         enable_ansi_colors: bool,
     ) -> JsResult<bool>,
+    /// `ConsoleObject.Formatter` DOM node printing for `bun test` matcher
+    /// messages, reached from `print_object` only when the formatter has
+    /// `print_dom_nodes_as_markup` set. `class_name` is the value's computed
+    /// class name. Returns `Ok(true)` when `value` duck-typed as a DOM node
+    /// and was fully formatted as markup into `writer`; `Ok(false)` to fall
+    /// through to the generic object printer.
+    pub console_print_dom_node: for<'a, 'f> fn(
+        formatter: &'a mut crate::console_object::Formatter<'f>,
+        writer: &'a mut dyn bun_io::Write,
+        value: JSValue,
+        class_name: &bun_core::String,
+        enable_ansi_colors: bool,
+    ) -> JsResult<bool>,
     /// Applies `--compile`-baked runtime flags to the
     /// worker's transpiler. `graph` is the same trait object stored in
     /// `vm.standalone_module_graph` (the high tier downcasts to its concrete

@@ -119,7 +119,7 @@ impl ScopeFunctions {
 
         let [array] = frame.arguments_as_array::<1>();
         if array.is_undefined_or_null() || !array.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+            let mut formatter = super::expect::new_formatter(global);
             return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
         }
 
@@ -168,7 +168,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
     if !this.each.is_empty() {
         if this.each.is_undefined_or_null() || !this.each.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+            let mut formatter = super::expect::new_formatter(global);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
         let mut iter = this.each.array_iterator(global)?;

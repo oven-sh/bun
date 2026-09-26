@@ -632,12 +632,11 @@ test.each(["Request", "Response"])(
   },
 );
 
-// clone()'s usability check now fires before the stream is teed, so the
-// readableStreamTee C++ bridge's exception propagation (which used to be
-// covered by the test above) is exercised via `new Request(lockedRequest)`,
-// which still tees. It must throw a single catchable TypeError, not also
-// report it as uncaught (exit code 1) or surface a bogus follow-up error.
-test("new Request(request) with a locked stream body throws a catchable TypeError from the tee and does not fail the process", async () => {
+// `new Request(request)` runs the same body-usability check as clone() before
+// transferring the body. A locked or disturbed input must throw a single
+// catchable TypeError, not also report it as uncaught (exit code 1) or surface
+// a bogus follow-up error.
+test("new Request(request) with a locked stream body throws a catchable TypeError and does not fail the process", async () => {
   const script = `
     const stream = new ReadableStream({ start() {} });
     const source = new Request("http://example.com/", { method: "POST", body: stream, duplex: "half" });
@@ -649,6 +648,40 @@ test("new Request(request) with a locked stream body throws a catchable TypeErro
       console.log("caught " + e.constructor.name + ": " + e.message);
     }
     // Give the event loop a turn so a deferred error report would surface.
+    await new Promise(resolve => setImmediate(resolve));
+    console.log("done");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    stdout: ["caught TypeError: Cannot construct a Request with a Request object that has already been used.", "done"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// A Request supplied as *init* (Bun extension) is not the spec input, so its
+// body is still teed. With a locked stream that reaches the readableStreamTee
+// C++ bridge, whose exception must surface as a single catchable TypeError.
+test("new Request(url, lockedRequestAsInit) throws a catchable TypeError from the tee and does not fail the process", async () => {
+  const script = `
+    const stream = new ReadableStream({ start() {} });
+    const source = new Request("http://example.com/", { method: "POST", body: stream, duplex: "half" });
+    source.body.getReader(); // lock the body stream
+    try {
+      new Request("http://example.com/other", source);
+      console.log("no throw");
+    } catch (e) {
+      console.log("caught " + e.constructor.name + ": " + e.message);
+    }
     await new Promise(resolve => setImmediate(resolve));
     console.log("done");
   `;
@@ -1027,14 +1060,12 @@ describe.concurrent("clone() after `.body` was observed returns a fresh tee bran
   });
 });
 
-// The two-arg `new Request(src, init)` constructor tees the source body via a
-// separate path from single-arg / .clone(); with a user ReadableStream body
-// (migrated into the source wrapper's stream cache at construction) it must
-// consult that cache instead of teeing the now-empty native slot, or the
-// derived request's body is a branch of a disconnected stream and reads hang.
-// After the tee, the source's cached stream must also be repointed to its own
-// branch so reading the source still works.
-test("new Request(src, init) with a user ReadableStream body: both derived and source read the bytes", async () => {
+// `new Request(src[, init])` with a Request input transfers the source body
+// (fetch spec §Request ctor step 45): the derived request reads the bytes and
+// the source becomes used. The transfer must pick up a user ReadableStream
+// that has already been migrated into the source wrapper's JS-side stream
+// cache, or the derived body is disconnected and reads hang.
+test("new Request(src, init) with a user ReadableStream body: derived reads the bytes, source is consumed", async () => {
   const stream = () =>
     new ReadableStream({
       start(controller) {
@@ -1051,19 +1082,22 @@ test("new Request(src, init) with a user ReadableStream body: both derived and s
   const oneArgSrc = make();
   const oneArg = new Request(oneArgSrc);
   // Bun extension: a Response as the second argument contributes its body via
-  // the sibling Response-source branch in construct_into.
+  // the sibling Response-source branch in construct_into. That branch still
+  // tees (no spec constraint), so the source Response remains readable.
   const responseSrc = new Response(stream());
   // @ts-expect-error Bun accepts a Response as init
   const fromResponse = new Request("http://example.com/", responseSrc);
   expect({
-    twoArg: { derived: await bytes(twoArg), src: await bytes(twoArgSrc) },
-    oneArg: { derived: await bytes(oneArg), src: await bytes(oneArgSrc) },
+    twoArg: { derived: await bytes(twoArg), srcUsed: twoArgSrc.bodyUsed },
+    oneArg: { derived: await bytes(oneArg), srcUsed: oneArgSrc.bodyUsed },
     fromResponse: { derived: await bytes(fromResponse), src: await bytes(responseSrc) },
   }).toEqual({
-    twoArg: { derived: [1, 2, 3], src: [1, 2, 3] },
-    oneArg: { derived: [1, 2, 3], src: [1, 2, 3] },
+    twoArg: { derived: [1, 2, 3], srcUsed: true },
+    oneArg: { derived: [1, 2, 3], srcUsed: true },
     fromResponse: { derived: [1, 2, 3], src: [1, 2, 3] },
   });
+  await expect(twoArgSrc.arrayBuffer()).rejects.toThrow(TypeError);
+  await expect(oneArgSrc.arrayBuffer()).rejects.toThrow(TypeError);
 });
 
 // The readers and Bun.serve move an unread Bun.file()/Blob stream back into
@@ -1232,6 +1266,470 @@ test("Blob type from a consumed Response keeps the original content-type after c
 
   expect(stdout.trim().split("\n")).toEqual(["application/x-original-type-0000000000000001", "clone-ok", "churn-ok"]);
   expect(exitCode).toBe(0);
+});
+
+// https://fetch.spec.whatwg.org/#dom-request step 45:
+// "If initBody is null and inputBody is non-null, then:
+//    1. If input is unusable, then throw a TypeError.
+//    2. Set finalBody to ... inputBody."
+// `new Request(input)` consumes the input's body: the input becomes used and
+// the derived request owns the bytes. A disturbed or locked input throws.
+// `request.clone()` is the non-consuming tee; the constructor is not.
+describe("new Request(input) transfers the input body", () => {
+  const make = (body: BodyInit) =>
+    // @ts-expect-error duplex
+    new Request("http://example.com/", { method: "POST", body, duplex: "half" });
+
+  describe.each([
+    ["string", () => make("hello"), "hello"],
+    ["Uint8Array", () => make(new TextEncoder().encode("hello")), "hello"],
+    ["Blob", () => make(new Blob(["hello"])), "hello"],
+    [
+      "ReadableStream (push)",
+      () =>
+        make(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("hello"));
+              c.close();
+            },
+          }),
+        ),
+      "hello",
+    ],
+    [
+      "ReadableStream (pull)",
+      () => {
+        let done = false;
+        return make(
+          new ReadableStream({
+            pull(c) {
+              if (done) return c.close();
+              c.enqueue(new TextEncoder().encode("hello"));
+              done = true;
+            },
+          }),
+        );
+      },
+      "hello",
+    ],
+  ] as const)("%s body", (_, factory, expected) => {
+    test("new Request(input): input is consumed, copy reads the bytes", async () => {
+      const input = factory();
+      const copy = new Request(input);
+      expect({ inputUsed: input.bodyUsed, copyUsed: copy.bodyUsed }).toEqual({
+        inputUsed: true,
+        copyUsed: false,
+      });
+      expect(await copy.text()).toBe(expected);
+      await expect(input.text()).rejects.toThrow(TypeError);
+    });
+
+    test.each([
+      ["{}", {}],
+      ["{ headers }", { headers: { "x-a": "1" } }],
+    ])("new Request(input, %s) without init.body: input is consumed", async (_, init) => {
+      const input = factory();
+      const copy = new Request(input, init);
+      expect({ inputUsed: input.bodyUsed, copyUsed: copy.bodyUsed }).toEqual({
+        inputUsed: true,
+        copyUsed: false,
+      });
+      expect(await copy.text()).toBe(expected);
+      await expect(input.text()).rejects.toThrow(TypeError);
+    });
+
+    test("new Request(consumedInput) throws TypeError", async () => {
+      const input = factory();
+      await input.text();
+      expect(() => new Request(input)).toThrow(TypeError);
+      expect(() => new Request(input)).toThrow(
+        "Cannot construct a Request with a Request object that has already been used.",
+      );
+      expect(() => new Request(input, { method: "PUT" })).toThrow(TypeError);
+      expect(() => new Request(input, { body: null })).toThrow(TypeError);
+    });
+
+    test("after the transfer, input.body is a locked stream that cannot be read", () => {
+      const input = factory();
+      new Request(input);
+      expect({ locked: input.body!.locked, used: input.bodyUsed }).toEqual({ locked: true, used: true });
+      expect(() => input.body!.getReader()).toThrow(TypeError);
+    });
+
+    // Step 45.2: the copy gets a *proxy* of the input body, so a stream handle
+    // taken before the constructor is locked afterwards and cannot steal bytes.
+    test.each([
+      ["single-arg", (req: Request) => new Request(req)],
+      ["two-arg", (req: Request) => new Request(req, { headers: { "x-a": "1" } })],
+    ])("a stream observed before %s new Request(input) is locked by the transfer", async (_, construct) => {
+      const input = factory();
+      const observed = input.body!;
+      const copy = construct(input);
+      expect({
+        observedLocked: observed.locked,
+        copyBodyIsObserved: copy.body === observed,
+        copyBodyLocked: copy.body!.locked,
+      }).toEqual({ observedLocked: true, copyBodyIsObserved: false, copyBodyLocked: false });
+      expect(() => observed.getReader()).toThrow(TypeError);
+      expect(await copy.text()).toBe(expected);
+    });
+
+    test("new Request(input, { body }) leaves the input intact", async () => {
+      const input = factory();
+      const copy = new Request(input, { body: "override" });
+      expect(input.bodyUsed).toBe(false);
+      expect(await input.text()).toBe(expected);
+      expect(await copy.text()).toBe("override");
+    });
+
+    test("new Request(input, { body: null }) still consumes the input", async () => {
+      const input = factory();
+      const copy = new Request(input, { body: null });
+      expect({ inputUsed: input.bodyUsed, copyUsed: copy.bodyUsed }).toEqual({
+        inputUsed: true,
+        copyUsed: false,
+      });
+      expect(await copy.text()).toBe(expected);
+    });
+  });
+
+  test("new Request(consumedInput, { body }) does not throw", async () => {
+    const input = make("original");
+    await input.text();
+    const copy = new Request(input, { body: "override" });
+    expect(await copy.text()).toBe("override");
+  });
+
+  // Bun extension: a Request supplied as the *init* argument is not the spec's
+  // input Request. The transfer does not apply to it.
+  test("new Request(url, requestAsInit) does not consume the init Request's body", async () => {
+    const src = make("from-init");
+    // @ts-expect-error Bun accepts a Request as init
+    const r = new Request("http://example.com/other", src);
+    expect(src.bodyUsed).toBe(false);
+    expect(await r.text()).toBe("from-init");
+  });
+
+  test("new Request(inputReq, requestAsInit) does not consume the init Request's body", async () => {
+    const input = make("from-input");
+    const init = make("from-init");
+    // @ts-expect-error Bun accepts a Request as init
+    const r = new Request(input, init);
+    // init supplies the body (like init.body would), so neither is the spec
+    // "inputBody" subject to step 45's transfer.
+    expect({ inputUsed: input.bodyUsed, initUsed: init.bodyUsed, rText: await r.text() }).toEqual({
+      inputUsed: false,
+      initUsed: false,
+      rText: "from-init",
+    });
+  });
+
+  test("a constructor throw after the input-body check does not consume the input", async () => {
+    // Bun's init.url extension validates after the loop; the transfer must not
+    // have happened yet when that validation throws.
+    const input = make("survivor");
+    // @ts-expect-error Bun-specific init.url
+    expect(() => new Request(input, { url: "http://[" })).toThrow(TypeError);
+    expect(input.bodyUsed).toBe(false);
+    expect(await input.text()).toBe("survivor");
+  });
+
+  // Fetch step 36 comes before the transfer. Without it the input lost its
+  // body to a GET/HEAD copy that cannot carry one.
+  describe.each(["GET", "HEAD"])("new Request(inputWithBody, { method: %p })", method => {
+    test("throws and leaves the input body intact", async () => {
+      const input = make("survivor");
+      expect(() => new Request(input, { method })).toThrow("Request with GET/HEAD method cannot have body.");
+      expect(input.bodyUsed).toBe(false);
+      expect(await input.text()).toBe("survivor");
+    });
+  });
+
+  test("the user's own ReadableStream passed as the input body is locked by the transfer", async () => {
+    const userStream = new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("mine"));
+        c.close();
+      },
+    });
+    const input = make(userStream);
+    const copy = new Request(input);
+    expect({ userStreamLocked: userStream.locked, copyBodyIsUserStream: copy.body === userStream }).toEqual({
+      userStreamLocked: true,
+      copyBodyIsUserStream: false,
+    });
+    expect(() => userStream.getReader()).toThrow(TypeError);
+    expect(await copy.text()).toBe("mine");
+  });
+
+  // The copy's stream is a proxy of the input's stream, not a tee branch. When
+  // it was a tee branch, the other branch stayed with the consumed input where
+  // nothing could cancel it, so none of these settled and the source's
+  // cancel() never ran.
+  describe.each([
+    ["single-arg", (req: Request) => new Request(req)],
+    ["two-arg", (req: Request) => new Request(req, { headers: { "x-a": "1" } })],
+  ] as const)("%s copy of a stream body: a consumer that stops early cancels the source", (_, construct) => {
+    const endless = () => {
+      const { promise: cancelled, resolve } = Promise.withResolvers<unknown>();
+      const input = make(
+        new ReadableStream({
+          pull(c) {
+            c.enqueue(new Uint8Array(16));
+          },
+          cancel(reason) {
+            resolve(reason);
+          },
+        }),
+      );
+      return { copy: construct(input), cancelled };
+    };
+
+    test("body.cancel(reason)", async () => {
+      const { copy, cancelled } = endless();
+      const reason = new Error("stop");
+      await copy.body!.cancel(reason);
+      expect(await cancelled).toBe(reason);
+    });
+
+    test("break out of for await", async () => {
+      const { copy, cancelled } = endless();
+      let chunks = 0;
+      for await (const _ of copy.body!) {
+        chunks++;
+        break;
+      }
+      expect({ chunks, reason: await cancelled }).toEqual({ chunks: 1, reason: undefined });
+    });
+
+    test("pipeTo() into a sink that fails", async () => {
+      const { copy, cancelled } = endless();
+      const failure = new Error("sink failed");
+      const sink = new WritableStream({
+        write() {
+          throw failure;
+        },
+      });
+      // Not `.rejects`: it waits for the promise inside the matcher, so a pipe
+      // that never settles would hang the runner instead of timing out the test.
+      const outcome = await copy.body!.pipeTo(sink).then(
+        () => "resolved",
+        e => e,
+      );
+      expect(outcome).toBe(failure);
+      expect(await cancelled).toBe(failure);
+    });
+  });
+
+  test("constructing twice from the same input throws on the second call", () => {
+    const input = make("once");
+    new Request(input);
+    expect(() => new Request(input)).toThrow(TypeError);
+  });
+
+  test("null-body input is not consumed and does not throw", () => {
+    const input = new Request("http://example.com/");
+    const copy = new Request(input);
+    expect({ inputUsed: input.bodyUsed, copyUsed: copy.bodyUsed }).toEqual({
+      inputUsed: false,
+      copyUsed: false,
+    });
+    // and a second construction from the same null-body input still works
+    expect(() => new Request(input)).not.toThrow();
+  });
+
+  // An empty string / empty buffer extracts to a non-null (immediately closed)
+  // body per spec, so it transfers like any other body.
+  for (const [label, body] of [
+    ["empty string", ""],
+    ["empty Uint8Array", new Uint8Array(0)],
+  ] as const) {
+    for (const [variant, construct] of [
+      ["single-arg", (req: Request) => new Request(req)],
+      ["two-arg", (req: Request) => new Request(req, { headers: { "x-a": "1" } })],
+    ] as const) {
+      test(`${variant} new Request(input) with an ${label} body consumes the input and gives the copy a non-null body`, async () => {
+        const input = make(body);
+        const copy = construct(input);
+        expect({
+          inputUsed: input.bodyUsed,
+          copyBodyIsNull: copy.body === null,
+          copyText: await copy.text(),
+        }).toEqual({
+          inputUsed: true,
+          copyBodyIsNull: false,
+          copyText: "",
+        });
+        expect(() => new Request(input)).toThrow(TypeError);
+      });
+    }
+  }
+
+  // The input wrapper's cached `stream` slot was what rooted a user-provided
+  // ReadableStream. The transfer clears that slot, so the copy must root what
+  // it reads from itself, or a GC before the first read leaves the read hanging.
+  const gcSources = {
+    push: () =>
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello"));
+          c.close();
+        },
+      }),
+    pull: () => {
+      let n = 0;
+      return new ReadableStream({
+        pull(c) {
+          if (n++ === 0) c.enqueue(new TextEncoder().encode("hello"));
+          else c.close();
+        },
+      });
+    },
+  };
+  test.each([
+    ["single-arg", "push", (input: Request) => new Request(input)],
+    ["single-arg", "pull", (input: Request) => new Request(input)],
+    ["two-arg", "push", (input: Request) => new Request(input, { headers: { "x-a": "1" } })],
+    ["two-arg", "pull", (input: Request) => new Request(input, { headers: { "x-a": "1" } })],
+  ] as const)("the copy still reads after a GC before the first read (%s, %s source)", async (_, kind, construct) => {
+    const copy = (() => construct(make(gcSources[kind]())))();
+    await Bun.sleep(0);
+    Bun.gc(true);
+    expect(await copy.text()).toBe("hello");
+  });
+
+  // A subclass instance is a Request too: the constructor reads its internal
+  // body, not the `body` getter, so the same transfer applies.
+  describe.each([
+    ["single-arg", (req: Request) => new Request(req)],
+    ["two-arg", (req: Request) => new Request(req, { headers: { "x-a": "1" } })],
+  ] as const)("%s new Request(input) of a `class extends Request` instance", (_, construct) => {
+    test("transfers the body and returns a plain Request", async () => {
+      class MyRequest extends Request {}
+      // @ts-expect-error duplex
+      const input = new MyRequest("http://example.com/", { method: "POST", body: "hello", duplex: "half" });
+      const copy = construct(input);
+      expect({
+        inputUsed: input.bodyUsed,
+        copyIsPlainRequest: copy.constructor === Request,
+        copyText: await copy.text(),
+      }).toEqual({ inputUsed: true, copyIsPlainRequest: true, copyText: "hello" });
+      expect(() => new Request(input)).toThrow(TypeError);
+    });
+  });
+
+  // The two-arg constructor reads `url` from the input after its usability
+  // check. A getter that touches the body in between must make the constructor
+  // throw, not reach the transfer with a locked or disturbed stream.
+  describe.each([
+    ["locks the body", (body: ReadableStream) => void body.getReader()],
+    [
+      "reads from the body and releases the lock",
+      (body: ReadableStream) => {
+        const reader = body.getReader();
+        void reader.read();
+        reader.releaseLock();
+      },
+    ],
+  ] as const)("two-arg new Request(input, init) when the input's `url` getter %s", (_, touch) => {
+    test("throws the used-input TypeError", () => {
+      class Sneaky extends Request {
+        get url() {
+          touch(this.body!);
+          return super.url;
+        }
+      }
+      const input = new Sneaky("http://example.com/", {
+        method: "POST",
+        body: new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode("hello"));
+            c.close();
+          },
+        }),
+        // @ts-expect-error duplex
+        duplex: "half",
+      });
+      expect(() => new Request(input, {})).toThrow(
+        "Cannot construct a Request with a Request object that has already been used.",
+      );
+    });
+  });
+
+  // A Bun.serve incoming Request shares its body slot with the RequestContext.
+  // The transfer must not move that Locked value out of the shared slot; it
+  // materializes the stream in place so chunks still reach the copy. Cover
+  // both construct_into entry points: single-arg (clone_into transfer) and
+  // two-arg (deferred post-loop transfer), for a `fetch` handler (Request) and
+  // a `routes` handler (BunRequest, a Request subclass).
+  type Handler = (req: Request) => Promise<Response>;
+  const serveWith = (kind: "fetch" | "routes", handler: Handler) =>
+    kind === "fetch"
+      ? Bun.serve({ port: 0, fetch: handler })
+      : Bun.serve({ port: 0, routes: { "/": handler }, fetch: () => new Response("unrouted", { status: 500 }) });
+  const singleArg = (req: Request) => new Request(req);
+  const twoArg = (req: Request) => new Request(req, { headers: { "x-proxied": "1" } });
+
+  describe.each([
+    ["fetch", "single-arg", singleArg],
+    ["fetch", "two-arg", twoArg],
+    ["routes", "single-arg", singleArg],
+    ["routes", "two-arg", twoArg],
+  ] as const)("Bun.serve %s handler: %s new Request(incomingReq)", (kind, _, construct) => {
+    describe.each([
+      [".body not accessed first", false],
+      [".body accessed first", true],
+    ] as const)("%s", (_, touchBodyFirst) => {
+      test("reads the bytes and consumes the input", async () => {
+        await using server = serveWith(kind, async req => {
+          const observed = touchBodyFirst ? req.body : null;
+          const r = construct(req);
+          const inputUsed = req.bodyUsed;
+          // A handle taken before the transfer is locked by the proxy.
+          const observedLocked = observed ? observed.locked : null;
+          let secondThrew = false;
+          try {
+            new Request(req);
+          } catch (e) {
+            secondThrew = e instanceof TypeError;
+          }
+          const copyText = await r.text();
+          let inputTextRejected = false;
+          try {
+            await req.text();
+          } catch (e) {
+            inputTextRejected = e instanceof TypeError;
+          }
+          return Response.json({ inputUsed, observedLocked, copyText, secondThrew, inputTextRejected });
+        });
+        const res = await fetch(server.url, { method: "POST", body: "hello-server" });
+        expect(await res.json()).toEqual({
+          inputUsed: true,
+          observedLocked: touchBodyFirst ? true : null,
+          copyText: "hello-server",
+          secondThrew: true,
+          inputTextRejected: true,
+        });
+      });
+    });
+
+    test("after req.clone(), both read the bytes and the input is consumed", async () => {
+      await using server = serveWith(kind, async req => {
+        const c = req.clone();
+        const r = construct(req);
+        const inputUsed = req.bodyUsed;
+        const [cloneText, copyText] = await Promise.all([c.text(), r.text()]);
+        return Response.json({ inputUsed, cloneText, copyText });
+      });
+      const res = await fetch(server.url, { method: "POST", body: "hello-server" });
+      expect(await res.json()).toEqual({
+        inputUsed: true,
+        cloneText: "hello-server",
+        copyText: "hello-server",
+      });
+    });
+  });
 });
 
 describe("Response.clone() of a stream body shares chunk references between tee branches", () => {

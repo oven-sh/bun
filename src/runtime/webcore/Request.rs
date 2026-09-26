@@ -950,6 +950,14 @@ impl Request {
     }
 }
 
+/// How `clone_into` takes the source body: `Tee` (non-consuming, `request.clone()`)
+/// or `Transfer` (fetch step 45, `new Request(request)` consumes the input).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BodyCloneMode {
+    Tee,
+    Transfer,
+}
+
 #[derive(enumset::EnumSetType)]
 enum Fields {
     Method,
@@ -973,6 +981,23 @@ impl Request {
     #[inline]
     fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
+    }
+
+    /// Fetch Request constructor step 45.1: the `input` Request's body is
+    /// about to become the new request's body, so it must be usable. Node's
+    /// message, since this is the constructor and not `clone()`.
+    fn throw_if_input_body_unusable(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        if self.body_is_unusable(global_this) {
+            return Err(global_this
+                .err(
+                    crate::webcore::jsc::ErrorCode::BODY_ALREADY_USED,
+                    format_args!(
+                        "Cannot construct a Request with a Request object that has already been used."
+                    ),
+                )
+                .throw());
+        }
+        Ok(())
     }
 
     pub(crate) fn construct_into(
@@ -1039,6 +1064,9 @@ impl Request {
         let url_or_object = arguments[0];
         let url_or_object_type = url_or_object.js_type();
         let mut fields: EnumSet<Fields> = EnumSet::empty();
+        // Set by the two-arg Request-input arm; the transfer itself runs after
+        // URL validation so a later `bail!` leaves the input body untouched.
+        let mut transfer_input_body = false;
 
         let is_first_argument_a_url =
             // fastest path:
@@ -1085,15 +1113,30 @@ impl Request {
                 && value_type == bun_jsc::JSType::FinalObject
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
-                if let Some(request) = value.as_direct::<Request>() {
-                    // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
-                    let request = unsafe { &*request };
+                // Not `as_direct`: a Bun.serve `routes:` BunRequest and a
+                // `class X extends Request` instance are Requests too.
+                if let Some(request) = value.as_class_ref::<Request>() {
+                    // Spec step 45's transfer applies only when this Request is
+                    // the *input* (arguments[0]); a Request supplied as *init*
+                    // (Bun extension) keeps the non-consuming tee, matching the
+                    // sibling Response-as-init branch below.
+                    let is_input = value == url_or_object;
                     if values_to_try.len() == 1 {
+                        if is_input {
+                            if let Err(e) = request.throw_if_input_body_unusable(cx.global()) {
+                                bail!(Err(e));
+                            }
+                        }
                         match Request::clone_into(
                             request,
                             &mut req,
                             cx,
                             fields.contains(Fields::Url),
+                            if is_input {
+                                BodyCloneMode::Transfer
+                            } else {
+                                BodyCloneMode::Tee
+                            },
                         ) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
@@ -1103,7 +1146,8 @@ impl Request {
                         return Ok(req);
                     }
 
-                    if !fields.contains(Fields::Method) {
+                    let init_set_method = fields.contains(Fields::Method);
+                    if !init_set_method {
                         req.method = request.method;
                         fields.insert(Fields::Method);
                     }
@@ -1136,7 +1180,25 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null => {}
+                            _ if is_input => {
+                                // Fetch step 36, only where it would otherwise cost the
+                                // input its body: init turned a request with a body into
+                                // GET/HEAD. Node's message.
+                                if init_set_method
+                                    && matches!(req.method, Method::GET | Method::HEAD)
+                                {
+                                    bail!(Err(cx.global().throw_type_error(format_args!(
+                                        "Request with GET/HEAD method cannot have body."
+                                    ))));
+                                }
+                                if let Err(e) = request.throw_if_input_body_unusable(cx.global()) {
+                                    bail!(Err(e));
+                                }
+                                transfer_input_body = true;
+                                fields.insert(Fields::Body);
+                            }
+                            BodyValue::Used => {}
                             _ => {
                                 match request.clone_body_value_via_cached_stream(cx) {
                                     Ok(v) => {
@@ -1201,7 +1263,7 @@ impl Request {
 
             if !fields.contains(Fields::Body) {
                 match value.fast_get(cx.global(), bun_jsc::BuiltinName::Body) {
-                    Ok(Some(body_)) => {
+                    Ok(Some(body_)) if !body_.is_null() => {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream
                         // body throws before body extraction (Node's message is "keepalive").
@@ -1223,7 +1285,7 @@ impl Request {
                             Err(e) => bail!(Err(e)),
                         }
                     }
-                    Ok(None) => {}
+                    Ok(_) => {}
                     Err(e) => bail!(Err(e)),
                 }
 
@@ -1400,6 +1462,23 @@ impl Request {
 
         req.url.set(href);
 
+        if transfer_input_body {
+            // The arm that set the flag matched `url_or_object` the same way,
+            // and nothing since could change the cell.
+            let input = url_or_object
+                .as_class_ref::<Request>()
+                .expect("arguments[0] matched as a Request in the loop above");
+            // Checked again: the `url` / `signal` reads after the loop's check
+            // can run a getter on the input that locks or reads its body.
+            if let Err(e) = input.throw_if_input_body_unusable(cx.global()) {
+                bail!(Err(e));
+            }
+            match input.transfer_body_value(cx) {
+                Ok(v) => *req.body_value_mut() = v,
+                Err(e) => bail!(Err(e)),
+            }
+        }
+
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {
                 let ct: &[u8] = blob.content_type_slice();
@@ -1469,15 +1548,18 @@ impl Request {
         req: &mut Request,
         cx: &bun_jsc::JsThread<'_>,
         preserve_url: bool,
+        body_mode: BodyCloneMode,
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
-        let body_ = self.clone_body_value_via_cached_stream(cx)?;
-        // BodyValue's Drop frees `body_` on the `?` error path
-        let body = body::hive_alloc(body_);
-        // Last fallible call; an early return here leaves `req.url` untouched.
-        // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
+        // Headers first: a transfer leaves `self` `Used`, so it must be the
+        // last fallible step.
         let headers = self.clone_headers(cx.global())?;
+        let body_ = match body_mode {
+            BodyCloneMode::Transfer => self.transfer_body_value(cx)?,
+            BodyCloneMode::Tee => self.clone_body_value_via_cached_stream(cx)?,
+        };
+        let body = body::hive_alloc(body_);
         let url = if preserve_url {
             req.url.take()
         } else {
@@ -1542,7 +1624,7 @@ impl Request {
             reported_estimated_size: Cell::new(0),
         });
         // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, cx, false)?;
+        self.clone_into(&mut req, cx, false, BodyCloneMode::Tee)?;
         Ok(req)
     }
 }

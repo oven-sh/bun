@@ -196,7 +196,8 @@ describe("WebKit 7b485a76e9 upgrade", () => {
   test("a source knows where its lines start once it is parsed (c76c52f5b1)", () => {
     // Not at the top of the file: a build without it would run none of the other tests.
     const { sourceHasLineStarts } = require("bun:internal-for-testing");
-    // Upstream reads the whole source the first time a position in it is asked for. Nothing has asked for one in these.
+    // Upstream reads the whole source again the first time a position in it is asked for. Nothing has asked for one
+    // in these.
     const long = `/* ${Buffer.alloc(1024, "x")} */\n`;
     expect(sourceHasLineStarts((0, eval)(long + "(function () {\n})"))).toBe(true);
     expect(sourceHasLineStarts(vm.runInThisContext(long + "(function () {\n})"))).toBe(true);
@@ -210,16 +211,63 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     expect(sourceHasLineStarts(Array.prototype.map)).toBe(false);
   });
 
+  test.each([
+    ["8 bit", ["\n", "\r", "\r\n"]],
+    ["16 bit", ["\n", "\r", "\r\n", "\u2028", "\u2029"]],
+  ])("positions in a %s source with lines of every length, from a parse and from bytecode (c76c52f5b1)", (_, ends) => {
+    // The table of line starts has the length of a line as a LEB128, and a start for every 64 lines.
+    let state = 7919;
+    const random = (n: number) => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) % n;
+    const lengths = [0, 1, 2, 126, 127, 128, 129, 16382, 16383, 16384, 16385];
+    const fill = (count: number, character: string) => Buffer.alloc(count, character).toString();
+    let text = "var probes = [];";
+    const marks: string[] = [];
+    for (let i = 0; i < 64 * 5 + 3; i++) {
+      const end = ends[random(ends.length)];
+      const length = Math.max(0, (i % 5 ? random(300) : lengths[(i / 5) % lengths.length]) - end.length);
+      const probe = `probes.push(function(){return new Error("p${i}").stack});`;
+      if (length >= probe.length && (i % 3 === 1 || i % 64 <= 1 || i % 64 === 63 || i % 5 === 1)) {
+        const before = random(length - probe.length + 1);
+        text += fill(before, " ") + probe + fill(length - probe.length - before, " ") + end;
+        marks.push(`("p${i}")`);
+      } else text += (length >= 4 ? "/*" + fill(length - 4, "c") + "*/" : fill(length, " ")) + end;
+    }
+    text += "probes";
+    const counted = marks.map(mark => {
+      const lines = text.slice(0, text.indexOf(mark)).split(/\r\n|[\n\r\u2028\u2029]/);
+      return `${lines.length}:${lines.at(-1)!.length + 1}`;
+    });
+    expect(counted.length).toBeGreaterThan(100);
+
+    const positions = (probes: (() => string)[], filename: string) =>
+      probes.map(
+        probe =>
+          /:(\d+:\d+)\)?$/.exec(
+            probe()
+              .split("\n")
+              .find(line => line.includes(filename))!,
+          )?.[1],
+      );
+    // A new context, so that `probes` does not stay in this realm's global scope.
+    const parsed = new vm.Script(text, { filename: "parsed-lines.js" }).runInNewContext();
+    expect(positions(parsed, "parsed-lines.js")).toEqual(counted);
+
+    const producer = new vm.Script(text, { filename: "cached-lines.js", produceCachedData: true });
+    const consumer = new vm.Script(text, { filename: "cached-lines.js", cachedData: producer.cachedData });
+    expect(consumer.cachedDataRejected).toBe(false);
+    expect(positions(consumer.runInNewContext(), "cached-lines.js")).toEqual(counted);
+  });
+
   test("a position in a builtin counts from where the builtin starts (c76c52f5b1)", () => {
-    // The builtins share one text. With offsets only, upstream reports the line in that text, which is in the thousands.
-    // A builtin has no positions of its own, so a frame in it is where its parameters start, after "(function ". A build
-    // with assertions keeps them, and its frame is the call in the builtin.
-    const position = (stack: string, name: string) =>
+    // The builtins share one text. With offsets only, upstream reports the line in that text, which is in the
+    // thousands. A release build has no positions for the code of a builtin, so a frame is where the builtin starts.
+    const inBuiltin = (stack: string, name: string) =>
       new RegExp(`at ${name} \\(native:(\\d+):(\\d+)\\)`).exec(stack)?.slice(1).map(Number);
-    const expectInBuiltin = ([line, column]: number[]) => {
-      if (isDebug || isASAN) expect(line).toBeLessThan(100);
-      else expect([line, column]).toEqual([1, 11]);
+    const expectCountedFromTheBuiltin = (position: number[] | undefined) => {
+      if (isDebug || isASAN) expect(position?.[0]).toBeLessThan(100);
+      else expect(position).toEqual([1, 11]);
     };
+
     let stack = "";
     try {
       [1].map(() => {
@@ -228,7 +276,7 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     } catch (e) {
       stack = (e as Error).stack!;
     }
-    expectInBuiltin(position(stack, "map")!);
+    expectCountedFromTheBuiltin(inBuiltin(stack, "map"));
 
     let thrownInside: any;
     try {
@@ -236,8 +284,8 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     } catch (e) {
       thrownInside = e;
     }
-    expectInBuiltin(position(thrownInside.stack, "reduce")!);
-    expectInBuiltin([thrownInside.line, thrownInside.column]);
+    expectCountedFromTheBuiltin(inBuiltin(thrownInside.stack, "reduce"));
+    expect([thrownInside.line, thrownInside.column]).toEqual(inBuiltin(thrownInside.stack, "reduce")!);
   });
 
   test("Reflect.construct call sites keep the semantics of the function (7b485a76e9)", () => {

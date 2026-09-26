@@ -39,6 +39,7 @@ pub struct InternalLoopData {
     pub closed_udp_head: *mut udp::Socket,
     pub closed_head: *mut us_socket_t,
     pub low_prio_head: *mut us_socket_t,
+    pub low_prio_iterator: *mut us_socket_t,
     pub low_prio_budget: i32,
     pub dns_ready_head: *mut ConnectingSocket,
     pub closed_connecting_head: *mut ConnectingSocket,

@@ -8,7 +8,6 @@ use bun_core::strings;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
-use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
@@ -71,9 +70,13 @@ pub(crate) struct FSWatcher {
     abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, _cause| {
+bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ not yet detached).
-    unsafe { &*this }.close_without_event()
+    let this = unsafe { &*this };
+    match cause {
+        bun_jsc::AbortCause::Signal(reason) => this.emit_abort(reason),
+        bun_jsc::AbortCause::ContextStopped(_) => this.close_without_event(),
+    }
 });
 
 /// `jsc.Codegen.JSFSWatcher` cached-slot accessors (`values: ["listener"]` in
@@ -529,14 +532,6 @@ impl<'a> Arguments<'a> {
     }
 }
 
-impl AbortListener for FSWatcher {
-    // R-2: trait sig is fixed at `&mut self`; body just reborrows as `&self`
-    // (auto-deref) and calls the interior-mutable `emit_abort`.
-    fn on_abort(&mut self, reason: JSValue) {
-        (*self).emit_abort(reason);
-    }
-}
-
 impl FSWatcher {
     /// Read access to the JS wrapper value. Exposed for `NodeFS::watch`.
     /// Returns `UNDEFINED` if the wrapper reference has been cleared.
@@ -580,8 +575,8 @@ impl FSWatcher {
                 });
                 this_ref.current_task.with_mut(|t| t.append_abort());
             } else {
-                // watch for abortion
-                s.listen::<FSWatcher>(this);
+                // SAFETY: `this` is the live boxed FSWatcher; `detach()` disarms the handle.
+                unsafe { bun_jsc::AbortHandle::follow_owner(this, s.clone()) };
             }
         }
     }
@@ -879,11 +874,8 @@ impl FSWatcher {
             self.poll_ref.with_mut(|r| r.unref(vm_ctx));
         }
 
-        if let Some(signal) = self.signal.replace(None) {
-            // `AbortSignalRef::Drop` already does the `unref`, so only
-            // remove the listener here to avoid a double-unref.
-            signal.clean_native_bindings(ctx_ptr);
-        }
+        self.abort_handle.unfollow();
+        self.signal.set(None);
 
         // Idempotent: `detach()` can run more than once (close + finalize).
         self.js_this.set(JsRef::empty());

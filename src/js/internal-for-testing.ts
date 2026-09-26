@@ -76,6 +76,13 @@ export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", 
 
 export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
 
+/** What a bytecode order file calls the code of `text`: `M <name>` and `<start> <kind> <name>` lines, or null. */
+export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "namesForTesting", 3) as (
+  text: string,
+  kind: "module" | "script" | "builtin" | "internal",
+  chunkPaths?: string,
+) => string | null | undefined;
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",
@@ -850,6 +857,14 @@ export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   "InternalModuleRegistry.cpp",
   "jsInternalModulesLoadedFromBytecode",
   0,
+);
+
+// Whether the source of `fn` knows where its lines start. Before anything asked for a position in it, that means they
+// came with its code: from the parse, or out of the bytecode.
+export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
+  "ZigSourceProvider.cpp",
+  "jsSourceHasLineStarts",
+  1,
 );
 
 // The bytecode `bun build --compile --bytecode` embeds for a builtin module, plus the external string table it embeds

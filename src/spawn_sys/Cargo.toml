@@ -16,6 +16,6 @@ libc.workspace = true
 bun_analytics.workspace = true
 bun_core.workspace = true
 bun_sys.workspace = true
-bun_windows_sys.workspace = true  # tier-0 no_std leaf; unconditional like bun_sys/bun_core do — keeps the IoCounters alias valid on non-Windows so the flat re-export in lib.rs stays un-cfg'd
+bun_windows_sys.workspace = true  # tier-0 no_std leaf, unconditional like bun_sys/bun_core: the un-cfg'd IoCounters alias in spawn_process.rs must resolve on non-Windows
 enumset.workspace = true
 strum.workspace = true

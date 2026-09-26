@@ -1044,6 +1044,12 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.bytecode = config.bytecode;
         transpiler.options.bytecode_depth = config.bytecode_depth;
         transpiler.options.optimize_bytecode = config.optimize_bytecode;
+        if let Some(compile) = &config.compile {
+            transpiler
+                .options
+                .bytecode_order
+                .clone_from(&compile.bytecode_order);
+        }
         transpiler.options.compile_mode = if config.compile.is_some() {
             options::CompileMode::Executable
         } else {

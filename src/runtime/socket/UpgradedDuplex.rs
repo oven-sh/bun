@@ -168,6 +168,8 @@ pub(crate) struct Handlers {
     pub(crate) on_session: fn(*mut (), &[u8]),
     /// An NSS key-log line - node's `'keylog'` event.
     pub(crate) on_keylog: fn(*mut (), &[u8]),
+    pub(crate) server_identity:
+        fn(*mut (), &mut bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity,
 }
 
 use crate::jsc_hooks::timer_all_mut as timer_all;
@@ -232,6 +234,15 @@ impl UpgradedDuplex {
         // SAFETY: see handler note above.
         let this = unsafe { &*this };
         (this.handlers.on_keylog)(this.handlers.ctx, line);
+    }
+
+    fn server_identity(
+        this: *mut Self,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        // SAFETY: see handler note above.
+        let this = unsafe { &*this };
+        (this.handlers.server_identity)(this.handlers.ctx, ssl)
     }
 
     fn on_handshake(this: *mut Self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
@@ -530,6 +541,7 @@ impl UpgradedDuplex {
             write: Self::internal_write,
             on_session: Some(Self::on_session),
             on_keylog: Some(Self::on_keylog),
+            server_identity: Some(Self::server_identity),
         }
     }
 
@@ -819,6 +831,23 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
 // method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
 // raw pointer.
 // ──────────────────────────────────────────────────────────────────────────
+
+#[unsafe(no_mangle)]
+extern "C" fn UpgradedDuplex__set_inline_reject(this: *const c_void) {
+    // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
+    if let Some(wrapper) = unsafe { (*this.cast::<UpgradedDuplex>()).wrapper_ref() } {
+        wrapper.set_inline_reject();
+    }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn UpgradedDuplex__latest_session(
+    this: *const c_void,
+) -> *mut bun_boringssl_sys::SSL_SESSION {
+    // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
+    unsafe { (*this.cast::<UpgradedDuplex>()).wrapper_ref() }
+        .map_or(core::ptr::null_mut(), |wrapper| wrapper.latest_session())
+}
 
 #[unsafe(no_mangle)]
 extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl_sys::SSL {

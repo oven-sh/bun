@@ -191,8 +191,8 @@ pub use spawn_process::process_rusage;
 #[cfg(unix)]
 pub use spawn_process::spawn_process_posix;
 pub use spawn_process::{
-    Dup2, ExtraPipe, FdT, IoCounters, PidFdType, PidT, Rusage, RusageFields, SpawnOptions,
-    SpawnResult, Stdio, StdioKind, WinRusage, WinTimeval, rusage_zeroed,
+    Dup2, ExtraPipe, PidFdType, PidT, Rusage, RusageFields, SpawnOptions, SpawnResult, Stdio,
+    StdioKind, rusage_zeroed,
 };
 #[cfg(windows)]
 pub use windows::{WindowsOptions, spawn_process_windows};

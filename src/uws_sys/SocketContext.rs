@@ -174,6 +174,25 @@ impl BunSocketContextOptions {
         unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
     }
 
+    /// Sets `digest` (this struct's `digest()`) as the session id context: see `us_ssl_apply_selected_ctx`.
+    pub fn create_ssl_context_with_digest(
+        self,
+        digest: &[u8; 32],
+        err: &mut create_bun_socket_error_t,
+    ) -> Option<OwnedSslCtx> {
+        let ctx = self.create_ssl_context(err)?;
+        // SAFETY: `ctx` is live and not shared yet; the call copies `digest`
+        // (32 bytes, the session id context maximum, so it cannot fail).
+        unsafe {
+            bun_boringssl_sys::SSL_CTX_set_session_id_context(
+                ctx.as_ptr(),
+                digest.as_ptr(),
+                digest.len(),
+            );
+        }
+        Some(ctx)
+    }
+
     /// SHA-256 over every field this struct carries, dereferencing string
     /// pointers so the digest is content-addressed (not pointer-addressed).
     /// Two option structs that build the same `SSL_CTX*` produce the same

@@ -1,91 +1,78 @@
 //! IP-address parsing shared by URL/host handling and the DNS backends.
 
-use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+#[cfg(not(windows))]
+use core::net::Ipv4Addr;
+use core::net::{IpAddr, Ipv6Addr};
 
-use sys::{AF_INET, AF_INET6, pton};
-
-/// The one place this module touches C: the vendored c-ares `inet_pton`, which is pure C with no preconditions — unlike ws2_32's, which fails with WSANOTINITIALISED whenever it runs before `WSAStartup()`, as URL/host parsing can.
+/// The one place this module touches C.
+#[cfg(not(windows))]
 mod sys {
     use core::ffi::{c_char, c_int, c_void};
 
-    // A thin libc/ws2def passthrough: bun_string sits below bun_sys, so `bun_sys::posix::AF` is out of reach.
-    pub(super) const AF_INET: c_int = 2;
-    #[cfg(not(windows))]
-    pub(super) const AF_INET6: c_int = libc::AF_INET6 as c_int;
-    #[cfg(windows)]
-    pub(super) use bun_windows_sys::ws2_32::AF_INET6;
-
     unsafe extern "C" {
-        fn ares_inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;
-        #[cfg(not(windows))]
         fn inet_aton(cp: *const c_char, addr: *mut c_void) -> c_int;
     }
 
-    /// BSD `inet_aton(3)`, which unlike `inet_pton` takes the shorthand forms (`127.1`, `0x7f000001`) that `getaddrinfo` accepts; Windows has no equivalent, so it parses strictly there.
+    /// BSD `inet_aton(3)`, which unlike `inet_pton` takes the shorthand forms (`127.1`, `0x7f000001`) that `getaddrinfo` accepts.
     pub(super) fn aton(src: &[u8], dst: &mut [u8; 4]) -> bool {
-        #[cfg(windows)]
-        {
-            pton(AF_INET, src, dst)
-        }
-        #[cfg(not(windows))]
-        {
-            debug_assert_eq!(src.last(), Some(&0));
-            // SAFETY: `src` is NUL-terminated per the assert; `dst` is an `in_addr`.
-            unsafe { inet_aton(src.as_ptr().cast(), dst.as_mut_ptr().cast()) != 0 }
-        }
-    }
-
-    /// Safe wrapper: `src` is NUL-terminated by construction and `dst` is sized for the family.
-    pub(super) fn pton(af: c_int, src: &[u8], dst: &mut [u8]) -> bool {
         debug_assert_eq!(src.last(), Some(&0));
-        debug_assert!(dst.len() >= if af == AF_INET6 { 16 } else { 4 });
-        // SAFETY: per the asserts above.
-        unsafe { ares_inet_pton(af, src.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
+        // SAFETY: `src` is NUL-terminated per the assert; `dst` is an `in_addr`.
+        unsafe { inet_aton(src.as_ptr().cast(), dst.as_mut_ptr().cast()) != 0 }
     }
 }
 
+/// Whether `input` is an IP literal: `net.isIP` without a `%zone`.
 pub fn is_ip_address(input: &[u8]) -> bool {
-    let mut buf = [0u8; 512];
-    if input.len() >= buf.len() {
-        return false;
-    }
-    buf[..input.len()].copy_from_slice(input);
-    let mut dst = [0u8; 28];
-    pton(AF_INET, &buf[..=input.len()], &mut dst) || pton(AF_INET6, &buf[..=input.len()], &mut dst)
+    parse_strict(input).is_some()
 }
 
 /// A strict parse, never a `contains(':')` heuristic — that mis-bracketed Windows paths like `C:/Windows/Temp/…` as `unix://[C:/…]`.
 pub fn is_ipv6_address(input: &[u8]) -> bool {
-    let mut buf = [0u8; 512];
-    if input.len() >= buf.len() {
-        return false;
-    }
-    buf[..input.len()].copy_from_slice(input);
-    let mut dst = [0u8; 28];
-    pton(AF_INET6, &buf[..=input.len()], &mut dst)
+    parse_strict_v6(input).is_some()
 }
 
-/// A dotted quad or an IPv6 address and nothing else, the same on every platform. This is `core::net`'s parser and not `ares_inet_pton`, which is `inet_net_pton` underneath: it also takes `10` (as 10.0.0.0), `127.1` (as 127.1.0.0), `0x7f000001`, zero-padded octets, a trailing `/bits`, and stops at a NUL. Use this when the parsed value is compared, not just classified.
+/// A dotted quad or an IPv6 address and nothing else, the same on every platform. This is `core::net`'s parser and not `ares_inet_pton`, which is `inet_net_pton` underneath: it also takes `10` (as 10.0.0.0), `127.1` (as 127.1.0.0), `0x7f000001`, zero-padded octets, a trailing `/bits`, and stops at a NUL.
+#[inline(never)]
 pub fn parse_strict(input: &[u8]) -> Option<IpAddr> {
+    // The longest literal is "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255", so a longer host is never scanned.
+    if input.len() > 45 {
+        return None;
+    }
     crate::fmt::parse_ascii::<IpAddr>(input)
 }
 
-/// Parses what the platform resolver treats as a numeric host: dotted-quad, IPv6 (an optional `%zone` is stripped, not validated), and the `inet_aton` shorthand `getaddrinfo` accepts but `is_ip_address` rejects (`127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`).
-pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
-    let mut buf = [0u8; 512];
-    if input.is_empty() || input.len() >= buf.len() {
+/// The IPv6 half of [`parse_strict`], for a caller that has no use for a dotted quad.
+fn parse_strict_v6(input: &[u8]) -> Option<Ipv6Addr> {
+    if input.len() > 45 {
         return None;
     }
+    crate::fmt::parse_ascii::<Ipv6Addr>(input)
+}
+
+/// Parses what the platform resolver treats as a numeric host: dotted-quad, IPv6 (an optional `%zone` is stripped, not validated), and the `inet_aton` shorthand `getaddrinfo` accepts but `is_ip_address` rejects (`127.1`, `2130706433`, `0x7f000001`, `0177.0.0.1`). The Windows resolver reads no shorthand.
+pub fn to_ip_address(input: &[u8]) -> Option<IpAddr> {
     // A `%zone` suffix belongs to a numeric v6 host; resolving the zone is the caller's business.
     let head = crate::strings::index_of_char_usize(input, b'%').unwrap_or(input.len());
-    buf[..head].copy_from_slice(&input[..head]);
-    let mut v6 = [0u8; 16];
-    if pton(AF_INET6, &buf[..=head], &mut v6) {
-        return Some(IpAddr::V6(Ipv6Addr::from(v6)));
+    if let Some(v6) = parse_strict_v6(&input[..head]) {
+        return Some(IpAddr::V6(v6));
     }
-    buf[..input.len()].copy_from_slice(input);
-    let mut v4 = [0u8; 4];
-    sys::aton(&buf[..=input.len()], &mut v4).then(|| IpAddr::V4(Ipv4Addr::from(v4)))
+    #[cfg(windows)]
+    {
+        parse_strict(input)
+    }
+    #[cfg(not(windows))]
+    {
+        let mut buf = [0u8; 512];
+        if input.is_empty() || input.len() >= buf.len() {
+            return None;
+        }
+        buf[..input.len()].copy_from_slice(input);
+        let mut v4 = [0u8; 4];
+        // `inet_aton` stops at whitespace or a NUL and reads what comes before.
+        (sys::aton(&buf[..=input.len()], &mut v4)
+            && crate::strings::index_of_any(input, b" \t\n\r\x0b\x0c\0").is_none())
+        .then(|| IpAddr::V4(Ipv4Addr::from(v4)))
+    }
 }
 
 /// A host as URLs and `host:port` strings write it keeps an IPv6 literal's

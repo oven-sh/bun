@@ -73,7 +73,7 @@ enum us_fault_action {
     US_FAULT_NONE,
     /* return -1 and set errno = errno_value */
     US_FAULT_ERRNO,
-    /* recv/send: clamp the length to clamp_bytes, then run the real syscall.
+    /* recv/send/writev: clamp the length to clamp_bytes, then run the real syscall.
      * Other syscalls have no length to clamp; the JS setter rejects them. */
     US_FAULT_SHORT,
     /* recv/recvmsg: return 0 (peer closed); send/sendmsg/writev: return 0

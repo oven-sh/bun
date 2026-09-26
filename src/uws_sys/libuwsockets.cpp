@@ -317,6 +317,17 @@ extern "C"
       }
   }
 
+  bool uws_res_has_fully_drained(int ssl, uws_res_r res)
+  {
+      if (ssl) {
+        uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+        return uwsRes->hasFullyDrained();
+      } else {
+        uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+        return uwsRes->hasFullyDrained();
+      }
+  }
+
   void uws_app_any(int ssl, uws_app_t *app, const char *pattern_ptr, size_t pattern_len, uws_method_handler handler, void *user_data)
   {
     std::string_view pattern = std::string_view(pattern_ptr, pattern_len);
@@ -398,31 +409,6 @@ extern "C"
     }
   }
 
-  void uws_app_listen(int ssl, uws_app_t *app, int port,
-                      uws_listen_handler handler, void *user_data)
-  {
-    uws_app_listen_config_t config;
-    config.port = port;
-    config.host = nullptr;
-    config.options = 0;
-
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(port, [handler,
-                            user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-
-      uwsApp->listen(port, [handler,
-                            user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
-    }
-  }
-
   void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
                                   uint16_t port, int32_t options,
                                   uws_listen_handler handler, void *user_data)
@@ -491,6 +477,15 @@ extern "C"
     } else {
       uWS::App *uwsApp = (uWS::App *)app;
       uwsApp->setMaxHTTPHeaderSize(max_header_size);
+    }
+  }
+  void uws_app_set_max_headers_count(int ssl, uws_app_t *app, uint32_t max_headers_count) {
+    if (ssl) {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->setMaxHeadersCount(max_headers_count);
+    } else {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->setMaxHeadersCount(max_headers_count);
     }
   }
   void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open) {
@@ -1531,6 +1526,20 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->sendWhenComplete();
+    }
+  }
+
+  bool uws_res_close_after_message_if_parsing(int ssl, uws_res_r res)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->closeAfterMessageIfParsing();
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      return uwsRes->closeAfterMessageIfParsing();
     }
   }
 

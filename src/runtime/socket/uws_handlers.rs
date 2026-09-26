@@ -723,6 +723,8 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
 }
 
 // ── WebSocket client ────────────────────────────────────────────────────────
+pub(crate) type WSUpgradeClient<const SSL: bool> =
+    websocket_upgrade_client::NewHttpUpgradeClient<SSL>;
 pub(crate) type WSUpgrade<const SSL: bool> =
     RawPtrHandler<websocket_upgrade_client::NewHttpUpgradeClient<SSL>, SSL>;
 pub(crate) type WSClient<const SSL: bool> = RawPtrHandler<websocket_client::WebSocket<SSL>, SSL>;

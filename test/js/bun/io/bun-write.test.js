@@ -1665,6 +1665,30 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       );
     });
 
+    it("rejects a body that a pending text() waits for, and text() still resolves", async () => {
+      using dir = tempDir("bun-write-response-pending-text", {});
+      const sendBody = Promise.withResolvers();
+      using listener = Bun.listen({
+        port: 0,
+        hostname: "127.0.0.1",
+        socket: {
+          async data(socket) {
+            socket.write("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n");
+            socket.flush();
+            await sendBody.promise;
+            socket.end("hello");
+          },
+        },
+      });
+      const res = await fetch(`http://127.0.0.1:${listener.port}/`);
+      const text = res.text();
+      await expect(Bun.write(join(String(dir), "out.txt"), res)).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
+      );
+      sendBody.resolve();
+      expect(await text).toBe("hello");
+    });
+
     it("rejects a body that was already used, and createPath: false into a missing directory", async () => {
       using dir = tempDir("bun-write-response-rejects", {});
       await using server = await origin();

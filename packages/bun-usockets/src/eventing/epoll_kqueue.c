@@ -361,12 +361,14 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                  * connect refused), or a read-filter EV_EOF carrying the
                  * socket error in fflags: both are epoll's EPOLLERR. */
                 if (bits.send_eof && !bits.send_eof_err && !bits.eof_err && type == POLL_TYPE_SOCKET &&
-                    ((struct us_socket_t *) poll)->flags.is_paused) {
+                    ((struct us_socket_t *) poll)->flags.is_paused &&
+                    !(((struct us_socket_t *) poll)->hangup_closes_unsent && ((struct us_socket_t *) poll)->flags.last_write_failed)) {
                     /* fflags==0 with reads paused is AF_UNIX's graceful peer
                      * close (TCP only gets SS_CANTSENDMORE from RST, which
                      * carries the error): the receive buffer survives, so
                      * defer like epoll's EPOLLHUP - resume() delivers the
-                     * tail + end instead of an error close discarding it. */
+                     * tail + end instead of an error close discarding it.
+                     * Not when a hangup_closes_unsent socket has bytes unsent. */
                     eof = 1;
                 } else {
                     error = 1;

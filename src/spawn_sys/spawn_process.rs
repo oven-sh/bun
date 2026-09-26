@@ -35,8 +35,6 @@ pub type PidT = core::ffi::c_int;
 
 #[cfg(unix)]
 pub type FdT = libc::c_int;
-#[cfg(not(unix))]
-pub type FdT = i32;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub type PidFdType = FdT;

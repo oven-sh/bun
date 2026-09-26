@@ -21,15 +21,16 @@ describe.skipIf(skip)("socketFaultInjection control surface", () => {
     expect(() => fault.set({ syscall: "recv", action: "bogus" as any })).toThrow(/rule\.action must be one of/);
   });
 
-  // Only recv/send have a byte count to clamp; arming "short" on any other
+  // Only recv/send/writev have a byte count to clamp; arming "short" on any other
   // syscall used to succeed silently and never fire. ssl_loop_buffer is an
   // allocation, so it has no byte count either.
   test("set() rejects 'short' for syscalls that cannot clamp a byte count", () => {
-    for (const syscall of ["writev", "sendmsg", "recvmsg", "connect", "accept", "ssl_loop_buffer"] as const) {
+    for (const syscall of ["sendmsg", "recvmsg", "connect", "accept", "ssl_loop_buffer"] as const) {
       expect(() => fault.set({ syscall, action: "short", bytes: 1 })).toThrow(/only supported for syscall/);
     }
     expect(fault.set({ syscall: "recv", action: "short", bytes: 1 })).toBe(true);
     expect(fault.set({ syscall: "send", action: "short", bytes: 1 })).toBe(true);
+    expect(fault.set({ syscall: "writev", action: "short", bytes: 1 })).toBe(true);
   });
 
   // A zero return only means something for the data syscalls (EOF on the read

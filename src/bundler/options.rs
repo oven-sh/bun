@@ -1339,6 +1339,8 @@ pub struct BundleOptions<'a> {
     pub bytecode_depth: u32,
     /// Run JSC's build-time bytecode optimization passes over the cached bytecode (`optimize.bytecode`).
     pub optimize_bytecode: bool,
+    /// `--compile --bytecode`: payload order files to lay the bytecode out by (`bytecode_order`), most important first.
+    pub bytecode_order: Vec<Box<[u8]>>,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
     pub compile_target_builtins: CompileTargetBuiltins,
 
@@ -1542,6 +1544,7 @@ impl<'a> BundleOptions<'a> {
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
             optimize_bytecode: self.optimize_bytecode,
+            bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
@@ -1791,6 +1794,7 @@ impl<'a> BundleOptions<'a> {
             bytecode: false,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
+            bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
             debugger: false,
@@ -2116,7 +2120,7 @@ pub enum PlaceholderField {
 
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
 #[inline]
-fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
+pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
     let needle: &[u8] = match field {
         PlaceholderField::Dir => b"[dir]",
         PlaceholderField::Name => b"[name]",

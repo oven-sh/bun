@@ -59,4 +59,16 @@ const _worker3 = new Worker(new URL("worker.ts", "/path/to/").href, {
   },
 });
 
+// The worker-global postMessage takes the same second argument shapes as
+// Worker.prototype.postMessage: a transfer list or a StructuredSerializeOptions bag.
+const ab = new ArrayBuffer(8);
+postMessage({ ab }, { transfer: [ab] });
+postMessage({ ab }, [ab]);
+postMessage("no transfer");
+
+// There is no static `Worker.data`. Data passed to the constructor is read inside
+// the worker through `require("node:worker_threads").workerData`.
+// @ts-expect-error
+Worker.data;
+
 export { _worker2, _worker3, nodeWorker as worker };

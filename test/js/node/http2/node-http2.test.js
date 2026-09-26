@@ -3136,6 +3136,80 @@ it("http2 session.altsvc() sends an object origin unchanged, like Node", async (
   ]);
 });
 
+it("http2 session.altsvc() and session.origin() reject an origin with the same error as Node", async () => {
+  // A string origin goes through URL parsing first, and its ERR_INVALID_URL is
+  // not replaced. After that only the origin "null" is invalid. The outcomes
+  // are those of node v26.3.0, except for the last two calls.
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const alt = 'h2=":8000"';
+  const calls = {
+    'altsvc(alt, "")': session => session.altsvc(alt, ""),
+    'altsvc(alt, "not a url")': session => session.altsvc(alt, "not a url"),
+    'altsvc(alt, "null")': session => session.altsvc(alt, "null"),
+    'altsvc(alt, "1")': session => session.altsvc(alt, "1"),
+    'altsvc(alt, "file:///x")': session => session.altsvc(alt, "file:///x"),
+    'origin("")': session => session.origin(""),
+    'origin("not a url")': session => session.origin("not a url"),
+    'origin("file:///x")': session => session.origin("file:///x"),
+    'origin({ origin: "null" })': session => session.origin({ origin: "null" }),
+    "origin({ origin: 1 })": session => session.origin({ origin: 1 }),
+    // An empty origin is not "null": the entry is sent with a length of zero.
+    'origin({ origin: "" })': session => session.origin({ origin: "" }),
+    // Neither an origin nor a stream: RFC 7838 section 4 makes that frame
+    // invalid. Node aborts the process here (a CHECK in Http2Session::AltSvc),
+    // so there is no error to match.
+    "altsvc(alt)": session => session.altsvc(alt),
+    "altsvc(alt, undefined)": session => session.altsvc(alt, undefined),
+  };
+  const outcomes = {};
+
+  const server = http2.createServer();
+  server.on("session", session => {
+    for (const [name, call] of Object.entries(calls)) {
+      try {
+        call(session);
+        outcomes[name] = "sent";
+      } catch (err) {
+        outcomes[name] = `${err.name} ${err.code}`;
+      }
+    }
+  });
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  server.on("error", reject);
+  server.listen(0, "127.0.0.1", () => {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", reject);
+    const req = client.request({ ":path": "/" });
+    req.resume();
+    req.on("close", () => {
+      client.close();
+      server.close();
+      resolve();
+    });
+    req.end();
+  });
+
+  await promise;
+  expect(outcomes).toEqual({
+    'altsvc(alt, "")': "TypeError ERR_INVALID_URL",
+    'altsvc(alt, "not a url")': "TypeError ERR_INVALID_URL",
+    'altsvc(alt, "null")': "TypeError ERR_INVALID_URL",
+    'altsvc(alt, "1")': "TypeError ERR_INVALID_URL",
+    'altsvc(alt, "file:///x")': "TypeError ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+    'origin("")': "TypeError ERR_INVALID_URL",
+    'origin("not a url")': "TypeError ERR_INVALID_URL",
+    'origin("file:///x")': "TypeError ERR_HTTP2_INVALID_ORIGIN",
+    'origin({ origin: "null" })': "TypeError ERR_HTTP2_INVALID_ORIGIN",
+    "origin({ origin: 1 })": "TypeError ERR_INVALID_ARG_TYPE",
+    'origin({ origin: "" })': "sent",
+    "altsvc(alt)": "TypeError ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+    "altsvc(alt, undefined)": "TypeError ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+  });
+});
+
 it("http2 client.request() propagates a throwing header-value toString() instead of masking it", async () => {
   // Node calls `${value}` and lets the user's exception escape; it must not be
   // replaced with ERR_HTTP2_INVALID_HEADER_VALUE.
@@ -3734,6 +3808,22 @@ describe("http2 ALTSVC and ORIGIN frame strings are latin-1", () => {
     try {
       const frames = await framesBeforePingAck(server.address().port, ORIGIN);
       expect(frames.map(originEntries)).toEqual([[origin], [origin, "https://b.example"]]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("server writes an empty object origin as a zero-length ORIGIN entry", async () => {
+    const server = http2.createServer();
+    server.on("session", session => {
+      session.origin({ origin: "" });
+      session.origin({ origin: "" }, "https://b.example");
+      session.origin("https://a.example", { origin: "" });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const frames = await framesBeforePingAck(server.address().port, ORIGIN);
+      expect(frames.map(originEntries)).toEqual([[""], ["", "https://b.example"], ["https://a.example", ""]]);
     } finally {
       server.close();
     }

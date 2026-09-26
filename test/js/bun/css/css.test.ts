@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -7724,6 +7725,136 @@ describe("css tests", () => {
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
     );
+  });
+
+  describe("@scope: `&` in the scope-end selector is the scoping root", () => {
+    // css-cascade-6: `&` in `@scope` behaves as `:where(:scope)`, and a scope-end selector with no `&`
+    // or `:scope` in it is relative to the scoping root. So `to (& > .b)` must not print as
+    // `to (.a > .b)`, which means `to (:scope .a > .b)`. See wpt css/css-cascade/scope-nesting.html.
+    // Chrome 130 has CSS nesting, so `&` stays, as it does with no targets. Chrome 95 has none, so `&` is lowered.
+    const nesting = { chrome: 130 << 16 };
+    const no_nesting = { chrome: 95 << 16 };
+
+    // [source, output with nesting kept, output with nesting lowered]
+    test.each([
+      [
+        "@scope (.a) to (& > .b) { .c { color: red } }",
+        "@scope(.a) to (&>.b){.c{color:red}}",
+        "@scope(.a) to (:scope>.b){.c{color:red}}",
+      ],
+      [
+        "@scope (.a) to (& .b) { .c { color: red } }",
+        "@scope(.a) to (& .b){.c{color:red}}",
+        "@scope(.a) to (:scope .b){.c{color:red}}",
+      ],
+      [
+        "@scope (.a) to (&) { .c { color: red } }",
+        "@scope(.a) to (&){.c{color:red}}",
+        "@scope(.a) to (:scope){.c{color:red}}",
+      ],
+      [
+        "@scope (.a) to (.b&) { .c { color: red } }",
+        "@scope(.a) to (.b&){.c{color:red}}",
+        "@scope(.a) to (.b:scope){.c{color:red}}",
+      ],
+      [
+        "@scope (.a) to (.p & > .b) { .c { color: red } }",
+        "@scope(.a) to (.p &>.b){.c{color:red}}",
+        "@scope(.a) to (.p :scope>.b){.c{color:red}}",
+      ],
+      [
+        "@scope (.a) to (:not(&) > .b) { .c { color: red } }",
+        "@scope(.a) to (:not(&)>.b){.c{color:red}}",
+        "@scope(.a) to (:not(:scope)>.b){.c{color:red}}",
+      ],
+      [
+        "@scope (.a) to (& > .b, & > .c) { .d { color: red } }",
+        "@scope(.a) to (&>.b,&>.c){.d{color:red}}",
+        "@scope(.a) to (:scope>.b,:scope>.c){.d{color:red}}",
+      ],
+
+      // A scope-start selector list, or one with a combinator. These printed as `:is(...)` in the scope-end selector.
+      [
+        "@scope (.a, .b) to (& > .x) { .c { color: red } }",
+        "@scope(.a,.b) to (&>.x){.c{color:red}}",
+        "@scope(.a,.b) to (:scope>.x){.c{color:red}}",
+      ],
+      [
+        "@scope (.p > .a) to (& > .b) { .c { color: red } }",
+        "@scope(.p>.a) to (&>.b){.c{color:red}}",
+        "@scope(.p>.a) to (:scope>.b){.c{color:red}}",
+      ],
+
+      // A type selector with `&`. With nesting kept, `to (&div)` printed `to (.adiv)`, the class `adiv`.
+      [
+        "@scope (.a) to (div&) { .c { color: red } }",
+        "@scope(.a) to (div&){.c{color:red}}",
+        "@scope(.a) to (div:scope){.c{color:red}}",
+      ],
+      // `&div` is not valid CSS any more (w3c/csswg-drafts#8662), but the parser takes it. The kept output is
+      // provisional: it is the source as written, as for `&div` in a style rule, and browsers drop it.
+      [
+        "@scope (.a) to (&div) { .c { color: red } }",
+        "@scope(.a) to (&div){.c{color:red}}",
+        "@scope(.a) to (div:scope){.c{color:red}}",
+      ],
+
+      // In a style rule, `&` in the scope-start selector is the parent rule. `&` in the scope-end selector is not.
+      [
+        ".p { @scope (& > .a) to (& > .b) { .c { color: red } } }",
+        ".p{@scope(&>.a) to (&>.b){& .c{color:red}}}",
+        "@scope(.p>.a) to (:scope>.b){:scope .c{color:red}}",
+      ],
+      // `:host()` reads the context of the printer, not the one that the selector list gets.
+      [
+        ".p { @scope (.a) to (:host(&)) { .c { color: red } } }",
+        ".p{@scope(.a) to (:host(&)){& .c{color:red}}}",
+        "@scope(.a) to (:host(:scope)){:scope .c{color:red}}",
+      ],
+      // The same in another `@scope`: `&` in the scope-start selector is the outer scoping root.
+      [
+        "@scope (.p) { @scope (& > .a) to (& > .b) { .c { color: red } } }",
+        "@scope(.p){@scope(&>.a) to (&>.b){.c{color:red}}}",
+        "@scope(.p){@scope(:scope>.a) to (:scope>.b){.c{color:red}}}",
+      ],
+
+      // No scope-start selector. The scoping root is the parent of the `<style>` element, also in a style rule.
+      // The output ended after `@scope to (.b`, and the next rule landed in that broken prelude.
+      ["@scope to (.b) { .c { color: red } }", "@scope to (.b){.c{color:red}}", "@scope to (.b){.c{color:red}}"],
+      [
+        "@scope to (.b) { .c { color: red } } .after { color: blue }",
+        "@scope to (.b){.c{color:red}}.after{color:#00f}",
+        "@scope to (.b){.c{color:red}}.after{color:#00f}",
+      ],
+      [
+        ".p { @scope to (& > .b) { .c { color: red } } }",
+        ".p{@scope to (&>.b){& .c{color:red}}}",
+        "@scope to (:scope>.b){:scope .c{color:red}}",
+      ],
+
+      // No `&`: printed as written, as before.
+      [
+        "@scope (.a) to (.a > .b) { .c { color: red } }",
+        "@scope(.a) to (.a>.b){.c{color:red}}",
+        "@scope(.a) to (.a>.b){.c{color:red}}",
+      ],
+      [
+        "@scope (.a) to (> .b) { .c { color: red } }",
+        "@scope(.a) to (:scope>.b){.c{color:red}}",
+        "@scope(.a) to (:scope>.b){.c{color:red}}",
+      ],
+    ])("%s", (source, kept, lowered) => {
+      expect({
+        no_targets: cssInternals.minifyTest(source, ""),
+        nesting: cssInternals.minifyTest(source, "", nesting),
+        no_nesting: cssInternals.minifyTest(source, "", no_nesting),
+      }).toEqual({ no_targets: kept, nesting: kept, no_nesting: lowered });
+      // Both outputs print as themselves again.
+      expect({
+        kept: cssInternals.minifyTest(kept, ""),
+        lowered: cssInternals.minifyTest(lowered, "", no_nesting),
+      }).toEqual({ kept, lowered });
+    });
   });
 
   describe("font-palette-values", () => {

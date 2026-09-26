@@ -1964,6 +1964,393 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
   });
 });
 
+// One node:quic connection, one request stream per path, in order. Each outcome
+// is "<status> <body>", or "reset <code>" when the server ended the stream with
+// RESET_STREAM. node:quic does not re-send a request, so the handler runs once.
+async function h3StreamOutcomes(
+  port: number,
+  paths: string[],
+  onHeaders?: (path: string, headers: Record<string, string>) => void,
+): Promise<string[]> {
+  await using endpoint = new QuicEndpoint();
+  const client = await connect(`127.0.0.1:${port}`, {
+    endpoint,
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5 },
+    // The defaults (128 pairs, 16 KB) drop the fields past them.
+    application: { maxHeaderPairs: 256, maxHeaderLength: 1024 * 1024 },
+    onerror() {},
+  });
+  await client.opened;
+  const outcomes: string[] = [];
+  for (const path of paths) {
+    let status = "";
+    const stream = await client.createBidirectionalStream({
+      headers: requestHeaders(path),
+      onheaders(received: Record<string, string>) {
+        status = received[":status"];
+        onHeaders?.(path, received);
+      },
+    });
+    const ended = stream.closed.then(
+      () => "",
+      (err: Error & { code?: string; errorCode?: bigint }) =>
+        err?.code === "ERR_QUIC_APPLICATION_ERROR" ? `reset ${err.errorCode}` : `error ${err?.code}`,
+    );
+    let body = "";
+    try {
+      for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+        for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      }
+    } catch {
+      // A reset stream rejects the read. `closed` carries the code.
+    }
+    outcomes.push((await ended) || `${status} ${body}`);
+  }
+  if (!client.destroyed) client.close().catch(() => {});
+  return outcomes;
+}
+
+// Resolves to `late` when `event` does not settle in time. The deadline stays
+// below the idle timeout of the connection. That timeout ends every stream, so
+// a build without the fix reports an abort and a closed stream then too, and
+// the test timeout of the CI runner is far above both.
+async function settledWithin<T>(ms: number, event: Promise<T>, late: T): Promise<T> {
+  let settled: { value: T } | undefined;
+  event.then(value => (settled = { value }));
+  const deadline = performance.now() + ms;
+  while (!settled && performance.now() < deadline) await new Promise<void>(resolve => setImmediate(resolve));
+  return settled ? settled.value : late;
+}
+
+// lsquic encodes a header block into a fixed 64 KB buffer, and lsxpack_header
+// keeps the length of each name and value in 16 bits. A response past either
+// limit cannot go out over HTTP/3.
+describe("Bun.serve HTTP/3 response headers past the lsquic limits", () => {
+  const fields = (name: string, fill: (i: number) => string) =>
+    Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`${name}-${i}`, Buffer.alloc(700, fill(i)).toString()]));
+  // "~" takes 13 bits in the QPACK Huffman table, so the encoder sends these
+  // values as literals: 100 x 700 bytes is about 70 KB of encoded block.
+  const overBlockLimit = fields("x-big", () => "~");
+  // A digit takes 5 bits: 70 KB of fields, about 44 KB of encoded block.
+  const underBlockLimit = fields("x-digits", i => String(i % 10));
+  // One value that is over both limits on its own. Cut to 16 bits of length
+  // (70000 % 65536 = 4464 bytes) it would fit the block and go out truncated.
+  const overValueLimit = { "x-one": Buffer.alloc(70_000, "~").toString(), "x-after": "after" };
+
+  // The server is a subprocess: a debug build that hands these fields to
+  // lsxpack_header unchecked aborts on an assertion.
+  const script = `
+    import { join } from "node:path";
+
+    // The response shapes use the value limit. That refusal comes from the
+    // server's own check, whatever size of block lsquic takes.
+    const { overValueLimit: headers, overBlockLimit, underBlockLimit } = ${JSON.stringify({ overBlockLimit, underBlockLimit, overValueLimit })};
+    const file = join(import.meta.dir, "file.txt");
+    await Bun.write(file, "from a file");
+    const taskHop = () => new Promise(resolve => setImmediate(resolve));
+
+    const server = Bun.serve({
+      port: 0,
+      tls: ${JSON.stringify(tls)},
+      http3: true,
+      routes: {
+        "/static": new Response("static", { headers }),
+        "/ok": () => new Response("ok"),
+        "/over-block-limit": () => new Response("block", { headers: overBlockLimit }),
+        "/under-block-limit": () => new Response("digits", { headers: underBlockLimit }),
+      },
+      async fetch(req) {
+        switch (new URL(req.url).pathname) {
+          // Rendered inside the QUIC read callback.
+          case "/string":
+            return new Response("string", { headers });
+          // Rendered from the event loop, outside lsquic.
+          case "/string-later":
+            await taskHop();
+            return new Response("string", { headers });
+          case "/after-request-body":
+            return new Response("body:" + (await req.bytes()).length, { headers });
+          case "/empty":
+            return new Response(null, { status: 204, headers });
+          case "/stream":
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  await taskHop();
+                  controller.enqueue(new TextEncoder().encode("stream"));
+                  controller.close();
+                },
+              }),
+              { headers },
+            );
+          case "/direct-stream":
+            return new Response(
+              new ReadableStream({
+                type: "direct",
+                async pull(controller) {
+                  controller.write("direct ");
+                  await taskHop();
+                  controller.write("stream");
+                  await controller.end();
+                },
+              }),
+              { headers },
+            );
+          case "/file":
+            return new Response(Bun.file(file), { headers });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    console.error("PORT=" + server.port);
+    process.stdin.on("data", () => {});
+    ${STOP_ON_STDIN_END}
+  `;
+
+  // Fails with the server's stderr when the server exits before `work` is done.
+  const unlessServerExits = <T>(waitForStderr: (re: RegExp) => Promise<unknown>, work: Promise<T>) =>
+    Promise.race([work, waitForStderr(/(?!)/) as Promise<never>]);
+
+  test("every response shape ends the stream with RESET_STREAM(H3_INTERNAL_ERROR), and the connection stays usable", async () => {
+    await withCustomServer(script, async (port, _send, waitForStderr) => {
+      const failing = ["/string", "/string-later", "/empty", "/stream", "/direct-stream", "/file", "/static"];
+      // All on one connection, so "/ok" at the end shows that it survived.
+      const outcomes = await unlessServerExits(waitForStderr, h3StreamOutcomes(port, [...failing, "/ok"]));
+      expect(outcomes).toEqual([...failing.map(() => "reset 258"), "200 ok"]);
+    });
+  });
+
+  // lsquic refused this block, the server took the refusal for backpressure,
+  // and the stream stayed open while the event loop spun.
+  test("a header block over 64 KB does not leave the stream open", async () => {
+    await withCustomServer(script, async (port, _send, waitForStderr) => {
+      const outcomes = await unlessServerExits(waitForStderr, h3StreamOutcomes(port, ["/over-block-limit", "/ok"]));
+      // "200 block" is the outcome with a lsquic that takes a block of this size.
+      expect(outcomes).toEqual([expect.stringMatching(/^(reset 258|200 block)$/), "200 ok"]);
+    });
+  });
+
+  test("fetch() rejects with HTTP3StreamReset", async () => {
+    await withCustomServer(script, async (port, _send, waitForStderr) => {
+      const post = fetchH3(port, "/after-request-body", { method: "POST", body: "request-content" }).then(
+        res => `status ${res.status}`,
+        err => err.code,
+      );
+      const outcome = await unlessServerExits(waitForStderr, settledWithin(3000, post, "no answer within 3 s"));
+      expect(outcome).toBe("HTTP3StreamReset");
+      expect(await fetchH3(port, "/ok").then(res => res.text())).toBe("ok");
+    });
+  });
+
+  test("fields over 64 KB in total still go out when the encoded block fits", async () => {
+    await withCustomServer(script, async (port, _send, waitForStderr) => {
+      let received: Record<string, string> = {};
+      const outcomes = await unlessServerExits(
+        waitForStderr,
+        h3StreamOutcomes(port, ["/under-block-limit"], (_, headers) => (received = headers)),
+      );
+      expect(outcomes).toEqual(["200 digits"]);
+      expect(received).toMatchObject(underBlockLimit);
+    });
+  });
+});
+
+// After the client's STOP_SENDING, lsquic refuses each write to the stream
+// with -1. While the request side is open the stream does not close by
+// itself, so a server that takes the -1 for backpressure keeps the request
+// pending, and buffers whatever the response still writes.
+describe("Bun.serve HTTP/3 response that the client stopped while its request is still open", () => {
+  const taskHop = () => new Promise<void>(resolve => setImmediate(resolve));
+
+  // A POST whose request side stays open, then STOP_SENDING for its response.
+  async function stoppedRequest(port: number, stopWhen: () => Promise<unknown>, onheaders?: () => void) {
+    const endpoint = new QuicEndpoint();
+    const client = await connect(`127.0.0.1:${port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    });
+    await client.opened;
+    const stream = await client.createBidirectionalStream({ onheaders });
+    stream.closed.catch(() => {});
+    stream.sendHeaders(requestHeaders("/", { ":method": "POST" }));
+    stream.writer.writeSync(new TextEncoder().encode("the start of an upload"));
+    (async () => {
+      for await (const _ of stream as AsyncIterable<Uint8Array[]>);
+    })().catch(() => {});
+    await stopWhen();
+    stream.stopSending(0x10cn);
+    return {
+      client,
+      stream,
+      // Not close(): it would wait for a stream that a build without the
+      // abort never ends.
+      async [Symbol.asyncDispose]() {
+        client.destroy();
+        await endpoint.close();
+      },
+    };
+  }
+
+  test("aborts the request when the response writes again", async () => {
+    const started = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<string>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            // Writes on every turn and never waits for the sink to drain,
+            // like an event stream that a timer drives. Only the abort stops
+            // it. The deadline is for a build that never aborts.
+            async pull(controller) {
+              const giveUpAt = performance.now() + 3000;
+              for (let writes = 0; !req.signal.aborted && performance.now() < giveUpAt; writes++) {
+                controller.write("event\n");
+                if (writes === 8) started.resolve();
+                await taskHop();
+              }
+              ended.resolve(req.signal.aborted ? "aborted" : "never aborted");
+            },
+          }),
+        );
+      },
+    });
+
+    await using _ = await stoppedRequest(server.port, () => started.promise);
+
+    expect(await ended.promise).toBe("aborted");
+  });
+
+  // With bytes already queued, a later write is only appended to them, so no
+  // write reaches lsquic. What fails is the request for a writable callback:
+  // lsquic refuses it once its RESET_STREAM is out. When the write comes in
+  // the flight that carried the STOP_SENDING, the RESET_STREAM is not out yet,
+  // and the callback's own write gets the -1. The response writes once, so a
+  // build that misses either case gets no second chance and never aborts.
+  test.each([
+    { when: "a later flight", turnsBetween: 2 },
+    { when: "the same flight", turnsBetween: 0 },
+  ])(
+    "aborts the request when bytes were queued before the STOP_SENDING and the response writes again in $when",
+    async ({ turnsBetween }) => {
+      const queued = Promise.withResolvers<void>();
+      const sawHeaders = Promise.withResolvers<void>();
+      const writeAgain = Promise.withResolvers<void>();
+      const aborted = Promise.withResolvers<string>();
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        routes: {
+          "/write-again": () => {
+            writeAgain.resolve();
+            return new Response("ok");
+          },
+        },
+        fetch(req) {
+          req.signal.addEventListener("abort", () => aborted.resolve("aborted"));
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                // Far more than the client's window takes: the rest is queued.
+                controller.write(Buffer.alloc(8 * 1024 * 1024, "q"));
+                controller.flush();
+                queued.resolve();
+                await writeAgain.promise;
+                controller.write("tail");
+                controller.flush();
+                await aborted.promise;
+              },
+            }),
+          );
+        },
+      });
+
+      await using stopped = await stoppedRequest(
+        server.port,
+        () => Promise.all([queued.promise, sawHeaders.promise]),
+        sawHeaders.resolve,
+      );
+      for (let i = 0; i < turnsBetween; i++) await taskHop();
+      const second = await stopped.client.createBidirectionalStream({ headers: requestHeaders("/write-again") });
+      for await (const _ of second as AsyncIterable<Uint8Array[]>);
+
+      expect(await settledWithin(3000, aborted.promise, "no abort within 3 s")).toBe("aborted");
+    },
+  );
+
+  // end() completes the response even when its bytes cannot go out, as it
+  // does over HTTP/1, so there is no abort event. The server still has to let
+  // go of the stream: the client sees its upload stopped and the stream close.
+  test("closes the stream when the response ends after the STOP_SENDING", async () => {
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      routes: {
+        "/finish": () => {
+          finish.resolve();
+          return new Response("ok");
+        },
+      },
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              // The header block and these bytes go out before the stop.
+              controller.write("head");
+              await controller.flush();
+              started.resolve();
+              await finish.promise;
+              // The sink hands this tail to end(), not to write().
+              controller.write("tail");
+              Promise.resolve(controller.end()).catch(() => {});
+            },
+          }),
+        );
+      },
+    });
+
+    await using stopped = await stoppedRequest(server.port, () => started.promise);
+    // Two turns put the STOP_SENDING on the wire. lsquic takes packets in
+    // order, so the server has it before this second request.
+    await taskHop();
+    await taskHop();
+    let status = "";
+    const second = await stopped.client.createBidirectionalStream({
+      headers: requestHeaders("/finish"),
+      onheaders(received: Record<string, string>) {
+        status = received[":status"];
+      },
+    });
+    for await (const _ of second as AsyncIterable<Uint8Array[]>);
+
+    const closed = stopped.stream.closed.then(
+      () => "closed",
+      () => "closed",
+    );
+    const upload = await settledWithin(3000, closed, "still open after 3 s");
+    expect({ status, upload, pendingRequests: server.pendingRequests }).toEqual({
+      status: "200",
+      upload: "closed",
+      pendingRequests: 0,
+    });
+  });
+});
+
 // The HTTP/3 twin of the HTTP/1 cases in websocket-server.test.ts: ws.close()
 // runs close() before it returns, and a request handler that calls it must still
 // run to completion before the nextTick and promise callbacks it queued. The

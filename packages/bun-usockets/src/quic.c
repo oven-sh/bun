@@ -1145,8 +1145,9 @@ void us_quic_stream_want_read(us_quic_stream_t *s, int want) {
     if (s->stream) lsquic_stream_wantread(s->stream, want);
 }
 
-void us_quic_stream_want_write(us_quic_stream_t *s, int want) {
-    if (s->stream) lsquic_stream_wantwrite(s->stream, want);
+int us_quic_stream_want_write(us_quic_stream_t *s, int want) {
+    if (!s->stream) return -1;
+    return lsquic_stream_wantwrite(s->stream, want) < 0 ? -1 : 0;
 }
 
 /* lsquic_stream_send_headers only buffers, and a flush is a no-op while lsquic
@@ -1182,8 +1183,13 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
      * so each pair has to be contiguous. The caller hands us arbitrary
      * pointers, so flatten here. */
     size_t total = 0;
-    for (unsigned int i = 0; i < count; i++)
+    for (unsigned int i = 0; i < count; i++) {
+        /* lsxpack_header stores each length in 16 bits; a longer one would
+         * go out truncated. */
+        if (headers[i].name_len > LSXPACK_MAX_STRLEN || headers[i].value_len > LSXPACK_MAX_STRLEN)
+            return -1;
         total += headers[i].name_len + headers[i].value_len;
+    }
 
     char stackbuf[1024];
     char *buf = total <= sizeof(stackbuf) ? stackbuf : (char *) us_malloc(total);
@@ -1199,10 +1205,13 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
     size_t off = 0;
     for (unsigned int i = 0; i < count; i++) {
         const struct us_quic_header_t *h = &headers[i];
-        memcpy(buf + off, h->name, h->name_len);
-        memcpy(buf + off + h->name_len, h->value, h->value_len);
-        lsxpack_header_set_offset2(&xh[i], buf, off, h->name_len,
-            off + h->name_len, h->value_len);
+        char *pair = buf + off;
+        memcpy(pair, h->name, h->name_len);
+        memcpy(pair + h->name_len, h->value, h->value_len);
+        /* Offsets are relative to this pair, not to buf: lsxpack asserts
+         * that an offset fits 16 bits, and `total` can be larger. */
+        lsxpack_header_set_offset2(&xh[i], pair, 0, h->name_len,
+            h->name_len, h->value_len);
         if (h->qpack_index >= 0) {
             xh[i].qpack_index = (uint8_t) h->qpack_index;
             xh[i].flags = LSXPACK_QPACK_IDX;
@@ -1246,6 +1255,13 @@ void us_quic_stream_close(us_quic_stream_t *s) {
 /* From lsquic_stream.h (not in the public header). */
 void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int);
 
+static void us_quic_stream_reset_with(us_quic_stream_t *s, uint64_t h3_error_code) {
+    if (!s->stream) return;
+    /* do_close=0: with no reset due, maybe_reset's own close shuts only the read half. */
+    lsquic_stream_maybe_reset(s->stream, h3_error_code, 0);
+    lsquic_stream_close(s->stream);
+}
+
 /* Abort the send half with RESET_STREAM(H3_REQUEST_CANCELLED) instead of
  * FIN. lsquic_stream_close/shutdown queue FIN after the buffered tail,
  * which is a protocol error if a content-length was advertised and the
@@ -1255,10 +1271,12 @@ void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int)
  * as a stream-level cancellation rather than a malformed message.
  * Sends nothing once lsquic_stream_close/shutdown has run, so call it first. */
 void us_quic_stream_reset(us_quic_stream_t *s) {
-    if (!s->stream) return;
-    /* do_close=0: with no reset due, maybe_reset's own close shuts only the read half. */
-    lsquic_stream_maybe_reset(s->stream, 0x10C, 0);
-    lsquic_stream_close(s->stream);
+    us_quic_stream_reset_with(s, 0x10C);
+}
+
+/* The server's form, for a response it cannot complete: H3_INTERNAL_ERROR. */
+void us_quic_stream_reset_internal_error(us_quic_stream_t *s) {
+    us_quic_stream_reset_with(s, 0x102);
 }
 
 int us_quic_stream_has_unacked(us_quic_stream_t *s) {

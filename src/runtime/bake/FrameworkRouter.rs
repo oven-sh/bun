@@ -131,6 +131,8 @@ pub(crate) type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>;
 /// Native code for `FrameworkFileSystemRouterType`
 pub(crate) struct Type {
     pub(crate) abs_root: Box<[u8]>,
+    /// URL path of the mount point. `scan` puts its segments in front of every pattern.
+    pub(crate) prefix: Box<[u8]>,
     pub(crate) ignore_underscores: bool,
     pub(crate) ignore_dirs: Box<[Box<[u8]>]>,
     pub(crate) extensions: Box<[Box<[u8]>]>,
@@ -148,6 +150,7 @@ impl Default for Type {
     fn default() -> Self {
         Self {
             abs_root: Box::default(),
+            prefix: Box::default(),
             ignore_underscores: false,
             ignore_dirs: Box::new([
                 Box::<[u8]>::from(b".git".as_slice()),
@@ -166,6 +169,32 @@ impl Default for Type {
 impl Type {
     pub(crate) fn root_route_index(type_index: TypeIndex) -> RouteIndex {
         RouteIndex::init(type_index.get() as u32)
+    }
+
+    /// Says why `prefix` is not a fixed, normalized URL path that a request can match.
+    pub(crate) fn validate_prefix(prefix: &[u8]) -> Result<(), &'static str> {
+        if prefix.first() != Some(&b'/') {
+            return Err("must start with \"/\"");
+        }
+        if prefix.len() >= MAX_PATH_BYTES {
+            return Err("is too long");
+        }
+        // A client sends `" < > ^ \` { }` percent-encoded, so they never match.
+        if !prefix.iter().all(u8::is_ascii_graphic)
+            || strings::index_of_any(prefix, b"?#\\:*\"<>^`{}").is_some()
+        {
+            return Err(
+                "can only contain printable ASCII characters, and none of ? # \\ : * \" < > ^ ` { }",
+            );
+        }
+        if strings::tokenize(prefix, b"/").any(|segment| segment == b"." || segment == b"..") {
+            return Err("cannot contain a \".\" or \"..\" segment");
+        }
+        // `/_bun` holds the dev server's own routes and the build's assets.
+        if strings::tokenize(prefix, b"/").next() == Some(b"_bun".as_slice()) {
+            return Err("cannot be under \"/_bun\", which Bun reserves");
+        }
+        Ok(())
     }
 }
 
@@ -1132,18 +1161,17 @@ impl FrameworkRouter {
 
         let file_id = ctx.get_file_id_for_router(file_path, new_route_index, file_kind)?;
 
-        let new_route = self.route_ptr_mut(new_route_index);
-        if let Some(existing) = *new_route.file_ptr(file_kind) {
+        if let Some(existing) = *self.route_ptr_mut(new_route_index).file_ptr(file_kind) {
             if existing == file_id {
                 return Ok(()); // exact match already exists. Hot-reloading code hits this
             }
             *out_colliding_file_id = existing;
             return Err(InsertError::RouteCollision);
         }
-        *new_route.file_ptr(file_kind) = Some(file_id);
 
         if file_kind == FileKind::Page {
-            match pattern {
+            // A different route can still serve the same URLs (see `dynamic_routes`).
+            let aliased_route = match pattern {
                 InsertPattern::Static(p) => {
                     let key: &[u8] = if p.route_path().is_empty() {
                         b"/"
@@ -1152,19 +1180,32 @@ impl FrameworkRouter {
                     };
                     let gop = self.static_routes.get_or_put(key)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
                 InsertPattern::Dynamic(p) => {
                     let gop = self.dynamic_routes.get_or_put(p)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
+            };
+            if let Some(aliased_route) = aliased_route {
+                *out_colliding_file_id = self
+                    .route_ptr(aliased_route)
+                    .file_page
+                    .expect("routes in the url maps have a page");
+                return Err(InsertError::RouteCollision);
             }
         }
+
+        *self.route_ptr_mut(new_route_index).file_ptr(file_kind) = Some(file_id);
         Ok(())
     }
 }
@@ -1609,6 +1650,16 @@ impl FrameworkRouter {
                         };
 
                         let mut log = TinyLog::empty();
+                        // `effective_url_hash` and `PatternBuffer` size their buffers for a file path.
+                        if t.prefix.len() + rel_path.len() >= MAX_PATH_BYTES {
+                            log.fail(
+                                format_args!("The URL of this route is too long"),
+                                0,
+                                full_rel_path.len(),
+                            );
+                            ctx.on_router_syntax_error(full_rel_path, log)?;
+                            continue 'outer;
+                        }
                         // The arena is reset at the end of every arm via
                         // `reset_retain_with_limit(8M)` — keep the `mi_heap`
                         // warm between directory entries instead of paying
@@ -1639,9 +1690,14 @@ impl FrameworkRouter {
                             continue 'outer;
                         }
 
+                        let mut parts: ArenaVec<'_, Part<'_>> = ArenaVec::new_in(arena_state);
+                        parts.extend(strings::tokenize(&t.prefix, b"/").map(Part::Text));
+                        parts.extend_from_slice(parsed.parts);
+                        let parts: &[Part<'_>] = parts.into_bump_slice();
+
                         let mut static_total_len: usize = 0;
                         let mut param_count: usize = 0;
-                        for part in parsed.parts {
+                        for part in parts {
                             match part {
                                 Part::Text(data) => static_total_len += 1 + data.len(),
                                 Part::Param(_) | Part::CatchAll(_) | Part::CatchAllOptional(_) => {
@@ -1669,10 +1725,8 @@ impl FrameworkRouter {
                         };
 
                         let result = if param_count > 0 {
-                            let pattern = EncodedPattern::init_from_parts(
-                                parsed.parts,
-                                &self.pattern_string_arena,
-                            )?;
+                            let pattern =
+                                EncodedPattern::init_from_parts(parts, &self.pattern_string_arena)?;
                             self.insert(
                                 t_index,
                                 InsertPattern::Dynamic(pattern),
@@ -1686,7 +1740,7 @@ impl FrameworkRouter {
                                 .pattern_string_arena
                                 .alloc_slice_fill_default::<u8>(static_total_len);
                             let mut pos = 0usize;
-                            for part in parsed.parts {
+                            for part in parts {
                                 match part {
                                     Part::Text(data) => {
                                         allocation[pos] = b'/';
@@ -1791,6 +1845,18 @@ impl JSFrameworkRouter {
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
 
+        let prefix: Box<[u8]> = match opts.get_optional_slice(global, b"prefix")? {
+            Some(prefix) => {
+                if let Err(reason) = Type::validate_prefix(&prefix) {
+                    return Err(
+                        global.throw_invalid_arguments(format_args!("options.prefix {reason}"))
+                    );
+                }
+                prefix.slice().into()
+            }
+            None => Box::default(),
+        };
+
         let style = Style::from_js(
             opts.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
             global,
@@ -1809,6 +1875,7 @@ impl JSFrameworkRouter {
 
         let types: Box<[Type]> = Box::new([Type {
             abs_root: abs_root.clone(),
+            prefix,
             ignore_underscores: false,
             extensions: Box::new([
                 b".tsx".as_slice().into(),

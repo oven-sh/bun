@@ -562,6 +562,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             abs_root: Box::from(strings::paths::without_trailing_slash_windows_path(
                 entry.abs_path,
             )),
+            prefix: Box::from(fsr.prefix),
             ignore_underscores: fsr.ignore_underscores,
             ignore_dirs: fsr
                 .ignore_dirs

@@ -1,6 +1,7 @@
 // this file is compatible with jest to test node.js' util.inspect as well as bun's
 
 const util = require("util");
+const vm = require("vm");
 
 test("util.inspect.custom exists", () => {
   expect(util.inspect.custom).toEqual(Symbol.for("nodejs.util.inspect.custom"));
@@ -144,6 +145,69 @@ for (const [name, inspect] of process.versions.bun
       ? "{[Symbol(nodejs.util.inspect.custom)]:512,}"
       : "{Symbol(nodejs.util.inspect.custom):512}";
     expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe(expected);
+  });
+
+  test(name + " does not call inspect.custom on a prototype object", () => {
+    const receivers = [];
+    class Foo {
+      [customSymbol]() {
+        receivers.push(this === Foo.prototype ? "prototype" : "instance");
+        return "custom";
+      }
+    }
+
+    expect(inspect(new Foo())).toBe("custom");
+    inspect(Foo.prototype);
+    inspect({ nested: Foo.prototype });
+    expect(receivers).toEqual(["instance"]);
+  });
+
+  test(name + " finds a prototype object only through an own constructor data property", () => {
+    const receivers = [];
+    function custom() {
+      receivers.push(this.name);
+      return "custom";
+    }
+    const nullConstructor = { name: "null", constructor: null, [customSymbol]: custom };
+    const primitiveConstructor = { name: "primitive", constructor: 1, [customSymbol]: custom };
+    const accessorConstructor = {
+      name: "accessor",
+      get constructor() {
+        throw new Error("the constructor getter must not run");
+      },
+      [customSymbol]: custom,
+    };
+    // The inherited constructor points back at the object, but it is not an own property.
+    const parent = { name: "parent", [customSymbol]: custom };
+    const inheritedConstructor = Object.create(parent, { name: { value: "inherited" } });
+    parent.constructor = { prototype: inheritedConstructor };
+    const prototypeObject = { name: "prototype", [customSymbol]: custom };
+    prototypeObject.constructor = { prototype: prototypeObject };
+
+    expect(inspect(nullConstructor)).toBe("custom");
+    expect(inspect(primitiveConstructor)).toBe("custom");
+    expect(inspect(accessorConstructor)).toBe("custom");
+    expect(inspect(inheritedConstructor)).toBe("custom");
+    inspect(prototypeObject);
+    expect(receivers).toEqual(["null", "primitive", "accessor", "inherited"]);
+  });
+
+  test(name + " propagates an exception thrown while it reads constructor.prototype", () => {
+    let hookCalls = 0;
+    const obj = {
+      constructor: {
+        get prototype() {
+          throw new Error("prototype getter");
+        },
+      },
+      [customSymbol]() {
+        hookCalls++;
+        return "custom";
+      },
+    };
+
+    expect(() => inspect(obj)).toThrow(new Error("prototype getter"));
+    expect(hookCalls).toBe(0);
   });
 
   const exceptions = [new Error("don't crash!"), 42];
@@ -309,8 +373,12 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
   test("wrong receiver returns the receiver (no infinite recursion)", () => {
     const o = {};
     expect(ReadableStream.prototype[customSymbol].call(o, 2, {})).toBe(o);
-    // util.inspect and Bun.inspect must both fall through to default formatting
-    // rather than recursing on a custom function that returned its own `this`.
+    // The hook returns a receiver that is not a stream as is. util.inspect and Bun.inspect
+    // must then use the default formatting, and not call the hook again.
+    const foreign = Object.create(ReadableStream.prototype);
+    expect(inspect(foreign)).toBe("ReadableStream {}");
+    expect(Bun.inspect(foreign)).toStartWith("ReadableStream {\n");
+    // Neither of them calls the hook for a prototype.
     expect(inspect(ReadableStream.prototype)).toContain("[ReadableStream]");
     expect(Bun.inspect(ReadableStream.prototype).length > 0).toBeTrue();
     expect(Bun.inspect(TransformStream.prototype).length > 0).toBeTrue();
@@ -330,4 +398,29 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     // formats as a plain object instead of throwing.
     expect(inspect(globalThis[className].prototype)).toContain("encoding: [Getter]");
   });
+});
+
+test.each([
+  "CompressionStream",
+  "DecompressionStream",
+  "TextEncoderStream",
+  "TextDecoderStream",
+  "BroadcastChannel",
+  "Buffer",
+  "PerformanceEntry",
+  "PerformanceMark",
+  "PerformanceMeasure",
+  "PerformanceResourceTiming",
+  "vm.Module",
+  "vm.SourceTextModule",
+  "vm.SyntheticModule",
+])("Bun.inspect formats %s.prototype without its inspect.custom", path => {
+  const className = path.replace("vm.", "");
+  const { prototype } = path.startsWith("vm.") ? vm[className] : globalThis[className];
+  expect(prototype[customSymbol]).toBeFunction();
+  expect(() => prototype[customSymbol].call(prototype, 2, {})).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_THIS" }),
+  );
+  expect(Bun.inspect(prototype)).toStartWith(`${className} {\n`);
+  expect(Bun.inspect({ nested: prototype })).toStartWith(`{\n  nested: ${className} {\n`);
 });

@@ -5588,11 +5588,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Returns `false` when visiting eliminated every statement, so no part was pushed.
     pub(crate) fn append_part(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
-    ) -> Result<(), crate::Error> {
+    ) -> Result<bool, crate::Error> {
         // Uses recorded outside a part's visit (the parse pass resolving
         // decorator-metadata types) belong to no part.
         self.part_uses.clear();
@@ -5654,7 +5655,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.relocated_top_level_vars.clear();
         }
 
-        if !part_stmts.is_empty() {
+        let appended = !part_stmts.is_empty();
+        if appended {
             // SAFETY: `into_bump_slice_mut` leaks the BumpVec into the arena and
             // returns the unique `&'a mut [T]` for that allocation. We compute
             // `can_be_removed_if_unused` while the `&mut` is live (reborrowed as
@@ -5713,7 +5715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.declared_symbols.clear_retaining_capacity();
             self.import_records_for_current_part.clear();
         }
-        Ok(())
+        Ok(appended)
     }
 
     /// A pattern runs getters or the iterator on its value, so only a literal value is side-effect free.

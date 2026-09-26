@@ -32,6 +32,7 @@
 #include "config.h"
 #include "HTTPHeaderMap.h"
 
+#include "VectorSizeLimit.h"
 #include <utility>
 #include <wtf/text/StringView.h>
 
@@ -162,13 +163,12 @@ void HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const Stri
         m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
-void HTTPHeaderMap::add(const String& name, const String& value)
+bool HTTPHeaderMap::add(const String& name, const String& value)
 {
     HTTPHeaderName headerName;
-    if (findHTTPHeaderName(name, headerName)) {
-        add(headerName, value);
-        return;
-    }
+    if (findHTTPHeaderName(name, headerName))
+        return add(headerName, value);
+
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
     });
@@ -176,6 +176,7 @@ void HTTPHeaderMap::add(const String& name, const String& value)
         m_uncommonHeaders.append(UncommonHeader { name, value });
     else
         m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+    return true;
 }
 
 bool HTTPHeaderMap::contains(const StringView name) const
@@ -316,11 +317,13 @@ bool HTTPHeaderMap::remove(HTTPHeaderName name)
     });
 }
 
-void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
+bool HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
 {
     if (name == HTTPHeaderName::SetCookie) {
-        m_setCookieHeaders.append(value);
-        return;
+        // Script grows this list one cheap call at a time, and Vector::append CRASH()es past the largest capacity.
+        if (m_setCookieHeaders.size() >= Bun::maxVectorSize<String>()) [[unlikely]]
+            return false;
+        return m_setCookieHeaders.tryAppend(value);
     }
 
     auto index = m_commonHeaders.findIf([&](auto& header) {
@@ -330,6 +333,7 @@ void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
         m_commonHeaders[index].value = makeString(m_commonHeaders[index].value, name == HTTPHeaderName::Cookie ? "; "_s : ", "_s, value);
     else
         m_commonHeaders.append(CommonHeader { name, value });
+    return true;
 }
 
 } // namespace WebCore

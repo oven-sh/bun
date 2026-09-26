@@ -11,7 +11,7 @@ use bun_semver::{self as Semver, SlicedString};
 use crate::dependency::Behavior;
 use crate::lockfile::Lockfile;
 use crate::lockfile::package::PackageColumns as _;
-use crate::npm::PackageManifest;
+use crate::npm::{FindResult, PackageManifest};
 use crate::package_manager::Options::{Do, Enable, LogLevel};
 use crate::package_manager_real::enqueue_dependency_with_main;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
@@ -845,9 +845,13 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 edges,
                 downgrade: candidate.downgrade,
                 too_recent: age_limit.is_some_and(|limit| {
-                    PackageManifest::is_package_version_too_recent(
-                        &release_pkgs[candidate.index],
+                    manifest.is_version_blocked_by_age_filter(
+                        FindResult {
+                            version: candidate.version,
+                            package: &release_pkgs[candidate.index],
+                        },
                         limit,
+                        excludes,
                     )
                 }),
                 edits,
@@ -1198,18 +1202,16 @@ pub fn prepare_install(manager: &mut PackageManager, plan: &FixPlan) -> crate::R
     package_json_edits::apply(manager, plan)?;
 
     if plan.fixes.iter().any(|fix| fix.too_recent) {
-        let mut names: Vec<&'static [u8]> = manager
+        let mut excludes = manager
             .options
             .minimum_release_age_excludes
-            .map_or_else(Vec::new, <[_]>::to_vec);
-        names.extend(
-            plan.fixes
-                .iter()
-                .filter(|fix| fix.too_recent)
-                .map(|fix| &*bun_core::heap::release(fix.name.clone())),
-        );
+            .cloned()
+            .unwrap_or_default();
+        for fix in plan.fixes.iter().filter(|fix| fix.too_recent) {
+            excludes.exclude_package(bun_core::heap::release(fix.name.clone()));
+        }
         manager.options.minimum_release_age_excludes =
-            Some(&*bun_core::heap::release(names.into_boxed_slice()));
+            Some(&*bun_core::heap::release(Box::new(excludes)));
     }
 
     manager.audit_fix_pins = plan

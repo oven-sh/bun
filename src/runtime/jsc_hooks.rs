@@ -793,42 +793,16 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
-        // HMR `pending_internal_promise` swap loop; non-watcher path uses
-        // `wait_for_promise` directly.
-        {
-            // SAFETY: per fn contract.
-            if unsafe { &*vm }.is_watcher_enabled() {
-                // pending_internal_promise can change if hot module reloading is
-                // enabled.
-                // SAFETY: `el` is the live per-thread event loop.
-                let el = unsafe { &*vm }.event_loop();
-                loop {
-                    // SAFETY: `pending_internal_promise` was set just above (or
-                    // swapped by HMR to another live cell); `status()` is a
-                    // read-only FFI call on a live JSC heap cell.
-                    let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
-                    // SAFETY: `pip` is a live JSC heap cell (set just above or
-                    // the protected `promise` fallback).
-                    if unsafe { &*pip }.status() != PromiseStatus::Pending {
-                        break;
-                    }
-                    // SAFETY: `el` is the live per-thread event loop.
-                    unsafe { (*el).tick() };
-                    // SAFETY: per fn contract — `vm` is the live per-thread VM.
-                    let pip = unsafe { &*vm }.pending_internal_promise.unwrap_or(promise);
-                    // SAFETY: `pip` is a live JSC heap cell (see above).
-                    if unsafe { &*pip }.status() == PromiseStatus::Pending {
-                        // SAFETY: per fn contract — short-lived `&mut *vm` for the
-                        // dispatched `auto_tick` hook (same shape as the
-                        // non-watcher `wait_for_promise` arm).
-                        unsafe { (*vm).auto_tick() };
-                    }
-                }
-            } else {
-                // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
-                // live protected JSC heap cell.
-                let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
-            }
+        // SAFETY: per fn contract.
+        if unsafe { &*vm }.is_watcher_enabled() {
+            // pending_internal_promise can change if hot module reloading is
+            // enabled.
+            // SAFETY: per fn contract — short-lived `&mut *vm`.
+            let _ = unsafe { (*vm).wait_for_pending_internal_promise() };
+        } else {
+            // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
+            // live protected JSC heap cell.
+            let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
         }
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
@@ -894,12 +868,14 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 /// `eventLoop().autoTick()`. Needs
 /// `timer::All` for the poll-timeout calculation, hence dispatched here.
 ///
+/// `waiting_on`: see `EventLoop::auto_tick_waiting_on`.
+///
 /// PERF: the one fn-ptr indirection is dwarfed by the kqueue/epoll syscall it
 /// gates.
 ///
 /// # Safety
-/// `vm` is the live per-thread VM.
-unsafe fn auto_tick(vm: *mut VirtualMachine) {
+/// `vm` is the live per-thread VM; `waiting_on`, if any, is a live promise.
+unsafe fn auto_tick(vm: *mut VirtualMachine, waiting_on: Option<AnyPromise>) {
     // Note: reshaped for borrowck — `EventLoop` is a value field of
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
@@ -913,10 +889,21 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
+    let mut wait_over = false;
+    if let Some(promise) = waiting_on {
+        // See `EventLoop::auto_tick_waiting_on`. An empty checkpoint is
+        // skipped: a program with a pending top-level await is here on every
+        // turn of its loop.
+        // SAFETY: as above.
+        let stopped =
+            unsafe { &*el }.has_checkpoint_work() && unsafe { (*el).drain_microtasks() }.is_err();
+        // Final: nothing else before the poll runs user script.
+        wait_over = stopped || promise.status() != PromiseStatus::Pending;
+    }
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
+    if has_yielded_tasks || wait_over || !unsafe { &*el }.immediate_tasks.is_empty() {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
@@ -979,8 +966,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
         // SAFETY: `el` is the live per-thread event loop.
-        // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
+            || wait_over
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.

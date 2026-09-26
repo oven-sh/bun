@@ -2,7 +2,8 @@
 // compares right, says what differs with both values, stays under 60 lines, runs to its end when
 // steps fail, when the image never ends and when a person interrupts it, and writes nothing outside
 // of its directory. Every case runs under each shell that is here of: dash, bash as sh (the sh of
-// macOS is bash), the sh of busybox.
+// macOS is bash), the sh of busybox, and zsh, which is the shell that a person has on a Mac and may
+// run the script with.
 //
 //   bun test-run-on-mac.ts [--case <part of a name>] [--shell <name>]
 //                                 after package-macos.ts. WORK as in build.ts.
@@ -213,7 +214,6 @@ const cases: Case[] = [
     name: "as on a Mac, the image hangs",
     prepare: dir => asOnAMac(dir),
     env: dir => macEnv(dir, arch, { MAC_TOOLS_HOST: "hangs", BUN_RUN_ON_MAC_SECONDS: "3" }),
-    within: 240,
     expect: summary => [
       has(summary, /the image DOES NOT START under the host: exit code 137 \(it was ended: by this script after 3 seconds, or by macOS\)/) ? "" : "the image is not reported as ended by the script",
       has(summary, /^2\. layout \(the image, as it was run where it was built\): \d{3} facts are the same, 0 DIFFER/) ? "" : "the layout is not compared with what the image printed where it was built",
@@ -225,9 +225,10 @@ const cases: Case[] = [
   {
     name: "as on a Mac, interrupted",
     prepare: dir => asOnAMac(dir),
-    env: dir => macEnv(dir, arch, { MAC_TOOLS_HOST: "hangs" }),
+    // Without the interruption the script would wait for as long as it gives the image.
+    env: dir => macEnv(dir, arch, { MAC_TOOLS_HOST: "hangs", BUN_RUN_ON_MAC_SECONDS: "900" }),
     interrupt: true,
-    within: 120,
+    within: 600,
     expect: summary => [
       has(summary, /the image DOES NOT START under the host: exit code/) ? "" : "the image is not reported as ended",
       has(summary, /^the run was interrupted: the steps that were left did not run/) ? "" : "the summary does not say that the run was interrupted",
@@ -238,10 +239,12 @@ const cases: Case[] = [
 ];
 
 const busybox = "/tmp/portable/u4/cache/bbin/sh";
+const zsh = "/tmp/portable/u4/cache/zsh-x86_64/bin/zsh";
 const shells: { name: string; command: string[] }[] = [
   { name: "dash", command: ["dash"] },
   { name: "bash", command: ["bash", "--posix"] },
   ...(existsSync(busybox) ? [{ name: "busybox", command: [busybox] }] : []),
+  ...(existsSync(zsh) ? [{ name: "zsh", command: [zsh] }] : []),
 ].filter(shell => !option("--shell") || shell.name === option("--shell"));
 
 let failed = 0;

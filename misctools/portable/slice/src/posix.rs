@@ -175,4 +175,90 @@ pub(crate) fn steps(report: &mut Report, work: &Work, root_fd: Fd) {
         }
         Err(error) => report.end_error(&error),
     }
+
+    vectors(report, work);
+}
+
+/// Several buffers in one call: `writev` and `readv` at the position of the descriptor, `pwritev` and
+/// `preadv` at a position of the file.
+fn vectors(report: &mut Report, work: &Work) {
+    use bun_sys::{platform_iovec_const_create, platform_iovec_create};
+
+    report.begin("writev");
+    report.string("path", b"a/vectors.txt");
+    let fd = match bun_sys::open(
+        z(&work.path(b"a/vectors.txt")),
+        O::RDWR | O::CREAT | O::TRUNC,
+        0o644,
+    ) {
+        Ok(fd) => fd,
+        Err(error) => return report.end_error(&error),
+    };
+    let file = File::from_fd(fd);
+    let (mut one, mut two, mut three) = (*b"one ", *b"two ", *b"three");
+    let parts = [
+        platform_iovec_create(&mut one),
+        platform_iovec_create(&mut two),
+        platform_iovec_create(&mut three),
+    ];
+    match bun_sys::writev(fd, &parts) {
+        Ok(count) => {
+            report.number("count", count as i64);
+            report.end_ok();
+        }
+        Err(error) => report.end_error(&error),
+    }
+
+    report.begin("pwritev");
+    let parts = [
+        platform_iovec_const_create(b"TW"),
+        platform_iovec_const_create(b"O"),
+    ];
+    match bun_sys::pwritev(fd, &parts, 4) {
+        Ok(count) => {
+            report.number("count", count as i64);
+            report.end_ok();
+        }
+        Err(error) => report.end_error(&error),
+    }
+
+    report.begin("preadv");
+    let (mut first, mut rest) = ([0u8; 4], [0u8; 9]);
+    let parts = [
+        platform_iovec_create(&mut first),
+        platform_iovec_create(&mut rest),
+    ];
+    match bun_sys::preadv(fd, &parts, 0) {
+        Ok(count) => {
+            report.number("count", count as i64);
+            report.string("first", &first);
+            report.string("rest", &rest);
+            report.end_ok();
+        }
+        Err(error) => report.end_error(&error),
+    }
+
+    // The descriptor stands behind what `writev` wrote: `pwritev` and `preadv` do not move it.
+    report.begin("readv, from a position");
+    let (mut first, mut rest) = ([0u8; 3], [0u8; 8]);
+    let parts = [
+        platform_iovec_create(&mut first),
+        platform_iovec_create(&mut rest),
+    ];
+    let read = (|| {
+        let at_the_end = bun_sys::readv(fd, &parts)?;
+        bun_sys::set_file_offset(fd, 5)?;
+        Ok((at_the_end, bun_sys::readv(fd, &parts)?))
+    })();
+    match read {
+        Ok((at_the_end, count)) => {
+            report.number("count at the end", at_the_end as i64);
+            report.number("count", count as i64);
+            report.string("first", &first);
+            report.string("rest", &rest[..count.saturating_sub(3).min(8)]);
+            report.end_ok();
+        }
+        Err(error) => report.end_error(&error),
+    }
+    drop(file);
 }

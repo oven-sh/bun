@@ -27,6 +27,10 @@ unsafe extern "C" {
     fn nine(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32) -> i32;
     // R5: a structure by value.
     fn by_value(time: timespec) -> i32;
+    // R6: macOS calls a function of the image that returns a bool.
+    fn with_a_function(context: *mut c_void, compare: unsafe extern "C" fn(*const c_void, *const c_void) -> bool) -> i32;
+    // Allowed: macOS calls a function of the image that takes pointers and returns an int.
+    fn with_another_function(context: *mut c_void, compare: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> i32>) -> i32;
     // Allowed, and listed: an integer of 16 bits is passed as 32.
     fn fchmod(fd: c_int, mode: u16) -> c_int;
 }

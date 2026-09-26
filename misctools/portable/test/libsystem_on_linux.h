@@ -195,6 +195,8 @@ D_FUNCTION ssize_t d_pread(int fd, void *buffer, size_t count, int64_t offset) {
 D_FUNCTION ssize_t d_pwrite(int fd, const void *buffer, size_t count, int64_t offset) { return d_ret(pwrite(fd, buffer, count, (off_t)offset)); }
 D_FUNCTION ssize_t d_readv(int fd, const struct iovec *parts, int count) { return d_ret(readv(fd, parts, count)); }
 D_FUNCTION ssize_t d_writev(int fd, const struct iovec *parts, int count) { return d_ret(writev(fd, parts, count)); }
+D_FUNCTION ssize_t d_preadv(int fd, const struct iovec *parts, int count, int64_t offset) { return d_ret(preadv(fd, parts, count, (off_t)offset)); }
+D_FUNCTION ssize_t d_pwritev(int fd, const struct iovec *parts, int count, int64_t offset) { return d_ret(pwritev(fd, parts, count, (off_t)offset)); }
 D_FUNCTION int d_close(int fd) { return (int)d_ret(close(fd)); }
 D_FUNCTION int d_fsync(int fd) { return (int)d_ret(fsync(fd)); }
 D_FUNCTION int d_ftruncate(int fd, int64_t length) { return (int)d_ret(ftruncate(fd, (off_t)length)); }
@@ -422,7 +424,7 @@ D_FUNCTION ssize_t d_getdirentries64(int fd, void *buffer, size_t size, int64_t 
 #define D_FUNCTIONS(F) \
   F(d_no_stand_in) F(d_strlen) F(d_getpid) F(d_memset_pattern4) F(d_memset_pattern8) F(d_memset_pattern16) \
   F(d_error) F(d_open) F(d_openat) F(d_fcntl) F(d_read) F(d_write) F(d_pread) F(d_pwrite) F(d_readv) \
-  F(d_writev) F(d_close) F(d_fsync) F(d_ftruncate) F(d_truncate) F(d_fchmod) F(d_lchmod) F(d_stat) \
+  F(d_writev) F(d_preadv) F(d_pwritev) F(d_close) F(d_fsync) F(d_ftruncate) F(d_truncate) F(d_fchmod) F(d_lchmod) F(d_stat) \
   F(d_lstat) F(d_fstat) F(d_fstatat) F(d_mkdirat) F(d_unlinkat) F(d_faccessat) F(d_renameatx_np) \
   F(d_realpath) F(d_clonefile) F(d_clonefileat) F(d_fclonefileat) F(d_copyfile) F(d_fcopyfile) \
   F(d_getdirentries64)
@@ -442,7 +444,7 @@ static void *libsystem_on_linux(const char *symbol) {
     {"bun_host_darwin_fcntl3", D(d_fcntl)}, {"bun_host_darwin_fcntl_nocancel3", D(d_fcntl)},
     {"read", D(d_read)}, {"read$NOCANCEL", D(d_read)}, {"write", D(d_write)}, {"write$NOCANCEL", D(d_write)},
     {"pread", D(d_pread)}, {"pread$NOCANCEL", D(d_pread)}, {"pwrite", D(d_pwrite)}, {"pwrite$NOCANCEL", D(d_pwrite)},
-    {"readv$NOCANCEL", D(d_readv)}, {"writev$NOCANCEL", D(d_writev)},
+    {"readv$NOCANCEL", D(d_readv)}, {"writev$NOCANCEL", D(d_writev)}, {"preadv$NOCANCEL", D(d_preadv)}, {"pwritev$NOCANCEL", D(d_pwritev)},
     {"close", D(d_close)}, {"close$NOCANCEL", D(d_close)}, {"fsync", D(d_fsync)},
     {"ftruncate", D(d_ftruncate)}, {"truncate", D(d_truncate)}, {"fchmod", D(d_fchmod)}, {"lchmod", D(d_lchmod)},
 #if defined(__x86_64__)

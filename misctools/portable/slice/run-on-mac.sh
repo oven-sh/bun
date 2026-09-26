@@ -28,6 +28,8 @@
 # for each of its runs. Control-C ends the run that is going on and skips the steps that are left:
 # the summary and the logs are written all the same.
 
+# zsh, when a person runs the script with it: as sh.
+if [ -n "${ZSH_VERSION:-}" ]; then emulate sh; fi
 here=$(cd "$(dirname "$0")" && pwd) || exit 1
 cd "$here" || exit 1
 logs=$here/logs
@@ -72,18 +74,18 @@ limit() {
     done
     kill -9 "$child" 2>/dev/null
   ) > /dev/null 2>&1 &
-  watch=$!
+  watcher=$!
   wait "$child"
-  status=$?
+  code=$?
   # A signal that this script caught ends the wait, not the command.
   if kill -0 "$child" 2>/dev/null; then
     kill -9 "$child" 2>/dev/null
     wait "$child" 2>/dev/null
   fi
   child=
-  kill "$watch" 2>/dev/null
-  wait "$watch" 2>/dev/null
-  return "$status"
+  kill "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+  return "$code"
 }
 ended() {
   if [ "$1" -eq 137 ]; then
@@ -145,11 +147,11 @@ fi
 image_runs=
 if [ -n "$host_is" ] && [ -f "$image" ] && [ -z "$interrupted" ]; then
   limit env BUN_HOST_TRACE=1 "$host" "$image" --layout-darwin > "$logs/layout-image.jsonl" 2> "$logs/layout-image.err" < /dev/null
-  status=$?
-  if [ "$status" -eq 0 ] && [ -s "$logs/layout-image.jsonl" ]; then
+  code=$?
+  if [ "$code" -eq 0 ] && [ -s "$logs/layout-image.jsonl" ]; then
     image_runs=yes
   else
-    say "   the image DOES NOT START under the host: $(ended "$status"). The end of what it wrote: $(sed -n '$p' "$logs/layout-image.err" | cut -c 1-100)"
+    say "   the image DOES NOT START under the host: $(ended "$code"). The end of what it wrote: $(sed -n '$p' "$logs/layout-image.err" | cut -c 1-100)"
   fi
 fi
 
@@ -234,12 +236,12 @@ fi
 # ---- 3. the functions of macOS that the image can call ----
 if [ -n "$image_runs" ] && [ -z "$interrupted" ]; then
   limit env BUN_HOST_TRACE=1 "$host" "$image" --imports > "$logs/imports.jsonl" 2> "$logs/imports.err" < /dev/null
-  status=$?
+  code=$?
   grep '"library":"libSystem"' "$logs/imports.jsonl" | sed -n 's/.*"symbol":"\([^"]*\)","why":"\([^"]*\)".*/\1 (\2)/p' > "$logs/imports-missing.txt"
   totals=$(sed -n 's/^{"step":"imports of macOS","total":\([0-9]*\),"missing":\([0-9]*\).*/\1 functions, \2 missing/p' "$logs/imports.jsonl")
   if [ -z "$totals" ]; then
     rm -f "$logs/imports-missing.txt"
-    say "3. imports: the image DID NOT FINISH, $(ended "$status"): $(sed -n '$p' "$logs/imports.err" | cut -c 1-160)"
+    say "3. imports: the image DID NOT FINISH, $(ended "$code"): $(sed -n '$p' "$logs/imports.err" | cut -c 1-160)"
   else
     say "3. imports of macOS: $totals"
     say_some "$logs/imports-missing.txt" 5 logs/imports-missing.txt
@@ -262,7 +264,7 @@ slice() {
   name=$4
   most=$5
   limit env BUN_HOST_TRACE=1 BUN_HOST_COUNTS="$logs/$name-requests.txt" "$host" "$image" "$directory" > "$logs/$name.jsonl" 2> "$logs/$name.err" < /dev/null
-  status=$?
+  code=$?
   grep '^{"detail"' "$logs/$name.jsonl" > "$logs/$name-details.jsonl"
   # The name of the system call is compared on Linux only.
   grep -v '^{"detail"' "$logs/$name.jsonl" | sed 's/,"syscall":"[^"]*"//' > "$logs/$name-steps.jsonl"
@@ -272,7 +274,7 @@ slice() {
   : > "$logs/$name-differences.txt"
   steps=$(count "$logs/$name-steps.jsonl")
   if cmp -s "$logs/$name-steps.jsonl" "$wanted"; then
-    say "$number. slice in $directory: $(ended "$status"), $steps steps, ALL AS EXPECTED"
+    say "$number. slice in $directory: $(ended "$code"), $steps steps, ALL AS EXPECTED"
   else
     diff "$wanted" "$logs/$name-steps.jsonl" > "$logs/$name.diff"
     grep '^> ' "$logs/$name.diff" | sed 's/^> //' > "$logs/$name-got.jsonl"
@@ -280,10 +282,10 @@ slice() {
     while IFS= read -r line; do
       step=$(printf '%s\n' "$line" | sed 's/^{"step":"\([^"]*\)".*/\1/')
       # With the name of the field, so that a step without a path is found by its name alone.
-      path=$(printf '%s\n' "$line" | sed -n 's/^{"step":"[^"]*",\("path":"[^"]*"\).*/\1/p')
+      of_path=$(printf '%s\n' "$line" | sed -n 's/^{"step":"[^"]*",\("path":"[^"]*"\).*/\1/p')
       grep -F -- "{\"step\":\"$step\"," "$logs/$name-wanted.jsonl" > "$build/wanted.jsonl"
-      if [ -n "$path" ]; then
-        grep -F -- "$path" "$build/wanted.jsonl" > "$build/wanted-of-path.jsonl"
+      if [ -n "$of_path" ]; then
+        grep -F -- "$of_path" "$build/wanted.jsonl" > "$build/wanted-of-path.jsonl"
         mv "$build/wanted-of-path.jsonl" "$build/wanted.jsonl"
       fi
       expected=$(sed -n 1p "$build/wanted.jsonl" | describe | sed 's/^[^:]*: //')
@@ -298,7 +300,7 @@ slice() {
         put "(the step did not come) <- EXPECTED: $(printf '%s\n' "$line" | describe)" >> "$logs/$name-differences.txt"
       fi
     done < "$logs/$name-wanted.jsonl"
-    say "$number. slice in $directory: $(ended "$status"), $steps steps of $(count "$wanted"), NOT AS EXPECTED in $(count "$logs/$name-differences.txt") (logs/$name.diff)"
+    say "$number. slice in $directory: $(ended "$code"), $steps steps of $(count "$wanted"), NOT AS EXPECTED in $(count "$logs/$name-differences.txt") (logs/$name.diff)"
     say_some "$logs/$name-differences.txt" "$most" "logs/$name-differences.txt"
   fi
   grep -v '^\[host\]' "$logs/$name.err" > "$logs/$name-messages.txt"
@@ -374,7 +376,8 @@ fi
 if [ -n "$interrupted" ]; then say "the run was interrupted: the steps that were left did not run"; fi
 say "$verdict. Everything that was written is in $here/run-on-mac-logs.tar"
 rm -rf "$build"
-tar -cf "$here/run-on-mac-logs.tar" -C "$here" logs
+# Without the files that the tar of macOS adds for what a file has beside its bytes.
+COPYFILE_DISABLE=1 tar -cf "$here/run-on-mac-logs.tar" -C "$here" logs
 # At most 60 lines, and the last one is the verdict.
 if [ "$(count "$summary")" -gt 60 ]; then
   sed -n '1,58p' "$summary"

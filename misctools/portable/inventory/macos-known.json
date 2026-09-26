@@ -20,6 +20,12 @@
    "why": "macOS has two numbers (45 and 102), Linux and the image have one (95). An error of macOS that was one of the two is reported back as ENOTSUP (45)."
   },
   {
+   "file": "src/sys/copy_file.rs",
+   "where": "copy_file_with_state, the code for macOS: E::EOPNOTSUPP after fcopyfile",
+   "what": "ENOTSUP and EOPNOTSUPP",
+   "why": "bun for macOS goes on to its own loop of read and write when fcopyfile fails with EOPNOTSUPP (102), and returns the error when it fails with ENOTSUP (45), which is what copyfile(3) names for a source that is no file, directory or link. The image has one number for both (95), so it goes on for either. The same holds wherever an error of macOS is compared with one of the two names: src/sys/lib.rs (the fallbacks of the renames and of the links), src/io/posix_event_loop.rs, src/spawn_sys/spawn_process.rs."
+  },
+  {
    "file": "src/bun_core/Global.rs",
    "where": "SignalCode",
    "what": "a signal number kept in data",

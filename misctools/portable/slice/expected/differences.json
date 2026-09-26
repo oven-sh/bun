@@ -43,7 +43,11 @@
     "fstatat, missing a/missing.txt",
     "flags of a descriptor a/copy.txt",
     "dup, and write through it",
-    "read what was written through the second descriptor"
+    "read what was written through the second descriptor",
+    "writev a/vectors.txt",
+    "pwritev",
+    "preadv",
+    "readv, from a position"
    ],
    "why": "steps of POSIX (src/posix.rs of the slice)"
   },
@@ -77,7 +81,7 @@
    "why": "the number of an error is the one of macOS"
   },
   "only_here": {
-   "after": "read what was written through the second descriptor",
+   "after": "readv, from a position",
    "steps": [
     {
      "step": "clonefile",

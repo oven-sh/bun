@@ -51,6 +51,10 @@
 {"step":"flags of a descriptor","path":"a/copy.txt","append":true,"write only":true,"non blocking":false,"ok":true}
 {"step":"dup, and write through it","ok":true}
 {"step":"read what was written through the second descriptor","content":"hello!","ok":true}
+{"step":"writev","path":"a/vectors.txt","count":13,"ok":true}
+{"step":"pwritev","count":3,"ok":true}
+{"step":"preadv","count":13,"first":"one ","rest":"TWO three","ok":true}
+{"step":"readv, from a position","count at the end":0,"count":8,"first":"WO ","rest":"three","ok":true}
 {"step":"rmdir, not empty","path":"a","ok":false,"error":"ENOTEMPTY","errno":39,"syscall":"unlink"}
 {"step":"unlink, directory","path":"a/side","ok":false,"error":"EISDIR","errno":21,"syscall":"unlink"}
 {"step":"unlink, missing","path":"a/missing.txt","ok":false,"error":"ENOENT","errno":2,"syscall":"unlink"}

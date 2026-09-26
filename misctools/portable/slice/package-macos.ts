@@ -7,7 +7,8 @@
 //   run-on-mac.sh              what the person runs: sh run-on-mac.sh (it says what it does)
 //   package.txt                the commit, and the images with their hashes
 //   image/                     the two images. The one for aarch64 ends with an ad-hoc code
-//                              signature: Apple Silicon maps code from a file only under one
+//                              signature: Apple Silicon maps code from a file only under one.
+//                              launch/tools/check_signature.ts reads it back, field by field
 //   host/                      the sources of the host: cc -O2 -o host host_posix.c
 //   verify/darwin_layout.c     prints what the headers of macOS say (../bindings/darwin.ts)
 //   verify/parts.txt           what each part of darwin_layout.c is about
@@ -65,6 +66,7 @@ for (const arch of ["x86_64", "aarch64"]) {
   const image = join(out, `image/bun_fs_slice-${arch}.img`);
   writeFileSync(image, bytes);
   chmodSync(image, 0o755);
+  if (arch === "aarch64") run(["bun", join(tree, "launch/tools/check_signature.ts"), image]);
   lines.push(`image/bun_fs_slice-${arch}.img ${bytes.length} bytes sha256 ${createHash("sha256").update(bytes).digest("hex")}${arch === "aarch64" ? " (with its code signature)" : ""}`);
   // What the image in the package says about the definitions of macOS.
   const emulator = arch === machine ? [] : [`qemu-${arch}`];

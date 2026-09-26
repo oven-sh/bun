@@ -1,6 +1,6 @@
 {
  "about": "Inventory of bun's code for macOS for the portable image. Written by misctools/portable/inventory/macos.ts; see the head of that file for what the kinds mean.",
- "tree": "cea941dcc6747147b96deec668e1d37543470438",
+ "tree": "cfba2798d7a4de7bc00cc52343f37c9706707883",
  "libc_crate": "0.2.186",
  "libc_of_the_image": "musl 1.2.5 with misctools/portable/libc/patch_musl.py",
  "host": "misctools/portable/host/host_posix.c",
@@ -59,11 +59,11 @@
  "counts": {
   "places_for_macos_only": 233,
   "of_them_with_a_function_of_the_system": 52,
-  "of_them_compiled_into_the_image": 46,
+  "of_them_compiled_into_the_image": 50,
   "places_for_linux_only": 241,
   "functions_of_shared_source": 140,
   "of_them_not_answered_by_the_host": 6,
-  "k3": 104
+  "k3": 105
  },
  "k1": {
   "functions": [
@@ -330,7 +330,7 @@
     "used_in": [
      "src/sys/lib.rs:3080",
      "src/sys/lib.rs:3132",
-     "src/sys/lib.rs:7488"
+     "src/sys/lib.rs:7492"
     ],
     "uses": 3,
     "requests": {
@@ -968,7 +968,7 @@
     "name": "dlclose",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:6421"
+     "src/sys/lib.rs:6425"
     ],
     "uses": 1,
     "requests": {
@@ -993,7 +993,7 @@
     "name": "dlopen",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:6447"
+     "src/sys/lib.rs:6451"
     ],
     "uses": 1,
     "requests": {
@@ -1018,8 +1018,8 @@
     "name": "dlsym",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:5368",
-     "src/sys/lib.rs:6485"
+     "src/sys/lib.rs:5372",
+     "src/sys/lib.rs:6489"
     ],
     "uses": 2,
     "requests": {
@@ -1207,7 +1207,7 @@
     "name": "fchmod",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:5341",
+     "src/sys/lib.rs:5345",
      "src/sys/lib.rs:1732"
     ],
     "uses": 2,
@@ -1545,7 +1545,7 @@
     "name": "getgid",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:5349"
+     "src/sys/lib.rs:5353"
     ],
     "uses": 1,
     "requests": {
@@ -1574,7 +1574,7 @@
     "name": "gethostname",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:8300"
+     "src/sys/lib.rs:8304"
     ],
     "uses": 1,
     "requests": {
@@ -1607,7 +1607,7 @@
     "name": "getPeakRSS",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:5226"
+     "src/sys/lib.rs:5230"
     ],
     "uses": 1,
     "requests": {},
@@ -1743,7 +1743,7 @@
     "name": "getRSS",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:5225"
+     "src/sys/lib.rs:5229"
     ],
     "uses": 1,
     "requests": {},
@@ -1757,7 +1757,7 @@
     "name": "getuid",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:5348"
+     "src/sys/lib.rs:5352"
     ],
     "uses": 1,
     "requests": {
@@ -1811,7 +1811,7 @@
     "name": "ioctl",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:9782"
+     "src/sys/lib.rs:9786"
     ],
     "uses": 1,
     "requests": {
@@ -2627,7 +2627,7 @@
     "used_in": [
      "src/bun_core/Global.rs:759",
      "src/bun_core/Global.rs:791",
-     "src/sys/lib.rs:8404",
+     "src/sys/lib.rs:8408",
      "src/spawn/ctrl_c.rs:32",
      "src/spawn/ctrl_c.rs:52"
     ],
@@ -3164,8 +3164,8 @@
     "declared_by": "libc crate",
     "used_in": [
      "src/sys/lib.rs:2747",
-     "src/sys/lib.rs:8105",
-     "src/sys/lib.rs:9341"
+     "src/sys/lib.rs:8109",
+     "src/sys/lib.rs:9345"
     ],
     "uses": 3,
     "requests": {
@@ -3495,7 +3495,7 @@
     "name": "dlclose",
     "uses": 1,
     "used_in": [
-     "src/sys/lib.rs:6421"
+     "src/sys/lib.rs:6425"
     ],
     "why": "the image is linked statically and its libc has no loader: the call fails. bun for macOS loads libraries with the dynamic linker of the system"
    },
@@ -3503,7 +3503,7 @@
     "name": "dlopen",
     "uses": 1,
     "used_in": [
-     "src/sys/lib.rs:6447"
+     "src/sys/lib.rs:6451"
     ],
     "why": "the image is linked statically and its libc has no loader: the call fails. bun for macOS loads libraries with the dynamic linker of the system"
    },
@@ -3511,8 +3511,8 @@
     "name": "dlsym",
     "uses": 2,
     "used_in": [
-     "src/sys/lib.rs:5368",
-     "src/sys/lib.rs:6485"
+     "src/sys/lib.rs:5372",
+     "src/sys/lib.rs:6489"
     ],
     "why": "the image is linked statically and its libc has no loader: the call fails. bun for macOS loads libraries with the dynamic linker of the system"
    }
@@ -6233,8 +6233,8 @@
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
     "line": 4850,
-    "end_line": 4871,
-    "item": "loop statement",
+    "end_line": 4872,
+    "item": "block",
     "in_function": "pwritev",
     "cfg": "target_os = \"macos\"",
     "effective": "all(unix, target_os = \"macos\")",
@@ -6242,12 +6242,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [
      {
@@ -6268,9 +6268,9 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5001,
-    "end_line": 5016,
-    "item": "loop statement",
+    "line": 5002,
+    "end_line": 5018,
+    "item": "block",
     "in_function": "writev",
     "cfg": "target_os = \"macos\"",
     "effective": "all(unix, target_os = \"macos\")",
@@ -6278,12 +6278,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [
@@ -6299,9 +6299,9 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5055,
-    "end_line": 5071,
-    "item": "loop statement",
+    "line": 5057,
+    "end_line": 5074,
+    "item": "block",
     "in_function": "readv",
     "cfg": "target_os = \"macos\"",
     "effective": "all(unix, target_os = \"macos\")",
@@ -6309,12 +6309,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [
@@ -6330,9 +6330,9 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5109,
-    "end_line": 5128,
-    "item": "loop statement",
+    "line": 5112,
+    "end_line": 5132,
+    "item": "block",
     "in_function": "preadv",
     "cfg": "target_os = \"macos\"",
     "effective": "all(unix, target_os = \"macos\")",
@@ -6340,12 +6340,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [
@@ -6361,8 +6361,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5185,
-    "end_line": 5189,
+    "line": 5189,
+    "end_line": 5193,
     "item": "block",
     "in_function": "statfs",
     "cfg": "all(target_os = \"macos\", target_arch = \"x86_64\")",
@@ -6383,7 +6383,7 @@
       "name": "_statfs",
       "symbol": "statfs64",
       "from": "declared by bun",
-      "line": 5188
+      "line": 5192
      }
     ],
     "types": [
@@ -6398,8 +6398,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5336,
-    "end_line": 5337,
+    "line": 5340,
+    "end_line": 5341,
     "item": "use core::ffi::c_int",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -6421,8 +6421,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5353,
-    "end_line": 5361,
+    "line": 5357,
+    "end_line": 5365,
     "item": "use libc::{getloadavg, sockaddr_dl",
     "cfg": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
@@ -6442,14 +6442,14 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 5361
+      "line": 5365
      },
      {
       "name": "sysctlbyname",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5361
+      "line": 5365
      }
     ],
     "types": [
@@ -6463,8 +6463,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5401,
-    "end_line": 5461,
+    "line": 5405,
+    "end_line": 5465,
     "item": "use libc::{_NSGetEnviron, COPYFILE_ACL",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6484,105 +6484,105 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5403
+      "line": 5407
      },
      {
       "name": "clonefile",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5429
+      "line": 5433
      },
      {
       "name": "clonefileat",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5430
+      "line": 5434
      },
      {
       "name": "copyfile",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5431
+      "line": 5435
      },
      {
       "name": "fclonefileat",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5434
+      "line": 5438
      },
      {
       "name": "fcopyfile",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5435
+      "line": 5439
      },
      {
       "name": "host_processor_info",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5436
+      "line": 5440
      },
      {
       "name": "host_statistics64",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5437
+      "line": 5441
      },
      {
       "name": "memset_pattern4",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5442
+      "line": 5446
      },
      {
       "name": "memset_pattern8",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5443
+      "line": 5447
      },
      {
       "name": "memset_pattern16",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5444
+      "line": 5448
      },
      {
       "name": "sysctl",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 5452
+      "line": 5456
      },
      {
       "name": "sysctlnametomib",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5453
+      "line": 5457
      },
      {
       "name": "truncate",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 5456
+      "line": 5460
      },
      {
       "name": "vm_deallocate",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5457
+      "line": 5461
      }
     ],
     "types": [
@@ -6765,8 +6765,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5466,
-    "end_line": 5471,
+    "line": 5470,
+    "end_line": 5475,
     "item": "fn clonefile_rc",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6786,7 +6786,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5470
+      "line": 5474
      }
     ],
     "types": [],
@@ -6795,8 +6795,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5473,
-    "end_line": 5483,
+    "line": 5477,
+    "end_line": 5487,
     "item": "fn copyfile_rc",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6816,7 +6816,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5482
+      "line": 5486
      }
     ],
     "types": [
@@ -6830,8 +6830,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5486,
-    "end_line": 5489,
+    "line": 5490,
+    "end_line": 5493,
     "item": "const PROCESSOR_CPU_LOAD_INFO_COUNT",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6862,8 +6862,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5492,
-    "end_line": 5499,
+    "line": 5496,
+    "end_line": 5503,
     "item": "struct struct_loadavg",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6885,8 +6885,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5501,
-    "end_line": 5502,
+    "line": 5505,
+    "end_line": 5506,
     "item": "impl bun_core::ffi::Zeroable for struct_loadavg",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6908,8 +6908,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5508,
-    "end_line": 5525,
+    "line": 5512,
+    "end_line": 5529,
     "item": "block",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6927,23 +6927,23 @@
      {
       "name": "mach_host_self",
       "from": "declared by bun",
-      "line": 5516
+      "line": 5520
      },
      {
       "name": "_dyld_image_count",
       "from": "declared by bun",
-      "line": 5518
+      "line": 5522
      },
      {
       "name": "_dyld_get_image_vmaddr_slide",
       "from": "declared by bun",
-      "line": 5520
+      "line": 5524
      },
      {
       "name": "dyld_get_image_header_raw",
       "symbol": "_dyld_get_image_header",
       "from": "declared by bun",
-      "line": 5524
+      "line": 5528
      }
     ],
     "types": [
@@ -6957,8 +6957,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5527,
-    "end_line": 5531,
+    "line": 5531,
+    "end_line": 5535,
     "item": "fn mach_task_self",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6985,8 +6985,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5534,
-    "end_line": 5538,
+    "line": 5538,
+    "end_line": 5542,
     "item": "fn _dyld_get_image_header",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -7008,8 +7008,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5545,
-    "end_line": 5556,
+    "line": 5549,
+    "end_line": 5560,
     "item": "fn sendfile",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -7029,7 +7029,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 5555
+      "line": 5559
      }
     ],
     "types": [],
@@ -7038,8 +7038,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5574,
-    "end_line": 5599,
+    "line": 5578,
+    "end_line": 5603,
     "item": "struct struct_proc_bsdinfo",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -7061,8 +7061,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5601,
-    "end_line": 5602,
+    "line": 5605,
+    "end_line": 5606,
     "item": "impl bun_core::ffi::Zeroable for struct_proc_bsdinfo",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -7084,8 +7084,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5603,
-    "end_line": 5604,
+    "line": 5607,
+    "end_line": 5608,
     "item": "const PROC_PIDTBSDINFO",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -7107,8 +7107,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5605,
-    "end_line": 5617,
+    "line": 5609,
+    "end_line": 5621,
     "item": "block",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -7126,12 +7126,12 @@
      {
       "name": "proc_pidinfo",
       "from": "declared by bun",
-      "line": 5608
+      "line": 5612
      },
      {
       "name": "proc_listchildpids",
       "from": "declared by bun",
-      "line": 5616
+      "line": 5620
      }
     ],
     "types": [],
@@ -7140,8 +7140,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5933,
-    "end_line": 5937,
+    "line": 5937,
+    "end_line": 5941,
     "item": "mod linux",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
     "effective": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -7163,8 +7163,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5940,
-    "end_line": 6189,
+    "line": 5944,
+    "end_line": 6193,
     "item": "mod darwin",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -7184,44 +7184,44 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 6016
+      "line": 6020
      },
      {
       "name": "truncate",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 6016
+      "line": 6020
      },
      {
       "name": "kevent64",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 6162
+      "line": 6166
      },
      {
       "name": "os_log_create",
       "from": "declared by bun",
-      "line": 5952
+      "line": 5956
      },
      {
       "name": "__ulock_wait_raw",
       "symbol": "__ulock_wait",
       "from": "declared by bun",
-      "line": 6098
+      "line": 6102
      },
      {
       "name": "__ulock_wait2_raw",
       "symbol": "__ulock_wait2",
       "from": "declared by bun",
-      "line": 6105
+      "line": 6109
      },
      {
       "name": "__ulock_wake_raw",
       "symbol": "__ulock_wake",
       "from": "declared by bun",
-      "line": 6113
+      "line": 6117
      }
     ],
     "types": [
@@ -7395,8 +7395,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 7803,
-    "end_line": 7810,
+    "line": 7807,
+    "end_line": 7814,
     "item": "fn kqueue",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -7418,8 +7418,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 7814,
-    "end_line": 7840,
+    "line": 7818,
+    "end_line": 7844,
     "item": "fn kevent",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -7439,7 +7439,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 7825
+      "line": 7829
      }
     ],
     "types": [
@@ -7457,8 +7457,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 7959,
-    "end_line": 7965,
+    "line": 7963,
+    "end_line": 7969,
     "item": "block",
     "in_function": "get_fd_path",
     "cfg": "target_os = \"macos\"",
@@ -7479,7 +7479,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 7963
+      "line": 7967
      }
     ],
     "types": [],
@@ -7494,8 +7494,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8209,
-    "end_line": 8217,
+    "line": 8213,
+    "end_line": 8221,
     "item": "use core::ffi::c_void",
     "cfg": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
@@ -7517,8 +7517,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8226,
-    "end_line": 8256,
+    "line": 8230,
+    "end_line": 8260,
     "item": "fn sysctl_read",
     "cfg": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
@@ -7538,7 +7538,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 8244
+      "line": 8248
      }
     ],
     "types": [],
@@ -7547,8 +7547,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8262,
-    "end_line": 8291,
+    "line": 8266,
+    "end_line": 8295,
     "item": "fn sysctl_read_slice",
     "cfg": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
@@ -7568,7 +7568,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 8279
+      "line": 8283
      }
     ],
     "types": [],
@@ -7577,8 +7577,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8444,
-    "end_line": 8447,
+    "line": 8448,
+    "end_line": 8451,
     "item": "let rc",
     "in_function": "poll",
     "cfg": "target_os = \"macos\"",
@@ -7601,8 +7601,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8602,
-    "end_line": 8603,
+    "line": 8606,
+    "end_line": 8607,
     "item": "field len",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -7624,8 +7624,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8611,
-    "end_line": 8612,
+    "line": 8615,
+    "end_line": 8616,
     "item": "field len",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -7647,8 +7647,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8623,
-    "end_line": 8624,
+    "line": 8627,
+    "end_line": 8628,
     "item": "field len",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -7670,8 +7670,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8633,
-    "end_line": 8634,
+    "line": 8637,
+    "end_line": 8638,
     "item": "field len",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -11296,7 +11296,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 6432,
+   "line": 6436,
    "what": "constant with another value",
    "name": "RTLD_LOCAL",
    "macos": "4",
@@ -11305,7 +11305,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8135,
+   "line": 8139,
    "in_function": "move_file_z_with_handle",
    "what": "type of another size or sign",
    "name": "mode_t",
@@ -11315,7 +11315,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8349,
+   "line": 8353,
    "what": "constant with another value",
    "name": "AF_INET6",
    "macos": "30",
@@ -11324,7 +11324,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8361,
+   "line": 8365,
    "what": "struct with another layout",
    "name": "sockaddr",
    "macos": "sa_len: u8; sa_family: u8; sa_data: [i8; 14]",
@@ -11333,7 +11333,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8361,
+   "line": 8365,
    "what": "struct with another layout",
    "name": "sockaddr_in",
    "macos": "sin_len: u8; sin_family: u8; sin_port: u16; sin_addr: in_addr; sin_zero: [i8; 8]",
@@ -11342,7 +11342,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8361,
+   "line": 8365,
    "what": "struct with another layout",
    "name": "sockaddr_in6",
    "macos": "sin6_len: u8; sin6_family: u8; sin6_port: u16; sin6_flowinfo: u32; sin6_addr: in6_addr; sin6_scope_id: u32",
@@ -11351,7 +11351,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8361,
+   "line": 8365,
    "what": "struct with another layout",
    "name": "sockaddr_storage",
    "macos": "ss_len: u8; ss_family: u8; __ss_pad1: Padding; __ss_align: i64; __ss_pad2: Padding",
@@ -11360,7 +11360,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8393,
+   "line": 8397,
    "what": "struct with another layout",
    "name": "sigaction",
    "macos": "sa_sigaction: usize; sa_mask: u32; sa_flags: i32",
@@ -11369,7 +11369,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8395,
+   "line": 8399,
    "what": "struct with another layout",
    "name": "siginfo_t",
    "macos": "si_signo: i32; si_errno: i32; si_code: i32; si_pid: i32; si_uid: u32; si_status: i32; si_addr: *mut core::ffi::c_void; _pad: Padding",
@@ -11378,7 +11378,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8465,
+   "line": 8469,
    "what": "struct with another layout",
    "name": "termios",
    "macos": "c_iflag: u64; c_oflag: u64; c_cflag: u64; c_lflag: u64; c_cc: [u8; 20]; c_ispeed: u64; c_ospeed: u64",
@@ -11387,7 +11387,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8558,
+   "line": 8562,
    "what": "constant with another value",
    "name": "AF_INET6",
    "macos": "30",
@@ -11396,7 +11396,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8558,
+   "line": 8562,
    "what": "struct with another layout",
    "name": "sockaddr",
    "macos": "sa_len: u8; sa_family: u8; sa_data: [i8; 14]",
@@ -11405,7 +11405,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8558,
+   "line": 8562,
    "what": "struct with another layout",
    "name": "sockaddr_in",
    "macos": "sin_len: u8; sin_family: u8; sin_port: u16; sin_addr: in_addr; sin_zero: [i8; 8]",
@@ -11414,7 +11414,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8558,
+   "line": 8562,
    "what": "struct with another layout",
    "name": "sockaddr_in6",
    "macos": "sin6_len: u8; sin6_family: u8; sin6_port: u16; sin6_flowinfo: u32; sin6_addr: in6_addr; sin6_scope_id: u32",
@@ -11423,7 +11423,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8558,
+   "line": 8562,
    "what": "struct with another layout",
    "name": "sockaddr_storage",
    "macos": "ss_len: u8; ss_family: u8; __ss_pad1: Padding; __ss_align: i64; __ss_pad2: Padding",
@@ -11432,7 +11432,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8588,
+   "line": 8592,
    "what": "type of another size or sign",
    "name": "sa_family_t",
    "macos": "u8",
@@ -11441,7 +11441,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 9398,
+   "line": 9402,
    "in_function": "copy_file_z_slow_with_handle",
    "what": "type of another size or sign",
    "name": "mode_t",
@@ -11824,6 +11824,14 @@
    "what": "ENOTSUP and EOPNOTSUPP",
    "name": "to_macos",
    "why": "macOS has two numbers (45 and 102), Linux and the image have one (95). An error of macOS that was one of the two is reported back as ENOTSUP (45).",
+   "found_by": "reading"
+  },
+  {
+   "file": "src/sys/copy_file.rs",
+   "in_function": "copy_file_with_state, the code for macOS: E::EOPNOTSUPP after fcopyfile",
+   "what": "ENOTSUP and EOPNOTSUPP",
+   "name": "copy_file_with_state, the code for macOS: E::EOPNOTSUPP after fcopyfile",
+   "why": "bun for macOS goes on to its own loop of read and write when fcopyfile fails with EOPNOTSUPP (102), and returns the error when it fails with ENOTSUP (45), which is what copyfile(3) names for a source that is no file, directory or link. The image has one number for both (95), so it goes on for either. The same holds wherever an error of macOS is compared with one of the two names: src/sys/lib.rs (the fallbacks of the renames and of the links), src/io/posix_event_loop.rs, src/spawn_sys/spawn_process.rs.",
    "found_by": "reading"
   },
   {
@@ -14752,8 +14760,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 4872,
-   "end_line": 4879,
+   "line": 4873,
+   "end_line": 4880,
    "item": "block",
    "in_function": "pwritev",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14780,8 +14788,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 5017,
-   "end_line": 5022,
+   "line": 5019,
+   "end_line": 5024,
    "item": "block",
    "in_function": "writev",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14803,8 +14811,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 5072,
-   "end_line": 5077,
+   "line": 5075,
+   "end_line": 5080,
    "item": "block",
    "in_function": "readv",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14826,8 +14834,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 5129,
-   "end_line": 5134,
+   "line": 5133,
+   "end_line": 5138,
    "item": "block",
    "in_function": "preadv",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14849,8 +14857,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 5624,
-   "end_line": 5932,
+   "line": 5628,
+   "end_line": 5936,
    "item": "mod linux",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14869,17 +14877,17 @@
      "name": "syscall",
      "from": "libc crate",
      "variadic": true,
-     "line": 5752
+     "line": 5756
     },
     {
      "name": "inotify_add_watch",
      "from": "libc crate",
-     "line": 5815
+     "line": 5819
     },
     {
      "name": "ppoll",
      "from": "libc crate",
-     "line": 5849
+     "line": 5853
     }
    ],
    "types": [
@@ -15181,8 +15189,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 5639,
-   "end_line": 5640,
+   "line": 5643,
+   "end_line": 5644,
    "item": "type time_t",
    "cfg": "not(target_env = \"musl\")",
    "effective": "all(any(target_os = \"linux\", target_os = \"android\"), not(target_env = \"musl\"))",
@@ -15208,8 +15216,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 6190,
-   "end_line": 6191,
+   "line": 6194,
+   "end_line": 6195,
    "item": "mod darwin",
    "cfg": "not(target_os = \"macos\")",
    "effective": "not(target_os = \"macos\")",
@@ -15230,8 +15238,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7702,
-   "end_line": 7718,
+   "line": 7706,
+   "end_line": 7722,
    "item": "block",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15249,12 +15257,12 @@
     {
      "name": "sys_preadv2",
      "from": "declared by bun",
-     "line": 7704
+     "line": 7708
     },
     {
      "name": "sys_pwritev2",
      "from": "declared by bun",
-     "line": 7711
+     "line": 7715
     }
    ],
    "types": [
@@ -15268,8 +15276,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7719,
-   "end_line": 7720,
+   "line": 7723,
+   "end_line": 7724,
    "item": "const RWF_NOWAIT",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15290,8 +15298,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7724,
-   "end_line": 7749,
+   "line": 7728,
+   "end_line": 7753,
    "item": "while statement",
    "in_function": "read_nonblocking",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15351,8 +15359,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7754,
-   "end_line": 7782,
+   "line": 7758,
+   "end_line": 7786,
    "item": "while statement",
    "in_function": "write_nonblocking",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15412,8 +15420,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7792,
-   "end_line": 7797,
+   "line": 7796,
+   "end_line": 7801,
    "item": "block",
    "in_function": "preallocate_file",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15435,8 +15443,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7844,
-   "end_line": 7851,
+   "line": 7848,
+   "end_line": 7855,
    "item": "fn clonefileat",
    "cfg": "not(target_os = \"macos\")",
    "effective": "not(target_os = \"macos\")",
@@ -15465,8 +15473,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7868,
-   "end_line": 7869,
+   "line": 7872,
+   "end_line": 7873,
    "item": "static LINUX_KERNEL_CACHED",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15487,8 +15495,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7874,
-   "end_line": 7878,
+   "line": 7878,
+   "end_line": 7882,
    "item": "fn linux_kernel_cached_is_freebsd",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15509,8 +15517,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7882,
-   "end_line": 7906,
+   "line": 7886,
+   "end_line": 7910,
    "item": "fn linux_kernel_is_freebsd",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15531,8 +15539,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7909,
-   "end_line": 7925,
+   "line": 7913,
+   "end_line": 7929,
    "item": "fn get_fd_path_freebsd_linuxulator",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15553,8 +15561,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7931,
-   "end_line": 7958,
+   "line": 7935,
+   "end_line": 7962,
    "item": "block",
    "in_function": "get_fd_path",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15576,8 +15584,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 8121,
-   "end_line": 8126,
+   "line": 8125,
+   "end_line": 8130,
    "item": "block",
    "in_function": "move_file_z_with_handle",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15599,8 +15607,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 8313,
-   "end_line": 8328,
+   "line": 8317,
+   "end_line": 8332,
    "item": "fn sysinfo",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15618,7 +15626,7 @@
     {
      "name": "sysinfo",
      "from": "declared by bun",
-     "line": 8320
+     "line": 8324
     }
    ],
    "types": [
@@ -15632,8 +15640,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 8450,
-   "end_line": 8451,
+   "line": 8454,
+   "end_line": 8455,
    "item": "let rc",
    "in_function": "poll",
    "cfg": "not(target_os = \"macos\")",
@@ -15653,7 +15661,7 @@
      "name": "poll",
      "from": "libc crate",
      "variadic": false,
-     "line": 8451
+     "line": 8455
     }
    ],
    "types": [],
@@ -15662,8 +15670,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 8843,
-   "end_line": 8851,
+   "line": 8847,
+   "end_line": 8855,
    "item": "struct LoadedModule",
    "cfg": "not(any(windows, target_os = \"macos\"))",
    "effective": "not(any(windows, target_os = \"macos\"))",
@@ -15684,8 +15692,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 8856,
-   "end_line": 8921,
+   "line": 8860,
+   "end_line": 8925,
    "item": "fn find_loaded_module",
    "cfg": "not(any(windows, target_os = \"macos\"))",
    "effective": "not(any(windows, target_os = \"macos\"))",
@@ -15703,7 +15711,7 @@
     {
      "name": "dl_iterate_phdr",
      "from": "libc crate",
-     "line": 8919
+     "line": 8923
     }
    ],
    "types": [
@@ -15721,8 +15729,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 9385,
-   "end_line": 9390,
+   "line": 9389,
+   "end_line": 9394,
    "item": "block",
    "in_function": "copy_file_z_slow_with_handle",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15744,8 +15752,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 9538,
-   "end_line": 9545,
+   "line": 9542,
+   "end_line": 9549,
    "item": "fn eventfd",
    "cfg": "any(target_os = \"linux\", target_os = \"android\", target_os = \"freebsd\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\", target_os = \"freebsd\")",

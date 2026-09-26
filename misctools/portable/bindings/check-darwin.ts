@@ -20,8 +20,12 @@
 //   R5  An argument is an integer of at least 32 bits, a floating point number, a pointer, a reference
 //       or a function, or an integer of fewer bits, which `#[imports]` passes as 32 (they are listed).
 //       Anything else, a structure by value for one, is refused: `#[imports]` has no rule for it.
+//   R6  A function of the image that macOS calls (an argument that is a function) takes and returns
+//       integers of at least 32 bits, floating point numbers and pointers, at most 8 of each kind, and
+//       no variable number of arguments: macOS expects a short result extended to 32 bits, which a
+//       function of the image does not do, and passes what does not fit into registers packed.
 //
-// `#[imports]` refuses R2, R4 and R5 itself when the image is compiled (bun_darwin_sys::abi). This tool
+// `#[imports]` refuses R2, R4, R5 and R6 itself when the image is compiled (bun_darwin_sys::abi). This tool
 // reads the sources, so it also sees a block under a `cfg` that was not compiled, and it knows the
 // functions of macOS by name.
 //
@@ -183,6 +187,16 @@ for (const b of bound) {
   for (const type of b.arguments) {
     if (float.test(type)) floats++;
     else integers++;
+    const called = /^(?:Option<)?(?:unsafe )?extern "C" fn\((.*)\)(?: -> (.+?))?>?$/.exec(type);
+    if (called) {
+      const takes = called[1].trim() ? called[1].split(/,\s*/).map(part => part.replace(/^[A-Za-z_0-9]+ ?: ?/, "")) : [];
+      const values = [...takes, ...(called[2] ? [called[2]] : [])];
+      if (takes.some(part => /^\.\.\.?$/.test(part.replace(/\s/g, "")))) broken.push(`R6 ${where(b)}: a function of the image with a variable number of arguments: ${type}`);
+      for (const value of values.filter(part => !/^\.\.\.?$/.test(part.replace(/\s/g, ""))))
+        if (value !== "()" && !integer.test(value) && !float.test(value) && !/^(\*(const|mut) |Option<(core::ptr::)?NonNull<|(core::ptr::)?NonNull<)/.test(value))
+          broken.push(`R6 ${where(b)}: a function of the image that takes or returns ${value}: ${type}`);
+      if (takes.filter(part => !float.test(part)).length > 8 || takes.filter(part => float.test(part)).length > 8) broken.push(`R6 ${where(b)}: a function of the image with more than 8 arguments of a kind: ${type}`);
+    }
     if (narrow.test(type)) widened.push(`${where(b)}: ${type}`);
     else if (!integer.test(type) && !float.test(type) && !pointer.test(type)) broken.push(`R5 ${where(b)}: an argument of the type ${type}, which this tool does not know as an integer, a floating point number or a pointer`);
   }

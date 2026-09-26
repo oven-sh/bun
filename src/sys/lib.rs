@@ -4847,28 +4847,29 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
         // SAFETY: `PlatformIoVecConst` is layout-compatible with `libc::iovec`
         // (asserted above); `pwritev(2)` only reads through `iov_base`.
         // Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
-        #[cfg(target_os = "macos")]
-        loop {
-            // macOS: `pwritev$NOCANCEL`, retried on EINTR.
-            // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
-            // (ptr, len) pair of layout-compatible iovecs (asserted above).
-            let rc = unsafe {
-                nocancel::pwritev(
-                    fd.native(),
-                    vecs.as_ptr().cast::<libc::iovec>(),
-                    vecs.len() as core::ffi::c_int,
-                    offset,
-                )
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
+        bun_core::host_only! { macos => {
+            loop {
+                // macOS: `pwritev$NOCANCEL`, retried on EINTR.
+                // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
+                // (ptr, len) pair of layout-compatible iovecs (asserted above).
+                let rc = unsafe {
+                    nocancel::pwritev(
+                        fd.native(),
+                        vecs.as_ptr().cast::<libc::iovec>(),
+                        vecs.len() as core::ffi::c_int,
+                        offset,
+                    )
+                };
+                if rc < 0 {
+                    let e = last_errno();
+                    if e == libc::EINTR {
+                        continue;
+                    }
+                    return Err(Error::from_code_int(e, Tag::pwritev));
                 }
-                return Err(Error::from_code_int(e, Tag::pwritev));
+                return Ok(rc as usize);
             }
-            return Ok(rc as usize);
-        }
+        }}
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: `PlatformIoVecConst` is layout-identical to `libc::iovec`.
@@ -4998,22 +4999,23 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
 pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(unix)]
     {
-        #[cfg(target_os = "macos")]
-        loop {
-            // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
-            // the descriptor table. `writev$NOCANCEL`, retried on EINTR.
-            let rc = unsafe {
-                nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
+        bun_core::host_only! { macos => {
+            loop {
+                // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
+                // the descriptor table. `writev$NOCANCEL`, retried on EINTR.
+                let rc = unsafe {
+                    nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
+                };
+                if rc < 0 {
+                    let e = last_errno();
+                    if e == libc::EINTR {
+                        continue;
+                    }
+                    return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
                 }
-                return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
+                return Ok(rc as usize);
             }
-            return Ok(rc as usize);
-        }
+        }}
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: `PlatformIoVec` is `libc::iovec`.
@@ -5052,23 +5054,24 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     }
     #[cfg(unix)]
     {
-        #[cfg(target_os = "macos")]
-        loop {
-            // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
-            // each `iov_base`, never the array itself. `readv$NOCANCEL`,
-            // retried on EINTR.
-            let rc = unsafe {
-                nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
+        bun_core::host_only! { macos => {
+            loop {
+                // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
+                // each `iov_base`, never the array itself. `readv$NOCANCEL`,
+                // retried on EINTR.
+                let rc = unsafe {
+                    nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
+                };
+                if rc < 0 {
+                    let e = last_errno();
+                    if e == libc::EINTR {
+                        continue;
+                    }
+                    return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
                 }
-                return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
+                return Ok(rc as usize);
             }
-            return Ok(rc as usize);
-        }
+        }}
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: `PlatformIoVec` is `libc::iovec`.
@@ -5106,26 +5109,27 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     }
     #[cfg(unix)]
     {
-        #[cfg(target_os = "macos")]
-        loop {
-            // SAFETY: see `readv`. `preadv$NOCANCEL`, retried on EINTR.
-            let rc = unsafe {
-                nocancel::preadv(
-                    fd.native(),
-                    vecs.as_ptr(),
-                    vecs.len() as core::ffi::c_int,
-                    position,
-                )
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
+        bun_core::host_only! { macos => {
+            loop {
+                // SAFETY: see `readv`. `preadv$NOCANCEL`, retried on EINTR.
+                let rc = unsafe {
+                    nocancel::preadv(
+                        fd.native(),
+                        vecs.as_ptr(),
+                        vecs.len() as core::ffi::c_int,
+                        position,
+                    )
+                };
+                if rc < 0 {
+                    let e = last_errno();
+                    if e == libc::EINTR {
+                        continue;
+                    }
+                    return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
                 }
-                return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
+                return Ok(rc as usize);
             }
-            return Ok(rc as usize);
-        }
+        }}
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: `PlatformIoVec` is `libc::iovec`.

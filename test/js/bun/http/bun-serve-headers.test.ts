@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { once } from "node:events";
+import * as http from "node:http";
 import * as net from "node:net";
 
 // https://github.com/oven-sh/bun/issues/9180
@@ -263,5 +265,270 @@ describe("response Connection: close closes the socket", () => {
     } finally {
       socket.destroy();
     }
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/43848
+describe("keep-alive headers", () => {
+  // Sends one raw request and returns the response header lines, so the test
+  // sees every header the server wrote, duplicates included.
+  async function rawHeaders(port: number, request: string): Promise<string[]> {
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write(request);
+      const head = await new Promise<string>((resolve, reject) => {
+        let raw = "";
+        socket.on("data", chunk => {
+          raw += chunk.toString("latin1");
+          const end = raw.indexOf("\r\n\r\n");
+          if (end !== -1) resolve(raw.slice(0, end));
+        });
+        socket.on("close", () => reject(new Error("closed before the headers arrived: " + JSON.stringify(raw))));
+      });
+      return head.split("\r\n").slice(1);
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  function pick(lines: string[], name: string): string[] {
+    const prefix = name.toLowerCase() + ":";
+    return lines.filter(line => line.toLowerCase().startsWith(prefix)).map(line => line.slice(prefix.length).trim());
+  }
+
+  function keepAlive(lines: string[]) {
+    return { connection: pick(lines, "connection"), keepAlive: pick(lines, "keep-alive") };
+  }
+
+  const GET = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+
+  test("default idleTimeout advertises the idle time the socket is sure to survive", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    // 10 s arms 3 sweeps of 4 s, the socket can close 8 s after the response.
+    expect(keepAlive(await rawHeaders(server.port, GET))).toEqual({
+      connection: ["keep-alive"],
+      keepAlive: ["timeout=8"],
+    });
+  });
+
+  test("idleTimeout rounds down to the sweep before the one that can close the socket", async () => {
+    // 1 to 4 s can close at the next sweep: no value is safe, so no hint.
+    for (const [idleTimeout, advertised] of [
+      [30, ["timeout=28"]],
+      [8, ["timeout=4"]],
+      [4, []],
+      [1, []],
+      [255, ["timeout=252"]],
+    ] as const) {
+      using server = Bun.serve({ port: 0, idleTimeout, fetch: () => new Response("ok") });
+      expect({ idleTimeout, ...keepAlive(await rawHeaders(server.port, GET)) }).toEqual({
+        idleTimeout,
+        connection: ["keep-alive"],
+        keepAlive: advertised,
+      });
+    }
+  });
+
+  test("idleTimeout: 0 sends Connection: keep-alive alone", async () => {
+    using server = Bun.serve({ port: 0, idleTimeout: 0, fetch: () => new Response("ok") });
+    expect(keepAlive(await rawHeaders(server.port, GET))).toEqual({ connection: ["keep-alive"], keepAlive: [] });
+  });
+
+  test("server.timeout(request, seconds) changes the advertised value", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        server.timeout(req, 20);
+        return new Response("ok");
+      },
+    });
+    expect(keepAlive(await rawHeaders(server.port, GET))).toEqual({
+      connection: ["keep-alive"],
+      keepAlive: ["timeout=16"],
+    });
+  });
+
+  test("a response that closes the connection advertises nothing", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    expect(keepAlive(await rawHeaders(server.port, "GET / HTTP/1.0\r\nHost: x\r\n\r\n"))).toEqual({
+      connection: [],
+      keepAlive: [],
+    });
+    expect(keepAlive(await rawHeaders(server.port, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"))).toEqual({
+      connection: [],
+      keepAlive: [],
+    });
+  });
+
+  test("the handler's Connection header wins and gets no Keep-Alive hint", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: req =>
+        new Response("ok", {
+          headers: { Connection: new URL(req.url).pathname === "/close" ? "close" : "keep-alive" },
+        }),
+    });
+    expect(keepAlive(await rawHeaders(server.port, "GET /close HTTP/1.1\r\nHost: x\r\n\r\n"))).toEqual({
+      connection: ["close"],
+      keepAlive: [],
+    });
+    expect(keepAlive(await rawHeaders(server.port, GET))).toEqual({ connection: ["keep-alive"], keepAlive: [] });
+  });
+
+  test("the handler's Keep-Alive header wins", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("ok", { headers: { "Keep-Alive": "timeout=9, max=100" } }),
+    });
+    expect(keepAlive(await rawHeaders(server.port, GET))).toEqual({
+      connection: ["keep-alive"],
+      keepAlive: ["timeout=9, max=100"],
+    });
+  });
+
+  test("a handler Connection header written after Content-Length is not duplicated", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("ok", { headers: { "Content-Length": "2", Connection: "close" } }),
+    });
+    const lines = await rawHeaders(server.port, GET);
+    expect(keepAlive(lines)).toEqual({ connection: ["close"], keepAlive: [] });
+    expect(pick(lines, "date")).toHaveLength(1);
+  });
+
+  test("every route kind and body kind gets the pair once", async () => {
+    using dir = tempDir("keep-alive-file", { "a.txt": "file body" });
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/static": new Response("static"),
+        "/file": new Response(Bun.file(`${dir}/a.txt`)),
+        "/stream": () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                c.enqueue("stream");
+                c.close();
+              },
+            }),
+          ),
+        "/204": () => new Response(null, { status: 204 }),
+        "/304": () => new Response(null, { status: 304 }),
+        "/file-304-user-date": () =>
+          new Response(Bun.file(`${dir}/a.txt`), { status: 304, headers: { Date: "Thu, 01 Jan 1970 00:00:00 GMT" } }),
+      },
+      fetch: () => new Response("fetch"),
+    });
+    for (const path of ["/static", "/file", "/stream", "/204", "/304", "/file-304-user-date", "/fetch"]) {
+      for (const method of ["GET", "HEAD"]) {
+        const lines = await rawHeaders(server.port, `${method} ${path} HTTP/1.1\r\nHost: x\r\n\r\n`);
+        expect({ path, method, ...keepAlive(lines), date: pick(lines, "date").length }).toEqual({
+          path,
+          method,
+          connection: ["keep-alive"],
+          keepAlive: ["timeout=8"],
+          date: 1,
+        });
+      }
+    }
+  });
+
+  test("a static or file route with Connection: close sends it once and closes the socket", async () => {
+    using dir = tempDir("keep-alive-close", { "a.txt": "file body" });
+    let handled = 0;
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      routes: {
+        "/static": new Response("static", { headers: { Connection: "close" } }),
+        "/file": new Response(Bun.file(`${dir}/a.txt`), { headers: { Connection: "Keep-Alive, Close" } }),
+      },
+      fetch() {
+        handled++;
+        return new Response("fetch");
+      },
+    });
+    for (const path of ["/static", "/file"]) {
+      const socket = net.connect(server.port, "127.0.0.1");
+      try {
+        socket.on("error", () => {});
+        await once(socket, "connect");
+        // The second request must never be answered: the server closes first.
+        // A second response resolves too, so a server that keeps the socket
+        // open fails the assertion below instead of hanging.
+        socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n`);
+        const raw = await new Promise<string>(resolve => {
+          let raw = "";
+          socket.on("data", chunk => {
+            raw += chunk.toString("latin1");
+            if ((raw.match(/HTTP\/1\.1 200/g) ?? []).length > 1) resolve(raw);
+          });
+          socket.on("close", () => resolve(raw));
+        });
+        const lines = raw.split("\r\n\r\n")[0].split("\r\n").slice(1);
+        expect({ path, ...keepAlive(lines), responses: (raw.match(/HTTP\/1\.1 200/g) ?? []).length }).toEqual({
+          path,
+          connection: [path === "/static" ? "close" : "Keep-Alive, Close"],
+          keepAlive: [],
+          responses: 1,
+        });
+      } finally {
+        socket.destroy();
+      }
+    }
+    expect(handled).toBe(0);
+  });
+
+  test("a WebSocket upgrade keeps Connection: Upgrade alone", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("no")),
+      websocket: { message() {} },
+    });
+    const lines = await rawHeaders(
+      server.port,
+      "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+    );
+    expect(keepAlive(lines)).toEqual({ connection: ["Upgrade"], keepAlive: [] });
+  });
+
+  test("a response ended with close after the handler threw does not advertise keep-alive", async () => {
+    // node:http ends a pending response with close when the handler throws
+    // before writeHead. The close mark must land before the server headers.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("node:http");
+        const net = require("node:net");
+        process.on("uncaughtException", () => {});
+        const server = http.createServer(() => { throw new Error("boom"); });
+        server.listen(0, "127.0.0.1", () => {
+          const s = net.connect(server.address().port, "127.0.0.1");
+          let raw = "";
+          s.on("connect", () => s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"));
+          s.on("data", d => (raw += d.toString("latin1")));
+          s.on("close", () => { console.log(raw.split("\\r\\n\\r\\n")[0]); server.close(); });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout.trim().split("\r\n").slice(1);
+    expect({ ...keepAlive(lines), stderr }).toEqual({ connection: ["close"], keepAlive: [], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("node:http keeps rendering its own pair once", async () => {
+    await using server = http.createServer((req, res) => res.end("ok"));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    expect(keepAlive(await rawHeaders(port, GET))).toEqual({ connection: ["keep-alive"], keepAlive: ["timeout=5"] });
   });
 });

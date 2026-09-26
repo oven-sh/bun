@@ -142,7 +142,6 @@ impl DirectoryRoute {
                 }
                 req.set_yield(false);
                 write_any_status(resp, 301);
-                resp.write_mark();
                 resp.write_header(b"location", &loc.0[..n]);
                 resp.end(b"", resp.should_close_connection());
                 return;
@@ -179,7 +178,6 @@ impl DirectoryRoute {
 
         req.set_yield(false);
         write_any_status(resp, status_code);
-        resp.write_mark();
 
         let ext: &[u8] = if is_index {
             b"html"
@@ -403,7 +401,6 @@ enum Subpath {
 fn write_miss(req: &mut AnyRequest, resp: AnyResponse) {
     req.set_yield(false);
     write_any_status(resp, 404);
-    resp.write_mark();
     resp.end(b"", resp.should_close_connection());
 }
 

@@ -221,10 +221,12 @@ console.log("How...dashing?");
     headers.sourcemap = headers.sourcemap.replace(/chunk-[a-z0-9]+\.js.map/g, "chunk-HASH.js.map");
     expect(headers).toMatchInlineSnapshot(`
 {
+  "connection": "keep-alive",
   "content-length": "316",
   "content-type": "text/javascript;charset=utf-8",
   "date": "<date>",
   "etag": ""f862dbeedf9b72bc"",
+  "keep-alive": "timeout=8",
   "sourcemap": "/chunk-HASH.js.map",
 }
 `);

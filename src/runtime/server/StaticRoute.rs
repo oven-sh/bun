@@ -386,9 +386,8 @@ impl StaticRoute {
         // Content-Length (uWS suppresses it for 1xx/204) desyncs keep-alive.
         if HTTPStatusText::is_null_body(self.status_code) {
             // 304: try_end would write Content-Length: 0 (RFC 9110 §8.6 forbids
-            // any but the 200's length); write_mark keeps Date.
+            // any but the 200's length).
             if self.status_code == 304 {
-                resp.write_mark();
                 resp.end_without_body(resp.should_close_connection());
                 *did_finish = true;
             } else {

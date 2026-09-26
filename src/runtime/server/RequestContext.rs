@@ -3483,8 +3483,6 @@ where
                 if let Some(len) = app_content_length {
                     resp.write_header_int(b"content-length", len);
                 }
-                // end_without_body skips writeMark(); keep Date as try_end did.
-                resp.write_mark();
                 this.end_without_body(this.should_close_connection());
                 return;
             }

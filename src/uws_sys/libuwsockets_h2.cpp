@@ -146,7 +146,6 @@ void uws_h2_res_mark_wrote_date_header(uws_h2_res_t* res)
     ((Http2Response*)res)->getHttpResponseData()->state |= Http2ResponseData::HTTP_WROTE_DATE_HEADER;
 }
 
-void uws_h2_res_write_mark(uws_h2_res_t* res) { ((Http2Response*)res)->writeMark(); }
 void uws_h2_res_flush_headers(uws_h2_res_t* res, bool) { ((Http2Response*)res)->flushHeaders(); }
 
 bool uws_h2_res_write(uws_h2_res_t* res, const char* data, size_t* length)

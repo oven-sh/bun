@@ -398,7 +398,6 @@ impl FileRoute {
         if self.has_date_header {
             resp.mark_wrote_date_header();
         }
-        resp.write_mark();
         self.write_headers(resp);
 
         // Bodiless statuses end before the range switch so a 304 emits no

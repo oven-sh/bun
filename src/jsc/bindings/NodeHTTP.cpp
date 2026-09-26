@@ -379,23 +379,6 @@ static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::String
     res->writeHeader(nameBytes.view(), valueBytes.view());
 }
 
-// Connection is `1#connection-option` (RFC 9112 §9.3): look for the "close"
-// token anywhere in a comma-separated list. Mirrors the /(?:^|\W)close(?:$|\W)/i
-// check used by Bun's node:http layer.
-static bool connectionValueHasClose(const WTF::String& value)
-{
-    size_t pos = 0;
-    while ((pos = value.findIgnoringASCIICase("close"_s, pos)) != WTF::notFound) {
-        bool leftOk = pos == 0 || !isASCIIAlphanumeric(value[pos - 1]);
-        size_t end = pos + 5;
-        bool rightOk = end >= value.length() || !isASCIIAlphanumeric(value[end]);
-        if (leftOk && rightOk)
-            return true;
-        pos = end;
-    }
-    return false;
-}
-
 template<bool isSSL>
 static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
 {
@@ -432,10 +415,7 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         // <
         //
         if (header.key == WebCore::HTTPHeaderName::ContentLength) {
-            if (!(data->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                res->writeMark();
-            }
+            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
         }
 
         // Prevent automatic Date header insertion when user provides one
@@ -448,13 +428,6 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
             data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
         }
 
-        // RFC 9112 §9.6: a server that sends the "close" connection option MUST
-        // close the connection after the response. Mark the uWS state so
-        // end()/tryEnd() shut the socket down instead of returning it to the
-        // keep-alive pool.
-        if (header.key == WebCore::HTTPHeaderName::Connection && connectionValueHasClose(value)) {
-            data->state |= uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
-        }
         writeResponseHeader<isSSL>(res, name, value);
     }
 
@@ -563,10 +536,11 @@ static void NodeHTTPServer__writeHead(
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
-    // node:http's ServerResponse owns the Date header entirely (it honors
-    // res.sendDate / removeHeader("date") in JS), so never let uWS write its
-    // own Date header for these responses.
-    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
+    // node:http's ServerResponse renders Date, Connection and Keep-Alive
+    // itself (autoHeaderBits), so uWS must not add its own.
+    response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER
+        | uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER
+        | uWS::HttpResponseData<isSSL>::HTTP_WROTE_KEEP_ALIVE_HEADER;
 
     // 204/304 responses must not carry any body framing, even when the user
     // explicitly set a Transfer-Encoding header (Node.js suppresses the
@@ -618,10 +592,7 @@ static void NodeHTTPServer__writeHead(
                 WebCore::HTTPHeaderName headerName;
                 if (WebCore::findHTTPHeaderName(StringView(name), headerName)) {
                     if (headerName == WebCore::HTTPHeaderName::ContentLength) {
-                        if (!(httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                            httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                            response->writeMark();
-                        }
+                        httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                     } else if (headerName == WebCore::HTTPHeaderName::Date) {
                         httpResponseData->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
                     } else if (headerName == WebCore::HTTPHeaderName::TransferEncoding) {

@@ -7974,6 +7974,11 @@ pub mod posix {
     pub const fn s_isdir(m: u32) -> bool {
         (m & libc::S_IFMT as u32) == libc::S_IFDIR as u32
     }
+    #[cfg(unix)]
+    #[inline]
+    pub const fn s_isreg(m: u32) -> bool {
+        (m & libc::S_IFMT as u32) == libc::S_IFREG as u32
+    }
 
     // ── signals ──
     #[cfg(unix)]

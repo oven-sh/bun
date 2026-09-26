@@ -582,16 +582,16 @@ pub(crate) fn watch(
 // ────────────────────────────────────────────────────────────────────────────────
 
 /// Shared recursive directory walk for Linux and Kqueue: open `abs_dir`, iterate,
-/// and for every entry call `cb` with (abs, rel, is_file); recurse into
-/// subdirectories. When `dirs_only`, non-directory entries are skipped entirely
-/// (inotify delivers file events on the parent dir's wd so we only need a watch
-/// per directory; kqueue needs an fd per file too). Best-effort — an unreadable
-/// subdirectory just stops that branch (matches Node).
+/// and for every entry call `cb` with (abs, rel, kind); recurse into
+/// subdirectories. When `dirs_only`, only directories and symlinks are reported
+/// (inotify delivers file events on the parent dir's wd; kqueue needs an fd per
+/// file too). A symlink is never descended into: its target can be an ancestor.
+/// Best-effort — an unreadable subdirectory just stops that branch (matches Node).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
     rel_dir: &[u8],
-    cb: &mut impl FnMut(&ZStr, &[u8], bool),
+    cb: &mut impl FnMut(&ZStr, &[u8], sys::EntryKind),
 ) {
     let dfd = match sys::open(
         abs_dir,
@@ -613,8 +613,9 @@ fn walk_subtree<const DIRS_ONLY: bool>(
             Ok(None) => return,
             Ok(Some(e)) => e,
         };
-        let child_is_file = entry.kind != sys::EntryKind::Directory;
-        if DIRS_ONLY && child_is_file {
+        let kind = entry.kind;
+        let child_is_dir = kind == sys::EntryKind::Directory;
+        if DIRS_ONLY && !child_is_dir && kind != sys::EntryKind::SymLink {
             continue;
         }
         // The iterator caches the UTF-8 transcode and exposes it as `slice_u8()`.
@@ -634,8 +635,8 @@ fn walk_subtree<const DIRS_ONLY: bool>(
             )
             .as_bytes()
         };
-        cb(child_abs, child_rel, child_is_file);
-        if !child_is_file {
+        cb(child_abs, child_rel, kind);
+        if child_is_dir {
             walk_subtree::<DIRS_ONLY>(child_abs, child_rel, cb);
         }
     }
@@ -690,16 +691,20 @@ struct WdOwner {
     /// Path of the watched directory/file relative to `watcher.path`. Empty for
     /// the root. Owned; freed when this owner is removed from the wd.
     subpath: ZBox,
+    /// `subpath` is a symlink entry and the wd is on its target. Every event is
+    /// reported as a rename of the link, like node's recursive watcher.
+    is_symlink: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[derive(Default)]
 pub(crate) struct LinuxWatch {
     /// All wds belonging to this PathWatcher (one for a file/non-recursive dir,
-    /// many for a recursive dir).
+    /// many for a recursive dir). A wd with several owners is listed once.
     wds: Vec<i32>,
+    /// Symlink entries of a recursive tree: subpath → wd of the link target.
+    link_wds: StringArrayHashMap<i32>,
 }
-// Drop: Vec frees automatically.
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl PathWatcherManager {
@@ -727,6 +732,8 @@ mod inotify_masks {
         | IN::MOVED_TO
         | IN::MOVE_SELF
         | IN::ONLYDIR;
+    /// A symlink entry: the target can be a file or a directory.
+    pub(super) const WATCH_LINK_MASK: u32 = WATCH_DIR_MASK & !IN::ONLYDIR;
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -764,7 +771,7 @@ impl Linux {
     ) -> sys::Result<()> {
         // Borrowck: clone path to avoid &/&mut overlap on watcher.
         let root = watcher.path.clone();
-        Linux::add_one(manager, watcher, &root, b"")?;
+        Linux::add_one(manager, watcher, &root, b"", false)?;
         if watcher.recursive && !watcher.is_file {
             if let Some(err) = Linux::walk_and_add(manager, watcher, &root, b"") {
                 // Partial coverage: emit 'error' but keep the watcher, like node.
@@ -776,15 +783,28 @@ impl Linux {
     }
 
     /// Add a single inotify watch and record ownership. Caller holds `manager.mutex`.
+    /// `is_symlink`: `abs_path` is a symlink entry; the watch lands on its target.
     fn add_one(
         manager: &'static PathWatcherManager,
         watcher: &mut PathWatcher,
         abs_path: &ZStr,
         subpath: &[u8],
+        is_symlink: bool,
     ) -> sys::Result<()> {
         let plat: *mut Linux = manager.platform.get();
         let mask: u32 = if watcher.is_file && subpath.is_empty() {
             inotify_masks::WATCH_FILE_MASK
+        } else if is_symlink {
+            // A link to a pipe or a tty (`access.log -> /dev/stdout`) would
+            // report every write the handler itself makes.
+            let Ok(st) = sys::stat(abs_path) else {
+                return Ok(());
+            };
+            let mode = st.st_mode as u32;
+            if !sys::posix::s_isreg(mode) && !sys::posix::s_isdir(mode) {
+                return Ok(());
+            }
+            inotify_masks::WATCH_LINK_MASK
         } else {
             inotify_masks::WATCH_DIR_MASK
         };
@@ -794,7 +814,13 @@ impl Linux {
         if rc < 0 {
             let err = sys::Error::from_code_int(sys::last_errno(), Tag::watch);
             // ENOENT/ENOTDIR during a recursive walk just means we raced; skip.
-            if !subpath.is_empty() && matches!(err.get_errno(), E::ENOENT | E::ENOTDIR) {
+            // A link target the process may not read is outside the tree; skip.
+            let skip = match err.get_errno() {
+                E::ENOENT | E::ENOTDIR | E::ELOOP => true,
+                E::EACCES | E::EPERM => is_symlink,
+                _ => false,
+            };
+            if !subpath.is_empty() && skip {
                 return Ok(());
             }
             return Err(err.with_path(abs_path.as_bytes()));
@@ -802,26 +828,42 @@ impl Linux {
         let wd: i32 = rc;
         // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
         let owners = unsafe { (*plat).wd_map.entry(wd).or_default() };
-        // This wd may already have this watcher as an owner:
-        //   - IN_CREATE raced the initial walk (same subpath → the reassign is a no-op)
-        //   - a subdirectory was *renamed* within the tree: IN_MOVED_TO re-adds it,
-        //     inotify returns the same wd (it watches by inode), and the cached subpath
-        //     is now stale. Overwrite so later events under the moved dir report the
-        //     new name. `walkAndAdd` never follows symlinks (`entry.kind == .directory`,
-        //     not `.sym_link`), so this can't pick a longer alias via a cycle.
+        // One owner per watcher for the path itself, plus one per symlink entry
+        // that points at this inode (each link reports under its own name).
+        // For the path itself: a subdirectory *renamed* within the tree comes
+        // back with the same wd (inotify watches by inode), so overwrite the
+        // stale subpath.
+        let mut owned = false;
         for o in owners.iter_mut() {
-            if core::ptr::eq(o.watcher, watcher) {
-                if !strings::eql(o.subpath.as_bytes(), subpath) {
-                    o.subpath = ZBox::from_bytes(subpath);
-                }
-                return Ok(());
+            if !core::ptr::eq(o.watcher, watcher) {
+                continue;
             }
+            owned = true;
+            if o.is_symlink != is_symlink {
+                continue;
+            }
+            if is_symlink {
+                if strings::eql(o.subpath.as_bytes(), subpath) {
+                    return Ok(());
+                }
+                continue;
+            }
+            if !strings::eql(o.subpath.as_bytes(), subpath) {
+                o.subpath = ZBox::from_bytes(subpath);
+            }
+            return Ok(());
         }
         owners.push(WdOwner {
             watcher: std::ptr::from_mut::<PathWatcher>(watcher),
             subpath: ZBox::from_bytes(subpath),
+            is_symlink,
         });
-        watcher.platform.wds.push(wd);
+        if !owned {
+            watcher.platform.wds.push(wd);
+        }
+        if is_symlink {
+            handle_oom(watcher.platform.link_wds.put(subpath, wd));
+        }
         log!(
             "inotify_add_watch({}) → wd={} sub='{}' owners={}",
             bstr::BStr::new(abs_path.as_bytes()),
@@ -832,8 +874,42 @@ impl Linux {
         Ok(())
     }
 
+    /// Drop the owner a symlink entry holds on its target's wd, and the wd when
+    /// no owner is left. Returns the index the owner had in the wd's list.
+    /// Caller holds `manager.mutex`.
+    fn remove_link_owner(
+        manager: &'static PathWatcherManager,
+        watcher: &mut PathWatcher,
+        wd: i32,
+        subpath: &[u8],
+    ) -> Option<usize> {
+        let plat: *mut Linux = manager.platform.get();
+        watcher.platform.link_wds.swap_remove(subpath);
+        // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
+        let wd_map = unsafe { &mut (*plat).wd_map };
+        let owners = wd_map.get_mut(&wd)?;
+        let i = owners.iter().position(|o| {
+            core::ptr::eq(o.watcher, watcher)
+                && o.is_symlink
+                && strings::eql(o.subpath.as_bytes(), subpath)
+        })?;
+        owners.remove(i);
+        if !owners.iter().any(|o| core::ptr::eq(o.watcher, watcher)) {
+            let wds = &mut watcher.platform.wds;
+            if let Some(idx) = wds.iter().position(|&x| x == wd) {
+                wds.swap_remove(idx);
+            }
+        }
+        if owners.is_empty() {
+            wd_map.remove(&wd);
+            sys::linux::inotify_rm_watch(manager.inotify_fd().native(), wd);
+        }
+        Some(i)
+    }
+
     /// Best-effort recursive directory walk. inotify watches are per-directory (events
     /// for files arrive on their parent's wd), so only descend into subdirectories.
+    /// A symlink entry gets a watch on its target, like node's recursive watcher.
     /// Returns the first `inotify_add_watch` failure without stopping the walk.
     fn walk_and_add(
         manager: &'static PathWatcherManager,
@@ -842,8 +918,9 @@ impl Linux {
         rel_dir: &[u8],
     ) -> Option<sys::Error> {
         let mut first_err: Option<sys::Error> = None;
-        walk_subtree::<true>(abs_dir, rel_dir, &mut |abs, rel, _is_file| {
-            if let Err(e) = Linux::add_one(manager, watcher, abs, rel) {
+        walk_subtree::<true>(abs_dir, rel_dir, &mut |abs, rel, kind| {
+            let is_symlink = kind == sys::EntryKind::SymLink;
+            if let Err(e) = Linux::add_one(manager, watcher, abs, rel, is_symlink) {
                 if first_err.is_none() {
                     first_err = Some(e);
                 }
@@ -877,6 +954,7 @@ impl Linux {
             }
         }
         watcher.platform.wds.clear();
+        watcher.platform.link_wds.clear();
     }
 
     fn thread_main(manager: &'static PathWatcherManager) {
@@ -937,6 +1015,9 @@ impl Linux {
             manager.mutex.lock();
             // Track which PathWatchers got at least one event so we flush() each once.
             let mut touched: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
+            // Symlink entries the current event removed. Their owners are
+            // dropped after the owner loop: one can sit on the wd being walked.
+            let mut dead_links: Vec<(*mut PathWatcher, Box<[u8]>)> = Vec::new();
 
             let mut i: usize = 0;
             while i < n {
@@ -975,6 +1056,9 @@ impl Linux {
                 if ev.mask & IN::IGNORED != 0 {
                     // SAFETY: holding manager.mutex; exclusive access to `wd_map`.
                     let wd_map = unsafe { &mut (*plat).wd_map };
+                    // Symlink entries whose target inode is gone. The link may
+                    // resolve again (a save by rename over the target).
+                    let mut relink: Vec<(*mut PathWatcher, ZBox)> = Vec::new();
                     if let Some(owners) = wd_map.get_mut(&wd) {
                         for o in owners.drain(..) {
                             // SAFETY: o.watcher live under manager.mutex; shared
@@ -992,13 +1076,36 @@ impl Linux {
                             // list under manager.mutex; the shared borrow above is
                             // no longer used.
                             unsafe {
-                                let wds = &mut (*o.watcher).platform.wds;
-                                if let Some(idx) = wds.iter().position(|&x| x == wd) {
-                                    wds.swap_remove(idx);
+                                let platform = &mut (*o.watcher).platform;
+                                if let Some(idx) = platform.wds.iter().position(|&x| x == wd) {
+                                    platform.wds.swap_remove(idx);
+                                }
+                                if o.is_symlink {
+                                    platform.link_wds.swap_remove(o.subpath.as_bytes());
+                                    relink.push((o.watcher, o.subpath));
                                 }
                             }
                         }
                         wd_map.remove(&wd);
+                    }
+                    for (w, subpath) in relink {
+                        let mut abs_buf = path::path_buffer_pool::get();
+                        let mut abs_spill: Vec<u8> = Vec::new();
+                        // SAFETY: w live under manager.mutex; the `&mut` is scoped
+                        // to the call, and `emit_error` takes `&self`.
+                        unsafe {
+                            let link_abs = join_z_buf_spill::<platform::Posix>(
+                                abs_buf.as_mut_slice(),
+                                &mut abs_spill,
+                                &[(*w).path.as_bytes(), subpath.as_bytes()],
+                            );
+                            if let Err(err) =
+                                Linux::add_one(manager, &mut *w, link_abs, subpath.as_bytes(), true)
+                            {
+                                (*w).emit_error(&err, false);
+                                let _ = handle_oom(touched.get_or_put(w));
+                            }
+                        }
                     }
                     continue;
                 }
@@ -1044,7 +1151,11 @@ impl Linux {
                     // calls `add_one`/`walk_and_add`, which take their own `&mut wd_map`
                     // and may rehash. Extract the owner's watcher ptr and subpath bytes,
                     // then drop the map borrow before any of that runs.
-                    let (owner_watcher, owner_subpath): (*mut PathWatcher, &[u8]) = unsafe {
+                    let (owner_watcher, owner_subpath, owner_is_symlink): (
+                        *mut PathWatcher,
+                        &[u8],
+                        bool,
+                    ) = unsafe {
                         let Some(owners) = (*plat).wd_map.get(&wd) else {
                             break;
                         };
@@ -1059,8 +1170,21 @@ impl Linux {
                         (
                             o.watcher,
                             &*std::ptr::from_ref::<[u8]>(o.subpath.as_bytes()),
+                            o.is_symlink,
                         )
                     };
+                    oi += 1;
+
+                    // node's recursive watcher reports every event behind a link as
+                    // a rename of the link, and never descends into the target.
+                    if owner_is_symlink {
+                        // SAFETY: owner_watcher live under manager.mutex; `emit` takes `&self`.
+                        unsafe {
+                            (*owner_watcher).emit(WatchEventKind::Rename, owner_subpath, true);
+                        }
+                        let _ = handle_oom(touched.get_or_put(owner_watcher));
+                        continue;
+                    }
                     // SAFETY: owner_watcher live under manager.mutex. Copy the
                     // scalars and launder the path bytes via a raw ptr so `rel`
                     // (which may borrow them) is decoupled from the scoped `&mut`
@@ -1112,77 +1236,145 @@ impl Linux {
                     }
                     let _ = handle_oom(touched.get_or_put(owner_watcher));
 
-                    // Recursive: a new directory appeared under this owner's tree —
-                    // start watching it so future events inside it are delivered.
-                    // This is what makes `{recursive: true}` track structure changes
-                    // after the initial crawl (#15939/#15085).
-                    if watcher_recursive
-                        && is_dir_child
-                        && (ev.mask & (IN::CREATE | IN::MOVED_TO) != 0)
-                        && !name.is_empty()
-                    {
-                        let mut abs_buf = path::path_buffer_pool::get();
-                        let mut abs_spill: Vec<u8> = Vec::new();
-                        let child_abs = join_z_buf_spill::<platform::Posix>(
-                            abs_buf.as_mut_slice(),
-                            &mut abs_spill,
-                            &[watcher_path, owner_subpath, name],
-                        );
-                        // Borrowck: `rel` may borrow `path_buf`,
-                        // which `walk_subtree` also borrows. Own it for the call.
-                        let rel_owned: Box<[u8]> = Box::from(rel);
-                        // These may rehash `wd_map`; `owners` is re-fetched next iteration.
-                        // SAFETY: owner_watcher live under manager.mutex; the `&mut`
-                        // is scoped to the call.
-                        let mut add_err = Linux::add_one(
-                            manager,
-                            unsafe { &mut *owner_watcher },
-                            child_abs,
-                            &rel_owned,
-                        )
-                        .err();
-                        // Entries created inside the new directory before our watch
-                        // attached never get their own IN_CREATE on this fd. Walk the
-                        // subtree: watch nested directories and synthesize a "rename"
-                        // for every discovered entry, like node's recursive watcher
-                        // does when it scans a newly added folder
-                        // (lib/internal/fs/recursive_watch.js). An entry created after
-                        // the watch attached may emit twice; per-handler ChangeEvent
-                        // coalescing absorbs back-to-back duplicates.
-                        walk_subtree::<false>(
-                            child_abs,
-                            &rel_owned,
-                            &mut |abs, entry_rel, entry_is_file| {
-                                if !entry_is_file {
-                                    // SAFETY: owner_watcher live under manager.mutex;
-                                    // the `&mut` is scoped to the call.
-                                    let watcher = unsafe { &mut *owner_watcher };
-                                    if let Err(e) = Linux::add_one(manager, watcher, abs, entry_rel)
-                                    {
-                                        if add_err.is_none() {
-                                            add_err = Some(e);
-                                        }
-                                    }
-                                }
-                                // SAFETY: owner_watcher live under manager.mutex;
-                                // `emit` takes `&self`.
-                                unsafe {
-                                    (*owner_watcher).emit(
-                                        WatchEventKind::Rename,
-                                        entry_rel,
-                                        entry_is_file,
-                                    );
-                                }
-                            },
-                        );
-                        if let Some(err) = add_err {
-                            // SAFETY: owner_watcher live under manager.mutex;
-                            // `emit_error` takes `&self`.
-                            unsafe { (*owner_watcher).emit_error(&err, false) };
-                        }
+                    if !watcher_recursive || name.is_empty() {
+                        continue;
                     }
 
-                    oi += 1;
+                    // Recursive: a symlink entry is gone (a link carries no IN_ISDIR),
+                    // or a directory moved away with the links under it.
+                    if ev.mask & (IN::DELETE | IN::MOVED_FROM) != 0 {
+                        // SAFETY: owner_watcher live under manager.mutex; shared read.
+                        let link_wds = unsafe { &(*owner_watcher).platform.link_wds };
+                        if is_dir_child {
+                            for link in link_wds.keys() {
+                                if link.len() > rel.len()
+                                    && link.starts_with(rel)
+                                    && link[rel.len()] == b'/'
+                                {
+                                    dead_links.push((owner_watcher, link.clone()));
+                                }
+                            }
+                        } else if link_wds.contains_key(rel) {
+                            dead_links.push((owner_watcher, Box::from(rel)));
+                        }
+                        continue;
+                    }
+
+                    // Recursive: a new entry appeared under this owner's tree. Only a
+                    // directory or a symlink needs a watch of its own.
+                    if ev.mask & (IN::CREATE | IN::MOVED_TO) == 0 {
+                        continue;
+                    }
+                    // The name was a symlink entry that got renamed over (`ln -sfn`):
+                    // no IN_DELETE for it, so drop the owner on the old target here.
+                    // SAFETY: owner_watcher live under manager.mutex; shared read.
+                    let old_link_wd =
+                        unsafe { (*owner_watcher).platform.link_wds.get(rel).copied() };
+                    if let Some(old_wd) = old_link_wd {
+                        // SAFETY: owner_watcher live under manager.mutex; the `&mut`
+                        // is scoped to the call.
+                        let removed = unsafe {
+                            Linux::remove_link_owner(manager, &mut *owner_watcher, old_wd, rel)
+                        };
+                        // The owner list being walked lost an entry before this one.
+                        if old_wd == wd && removed.is_some_and(|i| i < oi) {
+                            oi -= 1;
+                        }
+                    }
+                    let mut abs_buf = path::path_buffer_pool::get();
+                    let mut abs_spill: Vec<u8> = Vec::new();
+                    let child_abs = join_z_buf_spill::<platform::Posix>(
+                        abs_buf.as_mut_slice(),
+                        &mut abs_spill,
+                        &[watcher_path, owner_subpath, name],
+                    );
+                    // inotify does not say what kind of entry was created, so ask.
+                    if !is_dir_child
+                        && !sys::lstat(child_abs)
+                            .is_ok_and(|st| sys::posix::s_islnk(st.st_mode as u32))
+                    {
+                        continue;
+                    }
+                    // Borrowck: `rel` may borrow `path_buf`,
+                    // which `walk_subtree` also borrows. Own it for the call.
+                    let rel_owned: Box<[u8]> = Box::from(rel);
+
+                    if !is_dir_child {
+                        // A new symlink gets a watch on its target, as on the initial walk.
+                        // SAFETY: owner_watcher live under manager.mutex; the `&mut`
+                        // is scoped to the call, and `emit_error` takes `&self`.
+                        unsafe {
+                            if let Err(err) = Linux::add_one(
+                                manager,
+                                &mut *owner_watcher,
+                                child_abs,
+                                &rel_owned,
+                                true,
+                            ) {
+                                (*owner_watcher).emit_error(&err, false);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // A new directory: start watching it so future events inside it
+                    // are delivered. This is what makes `{recursive: true}` track
+                    // structure changes after the initial crawl (#15939/#15085).
+                    // These may rehash `wd_map`; `owners` is re-fetched next iteration.
+                    // SAFETY: owner_watcher live under manager.mutex; the `&mut`
+                    // is scoped to the call.
+                    let mut add_err = Linux::add_one(
+                        manager,
+                        unsafe { &mut *owner_watcher },
+                        child_abs,
+                        &rel_owned,
+                        false,
+                    )
+                    .err();
+                    // Entries created inside the new directory before our watch
+                    // attached never get their own IN_CREATE on this fd. Walk the
+                    // subtree: watch nested directories and synthesize a "rename"
+                    // for every discovered entry, like node's recursive watcher
+                    // does when it scans a newly added folder
+                    // (lib/internal/fs/recursive_watch.js). An entry created after
+                    // the watch attached may emit twice; per-handler ChangeEvent
+                    // coalescing absorbs back-to-back duplicates.
+                    walk_subtree::<false>(child_abs, &rel_owned, &mut |abs, entry_rel, kind| {
+                        let entry_is_dir = kind == sys::EntryKind::Directory;
+                        let entry_is_symlink = kind == sys::EntryKind::SymLink;
+                        if entry_is_dir || entry_is_symlink {
+                            // SAFETY: owner_watcher live under manager.mutex;
+                            // the `&mut` is scoped to the call.
+                            let watcher = unsafe { &mut *owner_watcher };
+                            if let Err(e) =
+                                Linux::add_one(manager, watcher, abs, entry_rel, entry_is_symlink)
+                            {
+                                if add_err.is_none() {
+                                    add_err = Some(e);
+                                }
+                            }
+                        }
+                        // SAFETY: owner_watcher live under manager.mutex;
+                        // `emit` takes `&self`.
+                        unsafe {
+                            (*owner_watcher).emit(WatchEventKind::Rename, entry_rel, !entry_is_dir);
+                        }
+                    });
+                    if let Some(err) = add_err {
+                        // SAFETY: owner_watcher live under manager.mutex;
+                        // `emit_error` takes `&self`.
+                        unsafe { (*owner_watcher).emit_error(&err, false) };
+                    }
+                }
+
+                for (w, subpath) in dead_links.drain(..) {
+                    // SAFETY: w live under manager.mutex; the `&mut` is scoped to
+                    // the call.
+                    unsafe {
+                        if let Some(&link_wd) = (*w).platform.link_wds.get(&subpath) {
+                            Linux::remove_link_owner(manager, &mut *w, link_wd, &subpath);
+                        }
+                    }
                 }
             }
 
@@ -1431,7 +1623,8 @@ impl Kqueue {
         if watcher.recursive && !watcher.is_file {
             // kqueue needs an open fd per *file* as well as per directory.
             let mut first_err: Option<sys::Error> = None;
-            walk_subtree::<false>(&root, b"", &mut |abs, rel, is_file| {
+            walk_subtree::<false>(&root, b"", &mut |abs, rel, kind| {
+                let is_file = kind != sys::EntryKind::Directory;
                 if let Err(e) = Kqueue::add_one(manager, watcher, abs, rel, is_file) {
                     if first_err.is_none() {
                         first_err = Some(e);

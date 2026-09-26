@@ -30,6 +30,94 @@ function sendAfterClose(state, cb) {
   }
 }
 
+// Module-load captures; user code cannot reassign these later.
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ArrayBufferIsView = ArrayBuffer.isView;
+const NativeArrayBuffer = ArrayBuffer;
+const NativeBlob = Blob;
+
+// Top-level TLS keys SSLConfig.fromJS parses, by how each is copied.
+const TLS_BOOL = 0; // copied unless undefined (keeps an explicit false)
+const TLS_SCALAR = 1; // copied unless null or undefined (keeps an explicit 0 or "")
+const TLS_FILE = 2; // copied only when truthy (SSLConfig reads `ca: ""` as an empty CA set)
+const tlsKeyKinds = {
+  __proto__: null,
+  rejectUnauthorized: TLS_BOOL,
+  requestCert: TLS_BOOL,
+  lowMemoryMode: TLS_BOOL,
+  allowPartialTrustChain: TLS_BOOL,
+  passphrase: TLS_SCALAR,
+  secureOptions: TLS_SCALAR,
+  clientRenegotiationLimit: TLS_SCALAR,
+  clientRenegotiationWindow: TLS_SCALAR,
+  ca: TLS_FILE,
+  cert: TLS_FILE,
+  key: TLS_FILE,
+  crl: TLS_FILE,
+  dhParamsFile: TLS_FILE,
+  keyFile: TLS_FILE,
+  certFile: TLS_FILE,
+  caFile: TLS_FILE,
+  servername: TLS_FILE,
+  serverName: TLS_FILE,
+  ciphers: TLS_FILE,
+  sigalgs: TLS_FILE,
+  ecdhCurve: TLS_FILE,
+};
+const tlsKeys = Object.keys(tlsKeyKinds);
+
+// The only connectOpts keys HttpsProxyAgent sets that SSLConfig.fromJS accepts.
+const agentTlsKeys = ["rejectUnauthorized", "ca", "cert", "key", "passphrase"];
+
+// ws accepts `{ pem, passphrase }` for key/cert; SSLConfig.fromJS throws on it.
+function isForwardableFileValue(value) {
+  if (!value) return false;
+  if ($isJSArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      if (!isRepresentableFileElement(value[i])) return false;
+    }
+    return true;
+  }
+  return isRepresentableFileElement(value);
+}
+
+function isRepresentableFileElement(value) {
+  return (
+    !$isObject(value) ||
+    ArrayBufferIsView(value) ||
+    $isTypedArrayView(value) ||
+    value instanceof NativeBlob ||
+    value instanceof NativeArrayBuffer
+  );
+}
+
+// Reads own properties only; Object.prototype is never consulted.
+function extractTlsOptions(source, keys = tlsKeys) {
+  if (!$isObject(source)) return null;
+
+  let tls = null;
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (!ObjectPrototypeHasOwnProperty.$call(source, key)) continue;
+    const value = source[key];
+    let keep;
+    switch (tlsKeyKinds[key]) {
+      case TLS_BOOL:
+        keep = value !== undefined;
+        break;
+      case TLS_SCALAR:
+        keep = value != null;
+        break;
+      default:
+        keep = isForwardableFileValue(value);
+    }
+    if (keep) {
+      (tls ??= { __proto__: null })[key] = value;
+    }
+  }
+  return tls;
+}
+
 /**
  * Extracts TLS and proxy options from an agent object.
  * @param {Object} agent The agent object to extract options from
@@ -37,40 +125,9 @@ function sendAfterClose(state, cb) {
  */
 function extractAgentOptions(agent) {
   const connectOpts = agent?.connectOpts || agent?.options;
-  let tls = null;
   let proxy = null;
 
-  if ($isObject(connectOpts)) {
-    // Build TLS options
-    const newTlsOptions = {};
-    let hasTlsOptions = false;
-
-    const { rejectUnauthorized, ca, cert, key, passphrase } = connectOpts;
-    if (rejectUnauthorized !== undefined) {
-      newTlsOptions.rejectUnauthorized = rejectUnauthorized;
-      hasTlsOptions = true;
-    }
-    if (ca) {
-      newTlsOptions.ca = ca;
-      hasTlsOptions = true;
-    }
-    if (cert) {
-      newTlsOptions.cert = cert;
-      hasTlsOptions = true;
-    }
-    if (key) {
-      newTlsOptions.key = key;
-      hasTlsOptions = true;
-    }
-    if (passphrase) {
-      newTlsOptions.passphrase = passphrase;
-      hasTlsOptions = true;
-    }
-
-    if (hasTlsOptions) {
-      tls = newTlsOptions;
-    }
-  }
+  const tls = extractTlsOptions(connectOpts, agentTlsKeys);
 
   // Build proxy - check connectOpts.proxy first, then agent.proxy
   const agentProxy = connectOpts?.proxy || agent?.proxy;
@@ -202,7 +259,9 @@ class BunWebSocket extends EventEmitter {
     if ($isObject(options)) {
       headers = options?.headers;
       proxy = options?.proxy;
-      tlsOptions = options?.tls;
+      // Bun's own `tls` object wins over ws-style top-level TLS options.
+      const explicitTls = $isObject(options.tls);
+      tlsOptions = explicitTls ? options.tls : extractTlsOptions(options);
       if ("perMessageDeflate" in options && !options.perMessageDeflate) {
         disableDeflate = true;
       }
@@ -215,8 +274,9 @@ class BunWebSocket extends EventEmitter {
         if (!proxy && agentProxy) {
           proxy = agentProxy;
         }
-        if (!tlsOptions && agentTls) {
-          tlsOptions = agentTls;
+        // Agent TLS is for the proxy hop; an explicit `tls` object takes precedence.
+        if (!explicitTls && agentTls) {
+          tlsOptions = tlsOptions ? { __proto__: null, ...agentTls, ...tlsOptions } : agentTls;
         }
       }
     }

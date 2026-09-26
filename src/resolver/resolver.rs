@@ -1205,12 +1205,7 @@ impl<'a> Resolver<'a> {
             && (self.is_external_pattern(import_path)
             // "fill: url(#filter);"
             || (kind.is_from_css() && import_path.starts_with(b"#"))
-            // "background: url(http://example.com/images/image.png);"
-            || import_path.starts_with(b"http://")
-            // "background: url(https://example.com/images/image.png);"
-            || import_path.starts_with(b"https://")
-            // "background: url(//example.com/images/image.png);"
-            || import_path.starts_with(b"//"))
+            || is_implicitly_external_url(import_path))
         {
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note(b"Marking this path as implicitly external".to_vec());
@@ -6731,6 +6726,25 @@ fn primary_side_effects(
         SideEffects::NoSideEffectsPackageJson
     } else {
         SideEffects::NoSideEffectsPackageJsonArray
+    }
+}
+
+/// A URL scheme is ASCII case-insensitive (RFC 3986 section 3.1), so `HTTPS://` is `https://`.
+#[inline]
+fn is_implicitly_external_url(specifier: &[u8]) -> bool {
+    match specifier.first() {
+        // "background: url(//example.com/images/image.png);"
+        Some(b'/') => specifier.get(1) == Some(&b'/'),
+        // "background: url(https://example.com/images/image.png);"
+        Some(b'h' | b'H') => {
+            specifier
+                .get(..7)
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case(b"http://"))
+                || specifier
+                    .get(..8)
+                    .is_some_and(|scheme| scheme.eq_ignore_ascii_case(b"https://"))
+        }
+        _ => false,
     }
 }
 

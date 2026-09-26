@@ -2388,6 +2388,35 @@ describe.concurrent("bundler", () => {
       ]);
     },
   });
+  // A URL scheme is ASCII case-insensitive (RFC 3986 section 3.1)
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`default/AutoExternalUppercaseScheme/${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import "HTTP://example.invalid/side-effect.js";
+          import a from "Https://example.invalid/default.js";
+          export { b } from "hTTp://example.invalid/reexport.js";
+          const c = require("HTTPS://example.invalid/required.js");
+          const d = import("hTTps://example.invalid/dynamic.js");
+          const e = require.resolve("Http://example.invalid/resolved.js");
+          console.log(a, c, d, e);
+        `,
+      },
+      format,
+      onAfterBundle(api) {
+        const file = api.readFile("/out.js");
+        const specifiers = [...file.matchAll(/"([^"]*:\/\/example\.invalid\/[^"]*)"/g)].map(match => match[1]);
+        expect(specifiers).toEqual([
+          "HTTP://example.invalid/side-effect.js",
+          "Https://example.invalid/default.js",
+          "hTTp://example.invalid/reexport.js",
+          "HTTPS://example.invalid/required.js",
+          "hTTps://example.invalid/dynamic.js",
+          "Http://example.invalid/resolved.js",
+        ]);
+      },
+    });
+  }
   itBundled("default/AutoExternalNode", {
     todo: true,
     // notImplemented: true,

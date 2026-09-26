@@ -488,6 +488,53 @@ describe("bundler", () => {
       expect(contents).not.toContain(`require("react")`);
     },
   });
+  // A URL scheme is ASCII case-insensitive (RFC 3986 section 3.1)
+  itBundled("plugin/ResolveDeclinedUppercaseURLSchemeIsExternal", () => {
+    const resolved: string[] = [];
+
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import value from "HTTPS://example.invalid/mod.js";
+          console.log(value);
+        `,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /example\.invalid/ }, args => {
+          resolved.push(args.path);
+          return undefined;
+        });
+      },
+      onAfterBundle(api) {
+        expect(resolved).toEqual(["HTTPS://example.invalid/mod.js"]);
+        expect(api.readFile("/out.js")).toContain(`from "HTTPS://example.invalid/mod.js"`);
+      },
+    };
+  });
+  itBundled("plugin/ResolveDeclinedUppercaseURLSchemeInHTML", () => {
+    const resolved: string[] = [];
+
+    return {
+      files: {
+        "/index.html": `<!DOCTYPE html><html><head><script src="HTTPS://cdn.example.invalid/app.js?v=3"></script></head></html>`,
+      },
+      outdir: "/out",
+      metafile: true,
+      plugins(builder) {
+        builder.onResolve({ filter: /example\.invalid/ }, args => {
+          resolved.push(args.path);
+          return undefined;
+        });
+      },
+      onAfterBundle(api) {
+        expect(resolved).toEqual(["HTTPS://cdn.example.invalid/app.js?v=3"]);
+        expect(JSON.parse(api.readFile("/metafile.json")).inputs["index.html"].imports).toEqual([
+          { path: "HTTPS://cdn.example.invalid/app.js?v=3", kind: "import-statement", external: true },
+        ]);
+        expect(api.readFile("/out/index.html")).toContain('src="HTTPS://cdn.example.invalid/app.js?v=3"');
+      },
+    };
+  });
   for (const format of ["esm", "cjs"] as const) {
     itBundled(`plugin/ResolveExternalRewritesRelativeImport_${format}`, {
       files: {

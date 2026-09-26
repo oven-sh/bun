@@ -183,6 +183,35 @@ describe("bundler", () => {
     },
   });
 
+  // A URL scheme is ASCII case-insensitive (RFC 3986 section 3.1)
+  itBundled("html/external-assets-uppercase-scheme", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="HTTPS://cdn.example.invalid/style.css">
+    <script src="Http://cdn.example.invalid/script.js?v=3#f"></script>
+  </head>
+  <body>
+    <img src="hTTp://cdn.example.invalid/image.jpg" srcset="HTTPS://cdn.example.invalid/image-2x.jpg 2x">
+    <video src="HTTP://cdn.example.invalid/video.mp4" poster="hTTps://cdn.example.invalid/poster.jpg"></video>
+  </body>
+</html>`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toContain('href="HTTPS://cdn.example.invalid/style.css"');
+      expect(html).toContain('src="Http://cdn.example.invalid/script.js?v=3#f"');
+      expect(html).toContain('src="hTTp://cdn.example.invalid/image.jpg"');
+      expect(html).toContain('srcset="HTTPS://cdn.example.invalid/image-2x.jpg 2x"');
+      expect(html).toContain('src="HTTP://cdn.example.invalid/video.mp4"');
+      expect(html).toContain('poster="hTTps://cdn.example.invalid/poster.jpg"');
+    },
+  });
+
   // Test JS imports
   itBundled("html/js-imports", {
     outdir: "out/",

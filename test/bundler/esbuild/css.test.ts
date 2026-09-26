@@ -1003,6 +1003,31 @@ describe("esbuild-bundler", () => {
     external: ["./src/external.png"],
   });
 
+  // A URL scheme is ASCII case-insensitive (RFC 3986 section 3.1)
+  itBundled("css/ExternalImportURLInCSSUppercaseScheme", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "HTTPS://example.invalid/a.css";
+        @import url(Http://example.invalid/b.css) print;
+        a { background: url(HTTP://example.invalid/images/a.png) }
+        b { background: url(hTTps://example.invalid/images/b.png) }
+        c { background: url("Https://example.invalid/images/c.png?q=1#frag") }
+      `,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        @import "HTTPS://example.invalid/a.css";
+        @import "Http://example.invalid/b.css" print;
+
+        /* entry.css */
+        a { background: url("HTTP://example.invalid/images/a.png"); }
+        b { background: url("hTTps://example.invalid/images/b.png"); }
+        c { background: url("Https://example.invalid/images/c.png?q=1#frag"); }
+      `);
+    },
+  });
+
   itBundled("css/InvalidImportURLInCSS", {
     // GENERATED
     files: {

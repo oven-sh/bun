@@ -9,10 +9,11 @@ import { tmpdir } from "os";
 import { dirname } from "path";
 import { debug, error, log } from "../src/console";
 import { fetch } from "../src/fetch";
-import { chmod, copy, exists, join, write, writeJson } from "../src/fs";
+import { basename, chmod, copy, exists, join, tmp, write, writeJson } from "../src/fs";
 import { getRelease, getSemver } from "../src/github";
 import type { Platform } from "../src/platform";
-import { platforms } from "../src/platform";
+import { abi, arch, os, platforms } from "../src/platform";
+import { binaryIncludesSha, binaryRevision } from "../src/sha";
 import { spawn } from "../src/spawn";
 
 const module = "bun";
@@ -21,7 +22,27 @@ const owner = "@oven";
 const [tag, action] = process.argv.slice(2);
 
 const release = await getRelease(tag);
-const version = await getSemver(release.tag_name);
+const revision = await getRevisionOfAssets();
+const version = await getSemver(release.tag_name, undefined, revision);
+
+// The commit the release's assets were built from, read out of the binary
+// for the platform this script runs on. git has no ref for it: the rolling
+// canary release's tag never moves while its assets are replaced in place.
+async function getRevisionOfAssets(): Promise<string> {
+  const platform = platforms.find(p => !p.alias && p.os === os && p.arch === arch && p.abi === abi);
+  if (!platform) {
+    throw new Error(`No platform entry matches this machine: ${os}-${arch}`);
+  }
+  const asset = release.assets.find(({ name }) => name === `${platform.bin}.zip`);
+  if (!asset) {
+    throw new Error(`Release "${release.tag_name}" has no asset: ${platform.bin}.zip`);
+  }
+  const bun = await extractFromZip(asset.browser_download_url, `${platform.bin}/bun`);
+  const exe = join(tmp(), basename(platform.exe));
+  write(exe, await bun.async("nodebuffer"));
+  chmod(exe, 0o755);
+  return binaryRevision(exe);
+}
 
 if (action !== "test-only") await build();
 
@@ -152,9 +173,16 @@ async function buildModule(
     return;
   }
   const bun = await extractFromZip(asset.browser_download_url, `${bin}/bun`);
+  const buffer = await bun.async("nodebuffer");
+  // Abort the whole publish on a mismatch: stamping `version` (which carries
+  // `revision`) onto a binary built from another commit publishes metadata
+  // that lies about the binary (#40880).
+  if (!binaryIncludesSha(buffer, revision)) {
+    throw new Error(`Binary in ${bin}.zip was not built from the expected commit: ${revision}`);
+  }
   const cwd = join("npm", module);
   mkdirSync(dirname(join(cwd, exe)), { recursive: true });
-  write(join(cwd, exe), await bun.async("arraybuffer"));
+  write(join(cwd, exe), buffer);
   chmod(join(cwd, exe), 0o755);
   writeJson(join(cwd, "package.json"), {
     name: module,

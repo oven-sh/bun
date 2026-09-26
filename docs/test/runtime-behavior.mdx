@@ -187,14 +187,13 @@ bun test --env-file .env.test
 ### Installation-related Flags
 
 ```bash
-# Affect any network requests or auto-installs during test execution
-bun test --prefer-offline
-bun test --frozen-lockfile
+# Affect auto-installs during test execution
+bun test --prefer-offline   # resolve auto-installed packages from the local cache, skip staleness checks
+bun test --install=fallback # auto-install only packages missing from node_modules
+bun test --no-install       # disable auto-install
 ```
 
-## Watch and Hot Reloading
-
-### Watch Mode
+## Watch Mode
 
 With the `--watch` flag, the test runner watches for file changes and re-runs tests.
 
@@ -202,15 +201,7 @@ With the `--watch` flag, the test runner watches for file changes and re-runs te
 bun test --watch
 ```
 
-### Hot Reloading
-
-The `--hot` flag is similar, but more aggressive about preserving state between runs:
-
-```bash terminal icon="terminal"
-bun test --hot
-```
-
-For most tests, use `--watch`: it gives better isolation between runs.
+The test runner does not support `--hot`. Each re-run starts a fresh process.
 
 ## Global Variables
 

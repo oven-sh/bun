@@ -618,6 +618,84 @@ test.concurrent.skipIf(!isPosix)("bun run --no-orphans <script>: clean exit reap
   expect(proc.exitCode).toBe(0);
 });
 
+// Linux keeps an ignored SIGCHLD across exec. The kernel then reaps bun's
+// children itself: wait4() on the script fails with ECHILD and the exit status
+// is lost. The no-orphans wait loop must end there with the error the plain
+// wait reports. It used to spin on the exited script's pidfd forever:
+// `wait4(-1)` answered ECHILD, or 0 while an orphan that the subreaper adopted
+// was alive, and the loop read both as "still running".
+const hasBash = Bun.which("bash") != null;
+describe.concurrent("bun run --no-orphans with SIGCHLD ignored", () => {
+  function bunRunGo(cwd: string) {
+    const env: Record<string, string> = {
+      ...bunEnv,
+      // LeakSanitizer cannot run while SIGCHLD is ignored: at exit it forks a
+      // ptrace probe, its own waitpid() fails too, and it prints a seccomp
+      // warning built from the unset status.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+    return Bun.spawn({
+      // bash turns a '' trap into SIG_IGN for the program it execs. dash does
+      // not, so `sh` is no substitute. No --silent: it hides the error this
+      // asserts on.
+      cmd: ["bash", "-c", `trap "" CHLD; exec "$0" "$@"`, bunExe(), "run", "--no-orphans", "go"],
+      env,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      // The spinning loop forwards SIGTERM to the dead script, so only SIGKILL
+      // keeps a regressing build from leaking a busy process into CI.
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+  }
+  // What `bun run` prints when the plain wait loses the status the same way.
+  const echild = (script: string) =>
+    `$ ${script}\nerror: Failed to run script go due to error:\nECHILD: No child processes (waitpid())\n`;
+
+  test.concurrent.skipIf(!isLinux || !hasBash)("reports ECHILD and exits", async () => {
+    const script = "echo hi";
+    using dir = tempDir("no-orphans-sigchld", {
+      "package.json": JSON.stringify({ name: "p", scripts: { go: script } }),
+    });
+    await using proc = bunRunGo(String(dir));
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // `signalCode: null` is the hang guard: bun exited by itself. The script's
+    // status is lost, so there is no exit code to assert.
+    expect({ stdout, stderr, signalCode: proc.signalCode }).toEqual({
+      stdout: "hi\n",
+      stderr: echild(script),
+      signalCode: null,
+    });
+  });
+
+  test.concurrent.skipIf(!isLinux || !hasBash)(
+    "kills a background process of the script instead of waiting for it",
+    async () => {
+      // `sleep` outlives the script and reparents to `bun run` (subreaper), so
+      // `wait4(-1)` keeps answering 0 after the script is gone.
+      const script = "sleep 60 >/dev/null 2>&1 & echo $!";
+      using dir = tempDir("no-orphans-sigchld-bg", {
+        "package.json": JSON.stringify({ name: "p", scripts: { go: script } }),
+      });
+      await using proc = bunRunGo(String(dir));
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const sleepPid = Number(stdout.trim());
+      // Only wait for the cleanup when `bun run` exited by itself, so reap() runs
+      // before the test timeout on a regressing build.
+      const died = sleepPid > 0 && proc.signalCode === null && (await waitUntilDead(sleepPid, 5000));
+      if (sleepPid > 0) reap(sleepPid);
+      expect({ stdout, stderr, signalCode: proc.signalCode, died }).toEqual({
+        stdout: expect.stringMatching(/^\d+\n$/),
+        stderr: echild(script),
+        signalCode: null,
+        died: true,
+      });
+    },
+  );
+});
+
 // Ctrl-Z bridge: with the script in its own pgroup `bun run` is a one-job
 // shell on a controlling TTY. Send SIGTSTP to the script's pgroup; bun run's
 // WUNTRACED wait must observe the stop, take the terminal, and `raise(SIGTSTP)`

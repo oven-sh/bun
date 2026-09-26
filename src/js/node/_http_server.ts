@@ -996,6 +996,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // Node's parserOnIncoming never counts an accepted upgrade or a missing-Host 400 against maxRequestsPerSocket.
         let rejectMissingHost = false;
         let reachedRequestsLimit = false;
+        // Node's parserOnIncoming counts requests and routes Expect for HTTP/1.1 only.
+        const isHttp11 = http_req.httpVersionMajor === 1 && http_req.httpVersionMinor === 1;
         if (!is_upgrade) {
           const maxRequestsPerSocket = server.maxRequestsPerSocket;
           if (
@@ -1006,7 +1008,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           ) {
             // The native parser skips its Host check for Upgrade requests; one dispatched normally still needs it.
             rejectMissingHost = true;
-          } else if (typeof maxRequestsPerSocket === "number" && maxRequestsPerSocket > 0) {
+          } else if (isHttp11 && typeof maxRequestsPerSocket === "number" && maxRequestsPerSocket > 0) {
             const requestCount = (socket._requestCount || 0) + 1;
             socket._requestCount = requestCount;
             http_res._maxRequestsPerSocket = maxRequestsPerSocket;
@@ -1073,7 +1075,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.writeHead(400, { Connection: "close" });
           http_res.end();
         } else {
-          if ((dispatchBits & DISPATCH_HAS_EXPECT) !== 0) {
+          if (isHttp11 && (dispatchBits & DISPATCH_HAS_EXPECT) !== 0) {
             // Case-insensitive, token-boundary match like Node's
             // parserOnIncoming (RFC 7231 5.1.1: expectation values compare
             // case-insensitively); computed natively into the bitfield.

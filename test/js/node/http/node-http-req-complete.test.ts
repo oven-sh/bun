@@ -231,6 +231,30 @@ describe("a connection given to the server with emit('connection')", () => {
   });
 });
 
+for (const expectation of ["100-continue", "something-else"]) {
+  test(`an HTTP/1.0 request with Expect: ${expectation} is a plain request`, async () => {
+    const events: string[] = [];
+    const server = http.createServer((req, res) => {
+      events.push("request");
+      req.resume();
+      res.end("ok");
+    });
+    server.on("checkContinue", () => events.push("checkContinue"));
+    server.on("checkExpectation", () => events.push("checkExpectation"));
+    await withServer(server, async port => {
+      const { promise: failed, reject } = Promise.withResolvers<never>();
+      const socket = send(port, `POST / HTTP/1.0\r\nExpect: ${expectation}\r\nContent-Length: 2\r\n\r\nhi`, reject);
+      let received = "";
+      socket.on("data", chunk => (received += chunk));
+      await Promise.race([once(socket, "close"), failed]);
+      assert.deepStrictEqual(
+        { events, status: received.split("\r\n")[0] },
+        { events: ["request"], status: "HTTP/1.1 200 OK" },
+      );
+    });
+  });
+}
+
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
   const { bunEnv, nodeExe } = await import("harness");

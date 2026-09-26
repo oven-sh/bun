@@ -1257,6 +1257,16 @@ pub mod package_manifest {
                 Batch as PoolBatch, Node as PoolNode, Task as PoolTask,
             };
 
+            if bun_core::env_var::feature_flag::BUN_INTERNAL_SYNC_MANIFEST_CACHE_WRITES
+                .get()
+                .unwrap_or(false)
+            {
+                if let Err(err) = Serializer::save(this, scope, tmpdir, cache_dir) {
+                    Self::warn_not_cached(this, err);
+                }
+                return;
+            }
+
             struct SaveTask {
                 manifest: PackageManifest,
                 // Owned: the thread-pool task can outlive the caller's borrow
@@ -1297,14 +1307,7 @@ pub mod package_manifest {
                         save_task.tmpdir,
                         save_task.cache_dir,
                     ) {
-                        if PackageManager::verbose_install() {
-                            bun_core::warn!(
-                                "Error caching manifest for {}: {}",
-                                bstr::BStr::new(save_task.manifest.name()),
-                                err.name(),
-                            );
-                            Output::flush();
-                        }
+                        Serializer::warn_not_cached(&save_task.manifest, err);
                     }
                 }
             }
@@ -1323,6 +1326,17 @@ pub mod package_manifest {
             // SAFETY: task is a valid Box-allocated SaveTask
             let batch = PoolBatch::from(unsafe { core::ptr::addr_of_mut!((*task).task) });
             PackageManager::get().thread_pool.schedule(batch);
+        }
+
+        fn warn_not_cached(manifest: &PackageManifest, err: Error) {
+            if PackageManager::verbose_install() {
+                bun_core::warn!(
+                    "Error caching manifest for {}: {}",
+                    bstr::BStr::new(manifest.name()),
+                    err.name(),
+                );
+                Output::flush();
+            }
         }
 
         fn manifest_file_name<'b>(

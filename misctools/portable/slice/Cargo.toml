@@ -1,0 +1,35 @@
+# A program of the portable image that reaches the file system through bun's own crates.
+# It is its own workspace: the profiles below are bun's, copied from the Cargo.toml of the repository.
+# build.ts builds it; a plain `cargo build` here makes a normal program for this machine.
+[workspace]
+
+[package]
+name = "bun-fs-slice"
+version = "0.0.0"
+edition = "2024"
+
+[[bin]]
+name = "bun-fs-slice"
+path = "src/main.rs"
+
+[dependencies]
+bun_alloc = { path = "../../../src/bun_alloc" }
+bun_core = { path = "../../../src/bun_core" }
+bun_errno = { path = "../../../src/errno" }
+bun_paths = { path = "../../../src/paths" }
+bun_sys = { path = "../../../src/sys" }
+bun_libuv_sys = { path = "../../../src/libuv_sys" }
+bun_windows_sys = { path = "../../../src/windows_sys" }
+
+[target.'cfg(bun_portable)'.dependencies]
+bun_portable_macros = { path = "../../../src/portable_macros" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_portable)'] }
+
+[profile.release]
+lto = "off"
+codegen-units = 1
+debug = "line-tables-only"
+strip = "none"
+panic = "abort"

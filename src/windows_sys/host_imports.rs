@@ -10,7 +10,8 @@
 //! on request, which is how a host is checked against the bindings.
 //!
 //! A call that cannot be bound does not return: the image runs on a host that is not Windows, the host has
-//! no resolver, or this Windows does not export the symbol.
+//! no resolver, or this Windows does not export the symbol. A host that is not Windows resolves nothing,
+//! except the test host on Linux, which has a library of its own for the tests of this table.
 
 use core::ffi::{CStr, c_char, c_ulong, c_void};
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -80,14 +81,15 @@ impl Import {
         if !address.is_null() {
             return Ok(address);
         }
-        let host = __bun_host_os();
-        if host != HOST_WINDOWS {
-            return Err(Unbound::HostIsNotWindows(host as u64));
-        }
         // SAFETY: both are NUL-terminated strings that live as long as the image.
         let address = unsafe { __bun_host_lookup(self.library, self.symbol) };
         if address.is_null() {
-            return Err(Unbound::NotFound);
+            let host = __bun_host_os();
+            return Err(if host == HOST_WINDOWS {
+                Unbound::NotFound
+            } else {
+                Unbound::HostIsNotWindows(host as u64)
+            });
         }
         self.address.store(address, Ordering::Relaxed);
         Ok(address)

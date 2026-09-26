@@ -249,6 +249,9 @@ static void *slot_read(unsigned long off) {
 /* ---- translation, Linux ABI on the left ---- */
 enum { L_ENOENT = 2, L_EIO = 5, L_EBADF = 9, L_EAGAIN = 11, L_ENOMEM = 12, L_EACCES = 13, L_EEXIST = 17, L_EINVAL = 22, L_ENOTTY = 25, L_ENOSYS = 38, L_ETIMEDOUT = 110, L_EINTR = 4 };
 static long to_linux_errno(int e) {
+#if defined(__linux__)
+  return e > 0 && e < 4096 ? -e : -L_EIO;
+#endif
   switch (e) {
     case EAGAIN: return -L_EAGAIN;
     case ETIMEDOUT: return -L_ETIMEDOUT;
@@ -372,7 +375,8 @@ __attribute__((used)) static void host_thread_exit(void *base, unsigned long siz
 /* ---- file system requests, Linux test host ----
    The numbers and the structures are the ones of this kernel, so the request
    is passed on as it is. A host on another OS has to translate each of them;
-   this host answers ENOSYS there. */
+   this host answers ENOSYS there. uname, sysinfo and getcpu are here for the
+   same reason: a program asks them at its start. */
 #if defined(__linux__)
 static long forward_file_request(long n, long a, long b, long c, long d, long e, long f) {
   switch (n) {
@@ -385,6 +389,7 @@ static long forward_file_request(long n, long a, long b, long c, long d, long e,
     case SYS_ftruncate: case SYS_truncate: case SYS_getdents64: case SYS_fcntl: case SYS_getcwd: case SYS_chdir: case SYS_fchdir:
     case SYS_fchmod: case SYS_fchmodat: case SYS_faccessat2: case SYS_copy_file_range: case SYS_fsync: case SYS_fdatasync:
     case SYS_utimensat: case SYS_dup: case SYS_dup3: case SYS_umask: case SYS_statfs: case SYS_fstatfs:
+    case SYS_uname: case SYS_sysinfo: case SYS_getcpu:
       return ret(syscall(n, a, b, c, d, e, f));
     default:
       return -L_ENOSYS;

@@ -1248,6 +1248,20 @@ describe("Bun.Image", () => {
       expect(h).toBe(8);
     });
 
+    test("fit:'inside' keeps the width when the height was derived from it", async () => {
+      // A height derived from the width already carries the source's ratio,
+      // so the fit has nothing left to do and can only round the width down.
+      // 20×21 asked for width 15 derives 15, then used to come back 14×15;
+      // 21×20 asked for width 10 derives 9 and came back 9×9. At photo
+      // sizes it is the same pixel: 943×1520 asked for 500 gave 499×805.
+      const tall = makePng(20, 21, (x, y) => [(x * 12) & 255, (y * 11) & 255, 0, 255]);
+      const wide = makePng(21, 20, (x, y) => [(x * 12) & 255, (y * 11) & 255, 0, 255]);
+      const a = decodePngRaw(await new Bun.Image(tall).resize(15, 0, { fit: "inside" }).png().bytes());
+      const b = decodePngRaw(await new Bun.Image(wide).resize(10, 0, { fit: "inside" }).png().bytes());
+      expect({ w: a.w, h: a.h }).toEqual({ w: 15, h: 15 });
+      expect({ w: b.w, h: b.h }).toEqual({ w: 10, h: 9 });
+    });
+
     test("modulate({saturation:0}) greyscales: R=G=B per pixel", async () => {
       const out = await new Bun.Image(cornersPng).modulate({ saturation: 0 }).png().bytes();
       const { data } = decodePngRaw(out);

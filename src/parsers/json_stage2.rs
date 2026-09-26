@@ -922,6 +922,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             self.expected(self.cursor, "number");
             return Err(self.unexpected(self.cursor));
         }
+        if q != minus_pos + 1 && !self.opts.allow_js_number_syntax {
+            return Err(self.json_number_error(
+                minus_pos,
+                1,
+                format_args!("JSON numbers must have a digit after \"-\""),
+            ));
+        }
         self.token_start = q;
         let run = &contents[q..self.pos_at(self.cursor + 1)];
         let (value, used) = self.parse_number_text(run, q)?;
@@ -951,9 +958,17 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let n = t.len();
         let first = t[0];
         let mut i = 1;
+        let strict = !self.opts.allow_js_number_syntax;
 
         if first == b'.' && (n < 2 || !t[1].is_ascii_digit()) {
             return Err(self.syntax_err_at(pos));
+        }
+        if first == b'.' && strict {
+            return Err(self.json_number_error(
+                pos,
+                number_token_len(t),
+                format_args!("JSON numbers must have a digit before \".\""),
+            ));
         }
 
         if first == b'0' && n > 1 {
@@ -966,6 +981,20 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 _ => (0, 0, false),
             };
             if radix != 0 {
+                if strict {
+                    let what = match t[1] {
+                        b'b' | b'B' => "binary numbers",
+                        b'o' | b'O' => "octal numbers",
+                        b'x' | b'X' => "hexadecimal numbers",
+                        b'_' => "numeric separators",
+                        _ => "numbers with leading zeros",
+                    };
+                    return Err(self.json_number_error(
+                        pos,
+                        number_token_len(t),
+                        format_args!("JSON does not support {what}"),
+                    ));
+                }
                 return self.parse_radix_number(t, pos, radix, prefix_len, legacy_octal);
             }
         }
@@ -979,6 +1008,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     match t[i] {
                         b'0'..=b'9' => i += 1,
                         b'_' => {
+                            if strict {
+                                return Err(self.json_number_error(
+                                    pos,
+                                    number_token_len(t),
+                                    format_args!("JSON does not support numeric separators"),
+                                ));
+                            }
                             if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
                                 return Err(self.syntax_err_at(pos));
                             }
@@ -1005,6 +1041,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             i += 1;
             if i < n && t[i] == b'_' {
                 return Err(self.syntax_err_at(pos));
+            }
+            if strict && (i >= n || !t[i].is_ascii_digit()) {
+                return Err(self.json_number_error(
+                    pos,
+                    number_token_len(t),
+                    format_args!("JSON numbers must have a digit after \".\""),
+                ));
             }
             digits!();
         } else if first == b'.' {
@@ -1151,6 +1194,25 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
+    /// A number that JavaScript accepts and JSON does not.
+    #[cold]
+    fn json_number_error(
+        &mut self,
+        pos: usize,
+        len: usize,
+        args: core::fmt::Arguments<'_>,
+    ) -> crate::Error {
+        self.token_start = pos;
+        let _ = self.add_range_error(
+            Range {
+                loc: usize2loc(pos),
+                len: len as i32,
+            },
+            args,
+        );
+        crate::Error::SyntaxError
+    }
+
     #[cold]
     fn parse_scalar_cold(&mut self, loc: Loc) -> PResult<Expr> {
         let cursor = self.cursor;
@@ -1278,6 +1340,20 @@ fn ident_len(t: &[u8]) -> usize {
         .take_while(|&&c| is_identifier_continue(c))
         .count()
         .max(1)
+}
+
+/// Length of the number-like token at the start of `t`, for the range of a syntax error.
+fn number_token_len(t: &[u8]) -> usize {
+    let mut i = 0;
+    while i < t.len() {
+        let c = t[i];
+        let exponent_sign = matches!(c, b'+' | b'-') && i > 0 && matches!(t[i - 1], b'e' | b'E');
+        if !(is_identifier_continue(c) || c == b'.' || exponent_sign) {
+            break;
+        }
+        i += 1;
+    }
+    i.max(1)
 }
 
 #[inline]

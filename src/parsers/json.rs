@@ -16,6 +16,8 @@ use crate::json_stage2::Parser;
 pub struct JSONOptions {
     pub allow_comments: bool,
     pub allow_trailing_commas: bool,
+    /// Accept the JavaScript number forms JSON lacks: `0x10`, `017`, `1_000`, `.5`, `5.`, `- 1`.
+    pub allow_js_number_syntax: bool,
     pub ignore_leading_escape_sequences: bool,
     pub json_warn_duplicate_keys: bool,
     pub was_originally_macro: bool,
@@ -27,6 +29,7 @@ impl JSONOptions {
     pub const DEFAULT: JSONOptions = JSONOptions {
         allow_comments: false,
         allow_trailing_commas: false,
+        allow_js_number_syntax: false,
         ignore_leading_escape_sequences: false,
         json_warn_duplicate_keys: true,
         was_originally_macro: false,
@@ -39,6 +42,7 @@ const JSON_OPTS: JSONOptions = JSONOptions::DEFAULT;
 
 const DOTENV_JSON_OPTS: JSONOptions = JSONOptions {
     allow_trailing_commas: true,
+    allow_js_number_syntax: true,
     ignore_leading_escape_sequences: true,
     ..JSONOptions::DEFAULT
 };
@@ -46,12 +50,14 @@ const DOTENV_JSON_OPTS: JSONOptions = JSONOptions {
 const TSCONFIG_OPTS: JSONOptions = JSONOptions {
     allow_comments: true,
     allow_trailing_commas: true,
+    allow_js_number_syntax: true,
     ..JSONOptions::DEFAULT
 };
 
 const MACRO_JSON_OPTS: JSONOptions = JSONOptions {
     allow_comments: true,
     allow_trailing_commas: true,
+    allow_js_number_syntax: true,
     json_warn_duplicate_keys: false,
     was_originally_macro: true,
     ..JSONOptions::DEFAULT
@@ -60,6 +66,7 @@ const MACRO_JSON_OPTS: JSONOptions = JSONOptions {
 pub const PACKAGE_JSON_OPTS: JSONOptions = JSONOptions {
     allow_comments: true,
     allow_trailing_commas: true,
+    allow_js_number_syntax: true,
     ..JSONOptions::DEFAULT
 };
 
@@ -712,6 +719,7 @@ const PKG_JSON_CHECKER_OPTS: JSONOptions = JSONOptions {
     json_warn_duplicate_keys: false,
     allow_trailing_commas: true,
     allow_comments: true,
+    allow_js_number_syntax: true,
     ..JSONOptions::DEFAULT
 };
 
@@ -1399,15 +1407,96 @@ mod tests {
             ("[- 5]", -5.0),
             ("[1e400]", f64::INFINITY),
         ] {
+            for which in [
+                Which::TsConfig,
+                Which::PackageJson,
+                Which::Jsonc,
+                Which::Env,
+            ] {
+                let p = run(src.as_bytes(), which);
+                assert_eq!(p.errors, 0, "{src}: {}", p.first_msg);
+                let mut got = String::new();
+                to_json_string(p.root.as_ref().unwrap(), &mut got);
+                let mut expected = String::new();
+                to_json_string(
+                    &Expr::init(E::Number::new(want), bun_ast::Loc::EMPTY),
+                    &mut expected,
+                );
+                assert_eq!(got, format!("[{expected}]"), "{src}");
+            }
+        }
+    }
+
+    #[test]
+    fn strict_numbers() {
+        // Plain `.json` agrees with `JSON.parse`, and each message names the construct.
+        for (src, msg) in [
+            ("[0x10]", "JSON does not support hexadecimal numbers"),
+            ("[0X10]", "JSON does not support hexadecimal numbers"),
+            ("[0b101]", "JSON does not support binary numbers"),
+            ("[0o17]", "JSON does not support octal numbers"),
+            ("[017]", "JSON does not support numbers with leading zeros"),
+            ("[018]", "JSON does not support numbers with leading zeros"),
+            ("[00]", "JSON does not support numbers with leading zeros"),
+            ("[-01]", "JSON does not support numbers with leading zeros"),
+            ("[1_000]", "JSON does not support numeric separators"),
+            ("[1.0_1]", "JSON does not support numeric separators"),
+            ("[1e1_0]", "JSON does not support numeric separators"),
+            ("[.5]", "JSON numbers must have a digit before \".\""),
+            ("[-.5]", "JSON numbers must have a digit before \".\""),
+            ("[5.]", "JSON numbers must have a digit after \".\""),
+            ("[5.e1]", "JSON numbers must have a digit after \".\""),
+            ("[- 5]", "JSON numbers must have a digit after \"-\""),
+            ("[-\u{a0}5]", "JSON numbers must have a digit after \"-\""),
+            (
+                "{\"a\": 0123}",
+                "JSON does not support numbers with leading zeros",
+            ),
+        ] {
+            for which in [Which::Utf8, Which::Immutable] {
+                let p = run(src.as_bytes(), which);
+                assert!(p.root.is_none() || p.errors > 0, "{src}: expected an error");
+                assert!(
+                    p.first_msg.contains(msg),
+                    "{src}: expected {msg:?}, got {:?}",
+                    p.first_msg
+                );
+            }
+        }
+        // The error range covers the number token and stops at an operator.
+        for (src, range) in [
+            ("{\"a\": 0x10}", (6, 4)),
+            ("{\"a\": 0x10+1}", (6, 4)),
+            ("{\"a\": 5.+2}", (6, 2)),
+            ("{\"a\": 1_000+1}", (6, 5)),
+            ("{\"a\": 1e+5_0}", (6, 6)),
+            ("{\"a\": - 1}", (6, 1)),
+        ] {
+            bun_ast::initialize_store_or_reset();
+            let _scope = js_ast::StoreResetGuard::new();
+            let mut log = bun_ast::Log::init();
+            let bump = Bump::new();
+            let source = bun_ast::Source::init_path_string("fixture.json", src.as_bytes());
+            assert!(parse_utf8(&source, &mut log, &bump).is_err(), "{src}");
+            let loc = log.msgs[0].data.location.as_ref().unwrap();
+            assert_eq!((loc.offset, loc.length), range, "{src}");
+        }
+        // Every number form that JSON does define still parses.
+        for (src, want) in [
+            ("[0]", "[0]"),
+            ("[-0]", "[-0]"),
+            ("[0.5]", "[0.5]"),
+            ("[0e1]", "[0]"),
+            ("[0E+1]", "[0]"),
+            ("[10]", "[10]"),
+            ("[-10.25e-1]", "[-1.025]"),
+            ("[1e400]", "[inf]"),
+        ] {
             let p = run(src.as_bytes(), Which::Utf8);
             assert_eq!(p.errors, 0, "{src}: {}", p.first_msg);
-            let Data::EArray(a) = &p.root.as_ref().unwrap().data else {
-                panic!()
-            };
-            let Data::ENumber(n) = &a.items[0].data else {
-                panic!("{src}")
-            };
-            assert_eq!(n.value(), want, "{src}");
+            let mut got = String::new();
+            to_json_string(p.root.as_ref().unwrap(), &mut got);
+            assert_eq!(got, want, "{src}");
         }
     }
 

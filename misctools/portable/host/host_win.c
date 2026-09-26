@@ -170,7 +170,8 @@ static long long host_mprotect(char *addr, size_t len, long long prot) {
 /* ---- files ---- */
 static HANDLE fds[1024];
 static SRWLOCK fd_lock = SRWLOCK_INIT;
-static HANDLE fd_handle(long long fd) { return fd >= 0 && fd < 1024 ? fds[fd] : 0; }
+/* A file descriptor is an int: the upper half of the register it arrives in is not part of it. */
+static HANDLE fd_handle(long long wide) { int fd = (int)wide; return fd >= 0 && fd < 1024 ? fds[fd] : 0; }
 static long long fd_put(HANDLE h) {
   AcquireSRWLockExclusive(&fd_lock);
   for (int i = 3; i < 1024; i++)
@@ -375,7 +376,7 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
     case N_close: {
       HANDLE h = fd_handle(a);
       if (!h) { r = -L_EBADF; break; }
-      if (a > 2) { CloseHandle(h); fds[a] = 0; }
+      if ((int)a > 2) { CloseHandle(h); fds[(int)a] = 0; }
       r = 0;
       break;
     }
@@ -441,7 +442,10 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
    A library is a system DLL, named as in an import table ("kernel32",
    "ntdll", "ws2_32"), and is loaded from the system directory only.
    "libuv" is the libuv that is linked into this host (BUN_HOST_LIBUV, see
-   host_win_uv.c): libuv has no DLL. */
+   host_win_uv.c): libuv has no DLL.
+   "*" is a function whose declaration in bun names no library, because the
+   linker of a build for Windows finds it in one of the libraries it always
+   searches: the DLLs of those are asked here, in this order. */
 #ifdef BUN_HOST_LIBUV
 void *bun_host_uv_lookup(const char *symbol);
 #else
@@ -451,6 +455,13 @@ static SYSV void *host_lookup(const char *library, const char *symbol) {
   void *address = 0;
   if (!strcmp(library, "libuv")) {
     address = bun_host_uv_lookup(symbol);
+  } else if (!strcmp(library, "*")) {
+    static const wchar_t *const always[] = {L"kernel32", L"ntdll", L"advapi32", L"ws2_32", L"userenv", L"user32", L"ucrtbase"};
+    for (size_t i = 0; !address && i < sizeof always / sizeof *always; i++) {
+      HMODULE module = GetModuleHandleW(always[i]);
+      if (!module) module = LoadLibraryExW(always[i], 0, LOAD_LIBRARY_SEARCH_SYSTEM32);
+      if (module) address = (void *)GetProcAddress(module, symbol);
+    }
   } else {
     wchar_t name[260];
     if (to_wide(library, name, 260) > 1) {

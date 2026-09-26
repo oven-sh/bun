@@ -1,6 +1,7 @@
 //! The loop slice: a program of the portable image that runs bun's event loop.
 //!
-//!   bun_loop_slice                runs the steps and prints one JSON object for each
+//!   bun_loop_slice                says which host it runs on and which code it takes, runs the steps and
+//!                                 prints one JSON object for each
 //!   bun_loop_slice child <mode>   what a step starts as its child process
 //!   bun_loop_slice --imports      binds every function of Windows and of libuv that the image can call
 //!                                 and prints the ones the host could not resolve
@@ -92,6 +93,22 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
                 0
             } else {
                 1
+            }
+        }
+        [] => {
+            let windows = bun_core::host::is_windows();
+            let mut line = Vec::new();
+            line.extend_from_slice(b"{\"step\":\"host\",\"os\":\"");
+            line.extend_from_slice(bun_core::host::name().as_bytes());
+            line.extend_from_slice(b"\",\"code\":\"");
+            line.extend_from_slice(if windows { b"windows".as_slice() } else { b"posix".as_slice() });
+            line.extend_from_slice(b"\",\"ok\":true}\n");
+            let stdout = Fd::stdout();
+            let _ = File::borrow(&stdout).write_all(&line);
+            if windows {
+                program_windows::run(program, arguments)
+            } else {
+                program_posix::run(program, arguments)
             }
         }
         _ if bun_core::host::is_windows() => program_windows::run(program, arguments),

@@ -1,0 +1,7 @@
+{"step":"host","os":"linux","code":"posix","ok":true}
+{"step":"timer","fired":1,"not_early":true,"ok":true}
+{"step":"tcp echo","listening":true,"connected":true,"bytes":4096,"sent":4096,"server_received":4096,"received":4096,"echoed":true,"several_writes":false,"waited_to_write":false,"closes_first":"client","client_saw_end":false,"server_saw_end":true,"client_closed":true,"server_closed":true,"ok":true}
+{"step":"tcp echo, large","listening":true,"connected":true,"bytes":16777216,"sent":16777216,"server_received":16777216,"received":16777216,"echoed":true,"several_writes":true,"waited_to_write":true,"closes_first":"server","client_saw_end":true,"server_saw_end":false,"client_closed":true,"server_closed":true,"ok":true}
+{"step":"thread pool","jobs":16,"reported":16,"sum_as_expected":true,"ran_on_the_loop_thread":0,"reported_off_the_loop_thread":0,"ok":true}
+{"step":"child with three pipes","started":true,"input_written":true,"stdout":"WRITTEN BY THE PARENT, READ BY THE CHILD\n","stderr":"the child read 41 bytes\n","ended":"exited","exit_code":7,"signal":0,"ok":true}
+{"step":"child that is killed","started":true,"killed":true,"stdout":"ready\n","ended":"signaled","signal":9,"ok":true}

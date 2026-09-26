@@ -558,6 +558,8 @@ enum Effect {
     None,
     Read,
     Write,
+    /// An assignment to a local. It also conflicts with a memo block that starts after it: a cache hit skips the block.
+    Store,
 }
 
 #[derive(Clone, Copy)]
@@ -581,6 +583,8 @@ struct InterState<'a> {
     statements: Statements,
     /// Statements that print in place inside the value block being visited. They count only there.
     value_block_statements: Option<Statements>,
+    /// Position of the entry of the innermost memo block being visited.
+    memo_block: u32,
     /// fbt wants these inside the macro call: they stay inline and their operands get the names.
     inline_macro_operands: &'a HashSet<IdentifierId>,
     operands_of_macro_operands: IdMap<DeclarationId, Vec<Place>>,
@@ -593,6 +597,7 @@ impl<'a> InterState<'a> {
             position: 0,
             statements: Statements::default(),
             value_block_statements: None,
+            memo_block: 0,
             inline_macro_operands,
             operands_of_macro_operands: IdMap::new(),
         }
@@ -618,7 +623,7 @@ impl<'a> InterState<'a> {
         match effect {
             Effect::None => {}
             Effect::Read => statements.read = self.position,
-            Effect::Write => statements.write = self.position,
+            Effect::Write | Effect::Store => statements.write = self.position,
         }
     }
 
@@ -627,7 +632,9 @@ impl<'a> InterState<'a> {
         match temporary.effect {
             Effect::None => {}
             Effect::Read => statements.read = statements.read.max(temporary.position),
-            Effect::Write => statements.write = statements.write.max(temporary.position),
+            Effect::Write | Effect::Store => {
+                statements.write = statements.write.max(temporary.position)
+            }
         }
     }
 
@@ -639,7 +646,13 @@ impl<'a> InterState<'a> {
             Effect::None => false,
             Effect::Read => write > temporary.position,
             Effect::Write => read.max(write) > temporary.position,
+            Effect::Store => read.max(write).max(self.memo_block) > temporary.position,
         }
+    }
+
+    fn enter_memo_block(&mut self) -> u32 {
+        self.position += 1;
+        std::mem::replace(&mut self.memo_block, self.position)
     }
 
     fn enter_value_block(&mut self) -> Option<Statements> {
@@ -675,6 +688,7 @@ fn promote_interposed_block(
                 }) {
                     inter_state.statement(Effect::Read);
                 }
+                let outer = inter_state.enter_memo_block();
                 promote_interposed_block(
                     &scope.instructions,
                     state,
@@ -683,6 +697,7 @@ fn promote_interposed_block(
                     globals,
                     env,
                 );
+                inter_state.memo_block = outer;
             }
             ReactiveStatement::PrunedScope(scope) => {
                 promote_interposed_block(
@@ -807,16 +822,23 @@ fn instruction_effect(
         | InstructionValue::PropertyDelete { .. }
         | InstructionValue::ComputedStore { .. }
         | InstructionValue::ComputedDelete { .. }
-        | InstructionValue::PostfixUpdate { .. }
-        | InstructionValue::PrefixUpdate { .. }
-        | InstructionValue::StoreGlobal { .. }
+        | InstructionValue::StoreGlobal { .. } => Effect::Write,
+        InstructionValue::PostfixUpdate { .. } | InstructionValue::PrefixUpdate { .. } => {
+            Effect::Store
+        }
         // An array pattern runs an iterator, and an object pattern can run a getter.
-        | InstructionValue::Destructure { .. } => Effect::Write,
+        InstructionValue::Destructure { lvalue, .. } => {
+            if lvalue.kind == InstructionKind::Reassign {
+                Effect::Store
+            } else {
+                Effect::Write
+            }
+        }
         // A declaration writes a variable that nothing before it can read.
         InstructionValue::StoreLocal { lvalue, .. }
         | InstructionValue::StoreContext { lvalue, .. } => {
             if lvalue.kind == InstructionKind::Reassign {
-                Effect::Write
+                Effect::Store
             } else {
                 Effect::None
             }

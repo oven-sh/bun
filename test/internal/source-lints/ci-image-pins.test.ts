@@ -2,9 +2,10 @@
 // places they go are written. Some files cannot import it: other programs read
 // them, or they run somewhere the spec is not. They have to say the same thing.
 import { expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { locations, pins } from "../../../scripts/build/ci-images/spec.ts";
+import { generateImage, images, locations, pins } from "../../../scripts/build/ci-images/spec.ts";
 
 const root = join(import.meta.dir, "../../..");
 
@@ -55,6 +56,19 @@ test("scripts/darwin-ci, which is copied to its hosts, names the agent and the L
 
 test("scripts/agent.ts, which runs on the machines alone, puts the spec's Rust directory on a Mac's PATH", () => {
   expect(readFileSync(join(root, "scripts/agent.ts"), "utf8")).toContain(`<string>${locations.rust.darwin}/bin:`);
+});
+
+test("scripts/agent.ts starts the agent after the docker service an Alpine image enables", () => {
+  using dir = tempDir("ci-image-pins", {});
+  const image = images.find(image => image.os === "linux" && image.distro === "alpine")!;
+  const bootstrap = readFileSync(join(generateImage(image, String(dir)).directory, "bootstrap.sh"), "utf8");
+  // `rc-update add` is a link to the service in the runlevel's directory.
+  expect(bootstrap.split("\n")).toContain("rc-update add docker default");
+
+  const agent = readFileSync(join(root, "scripts/agent.ts"), "utf8");
+  const [, depend] = agent.match(/^ *depend\(\) \{\n([^}]*)\}/m)!;
+  expect(depend.split("\n").map(line => line.trim())).toContain("after docker");
+  expect(agent).toContain('const openRcDockerService = "/etc/runlevels/default/docker";');
 });
 
 test("the Node-API tests build against the headers of the Node.js the CI images install", () => {

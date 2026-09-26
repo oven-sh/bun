@@ -1,7 +1,7 @@
 import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, ospath, tempDir, wasmGCStructRefSource } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -973,16 +973,7 @@ console.log("survived", require("./late.js"));`,
     // In a subprocess because the failure is an abort of the process.
     test("a WebAssembly GC reference as the receiver throws a TypeError", async () => {
       const src = `
-        // (module (type $s (struct (field (mut i32))))
-        //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
-        const bytes = new Uint8Array([
-          0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-          0x01, 0x0a, 0x02, 0x5f, 0x01, 0x7f, 0x01, 0x60, 0x00, 0x01, 0x63, 0x00,
-          0x03, 0x02, 0x01, 0x01,
-          0x07, 0x06, 0x01, 0x02, 0x6d, 0x6b, 0x00, 0x00,
-          0x0a, 0x07, 0x01, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b,
-        ]);
-        const ref = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+        const ref = ${wasmGCStructRefSource};
         const { set } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(require), ${JSON.stringify(key)});
         try {
           set.call(ref, 1);

@@ -1528,6 +1528,8 @@ void WebSocket::didConnect(us_socket_t* socket, void* bufferedData, const PerMes
     if (m_paused)
         applyPauseToConnectedClient();
 
+    if (bufferedData)
+        queueInitialDataDelivery();
     this->didConnect();
 }
 
@@ -1717,6 +1719,9 @@ void WebSocket::didConnectWithTunnel(void* tunnel, void* bufferedData, const Per
     if (m_paused)
         applyPauseToConnectedClient();
 
+    if (bufferedData)
+        queueInitialDataDelivery();
+
     // IMPORTANT: Call didConnect() BEFORE setting the connected websocket on the tunnel.
     // didConnect() sets m_state = OPEN, and messages are dropped if state != OPEN.
     // By calling didConnect() first, we ensure the state is OPEN before the tunnel
@@ -1726,6 +1731,28 @@ void WebSocket::didConnectWithTunnel(void* tunnel, void* bufferedData, const Per
     // Now set the connected websocket on the tunnel to start forwarding data
     // The open handler may already have closed/terminated us.
     WebSocketProxyTunnel__setConnectedWebSocket(tunnel, m_connectedWebSocketKind == ConnectedWebSocketKind::Client ? this->m_connectedWebSocket.client : nullptr);
+}
+
+// An open listener that spins the event loop gets the bytes behind the 101 from this task.
+void WebSocket::queueInitialDataDelivery()
+{
+    queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [](WebSocket& ws) {
+        ws.deliverInitialData();
+    });
+}
+
+void WebSocket::deliverInitialData()
+{
+    switch (m_connectedWebSocketKind) {
+    case ConnectedWebSocketKind::Client:
+        Bun__WebSocketClient__deliverInitialData(m_connectedWebSocket.client);
+        break;
+    case ConnectedWebSocketKind::ClientSSL:
+        Bun__WebSocketClientTLS__deliverInitialData(m_connectedWebSocket.clientSSL);
+        break;
+    case ConnectedWebSocketKind::None:
+        break;
+    }
 }
 
 } // namespace WebCore
@@ -1741,6 +1768,11 @@ extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t
 extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params)
 {
     webSocket->didConnectWithTunnel(tunnel, bufferedData, deflate_params);
+}
+
+extern "C" void WebSocket__deliverInitialData(WebCore::WebSocket* webSocket)
+{
+    webSocket->deliverInitialData();
 }
 
 struct FfiRawHeaderSlice {

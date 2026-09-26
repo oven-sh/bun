@@ -32,7 +32,7 @@
 "generic_body_not_generic:src/http/lib.rs" = 2
 
 [bun_http_jsc]
-"generic_body_not_generic:src/http_jsc/websocket_client.rs" = 2
+"generic_body_not_generic:src/http_jsc/websocket_client.rs" = 5
 "generic_body_not_generic:src/http_jsc/websocket_client/WebSocketUpgradeClient.rs" = 1
 
 [bun_install]

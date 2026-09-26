@@ -208,21 +208,6 @@ impl<T> BackRef<T, Root> {
         // SAFETY: see above.
         unsafe { ThisPtr::new(self.0.as_ptr()) }
     }
-
-    /// Wrap the root pointer of a live heap allocation.
-    ///
-    /// # Safety
-    /// [`BackRef::from_raw`]'s contract, and `p` is what `Box::into_raw` /
-    /// `heap::into_raw` returned for an allocation that stays live while the
-    /// result is held.
-    #[inline]
-    pub const unsafe fn from_root(p: *mut T) -> Self {
-        // SAFETY: caller contract — `p` is non-null.
-        BackRef(
-            unsafe { core::ptr::NonNull::new_unchecked(p) },
-            core::marker::PhantomData,
-        )
-    }
 }
 
 impl<T> From<ThisPtr<T>> for BackRef<T, Root> {

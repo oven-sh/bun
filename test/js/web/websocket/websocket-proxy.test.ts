@@ -689,6 +689,65 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
   });
 });
 
+// A Bun.serve origin that sends from its open handler puts the 101 and the frame in one write (one
+// TLS record for wss://), so the client gets the frame in the same read as the 101. wss:// goes
+// through the TLS tunnel; ws:// hands the proxy socket to the client directly.
+describe("a message that arrives with the 101 through a proxy", () => {
+  test.each([
+    ["ws", "http"],
+    ["ws", "https"],
+    ["wss", "http"],
+    ["wss", "https"],
+  ])("%s:// through an %s proxy: code that awaits open gets the message", async (protocol, scheme) => {
+    using origin = Bun.serve({
+      port: 0,
+      tls: protocol === "wss" ? { key: tlsCerts.key, cert: tlsCerts.cert } : undefined,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("Expected WebSocket", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send("greeting");
+        },
+        message() {},
+      },
+    });
+    using recorded = await startRecordingProxy({ tls: scheme === "https" });
+
+    const order: string[] = [];
+    const opened = Promise.withResolvers<void>();
+    const received = Promise.withResolvers<void>();
+    let ready = false;
+    const ws = new WebSocket(`${protocol}://127.0.0.1:${origin.port}`, {
+      proxy: `${scheme}://127.0.0.1:${recorded.port}`,
+      tls: { rejectUnauthorized: false },
+    });
+    ws.addEventListener("open", () => opened.resolve());
+    ws.addEventListener("message", event => {
+      order.push(`message ${event.data} ready=${ready}`);
+      received.resolve();
+    });
+    for (const pending of [opened, received]) {
+      ws.addEventListener("error", event => pending.reject(new Error(`error: ${(event as ErrorEvent).message}`)));
+      ws.addEventListener("close", event => pending.reject(new Error(`closed: ${event.code} ${event.reason}`)));
+    }
+
+    try {
+      await opened.promise;
+      order.push("open awaited");
+      ready = true;
+      await received.promise;
+      expect({ order, requests: recorded.requests }).toEqual({
+        order: ["open awaited", "message greeting ready=true"],
+        requests: [connectRequest(origin.port)],
+      });
+    } finally {
+      ws.close();
+    }
+  });
+});
+
 describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
   // These tests verify WebSocket connections through HTTPS (TLS) proxy servers
 

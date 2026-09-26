@@ -39,7 +39,7 @@ use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 use super::websocket_proxy_tunnel::IntoUpgradeClientRef;
 use bun_uws::{self as uws, SocketHandler, SocketKind};
 
-use super::cpp_websocket::CppWebSocket;
+use super::cpp_websocket::{CppWebSocket, CppWebSocketRef};
 use super::websocket_deflate as WebSocketDeflate;
 use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
@@ -835,17 +835,32 @@ where
         let head_len = response.bytes_read;
         let is_101 = response.status_code == 101;
 
-        // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
-        let _scope = is_101
-            .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
+        let overflow_owner;
+        {
+            // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
+            let _scope = is_101
+                .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
 
-        if let Some(ws) = this.cpp_websocket() {
-            Self::dispatch_handshake(ws, &response, if is_101 { &[] } else { &full[head_len..] });
-            if this.cpp_websocket().is_none() {
-                return;
+            if let Some(ws) = this.cpp_websocket() {
+                Self::dispatch_handshake(
+                    ws,
+                    &response,
+                    if is_101 { &[] } else { &full[head_len..] },
+                );
+                if this.cpp_websocket().is_none() {
+                    return;
+                }
             }
+            // After 'upgrade': a listener that spins the event loop re-enters here, and C++ has one slot.
+            overflow_owner = this
+                .cpp_websocket()
+                .filter(|_| is_101 && full.len() > head_len)
+                .map(|ws| CppWebSocketRef::new(&ws));
+            Self::process_response(this, response, &full[head_len..]);
         }
-        Self::process_response(this, response, &full[head_len..]);
+        if is_101 {
+            CppWebSocket::deliver_initial_data_after_open(overflow_owner);
+        }
     }
 
     /// Takes `ThisPtr<Self>` because `terminate`/`handle_data` may free `this`.

@@ -541,6 +541,8 @@ void nativeTransformReleaseStateIfIdle(JSTransformStream*); // userJS: no — JS
 // Both mean "suspend" — nativeSinkWriteIsBackpressure below reads either shape.
 extern "C" JSC::EncodedJSValue Bun__NativeTransformSink__writeBytes(uint8_t sinkId, void* sinkPtr, JSC::JSGlobalObject*, const uint8_t* ptr, size_t len); // userJS: no — Sink.rs
 bool nativeSinkWriteIsBackpressure(JSC::VM&, JSC::JSValue wrote); // userJS: no — WebStreamsMisc.cpp
+// FileReader::set_flowing on the Source that a JSFileInternalReadableStreamSource wraps.
+extern "C" void FileReader__setFlowing(void* source, bool flowing); // userJS: no — FileReader.rs
 
 // Brackets a native transform/flush arm so a re-entrant ClearAlgorithms (reached via a
 // reader.cancel() inside the arm's chunk coercion) defers nativeTransformReleaseState

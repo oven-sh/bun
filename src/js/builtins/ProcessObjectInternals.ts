@@ -142,6 +142,8 @@ export function getStdinStream(
 
   function disown() {
     $debug("unref();");
+    // Another reader of Bun.stdin.stream() holds the lock: the source is theirs.
+    if (!reader && native.locked) return;
     source?.setFlowing?.(false);
 
     if (reader) {
@@ -151,7 +153,8 @@ export function getStdinStream(
       reader = undefined;
       $debug("released reader");
     }
-    source?.updateRef?.(false);
+    // A stopped source keeps nothing alive; its ref is for the next reader of Bun.stdin.stream().
+    source?.updateRef?.(!forceUnref);
   }
 
   const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;

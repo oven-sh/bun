@@ -472,6 +472,201 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(exitCode).toBe(0);
 });
 
+// process.stdin reads through a reader on Bun.stdin.stream(), which is one stream
+// per process. One tick after 'pause' it stops the native source and releases
+// that reader. The next reader (the console iterator, a Bun.stdin.stream()
+// reader, process.stdin again) has to resume the source and keep the process alive.
+describe("Bun's own stdin readers after process.stdin pauses", () => {
+  // Not top-level await: a pending module promise keeps the process alive and hides an early exit.
+  const child = (door: string, consumer: string) => `
+    const got = [];
+    (async () => {
+      ${door}
+      // The release happens one tick after 'pause'.
+      await new Promise(resolve => setImmediate(resolve));
+      console.log("READY");
+      ${consumer}
+      console.log(JSON.stringify(got));
+    })();
+  `;
+
+  const doors = {
+    "pause()": { first: "", seen: [], door: `process.stdin.pause();` },
+    "rl.close()": {
+      first: "one\n",
+      seen: ["rl:one"],
+      door: `
+        const rl = require("node:readline").createInterface({ input: process.stdin });
+        got.push("rl:" + (await new Promise(resolve => rl.once("line", resolve))));
+        rl.close();
+      `,
+    },
+    "a 'data' listener that pauses": {
+      first: "one\n",
+      seen: ["data:one"],
+      door: `
+        await new Promise(resolve =>
+          process.stdin.once("data", chunk => {
+            got.push("data:" + chunk.toString().trim());
+            process.stdin.pause();
+            resolve();
+          }),
+        );
+      `,
+    },
+  };
+
+  const consumers = {
+    "the console iterator": `for await (const line of console) got.push(line);`,
+    "Bun.stdin.stream()": `
+      const reader = Bun.stdin.stream().getReader();
+      let text = "";
+      for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+        text += Buffer.from(chunk.value).toString();
+      }
+      got.push(...text.split("\\n"));
+    `,
+  };
+
+  // Each step waits for `marker` on the child's stdout (if any), then writes `input`. Stdin closes after the last step.
+  async function run(script: string, steps: [marker: string | null, input: string][]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    for (const [marker, input] of steps) {
+      while (marker && !stdout.includes(marker)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stdout ended before ${marker}; stdout=${JSON.stringify(stdout)}`);
+        stdout += decoder.decode(value, { stream: true });
+      }
+      proc.stdin.write(input);
+      proc.stdin.flush();
+    }
+    await proc.stdin.end();
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+      stdout += decoder.decode(chunk.value, { stream: true });
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  for (const [doorName, { first, seen, door }] of Object.entries(doors)) {
+    for (const [consumerName, consumer] of Object.entries(consumers)) {
+      test.concurrent(`${consumerName} after ${doorName}`, async () => {
+        const steps: [string | null, string][] = first ? [[null, first]] : [];
+        expect(await run(child(door, consumer), [...steps, ["READY\n", "two\nthree"]])).toEqual({
+          stdout: "READY\n" + JSON.stringify([...seen, "two", "three"]) + "\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    }
+  }
+
+  test.concurrent("pause() leaves a Bun.stdin.stream() reader that holds the lock alone", async () => {
+    const script = `
+      (async () => {
+        const reader = Bun.stdin.stream().getReader();
+        const pending = reader.read();
+        process.stdin.pause();
+        await new Promise(resolve => setImmediate(resolve));
+        console.log("READY");
+        console.log(JSON.stringify(Buffer.from((await pending).value).toString()));
+      })();
+    `;
+    expect(await run(script, [["READY\n", "one"]])).toEqual({ stdout: 'READY\n"one"\n', stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("process.stdin takes stdin back after the Bun reader releases it", async () => {
+    const script = `
+      const got = [];
+      (async () => {
+        process.stdin.once("data", chunk => {
+          got.push("data:" + chunk.toString().trim());
+          process.stdin.pause();
+        });
+        await new Promise(resolve => process.stdin.once("pause", resolve));
+        await new Promise(resolve => setImmediate(resolve));
+        const reader = Bun.stdin.stream().getReader();
+        console.log("READY");
+        got.push("web:" + Buffer.from((await reader.read()).value).toString().trim());
+        reader.releaseLock();
+        process.stdin.on("data", chunk => got.push("data:" + chunk.toString().trim()));
+        process.stdin.on("end", () => console.log(JSON.stringify(got)));
+        process.stdin.resume();
+        console.log("AGAIN");
+      })();
+    `;
+    expect(
+      await run(script, [
+        [null, "one\n"],
+        ["READY\n", "two\n"],
+        ["AGAIN\n", "three\n"],
+      ]),
+    ).toEqual({
+      stdout: "READY\nAGAIN\n" + JSON.stringify(["data:one", "web:two", "data:three"]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // readline puts the terminal in raw mode for the prompt, and close() restores it and pauses stdin.
+  test.skipIf(isWindows).concurrent("the console iterator after a readline prompt on a terminal", async () => {
+    const script = `
+      const got = [];
+      (async () => {
+        const rl = require("node:readline").createInterface({ input: process.stdin, output: process.stdout });
+        got.push("rl:" + (await new Promise(resolve => rl.question("name? ", resolve))));
+        rl.close();
+        await new Promise(resolve => setImmediate(resolve));
+        console.log("READY");
+        for await (const line of console) {
+          got.push(line);
+          if (got.length === 3) break;
+        }
+        console.log("GOT " + JSON.stringify(got));
+      })();
+    `;
+    const decoder = new TextDecoder();
+    let output = "";
+    let waiting: { marker: string; resolve: () => void } | undefined;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      terminal: {
+        data(_terminal, chunk) {
+          output += decoder.decode(chunk, { stream: true });
+          if (waiting && output.includes(waiting.marker)) waiting.resolve();
+        },
+      },
+    });
+    await using terminal = proc.terminal!;
+    function waitFor(marker: string) {
+      return new Promise<void>((resolve, reject) => {
+        waiting = { marker, resolve };
+        proc.exited.then(code =>
+          reject(new Error(`child exited with ${code} before ${marker}; output=${JSON.stringify(output)}`)),
+        );
+        if (output.includes(marker)) resolve();
+      });
+    }
+    await waitFor("name? ");
+    terminal.write("one\r");
+    await waitFor("READY");
+    terminal.write("two\nthree\n");
+    await waitFor("GOT ");
+    expect(output).toContain('GOT ["rl:one","two","three"]');
+    expect(await proc.exited).toBe(0);
+  });
+});
+
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the

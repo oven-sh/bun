@@ -1068,6 +1068,14 @@ impl FileReader {
 
 pub(crate) type Source = readable_stream::NewSource<FileReader>;
 
+/// `readableStreamReaderGenericInitialize` (C++): a reader locked the stream over this source.
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub(crate) extern "C" fn FileReader__setFlowing(source: *mut Source, flowing: bool) {
+    // SAFETY: `source` is the live `Source` that the stream's native handle wraps.
+    unsafe { (*source).context.set_flowing(flowing) };
+}
+
 /// Holds a ref on the `Source` that embeds a `FileReader` while a dispatch runs
 /// user JS. Dropping it releases the ref and can free the source, so a pin must
 /// outlive every use of the reader it protects.

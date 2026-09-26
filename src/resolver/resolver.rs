@@ -2463,18 +2463,24 @@ impl<'a> Resolver<'a> {
             return a || b;
         }
 
-        if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
-            return false;
-        }
         if !bun_paths::is_absolute(import_source_file) {
             return false;
         }
+        let source_dir = bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO);
 
-        let joined = bun_paths::join_abs(
-            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
-            bun_paths::Platform::AUTO,
-            specifier,
-        );
+        if is_package_path(specifier) {
+            let mut busted = false;
+            self.for_each_tsconfig_paths_target_from(source_dir, specifier, &mut |this, abs| {
+                // `@/dir/` maps to a path that ends in a separator.
+                let abs = strings::without_trailing_slash_windows_path(abs);
+                let dir = bun_paths::dirname_platform(abs, bun_paths::Platform::AUTO);
+                busted |= this.bust_dir_cache(dir);
+                busted |= this.bust_dir_cache(abs);
+            });
+            return busted;
+        }
+
+        let joined = bun_paths::join_abs(source_dir, bun_paths::Platform::AUTO, specifier);
         let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
 
         let a = self.bust_dir_cache(dir);
@@ -4757,6 +4763,22 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
+        if self.for_each_tsconfig_paths_target(tsconfig, path, &mut |this, abs| {
+            this.load_as_file_or_directory(abs, kind, out).is_success()
+        }) {
+            MatchStatus::Success
+        } else {
+            MatchStatus::NotFound
+        }
+    }
+
+    /// Visits each target the `paths` map `path` to. Stops when `visit` returns true.
+    fn for_each_tsconfig_paths_target(
+        &mut self,
+        tsconfig: &TSConfigJSON,
+        path: &[u8],
+        visit: &mut dyn FnMut(&mut Self, &[u8]) -> bool,
+    ) -> bool {
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Matching \"{}\" against \"paths\" in \"{}\"",
@@ -4805,11 +4827,8 @@ impl<'a> Resolver<'a> {
                                 self.fs_ref().abs_buf(&parts, bufs!(tsconfig_path_abs));
                         }
 
-                        if self
-                            .load_as_file_or_directory(absolute_original_path, kind, out)
-                            .is_success()
-                        {
-                            return MatchStatus::Success;
+                        if visit(self, absolute_original_path) {
+                            return true;
                         }
                     }
                 }
@@ -4925,16 +4944,38 @@ impl<'a> Resolver<'a> {
                     continue;
                 };
 
-                if self
-                    .load_as_file_or_directory(absolute_original_path, kind, out)
-                    .is_success()
-                {
-                    return MatchStatus::Success;
+                if visit(self, absolute_original_path) {
+                    return true;
                 }
             }
         }
 
-        MatchStatus::NotFound
+        false
+    }
+
+    /// Visits each target the tsconfig `paths` enclosing `source_dir` map `specifier` to.
+    pub fn for_each_tsconfig_paths_target_from(
+        &mut self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        visit: &mut dyn FnMut(&mut Self, &[u8]),
+    ) {
+        if !bun_paths::is_absolute(source_dir) {
+            return;
+        }
+        let Some(dir_info) = self.dir_info_cached(source_dir).ok().flatten() else {
+            return;
+        };
+        let Some(tsconfig) = dir_info.enclosing_tsconfig_json else {
+            return;
+        };
+        if tsconfig.paths.count() == 0 {
+            return;
+        }
+        self.for_each_tsconfig_paths_target(tsconfig, specifier, &mut |this, abs| {
+            visit(this, abs);
+            false
+        });
     }
 
     /// A `paths` substitution written as a declaration file exists for type checking

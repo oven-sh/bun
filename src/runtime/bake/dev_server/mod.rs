@@ -1231,28 +1231,72 @@ impl DirectoryWatchStore {
             return Ok(());
         }
 
+        let source_dir =
+            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source);
+
+        let mut dirs: Vec<Box<[u8]>> = Vec::new();
+        let mut specifier_to_resolve: Box<[u8]> = Box::from(specifier);
         match loader {
             Loader::Tsx | Loader::Ts | Loader::Jsx | Loader::Js => {
-                if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
+                if bun_paths::is_absolute(specifier) {
                     return Ok(());
+                }
+                if bun_paths::is_package_path_not_absolute(specifier) {
+                    let dev = self.owner();
+                    // SAFETY: `server_transpiler` is initialized before the
+                    // bundler can report a failure. `owner()` recovers the
+                    // heap-allocated DevServer; the transpiler is disjoint
+                    // from `directory_watchers`.
+                    unsafe { (*dev).server_transpiler.assume_init_mut() }
+                        .resolver
+                        .for_each_tsconfig_paths_target_from(
+                            source_dir,
+                            specifier,
+                            &mut |_, abs| {
+                                let abs =
+                                    bun_paths::string_paths::without_trailing_slash_windows_path(
+                                        abs,
+                                    );
+                                let dir = bun_paths::resolve_path::dirname::<
+                                    bun_paths::platform::Auto,
+                                >(abs);
+                                if !dirs.iter().any(|d| **d == *dir) {
+                                    dirs.push(Box::from(dir));
+                                }
+                            },
+                        );
+                    if dirs.is_empty() {
+                        return Ok(());
+                    }
                 }
             }
             // Imports in CSS can resolve to relative files without './'
             // Imports in HTML can resolve to project-relative paths by
             // prefixing with '/', but that is done in HTMLScanner.
-            Loader::Css | Loader::Html => {}
+            Loader::Css | Loader::Html => {
+                if !(specifier[0] == b'.' || bun_paths::is_absolute(specifier)) {
+                    let mut v = Vec::with_capacity(2 + specifier.len());
+                    v.extend_from_slice(b"./");
+                    v.extend_from_slice(specifier);
+                    specifier_to_resolve = v.into_boxed_slice();
+                }
+            }
             // Multiple parts of DevServer rely on the fact that these
             // loaders do not depend on importing other files.
             _ => debug_assert!(false),
         }
 
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
-            &mut buf.0,
-            &[specifier],
-        );
-        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
+        if dirs.is_empty() {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                source_dir,
+                &mut buf.0,
+                &[&specifier_to_resolve],
+            );
+            dirs.push(Box::from(bun_paths::resolve_path::dirname::<
+                bun_paths::platform::Auto,
+            >(joined)));
+        }
 
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
@@ -1283,11 +1327,14 @@ impl DirectoryWatchStore {
             }
         };
 
-        match self.insert(dir, owned_file_path, specifier) {
-            Ok(()) => Ok(()),
-            Err(DirectoryWatchInsertError::Ignore) => Ok(()), // ignoring watch errors.
-            Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
+        for dir in &dirs {
+            match self.insert(dir, owned_file_path, &specifier_to_resolve) {
+                Ok(()) => {}
+                Err(DirectoryWatchInsertError::Ignore) => {} // ignoring watch errors.
+                Err(DirectoryWatchInsertError::OutOfMemory) => return Err(bun_alloc::AllocError),
+            }
         }
+        Ok(())
     }
 
     /// `dir_name_to_watch` is cloned; `file_path` must outlive the watch;
@@ -1324,16 +1371,7 @@ impl DirectoryWatchStore {
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 
-        let specifier_cloned: Box<[u8]> =
-            if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
-                Box::<[u8]>::from(specifier)
-            } else {
-                let mut v = Vec::with_capacity(2 + specifier.len());
-                v.extend_from_slice(b"./");
-                v.extend_from_slice(specifier);
-                v.into_boxed_slice()
-            };
-        // errdefer free(specifier_cloned) — handled by Drop on `?` paths.
+        let specifier_cloned: Box<[u8]> = Box::<[u8]>::from(specifier);
 
         if found_existing {
             let prev_first = Some(self.watches.values()[gop_index].first_dep);

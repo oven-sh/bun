@@ -288,6 +288,111 @@ devTest("directory cache bust case #17576", {
     await c.expectMessage(456);
   },
 });
+devTest("tsconfig paths alias to a file created after the server started (#43391)", {
+  files: {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } },
+    }),
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { base } from "@/base";
+      console.log(base);
+      import.meta.hot.accept();
+    `,
+    "src/base.ts": `
+      export const base = 123;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("src/fresh.ts", `export const fresh = 456;`);
+    });
+    await dev.write(
+      "index.ts",
+      `
+        import { fresh } from "@/fresh";
+        console.log(fresh);
+      `,
+    );
+    await c.expectMessage(456);
+  },
+});
+devTest("tsconfig paths alias imported before the file is created (#43391)", {
+  files: {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } },
+    }),
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from "@/second";
+      console.log("value: " + abc);
+    `,
+    "src/keep.ts": `
+      export const keep = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "@/second". Maybe you need to "bun install"?`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("src/second.ts", `export const abc = "456";`);
+    });
+
+    await c.expectMessage("value: 456");
+  },
+});
+// The alias maps to a path that ends in a slash. The resolver's cache key
+// assertion (debug and ASAN builds) rejects such a key, so the retry after the
+// failed resolution strips it before it evicts the cache.
+devTest("tsconfig paths alias to a directory that ends in a slash (#43391)", {
+  files: {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } },
+    }),
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from "@/second/";
+      console.log("value: " + abc);
+    `,
+    "src/second/keep.ts": `
+      export const keep = 1;
+    `,
+  },
+  async test(dev) {
+    const errors = [`index.ts:1:21: error: Could not resolve: "@/second/". Maybe you need to "bun install"?`];
+    await using c = await dev.client("/", { errors });
+
+    // No watch covers `src/second`, so this write alone rebuilds nothing.
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("src/second/index.ts", `export const abc = 789;`, { errors });
+    });
+    // The next build of the importer finds the stale listing of `src/second`,
+    // evicts it, and resolves the alias on the retry.
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+          import { abc } from "@/second/";
+          console.log("value: " + abc + "!");
+        `,
+      );
+    });
+    await c.expectMessage("value: 789!");
+  },
+});
 devTest("deleting imported file shows error then recovers", {
   skip: [
     "win32", // unlinkSync is having weird behavior

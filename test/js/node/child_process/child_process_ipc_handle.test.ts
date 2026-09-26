@@ -632,25 +632,43 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 
+  // The runtime opens some descriptors on first use and keeps them open: JSC opens /proc/self/statm
+  // when a GC cycle ends (WTF::LinuxMemory in AvailableMemory.cpp), WTF and bmalloc open /dev/urandom.
+  // If one of those opens runs between closeSync(0) and the SCM_RIGHTS receive, it takes fd 0 and the
+  // handle lands elsewhere. So the child first receives one handle (which runs every code path the real
+  // receive runs) and forces a full GC, then closes fd 0 and asks for the handle under test.
   test.concurrent("a received handle that lands on fd 0 is adopted", async () => {
     using dir = tempDir("ipc-handle-fd0", {
       "parent.js": `
 const { fork } = require('node:child_process');
 const net = require('node:net');
 const child = fork('child.js');
-const server = net.createServer(sock => {
-  child.send('sock', sock);
-  child.once('message', m => { console.log(JSON.stringify(m)); sock.destroy(); server.close(); child.disconnect(); });
-});
-server.listen(0, '127.0.0.1', () => {
+const server = net.createServer(sock => child.send('sock', sock));
+function connect() {
   const client = net.connect(server.address().port, '127.0.0.1');
   client.on('data', d => { client.end(); });
   client.on('error', () => {});
+}
+child.on('message', m => {
+  if (m === 'fd 0 is free') return connect();
+  console.log(JSON.stringify(m));
+  server.close();
+  child.disconnect();
 });
+server.listen(0, '127.0.0.1', connect);
 `,
       "child.js": `
-require('node:fs').closeSync(0); // the next descriptor this process receives is fd 0
+const fs = require('node:fs');
+let warmedUp = false;
 process.on('message', (m, sock) => {
+  if (!warmedUp) {
+    warmedUp = true;
+    sock.end('hi');
+    Bun.gc(true);
+    fs.closeSync(0); // the next descriptor this process receives is fd 0
+    process.send('fd 0 is free');
+    return;
+  }
   const fd = sock && sock._handle && sock._handle.fd;
   sock.end('hi', () => process.send({ message: m, receivedFd: fd, writable: true }));
 });

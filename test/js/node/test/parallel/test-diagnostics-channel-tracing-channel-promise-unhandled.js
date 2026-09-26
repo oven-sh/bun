@@ -10,6 +10,10 @@ const expectedError = new Error('test');
 const input = { foo: 'bar' };
 const thisArg = { baz: 'buz' };
 
+process.on('unhandledRejection', common.mustCall((reason) => {
+  assert.deepStrictEqual(reason, expectedError);
+}));
+
 function check(found) {
   assert.deepStrictEqual(found, input);
 }
@@ -27,10 +31,8 @@ const handlers = {
 
 channel.subscribe(handlers);
 
-channel.traceCallback(common.mustCall(function(cb, err) {
+// Set no then/catch handler to verify unhandledRejection happens
+channel.tracePromise(common.mustCall(function(value) {
   assert.deepStrictEqual(this, thisArg);
-  setImmediate(cb, err);
-}), 0, input, thisArg, common.mustCall((err, res) => {
-  assert.strictEqual(err, expectedError);
-  assert.strictEqual(res, undefined);
-}), expectedError);
+  return Promise.reject(value);
+}), input, thisArg, expectedError);

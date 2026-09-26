@@ -76,6 +76,7 @@ public:
     void finishCreation(JSC::VM&, const WTF::String& specifier, const WTF::String& referrer);
 
     bool wasModuleMock = false;
+    bool wasRequire = false;
 };
 
 // `graph`: the Bun.ModuleGraph whose loader is fetching, or null. A CommonJS file

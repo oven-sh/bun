@@ -12,6 +12,9 @@ declare global {
   var asyncObject: any;
   var asyncfail: any;
   var asyncret: any;
+  var __cjsSyncSideEffect: any;
+  var __cjsAsyncSideEffect: any;
+  var __cjsGhostRan: any;
 }
 
 plugin({
@@ -301,6 +304,268 @@ describe("module", () => {
       expect(hello).toBeUndefined();
       expect(there).toBeUndefined();
     }
+  });
+
+  it("sync module() returning CommonJS source works with import()", async () => {
+    globalThis.__cjsSyncSideEffect = 0;
+    // @ts-expect-error
+    const mod = await import("my-virtual-module-cjs-sync");
+    expect({ ...mod }).toEqual({ default: { hello: "cjs-sync", named: 1 }, hello: "cjs-sync", named: 1 });
+    expect(globalThis.__cjsSyncSideEffect).toBe(42);
+    delete require.cache["my-virtual-module-cjs-sync"];
+  });
+
+  it("sync module() returning CommonJS source works with require()", () => {
+    globalThis.__cjsSyncSideEffect = 0;
+    const mod = require("my-virtual-module-cjs-sync");
+    expect(mod).toEqual({ hello: "cjs-sync", named: 1 });
+    expect(globalThis.__cjsSyncSideEffect).toBe(42);
+    delete require.cache["my-virtual-module-cjs-sync"];
+  });
+
+  it("async module() returning CommonJS source works with import()", async () => {
+    globalThis.__cjsAsyncSideEffect = 0;
+    // @ts-expect-error
+    const mod = await import("my-virtual-module-cjs-async");
+    expect(mod.default).toEqual({ hello: "cjs-async" });
+    expect(mod.hello).toBe("cjs-async");
+    expect(globalThis.__cjsAsyncSideEffect).toBe(99);
+    delete require.cache["my-virtual-module-cjs-async"];
+  });
+
+  it("require() of an async module() returning CommonJS throws and leaves require.cache clean", async () => {
+    let factoryDone!: Promise<void>;
+    Bun.plugin({
+      name: "cjs-async-require-ghost",
+      setup(b) {
+        b.module("cjs-async-require-ghost", () => {
+          const { promise, resolve } = Promise.withResolvers<void>();
+          factoryDone = promise;
+          return (async () => {
+            await Promise.resolve();
+            resolve();
+            return { contents: "globalThis.__cjsGhostRan = true; module.exports = 1;", loader: "js" as const };
+          })();
+        });
+      },
+    });
+    globalThis.__cjsGhostRan = false;
+    expect(() => require("cjs-async-require-ghost")).toThrow("async module");
+    expect("cjs-async-require-ghost" in require.cache).toBe(false);
+    // Wait for the factory's promise to settle, then one more microtask turn
+    // for the orphaned then-reaction on it to fire.
+    await factoryDone;
+    await Promise.resolve();
+    expect("cjs-async-require-ghost" in require.cache).toBe(false);
+    expect(globalThis.__cjsGhostRan).toBe(false);
+    expect(() => require("cjs-async-require-ghost")).toThrow("async module");
+  });
+
+  it("module() returning `exports.x = ...` works", async () => {
+    // @ts-expect-error
+    const mod = await import("my-virtual-module-cjs-exports-dot");
+    expect(mod.foo).toBe("F");
+    expect(mod.bar).toBe("B");
+    delete require.cache["my-virtual-module-cjs-exports-dot"];
+  });
+
+  it("module() returning CommonJS source propagates errors from the body", async () => {
+    // @ts-expect-error
+    await expect(import("my-virtual-module-cjs-throws")).rejects.toThrow("cjs body threw");
+    delete require.cache["my-virtual-module-cjs-throws"];
+  });
+
+  it("onLoad returning CommonJS source works with import()", async () => {
+    // @ts-expect-error
+    const mod = await import("onload-cjs:m1");
+    expect(mod.default).toEqual({ fromOnLoad: true });
+    expect(mod.fromOnLoad).toBe(true);
+  });
+
+  it("onLoad returning CommonJS source works with require()", () => {
+    const mod = require("onload-cjs:m2");
+    expect(mod).toEqual({ fromOnLoad: true });
+  });
+
+  it.concurrent("module() returning CommonJS source does not populate the --isolate provider cache", async () => {
+    const testBody = `
+      import { test, expect } from "bun:test";
+      test("sync require", () => { expect(require("vcjs")).toBe(1); });
+      test("sync import", async () => { expect((await import("vcjs-i")).default).toBe(1); });
+      test("async import", async () => { expect((await import("vcjs-a")).default).toBe(2); });
+    `;
+    using dir = tempDir("plugin-cjs-isolate", {
+      "preload.ts": `
+        Bun.plugin({
+          name: "vcjs",
+          setup(b) {
+            b.module("vcjs", () => ({ contents: "module.exports = 1", loader: "js" }));
+            b.module("vcjs-i", () => ({ contents: "module.exports = 1", loader: "js" }));
+            b.module("vcjs-a", async () => {
+              await Promise.resolve();
+              return { contents: "module.exports = 2", loader: "js" };
+            });
+          },
+        });
+      `,
+      "a.test.ts": testBody,
+      "b.test.ts": testBody,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts", "a.test.ts", "b.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("6 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/21369
+  // https://github.com/oven-sh/bun/issues/22683
+  // https://github.com/oven-sh/bun/issues/10083
+  it.concurrent("onLoad in the file namespace returning CommonJS source works", async () => {
+    using dir = tempDir("plugin-onload-file-cjs", {
+      "preload.ts": `
+        Bun.plugin({
+          name: "file-cjs",
+          setup(b) {
+            b.onLoad({ filter: /target\\.js$/, namespace: "file" }, () => ({
+              contents: "globalThis.SIDE = 1; module.exports = { fromPlugin: true };",
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      "target.js": "module.exports = { disk: true };",
+      "entry.ts": `
+        globalThis.SIDE = 0;
+        const m = await import("./target.js");
+        const r = require("./target.js");
+        console.log(JSON.stringify({ keys: Object.keys(m).sort(), side: globalThis.SIDE, req: r }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+      keys: ["default", "fromPlugin"],
+      side: 1,
+      req: { fromPlugin: true },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/5044
+  it.concurrent("pass-through onLoad preserves CJS interop for named imports from node_modules", async () => {
+    using dir = tempDir("plugin-onload-passthrough-cjs", {
+      "preload.ts": `
+        import { readFileSync } from "node:fs";
+        Bun.plugin({
+          name: "noop",
+          setup(b) {
+            b.onLoad({ filter: /\\.[mc]?js$/ }, (args) => ({
+              contents: readFileSync(args.path, "utf8"),
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      "node_modules/fake-cjs-pkg/package.json": JSON.stringify({ name: "fake-cjs-pkg", main: "./lib/index.js" }),
+      "node_modules/fake-cjs-pkg/lib/index.js": `
+        "use strict";
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.readProjectManifest = function () { return { name: "hello" }; };
+      `,
+      "entry.ts": `
+        import { readProjectManifest } from "fake-cjs-pkg";
+        const r = require("fake-cjs-pkg");
+        console.log(JSON.stringify({ esm: readProjectManifest(), cjs: r.readProjectManifest() }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+      esm: { name: "hello" },
+      cjs: { name: "hello" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/19279
+  // A pass-through onLoad must not change how the file's own source is
+  // interpreted: foo.cts keeps its CommonJS exports, foo.mts stays ESM.
+  const passThroughPlugin = `
+    import { readFileSync } from "node:fs";
+    Bun.plugin({
+      name: "passthrough",
+      setup(b) {
+        b.onLoad({ filter: /foo\\.[cm]ts$/, namespace: "file" }, async args => ({
+          contents: readFileSync(args.path, "utf8"),
+          loader: "js",
+        }));
+      },
+    });
+  `;
+
+  it.concurrent.each(["cts", "mts"])(
+    "pass-through onLoad of a file-namespace .%s module keeps its named exports when imported as ESM",
+    async ext => {
+      using dir = tempDir(`plugin-onload-passthrough-${ext}`, {
+        "preload.ts": passThroughPlugin,
+        "foo.cts": `exports.foo = () => "foo";`,
+        "foo.mts": `export const foo = () => "foo";`,
+        "entry.ts": `
+          import * as ns from "./foo.${ext}";
+          import { foo } from "./foo.${ext}";
+          console.log(JSON.stringify({ hasFoo: Object.keys(ns).includes("foo"), foo: foo(), nsFoo: ns.foo() }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+        hasFoo: true,
+        foo: "foo",
+        nsFoo: "foo",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent("pass-through onLoad of a file-namespace .cts module works with require()", async () => {
+    using dir = tempDir("plugin-onload-passthrough-cts-require", {
+      "preload.ts": passThroughPlugin,
+      "foo.cts": `exports.foo = () => "foo";`,
+      "entry.ts": `
+        const mod = require("./foo.cts");
+        console.log(JSON.stringify({ keys: Object.keys(mod), foo: mod.foo() }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({ keys: ["foo"], foo: "foo" });
+    expect(exitCode).toBe(0);
   });
 });
 

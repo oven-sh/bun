@@ -394,6 +394,46 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // fixture/package.json resolves @types/node to latest, so the runs above
+  // never see the release the repo itself pins (package.json#resolutions),
+  // and a declaration that only breaks on an older release (the "process
+  // event methods" checks below) passes them. This run checks the whole
+  // fixture against that pin.
+  describe("@types/node at the repo's pin", () => {
+    test.skipIf(isDebug)("checks the fixture against the pinned @types/node", async () => {
+      const rootPkg = JSON.parse(readFileSync(join(BUN_REPO_ROOT, "package.json"), "utf8"));
+      const pin: string = rootPkg.resolutions["@types/node"];
+
+      const fixtureDir = await createIsolatedFixture();
+      const fixturePkg = await Bun.file(join(fixtureDir, "package.json")).json();
+      fixturePkg.resolutions["@types/node"] = pin;
+      await Bun.write(join(fixtureDir, "package.json"), JSON.stringify(fixturePkg, null, 2));
+      await $`cd ${fixtureDir} && bun add @types/node@${pin}`.quiet();
+
+      const nodeTypesPkg = await Bun.file(join(fixtureDir, "node_modules", "@types", "node", "package.json")).json();
+      expect(Bun.semver.satisfies(nodeTypesPkg.version, pin)).toBe(true);
+
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      tsconfig.include = ["*.ts", "*.tsx"];
+      await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(fixtureDir, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: fixtureDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   // Runs on debug builds too: spawning tsc over a single file is cheap,
   // unlike the in-process LanguageService runs above.
   describe("Bun.mmap", () => {
@@ -552,29 +592,25 @@ describe("@types/bun integration test", () => {
   });
 
   // Also runs on debug builds: spawned tsc over a single file, like the
-  // Bun.mmap check above. @types/node@24 declares `off`/`removeListener` only
-  // on EventEmitter, not on `Process`, so the `memoryPressure` overloads in
-  // overrides.d.ts used to hide the inherited signatures and reject every
-  // other event name (#40003). @types/node >= 26 declares them on `Process`
-  // directly, which masks the bug, so this check pins @types/node@24 instead
-  // of reusing the base fixture.
-  describe("process event methods with @types/node@24", () => {
-    test("removeListener and off accept other event names", async () => {
-      const checkDir = join(TEMP_DIR, "types-node-24-check");
+  // Bun.mmap check above. A method declared on bun-types' `Process` merge
+  // hides the one `Process` inherits. The `memoryPressure` overloads that
+  // overrides.d.ts used to declare there rejected every other event name for
+  // `off`/`removeListener` on @types/node 24 (#40003) and for every event
+  // method on 25.0.0 through 25.0.9, where `Process` inherits all of them
+  // (#39807). @types/node@latest, which the base fixture resolves, declares
+  // them on `Process` directly and masks both, so these checks pin the version.
+  describe("process event methods", () => {
+    async function checkProcessEvents(name: string, typesNodeSpec: string, versionPrefix: string, source: string) {
+      const checkDir = join(TEMP_DIR, name);
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.include = ["index.ts"];
       await mkdir(checkDir, { recursive: true });
       await makeTree(checkDir, {
-        "package.json": JSON.stringify({ name: "types-node-24-check", private: true }),
+        "package.json": JSON.stringify({ name, private: true }),
         "tsconfig.json": JSON.stringify(tsconfig, null, 2),
-        "index.ts": `process.removeListener("SIGINT", () => {});
-           process.off("unhandledRejection", () => {});
-           process.removeListener("memoryPressure", () => {});
-           process.on("memoryPressure", level => {
-             level satisfies "warning" | "critical";
-           });`,
+        "index.ts": source,
       });
-      await $`cd ${checkDir} && bun add @types/node@24`.quiet();
+      await $`cd ${checkDir} && bun add @types/node@${typesNodeSpec}`.quiet();
       await cp(join(BASE_FIXTURE_DIR, "node_modules", "bun-types"), join(checkDir, "node_modules", "bun-types"), {
         recursive: true,
       });
@@ -584,9 +620,9 @@ describe("@types/bun integration test", () => {
         { recursive: true },
       );
 
-      // Guard against resolution drift silently checking the wrong major.
+      // Guard against resolution drift silently checking the wrong version.
       const nodeTypesPkg = await Bun.file(join(checkDir, "node_modules", "@types", "node", "package.json")).json();
-      expect(nodeTypesPkg.version).toStartWith("24.");
+      expect(nodeTypesPkg.version).toStartWith(versionPrefix);
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
@@ -601,6 +637,68 @@ describe("@types/bun integration test", () => {
       expect(stderr.trim()).toBe("");
       expect(stdout.trim()).toBe("");
       expect(exitCode).toBe(0);
+    }
+
+    // @types/node 24 has no `ProcessEventMap`, so `memoryPressure` is only an
+    // unknown event name there: accepted, with an untyped listener.
+    test("removeListener and off accept other event names with @types/node@24", async () => {
+      await checkProcessEvents(
+        "types-node-24-check",
+        "24",
+        "24.",
+        `process.removeListener("SIGINT", () => {});
+         process.off("unhandledRejection", () => {});
+         process.removeListener("memoryPressure", () => {});
+         process.on("memoryPressure", () => {});`,
+      );
+    });
+
+    // `NotAny<typeof arg>` is `never` when the listener argument is `any`, and
+    // `any` is not assignable to `never`, so a listener that only type-checks
+    // through the untyped `(...args: any[])` fallback fails here too.
+    test("every event method keeps its typed signatures with @types/node@25.0", async () => {
+      await checkProcessEvents(
+        "types-node-25-0-check",
+        "25.0.0",
+        "25.0.",
+        `type NotAny<T> = 0 extends 1 & T ? never : T;
+         process.on("SIGINT", signal => {
+           const typed: NotAny<typeof signal> = signal;
+           typed satisfies NodeJS.Signals;
+         });
+         process.once("beforeExit", code => {
+           const typed: NotAny<typeof code> = code;
+           typed satisfies number;
+         });
+         process.addListener("exit", code => {
+           const typed: NotAny<typeof code> = code;
+           typed satisfies number;
+         });
+         process.prependListener("uncaughtException", error => {
+           const typed: NotAny<typeof error> = error;
+           typed satisfies Error;
+         });
+         process.prependOnceListener("unhandledRejection", (reason, promise) => {
+           const typed: NotAny<typeof promise> = promise;
+           typed satisfies Promise<unknown>;
+         });
+         process.off("exit", code => {
+           const typed: NotAny<typeof code> = code;
+           typed satisfies number;
+         });
+         process.removeListener("SIGTERM", signal => {
+           const typed: NotAny<typeof signal> = signal;
+           typed satisfies NodeJS.Signals;
+         });
+         process.emit("exit", 0);
+         process.on("memoryPressure", level => {
+           const typed: NotAny<typeof level> = level;
+           typed satisfies "warning" | "critical";
+         });
+         process.emit("memoryPressure", "critical");
+         type Level = process.ProcessEventMap["memoryPressure"][0];
+         "warning" satisfies Level;`,
+      );
     });
   });
 

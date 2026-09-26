@@ -260,6 +260,10 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigfillset(&blockall);
+#if OS(LINUX)
+    // A seccomp trap on a blocked SIGSYS is fatal; see installSIGSYSHandler (c-bindings.cpp).
+    sigdelset(&blockall, SIGSYS);
+#endif
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
 #if !OS(ANDROID)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
@@ -309,6 +313,11 @@ extern "C" ssize_t posix_spawn_bun(
         struct sigaction sa = { 0 };
         sa.sa_handler = SIG_DFL;
         for (int i = 0; i < NSIG; i++) {
+#if OS(LINUX)
+            // close_range() below still needs the ENOSYS handler; reset before execve.
+            if (i == SIGSYS)
+                continue;
+#endif
             sigaction(i, &sa, 0);
         }
 
@@ -457,13 +466,17 @@ extern "C" ssize_t posix_spawn_bun(
         }
 #endif
 
-        sigprocmask(SIG_SETMASK, &childmask, 0);
         if (!envp)
             envp = environ;
 
         // Close all fds > current_max_fd, preferring cloexec if available
         closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
 
+        // After close_range(): the caller's mask may block SIGSYS. execve keeps the mask.
+        sigprocmask(SIG_SETMASK, &childmask, 0);
+#if OS(LINUX)
+        sigaction(SIGSYS, &sa, 0);
+#endif
         if (execve(path, argv, envp) == -1) {
             return childFailed();
         }

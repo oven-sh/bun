@@ -488,7 +488,7 @@ impl PatchTask {
             package_version: &resolution_label,
             // dummy value
             node_modules: &dummy_node_modules,
-            lockfile,
+            lockfile: Some(lockfile),
         };
 
         match pkg_install.install(

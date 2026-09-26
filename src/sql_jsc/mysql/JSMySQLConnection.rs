@@ -731,12 +731,32 @@ impl JSMySQLConnection {
         request.resolve(self.get_queries_array(), result);
     }
 
+    /// The client cannot turn one of `request`'s rows into a JS value. The
+    /// packet header frames the row and the packet is skipped whole, so the
+    /// stream is still in step: that fails the request alone, not the
+    /// connection and the requests queued behind it. A VM that is stopping
+    /// fails the connection instead.
+    fn on_undecodable_row(
+        &self,
+        request: &JSMySQLQuery,
+        err: AnyMySQLErrorT,
+    ) -> Result<(), OnResultRowError> {
+        if self.global_object.has_pending_termination_exception() {
+            return Err(OnResultRowError::JSError);
+        }
+        request.reject_undecodable_row(self.get_queries_array(), err);
+        Ok(())
+    }
+
     pub(crate) fn on_result_row<C: bun_sql::mysql::protocol::ReaderContext>(
         &self,
         request: &JSMySQLQuery,
         statement: &mut MySQLStatement,
         reader: NewReader<C>,
     ) -> Result<(), OnResultRowError> {
+        if request.is_discarding_response() {
+            return Ok(());
+        }
         let result_mode = request.get_result_mode();
         let mut structure: JSValue = JSValue::UNDEFINED;
         // `MySQLStatement::structure(&mut self) -> &CachedStructure`
@@ -771,37 +791,26 @@ impl JSMySQLConnection {
             if e == AnyMySQLErrorT::ShortRead {
                 return Err(OnResultRowError::ShortRead);
             }
-            self.connection_mut()
-                .queue
-                .mark_current_request_as_finished(request);
-            request.reject(self.get_queries_array(), e);
-            return Ok(());
+            return self.on_undecodable_row(request, e);
         }
         let pending_value = request.get_pending_value().unwrap_or(JSValue::UNDEFINED);
         // `ParentRef::Deref` recovers `&CachedStructure`; `*statement` is live
         // and not mutably borrowed for the duration of this `to_js` call.
         let cached_structure = cached_structure.as_deref();
         // Process row data
-        let row_value = row
-            .to_js(
-                &self.global_object,
-                pending_value,
-                structure,
-                fields_flags,
-                result_mode,
-                cached_structure,
-            )
-            .map_err(|_| OnResultRowError::JSError)?;
+        let Ok(row_value) = row.to_js(
+            &self.global_object,
+            pending_value,
+            structure,
+            fields_flags,
+            result_mode,
+            cached_structure,
+        ) else {
+            return self.on_undecodable_row(request, AnyMySQLErrorT::JSError);
+        };
         // `Row<'_>` has a Drop impl, so its `&statement.columns` borrow lives to
         // end-of-scope; drop it now so `statement.result_count += 1` may take `&mut`.
         drop(row);
-        if let Some(err) = self.global_object.try_take_exception() {
-            self.connection_mut()
-                .queue
-                .mark_current_request_as_finished(request);
-            request.reject_with_js_value(self.get_queries_array(), err);
-            return Ok(());
-        }
         statement.result_count += 1;
 
         if pending_value.is_empty_or_undefined_or_null() {

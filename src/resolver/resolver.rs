@@ -572,6 +572,13 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
+
+    /// Set for one resolution of a bare specifier from a module embedded in a
+    /// compiled binary (`bun build --compile`). The `node_modules` walk in
+    /// `load_node_modules` starts at the executable's directory. When that walk
+    /// reaches the root, it continues from this directory (the current working
+    /// directory) before it tries `NODE_PATH`.
+    pub(crate) standalone_cwd_fallback: Option<&'static [u8]>,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -647,6 +654,7 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            standalone_cwd_fallback: None,
         }
     }
 
@@ -933,7 +941,16 @@ impl<'a> Resolver<'a> {
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            standalone_cwd_fallback: None,
         }
+    }
+
+    /// Directory of the running executable, the same path `process.execPath`
+    /// reports. Used as the first `node_modules` search root for a bare
+    /// specifier that is not embedded in a compiled binary.
+    fn standalone_exe_dir() -> Option<&'static [u8]> {
+        let exe = bun_core::self_exe_path().ok()?;
+        bun_paths::dirname(exe.as_bytes())
     }
 
     pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
@@ -1305,10 +1322,13 @@ impl<'a> Resolver<'a> {
         // When using `bun build --compile`, module resolution is never
         // relative to our special /$bunfs/ directory.
         //
-        // It's always relative to the current working directory of the project root.
-        //
-        // ...unless you pass a relative path that exists in the standalone module graph executable.
+        // A specifier that exists in the standalone module graph resolves to the
+        // embedded file. Otherwise a relative path resolves from the current
+        // working directory, and a bare package specifier searches
+        // `node_modules` next to the executable first, then from the current
+        // working directory, then `NODE_PATH`.
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
+        let mut standalone_cwd_fallback: Option<&'static [u8]> = None;
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
@@ -1333,7 +1353,15 @@ impl<'a> Resolver<'a> {
                         self.extension_order = original_order;
                         return ResultUnion::NotFound;
                     }
-                    break 'brk Fs::FileSystem::instance().top_level_dir;
+                    let cwd = Fs::FileSystem::instance().top_level_dir;
+                    if is_package_path(import_path)
+                        && self.custom_dir_paths.is_none()
+                        && let Some(exe_dir) = Self::standalone_exe_dir()
+                    {
+                        standalone_cwd_fallback = Some(cwd);
+                        break 'brk exe_dir;
+                    }
+                    break 'brk cwd;
                 }
             }
 
@@ -1378,8 +1406,10 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         }
 
+        self.standalone_cwd_fallback = standalone_cwd_fallback;
         let mut tmp =
             self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        self.standalone_cwd_fallback = None;
 
         // Fragments in URLs in CSS imports are technically expected to work
         if matches!(tmp, ResultUnion::NotFound) && kind.is_from_css() {
@@ -1399,12 +1429,14 @@ impl<'a> Resolver<'a> {
                         bstr::BStr::new(&import_path[suffix..])
                     ));
                 }
+                self.standalone_cwd_fallback = standalone_cwd_fallback;
                 let result2 = self.resolve_without_symlinks(
                     source_dir_normalized,
                     &import_path[0..suffix],
                     kind,
                     global_cache,
                 );
+                self.standalone_cwd_fallback = None;
                 if matches!(result2, ResultUnion::NotFound) {
                     break 'try_without_suffix;
                 }
@@ -2591,11 +2623,23 @@ impl<'a> Resolver<'a> {
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
         let use_node_module_resolver = global_cache != GlobalCache::force;
+        let mut walking_from_cwd_fallback = false;
 
         // Then check for the package in any enclosing "node_modules" directories
         // or in the package root directory if it's a self-reference
         if use_node_module_resolver {
             loop {
+                // The walk from the cwd stops where it joins the chain of
+                // directories the walk from the executable already probed.
+                if walking_from_cwd_fallback
+                    && ResolvePath::resolve_path::is_parent_or_equal(
+                        dir_info.abs_path,
+                        source_dir_info.abs_path,
+                    ) != ResolvePath::resolve_path::ParentEqual::Unrelated
+                {
+                    break;
+                }
+
                 // Skip directories that are themselves called "node_modules", since we
                 // don't ever want to search for "node_modules/node_modules"
                 'node_modules: {
@@ -2807,7 +2851,22 @@ impl<'a> Resolver<'a> {
 
                 match dir_info.get_parent() {
                     Some(p) => dir_info = p,
-                    None => break,
+                    None => {
+                        let Some(cwd) = self.standalone_cwd_fallback.take() else {
+                            break;
+                        };
+                        let Ok(Some(cwd_dir_info)) = self.dir_info_cached(cwd) else {
+                            break;
+                        };
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "Continuing the search from the current working directory \"{}\"",
+                                bstr::BStr::new(cwd)
+                            ));
+                        }
+                        walking_from_cwd_fallback = true;
+                        dir_info = cwd_dir_info;
+                    }
                 }
             }
         }

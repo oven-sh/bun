@@ -1062,6 +1062,69 @@ describe("bundler", () => {
     },
     compile: true,
   });
+  // https://github.com/oven-sh/bun/issues/44053
+  // A bare specifier that is not embedded in the binary resolves from
+  // `node_modules` next to the executable, whatever the cwd is.
+  itBundled("compile/ExternalResolvesFromExecutableDir", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import dep from "dep-beside-exe-44053";
+        console.log("static:", dep);
+      `,
+    },
+    external: ["dep-beside-exe-44053"],
+    outfile: "/dist/app",
+    runtimeFiles: {
+      "/dist/node_modules/dep-beside-exe-44053/index.js": `export default "dep-loaded";`,
+    },
+    run: {
+      stdout: "static: dep-loaded",
+      setCwd: false,
+    },
+    compile: true,
+  });
+  itBundled("compile/DynamicImportResolvesFromExecutableDir", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const name = "dep-beside-exe-44053" + (process.env.NOT_SET ?? "");
+        const req = (x) => require(x);
+        const a = (await import(name)).default;
+        const b = req(name + "-cjs");
+        console.log(JSON.stringify([a, b]));
+      `,
+    },
+    outfile: "/dist/app",
+    runtimeFiles: {
+      "/dist/node_modules/dep-beside-exe-44053/index.js": `export default "esm";`,
+      "/dist/node_modules/dep-beside-exe-44053-cjs/index.js": `module.exports = "cjs";`,
+    },
+    run: {
+      stdout: '["esm","cjs"]',
+      setCwd: false,
+    },
+    compile: true,
+  });
+  // The executable's directory wins over the cwd. A miss next to the
+  // executable still falls back to the cwd.
+  itBundled("compile/ExecutableDirBeforeCwd", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        console.log(JSON.stringify([req("dep-beside-exe-44053"), req("dep-in-cwd-44053")]));
+      `,
+    },
+    outfile: "/dist/app",
+    runtimeFiles: {
+      "/dist/node_modules/dep-beside-exe-44053/index.js": `module.exports = "exe-dir";`,
+      "/node_modules/dep-beside-exe-44053/index.js": `module.exports = "cwd";`,
+      "/node_modules/dep-in-cwd-44053/index.js": `module.exports = "cwd-only";`,
+    },
+    run: {
+      stdout: '["exe-dir","cwd-only"]',
+      setCwd: true,
+    },
+    compile: true,
+  });
   for (const minify of [true, false] as const) {
     itBundled("compile/platform-specific-binary" + (minify ? "-minify" : ""), {
       minifySyntax: minify,

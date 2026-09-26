@@ -1406,6 +1406,35 @@ impl ServerWebSocket {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Parses `data` as if the loop had just read it. Returns false when the socket is not open.
+    pub(crate) fn unshift_data(&self, data: &[u8]) -> bool {
+        let socket: *mut bun_uws_sys::us_socket_t = self.websocket().raw().cast();
+        if socket.is_null() || self.is_closed() {
+            return false;
+        }
+        if data.is_empty() {
+            return true;
+        }
+        // `WebSocketProtocol::consume` unmasks in place and reads past both ends of its input.
+        const PADDING: usize = bun_uws_sys::LIBUS_RECV_BUFFER_PADDING;
+        let Ok(len) = core::ffi::c_int::try_from(data.len()) else {
+            return false;
+        };
+        let mut buf = vec![0u8; data.len() + 2 * PADDING];
+        buf[PADDING..PADDING + data.len()].copy_from_slice(data);
+        // SAFETY: `socket` is live (`on_close` sets the closed flag before uWS
+        // frees it). `buf` outlives the synchronous dispatch and has `PADDING`
+        // writable bytes on each side of `data`.
+        unsafe {
+            let _ = crate::socket::uws_dispatch::us_dispatch_data(
+                socket,
+                buf.as_mut_ptr().add(PADDING),
+                len,
+            );
+        }
+        true
+    }
+
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_binary_type(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_output::scoped_log!(WebSocketServer, "getBinaryType()");

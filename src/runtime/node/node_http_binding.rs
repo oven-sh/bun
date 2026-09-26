@@ -1,9 +1,31 @@
 //! `node:http` native binding — `getBunServerAllClosedPromise` /
-//! `{get,set}MaxHTTPHeaderSize`.
+//! `{get,set}MaxHTTPHeaderSize` / `unshiftWebSocketData`.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
+use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, ServerWebSocket};
+
+/// `unshiftWebSocketData(ws, chunk)`: the `ws` shim's entry to `ServerWebSocket::unshift_data`.
+pub(crate) fn unshift_web_socket_data(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let [ws_value, chunk_value] = frame.arguments_as_array::<2>();
+    let Some(ws) = ws_value.as_::<ServerWebSocket>() else {
+        return Err(global.throw_invalid_argument_type_value("ws", "ServerWebSocket", ws_value));
+    };
+    let Some(chunk) = chunk_value.as_array_buffer(global) else {
+        return Err(global.throw_invalid_argument_type_value(
+            "chunk",
+            "ArrayBufferView",
+            chunk_value,
+        ));
+    };
+    // SAFETY: `as_` returns a pointer to the live JS-owned `ServerWebSocket`,
+    // rooted by the caller's argument for this synchronous call.
+    let ws = unsafe { &*ws };
+    Ok(JSValue::js_boolean(ws.unshift_data(chunk.slice())))
+}
 
 pub(crate) fn get_bun_server_all_closed_promise(
     global: &JSGlobalObject,

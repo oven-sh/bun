@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import url from "node:url";
 
 const pairs = [
@@ -96,7 +97,76 @@ describe("url.domainToUnicode", () => {
   }
   for (const [input, expected] of invalids) {
     test(`-> '${input}' is '${expected}'`, () => {
-      expect(url.domainToASCII(input)).toEqual(expected);
+      expect(url.domainToUnicode(input)).toEqual(expected);
     });
   }
+});
+
+// ICU reports the output length that a conversion needs, and the buffer grew to that length with no check. The length
+// follows the input, so a host of 2**30 characters asked for more than the buffer can hold, and that aborted the
+// process: `panic(main thread): abort() called`, exit code 134. A synthetic limit of 1 MiB lowers the buffer limit to
+// 524288 code units, so the hosts here can be small.
+test("a host too long for the IDNA conversion buffer", async () => {
+  const fixture = `
+    import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+    import url from "node:url";
+
+    const fits = Buffer.alloc(500_000, "a").toString();
+    const long = Buffer.alloc(600_000, "a").toString();
+    setSyntheticAllocationLimitForTesting(1024 * 1024);
+    // ToUnicode changes this label to one Greek letter, so the output is as long as the rest of the host.
+    const greek = "xn--nxa.";
+    // A host needs no buffer for its verdict, so the limit does not apply. The Arabic label needs the BiDi rule
+    // and the label with U+200D needs the CONTEXTJ rule, so ICU judges these hosts, not the check before it.
+    const arabic = "xn--mgbh0fb.";
+    const joiner = "xn--ab-m1t.";
+    const hostnameAfterSet = value => {
+      const parsed = new URL("http://a/");
+      parsed.hostname = value;
+      return parsed.hostname.length;
+    };
+    const cases = {
+      "domainToUnicode, no punycode label": () => url.domainToUnicode(long).length,
+      "domainToUnicode, output fits": () => url.domainToUnicode(greek + fits).length,
+      "domainToUnicode, output too long": () => url.domainToUnicode(greek + long).length,
+      "domainToASCII, valid host": () => url.domainToASCII(arabic + long).length,
+      "domainToASCII, invalid host": () => url.domainToASCII(joiner + long).length,
+      "new URL, valid host": () => new URL("http://" + arabic + long).hostname.length,
+      "new URL, invalid host": () => new URL("http://" + joiner + long).hostname.length,
+      "URL.canParse, invalid host": () => URL.canParse("http://" + joiner + long),
+      "hostname setter, valid host": () => hostnameAfterSet(arabic + long),
+      "hostname setter, invalid host": () => hostnameAfterSet(joiner + long),
+    };
+    // Each case prints its line as soon as it finishes. If a case aborts the process, the diff shows which one.
+    for (const [name, run] of Object.entries(cases)) {
+      try {
+        console.log(name + ": " + run());
+      } catch (e) {
+        console.log(name + ": " + e.name + ": " + e.message);
+      }
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      "domainToUnicode, no punycode label: 600000",
+      "domainToUnicode, output fits: 500002",
+      "domainToUnicode, output too long: RangeError: Out of memory",
+      "domainToASCII, valid host: 600012",
+      "domainToASCII, invalid host: 0",
+      "new URL, valid host: 600012",
+      "new URL, invalid host: TypeError: Invalid URL",
+      "URL.canParse, invalid host: false",
+      "hostname setter, valid host: 600012",
+      "hostname setter, invalid host: 1",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
 });

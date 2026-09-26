@@ -289,6 +289,40 @@ it('install.prefer = "offline" and install.offline = true in bunfig.toml behave 
   expect(urls.length).toBe(before);
 });
 
+it('install.offline = "true" in bunfig.toml is an error, not an online install', async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {} }));
+  const dir = mkdtemp();
+  await writeFile(
+    join(dir, "bunfig.toml"),
+    [
+      "[install]",
+      'offline = "true"',
+      `registry = ${JSON.stringify(root_url + "/")}`,
+      'linker = "hoisted"',
+      "[install.cache]",
+      `dir = ${JSON.stringify(cache_dir)}`,
+      "",
+    ].join("\n"),
+  );
+  await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app", dependencies: { baz: "0.0.3" } }));
+  const r = await install(dir, []);
+  // The message does not name the key. The source line and the location do.
+  expect(r.err.replace(/ at .*bunfig\.toml:/, " at bunfig.toml:")).toBe(
+    [
+      '2 | offline = "true"',
+      "              ^",
+      "error: expected boolean but received string",
+      "    at bunfig.toml:2:11",
+      "",
+      "Invalid Bunfig: failed to load bunfig",
+      "",
+    ].join("\n"),
+  );
+  expect(urls).toEqual([]);
+  expect(r.code).toBe(1);
+});
+
 const gitEnv = {
   ...installEnv,
   GIT_CONFIG_NOSYSTEM: "1",

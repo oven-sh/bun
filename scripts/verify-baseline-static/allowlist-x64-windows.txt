@@ -437,7 +437,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Highway. MSVC-mangled bun::N_AVX* names.
-# (280 symbols)
+# (286 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX10_2::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::CopyAsciiPrefixImpl                                  [AVX, AVX512BW, AVX512F, AVX512VL]
@@ -719,6 +719,12 @@ bun::N_AVX3_SPR::BSwap64Impl                                                   [
 bun::N_AVX3_ZEN4::BSwap16Impl                                                  [AVX, AVX2, AVX512BW, AVX512F]
 bun::N_AVX3_ZEN4::BSwap32Impl                                                  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
 bun::N_AVX3_ZEN4::BSwap64Impl                                                  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+bun::N_AVX10_2::ConstantTimeEqualImpl                                          [AVX, AVX512BW, AVX512F, BMI2]
+bun::N_AVX2::ConstantTimeEqualImpl                                             [AVX, AVX2]
+bun::N_AVX3::ConstantTimeEqualImpl                                             [AVX, AVX512BW, AVX512F, BMI2]
+bun::N_AVX3_DL::ConstantTimeEqualImpl                                          [AVX, AVX512BW, AVX512F, BMI2]
+bun::N_AVX3_SPR::ConstantTimeEqualImpl                                         [AVX, AVX512BW, AVX512F, BMI2]
+bun::N_AVX3_ZEN4::ConstantTimeEqualImpl                                        [AVX, AVX512BW, AVX512F, BMI2]
 
 
 # ----------------------------------------------------------------------------

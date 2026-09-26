@@ -459,7 +459,7 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SIMD. Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets.
-# (280 symbols)
+# (286 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_AVX3_SPR10MemMemImplEPKhmS2_m                                       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 _ZN3bun10N_AVX3_SPR11MemRMemImplEPKhmS2_m                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
@@ -741,6 +741,12 @@ _ZN3bun6N_AVX3L12MemMemSearchILb1EtEEmPKT0_mS4_mmmPm                           [
 _ZN3bun9N_AVX3_DL11BSwap16ImplEPhm                                             [AVX, AVX2, AVX512BW, AVX512F]
 _ZN3bun9N_AVX3_DL11BSwap32ImplEPhm                                             [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
 _ZN3bun9N_AVX3_DL11BSwap64ImplEPhm                                             [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
+_ZN3bun10N_AVX3_SPR21ConstantTimeEqualImplEPKhS2_m                             [AVX, AVX512BW, AVX512F, BMI2]
+_ZN3bun11N_AVX3_ZEN421ConstantTimeEqualImplEPKhS2_m                            [AVX, AVX512BW, AVX512F, BMI2]
+_ZN3bun6N_AVX221ConstantTimeEqualImplEPKhS2_m                                  [AVX, AVX2]
+_ZN3bun6N_AVX321ConstantTimeEqualImplEPKhS2_m                                  [AVX, AVX512BW, AVX512F, BMI2]
+_ZN3bun9N_AVX10_221ConstantTimeEqualImplEPKhS2_m                               [AVX, AVX512BW, AVX512F, BMI2]
+_ZN3bun9N_AVX3_DL21ConstantTimeEqualImplEPKhS2_m                               [AVX, AVX512BW, AVX512F, BMI2]
 
 
 # ----------------------------------------------------------------------------

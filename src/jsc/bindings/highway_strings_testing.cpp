@@ -23,6 +23,7 @@ extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, co
 extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
 extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
+extern "C" bool highway_constant_time_eq(const uint8_t* a, const uint8_t* b, size_t len);
 
 namespace Bun {
 
@@ -32,6 +33,7 @@ namespace Bun {
 // others. Returns exactly what the kernel returns: an index (with
 // `haystack.length` meaning "not found" for the index_of family), a count, or
 // for memmem/memrmem the match offset with -1 for "not found".
+// constantTimeEq compares `haystack` with an `arg` view of the same length: 1 = equal.
 BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -88,6 +90,12 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
     } else if (op == "memrmem"_s) {
         size_t r = highway_memrmem(haystack, len, needle, needle_len);
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(r == static_cast<size_t>(-1) ? -1.0 : static_cast<double>(r))));
+    } else if (op == "constantTimeEq"_s) {
+        if (arg.isNumber() || needle_len != len) {
+            throwRangeError(globalObject, scope, "constantTimeEq needs two views of the same byte length"_s);
+            return {};
+        }
+        result = highway_constant_time_eq(haystack, needle, len) ? 1 : 0;
     } else if (op == "memmem16"_s || op == "memrmem16"_s) {
         // Byte views reinterpreted as UTF-16 code units (any alignment, odd byte
         // dropped, as JSBuffer.cpp does); result is in code units.

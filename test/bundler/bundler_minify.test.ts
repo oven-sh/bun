@@ -123,54 +123,84 @@ describe("bundler", () => {
   itBundled("minify/KeepNamesPreservesNames", {
     files: {
       "/entry.js": /* js */ `
-        export var AB = function A() { };
-        export var CD = function B() { return 1; };
-        export var EF = function C() { C(); };
-        export var GH = function() { };
-        export var IJ = class D { };
-        export var KL = class E { constructor() {} };
-        export var MN = class F { method() { return F; } };
-        export var OP = class { };
+        var AB = function A() { };
+        var CD = function B() { return 1; };
+        var EF = function C() { C(); };
+        var GH = function() { };
+        var IJ = class D { };
+        var KL = class E { constructor() {} };
+        var MN = class F { method() { return F; } };
+        var OP = class { };
+        var QR = () => {};
+        var ST = { a: () => {}, b: function() {}, c: class {}, d() {} };
+        function UV() {}
+        class WX { static self = this; }
+        console.log([AB, CD, EF, GH, IJ, KL, MN, OP, QR, ST.a, ST.b, ST.c, ST.d, UV, WX].map(x => x.name).join(" "));
       `,
     },
-    onAfterBundle(api) {
-      const code = api.readFile("/out.js");
-      // With keepNames, all names should be preserved even when minifying
-      expect(code).toContain("function A()");
-      expect(code).toContain("function B()");
-      expect(code).toContain("function C()");
-      expect(code).toContain("class D");
-      expect(code).toContain("class E");
-      expect(code).toContain("class F");
-      // Anonymous functions/classes stay anonymous
-      expect(code).toMatch(/\w+ = function\(\) \{\}/); // GH stays anonymous
-      expect(code).toMatch(/\w+ = class \{\s*\}/); // OP stays anonymous
-    },
+    run: { stdout: "A B C GH D E F OP QR a b c d UV WX" },
     minifySyntax: true,
-    minifyIdentifiers: false, // Don't minify identifiers to make testing easier
+    minifyIdentifiers: true,
     keepNames: true,
     target: "bun",
   });
-  itBundled("minify/KeepNamesWithMinifyIdentifiers", {
+  itBundled("minify/KeepNamesClassErrorSubclass", {
     files: {
       "/entry.js": /* js */ `
-        export var AB = function A() { };
-        export var CD = function B() { return 1; };
-        export var EF = class C { };
+        class BaseError extends Error {
+          constructor(message) {
+            super(message);
+            this.name = this.constructor.name;
+          }
+        }
+        class AbortError extends BaseError {}
+        export default class extends BaseError {}
+        const err = new AbortError("x");
+        console.log(err.name, err instanceof AbortError, AbortError.name, BaseError.name);
       `,
     },
-    onAfterBundle(api) {
-      const code = api.readFile("/out.js");
-      // With keepNames + minifyIdentifiers, names are preserved but minified
-      // The original names A, B, C should still exist (though minified)
-      expect(code).toMatch(/function \w+\(\)/); // Functions should have names
-      expect(code).toMatch(/class \w+/); // Classes should have names
-      // Should not have anonymous functions/classes
-      expect(code).not.toContain("function()");
-      expect(code).not.toContain("class {");
-    },
+    run: { stdout: "AbortError true AbortError BaseError" },
     minifySyntax: true,
     minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesNestedAndNamespace", {
+    files: {
+      "/entry.ts": /* ts */ `
+        export default function () {}
+        function outer() {
+          function inner() {}
+          return inner;
+        }
+        namespace NS { export function nsFn() {} export class NsClass {} }
+        console.log(outer.name, outer().name, NS.nsFn.name, NS.NsClass.name);
+      `,
+      "/main.ts": /* ts */ `
+        import def from "./entry.ts";
+        console.log(def.name);
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    run: { stdout: "outer inner nsFn NsClass\ndefault" },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesTreeShakesUnused", {
+    files: {
+      "/entry.js": /* js */ `
+        function REMOVE_fn() {}
+        class REMOVE_cls {}
+        const REMOVE_arrow = () => {};
+        const REMOVE_expr = function REMOVE_named() {};
+        export function keepFn() {}
+      `,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    minifySyntax: true,
     keepNames: true,
     target: "bun",
   });

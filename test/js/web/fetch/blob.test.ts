@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
@@ -824,4 +824,263 @@ test.each([
 ])("new Blob([], { type: %j }).slice().type", (type, expected) => {
   const blob = new Blob(["abc"], { type });
   expect(blob.slice(0, 1).type).toBe(expected);
+});
+
+describe("new Blob([blob, ...]) appends onto the first part's store", () => {
+  // When the first part is a Blob viewing a whole in-memory store, the
+  // constructor does not copy it into a fresh buffer: the result shares the
+  // prefix's allocation (which keeps spare capacity once it has been appended
+  // onto more than once) and only the new parts are written, past the bytes
+  // every existing Blob can see. These tests pin both halves of that: the cost
+  // of `b = new Blob([b, chunk])` stays linear, and no Blob ever observes bytes
+  // appended by a later construction.
+
+  const byteChunk = (len: number, fill: number) => new Uint8Array(len).fill(fill);
+  const concat = (...parts: Uint8Array[]) => new Uint8Array(Buffer.concat(parts));
+
+  test.concurrent("accumulating chunks costs linear time, not one prefix copy per step", async () => {
+    // Unfixed, step i copies the i chunks accumulated so far: for these sizes
+    // that is 16 GiB of memcpy, about 140x the baseline below in a release
+    // build (4.1 s vs 30 ms) and far worse under ASAN. Fixed, each step copies
+    // one chunk plus the occasional buffer regrowth, so it costs a small
+    // multiple (about 4x in a debug build, mostly GC work from the growing
+    // reported sizes) of building the Blob once from all the chunks plus
+    // constructing n single-chunk Blobs. That baseline is measured in the same
+    // process so the bound calibrates itself to the build type and machine.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const cpuMs = () => { const u = process.cpuUsage(); return (u.user + u.system) / 1000; };
+          const n = 1024;
+          const chunks = Array.from({ length: 8 }, (_, i) => new Uint8Array(32 * 1024).fill(i + 1));
+          const parts = Array.from({ length: n }, (_, i) => chunks[i % chunks.length]);
+
+          let t0 = cpuMs();
+          const oneShot = new Blob(parts);
+          for (const part of parts) new Blob([part]);
+          const baselineMs = cpuMs() - t0;
+
+          t0 = cpuMs();
+          let accumulated = new Blob([]);
+          for (const part of parts) accumulated = new Blob([accumulated, part]);
+          const accumulateMs = cpuMs() - t0;
+
+          const same = Buffer.compare(await oneShot.bytes(), await accumulated.bytes()) === 0;
+          console.log(JSON.stringify({ size: accumulated.size, same, baselineMs, accumulateMs }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith("{");
+
+    const { size, same, baselineMs, accumulateMs } = JSON.parse(stdout);
+    expect({ size, same }).toEqual({ size: 1024 * 32 * 1024, same: true });
+    expect(accumulateMs).toBeLessThan(20 * baselineMs + 100);
+    expect(exitCode).toBe(0);
+  });
+
+  test("every intermediate Blob keeps its own size and bytes as the chain grows", async () => {
+    // Chunk sizes vary so the chain goes through both in-place appends and
+    // buffer regrowths many times over.
+    const chain: Blob[] = [];
+    const chunks: Uint8Array[] = [];
+    let blob = new Blob([]);
+    for (let i = 0; i < 48; i++) {
+      const chunk = byteChunk(1 + ((i * 37) % 100), i);
+      chunks.push(chunk);
+      blob = new Blob([blob, chunk]);
+      chain.push(blob);
+    }
+
+    const sizes = await Promise.all(chain.map(async b => [b.size, (await b.bytes()).length]));
+    let expected = new Uint8Array(0);
+    for (let i = 0; i < chain.length; i++) {
+      expected = concat(expected, chunks[i]);
+      expect(sizes[i]).toEqual([expected.length, expected.length]);
+      expect(await chain[i].bytes()).toEqual(expected);
+    }
+  });
+
+  test("appending twice onto the same Blob gives independent results", async () => {
+    // The second append cannot reuse the tail the first one already claimed.
+    let base = new Blob([byteChunk(64, 1)]);
+    base = new Blob([base, byteChunk(64, 2)]);
+    base = new Blob([base, byteChunk(64, 3)]);
+    const baseBytes = concat(byteChunk(64, 1), byteChunk(64, 2), byteChunk(64, 3));
+
+    const left = new Blob([base, byteChunk(8, 0x11)]);
+    const right = new Blob([base, byteChunk(8, 0x22)]);
+    const left2 = new Blob([left, byteChunk(8, 0x33)]);
+    const right2 = new Blob([right, byteChunk(8, 0x44)]);
+
+    expect(await base.bytes()).toEqual(baseBytes);
+    expect(await left.bytes()).toEqual(concat(baseBytes, byteChunk(8, 0x11)));
+    expect(await right.bytes()).toEqual(concat(baseBytes, byteChunk(8, 0x22)));
+    expect(await left2.bytes()).toEqual(concat(baseBytes, byteChunk(8, 0x11), byteChunk(8, 0x33)));
+    expect(await right2.bytes()).toEqual(concat(baseBytes, byteChunk(8, 0x22), byteChunk(8, 0x44)));
+  });
+
+  test("a Blob can be appended onto itself", async () => {
+    let blob = new Blob(["ab"]);
+    for (let i = 0; i < 6; i++) blob = new Blob([blob, blob]);
+    expect(blob.size).toBe(2 * 64);
+    expect(await blob.text()).toBe(Buffer.alloc(2 * 64, "ab").toString());
+  });
+
+  test("mixed parts after the Blob prefix, and empty parts around it", async () => {
+    const prefix = new Blob(["abc"]);
+    expect(await new Blob([prefix, "d", new Uint8Array([0x65]), new Blob(["f"]), "", new Blob()]).text()).toBe(
+      "abcdef",
+    );
+    expect(await new Blob(["", new Blob(), prefix, "d"]).text()).toBe("abcd");
+    expect(await new Blob([prefix.slice(1), "d"]).text()).toBe("bcd");
+    expect(await new Blob([prefix, { toString: () => "!" }]).text()).toBe("abc!");
+    expect(await prefix.text()).toBe("abc");
+
+    const copy = new Blob([prefix, ""]);
+    expect(copy).not.toBe(prefix);
+    expect(await copy.text()).toBe("abc");
+  });
+
+  test("new File([file, ...], name) does not rename the source", async () => {
+    const source = new File(["abc"], "source.txt");
+    const derived = new File([source, ""], "derived.txt");
+    const longer = new File([source, "def"], "longer.txt");
+    expect([source.name, derived.name, longer.name]).toEqual(["source.txt", "derived.txt", "longer.txt"]);
+    expect([await source.text(), await derived.text(), await longer.text()]).toEqual(["abc", "abc", "abcdef"]);
+  });
+
+  test("text() decodes each Blob in the chain by its own bytes", async () => {
+    const ascii = new Blob(["ascii"]);
+    const ascii2 = new Blob([ascii, "-more"]);
+    expect(await ascii2.text()).toBe("ascii-more");
+    const utf8 = new Blob([ascii2, " héllo ✓"]);
+    const asciiAgain = new Blob([utf8, " end"]);
+    expect(await ascii.text()).toBe("ascii");
+    expect(await utf8.text()).toBe("ascii-more héllo ✓");
+    expect(await asciiAgain.text()).toBe("ascii-more héllo ✓ end");
+    expect(await ascii2.text()).toBe("ascii-more");
+
+    const utf8First = new Blob(["ü"]);
+    const appended = new Blob([utf8First, "x"]);
+    const appendedAgain = new Blob([appended, "y"]);
+    expect([await utf8First.text(), await appended.text(), await appendedAgain.text()]).toEqual(["ü", "üx", "üxy"]);
+  });
+
+  test("slice(), stream(), structuredClone() and Bun.write() see only their Blob's bytes", async () => {
+    let blob = new Blob([byteChunk(10, 1)]);
+    blob = new Blob([blob, byteChunk(10, 2)]);
+    const shorter = new Blob([blob, byteChunk(10, 3)]);
+    const longer = new Blob([shorter, byteChunk(10, 4)]);
+    const shorterBytes = concat(byteChunk(10, 1), byteChunk(10, 2), byteChunk(10, 3));
+    const longerBytes = concat(shorterBytes, byteChunk(10, 4));
+
+    expect(await shorter.slice(25).bytes()).toEqual(shorterBytes.subarray(25));
+    expect(await longer.slice(25).bytes()).toEqual(longerBytes.subarray(25));
+    expect(await new Response(shorter.stream()).bytes()).toEqual(shorterBytes);
+    expect(await new Response(longer.stream()).bytes()).toEqual(longerBytes);
+    expect(await structuredClone(shorter).bytes()).toEqual(shorterBytes);
+    expect(await structuredClone(longer).bytes()).toEqual(longerBytes);
+
+    using dir = tempDir("blob-append-write", {});
+    const shorterPath = path.join(String(dir), "shorter.bin");
+    const longerPath = path.join(String(dir), "longer.bin");
+    expect(await Promise.all([Bun.write(shorterPath, shorter), Bun.write(longerPath, longer)])).toEqual([30, 40]);
+    expect(await Bun.file(shorterPath).bytes()).toEqual(shorterBytes);
+    expect(await Bun.file(longerPath).bytes()).toEqual(longerBytes);
+  });
+
+  test("a body's transferred ArrayBuffer is not backed by memory a longer Blob shares", async () => {
+    // Response.arrayBuffer() hands out the body's bytes without copying when
+    // the body holds the only reference to the store. Once the `middle` Blob
+    // object has been collected (gcTick() reliably does that here; should it
+    // ever not, the copying path is taken and the test still passes) that is
+    // the case for its store, but `longer` was appended in place onto the same
+    // allocation, so writing into the returned buffer must not be able to
+    // change it. Without the sharing check in the transfer path, `longer`'s
+    // first 192 bytes read back as 0xff.
+    function build() {
+      let middle = new Blob([byteChunk(64, 1)]);
+      middle = new Blob([middle, byteChunk(64, 2)]);
+      middle = new Blob([middle, byteChunk(64, 3)]);
+      return { response: new Response(middle), longer: new Blob([middle, byteChunk(16, 4)]) };
+    }
+    const { response, longer } = build();
+    await gcTick();
+
+    new Uint8Array(await response.arrayBuffer()).fill(0xff);
+    expect(await longer.bytes()).toEqual(
+      concat(byteChunk(64, 1), byteChunk(64, 2), byteChunk(64, 3), byteChunk(16, 4)),
+    );
+  });
+
+  test("consuming a stream that holds the last reference to an appended Blob's store", async () => {
+    // With the Blob objects collected, the stream's source holds the only
+    // reference to the store, and the native consumers take the store's buffer
+    // over instead of copying it. For a buffer nothing else shares that hands
+    // the allocation itself over; `shared` below still has a sibling on its
+    // buffer, so it is copied. Either way the bytes must come out intact.
+    function build() {
+      let unique = new Blob([byteChunk(32, 1)]);
+      unique = new Blob([unique, byteChunk(32, 2)]);
+      unique = new Blob([unique, byteChunk(32, 3)]);
+      let shared = new Blob([byteChunk(32, 4)]);
+      shared = new Blob([shared, byteChunk(32, 5)]);
+      shared = new Blob([shared, byteChunk(32, 6)]);
+      const sibling = new Blob([shared, byteChunk(8, 7)]);
+      return { unique: unique.stream(), shared: shared.stream(), sibling };
+    }
+    const { unique, shared, sibling } = build();
+    await gcTick();
+
+    expect(await new Response(unique).bytes()).toEqual(concat(byteChunk(32, 1), byteChunk(32, 2), byteChunk(32, 3)));
+    expect(await Bun.readableStreamToBytes(shared)).toEqual(
+      concat(byteChunk(32, 4), byteChunk(32, 5), byteChunk(32, 6)),
+    );
+    expect(await sibling.bytes()).toEqual(
+      concat(byteChunk(32, 4), byteChunk(32, 5), byteChunk(32, 6), byteChunk(8, 7)),
+    );
+  });
+
+  test("a worker holding the same Blob through a blob: URL can append onto it too", async () => {
+    let shared = new Blob(["shared"]);
+    shared = new Blob([shared, "-data"]);
+    shared = new Blob([shared, "-twice"]);
+    const url = URL.createObjectURL(shared);
+    const scriptUrl = URL.createObjectURL(
+      new Blob([
+        `
+          self.onmessage = async ({ data: url }) => {
+            const fromMain = await (await fetch(url)).blob();
+            const appended = new Blob([fromMain, "+worker"]);
+            postMessage([await fromMain.text(), await appended.text()]);
+          };
+        `,
+      ]),
+    );
+    let worker: Worker | undefined;
+    try {
+      worker = new Worker(scriptUrl);
+      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+      worker.onmessage = event => resolve(event.data);
+      worker.onerror = reject;
+      worker.postMessage(url);
+      const appendedOnMain = new Blob([shared, "+main"]);
+      expect(await promise).toEqual(["shared-data-twice", "shared-data-twice+worker"]);
+      expect(await appendedOnMain.text()).toBe("shared-data-twice+main");
+      expect(await shared.text()).toBe("shared-data-twice");
+    } finally {
+      worker?.terminate();
+      URL.revokeObjectURL(scriptUrl);
+      URL.revokeObjectURL(url);
+    }
+  });
 });

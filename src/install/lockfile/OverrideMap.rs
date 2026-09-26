@@ -120,7 +120,7 @@ struct NoAliases;
 
 impl NpmAliasRegistry for NoAliases {
     #[inline]
-    fn record_npm_alias(&mut self, _hash: PackageNameHash, _version: &dependency::Version) {}
+    fn record_npm_alias(&mut self, _hash: PackageNameHash, _specifier: &[u8]) {}
 }
 
 #[inline]

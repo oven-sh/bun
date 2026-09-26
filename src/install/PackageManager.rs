@@ -273,7 +273,7 @@ type AppendedTaskPackageMap =
 pub(crate) type FolderResolutionMap =
     HashMap<u64, FolderResolutionEntry /* , IdentityContext<u64>, 80 */>;
 pub(crate) type NpmAliasMap =
-    HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
+    HashMap<PackageNameHash, Box<[u8]> /* , IdentityContext<u64>, 80 */>;
 
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
 type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;
@@ -398,7 +398,8 @@ pub struct PackageManager {
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
-    // name hash from alias package name -> aliased package dependency version info
+    // name hash from alias package name -> the alias's `npm:` specifier, as owned text
+    // (see `NpmAliasRegistry::record_npm_alias`)
     pub(crate) known_npm_aliases: NpmAliasMap,
 
     pub(crate) event_loop: AnyEventLoop,

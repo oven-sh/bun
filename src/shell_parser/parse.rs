@@ -3469,12 +3469,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.chars.peek()
     }
 
+    /// A comment runs to the end of the line. A backslash inside it is
+    /// literal, so an escaped newline ends the comment too. The newline
+    /// still delimits the statement, so it is pushed as a token.
     fn eat_comment(&mut self) {
-        while let Some(peeked) = self.eat() {
-            if peeked.escaped {
-                continue;
-            }
-            if peeked.char == u32::from(b'\n') {
+        while let Some(c) = self.eat() {
+            if c.char == u32::from(b'\n') {
+                self.tokens.push(Token::Newline);
                 break;
             }
         }

@@ -1,6 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
+import { existsSync, lstatSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -1232,5 +1232,209 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+// ships-no-deps@1.0.0 declares no dependencies, but its tarball ships a copy of no-deps@1.0.0
+// under node_modules/no-deps. No lockfile row points at that copy (#43353).
+describe("a folder whose version is not in the lockfile as the target", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  const shippedCopy = "node_modules/ships-no-deps/node_modules/no-deps";
+  const notInLockfile = `error: cannot patch ${shippedCopy}: no-deps@1.0.0 is not in the lockfile\n`;
+
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`.
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function installedProject(linker: "hoisted" | "isolated", dependencies: Record<string, string>) {
+    const packageJson = { name: "foo", dependencies };
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: { "package.json": JSON.stringify(packageJson) },
+    });
+    const { stderr, exitCode } = await runBun(packageDir, "install");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(packageDir, shippedCopy, "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+    return { packageDir, packageJson };
+  }
+
+  const shippedVersion = (packageDir: string) =>
+    Bun.file(join(packageDir, shippedCopy, "package.json"))
+      .json()
+      .then(pkg => pkg.version);
+
+  describe.each(["hoisted", "isolated"] as const)("%s linker", linker => {
+    // One lockfile row with the name: no-deps@2.0.0.
+    test.concurrent("bun patch <path> is refused when the lockfile has one other version", async () => {
+      const { packageDir } = await installedProject(linker, { "ships-no-deps": "1.0.0", "no-deps": "2.0.0" });
+
+      const { stderr, exitCode } = await runBun(packageDir, "patch", shippedCopy);
+      expect(stderr).toEndWith(notInLockfile);
+      expect(await shippedVersion(packageDir)).toBe("1.0.0");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("bun patch --commit <path> is refused when the lockfile has one other version", async () => {
+      const { packageDir, packageJson } = await installedProject(linker, {
+        "ships-no-deps": "1.0.0",
+        "no-deps": "2.0.0",
+      });
+
+      const { stderr, exitCode } = await runBun(packageDir, "patch", "--commit", shippedCopy);
+      expect(stderr).toEndWith(notInLockfile);
+      expect({
+        packageJson: await Bun.file(join(packageDir, "package.json")).json(),
+        patches: existsSync(join(packageDir, "patches")),
+        version: await shippedVersion(packageDir),
+      }).toEqual({ packageJson, patches: false, version: "1.0.0" });
+      expect(exitCode).toBe(1);
+    });
+
+    // Two lockfile rows with the name: no-deps@2.0.0 and no-deps@1.1.0.
+    test.concurrent("bun patch <path> is refused when the lockfile has two other versions", async () => {
+      const { packageDir } = await installedProject(linker, {
+        "ships-no-deps": "1.0.0",
+        "no-deps": "2.0.0",
+        "no-deps-1-1": "npm:no-deps@1.1.0",
+      });
+
+      const { stderr, exitCode } = await runBun(packageDir, "patch", shippedCopy);
+      expect(stderr).toEndWith(notInLockfile);
+      expect(await shippedVersion(packageDir)).toBe("1.0.0");
+      expect(exitCode).toBe(1);
+    });
+
+    // Two lockfile rows with the name: no-deps@2.0.0 and a tarball with no-deps@1.1.0. The version
+    // in package.json is not the label of a tarball package, so the tarball is not taken by name.
+    // The error points at the name form, which takes a label.
+    test.concurrent("bun patch <path> is refused when the lockfile has an npm and a tarball package", async () => {
+      const packageJson = {
+        name: "foo",
+        dependencies: { "ships-no-deps": "1.0.0", "no-deps": "2.0.0", "no-deps-tarball": "./no-deps-1.1.0.tgz" },
+      };
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: {
+          "package.json": JSON.stringify(packageJson),
+          "no-deps-1.1.0.tgz": readFileSync(
+            join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.1.0.tgz"),
+          ),
+        },
+      });
+      const install = await runBun(packageDir, "install");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+
+      const { stderr, exitCode } = await runBun(packageDir, "patch", shippedCopy);
+      expect(stderr).toEndWith(
+        `error: cannot patch ${shippedCopy}: no npm package no-deps@1.0.0 is in the lockfile, and the other packages named no-deps have a git, tarball or folder label. Run bun patch <dependency>@<label> with the dependency name and the label from the lockfile instead.\n`,
+      );
+      expect(await shippedVersion(packageDir)).toBe("1.0.0");
+      expect(exitCode).toBe(1);
+    });
+
+    // No lockfile row with the name at all.
+    test.concurrent("bun patch <path> is refused when the lockfile has no package with the name", async () => {
+      const { packageDir } = await installedProject(linker, { "ships-no-deps": "1.0.0" });
+
+      const { stderr, exitCode } = await runBun(packageDir, "patch", shippedCopy);
+      expect(stderr).toEndWith(notInLockfile);
+      expect(await shippedVersion(packageDir)).toBe("1.0.0");
+      expect(exitCode).toBe(1);
+    });
+
+    // The version in package.json is not the label of a tarball package, so the folder cannot
+    // tell two tarball packages of the same name apart.
+    test.concurrent("bun patch <path> is refused when two packages with the name have a tarball label", async () => {
+      const tarball = readFileSync(join(import.meta.dir, "bar-0.0.2.tgz"));
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: {
+          "package.json": JSON.stringify({
+            name: "foo",
+            dependencies: { "bar": "./bar-0.0.2.tgz", "bar-copy": "./bar-copy.tgz" },
+          }),
+          "bar-0.0.2.tgz": tarball,
+          "bar-copy.tgz": tarball,
+        },
+      });
+      const install = await runBun(packageDir, "install");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+
+      const prepare = await runBun(packageDir, "patch", "node_modules/bar");
+      expect(prepare.stderr).toEndWith(
+        "error: cannot patch node_modules/bar: no npm package bar@0.0.2 is in the lockfile, and the other packages named bar have a git, tarball or folder label. Run bun patch <dependency>@<label> with the dependency name and the label from the lockfile instead.\n",
+      );
+      expect(prepare.exitCode).toBe(1);
+
+      // The commit hint must not name the prepare command. That would overwrite the folder.
+      const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bar");
+      expect(commit.stderr).toEndWith(
+        "error: cannot patch node_modules/bar: no npm package bar@0.0.2 is in the lockfile, and the other packages named bar have a git, tarball or folder label. Run bun patch --commit <dependency>@<label> with the dependency name and the label from the lockfile instead.\n",
+      );
+      expect(commit.exitCode).toBe(1);
+    });
+
+    // no-deps-build-metadata@1.0.0 ships "version": "1.0.0+123" in its package.json. The registry
+    // drops the build metadata, so the lockfile label is 1.0.0.
+    test.concurrent("bun patch <path> ignores build metadata in the folder's version", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: { "package.json": JSON.stringify({ name: "foo", dependencies: { "no-deps-build-metadata": "1.0.0" } }) },
+      });
+      const install = await runBun(packageDir, "install");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+
+      const prepare = await runBun(packageDir, "patch", "node_modules/no-deps-build-metadata");
+      expect(prepare.stderr).not.toContain("error:");
+      expect(prepare.stdout).toContain("To patch no-deps-build-metadata, edit the following folder:");
+      expect(prepare.exitCode).toBe(0);
+
+      await Bun.write(
+        join(packageDir, "node_modules", "no-deps-build-metadata", "index.js"),
+        "module.exports = 'patched';\n",
+      );
+
+      const commit = await runBun(packageDir, "patch", "--commit", "node_modules/no-deps-build-metadata");
+      expect(commit.stderr).not.toContain("error:");
+      expect(commit.exitCode).toBe(0);
+      expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toEqual({
+        "no-deps-build-metadata@1.0.0": "patches/no-deps-build-metadata@1.0.0.patch",
+      });
+    });
+
+    test.concurrent("bun patch <path> still patches the copy that bun installed", async () => {
+      const { packageDir } = await installedProject(linker, { "ships-no-deps": "1.0.0", "no-deps": "2.0.0" });
+
+      const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "node_modules/no-deps");
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("To patch no-deps, edit the following folder:\n\n  node_modules/no-deps\n");
+      expect(await shippedVersion(packageDir)).toBe("1.0.0");
+      expect(exitCode).toBe(0);
+    });
   });
 });

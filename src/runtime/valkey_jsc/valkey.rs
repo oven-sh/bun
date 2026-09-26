@@ -30,6 +30,8 @@ bun_output::define_scoped_log!(debug, Redis, visible);
 /// Connection flags to track Valkey client state
 pub(crate) struct ConnectionFlags {
     pub(crate) is_manually_closed: bool,
+    /// The handshake wrote a `SELECT` behind `HELLO` and its reply is still
+    /// due. The client stays `Connecting` until it arrives.
     pub(crate) is_selecting_db_internal: bool,
     pub(crate) enable_offline_queue: bool,
     pub(crate) enable_auto_reconnect: bool,
@@ -81,7 +83,8 @@ pub(crate) enum Status {
     NeverConnected,
     Disconnected,
     Connecting,
-    /// Socket open and HELLO accepted.
+    /// Socket open and handshake accepted: HELLO, then SELECT when the URL
+    /// names a database.
     Connected,
 }
 
@@ -259,6 +262,10 @@ pub(crate) struct ValkeyClient {
     pub(crate) password: Box<[u8]>,
     pub(crate) username: Box<[u8]>,
     pub(crate) database: u32,
+    /// The accepted HELLO reply, held while the handshake's SELECT reply is
+    /// due so that `on_valkey_connect` still receives it. While it is held,
+    /// the next reply is the SELECT's.
+    pub(crate) pending_hello: Option<RESPValue>,
     pub(crate) address: Address,
     pub(crate) protocol: Protocol,
 
@@ -669,6 +676,8 @@ impl ValkeyClient {
         // pending activity in `update_poll_ref` and keeps the event loop alive.
         self.read_buffer.clear_and_free();
         self.reply_scanner.reset();
+        self.flags.is_selecting_db_internal = false;
+        self.pending_hello = None;
 
         // A manual close, a failure the client detected itself, or the script that made the client
         // is gone (a disposed `Bun.ModuleGraph`'s): no retry, and what was queued is released.
@@ -707,7 +716,6 @@ impl ValkeyClient {
         );
 
         self.flags.is_reconnecting = true;
-        self.flags.is_selecting_db_internal = false;
 
         self.reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed)?;
 
@@ -1008,11 +1016,7 @@ impl ValkeyClient {
             }
             RESPValue::SimpleString(str_) => {
                 if str_.as_ref() == b"OK" {
-                    self.status = Status::Connected;
-                    self.flags.is_reconnecting = false;
-                    self.retry_attempts = 0;
-                    self.on_valkey_connect(value)?;
-                    return Ok(());
+                    return self.hello_accepted(value);
                 }
                 self.fail(
                     b"Authentication failed (unexpected response)",
@@ -1047,11 +1051,7 @@ impl ValkeyClient {
                 }
 
                 // Authentication successful via HELLO
-                self.status = Status::Connected;
-                self.flags.is_reconnecting = false;
-                self.retry_attempts = 0;
-                self.on_valkey_connect(value)?;
-                Ok(())
+                self.hello_accepted(value)
             }
             _ => {
                 self.fail(
@@ -1063,52 +1063,56 @@ impl ValkeyClient {
         }
     }
 
+    /// When `authenticate()` wrote a `SELECT` behind `HELLO`, the handshake has
+    /// one more reply to go.
+    fn hello_accepted(&mut self, value: &mut RESPValue) -> JsResult<()> {
+        if self.flags.is_selecting_db_internal {
+            self.pending_hello = Some(core::mem::replace(value, RESPValue::Null));
+            return Ok(());
+        }
+        self.handshake_complete(value)
+    }
+
+    fn handle_select_response(
+        &mut self,
+        mut hello: RESPValue,
+        value: &mut RESPValue,
+    ) -> JsResult<()> {
+        self.flags.is_selecting_db_internal = false;
+        match value {
+            RESPValue::Error(err) => self.fail(err, RedisError::ServerError),
+            RESPValue::SimpleString(ok) if ok.as_ref() == b"OK" => {
+                debug!("SELECT {} successful", self.database);
+                self.handshake_complete(&mut hello)
+            }
+            _ => self.fail(
+                b"SELECT command failed with non-OK response",
+                RedisError::InvalidResponse,
+            ),
+        }
+    }
+
+    /// The one place a connection becomes `Connected`: `onconnect`, the
+    /// `connect()` promise, the queue drain and the auto-flusher all key off it,
+    /// so nothing is written ahead of a handshake reply that is still due.
+    fn handshake_complete(&mut self, hello: &mut RESPValue) -> JsResult<()> {
+        self.status = Status::Connected;
+        self.flags.is_reconnecting = false;
+        self.retry_attempts = 0;
+        self.on_valkey_connect(hello)
+    }
+
     /// Handle Valkey protocol response
     fn handle_response(&mut self, value: &mut RESPValue) -> JsResult<()> {
-        // Special handling for the initial HELLO response
+        // Replies to the handshake are not paired with anything in the command queue.
         if self.status != Status::Connected {
-            self.handle_hello_response(value)?;
-
-            // We've handled the HELLO response without consuming anything from the command queue
+            match self.pending_hello.take() {
+                Some(hello) => self.handle_select_response(hello, value)?,
+                None => self.handle_hello_response(value)?,
+            }
             return Ok(());
         }
 
-        // Handle initial SELECT response
-        if self.flags.is_selecting_db_internal {
-            self.flags.is_selecting_db_internal = false;
-
-            return match value {
-                RESPValue::Error(err_str) => {
-                    self.fail(err_str, RedisError::InvalidCommand)?;
-                    Ok(())
-                }
-                RESPValue::SimpleString(ok_str) => {
-                    if ok_str.as_ref() != b"OK" {
-                        // SELECT returned something other than "OK"
-                        self.fail(
-                            b"SELECT command failed with non-OK response",
-                            RedisError::InvalidResponse,
-                        )?;
-                        return Ok(());
-                    }
-
-                    // SELECT was successful.
-                    debug!("SELECT {} successful", self.database);
-                    // Connection is now fully ready on the specified database.
-                    // If any commands were queued while waiting for SELECT, try to send them.
-                    self.send_next_command();
-                    Ok(())
-                }
-                _ => {
-                    // Unexpected response type for SELECT
-                    self.fail(
-                        b"Received non-SELECT response while in the SELECT state.",
-                        RedisError::InvalidResponse,
-                    )?;
-                    Ok(())
-                }
-            };
-        }
         // Check if this is a subscription push message that might not need a promise pair
         let mut should_consume_promise_pair = true;
         let mut pair_maybe: Option<command::PromisePair> = None;
@@ -1274,7 +1278,8 @@ impl ValkeyClient {
             return Ok(());
         }
 
-        // If using a specific database, send SELECT command
+        // If using a specific database, send SELECT right behind HELLO; its
+        // reply completes the handshake (`hello_accepted`).
         if self.database > 0 {
             let mut int_buf = [0u8; 64];
             let db_str = bun_core::fmt::int_as_bytes(&mut int_buf, self.database);
@@ -1303,6 +1308,7 @@ impl ValkeyClient {
         // after a previous connection exhausted retries (#29925).
         self.flags.failed = false;
         self.flags.is_selecting_db_internal = false;
+        self.pending_hello = None;
         if matches!(self.socket, AnySocket::SocketTcp(_)) {
             // if is tcp, we need to start the connection process
             // if is tls, we need to wait for the handshake to complete
@@ -1321,7 +1327,7 @@ impl ValkeyClient {
     /// Test whether we are ready to run "normal" RESP commands, such as
     /// get/set, pub/sub, etc.
     fn connection_ready(&self) -> bool {
-        self.status == Status::Connected && !self.flags.is_selecting_db_internal
+        self.status == Status::Connected
     }
 
     /// Process queued commands in the offline queue

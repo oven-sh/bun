@@ -325,10 +325,19 @@ impl Worker {
                 return Err(crate::Error::ProcessWatchFailed);
             }
         }
+        // `kill` does nothing until the exit is watched, so a reader that failed above has not stopped the process yet.
+        if this.output_error().is_some() {
+            let _ = process.kill(9);
+        }
 
         // Disarm the errdefer cleanup on success.
         let _ = scopeguard::ScopeGuard::into_inner(this);
         Ok(())
+    }
+
+    /// The failed read of stdout or stderr that this process is killed for.
+    pub(crate) fn output_error(&self) -> Option<&bun_sys::Error> {
+        self.out.error.as_ref().or(self.err.error.as_ref())
     }
 
     pub(crate) fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
@@ -394,6 +403,8 @@ pub(crate) struct WorkerPipe {
     pub(crate) worker: *const Worker,
     /// EOF or error observed.
     pub(crate) done: bool,
+    /// The read error that ended this pipe.
+    pub(crate) error: Option<bun_sys::Error>,
 }
 
 impl WorkerPipe {
@@ -402,6 +413,7 @@ impl WorkerPipe {
             reader: bun_io::BufferedReader::init::<WorkerPipe>(),
             worker,
             done: false,
+            error: None,
         }
     }
 
@@ -421,8 +433,14 @@ impl WorkerPipe {
     pub(crate) fn on_reader_done(&mut self) {
         self.done = true;
     }
-    pub(crate) fn on_reader_error(&mut self, _: bun_sys::Error) {
+    pub(crate) fn on_reader_error(&mut self, err: bun_sys::Error) {
         self.done = true;
+        self.error = Some(err);
+        // What the worker prints from here on cannot be read, so it is stopped like one with a corrupt IPC stream; `reap_worker` reports the cause.
+        // SAFETY: worker backref valid while this pipe is embedded in its Worker; `process` is a field disjoint from the pipe.
+        if let Some(p) = unsafe { &(*self.worker).process } {
+            let _ = p.kill(9);
+        }
     }
 }
 

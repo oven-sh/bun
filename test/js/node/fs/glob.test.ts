@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
+import { sep } from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -293,5 +294,56 @@ describe("fs.globSync exclude with withFileTypes", () => {
     const inners = results.filter(d => d.name === "inner.txt");
     expect(inners).toHaveLength(1);
     expect(String(inners[0].parentPath).replaceAll("\\", "/")).toEndWith("keep");
+  });
+});
+
+// https://github.com/nodejs/node/issues/62897
+describe("a directory that is listed after one of its children was traversed", () => {
+  const src = { src: { helpers: { "a.ts": "", "b.ts": "" }, "index.ts": "" } };
+  const cases = [
+    {
+      // "a/**" matches "a" and every directory below it. "../*" lists the parent
+      // of each one: ".", "a", "a/b", "a/b/c", "a/c" and "a/c/d".
+      name: "'..' after '**'",
+      tree: { a: { b: { c: { d: {} } }, c: { d: { c: {} } }, x: "", z: "" } },
+      pattern: "a/**/../*",
+      expected: ["a", "a/b", "a/b/c", "a/b/c/d", "a/c", "a/c/d", "a/c/d/c", "a/x", "a/z"],
+    },
+    {
+      // The "./" pattern is traversed first, then "src/*.ts" lists "src".
+      // Entries are visited in sorted order, so "index.ts" must sort after "helpers".
+      name: "a pattern array with a './' pattern",
+      tree: src,
+      pattern: ["src/*.ts", "./src/helpers/*.ts"],
+      expected: ["src/helpers/a.ts", "src/helpers/b.ts", "src/index.ts"],
+    },
+    {
+      name: "a brace group with a './' alternative",
+      tree: src,
+      pattern: "{src/*.ts,./src/helpers/*.ts}",
+      expected: ["src/helpers/a.ts", "src/helpers/b.ts", "src/index.ts"],
+    },
+  ];
+
+  describe.each(cases)("$name", ({ tree, pattern, expected }) => {
+    const sorted = expected.map(path => path.replaceAll("/", sep)).sort();
+
+    it("fs.globSync", () => {
+      using dir = tempDir("fs-glob-seen", tree);
+      expect(fs.globSync(pattern, { cwd: String(dir) }).sort()).toEqual(sorted);
+    });
+
+    it("fs.promises.glob", async () => {
+      using dir = tempDir("fs-glob-seen", tree);
+      const paths = await Array.fromAsync(fs.promises.glob(pattern, { cwd: String(dir) }));
+      expect(paths.sort()).toEqual(sorted);
+    });
+
+    it("fs.glob", async () => {
+      using dir = tempDir("fs-glob-seen", tree);
+      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+      fs.glob(pattern, { cwd: String(dir) }, (err, paths) => (err ? reject(err) : resolve(paths)));
+      expect((await promise).sort()).toEqual(sorted);
+    });
   });
 });

@@ -22,8 +22,7 @@ use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
 use crate::socket::{
-    DuplexUpgradeContext, Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket,
-    TLSSocket,
+    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
@@ -92,23 +91,6 @@ bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ not finalized).
     Listener::do_stop(unsafe { &*this }, true)
 });
-
-// The context's stop reaches an owner as a raw pointer, so `DuplexUpgradeContext`
-// (whose own file only takes `ThisPtr`) has its impl here.
-// `close` may re-enter (`on_close`) and schedule the free of `this`.
-bun_jsc::impl_abort_handle_owner!(DuplexUpgradeContext, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ not dropped).
-    unsafe { bun_ptr::ThisPtr::new(this) }.upgrade.close()
-});
-
-impl DuplexUpgradeContext {
-    /// Joins `context`, which closes the duplex when it stops.
-    pub(super) fn arm(this: bun_ptr::ThisPtr<Self>, context: &bun_jsc::ScriptExecutionContext) {
-        // SAFETY: `this` is the root of a live heap allocation; the handle is a
-        // field of it and leaves `context` when it is dropped.
-        unsafe { bun_jsc::AbortHandle::arm_owner(this.as_ptr(), context) };
-    }
-}
 
 #[derive(Clone, Copy, Default)]
 pub(crate) enum ListenerType {

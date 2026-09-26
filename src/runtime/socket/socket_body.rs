@@ -60,7 +60,7 @@ fn js_loop_ctx() -> bun_io::EventLoopCtx {
 /// on POSIX, a WSA code (`WSAECONNRESET` = 10054) on Windows. `sys::Error`
 /// stores `SystemErrno` discriminants, so the WSA code has to be mapped first
 /// or the error reaches JS with no `code` at all.
-pub(super) fn read_error_from_close_code(code: c_int) -> sys::Error {
+fn read_error_from_close_code(code: c_int) -> sys::Error {
     #[cfg(not(windows))]
     {
         sys::Error::from_code_int(code, sys::Tag::read)
@@ -79,6 +79,15 @@ pub(super) fn read_error_from_close_code(code: c_int) -> sys::Error {
         };
         sys::Error::new(errno, sys::Tag::read)
     }
+}
+
+/// `read_error_from_close_code` for C++: the `closeError` getter of `JSNodeHTTPServerSocket`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
+    global: &JSGlobalObject,
+    code: c_int,
+) -> JSValue {
+    <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(code), global)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -113,7 +122,8 @@ impl<const SSL: bool> boringssl_sys::AlpnSelectCallback for TlsSocketAlpnSelect<
         offered: &'o [u8],
     ) -> Result<Option<&'o [u8]>, boringssl_sys::AlpnReject> {
         use boringssl_sys::AlpnReject;
-        let Some(this) = ssl.ex_data(NewSocket::<SSL>::tls_socket_slot()) else {
+        let Some(this) = NewSocket::<SSL>::tls_socket_slot().and_then(|slot| ssl.ex_data(slot))
+        else {
             return Ok(None);
         };
         // Same handlers-presence guard as every other dispatch entry point:
@@ -453,14 +463,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.flags.set(v);
     }
 
-    /// The per-`SSL` ex-data slot `on_open` points back at the owning socket
-    /// through (read by the ALPN select callback).
-    fn tls_socket_slot() -> &'static boringssl_sys::ExDataSlot<Self> {
-        static TCP: boringssl_sys::ExDataSlot<NewSocket<false>> = boringssl_sys::ExDataSlot::new();
-        static TLS: boringssl_sys::ExDataSlot<NewSocket<true>> = boringssl_sys::ExDataSlot::new();
-        let slot: &'static dyn core::any::Any = if SSL { &TLS } else { &TCP };
-        slot.downcast_ref()
-            .expect("SSL selects the matching static")
+    /// The slot of a TLS socket's `SSL` through which `on_open` points back at
+    /// the owning socket (read by the ALPN select callback). `None` for
+    /// `TCPSocket`, which has no `SSL`.
+    fn tls_socket_slot() -> Option<&'static boringssl_sys::ExDataSlot<Self>> {
+        // SAFETY: uSockets and `SSLWrapper` create the `SSL` of a `TLSSocket`;
+        // neither of them nor anything else uses its application slot.
+        static TLS: boringssl_sys::ExDataSlot<TLSSocket> =
+            unsafe { boringssl_sys::ExDataSlot::app_data() };
+        (&TLS as &'static dyn core::any::Any).downcast_ref()
     }
 
     /// Take the [`io_ref`](Self::io_ref) for the native owner now pointing at
@@ -1486,7 +1497,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                         && (this.protos.get().is_some()
                             || !this.get_handlers().on_alpn_callback().is_empty())
                     {
-                        ssl.set_ex_data(Self::tls_socket_slot(), Some(BackRef::new(this.get())));
+                        if let Some(slot) = Self::tls_socket_slot() {
+                            ssl.set_ex_data(slot, Some(BackRef::new(this.get())));
+                        }
                         SSL_CTX::opaque_ref(tls_socket_functions::ffi::SSL_get_SSL_CTX(ssl))
                             .set_alpn_select_callback::<TlsSocketAlpnSelect<SSL>>();
                     }
@@ -4200,6 +4213,34 @@ impl SocketMode {
 // DuplexUpgradeContext
 // ──────────────────────────────────────────────────────────────────────────
 
+impl bun_event_loop::Taskable for DuplexUpgradeContext {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DuplexUpgradeContext;
+    /// The context's one queued hop will not run (the VM is tearing down, or
+    /// the context that upgraded the duplex has stopped), and nothing else
+    /// frees the context. If the TLSSocket is still attached (a `StartTLS`
+    /// that never ran: no wrapper was created, so no close ever detached it),
+    /// route it through its close first — that consumes our +1 and detaches it
+    /// from the duplex, so its finalizer during ~VM finds nothing to reach
+    /// into — then free the context.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; the single queue entry for `this`.
+        let this = unsafe { ThisPtr::new(this) };
+        this.queued.set(false);
+        if let Some(tls) = this.tls.replace(None) {
+            let socket = this.duplex_socket();
+            // `Err` is left pending for the release dispatcher's fold.
+            let _ = TLSSocket::on_close(TLSSocket::adopt_io_ref(tls), socket, 0, None);
+        }
+        Self::deinit(this);
+    }
+    /// The hop continues the script that upgraded the duplex: once that context has stopped, a
+    /// `StartTLS` that has not run yet must not start (`release_unrun` closes what there is).
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+        // SAFETY: fn contract — the queued context.
+        unsafe { (*this).context }
+    }
+}
+
 pub(crate) struct DuplexUpgradeContext {
     pub upgrade: UpgradedDuplex,
     /// The context owns itself from `js_upgrade_duplex_to_tls` until
@@ -4231,12 +4272,17 @@ pub(crate) struct DuplexUpgradeContext {
     pub server_verify: crate::socket::upgraded_duplex::ServerVerify,
     mode: SocketMode,
     /// A TLS socket over a JS duplex is in no uSockets group, so the context
-    /// that upgraded it closes it through this owner when it stops. The
-    /// `AbortHandleOwner` impl and [`arm`](Self::arm) are in `Listener.rs`.
-    pub(super) abort_handle: bun_jsc::AbortHandle,
+    /// that upgraded it closes it through this owner when it stops.
+    abort_handle: bun_jsc::AbortHandle,
     /// That context.
     context: bun_jsc::ContextId,
 }
+
+// `close` may re-enter (`on_close`) and schedule the free of `this`.
+bun_jsc::impl_abort_handle_owner!(DuplexUpgradeContext, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ not dropped).
+    unsafe { ThisPtr::new(this) }.upgrade.close()
+});
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4479,15 +4525,9 @@ impl DuplexUpgradeContext {
             // Already in the queue: that entry runs the updated `task_event`.
             return;
         }
-        // Dispatched by `task_tag::DuplexUpgradeContext` to `run_event` /
-        // `release_unrun`. The hop continues the script that upgraded the
-        // duplex: once that context has stopped, a `StartTLS` that has not run
-        // yet must not start (`release_unrun` closes what there is).
-        this.vm.event_loop_mut().enqueue_task(jsc::Task::new(
-            bun_event_loop::task_tag::DuplexUpgradeContext,
-            this.as_ptr().cast(),
-            this.context,
-        ));
+        this.vm
+            .event_loop_mut()
+            .enqueue_task(jsc::Task::init(this.as_ptr()));
     }
 
     fn deinit_in_next_tick(this: bun_ptr::ThisPtr<Self>) {
@@ -4498,24 +4538,6 @@ impl DuplexUpgradeContext {
     fn start_tls(this: bun_ptr::ThisPtr<Self>) {
         this.task_event.set(EventState::StartTLS);
         Self::enqueue_self_task(this);
-    }
-
-    /// The queued hop (see [`enqueue_self_task`](Self::enqueue_self_task))
-    /// will never run (the VM is tearing down, or the context that upgraded
-    /// the duplex has stopped), and nothing else frees the context. If the
-    /// TLSSocket is still attached (a `StartTLS` that never ran: no wrapper
-    /// was created, so no close ever detached it), route it through its close
-    /// first — that consumes our +1 and detaches it from the duplex, so its
-    /// finalizer during ~VM finds nothing to reach into — then free the
-    /// context.
-    pub(crate) fn release_unrun(this: ThisPtr<Self>) {
-        this.queued.set(false);
-        if let Some(tls) = this.tls.replace(None) {
-            let socket = this.duplex_socket();
-            // `Err` is left pending for the release dispatcher's fold.
-            let _ = TLSSocket::on_close(TLSSocket::adopt_io_ref(tls), socket, 0, None);
-        }
-        Self::deinit(this);
     }
 
     /// Frees the context; nothing may touch `this` afterwards.
@@ -4754,8 +4776,9 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     // dangling still exits. If the underlying stream is a real socket, that
     // socket's own handle keeps the loop alive.
 
-    // Leaves its context again when it is dropped.
-    DuplexUpgradeContext::arm(duplex_context_ref, context);
+    // SAFETY: the root of a live heap allocation; the handle is a field of it
+    // and leaves `context` when the allocation is dropped.
+    unsafe { bun_jsc::AbortHandle::arm_owner(duplex_context_ref.as_ptr(), context) };
     DuplexUpgradeContext::start_tls(duplex_context_ref);
 
     let array = JSValue::create_empty_array(global, 2)?;

@@ -270,38 +270,34 @@ unsafe extern "C" {
 #[repr(transparent)]
 pub struct OwnedSslCtx(core::ptr::NonNull<SSL_CTX>);
 
-/// A typed `SSL` ex-data index: allocated once (per `static`) with
-/// `SSL_get_ex_new_index`, so distinct slots never alias and everything read
-/// through a slot was written as the same `T`.
+/// The typed view of an `SSL`'s application slot: ex_data index 0, which
+/// BoringSSL reserves for the application (`SSL_set_app_data`). A registered
+/// index (`SSL_get_ex_new_index`) would be the third one on every `SSL` of
+/// uSockets, and the first write to it reallocates the per-`SSL` ex_data
+/// stack.
 pub struct ExDataSlot<T> {
-    index: std::sync::OnceLock<c_int>,
     _marker: core::marker::PhantomData<fn() -> T>,
 }
 
 impl<T> ExDataSlot<T> {
-    pub const fn new() -> Self {
+    const APP_DATA_INDEX: c_int = 0;
+
+    /// # Safety
+    /// An `SSL` has one application slot, so it has one `T`. On every `SSL`
+    /// this slot is used with, nothing else reads or writes index 0 (lsquic
+    /// keeps its connection there on the `SSL`s it creates), and no
+    /// `ExDataSlot` of another type exists for them.
+    pub const unsafe fn app_data() -> Self {
         ExDataSlot {
-            index: std::sync::OnceLock::new(),
             _marker: core::marker::PhantomData,
         }
     }
 
+    #[inline]
     fn index(&self) -> c_int {
-        *self.index.get_or_init(|| {
-            // SAFETY: no argp/callbacks; BoringSSL just hands out the next index.
-            let i = unsafe {
-                SSL_get_ex_new_index(0, core::ptr::null_mut(), core::ptr::null_mut(), None, None)
-            };
-            assert!(i >= 0, "SSL_get_ex_new_index failed");
-            i
-        })
+        Self::APP_DATA_INDEX
     }
 }
-
-// SAFETY: holds only an index.
-unsafe impl<T> Sync for ExDataSlot<T> {}
-// SAFETY: holds only an index.
-unsafe impl<T> Send for ExDataSlot<T> {}
 
 impl OwnedSslCtx {
     /// Takes the +1 `raw` carries; `None` when `raw` is null.

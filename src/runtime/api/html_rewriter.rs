@@ -7,8 +7,7 @@ use std::rc::Rc;
 
 use bun_jsc::{
     self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, GlobalRef,
-    JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, ProtectedJSValue, SystemError,
-    bun_string_jsc,
+    JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SystemError, bun_string_jsc,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -31,6 +30,7 @@ use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, Si
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
+use lol_html::html_content::UserData as _;
 
 // lol-html rewritable units, lifetime-erased to `'static` so a `*mut RawX`
 // can be parked in a JsClass `DetachablePtr` for the duration of the
@@ -256,6 +256,10 @@ impl HandlerList {
         Ok(value)
     }
 }
+
+/// Index of a pending `onEndTag()` callback in the JS array of the cell's `endTagHandlers` slot.
+#[derive(Clone, Copy)]
+struct EndTagSlot(u32);
 
 /// Selector + handler registry shared between an [`HTMLRewriter`] and every
 /// rewriter it spawns — `transform()` can run more than once, so
@@ -803,6 +807,8 @@ pub struct RewriterPipe {
     /// `on_ready`/`write`/`end_from_stream` during that call; those entry
     /// points defer instead of re-driving the (still-running) rewriter.
     driving: Cell<bool>,
+    /// Slots whose callback has run. Reused, so the array grows with the open elements only.
+    free_end_tag_slots: JsCell<Vec<EndTagSlot>>,
 
     // ── JS-pump path ─────────────────────────────────────────────────────
     /// Shared pending drain promise for the JS-pump `write()`/`flush(true)`.
@@ -1072,6 +1078,7 @@ impl RewriterPipe {
             pending_suspension: JsCell::new(None),
             suspended_wrapper: JsCell::new(None),
             driving: Cell::new(false),
+            free_end_tag_slots: JsCell::new(Vec::new()),
             pending: JsCell::new(WritablePending::default()),
             done: Cell::new(false),
             ref_count: Cell::new(1),
@@ -1620,10 +1627,72 @@ impl RewriterPipe {
             // lol-html runs the handlers for the rest of this chunk. `drive_rewriter` calls again.
             return;
         }
+        self.free_end_tag_slots.set(Vec::new());
         let cell = self.cell.get();
         if cell.is_cell() {
             js_HTMLRewriterTransform::handlers_set_cached(cell, &self.global, JSValue::UNDEFINED);
+            js_HTMLRewriterTransform::end_tag_handlers_set_cached(
+                cell,
+                &self.global,
+                JSValue::UNDEFINED,
+            );
         }
+    }
+
+    /// Holds `callback` for the end-tag handler that names the slot. `None`: no end tag can come.
+    fn hold_end_tag_callback(
+        &self,
+        global: &JSGlobalObject,
+        replaced: Option<EndTagSlot>,
+        callback: JSValue,
+    ) -> JsResult<Option<EndTagSlot>> {
+        let cell = self.cell.get();
+        // Parked element: its rewrite can be over, and its cell dead or swept before the abandon.
+        if !self.driving.get()
+            && (self.phase.get() == RewritePhase::Done || !cell.is_cell() || !cell.is_live_cell())
+        {
+            return Ok(None);
+        }
+        let list = match js_HTMLRewriterTransform::end_tag_handlers_get_cached(cell) {
+            Some(list) if list.is_cell() => list,
+            _ => {
+                let list = JSValue::create_empty_array(global, 0)?;
+                js_HTMLRewriterTransform::end_tag_handlers_set_cached(cell, global, list);
+                list
+            }
+        };
+        let slot = match replaced.or_else(|| self.free_end_tag_slots.with_mut(Vec::pop)) {
+            Some(slot) => slot,
+            None => EndTagSlot(list.get_length(global)? as u32),
+        };
+        // An own property, as in `HandlerList::append`.
+        list.put_index(global, slot.0, callback)?;
+        cell.ensure_still_alive();
+        Ok(Some(slot))
+    }
+
+    /// For the one run of the handler that names `slot`. `Err`: a termination is pending.
+    fn take_end_tag_callback(
+        &self,
+        global: &JSGlobalObject,
+        slot: EndTagSlot,
+    ) -> JsResult<Option<JSValue>> {
+        // `drive_rewriter` keeps the cell alive, and the array stays until lol-html returns.
+        let cell = self.cell.get();
+        let list = cell
+            .is_cell()
+            .then(|| js_HTMLRewriterTransform::end_tag_handlers_get_cached(cell))
+            .flatten()
+            .filter(|list| list.is_cell());
+        debug_assert!(list.is_some(), "HTMLRewriter end-tag handler has no array");
+        let Some(list) = list else {
+            return Ok(None);
+        };
+        let callback = list.get_direct_index(global, slot.0)?;
+        list.put_index(global, slot.0, JSValue::UNDEFINED)?;
+        self.free_end_tag_slots.with_mut(|free| free.push(slot));
+        debug_assert!(callback.is_cell(), "HTMLRewriter end-tag slot is empty");
+        Ok(callback.is_cell().then_some(callback))
     }
 
     fn flush_output(&self) {
@@ -2179,8 +2248,8 @@ enum HandlerCallback {
         callback: HandlerSlot,
         this_object: HandlerSlot,
     },
-    /// Given to `element.onEndTag()`: protected by its [`EndTagHandler`].
-    Protected(JSValue),
+    /// Given to `element.onEndTag()`: in the cell's `endTagHandlers` array until its one run.
+    EndTag(EndTagSlot),
 }
 
 /// Trait abstracting the per-handler bits [`handler_callback`] needs.
@@ -2208,7 +2277,8 @@ impl HandlerLike for EndTagHandler {
 /// suspension plumbing need.
 trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
     type Raw;
-    fn init(value: *mut Self::Raw) -> NonNull<Self>;
+    /// `pipe` is the one whose lol-html call lends `value`.
+    fn init(value: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> NonNull<Self>;
     /// `jsc.Codegen.JS${T}.toJS` — wraps the *existing* heap allocation `this`
     /// in a JS wrapper (the codegen `${T}__create`). Takes `NonNull<Self>` (not
     /// `&self`) because the C++ side stores the raw heap pointer in `m_ctx`;
@@ -2240,7 +2310,7 @@ macro_rules! impl_wrapper_like {
     ($ty:ident, $raw:ty, $field:ident, $suspended:ident) => {
         impl WrapperLike for $ty {
             type Raw = $raw;
-            fn init(v: *mut Self::Raw) -> NonNull<Self> {
+            fn init(v: *mut Self::Raw, _pipe: BackRef<RewriterPipe>) -> NonNull<Self> {
                 Self::init(v)
             }
             fn to_js(this: NonNull<Self>, g: &JSGlobalObject) -> JSValue {
@@ -2314,7 +2384,12 @@ where
 
     let callback = get_callback(&this).expect("callback must be set if handler registered");
     let (cb, this_object) = match callback {
-        HandlerCallback::Protected(cb) => (cb, JSValue::ZERO),
+        // The slot is free again: from here on only this frame holds `cb`.
+        HandlerCallback::EndTag(slot) => match sink.take_end_tag_callback(global, slot) {
+            Ok(Some(cb)) => (cb, JSValue::ZERO),
+            // A pending termination stays pending, as below.
+            Ok(None) | Err(_) => return HandlerOutcome::Stop,
+        },
         HandlerCallback::Listed {
             callback,
             this_object,
@@ -2336,7 +2411,7 @@ where
     };
 
     // After the early returns: only `to_js` below gives the wrapper's first ref an owner.
-    let wrapper: NonNull<Z> = Z::init(value);
+    let wrapper: NonNull<Z> = Z::init(value, sink);
 
     // Our ref across the handler call; the guard detaches then drops it. On
     // the SUSPEND path the guard is disarmed and `SuspendedWrapper`'s drop
@@ -2824,17 +2899,15 @@ pub(crate) struct EndTag {
 }
 
 struct EndTagHandler {
-    // GC-rooted via `ProtectedJSValue` until lol-html runs or drops the handler.
-    pub callback: Option<ProtectedJSValue>,
+    // No JS value here: lol-html may drop this during a GC sweep, with the pipe.
+    pub slot: EndTagSlot,
     pub global: GlobalRef, // JSC_BORROW
 }
 
 impl EndTagHandler {
     pub(crate) fn on_end_tag(this: NonNull<Self>, value: *mut RawEndTag) -> HandlerOutcome {
         handler_callback::<Self, EndTag, RawEndTag>(this, value, |h| {
-            h.callback
-                .as_ref()
-                .map(|callback| HandlerCallback::Protected(callback.value()))
+            Some(HandlerCallback::EndTag(h.slot))
         })
     }
 }
@@ -2995,6 +3068,8 @@ pub(crate) struct Element {
     /// closures do not call into JS, so the short `&mut Vec` borrow cannot
     /// overlap a re-entrant access.
     pub(crate) attribute_iterators: JsCell<Vec<RefPtr<AttributeIterator>>>,
+    /// Lends `element`. Not `active_sink`: none after an `await`, another in a nested rewrite.
+    pipe: Cell<Option<BackRef<RewriterPipe>>>,
 }
 
 impl Drop for Element {
@@ -3006,11 +3081,12 @@ impl Drop for Element {
 impl Element {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
 
-    pub(crate) fn init(element: *mut RawElement) -> NonNull<Element> {
+    pub(crate) fn init(element: *mut RawElement, pipe: BackRef<RewriterPipe>) -> NonNull<Element> {
         bun_core::heap::alloc_nn(Element {
             ref_count: Cell::new(1),
             element: DetachablePtr::new(element),
             attribute_iterators: JsCell::new(Vec::new()),
+            pipe: Cell::new(Some(pipe)),
         })
     }
 
@@ -3033,6 +3109,7 @@ impl Element {
     /// out here, and end the iterators that read through it.
     pub(crate) fn invalidate(&self) {
         self.element.detach();
+        self.pipe.set(None);
         self.detach_attribute_iterators();
     }
 
@@ -3049,6 +3126,9 @@ impl Element {
             return Err(global_object.throw_type_error(format_args!("Expected a function")));
         }
 
+        // Every matching `on()` handler gets this lol-html element: its user data keeps the slot.
+        let replaced = el.user_data().downcast_ref::<EndTagSlot>().copied();
+
         // `None` iff the element is void (`!can_have_content`) — the exact
         // condition lol-html's C API mapped to the "No end tag." error.
         let Some(handlers) = el.end_tag_handlers() else {
@@ -3056,15 +3136,17 @@ impl Element {
             return Err(global_object.throw_value(err));
         };
 
-        // `onEndTag()` replaces any previously registered handler
-        // (clear-then-add, as the C API did).
-        handlers.clear();
+        // Only `invalidate()` clears `pipe`, and it detaches `element` in the same call.
+        let pipe = self.pipe.get().expect("attached Element without its pipe");
+        let slot = pipe.hold_end_tag_callback(global_object, replaced, function)?;
+        let (Some(slot), None) = (slot, replaced) else {
+            // No end tag can come, or the earlier call's handler now reads the new callback.
+            return Ok(call_frame.this());
+        };
 
-        // The `FnOnce` box owns the handler; dropping it (whether or not
-        // lol-html ever invokes it) unprotects `callback` via `ProtectedJSValue`.
         let mut end_tag_handler = EndTagHandler {
             global: GlobalRef::from(global_object),
-            callback: Some(function.protected()),
+            slot,
         };
         handlers.push(Box::new(move |end_tag| {
             // SAFETY: lifetime erasure. `end_tag` only lives for this
@@ -3078,6 +3160,7 @@ impl Element {
                 raw,
             ))
         }));
+        el.set_user_data(slot);
 
         Ok(call_frame.this())
     }
@@ -3337,8 +3420,8 @@ impl Element {
 // hold a backref to it and read through it (see `invalidate`).
 impl WrapperLike for Element {
     type Raw = RawElement;
-    fn init(v: *mut Self::Raw) -> NonNull<Self> {
-        Self::init(v)
+    fn init(v: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> NonNull<Self> {
+        Self::init(v, pipe)
     }
     fn to_js(this: NonNull<Self>, g: &JSGlobalObject) -> JSValue {
         Self::to_js_nonnull(this, g)

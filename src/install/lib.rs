@@ -116,6 +116,8 @@ pub mod git_runner;
 pub mod hoisted_install;
 pub mod isolated_install;
 pub mod lifecycle_script_runner;
+#[cfg(unix)]
+pub(crate) mod lifecycle_signals;
 pub mod migration;
 #[path = "PackageInstall.rs"]
 pub mod package_install;

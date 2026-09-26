@@ -1,0 +1,65 @@
+{
+  "_id": "bundled-unpublished",
+  "name": "bundled-unpublished",
+  "dist-tags": {
+    "latest": "3.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-unpublished",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "unpublished-dep": "1.0.0"
+      },
+      "bundleDependencies": [
+        "unpublished-dep"
+      ],
+      "_id": "bundled-unpublished@1.0.0",
+      "dist": {
+        "integrity": "sha512-YJy/lrrhqm80Zok5szGARoEgdZir7eNGa8DS6TfeGfJXkr4ULd2RX6dZgTWIHhcKF9l224Ipp2gQTG43chjU0A==",
+        "shasum": "6c4b568dabde70e58233df4b72b607f06e90689e",
+        "tarball": "http://localhost:4873/bundled-unpublished/-/bundled-unpublished-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "bundled-unpublished",
+      "version": "2.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "a-dep": "1.0.1",
+        "no-deps": "9.9.9",
+        "unpublished-alias": "npm:unpublished-dep@1.0.0",
+        "unpublished-catalog": "catalog:",
+        "unpublished-dep": "^1.0.0",
+        "unpublished-tag": "nightly",
+        "unpublished-workspace": "workspace:*"
+      },
+      "bundleDependencies": true,
+      "_id": "bundled-unpublished@2.0.0",
+      "dist": {
+        "integrity": "sha512-iem212sVvYvCdP9KM0HtqDloS+fDrolL/0UvNK9xLzWO/cNCaP1LCP+AOXjGcRx0Rv3wu2DHUIR+vXtS0Q7raQ==",
+        "shasum": "f5c174ba49cd3af37eae4900f65be6b45450dcbc",
+        "tarball": "http://localhost:4873/bundled-unpublished/-/bundled-unpublished-2.0.0.tgz"
+      }
+    },
+    "3.0.0": {
+      "name": "bundled-unpublished",
+      "version": "3.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "no-deps": "9.9.9",
+        "one-dep": "1.0.0"
+      },
+      "bundleDependencies": [
+        "no-deps"
+      ],
+      "_id": "bundled-unpublished@3.0.0",
+      "dist": {
+        "integrity": "sha512-bNj1dGVPyn8140md5CX2g9itfGZWPeqWYS8zjJTcxlopt+wEA0IqxRAFtA0TwLB2ypNZJxEBlK0AUaRQLi6QFQ==",
+        "shasum": "31fef1a35f94e403816493aa02887b20d774027d",
+        "tarball": "http://localhost:4873/bundled-unpublished/-/bundled-unpublished-3.0.0.tgz"
+      }
+    }
+  }
+}

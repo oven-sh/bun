@@ -1267,6 +1267,113 @@ describe.concurrent("hand-edited bun.lock that lists workspaces but has no packa
   });
 });
 
+// bundled-unpublished@1.0.0 bundles "unpublished-dep", which the registry does not have. bun.lock
+// has no entry for it, and the package that ships it names it in `bundledDependencies`.
+describe.concurrent("hand-edited bun.lock bundledDependencies", () => {
+  async function installWithBundledDependencies(bundledDependencies: unknown) {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const manifest = await file(
+      join(import.meta.dir, "registry", "packages", "bundled-unpublished", "package.json"),
+    ).json();
+    const lockfile = JSON.stringify(
+      {
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "hand-edited-bundled", dependencies: { "bundled-unpublished": "1.0.0" } } },
+        packages: {
+          "bundled-unpublished": [
+            "bundled-unpublished@1.0.0",
+            `${registry.registryUrl()}bundled-unpublished/-/bundled-unpublished-1.0.0.tgz`,
+            { dependencies: { "unpublished-dep": "1.0.0" }, bundledDependencies },
+            manifest.versions["1.0.0"].dist.integrity,
+          ],
+        },
+      },
+      null,
+      2,
+    );
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({ name: "hand-edited-bundled", dependencies: { "bundled-unpublished": "1.0.0" } }),
+      ),
+      write(join(packageDir, "bun.lock"), lockfile),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+    return { out: normalizeBunSnapshot(out, packageDir), err: normalizeBunSnapshot(err, packageDir), exitCode };
+  }
+
+  it("loads a package whose bundled dependency has no entry", async () => {
+    const { out, err, exitCode } = await installWithBundledDependencies(["unpublished-dep"]);
+    expect(err).toMatchInlineSnapshot(`""`);
+    expect(out).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      + bundled-unpublished@1.0.0
+
+      1 package installed"
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  it("rejects a value that is not an array", async () => {
+    const { out, err, exitCode } = await installWithBundledDependencies("unpublished-dep");
+    expect(err).toMatchInlineSnapshot(`
+      "20 |         "bundledDependencies": "unpublished-dep"
+                                          ^
+      error: Expected an array
+          at bun.lock:20:32
+      InvalidLockfile: failed to parse lockfile: 'bun.lock'
+
+      warn: Ignoring lockfile
+      error: lockfile had changes, but lockfile is frozen"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it("rejects an item that is not a string", async () => {
+    const { out, err, exitCode } = await installWithBundledDependencies(["unpublished-dep", 1]);
+    expect(err).toMatchInlineSnapshot(`
+      "22 |           1
+                     ^
+      error: Expected a string
+          at bun.lock:22:11
+      InvalidLockfile: failed to parse lockfile: 'bun.lock'
+
+      warn: Ignoring lockfile
+      error: lockfile had changes, but lockfile is frozen"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it("rejects a dependency that has no entry and is not listed", async () => {
+    const { out, err, exitCode } = await installWithBundledDependencies([]);
+    expect(err).toMatchInlineSnapshot(`
+      "13 |     "bundled-unpublished": [
+               ^
+      error: Failed to resolve prod dependency 'unpublished-dep' for package 'bundled-unpublished'
+          at bun.lock:13:5
+      InvalidLockfile: failed to parse lockfile: 'bun.lock'
+
+      warn: Ignoring lockfile
+      error: lockfile had changes, but lockfile is frozen"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+});
+
 const makeInstallRunner = (cwd: string) => async (args: string[]) => {
   await using proc = spawn({
     cmd: [bunExe(), ...args],

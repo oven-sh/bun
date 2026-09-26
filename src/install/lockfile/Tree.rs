@@ -992,6 +992,11 @@ impl Tree {
 
             let res_id = builder.resolutions[dep_id as usize];
 
+            // The copy a tarball ships stays in this folder, whether or not the dependency resolved.
+            if res_id == invalid_package_id && dep.behavior.is_bundled() {
+                return HoistDependencyResult::DependencyLoop; // 3
+            }
+
             if res_id == invalid_package_id && package_id == invalid_package_id {
                 debug_assert!(dep.behavior.is_optional_peer());
                 debug_assert!(dependency.behavior.is_optional_peer());

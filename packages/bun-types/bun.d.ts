@@ -10591,6 +10591,13 @@ declare module "bun" {
     os?: string | string[];
     cpu?: string | string[];
     bundled?: true;
+    /**
+     * Bundled dependencies of this package that have no entry of their own in
+     * `packages`, because they could not be resolved. The package's tarball
+     * ships them. A bundled dependency that was resolved has an entry with
+     * `bundled: true` instead.
+     */
+    bundledDependencies?: string[];
   };
 
   /** @see {@link BunLockFile.packages} */

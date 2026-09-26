@@ -859,8 +859,8 @@ export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   0,
 );
 
-// Whether the source of `fn` already knows where its lines start. Before anything asked for a position in it, that
-// means `bun build --compile` embedded them.
+// Whether the source of `fn` knows where its lines start. Before anything asked for a position in it, that means they
+// came with its code: from the parse, or out of the bytecode.
 export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
   "ZigSourceProvider.cpp",
   "jsSourceHasLineStarts",

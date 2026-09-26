@@ -130,9 +130,6 @@ Ref<SourceProvider> SourceProvider::create(
 
     auto provider = getProvider();
 
-    if (resolvedSource.line_starts_length)
-        provider->setEncodedLineStarts({ resolvedSource.line_starts, resolvedSource.line_starts_length });
-
     if (shouldGenerateCodeCoverage) {
         BunString providerURL = Bun::toString(provider->sourceURL());
         WTF::String providerSourceString = provider->source().toStringWithoutCopying();
@@ -413,21 +410,10 @@ extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 
 }; // namespace Zig
 
-// bun build --compile: where each line of a module's source starts, to embed beside the source.
-extern "C" size_t Bun__encodeLineStarts(const uint8_t* characters, size_t length, bool is16Bit, uint8_t* out, size_t capacity)
-{
-    StringView text = is16Bit
-        ? StringView(std::span { reinterpret_cast<const char16_t*>(characters), length })
-        : StringView(std::span { reinterpret_cast<const Latin1Character*>(characters), length });
-    Vector<uint8_t> encoded = JSC::LineStartTable::encode(text);
-    memcpySpan(std::span { out, capacity }, encoded.span());
-    return encoded.size();
-}
-
 namespace Bun {
 
-// bun:internal-for-testing: whether the source of a function already knows where its lines start. Before anything asked
-// for a position in it, that means the executable brought them.
+// bun:internal-for-testing: whether the source of a function knows where its lines start. Before anything asked for a
+// position in it, that means they came with its code: from the parse, or out of the bytecode.
 JSC_DEFINE_HOST_FUNCTION(jsSourceHasLineStarts, (JSC::JSGlobalObject*, JSC::CallFrame* callFrame))
 {
     auto* function = dynamicDowncast<JSC::JSFunction>(callFrame->argument(0));

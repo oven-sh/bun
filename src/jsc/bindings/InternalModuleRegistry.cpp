@@ -278,7 +278,7 @@ static bool encodeInternalModule(const String& text, const String& moduleName, c
     UnlinkedFunctionExecutable* executable = generateInternalModuleCode(vm, source, moduleName, depth);
     if (!executable)
         return false;
-    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), sourceStamp, externalStrings, JSC::BytecodeCacheUpdatable::No);
+    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source, sourceStamp, externalStrings, JSC::BytecodeCacheUpdatable::No);
     if (!result)
         return false;
     result->ref();

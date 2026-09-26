@@ -43,34 +43,6 @@ pub struct ResolvedSource {
     /// The file path whose `file://` URL is this module's source origin (what `import()` resolves against and what a
     /// bytecode cache is validated against). Empty: derived from `source_url` (a builtin gets a `builtin://` origin).
     pub origin_path: BunString,
-    /// `bun build --compile`: where each line of `source_code` starts, computed at build time.
-    pub line_starts: LineStarts,
-}
-
-/// `ResolvedSource.line_starts`: C++ sees `{ const uint8_t* ptr; size_t len; }`. Borrowed from the executable's
-/// module graph section, which is never unmapped.
-#[repr(C)]
-pub struct LineStarts {
-    ptr: *const u8,
-    len: usize,
-}
-
-impl Default for LineStarts {
-    fn default() -> Self {
-        Self {
-            ptr: core::ptr::null(),
-            len: 0,
-        }
-    }
-}
-
-impl LineStarts {
-    pub fn persistent(bytes: &'static [u8]) -> Self {
-        Self {
-            ptr: bytes.as_ptr(),
-            len: bytes.len(),
-        }
-    }
 }
 
 /// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; uint32_t entry_offset; }`
@@ -154,5 +126,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 152, 8; is_prelinked_module @ 77, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, bytecode_cache @ 80, module_info @ 104);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

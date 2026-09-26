@@ -752,6 +752,8 @@ pub struct ExitHandler {
     /// `process.exit()`, a fatal error or the end of a `bun test` run, as opposed to the event loop running dry.
     /// See `VirtualMachine::exit_tears_down_napi_envs`.
     pub requested: bool,
+    /// `bun repl`: the errors a session reports do not decide its exit code.
+    pub interactive: bool,
 }
 
 impl ExitHandler {
@@ -4446,6 +4448,9 @@ impl VirtualMachine {
 
     /// Exit code 1, unless 'exit' is being emitted: then the code in effect stands, as in Node.
     fn fail_exit_code(&mut self) {
+        if self.exit_handler.interactive {
+            return;
+        }
         // The VM's own global: the reporting global may be a node:vm context's.
         let global = self.global();
         // With no code chosen a worker exits 0 and the main thread 1.

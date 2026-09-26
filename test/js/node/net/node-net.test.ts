@@ -2505,17 +2505,13 @@ it("onread: a callback that throws is an uncaught exception", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("onread-boom");
-  const lines = stdout.split("\n").filter(Boolean);
   // The throw reaches the uncaught-exception path, not the socket 'error'
-  // handler. Node exits after the first slice; bun reports each throw and
-  // delivers the remaining slices (it does not exit mid-tick on an unhandled
-  // uncaughtException), so whichever slices appear must be the contiguous
-  // prefix of the stream with no gap and no 'socket-error'.
-  expect(lines[0]).toBe("calls:abcd");
-  expect(lines).not.toContain("socket-error");
-  expect(["calls:abcd", "calls:abcd,efgh", "calls:abcd,efgh,ijkl"]).toEqual(expect.arrayContaining(lines));
-  expect(exitCode).not.toBe(0);
+  // handler, and ends the process after the first slice, as in node.
+  expect({ lines: stdout.split("\n").filter(Boolean), stderr, exitCode }).toEqual({
+    lines: ["calls:abcd"],
+    stderr: expect.stringContaining("onread-boom"),
+    exitCode: 1,
+  });
 });
 
 // Node bounds each kernel read to the onread buffer's size, so a throw that is

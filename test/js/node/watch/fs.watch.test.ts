@@ -1815,7 +1815,7 @@ test("fs.watch callback throw is a fatal uncaught exception", async () => {
     stderr: expect.stringContaining("watch-boom"),
     exitCode: 1,
   });
-}, 15_000);
+});
 
 test("fs.promises.watch throwing ignore matcher is a fatal uncaught exception", async () => {
   using dir = tempDir("pwatch-throw", {});
@@ -1840,7 +1840,7 @@ test("fs.promises.watch throwing ignore matcher is a fatal uncaught exception", 
     stderr: expect.stringContaining("ignore-boom"),
     exitCode: 1,
   });
-}, 15_000);
+});
 
 test("fs.watch callback throw reaches an uncaughtException handler", async () => {
   using dir = tempDir("watch-caught", {});
@@ -1869,7 +1869,7 @@ test("fs.watch callback throw reaches an uncaughtException handler", async () =>
     stderr: "",
     exitCode: 0,
   });
-}, 15_000);
+});
 
 // Watching a file symlink makes bun hand libuv the readlink() result, which for
 // a relative link target is a bare file name. libuv's uv__split_path() used to

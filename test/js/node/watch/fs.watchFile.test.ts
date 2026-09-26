@@ -520,4 +520,4 @@ test("fs.watchFile listener throw is a fatal uncaught exception", async () => {
     stderr: expect.stringContaining("watchfile-boom"),
     exitCode: 1,
   });
-}, 15_000);
+});

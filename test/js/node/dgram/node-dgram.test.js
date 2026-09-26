@@ -144,4 +144,4 @@ test("node:dgram 'message' listener throw is a fatal uncaught exception", async 
     stderr: expect.stringContaining("dgram-boom"),
     exitCode: 1,
   });
-}, 15_000);
+});

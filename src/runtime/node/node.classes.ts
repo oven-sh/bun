@@ -123,7 +123,7 @@ export default [
         length: 0,
       },
     },
-    values: ["listener", "prevStat"],
+    values: ["listener"],
   }),
   define({
     name: "Timeout",

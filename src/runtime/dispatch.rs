@@ -302,12 +302,11 @@ pub(crate) fn run_task(
             };
         }
         task_tag::StatWatcherHop => {
-            // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
+            // SAFETY: boxed in `StatWatcherHop::post`; the arm consumes it.
             unsafe {
-                crate::node::node_fs_stat_watcher::StatWatcher::run_hop(cast_ptr!(
-                    crate::node::node_fs_stat_watcher::StatWatcher
-                ))
-            }?;
+                bun_core::heap::take(cast_ptr!(crate::node::node_fs_stat_watcher::StatWatcherHop))
+            }
+            .run()?;
         }
         task_tag::BundleV2PluginResolveAnswered => {
             cast!(bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered).run();
@@ -1476,7 +1475,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::StatWatcherTimerUpdate => {
             release!(crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate)
         }
-        task_tag::StatWatcherHop => release!(crate::node::node_fs_stat_watcher::StatWatcher),
+        task_tag::StatWatcherHop => release!(crate::node::node_fs_stat_watcher::StatWatcherHop),
         task_tag::AsyncCpTask => release!(crate::node::fs::AsyncCpTask),
         task_tag::ShellAsyncCpTask => release!(crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release!(StreamPending),

@@ -10,7 +10,6 @@ use bun_core::strings;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
-use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
@@ -42,7 +41,7 @@ use super::win_watcher as path_watcher;
 // exactly that. With `Cell`/`JsCell` (UnsafeCell-backed) the miscompile is
 // structurally impossible and those methods are now plain `&self`.
 #[bun_jsc::JsClass(no_constructor)]
-pub struct FSWatcher {
+pub(crate) struct FSWatcher {
     // codegen: jsc.Codegen.JSFSWatcher provides toJS/fromJS/fromJSDirect
     /// JS-thread uses only.
     ctx: *mut VirtualMachine,
@@ -75,11 +74,23 @@ pub struct FSWatcher {
     /// While it's not closed, the pending activity
     pending_activity_count: AtomicU32,
     current_task: JsCell<FSWatchTask>,
+
+    /// Armed until `detach()`: the watcher closes with the context that started it.
+    abort_handle: bun_jsc::AbortHandle,
 }
+
+bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ not yet detached).
+    let this = unsafe { &*this };
+    match cause {
+        bun_jsc::AbortCause::Signal(reason) => this.emit_abort(reason),
+        bun_jsc::AbortCause::ContextStopped(_) => this.close_without_event(),
+    }
+});
 
 /// `jsc.Codegen.JSFSWatcher` cached-slot accessors (`values: ["listener"]` in
 /// node.classes.ts). The C++ side is emitted by `generate-classes.ts`.
-pub mod js {
+pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!("FSWatcher"; listener);
 }
 
@@ -121,22 +132,22 @@ impl FSWatcher {
 
     /// Codegen `finalize: true` entry point. Runs on the mutator thread during lazy sweep.
     #[allow(clippy::boxed_local)] // codegen's signature
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         // stop all managers and signals
         self.detach();
     }
 }
 
 #[cfg(windows)]
-pub type FSWatchTask = FSWatchTaskWindows;
+pub(crate) type FSWatchTask = FSWatchTaskWindows;
 #[cfg(not(windows))]
-pub type FSWatchTask = FSWatchTaskPosix;
+pub(crate) type FSWatchTask = FSWatchTaskPosix;
 
 // `Event::Rename`/`Change` carry `StringOrBytesToDecode` on Windows, which
 // does not coerce to the `&[u8]` `emit()` expects — gate the whole posix task
 // to keep the Windows build sound.
 #[cfg(not(windows))]
-pub struct FSWatchTaskPosix {
+pub(crate) struct FSWatchTaskPosix {
     /// `None` only during `FSWatcher::init` two-phase construction (the task is
     /// embedded as `current_task` before the boxed `FSWatcher` address is
     /// known); patched to `Some` immediately after.
@@ -161,10 +172,15 @@ impl Taskable for FSWatchTaskPosix {
             ctx.expect("FSWatchTask.ctx unset").get().unref_task();
         }
     }
+    /// The watcher closes with the context that started it (`abort_handle`); a batch that arrives
+    /// afterwards finds it closed.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 #[cfg(not(windows))]
-pub struct Entry {
+pub(crate) struct Entry {
     event: Event,
     needs_free: bool,
 }
@@ -210,6 +226,7 @@ impl FSWatchTaskPosix {
                     self.ctx().emit_error(err, *close);
                     Ok(())
                 }
+                #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
                 Event::NoFilename(event_type) => {
                     self.ctx().emit_null_filename(*event_type);
                     Ok(())
@@ -310,9 +327,9 @@ impl FSWatchTaskPosix {
 }
 
 #[cfg(windows)]
-pub type EventPathString = StringOrBytesToDecode;
+pub(crate) type EventPathString = StringOrBytesToDecode;
 #[cfg(not(windows))]
-pub type EventPathString = Box<[u8]>;
+pub(crate) type EventPathString = Box<[u8]>;
 
 /// The kind of change a watcher backend reports for a path, before it becomes a JS event.
 /// Every backend (inotify, kqueue, FSEvents, Windows) produces exactly these two.
@@ -334,7 +351,7 @@ impl WatchEventKind {
     }
 }
 
-pub enum Event {
+pub(crate) enum Event {
     Rename(EventPathString),
     Change(EventPathString),
     Error {
@@ -344,6 +361,7 @@ pub enum Event {
     /// An event with no filename, surfaced to JS with `null`, matching node:
     /// `Change` when the OS event queue overflowed and changes were lost,
     /// `Rename` when libuv could not convert a name to UTF-8 (Windows).
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     NoFilename(WatchEventKind),
     Abort,
 }
@@ -368,7 +386,7 @@ unsafe extern "C" {
 }
 
 #[cfg(windows)]
-pub struct FSWatchTaskWindows {
+pub(crate) struct FSWatchTaskWindows {
     event: Event,
     ctx: Option<bun_ptr::ParentRef<FSWatcher>>,
 }
@@ -384,6 +402,10 @@ impl Taskable for FSWatchTaskWindows {
             Self::deinit(this);
             ctx.expect("FSWatchTask.ctx unset").get().unref_task();
         }
+    }
+    /// As `FSWatchTaskPosix`.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -404,7 +426,8 @@ impl Default for FSWatchTaskWindows {
     }
 }
 
-pub enum StringOrBytesToDecode {
+#[cfg(windows)]
+pub(crate) enum StringOrBytesToDecode {
     String(bun_core::String),
     BytesToFree(Box<[u8]>),
 }
@@ -412,6 +435,7 @@ pub enum StringOrBytesToDecode {
 // `PathWatcher::emit` and `Event::dupe` take a borrowed `&[u8]` rel-path and box
 // it into the owned `bytes_to_free` arm so the Windows task can carry it across
 // the thread hop.
+#[cfg(windows)]
 impl From<&[u8]> for StringOrBytesToDecode {
     #[inline]
     fn from(bytes: &[u8]) -> Self {
@@ -419,6 +443,7 @@ impl From<&[u8]> for StringOrBytesToDecode {
     }
 }
 
+#[cfg(windows)]
 impl core::fmt::Display for StringOrBytesToDecode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -616,10 +641,12 @@ impl FSWatcher {
     }
 }
 
-pub struct Arguments<'a> {
+pub(crate) struct Arguments<'a> {
     pub path: PathLike<'static>,
     pub(crate) listener: JSValue,
     pub global_this: &'a JSGlobalObject,
+    /// The context of the script that called `fs.watch`: the watcher is that script's.
+    pub(crate) context: &'a bun_jsc::ScriptExecutionContext,
     pub(crate) signal: Option<&'a AbortSignal>,
     pub(crate) persistent: bool,
     pub(crate) recursive: bool,
@@ -628,12 +655,13 @@ pub struct Arguments<'a> {
 }
 
 impl<'a> Arguments<'a> {
-    pub fn from_js(
-        ctx: &'a JSGlobalObject,
+    pub(crate) fn from_js(
+        cx: &bun_jsc::JsThread<'a>,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Arguments<'a>> {
-        let Some(path) = PathLike::from_js(ctx, arguments)? else {
-            return Err(ctx
+        let Some(path) = PathLike::from_js(cx.global(), arguments)? else {
+            return Err(cx
+                .global()
                 .throw_invalid_arguments(format_args!("filename must be a string or TypedArray")));
         };
         // `PathLike: Drop` releases the path: `?` on the error paths below
@@ -648,40 +676,45 @@ impl<'a> Arguments<'a> {
         if let Some(options_or_callable) = arguments.next_eat() {
             // options
             if options_or_callable.is_object() {
-                if let Some(persistent_) = options_or_callable.get_truthy(ctx, "persistent")? {
+                if let Some(persistent_) =
+                    options_or_callable.get_truthy(cx.global(), "persistent")?
+                {
                     if !persistent_.is_boolean() {
-                        return Err(ctx.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "persistent must be a boolean"
                         )));
                     }
                     persistent = persistent_.to_boolean();
                 }
 
-                if let Some(verbose_) = options_or_callable.get_truthy(ctx, "verbose")? {
+                if let Some(verbose_) = options_or_callable.get_truthy(cx.global(), "verbose")? {
                     if !verbose_.is_boolean() {
-                        return Err(
-                            ctx.throw_invalid_arguments(format_args!("verbose must be a boolean"))
-                        );
+                        return Err(cx
+                            .global()
+                            .throw_invalid_arguments(format_args!("verbose must be a boolean")));
                     }
                     verbose = verbose_.to_boolean();
                 }
 
                 if let Some(encoding_) =
-                    options_or_callable.fast_get(ctx, jsc::BuiltinName::encoding)?
+                    options_or_callable.fast_get(cx.global(), jsc::BuiltinName::encoding)?
                 {
-                    encoding = Encoding::assert(encoding_, ctx, encoding)?;
+                    encoding = Encoding::assert(encoding_, cx.global(), encoding)?;
                 }
 
-                if let Some(recursive_) = options_or_callable.get_truthy(ctx, "recursive")? {
+                if let Some(recursive_) =
+                    options_or_callable.get_truthy(cx.global(), "recursive")?
+                {
                     if !recursive_.is_boolean() {
-                        return Err(ctx
+                        return Err(cx
+                            .global()
                             .throw_invalid_arguments(format_args!("recursive must be a boolean")));
                     }
                     recursive = recursive_.to_boolean();
                 }
 
                 // abort signal
-                if let Some(signal_) = options_or_callable.get_truthy(ctx, "signal")? {
+                if let Some(signal_) = options_or_callable.get_truthy(cx.global(), "signal")? {
                     if let Some(signal_obj) = AbortSignal::from_js(signal_) {
                         // Keep it alive
                         signal_.ensure_still_alive();
@@ -692,7 +725,7 @@ impl<'a> Arguments<'a> {
                         // centralised deref proof.
                         signal = Some(AbortSignal::opaque_ref(signal_obj));
                     } else {
-                        return Err(ctx.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "signal is not of type AbortSignal"
                         )));
                     }
@@ -701,7 +734,7 @@ impl<'a> Arguments<'a> {
                 // listener
                 if let Some(callable) = arguments.next_eat() {
                     if !callable.is_cell() || !callable.is_callable() {
-                        return Err(ctx.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "Expected \"listener\" callback to be a function"
                         )));
                     }
@@ -709,7 +742,7 @@ impl<'a> Arguments<'a> {
                 }
             } else {
                 if !options_or_callable.is_cell() || !options_or_callable.is_callable() {
-                    return Err(ctx.throw_invalid_arguments(format_args!(
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
                         "Expected \"listener\" callback to be a function"
                     )));
                 }
@@ -717,13 +750,16 @@ impl<'a> Arguments<'a> {
             }
         }
         if listener.is_empty() {
-            return Err(ctx.throw_invalid_arguments(format_args!("Expected \"listener\" callback")));
+            return Err(cx
+                .global()
+                .throw_invalid_arguments(format_args!("Expected \"listener\" callback")));
         }
 
         Ok(Arguments {
             path,
             listener,
-            global_this: ctx,
+            global_this: cx.global(),
+            context: cx.context(),
             signal,
             persistent,
             recursive,
@@ -734,14 +770,6 @@ impl<'a> Arguments<'a> {
 
     pub(crate) fn create_fs_watcher(&self) -> bun_sys::Result<*mut FSWatcher> {
         FSWatcher::init(self)
-    }
-}
-
-impl AbortListener for FSWatcher {
-    // R-2: trait sig is fixed at `&mut self`; body just reborrows as `&self`
-    // (auto-deref) and calls the interior-mutable `emit_abort`.
-    fn on_abort(&mut self, reason: JSValue) {
-        (*self).emit_abort(reason);
     }
 }
 
@@ -788,8 +816,8 @@ impl FSWatcher {
                 });
                 this_ref.current_task.with_mut(|t| t.append_abort());
             } else {
-                // watch for abortion
-                s.listen::<FSWatcher>(this);
+                // SAFETY: `this` is the live boxed FSWatcher; `detach()` disarms the handle.
+                unsafe { bun_jsc::AbortHandle::follow_owner(this, s.clone()) };
             }
         }
     }
@@ -840,6 +868,7 @@ impl FSWatcher {
                 // Reported here rather than returned: the watcher still closes
                 // (and emits 'close') below whatever the listener did.
                 global_this.bun_vm().event_loop_mut().run_callback(
+                    bun_event_loop::ContextId::NONE,
                     listener,
                     &global_this,
                     global_this.to_js_value(),
@@ -870,6 +899,7 @@ impl FSWatcher {
                 let args = [EventType::Error.to_js(&global_object), err_js];
                 // As `emit_abort`: reported here so the close below still runs.
                 global_object.bun_vm().event_loop_mut().run_callback(
+                    bun_event_loop::ContextId::NONE,
                     listener,
                     &global_object,
                     global_object.to_js_value(),
@@ -883,6 +913,7 @@ impl FSWatcher {
         }
     }
 
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     pub(crate) fn emit_with_filename<const EVENT_TYPE: EventType>(&self, file_name: JSValue) {
         let Some(js_this) = self.js_this.try_get() else {
             return;
@@ -894,6 +925,7 @@ impl FSWatcher {
     }
 
     /// `Event::NoFilename`: deliver `(event, null)` regardless of encoding.
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     fn emit_null_filename(&self, event_type: WatchEventKind) {
         match event_type {
             WatchEventKind::Rename => {
@@ -941,6 +973,7 @@ fn emit_js<const EVENT_TYPE: EventType>(
 ) {
     let args = [EVENT_TYPE.to_js(global_object), filename];
     global_object.bun_vm().event_loop_mut().run_callback(
+        bun_event_loop::ContextId::NONE,
         listener,
         global_object,
         global_object.to_js_value(),
@@ -1003,7 +1036,7 @@ impl FSWatcher {
         debug_assert!(prev > 0);
     }
 
-    pub fn close(&self) {
+    pub(crate) fn close(&self) {
         self.mutex.lock();
         if !self.closed.get() {
             self.closed.set(true);
@@ -1026,6 +1059,7 @@ impl FSWatcher {
                     // Node too (it emits on the next tick).
                     let global = self.global_this;
                     global.bun_vm().event_loop_mut().run_callback(
+                        bun_event_loop::ContextId::NONE,
                         listener,
                         &global,
                         global.to_js_value(),
@@ -1044,14 +1078,13 @@ impl FSWatcher {
         // path unlocks exactly once. `ref_task`/`unref_task` use the RAII guard.
     }
 
-    /// `bun test --isolate` teardown: `close()` minus the `'close'` event (no
-    /// user JS mid-swap; parity with `StatWatcher::close`). Dropping the
+    /// The watcher's context is stopping: `close()` minus the `'close'` event
+    /// (no user JS then; parity with `StatWatcher::close`). Dropping the
     /// initial pending-activity ref is the load-bearing part — `detach()`
     /// alone leaves `pending_activity_count` at 1, so `has_pending_activity()`
     /// stays true forever and the GC can never collect the wrapper, pinning
-    /// the cached listener (and the outgoing file's entire global) for the
-    /// rest of the run.
-    pub(crate) fn close_for_isolation(&self) {
+    /// the cached listener (and with it the stopped context's entire realm).
+    fn close_without_event(&self) {
         self.mutex.lock();
         if !self.closed.get() {
             self.closed.set(true);
@@ -1066,11 +1099,7 @@ impl FSWatcher {
     // this can be called multiple times
     pub(crate) fn detach(&self) {
         let ctx_ptr = self.as_ctx_ptr().cast::<c_void>();
-        if let Some(handles) = crate::jsc_hooks::active_handles() {
-            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::FsWatcher(
-                core::ptr::NonNull::from(self),
-            ));
-        }
+        self.abort_handle.leave();
 
         if let Some(watcher) = self.path_watcher.take() {
             // Both backends expose `detach` as an associated fn over `*mut PathWatcher`
@@ -1086,11 +1115,8 @@ impl FSWatcher {
             self.poll_ref.with_mut(|r| r.unref(vm_ctx));
         }
 
-        if let Some(signal) = self.signal.replace(None) {
-            // `AbortSignalRef::Drop` already does the `unref`, so only
-            // remove the listener here to avoid a double-unref.
-            signal.clean_native_bindings(ctx_ptr);
-        }
+        self.abort_handle.unfollow();
+        self.signal.set(None);
 
         // Idempotent: `detach()` can run more than once (close + finalize).
         self.js_this.set(JsRef::empty());
@@ -1161,6 +1187,7 @@ impl FSWatcher {
             verbose: args.verbose,
             poll_ref: JsCell::new(KeepAlive::default()),
             pending_activity_count: AtomicU32::new(1),
+            abort_handle: bun_jsc::AbortHandle::for_owner::<FSWatcher>(),
         }));
         // SAFETY: `ctx` is the freshly-boxed payload; uniquely owned here.
         // R-2: deref as shared; mutation goes through `JsCell`.
@@ -1211,14 +1238,8 @@ impl FSWatcher {
                 args.listener.with_async_context_if_needed(args.global_this),
             )
         };
-        if let Some(handles) = crate::jsc_hooks::active_handles() {
-            bun_core::handle_oom(handles.put(
-                crate::jsc_hooks::ActiveHandle::FsWatcher(
-                    core::ptr::NonNull::new(ctx).expect("init: watcher"),
-                ),
-                (),
-            ));
-        }
+        // SAFETY: `ctx` is heap-allocated; `detach()` disarms it before it is finalized.
+        unsafe { bun_jsc::AbortHandle::arm_owner(ctx, args.context) };
         Ok(ctx)
     }
 }

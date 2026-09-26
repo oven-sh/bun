@@ -11,7 +11,7 @@ pub struct CommonStrings<'a> {
 /// Must be kept in sync with `CommonStringsForRust` in `BunCommonStrings.cpp`.
 #[repr(u8)]
 #[derive(Copy, Clone)]
-enum CommonStringsForRust {
+pub enum CommonStringsForRust {
     IPv4 = 0,
     IPv6 = 1,
     IN4Loopback = 2,
@@ -37,6 +37,18 @@ enum CommonStringsForRust {
     QuicDatagramLost = 22,
     Base64 = 23,
     Write = 24,
+    FetchOptionCompress = 25,
+    FetchOptionDecompress = 26,
+    FetchOptionKeepalive = 27,
+    FetchOptionMaxRedirects = 28,
+    FetchOptionProtocol = 29,
+    FetchOptionProxy = 30,
+    FetchOptionS3 = 31,
+    FetchOptionSession = 32,
+    FetchOptionTimeout = 33,
+    FetchOptionTls = 34,
+    FetchOptionUnix = 35,
+    FetchOptionVerbose = 36,
 }
 
 unsafe extern "C" {
@@ -47,12 +59,23 @@ unsafe extern "C" {
         common_string: CommonStringsForRust,
         global_object: &JSGlobalObject,
     ) -> JSValue;
+    safe fn Bun__CommonStringsForRust__getProperty(
+        object: JSValue,
+        global_object: &JSGlobalObject,
+        common_string: CommonStringsForRust,
+    ) -> JSValue;
 }
 
 impl CommonStringsForRust {
     #[inline]
-    fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
+    pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
         Bun__CommonStringsForRust__toJS(self, global_object)
+    }
+
+    /// `object[self]`; see `JSValue::get_common_string`.
+    #[inline]
+    pub(crate) fn get_property(self, object: JSValue, global_object: &JSGlobalObject) -> JSValue {
+        Bun__CommonStringsForRust__getProperty(object, global_object, self)
     }
 }
 

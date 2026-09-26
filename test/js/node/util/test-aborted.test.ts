@@ -106,3 +106,18 @@ test("aborted resolves every waiter on the same signal with undefined", async ()
   expect(await Promise.all([first, second])).toEqual([undefined, undefined]);
   expect(getEventListeners(ac.signal, "abort")).toHaveLength(0);
 });
+
+test("aborted does not hand its internal settle function to a patched Function.prototype.bind", () => {
+  const originalBind = Function.prototype.bind;
+  const receivers: Function[] = [];
+  Function.prototype.bind = function (this: Function, ...args: any[]) {
+    receivers.push(this);
+    return originalBind.apply(this, args as [any, ...any[]]);
+  };
+  try {
+    aborted(new AbortController().signal, {});
+  } finally {
+    Function.prototype.bind = originalBind;
+  }
+  expect(receivers).toEqual([]);
+});

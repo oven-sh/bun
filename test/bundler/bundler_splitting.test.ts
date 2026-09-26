@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
+import { checkGraph, run } from "./splitting-fuzz";
 
 const env = {
   ...bunEnv,
@@ -1490,6 +1491,736 @@ describe("bundler", () => {
     run: { file: "/out/e1.js", stdout: 'e1 ab ["b","a"]' },
   });
 
+  // The order is the importing chunk's own. e2.js and e3.js come first and load
+  // a.js and then b.js between them, and e1.js still runs b.js before a.js.
+  itBundled("splitting/EvaluationOrderOfSharedChunkImportsIsPerImporter", {
+    files: {
+      "/e1.js": /* js */ `
+        import { b } from './b.js'
+        import { a } from './a.js'
+        console.log('e1', a + b, JSON.stringify(globalThis.log))
+      `,
+      "/e2.js": /* js */ `
+        import { a } from './a.js'
+        console.log('e2', a)
+      `,
+      "/e3.js": /* js */ `
+        import { b } from './b.js'
+        console.log('e3', b)
+      `,
+      "/a.js": /* js */ `
+        (globalThis.log ||= []).push('a')
+        export const a = 'a'
+      `,
+      "/b.js": /* js */ `
+        (globalThis.log ||= []).push('b')
+        export const b = 'b'
+      `,
+    },
+    entryPoints: ["/e2.js", "/e3.js", "/e1.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/e1.js", stdout: 'e1 ab ["b","a"]' },
+  });
+
+  // Removing a tree-shaken importer from a shared chunk must not discard its
+  // import order when selecting the root of the A/B cycle. Otherwise A runs
+  // first and permanently captures B's uninitialized namespace property.
+  itBundled("splitting/TreeShakenImporterPreservesCyclicChunkOrder", {
+    files: {
+      "/a.ts": /* js */ `
+        export * as A from "./a";
+        import { B } from "./b";
+        export const node = { name: "a", deps: [B.node] };
+      `,
+      "/b.ts": /* js */ `
+        export * as B from "./b";
+        import { A } from "./a";
+        export const readA = () => A.node.name;
+        export const node = { name: "b", deps: [] };
+      `,
+      "/p.ts": /* js */ `
+        export * as P from "./p";
+        import { A } from "./a";
+        export const node = { name: "p", deps: [A.node] };
+      `,
+      "/group.ts": /* js */ `
+        import { A } from "./a";
+        import { B } from "./b";
+        import { P } from "./p";
+        export const nodes = [P.node, B.node, A.node];
+      `,
+      "/hub1.ts": /* js */ `
+        import { A } from "./a";
+        import { B } from "./b";
+        import { P } from "./p";
+        export const orderAnchor = "HUB1_ORDER_ANCHOR";
+        export const a = A.node;
+        export const b = B.node;
+        export const p = P.node;
+      `,
+      "/hub3.ts": /* js */ `
+        import { A } from "./a";
+        import { B } from "./b";
+        import { P } from "./p";
+        export const a = A.node;
+        export const b = B.node;
+        export const p = P.node;
+      `,
+      "/hub4.ts": /* js */ `
+        import { A } from "./a";
+        import { B } from "./b";
+        import { P } from "./p";
+        export const a = A.node;
+        export const b = B.node;
+        export const p = P.node;
+      `,
+      "/lazy.ts": /* js */ `
+        import { p as lazyP } from "./hub4";
+        import { p as deadP } from "./hub1";
+        console.log("lazy", lazyP.name);
+      `,
+      "/entry.ts": /* js */ `
+        import { nodes } from "./group";
+        import { p as entryP } from "./hub3";
+        import { b as entryB, orderAnchor } from "./hub1";
+        await import("./lazy");
+        if (orderAnchor !== "HUB1_ORDER_ANCHOR") throw new Error("bad anchor");
+        console.log("entry", entryB.name, entryP.name);
+        console.log("dependency", nodes[2].deps[0]?.name ?? "undefined");
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const outputs = jsFilesIn(api);
+      expect(outputs).toHaveLength(3);
+      expect(api.readFile("/out/entry.js")).toContain("HUB1_ORDER_ANCHOR");
+      for (const output of outputs) {
+        if (output !== "entry.js") expect(api.readFile("/out/" + output)).not.toContain("HUB1_ORDER_ANCHOR");
+      }
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "lazy p\nentry b p\ndependency b",
+    },
+  });
+
+  // Do not topologically sort the initializer parts. Here the live importer
+  // intentionally reaches B before A, so A must observe B before B initializes.
+  itBundled("splitting/CyclicChunkPreservesLiveImporterOrder", {
+    files: {
+      "/a.ts": /* js */ `
+        export * as A from "./a";
+        import { B } from "./b";
+        export var node = { name: "a", dependency: B.node?.name ?? "undefined" };
+      `,
+      "/b.ts": /* js */ `
+        export * as B from "./b";
+        import { A } from "./a";
+        export var node = { name: "b" };
+        export const readA = () => A.node.name;
+      `,
+      "/hub.ts": /* js */ `
+        import { B } from "./b";
+        import { A } from "./a";
+        export const nodes = [B.node, A.node];
+        export const readA = () => B.readA();
+      `,
+      "/lazy.ts": /* js */ `
+        import { nodes } from "./hub";
+        console.log("lazy", nodes[1].dependency);
+      `,
+      "/entry.ts": /* js */ `
+        import { nodes, readA } from "./hub";
+        await import("./lazy");
+        console.log("entry", nodes[0].name, readA());
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: {
+      file: "/out/entry.js",
+      stdout: "lazy undefined\nentry b a",
+    },
+  });
+
+  // The first DFS path reaches A through X, but BFS reaches B through M first.
+  // Both the static entry and the lazy entry require B to initialize before A.
+  describe.each([false, true])("cyclic chunk deep importer order", splitting => {
+    itBundled(`splitting/CyclicChunkPreservesDeepImporterOrder${splitting ? "Split" : "Unsplit"}`, {
+      files: {
+        "/a.js": `
+          import { B } from "./b.js";
+          export * as A from "./a.js";
+          export var node = { name: "a", dependency: B.node?.name ?? "undefined" };
+        `,
+        "/b.js": `
+          import { A } from "./a.js";
+          export * as B from "./b.js";
+          export var node = { name: "b" };
+          export const readA = () => A.node.name;
+        `,
+        "/x.js": `import { A } from "./a.js"; export const a = A.node;`,
+        "/m.js": `
+          import { a } from "./x.js";
+          import { B } from "./b.js";
+          export const nodes = [a, B.node];
+          export const readA = B.readA;
+        `,
+        "/n.js": `import { A } from "./a.js"; export const a = A.node;`,
+        "/w.js": `import { A } from "./a.js"; export const a = A.node;`,
+        "/lazy.js": `
+          import { a } from "./w.js";
+          console.log("lazy", a.dependency);
+        `,
+        "/entry.js": `
+          import { nodes, readA } from "./m.js";
+          import { a } from "./n.js";
+          await import("./lazy.js");
+          console.log("entry", nodes[0].dependency, nodes[1].name, readA(), a.dependency);
+        `,
+      },
+      entryPoints: ["/entry.js", "/lazy.js"],
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      run: [
+        { file: "/out/entry.js", stdout: "lazy b\nentry b b a b" },
+        { file: "/out/lazy.js", stdout: "lazy b" },
+      ],
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/42632
+  // The shared chunk holds both files of the fs/search cycle and neither entry
+  // point. Both entry points enter the cycle at fs.ts, so search.ts runs first.
+  itBundled("splitting/SharedChunkKeepsImportCycleOrder", {
+    files: {
+      "/fs.ts": /* js */ `
+        export * as FileSystem from "./fs";
+        import { FileSystemSearch } from "./fs/search";
+        export const Entry = { make: (x: number) => ({ x }) };
+        export const node = { name: "fs", deps: [FileSystemSearch.node] };
+      `,
+      "/fs/search.ts": /* js */ `
+        export * as FileSystemSearch from "./search";
+        import { FileSystem } from "../fs";
+        export const node = { name: "search" };
+        export function find(x: number) { return FileSystem.Entry.make(x); }
+      `,
+      "/a.ts": /* js */ `
+        import { FileSystem } from "./fs";
+        console.log("a", FileSystem.node.deps[0]?.name ?? "undefined");
+      `,
+      "/b.ts": /* js */ `
+        import { FileSystem } from "./fs";
+        import { FileSystemSearch } from "./fs/search";
+        console.log("b", FileSystemSearch.find(1).x, FileSystemSearch.node.name, FileSystem.node.name);
+      `,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "a search" },
+      { file: "/out/b.js", stdout: "b 1 search fs" },
+    ],
+  });
+
+  // Both entry points enter the A/B cycle at A, so B must initialize first. B is
+  // one import away from an entry point and A is two. The file closer to an
+  // entry point must not start the shared chunk.
+  itBundled("splitting/SharedChunkCycleOrderIgnoresImportDepth", {
+    files: {
+      "/a.ts": /* js */ `
+        export * as A from "./a";
+        import { B } from "./b";
+        export const make = (x: number) => ({ x });
+        export const node = { name: "a", deps: [B.node] };
+      `,
+      "/b.ts": /* js */ `
+        export * as B from "./b";
+        import { A } from "./a";
+        export const node = { name: "b" };
+        export const find = (x: number) => A.make(x);
+      `,
+      "/mid1.ts": `import { A } from "./a"; export const a = A.node;`,
+      "/mid2.ts": `import { A } from "./a"; export const a = A.node;`,
+      "/entry1.ts": /* js */ `
+        import { a } from "./mid1";
+        import { B } from "./b";
+        console.log("entry1", a.deps[0]?.name ?? "undefined", B.find(1).x);
+      `,
+      "/entry2.ts": /* js */ `
+        import { a } from "./mid2";
+        import { B } from "./b";
+        console.log("entry2", a.deps[0]?.name ?? "undefined", B.find(2).x);
+      `,
+    },
+    entryPoints: ["/entry1.ts", "/entry2.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/entry1.js", stdout: "entry1 b 1" },
+      { file: "/out/entry2.js", stdout: "entry2 b 2" },
+    ],
+  });
+
+  // No cycle: both entry points run p before q. q is one import away from
+  // entry.js and p is two.
+  itBundled("splitting/SharedChunkKeepsSideEffectOrder", {
+    files: {
+      "/p.js": `console.log("p");`,
+      "/q.js": `console.log("q");`,
+      "/m.js": `import "./p.js";`,
+      "/w.js": `import "./p.js";`,
+      "/v.js": `import "./q.js";`,
+      "/lazy.js": /* js */ `
+        import "./w.js";
+        import "./v.js";
+        console.log("lazy");
+      `,
+      "/entry.js": /* js */ `
+        import "./m.js";
+        import "./q.js";
+        await import("./lazy.js");
+        console.log("entry");
+      `,
+    },
+    entryPoints: ["/entry.js", "/lazy.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/entry.js", stdout: "p\nq\nlazy\nentry" },
+      { file: "/out/lazy.js", stdout: "p\nq\nlazy" },
+    ],
+  });
+
+  // shared.js imports a wrapped file, then a file that prints in line. The call that
+  // runs the wrapped file stays ahead of the code of the second file.
+  itBundled("splitting/SharedChunkKeepsWrappedImportOrder", {
+    files: {
+      "/a.js": `import "./shared.js"; console.log("a");`,
+      "/b.js": `import "./shared.js"; console.log("b");`,
+      "/shared.js": `import "./w.cjs"; import "./x.js"; console.log("shared");`,
+      "/w.cjs": `console.log("w");`,
+      "/x.js": `console.log("x");`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "w\nx\nshared\na" },
+      { file: "/out/b.js", stdout: "w\nx\nshared\nb" },
+    ],
+  });
+
+  describe.each([true, false])("import order in one file, splitting: %p", splitting => {
+    // An import of a wrapped file prints as a call in the importer. The call keeps its
+    // place among the files that the other imports of the importer print.
+    itBundled("splitting/WrappedImportKeepsImportOrder" + (splitting ? "" : "WithoutSplitting"), {
+      files: {
+        "/entry.js": `import "./a.cjs"; import "./b.js"; import "./c.cjs"; import "./d.js"; console.log("entry");`,
+        "/a.cjs": `console.log("a");`,
+        "/b.js": `console.log("b");`,
+        "/c.cjs": `console.log("c");`,
+        "/d.js": `console.log("d");`,
+      },
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/entry.js", stdout: "a\nb\nc\nd\nentry" },
+    });
+
+    // A file of a "sideEffects": false package that the bundle keeps runs where its
+    // import statement is, also behind a barrel, not where its first use is.
+    itBundled("splitting/SideEffectsFalseFileKeepsImportOrder" + (splitting ? "" : "WithoutSplitting"), {
+      files: {
+        "/entry.js": /* js */ `
+          import { x } from "pure";
+          import "./side.js";
+          import { y } from "barrel";
+          import "./last.js";
+          console.log("entry", x, y);
+        `,
+        "/side.js": `console.log("side");`,
+        "/last.js": `console.log("last");`,
+        "/node_modules/pure/package.json": JSON.stringify({ name: "pure", main: "index.js", sideEffects: false }),
+        "/node_modules/pure/index.js": `console.log("pure"); export const x = 1;`,
+        "/node_modules/barrel/package.json": JSON.stringify({ name: "barrel", main: "index.js", sideEffects: false }),
+        "/node_modules/barrel/index.js": `export { y } from "./y.js"; export { z } from "./z.js";`,
+        "/node_modules/barrel/y.js": `console.log("y"); export const y = 2;`,
+        "/node_modules/barrel/z.js": `console.log("z"); export const z = 3;`,
+      },
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/entry.js", stdout: "pure\nside\ny\nlast\nentry 1 2" },
+    });
+
+    // entry.js imports button.js ahead of the CSS module, and button.js reads the same
+    // CSS module at its top level. The class-name object prints ahead of button.js.
+    itBundled("splitting/CssModuleObjectPrintsBeforeItsFirstImporter" + (splitting ? "" : "WithoutSplitting"), {
+      files: {
+        "/entry.js": /* js */ `
+          import { cls } from "./button.js";
+          import styles from "./shared.module.css";
+          console.log("entry", cls === styles.button);
+        `,
+        "/button.js": /* js */ `
+          import styles from "./shared.module.css";
+          export const cls = styles.button;
+          console.log("button", typeof cls);
+        `,
+        "/shared.module.css": `.button { color: red; }`,
+      },
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/entry.js", stdout: "button string\nentry true" },
+    });
+
+    // The namespace object of lib.js names a (from second.js) ahead of z (from first.js).
+    // The two files still run in the order of the import statements of lib.js.
+    itBundled("splitting/NamespaceExportKeepsImportOrder" + (splitting ? "" : "WithoutSplitting"), {
+      files: {
+        "/entry.js": `import * as lib from "./lib.js"; console.log(Object.keys(lib).join());`,
+        "/lib.js": `import { z } from "./first.js"; import { a } from "./second.js"; export { a, z };`,
+        "/first.js": `console.log("first"); export const z = 1;`,
+        "/second.js": `console.log("second"); export const a = 2;`,
+      },
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/entry.js", stdout: "first\nsecond\na,z" },
+    });
+  });
+
+  // entry.ts loads the shared chunk and enters the A/B cycle at A, so B must
+  // initialize first. page.ts enters the cycle at B, and its import() comes
+  // before entry.ts's import of a.ts. An import() runs after the entry point's
+  // own imports, so it must not decide where the shared chunk starts.
+  itBundled("splitting/SharedChunkFollowsStaticImportsBeforeDynamic", {
+    files: {
+      "/a.ts": /* js */ `
+        export * as A from "./a";
+        import { B } from "./b";
+        export const make = (x: number) => ({ x });
+        export const node = { name: "a", deps: [B.node] };
+      `,
+      "/b.ts": /* js */ `
+        export * as B from "./b";
+        import { A } from "./a";
+        export const node = { name: "b" };
+        export const find = (x: number) => A.make(x);
+      `,
+      "/router.ts": `export const load = () => import("./page");`,
+      "/page.ts": /* js */ `
+        import { B } from "./b";
+        export const page = () => console.log("page", B.node.name, B.find(3).x);
+      `,
+      "/entry.ts": /* js */ `
+        import { load } from "./router";
+        import { A } from "./a";
+        console.log("entry", A.node.deps[0]?.name ?? "undefined");
+        (await load()).page();
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "entry b\npage b 3" },
+  });
+
+  // The same graph with no top-level await: the files that entry.ts and page.ts
+  // share fold into the chunk of entry.ts, and their entry bits change with that.
+  itBundled("splitting/FoldedSharedFilesFollowStaticImportsBeforeDynamic", {
+    files: {
+      "/a.ts": /* js */ `
+        export * as A from "./a";
+        import { B } from "./b";
+        export const make = (x: number) => ({ x });
+        export const node = { name: "a", deps: [B.node] };
+      `,
+      "/b.ts": /* js */ `
+        export * as B from "./b";
+        import { A } from "./a";
+        export const node = { name: "b" };
+        export const find = (x: number) => A.make(x);
+      `,
+      "/router.ts": `export const load = () => import("./page");`,
+      "/page.ts": /* js */ `
+        import { B } from "./b";
+        export const page = () => console.log("page", B.node.name, B.find(3).x);
+      `,
+      "/entry.ts": /* js */ `
+        import { load } from "./router";
+        import { A } from "./a";
+        console.log("entry", A.node.deps[0]?.name ?? "undefined");
+        load().then(m => m.page());
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toHaveLength(2);
+    },
+    run: { file: "/out/entry.js", stdout: "entry b\npage b 3" },
+  });
+
+  // first.js runs ahead of the body of entry.js, so its import() is the first one.
+  // late2.js enters the A/B cycle at A, late1.js at B. The chunk that they share
+  // follows late2.js.
+  itBundled("splitting/SharedChunkFollowsTheImportCallThatRunsFirst", {
+    files: {
+      "/a.js": /* js */ `
+        export * as A from "./a.js";
+        import { B } from "./b.js";
+        export var node = { name: "a", dep: B.node?.name ?? "undefined" };
+      `,
+      "/b.js": /* js */ `
+        export * as B from "./b.js";
+        import { A } from "./a.js";
+        export var node = { name: "b" };
+        export const readA = () => A.node.dep;
+      `,
+      "/late1.js": `import { B } from "./b.js"; export const go = () => B.readA();`,
+      "/late2.js": `import { A } from "./a.js"; export const go = () => A.node.dep;`,
+      "/first.js": `globalThis.late2 = import("./late2.js");`,
+      "/entry.js": /* js */ `
+        import "./first.js";
+        const late1 = import("./late1.js");
+        const [m2, m1] = await Promise.all([globalThis.late2, late1]);
+        console.log("late2", m2.go(), "late1", m1.go());
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "late2 b late1 b" },
+  });
+
+  // entry.js uses only x from pkg, so it does not load loader.js. The import() in
+  // loader.js is not one that entry.js comes to: late2.js loads first, enters the
+  // A/B cycle at A, and the chunk that late1.js and late2.js share follows it.
+  itBundled("splitting/SharedChunkIgnoresImportCallInFileThatEntryDoesNotLoad", {
+    files: {
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+      "/node_modules/pkg/index.js": `export * from "./x.js"; export * from "./loader.js";`,
+      "/node_modules/pkg/x.js": `export const x = 1;`,
+      "/node_modules/pkg/loader.js": `export const loadLate1 = () => import("../../late1.js");`,
+      "/node_modules/pkg/a.js": /* js */ `
+        export * as A from "./a.js";
+        import { B } from "./b.js";
+        export var node = { name: "a", dep: B.node?.name ?? "undefined" };
+      `,
+      "/node_modules/pkg/b.js": /* js */ `
+        export * as B from "./b.js";
+        import { A } from "./a.js";
+        export var node = { name: "b" };
+        export const readA = () => A.node.dep;
+      `,
+      "/late1.js": `import { B } from "pkg/b.js"; export const go = () => B.readA();`,
+      "/late2.js": /* js */ `
+        import { A } from "pkg/a.js";
+        import { loadLate1 } from "pkg/loader.js";
+        export const go = () => (loadLate1(), A.node.dep);
+      `,
+      "/entry.js": /* js */ `
+        import { x } from "pkg";
+        console.log(x);
+        const m2 = await import("./late2.js");
+        const m1 = await import("./late1.js");
+        console.log(m2.go(), m1.go());
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "1\nb b" },
+  });
+
+  // card.js is in the chunk of w.js alone. The walk first comes to it under r.js, through
+  // an import that r.js does not use. Its class-name object still prints with it.
+  itBundled("splitting/CssModuleObjectOfFileReachedThroughSplitRequire", {
+    files: {
+      "/node_modules/ui/package.json": JSON.stringify({ name: "ui", main: "index.js", sideEffects: false }),
+      "/node_modules/ui/index.js": `export { Button } from "./button.js"; export { Card } from "./card.js";`,
+      "/node_modules/ui/button.js": `export const Button = () => "button";`,
+      "/node_modules/ui/card.js": `import styles from "./card.module.css"; export const Card = () => styles.card;`,
+      "/node_modules/ui/card.module.css": `.card { color: red; }`,
+      "/r.js": `import { Button } from "ui/button.js"; import { Card as Unused } from "ui"; export const x = Button();`,
+      "/m.js": `const r = require("./r.js"); console.log(r.x);`,
+      "/w.js": `import "./m.js"; import { Card } from "ui/card.js"; console.log(typeof Card());`,
+    },
+    entryPoints: ["/w.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/w.js", stdout: "button\nstring" },
+  });
+
+  // e1.js comes first and its import goes through a barrel that re-exports
+  // b.js before a.js, but it uses nothing from them, so it does not load the
+  // chunk that e2.js and e3.js share. Both of those enter the A/B cycle at A.
+  // An entry point that does not load a chunk must not decide where it starts.
+  itBundled("splitting/SharedChunkIgnoresEntryPointThatDoesNotLoadIt", {
+    files: {
+      "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "index.js", sideEffects: false }),
+      "/node_modules/lib/index.js": /* js */ `
+        export * from "./b.js";
+        export * from "./a.js";
+        export * from "./x.js";
+      `,
+      "/node_modules/lib/x.js": `export const x = "x";`,
+      "/node_modules/lib/a.js": /* js */ `
+        export * as A from "./a.js";
+        import { B } from "./b.js";
+        export var nodeA = { name: "a", dep: B.nodeB?.name ?? "undefined" };
+      `,
+      "/node_modules/lib/b.js": /* js */ `
+        export * as B from "./b.js";
+        import { A } from "./a.js";
+        export var nodeB = { name: "b" };
+        export const readA = () => A.nodeA.name;
+      `,
+      "/e1.js": `import { x } from "lib"; console.log("e1", x);`,
+      "/e2.js": `import { A } from "lib/a.js"; console.log("e2", A.nodeA.dep);`,
+      "/e3.js": `import { A } from "lib/a.js"; console.log("e3", A.nodeA.dep);`,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "e1 x" },
+      { file: "/out/e2.js", stdout: "e2 b" },
+      { file: "/out/e3.js", stdout: "e3 b" },
+    ],
+  });
+
+  // The same with an import that e1.js does not use: tree shaking drops it, and
+  // the import record stays.
+  itBundled("splitting/SharedChunkIgnoresUnusedImportOfEarlierEntryPoint", {
+    files: {
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", sideEffects: false }),
+      "/node_modules/pkg/a.js": /* js */ `
+        export * as A from "./a.js";
+        import { B } from "./b.js";
+        export var node = { name: "a", dep: B.node?.name ?? "undefined" };
+      `,
+      "/node_modules/pkg/b.js": /* js */ `
+        export * as B from "./b.js";
+        import { A } from "./a.js";
+        export var node = { name: "b" };
+        export const readA = () => A.node.name;
+      `,
+      "/e1.js": `import { B } from "pkg/b.js"; console.log("e1");`,
+      "/e2.js": `import { A } from "pkg/a.js"; console.log("e2", A.node.dep);`,
+      "/e3.js": `import { A } from "pkg/a.js"; console.log("e3", A.node.dep);`,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "e1" },
+      { file: "/out/e2.js", stdout: "e2 b" },
+      { file: "/out/e3.js", stdout: "e3 b" },
+    ],
+  });
+
+  // With --target=bun a require() of an ES module is a chunk of its own. At the
+  // top level of m1.ts it runs while m1.ts evaluates, and m1.ts comes before
+  // mid.ts. So entry.ts enters the A/B cycle at A, through lazy.ts, and B
+  // initializes first.
+  itBundled("splitting/SharedChunkFollowsTopLevelSplitRequire", {
+    files: {
+      "/a.ts": /* js */ `
+        export * as A from "./a";
+        import { B } from "./b";
+        export const make = (x: number) => ({ x });
+        export const node = { name: "a", deps: [B.node] };
+      `,
+      "/b.ts": /* js */ `
+        export * as B from "./b";
+        import { A } from "./a";
+        export const node = { name: "b" };
+        export const find = (x: number) => A.make(x);
+      `,
+      "/lazy.ts": /* js */ `
+        import { A } from "./a";
+        export const lazy = () => A.node.deps[0]?.name ?? "undefined";
+      `,
+      "/m1.ts": `const { lazy } = require("./lazy"); export const viaLazy = lazy();`,
+      "/mid.ts": `import { B } from "./b"; export const b = B;`,
+      "/entry.ts": /* js */ `
+        import { viaLazy } from "./m1";
+        import { b } from "./mid";
+        console.log("entry", viaLazy, b.find(1).x);
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api).length).toBeGreaterThan(2);
+    },
+    run: { file: "/out/entry.js", stdout: "entry b 1" },
+  });
+
+  // Two files require r.ts at their top level. g.ts runs first: entry.ts imports it
+  // ahead of h.ts and ahead of its own require(). So the A/B cycle is entered at A,
+  // through r.ts, and B initializes first.
+  itBundled("splitting/SharedChunkFollowsTheSplitRequireThatRunsFirst", {
+    files: {
+      "/a.ts": /* js */ `
+        export * as A from "./a";
+        import { B } from "./b";
+        export const node = { name: "a", deps: [B.node] };
+      `,
+      "/b.ts": /* js */ `
+        export * as B from "./b";
+        import { A } from "./a";
+        export const node = { name: "b" };
+        export const find = () => A.node.name;
+      `,
+      "/r.ts": `import { A } from "./a"; export const r = A.node.deps[0]?.name ?? "undefined";`,
+      "/g.ts": `const { r } = require("./r"); export const g = r;`,
+      "/h.ts": `import { B } from "./b"; export const h = B.node.name;`,
+      "/entry.ts": /* js */ `
+        import { g } from "./g";
+        import { h } from "./h";
+        const { r } = require("./r");
+        console.log("entry", g, h, r);
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "entry b b b" },
+  });
+
   // import() of another chunk is printed as import(); it does not pull the
   // runtime's __require into the bundle.
   itBundled("splitting/DynamicImportDoesNotNeedRequireShim", {
@@ -2532,6 +3263,361 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "tool:shared shared" },
   });
 
+  // A split require() evaluates its target in the middle of the file making the call. Where the target imports its
+  // way back to that file, whatever else it needs must be a chunk that can be evaluated on demand at that moment,
+  // not code sitting further down the caller's own chunk. Each graph runs unbundled and bundled; the output must match.
+  const requireCycleGraphs: Record<string, { files: Record<string, string>; todo?: string; folding?: true }> = {
+    "the caller imports itself": {
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          console.log(tools.map(t => t.name).join(","))
+          export const later = () => import('./other.ts')
+        `,
+        "registry.ts": `
+          import * as self from './registry.ts'
+          export function buildTool(name: string) { return { name } }
+          export const tools = [require('./tool.ts').Tool, { name: typeof self.buildTool }]
+        `,
+        "tool.ts": `
+          import { buildTool } from './registry.ts'
+          export const Tool = buildTool("tool")
+        `,
+        "other.ts": `
+          import { buildTool } from './registry.ts'
+          export const other = buildTool("other")
+        `,
+      },
+    },
+    // base.ts is needed by tool.ts and imports registry.ts, which require()s tool.ts. `other` (loaded after main) is
+    // redundant in registry.ts's key, and dropping it must not fold base.ts into registry.ts's chunk.
+    "a file the target needs imports the caller": {
+      folding: true,
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import { base } from './base.ts'
+          export const later = () => import('./other.ts')
+          console.log(tools[0].name, base.kind)
+        `,
+        "registry.ts": `
+          export function buildTool(name: string) { return { name } }
+          export const tools = [require('./tool.ts').Tool]
+        `,
+        "tool.ts": `
+          import { base } from './base.ts'
+          import { buildTool } from './registry.ts'
+          export const Tool = buildTool("tool:" + base.kind)
+        `,
+        "base.ts": `
+          import { buildTool } from './registry.ts'
+          export const base = { kind: "base", make: () => buildTool("x") }
+        `,
+        "other.ts": `
+          import { buildTool } from './registry.ts'
+          export const other = buildTool("other")
+        `,
+      },
+    },
+    // The same with a leaf that shares the caller's key and is imported ahead of the call: it is the caller's group
+    // that has to stay out, not whichever group comes second.
+    "the caller shares its chunk with a leaf": {
+      folding: true,
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import { base } from './base.ts'
+          export const a = () => import('./other.ts')
+          export const b = () => import('./foo.ts')
+          console.log(tools[0].name, base.kind)
+        `,
+        "registry.ts": `
+          import { leaf } from './leaf.ts'
+          import { x } from './x.ts'
+          export function buildTool(name: string) { return { name: name + leaf + x } }
+          export const tools = [require('./tool.ts').Tool]
+        `,
+        "leaf.ts": `export const leaf = "+leaf"`,
+        "x.ts": `export const x = "+x"`,
+        "tool.ts": `
+          import { base } from './base.ts'
+          import { buildTool } from './registry.ts'
+          export const Tool = buildTool("tool:" + base.kind)
+        `,
+        "base.ts": `
+          import { buildTool } from './registry.ts'
+          export const base = { kind: "base", make: () => buildTool("x") }
+        `,
+        "other.ts": `
+          import { buildTool } from './registry.ts'
+          export const other = buildTool("other")
+        `,
+        "foo.ts": `
+          import { x } from './x.ts'
+          export const foo = x
+        `,
+      },
+    },
+    // The call is in base.ts, one require() further along than the one that starts the chain.
+    "a chain of two calls": {
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import { base } from './base.ts'
+          import { shared2 } from './shared2.ts'
+          const later = () => import('./other.ts')
+          console.log(tools[0].name, base.kind, base.extra, shared2.name, typeof later)
+        `,
+        "registry.ts": `
+          export function buildTool(name: string) { return { name } }
+          export const tools = [require('./tool.ts').Tool]
+        `,
+        "tool.ts": `
+          import { base } from './base.ts'
+          import { buildTool } from './registry.ts'
+          export const Tool = { get name() { return buildTool("tool:" + base.kind).name } }
+        `,
+        "base.ts": `
+          import { buildTool } from './registry.ts'
+          export const base = { kind: "base", make: () => buildTool("x"), extra: require('./tool2.ts').T2 }
+        `,
+        "tool2.ts": `
+          import { shared2 } from './shared2.ts'
+          export const T2 = "t2:" + shared2.name
+        `,
+        "shared2.ts": `export const shared2 = { name: "s2" }`,
+        "other.ts": `
+          import { buildTool } from './registry.ts'
+          export const other = buildTool("other")
+        `,
+      },
+    },
+    // One call inside a function nobody calls while loading, one at the top level of another file.
+    "a call in a function and a call at the top level": {
+      files: {
+        "main.ts": `
+          import "./a.ts"
+          import "./b.ts"
+          import "./g.ts"
+        `,
+        "a.ts": `
+          export const a = 1
+          export function later() { return require("./x.ts") }
+          console.log("a")
+        `,
+        "b.ts": `
+          export function bfn() { return 2 }
+          const x = require("./x.ts")
+          console.log("b got", x.v)
+        `,
+        "f.ts": `
+          import { a } from "./a.ts"
+          export const fval = a + 10
+          console.log("f")
+        `,
+        "g.ts": `
+          import { fval } from "./f.ts"
+          import { later } from "./a.ts"
+          globalThis.later = later
+          console.log("g", fval)
+        `,
+        "x.ts": `
+          import { fval } from "./f.ts"
+          import { bfn } from "./b.ts"
+          export const v = fval + 1
+          export const w = () => bfn()
+          console.log("x")
+        `,
+      },
+    },
+    "a class extends one from a file with a call in a function": {
+      files: {
+        "main.ts": `
+          import "./a.ts"
+          import { Z } from "./z.ts"
+          import "./f.ts"
+          console.log(new Z().tag())
+        `,
+        "a.ts": `
+          export class Base { tag() { return "base" } }
+          export const lazy = () => require("./x.ts")
+        `,
+        "x.ts": `
+          import { l2 } from "./f.ts"
+          export const x = typeof l2
+        `,
+        "f.ts": `export const l2 = () => require("./x2.ts")`,
+        "x2.ts": `
+          import { Z } from "./z.ts"
+          export const x2 = Z.name
+        `,
+        "z.ts": `
+          import { Base } from "./a.ts"
+          export class Z extends Base { tag() { return "z<" + super.tag() } }
+        `,
+      },
+    },
+    "the target requires a CommonJS file the entry point imports too": {
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import cjs from './cjs.cjs'
+          console.log(tools[0].n, cjs.x)
+        `,
+        "registry.ts": `export const tools = [require('./tool.ts').Tool]`,
+        "tool.ts": `
+          const c = require('./cjs.cjs')
+          export const Tool = { n: c.x }
+        `,
+        "cjs.cjs": `exports.x = "cjs"`,
+      },
+    },
+    "the caller's own imports run before the target": {
+      todo: "the code registry.ts shares with tool.ts is hoisted ahead of registry.ts's import of setup.ts",
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import { shared } from './shared.ts'
+          console.log(tools[0].name, shared.name)
+        `,
+        "registry.ts": `
+          import './setup.ts'
+          export const tools = [require('./tool.ts').Tool]
+        `,
+        "setup.ts": `globalThis.X = "set"`,
+        "shared.ts": `export const shared = { name: "shared:" + globalThis.X }`,
+        "tool.ts": `
+          import { shared } from './shared.ts'
+          export const Tool = { name: "tool:" + shared.name }
+        `,
+      },
+    },
+    "a file the target needs shares the caller's chunk and comes after it": {
+      todo: "files reached by the same entry points share a chunk, and nothing orders helper.ts ahead of registry.ts",
+      files: {
+        "main.ts": `
+          import { tools } from './registry.ts'
+          import { viaMain } from './via-main.ts'
+          console.log(tools.map(t => t.name).join(","), viaMain())
+        `,
+        "registry.ts": `
+          export function buildTool(name: string) { return { name } }
+          export const tools = [require('./tool.ts').Tool]
+        `,
+        "tool.ts": `
+          import { buildTool } from './registry.ts'
+          import { viaTool } from './via-tool.ts'
+          export const Tool = buildTool("tool+" + viaTool())
+        `,
+        "via-main.ts": `
+          import { helperName } from './mid.ts'
+          export function viaMain() { return helperName() }
+        `,
+        "via-tool.ts": `
+          import { helperName } from './mid.ts'
+          export function viaTool() { return helperName() }
+        `,
+        "mid.ts": `
+          import { helper } from './helper.ts'
+          export function helperName() { return helper.name }
+        `,
+        "helper.ts": `export const helper = { name: "helper" }`,
+      },
+    },
+  };
+  for (const [name, { files, todo, folding }] of Object.entries(requireCycleGraphs)) {
+    // `folding`: the graph goes wrong because of a fold, so the build without folding has to get it right.
+    for (const fold of folding ? [true, false] : [true]) {
+      test
+        .todoIf(!!todo && fold)
+        .concurrent(`splitting/SplitRequireCycle: ${name}${fold ? "" : " (without folding)"}`, async () => {
+          using dir = tempDir("splitting-require-cycle", files);
+          const cwd = String(dir);
+          const [unbundled, build] = await Promise.all([
+            run([bunExe(), "main.ts"], cwd, env),
+            Bun.build({
+              entrypoints: [join(String(dir), "main.ts")],
+              outdir: join(String(dir), "out"),
+              splitting: true,
+              target: "bun",
+              format: "esm",
+              // @ts-expect-error internal to Bun's tests
+              foldChunksForTesting: fold,
+            }),
+          ]);
+          expect(unbundled.stdout).not.toBe("");
+          expect(unbundled.exitCode).toBe(0);
+          expect(build.logs).toEqual([]);
+          expect(await run([bunExe(), join("out", "main.js")], cwd, env)).toEqual(unbundled);
+        });
+    }
+  }
+
+  // Without folding, the chunk that a fold would have removed is kept; the program prints the same.
+  for (const foldChunks of [undefined, false]) {
+    itBundled(`splitting/FoldChunksForTesting/${foldChunks === false ? "off" : "on"}`, {
+      backend: "api",
+      files: {
+        "/main.js": `import { shared } from "./shared.js"; console.log("main", shared); import("./lazy.js");`,
+        "/lazy.js": `import { shared } from "./shared.js"; console.log("lazy", shared);`,
+        "/shared.js": `export const shared = "shared";`,
+      },
+      entryPoints: ["/main.js"],
+      splitting: true,
+      foldChunks,
+      outdir: "/out",
+      run: { file: "/out/main.js", stdout: "main shared\nlazy shared" },
+      onAfterBundle(api) {
+        const chunks = readdirSync(api.outdir).filter(name => name.endsWith(".js"));
+        expect(chunks.length).toBe(foldChunks === false ? 3 : 2);
+      },
+    });
+  }
+
+  // `foldChunksForTesting` is read only where `bun:internal-for-testing` resolves (always, in a debug build).
+  test.skipIf(isDebug).concurrent("splitting/FoldChunksForTesting is ignored without --expose-internals", async () => {
+    using dir = tempDir("splitting-fold-chunks-gate", {
+      "main.js": `import { shared } from "./shared.js"; console.log("main", shared); import("./lazy.js");`,
+      "lazy.js": `import { shared } from "./shared.js"; console.log("lazy", shared);`,
+      "shared.js": `export const shared = "shared";`,
+      "build.js": `
+        const result = await Bun.build({
+          entrypoints: [import.meta.dir + "/main.js"],
+          splitting: true,
+          foldChunksForTesting: false,
+        });
+        console.log(result.outputs.length);
+      `,
+    });
+    const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, ...withoutInternals } = env;
+    const chunks = async (...flags: string[]) => {
+      const { stdout, ...rest } = await run([bunExe(), ...flags, "build.js"], String(dir), withoutInternals);
+      return { stdout: stdout.trim(), ...rest };
+    };
+    expect(await Promise.all([chunks(), chunks("--expose-internals")])).toEqual([
+      { stdout: "2", stderr: "", exitCode: 0 },
+      { stdout: "3", stderr: "", exitCode: 0 },
+    ]);
+  });
+
+  // Random graphs, each run unbundled, bundled without folding and bundled with it (splitting-fuzz.ts). Folding may
+  // not lose a value or an order of top-level effects that the unfolded bundle and the source agree on. Folding
+  // changes the bundle of about one graph in sixteen; these are from those.
+  for (const [seed, folded, todo] of [
+    [47, true, ""],
+    [59, true, ""],
+    // A chunk that can be evaluating while an entry of its class loads stays out of the fold: 762 and 993 lost an
+    // order and a read to it, and 3 was folded without harm.
+    [3, false, ""],
+    [762, false, ""],
+    [993, false, ""],
+    [496, true, "f5 runs after f1 once folded"],
+  ] as const) {
+    test.todoIf(!!todo).concurrent(`splitting/FoldingNeverMakesABundleWorse: graph ${seed}`, async () => {
+      expect(await checkGraph(bunExe(), seed)).toEqual({ seed, status: "ok", folded, problems: [] });
+    });
+  }
+
   // Browser-side files of a server build (an imported HTML page's scripts)
   // cannot call import.meta.require; their require() keeps the wrapper.
   itBundled("splitting/SplitRequireLeavesBrowserFilesOfServerBuildAlone", {
@@ -3131,6 +4217,73 @@ describe("bundler", () => {
     }
     expect(runOut.trim()).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}`);
   }, 60_000);
+
+  // Every chunk's renamer stays alive until its chunk is printed, so its name
+  // tables must be sized by the chunk's own files. A binding imported from
+  // another chunk costs a reserved name, not a row that reaches its index in
+  // the symbol table of the file that declares it. The tables are reported
+  // by a debug log, which release builds do not have.
+  test.skipIf(!isDebug)("splitting/ChunkRenamerTablesHoldOnlyTheChunksOwnFiles", async () => {
+    const locals = Array.from({ length: 1000 }, (_, i) => "v" + i);
+    using dir = tempDir("splitting-renamer-tables", {
+      "a.js": `import { pick } from "./big.js";\nimport { last } from "./big.cjs";\nconsole.log("a", pick(), last());\n`,
+      "b.js": `import { pick } from "./big.js";\nimport { last } from "./big.cjs";\nconsole.log("b", pick(), last());\n`,
+      // `pick` comes after 1000 other symbols.
+      "big.js": `export function filler() { var ${locals}; }\nexport function pick() { return 1; }\n`,
+      // The `require_big` wrapper that a.js and b.js call is the last symbol of a CommonJS file.
+      "big.cjs": `module.exports = { last: () => 2, filler() { var ${locals}; } };\n`,
+    });
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--splitting", "--outdir", "out", "./a.js", "./b.js"],
+      env: { ...bunEnv, BUN_DEBUG_ChunkRenamer: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    const tables = [...(buildOut + buildErr).matchAll(/(\d+) files, (\d+) rows, (\d+) name slots/g)].map(m => ({
+      files: Number(m[1]),
+      rows: Number(m[2]),
+      nameSlots: Number(m[3]),
+    }));
+    // a.js and b.js are alone in their chunks. big.js, big.cjs and the runtime share the third.
+    const entryChunks = tables.filter(t => t.files === 1);
+    expect({ chunks: tables.length, entryChunks: entryChunks.length }).toEqual({ chunks: 3, entryChunks: 2 });
+    for (const { rows, nameSlots } of entryChunks) {
+      expect(rows).toBe(1);
+      expect(nameSlots).toBeLessThan(50);
+    }
+    expect(buildExit).toBe(0);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "out", "a.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect({ stdout: runOut, stderr: runErr, exitCode: runExit }).toEqual({
+      stdout: "a 1 2\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // shared.js exports the first `x`, which the parser links to the second. A chunk
+  // that imports it finds the bundle-wide name (`x2` here) through that link.
+  itBundled("splitting/CrossChunkNameOfRedeclaredExport", {
+    files: {
+      "/a.js": `import { x as other } from "./shared2.js";\nimport { x } from "./shared.js";\nconsole.log("a", x, other);`,
+      "/b.js": `import { x as other } from "./shared2.js";\nimport { x } from "./shared.js";\nconsole.log("b", x, other);`,
+      "/shared.js": `export var x = (console.log("first"), 1);\nvar x = (console.log("second"), 2);`,
+      "/shared2.js": `export var x = "other";`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/a.js", stdout: "first\nsecond\na 2 other" },
+  });
 
   // Chunks are printed with placeholders where they refer to other chunks and
   // assets; the placeholders are replaced once every output path is known.

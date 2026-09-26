@@ -1,9 +1,8 @@
-import { $ } from "bun";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { config, toolchain } from "./config";
-import { fail, output, poll, sleep, succeeds, sudoWrite } from "./shell";
+import { fail, poll, probe, run, runInheritOrThrow, sleep, spawn, succeeds, sudoWrite } from "./shell";
 
 export const brewPrefix = process.arch === "arm64" ? "/opt/homebrew" : "/usr/local";
 const brew = `${brewPrefix}/bin/brew`;
@@ -11,9 +10,9 @@ const tailscale = `${brewPrefix}/bin/tailscale`;
 
 export async function disableRemoteManagement(): Promise<void> {
   const kickstart = "/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart";
-  await $`sudo ${kickstart} -deactivate -stop`.quiet().nothrow();
-  await $`sudo launchctl disable system/com.apple.screensharing`.quiet().nothrow();
-  await $`sudo launchctl bootout system/com.apple.screensharing`.quiet().nothrow();
+  await spawn(["sudo", kickstart, "-deactivate", "-stop"]);
+  await spawn(["sudo", "launchctl", "disable", "system/com.apple.screensharing"]);
+  await spawn(["sudo", "launchctl", "bootout", "system/com.apple.screensharing"]);
 }
 
 export async function hardenSshd(): Promise<void> {
@@ -21,28 +20,37 @@ export async function hardenSshd(): Promise<void> {
     "/etc/ssh/sshd_config.d/000-hardening.conf",
     "PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n",
   );
-  await $`sudo launchctl kickstart -k system/com.openssh.sshd`.quiet();
+  await run(["sudo", "launchctl", "kickstart", "-k", "system/com.openssh.sshd"]);
 }
 
 export async function setHostname(name: string): Promise<void> {
   for (const key of ["ComputerName", "LocalHostName", "HostName"]) {
-    await $`sudo scutil --set ${key} ${name}`;
+    await run(["sudo", "scutil", "--set", key, name]);
   }
-  // bootstrap.sh only appends PATH entries to profiles that already exist
-  await $`touch ~/.profile ~/.zshrc ~/.bash_profile`;
 }
 
 export async function brewInstall(formula: string): Promise<void> {
-  const name = formula.split("/").pop()!;
-  if (await succeeds($`${brew} list ${name}`)) return;
-  await $`${brew} install ${formula}`;
+  const parts = formula.split("/");
+  const name = parts.pop()!;
+  if (await succeeds([brew, "list", name])) return;
+  // Homebrew refuses to load a formula from a tap it has not been told to trust
+  // ("Refusing to load formula ... from untrusted tap"), which fails the install.
+  // A tap formula is written org/repo/name. Trust the whole tap, not only the named
+  // formula: `brew install cirruslabs/cli/tart` trusts tart by itself and still
+  // refuses its dependency cirruslabs/cli/softnet from the same tap.
+  if (parts.length === 2) {
+    const tap = parts.join("/");
+    await run([brew, "tap", tap]);
+    await spawn([brew, "trust", tap]); // older Homebrew has no `trust`
+  }
+  await runInheritOrThrow([brew, "install", formula]);
 }
 
 export async function joinTailnet(hostname: string, tags: string | undefined): Promise<void> {
   await brewInstall("tailscale");
-  await $`sudo ${brewPrefix}/bin/tailscaled install-system-daemon`.quiet().nothrow();
+  await spawn(["sudo", `${brewPrefix}/bin/tailscaled`, "install-system-daemon"]);
   await sleep(3000);
-  if (await succeeds($`sudo ${tailscale} status`)) return;
+  if (await succeeds(["sudo", tailscale, "status"])) return;
 
   const tagArgs = tags ? [`--advertise-tags=${tags}`] : [];
   Bun.spawn(["sudo", tailscale, "up", "--ssh", ...tagArgs, `--hostname=${hostname}`], {
@@ -52,7 +60,7 @@ export async function joinTailnet(hostname: string, tags: string | undefined): P
   }).unref();
 
   const url = await poll(15, 2000, async () => {
-    const status = JSON.parse((await output($`sudo ${tailscale} status --json`)) || "{}");
+    const status = JSON.parse((await probe(["sudo", tailscale, "status", "--json"])) ?? "{}");
     return typeof status.AuthURL === "string" && status.AuthURL ? (status.AuthURL as string) : undefined;
   });
   console.log(
@@ -63,39 +71,57 @@ export async function joinTailnet(hostname: string, tags: string | undefined): P
 }
 
 export async function tailnetSummary(): Promise<string> {
-  const line = await output($`sudo ${tailscale} status --self --peers=false`);
-  return line.split("\n")[0] || "not connected";
+  const status = await probe(["sudo", tailscale, "status", "--self", "--peers=false"]);
+  return status?.split("\n")[0] || "not connected";
 }
 
 export async function installBuildkiteAgent(): Promise<void> {
   const { version, bin } = config.buildkiteAgent;
-  if ((await output($`${bin} --version`)).includes(version)) return;
+  if ((await probe([bin, "--version"]))?.includes(version)) return;
   const arch = process.arch === "arm64" ? "arm64" : "amd64";
   const url = `https://github.com/buildkite/agent/releases/download/v${version}/buildkite-agent-darwin-${arch}-${version}.tar.gz`;
   const tmp = mkdtempSync(join(tmpdir(), "buildkite-agent-"));
-  await $`curl -fsSL ${url} | tar -xz -C ${tmp}`;
-  await $`sudo mkdir -p /usr/local/bin && sudo install -m 755 ${join(tmp, "buildkite-agent")} ${bin}`;
-  await $`rm -rf ${tmp}`;
+  try {
+    await run(["curl", "-fsSL", "-o", join(tmp, "agent.tgz"), url]);
+    await run(["tar", "-xzf", join(tmp, "agent.tgz"), "-C", tmp]);
+    await run(["sudo", "mkdir", "-p", "/usr/local/bin"]);
+    await run(["sudo", "install", "-m", "755", join(tmp, "buildkite-agent"), bin]);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 export async function installSelf(): Promise<void> {
   const source = join(import.meta.dir, "..");
-  await $`sudo mkdir -p ${config.installDir}`;
-  await $`sudo rsync -a --delete --chmod=Fa+r,Da+rx ${source}/ ${config.installDir}/`;
+  await run(["sudo", "mkdir", "-p", config.installDir]);
+  await run(["sudo", "rsync", "-a", "--delete", "--chmod=Fa+r,Da+rx", `${source}/`, `${config.installDir}/`]);
 }
 
-export async function bootstrapToolchain(): Promise<void> {
-  const checkout = join(process.env.HOME!, "bun-bootstrap");
-  await $`rm -rf ${checkout}`;
-  await $`git clone -q --depth=1 --branch ${config.bun.ref} ${config.bun.repo} ${checkout}`;
-  await $`./scripts/bootstrap.sh`.cwd(checkout).nothrow();
+export const bootstrapCheckout = join(homedir(), "bun-bootstrap");
+
+/**
+ * The script that installs the toolchain on a machine of this architecture,
+ * generated from the image spec (scripts/build/ci-images) of the bun
+ * repository at `ref`. Returns its path. The checkout is left in place:
+ * installBareAgent runs scripts/agent.ts from it.
+ */
+export async function generateBootstrap(ref: string): Promise<string> {
+  rmSync(bootstrapCheckout, { recursive: true, force: true });
+  await run(["git", "clone", "-q", "--depth=1", "--branch", ref, config.bun.repo, bootstrapCheckout]);
+  const key = `darwin-${process.arch === "arm64" ? "aarch64" : "x64"}`;
+  await run([process.execPath, "scripts/build/ci-images/spec.ts", key], { cwd: bootstrapCheckout });
+  return join(bootstrapCheckout, "build", "ci-images", key, "bootstrap.sh");
+}
+
+export async function bootstrapToolchain(ref: string): Promise<void> {
+  await runInheritOrThrow(["sh", await generateBootstrap(ref)]);
   await verifyToolchain();
 }
 
 export async function verifyToolchain(): Promise<void> {
   const missing: string[] = [];
   for (const tool of toolchain) {
-    if (!(await succeeds($`bash -lc ${`command -v ${tool}`}`))) missing.push(tool);
+    if (!(await succeeds(["bash", "-lc", `command -v ${tool}`]))) missing.push(tool);
   }
   if (missing.length) fail(`toolchain incomplete after bootstrap: ${missing.join(", ")}`);
 }

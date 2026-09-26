@@ -32,14 +32,14 @@ mod production_body;
 // `Bun__add{Bake,DevServer}SourceProvider*` host exports — the Rust side of
 // `BakeSourceProvider.h` / `DevServerSourceProvider.h`. Reached only via the
 // codegen-emitted `extern "C"` thunks in `generated_host_exports.rs`.
-pub mod source_provider_exports;
+pub(crate) mod source_provider_exports;
 
 // Re-exports from the submodule bodies so `production.rs` can name them
 // without going through the keystone stubs below.
-pub use bake_body::{PatternBuffer, UserOptions, print_warning};
+pub(crate) use bake_body::{PatternBuffer, UserOptions, print_warning};
 
 /// All bake JSC references go through this re-export of `bun_jsc`.
-pub mod jsc {
+pub(crate) mod jsc {
     /// `jsc.API.JSBundler.Plugin` — the C++ `BunPlugin` FFI handle. The
     /// canonical opaque struct lives in `bun_bundler::bundle_v2::api::JSBundler`
     /// (T5) and is re-exported through `crate::api::js_bundler` so the
@@ -53,20 +53,28 @@ pub mod jsc {
 // Top-level types
 // ══════════════════════════════════════════════════════════════════════════
 
-pub use bun_bundler::bake_types::BuiltInModule;
+pub(crate) use bun_bundler::bake_types::BuiltInModule;
 /// `bake.Side` / `bake.Graph` — these are TYPE_ONLY moved-down into
 /// `bun_bundler::bake_types` (lower tier owns the canonical defs so the
 /// bundler can name them without depending on `bun_runtime`). Re-export
 /// here so intra-crate `bake::Side` paths resolve.
-pub use bun_bundler::bake_types::{Graph, Side};
+pub(crate) use bun_bundler::bake_types::{Graph, Side};
 
 /// `bake.Mode` — canonical definition. `bake_body::Mode` re-exports this
 /// (`pub use super::Mode;`) so both paths name the same nominal type.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Mode {
+pub(crate) enum Mode {
     Development,
-    ProductionDynamic,
     ProductionStatic,
+}
+
+impl Mode {
+    pub(crate) fn output_format(self) -> bun_bundler::options::Format {
+        match self {
+            Mode::Development => bun_bundler::options::Format::InternalBakeDev,
+            Mode::ProductionStatic => bun_bundler::options::Format::Esm,
+        }
+    }
 }
 
 /// `bake.Framework.ServerComponents`.
@@ -74,7 +82,7 @@ pub enum Mode {
 /// String fields are arena-backed at runtime but default to static literals.
 /// `Cow<'static, [u8]>` covers both without leaking.
 #[derive(Clone)]
-pub struct ServerComponents {
+pub(crate) struct ServerComponents {
     pub(crate) separate_ssr_graph: bool,
     /// REQUIRED — `fromJS` throws if `serverRuntimeImportSource` is absent.
     pub(crate) server_runtime_import: Cow<'static, [u8]>,
@@ -86,7 +94,7 @@ pub struct ServerComponents {
 // supply it explicitly (`Framework::react()` sets `"react-server-dom-bun/server"`).
 
 #[derive(Clone)]
-pub struct ReactFastRefresh {
+pub(crate) struct ReactFastRefresh {
     pub(crate) import_source: Cow<'static, [u8]>,
 }
 
@@ -95,7 +103,7 @@ pub struct ReactFastRefresh {
 /// DevServer touches is named here.
 // Deliberately not `Clone` — `framework_router::Style` is the
 // body enum (carries `JavascriptDefined(jsc::Strong)`, not `Clone`).
-pub struct FileSystemRouterType {
+pub(crate) struct FileSystemRouterType {
     pub(crate) root: Cow<'static, [u8]>,
     pub(crate) prefix: Cow<'static, [u8]>,
     pub(crate) entry_client: Option<Cow<'static, [u8]>>,
@@ -113,7 +121,7 @@ pub struct FileSystemRouterType {
 /// would set in order to integrate with the application. Since many fields
 /// have default values which may point to static memory, this structure is
 /// always arena-allocated, usually owned by the arena in `UserOptions`.
-pub struct Framework {
+pub(crate) struct Framework {
     pub(crate) is_built_in_react: bool,
     /// Owned `Vec` so `resolve()` can take `&mut` and rewrite entries in
     /// place; freed by `Vec::drop`.
@@ -210,10 +218,7 @@ impl Framework {
         };
         out.options.entry_points = Box::default();
         out.options.log = log;
-        out.options.output_format = match mode {
-            Mode::Development => bun_bundler::options::Format::InternalBakeDev,
-            Mode::ProductionDynamic | Mode::ProductionStatic => bun_bundler::options::Format::Esm,
-        };
+        out.options.output_format = mode.output_format();
         out.options.out_extensions = bun_collections::StringHashMap::new();
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
@@ -266,9 +271,7 @@ impl Framework {
             // on source maps always being enabled.
             Mode::Development => bun_bundler::options::SourceMapOption::External,
             // TODO: follow user configuration
-            Mode::ProductionDynamic | Mode::ProductionStatic => {
-                bun_bundler::options::SourceMapOption::None
-            }
+            Mode::ProductionStatic => bun_bundler::options::SourceMapOption::None,
         };
         if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
             out.options.env.behavior = bundler_options.env;
@@ -447,7 +450,7 @@ impl Framework {
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
 #[derive(Default)]
-pub struct SplitBundlerOptions {
+pub(crate) struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
     pub(crate) plugin: Option<NonNull<jsc::Plugin>>,
@@ -558,7 +561,7 @@ impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
 /// `Framework::init_transpiler` reads so DevServer's
 /// per-graph transpilers see bunfig `[serve.static]` define/env/conditions.
 #[derive(Default)]
-pub struct BuildConfigSubset {
+pub(crate) struct BuildConfigSubset {
     pub(crate) ignore_dce_annotations: Option<bool>,
     pub(crate) conditions: bun_collections::ArrayHashMap<&'static [u8], ()>,
     pub(crate) drop: bun_collections::ArrayHashMap<&'static [u8], ()>,
@@ -588,22 +591,22 @@ pub(crate) use bake_body::get_hmr_runtime;
 // NUL-terminated `&ZStr` form for JSC handoff; the bundler-side one is plain
 // `&[u8]`.)
 
-pub use bake_body::StringRefList;
+pub(crate) use bake_body::StringRefList;
 
 // ══════════════════════════════════════════════════════════════════════════
 // FrameworkRouter
 // ══════════════════════════════════════════════════════════════════════════
-pub mod framework_router {
+pub(crate) mod framework_router {
     // Everything is re-exported from `framework_router_body`
     // (FrameworkRouter.rs) so `framework_router::X` ≡
     // `framework_router_body::X` and the real method bodies resolve directly.
     /// `generated_js2native.rs` lowers `JSFrameworkRouter.getBindings` to
     /// `framework_router::js_framework_router::get_bindings`; alias the type so
     /// the associated-fn path resolves.
-    pub use super::framework_router_body::JSFrameworkRouter as js_framework_router;
-    pub use super::framework_router_body::{
+    pub(crate) use super::framework_router_body::JSFrameworkRouter as js_framework_router;
+    pub(crate) use super::framework_router_body::{
         FileKind, FrameworkRouter, InsertionHandler, JSFrameworkRouter, MatchedParams,
-        OpaqueFileId, OpaqueFileIdOptional, Part, RouteIndex, Style, TinyLog, Type, TypeIndex,
+        OpaqueFileId, OpaqueFileIdOptional, Part, RouteIndex, Style, TinyLog, Type,
     };
 
     /// `wrap` shim over the trait-object form (`&mut dyn InsertionHandler`),
@@ -621,12 +624,12 @@ pub mod framework_router {
 // ══════════════════════════════════════════════════════════════════════════
 // production
 // ══════════════════════════════════════════════════════════════════════════
-pub mod production {
-    pub use super::production_body::{PerThread, build_command};
+pub(crate) mod production {
+    pub(crate) use super::production_body::{PerThread, build_command};
 }
 
 // ══════════════════════════════════════════════════════════════════════════
 // DevServer
 // ══════════════════════════════════════════════════════════════════════════
-pub mod dev_server;
-pub use dev_server as DevServer;
+pub(crate) mod dev_server;
+pub(crate) use dev_server as DevServer;

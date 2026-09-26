@@ -122,6 +122,10 @@ struct HttpResponseData;
         unsigned int errorStatusCodeOrConsumedBytes = 0;
         void* returnedData = nullptr;
     public:
+        /* consumedBytes() of a success that leaves none of the read to the caller,
+         * whatever the length of the read. */
+        static constexpr unsigned int WHOLE_READ = UINT_MAX;
+
         static HttpParserResult error(unsigned int errorStatusCode, HttpParserError error) {
             return HttpParserResult{.parserError = error, .errorStatusCodeOrConsumedBytes = errorStatusCode, .returnedData = nullptr};
         }
@@ -284,6 +288,41 @@ struct HttpResponseData;
                 }
             }
             return std::string_view(nullptr, 0);
+        }
+
+        /* RFC 9112 9.6: "close" is a case-insensitive token in the Connection list. */
+        bool hasConnectionClose()
+        {
+            if (!bf.mightHave("connection")) {
+                return false;
+            }
+            for (Header *h = headers; (++h)->key.length();) {
+                if (h->key.length() != 10 || strncasecmp(h->key.data(), "connection", 10)) {
+                    continue;
+                }
+                const auto value = h->value;
+                size_t pos = 0;
+                while (pos < value.length()) {
+                    while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
+                        pos++;
+                    }
+                    size_t tokenStart = pos;
+                    while (pos < value.length() && value[pos] != ',') {
+                        pos++;
+                    }
+                    size_t tokenEnd = pos;
+                    while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
+                        tokenEnd--;
+                    }
+                    if (tokenEnd - tokenStart == 5 && !strncasecmp(value.data() + tokenStart, "close", 5)) {
+                        return true;
+                    }
+                    if (pos < value.length()) {
+                        pos++;
+                    }
+                }
+            }
+            return false;
         }
 
         struct TransferEncoding {
@@ -599,14 +638,12 @@ struct HttpResponseData;
          * at the next request boundary and park the rest", cleared for replay so it can make progress. */
         bool nodeHttpParkAtNextBoundary = false;
         bool nodeHttpSpillReplayScheduled = false;
+        /* A request on this connection had Connection: close or was HTTP/1.0, or a Bun.serve response closed it (RFC 9112 9.6). */
+        bool sawConnectionClose = false;
         WTF::Vector<char> nodeHttpPausedSpill;
     private:
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
-        /* node:http compat: a completed request on this connection forbade keep-alive
-         * (Connection: close, or HTTP/1.0), so no further message may be dispatched
-         * (llhttp parses nothing after such a message: HPE_CLOSED_CONNECTION). */
-        bool nodeHttpSawConnectionClose = false;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
         /* maxHeaderSize bounds what llhttp counts (URL + field names/values), not framing
@@ -1144,6 +1181,13 @@ struct HttpResponseData;
                     }
                 }
             }
+            /* Must stay below the tunnel check, the park and the CR/LF skip, like llhttp's closed state. */
+            if (sawConnectionClose) {
+                if constexpr (IsNodeHttp) {
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
+                }
+                return HttpParserResult::success(consumedTotal + length, user);
+            }
             auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
             if(result.isError()) {
                 return result;
@@ -1169,17 +1213,8 @@ struct HttpResponseData;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
-            /* node:http compat: a pipelined request behind one that forbade keep-alive is
-             * never dispatched - node's parser is closed after that message and raises
-             * HPE_CLOSED_CONNECTION ('clientError') on further bytes. The predicate is the
-             * same one that marks the connection for close at dispatch (HttpContext). */
-            if constexpr (IsNodeHttp) {
-                if (nodeHttpSawConnectionClose) {
-                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
-                }
-                if (req->isAncient() || req->getHeader("connection").length() == 5) {
-                    nodeHttpSawConnectionClose = true;
-                }
+            if (req->isAncient() || req->hasConnectionClose()) {
+                sawConnectionClose = true;
             }
             /* RFC 9112 6.3
             * If a message is received with both a Transfer-Encoding and a Content-Length header field,
@@ -1300,10 +1335,13 @@ struct HttpResponseData;
             /* Same verdict that selects chunked framing below, so the handler's
              * has-body decision cannot disagree with how the body is consumed. */
             req->hasTransferEncoding = transferEncoding.has;
+            /* Read before the handler runs: an upgrade destroys this parser. */
+            const bool hasBody = transferEncoding.has || (contentLengthStringLen && remainingStreamingBytes);
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
-                /* We are upgraded to WebSocket or otherwise broken */
-                return HttpParserResult::success(consumedTotal, returnedUser);
+                /* We are upgraded to WebSocket or otherwise broken. What follows the head
+                 * is the caller's, unless it is the body that this request declared. */
+                return HttpParserResult::success(hasBody ? HttpParserResult::WHOLE_READ : consumedTotal, returnedUser);
             }
 
             if (deferredTransferEncodingError) [[unlikely]] {
@@ -1415,8 +1453,14 @@ struct HttpResponseData;
     }
 
 public:
+    /* When requestHandler returns something other than user (it upgraded or closed
+     * the socket), parsing stops and consumedBytes() of the result is the offset in
+     * data from which the bytes are the caller's. That is the end of the request's
+     * head, or WHOLE_READ when the request declared a body: the body is not parsed
+     * and is not the caller's. The handler may have destroyed this parser. */
     template <bool IsNodeHttp>
     HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+        char *const readStart = data;
         /* The fallback buffer may not exceed the configured per-request header
          * limit (per-server maxHeaderSize can raise it above the default). */
         const size_t maxFallbackSize = maxHeaderSize ? (size_t) (maxHeaderSize + MAX_HEADER_FRAMING_SLACK) : MAX_FALLBACK_SIZE;
@@ -1495,6 +1539,11 @@ public:
             HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
+                /* The count is in fallback bytes, and the first `had` of them came from
+                 * earlier reads. The head ends past them: those reads did not complete it. */
+                if (!consumed.isError() && consumed.errorStatusCodeOrConsumedBytes != HttpParserResult::WHOLE_READ) {
+                    consumed.errorStatusCodeOrConsumedBytes -= had;
+                }
                 return consumed;
             }
             /* safe to call consumed.consumedBytes() because consumed.returnedData == user */
@@ -1577,6 +1626,10 @@ public:
         HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
+            /* A body or a fallback head ahead of this request moved data forward. */
+            if (!consumed.isError() && consumed.errorStatusCodeOrConsumedBytes != HttpParserResult::WHOLE_READ) {
+                consumed.errorStatusCodeOrConsumedBytes += (unsigned int) (data - readStart);
+            }
             return consumed;
         }
         /* safe to call consumed.consumedBytes() because consumed.returnedData == user */

@@ -1,6 +1,9 @@
 import type { MySQLErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLCommand, SQLResultArray, SSLMode } from "./shared";
+import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLCommand, SSLMode } from "./shared";
+
+type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
+
 const {
   SQLResultArray,
   BasePooledConnection,
@@ -20,7 +23,7 @@ const {
   init: initMySQL,
 } = $rust("mysql.rs", "createBinding") as MySQLDotZig;
 
-function wrapError(error: Error | MySQLErrorOptions) {
+function wrapError(error: Error | (MySQLErrorOptions & { message: string })) {
   if (Error.isError(error)) {
     return error;
   }
@@ -64,8 +67,13 @@ initMySQL(
     } catch {}
   },
 
-  function onRejectMySQLQuery(query: Query<any, any>, reject: Error | MySQLErrorOptions, queries: Query<any, any>[]) {
-    reject = wrapError(reject);
+  function onRejectMySQLQuery(
+    query: Query<any, any>,
+    reject: Error | (MySQLErrorOptions & { message: string }),
+    queries: Query<any, any>[],
+  ) {
+    // A parameter can throw a non-object, and the query rejects with it.
+    if ($isObject(reject)) reject = wrapError(reject);
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
@@ -83,11 +91,13 @@ export interface MySQLDotZig {
   init: (
     onResolveQuery: (
       query: Query<any, any>,
-      result: SQLResultArray,
+      result: SQLResultArray<unknown>,
       commandTag: string,
       count: number,
       queries: any,
       is_last: boolean,
+      last_insert_rowid: number,
+      affected_rows: number,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
   ) => void;
@@ -112,7 +122,7 @@ export interface MySQLDotZig {
   createQuery: (
     sql: string,
     values: unknown[],
-    pendingValue: SQLResultArray,
+    pendingValue: SQLResultArray<unknown>,
     columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
@@ -133,8 +143,8 @@ class PooledMySQLConnection extends BasePooledConnection<$ZigGeneratedClasses.My
     this.connection = await createPooledConnectionHandle(
       createMySQLConnection,
       this.connectionInfo,
-      this.handleConnected.bind(this),
-      this.handleClose.bind(this),
+      this.nativeCallback(this.handleConnected),
+      this.nativeCallback(this.handleClose),
     );
   }
 

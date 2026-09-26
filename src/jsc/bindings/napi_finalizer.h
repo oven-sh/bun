@@ -3,7 +3,7 @@
 #include "root.h"
 #include "js_native_api.h"
 
-extern "C" void napi_internal_enqueue_finalizer(napi_env env, napi_finalize finalize_cb, void* data, void* hint);
+extern "C" void Bun__napi_enqueue_finalizer(napi_env env, napi_finalize finalize_cb, void* data, void* hint);
 
 namespace Bun {
 

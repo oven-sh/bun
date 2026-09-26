@@ -32,9 +32,14 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     ld64Lld: undefined,
     rustLld: undefined,
     rustLlvmVersion: "22.1.4",
+    rustSysroot: undefined,
+    rustHostTriple: undefined,
     strip: "/fake/llvm/bin/llvm-strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
+    readobj: "/fake/llvm/bin/llvm-readobj",
+    objdump: "/fake/llvm/bin/llvm-objdump",
+    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
     dsymutil: undefined,
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
@@ -54,7 +59,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
 
 /**
  * Shorthand: resolve a config for a Windows target the way the CI cross lane
- * does (`--profile=ci-release --os=windows --arch=<arch>`): Release + ci so
+ * does (`--profile=ci-build --os=windows --arch=<arch>`): Release + ci so
  * the LTO default applies, with an explicit fake sysroot so the local-build
  * "create one with xwin" error never triggers.
  */
@@ -95,12 +100,11 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(resolveWindowsCross({ arch: "aarch64", lto: true }).lto).toBe(false);
   });
 
-  test("local (non-ci) release builds stay non-LTO unless asked", () => {
-    const local = resolveWindowsCross({ ci: false });
-    expect(local.lto).toBe(false);
-    const explicit = resolveWindowsCross({ ci: false, lto: true, baseline: false });
-    expect(explicit.lto).toBe(true);
-    expect(explicit.crossLangLto).toBe(true);
+  test("local (non-ci) release builds are LTO too, unless turned off", () => {
+    const local = resolveWindowsCross({ ci: false, baseline: false });
+    expect(local.lto).toBe(true);
+    expect(local.crossLangLto).toBe(true);
+    expect(resolveWindowsCross({ ci: false, lto: false }).lto).toBe(false);
   });
 
   test("compile flags use clang-cl ThinLTO without whole-program vtables", () => {
@@ -142,7 +146,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
       mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }),
     );
     expect(cfg.ld).toBe(join(String(dir), "gcc-ld", "lld-link"));
-    // Cargo-driven links (bun_shim_impl.exe) must NOT follow the swap: rustc
+    // rustc-driven links (the .bin/ shim's executable) must NOT follow the swap: rustc
     // treats a linker inside its own gcc-ld/ as rust-lld and prepends
     // `-flavor link`, which breaks the wrapper. They keep the host lld-link.
     expect(cfg.msvcLinker).toBe("/fake/llvm/bin/lld-link");

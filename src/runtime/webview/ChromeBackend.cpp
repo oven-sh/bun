@@ -433,8 +433,12 @@ static void wsOnClose(void* ctx, unsigned short code)
             // terminator the pipe protocol needs.
             for (auto& cmd : pending) {
                 if (cmd.id && !t.m_pending.contains(cmd.id)) continue;
-                Bun::UTF8View view(cmd.body);
-                auto s = view.span();
+                auto view = Bun::UTF8View::tryCreate(cmd.body);
+                if (!view) [[unlikely]] {
+                    t.rejectAllAndMarkDead("Chrome command is too long to send"_s);
+                    return;
+                }
+                auto s = view->span();
                 t.writeRaw(s.data(), s.size());
                 t.writeRaw("\0", 1);
             }
@@ -825,14 +829,6 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         view->m_pendingChromeNavigateUrl = WTF::String();
         return;
     }
-    case Method::RuntimeEnable:
-    case Method::TargetCloseTarget:
-        // Untracked fire-and-forget — close() sends TargetCloseTarget
-        // without adding to m_pending (the view is going away). Chrome's
-        // reply finds no entry, handleResponse's find()==end() drops it.
-        // This case arm is unreachable; present for switch completeness.
-        return;
-
     case Method::PageNavigate: {
         // {"frameId":"...","loaderId":"..."} or {"frameId":"...","errorText":"..."}
         // errorText present → navigation failed synchronously (bad URL,
@@ -1022,7 +1018,6 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     case Method::InputDispatchMouseEvent:
     case Method::InputDispatchKeyEvent:
-    case Method::InputDispatchScrollEvent:
     case Method::InputInsertText:
     case Method::EmulationSetDeviceMetricsOverride:
         // Input.* / Emulation.* reply with empty result on success. Sync-

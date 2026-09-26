@@ -139,6 +139,22 @@ declare module "bun:jsc" {
   function memoryUsage(): MemoryUsage;
 
   /**
+   * For an executable built with `bun build --compile --bytecode
+   * --bytecode-order`: how many functions this thread has loaded from each part
+   * of the bytecode the order file arranged. Returns `null` in any other
+   * process. See {@link BytecodeOrderStats}.
+   *
+   * @example
+   * ```ts
+   * import { bytecodeOrderStats } from "bun:jsc";
+   *
+   * const stats = bytecodeOrderStats();
+   * if (stats) console.log(stats.cold / (stats.hot + stats.unknown + stats.cold));
+   * ```
+   */
+  function bytecodeOrderStats(): BytecodeOrderStats | null;
+
+  /**
    * Returns the seed of the pseudo-random number generator behind
    * `Math.random()`. The seed is chosen at random when Bun starts; see
    * {@link setRandomSeed}.
@@ -314,9 +330,9 @@ declare module "bun:jsc" {
 
   /**
    * Runs every pending microtask right now: promise reactions,
-   * `queueMicrotask()` callbacks, and `process.nextTick()` callbacks. Callbacks
-   * that Bun's event loop has already queued, such as those of I/O that has
-   * completed, run as well. Nothing is waited for, and timers do not fire.
+   * `queueMicrotask()` callbacks, and `process.nextTick()` callbacks. The event
+   * loop does not run: the callbacks of completed I/O, messages, and timers wait
+   * until the current callback returns.
    *
    * Microtasks normally run only after the current script or callback
    * finishes; this lets synchronous code observe their effects immediately.
@@ -439,17 +455,46 @@ declare module "bun:jsc" {
   }
 
   /**
+   * Returned by {@link bytecodeOrderStats}. Counts are per thread: a `Worker`
+   * has its own. A function whose bytecode was discarded and loaded again
+   * counts again. Sizes are in bytes.
+   */
+  interface BytecodeOrderStats {
+    /** Functions loaded that the order file's run had used. */
+    hot: number;
+    /** Functions loaded that the build the order file was recorded from did not have. */
+    unknown: number;
+    /** Functions loaded that the order file's run had not used. */
+    cold: number;
+    hotBytes: number;
+    unknownBytes: number;
+    coldBytes: number;
+    /** The size of each part of the bytecode, in the order they are stored. */
+    regions: {
+      moduleHeads: number;
+      hot: number;
+      unknown: number;
+      lateModuleHeads: number;
+      cold: number;
+      expressionInfo: number;
+    };
+  }
+
+  /**
    * Memory statistics for the whole process, returned by {@link memoryUsage}.
    * Sizes are in bytes.
    */
   interface MemoryUsage {
     /**
-     * Resident set size: the physical memory the process is using right now.
-     * The same measurement as `process.memoryUsage().rss`.
+     * The physical memory the process is using right now. The same
+     * measurement as `process.memoryUsage().rss`: the resident set size on
+     * Linux and Windows, and on macOS the memory footprint that Activity
+     * Monitor shows (`phys_footprint`, which also counts compressed pages and
+     * leaves out clean file-backed ones).
      */
     current: number;
     /**
-     * The largest resident set size the process has had.
+     * The largest value `current` has had over the life of the process.
      */
     peak: number;
     /**

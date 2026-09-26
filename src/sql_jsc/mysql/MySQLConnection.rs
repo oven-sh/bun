@@ -1,4 +1,4 @@
-use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
+use crate::jsc::JSValue;
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{OffsetByteList, StringHashMap, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket};
@@ -313,11 +313,11 @@ impl MySQLConnection {
             return Ok(());
         };
 
-        // `as_mut()` is `'static`, so `tls_group` borrows the VM singleton —
-        // not `*self` — and stays live across the field reads below.
-        let tls_group: &mut bun_uws::SocketGroup = crate::jsc::VirtualMachine::get()
-            .as_mut()
-            .mysql_socket_group::<true>();
+        // SAFETY: `raw` is a live connected socket in its context's MySQL TCP group.
+        let tls_group: &mut bun_uws::SocketGroup = unsafe {
+            bun_jsc::rare_data::SocketGroups::of((*raw).group())
+                .mysql_group::<true>(crate::jsc::VirtualMachine::get().uws_loop())
+        };
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
         // requested.
@@ -328,14 +328,7 @@ impl MySQLConnection {
                 .expect("secure SSL_CTX must be set before upgradeToTLS")
                 .as_ptr()
         };
-        let server_name = self.tls_config.server_name();
-        let sni = if server_name.is_null() {
-            None
-        } else {
-            // SAFETY: `server_name` is a NUL-terminated C string owned by
-            // `tls_config` for the connection lifetime.
-            Some(unsafe { bun_core::ffi::cstr(server_name) })
-        };
+        let sni = self.tls_config.sni();
         // `Option<NonNull<T>>` is an 8-byte null-niche optional; using
         // `Option<*mut T>` here would request 16 bytes (separate discriminant)
         // and desync with the trampoline reader (uws_handlers.rs) which reads
@@ -351,7 +344,7 @@ impl MySQLConnection {
             sni,
             true,  // is_client
             false, // request_cert (server-only)
-            false, // reject_unauthorized (server-only)
+            false, // reject_unauthorized (server-only; the client policy is set_inline_reject below)
             ext_size,
             ext_size,
         ) else {
@@ -367,6 +360,11 @@ impl MySQLConnection {
         let sock = unsafe { &mut *new_socket };
         *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
             core::ptr::NonNull::new(js_connection);
+        if self.tls_config.reject_unauthorized() != 0
+            && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
+        {
+            sock.set_inline_reject();
+        }
         self.socket = Socket::SocketTls(uws::SocketTLS {
             socket: uws::InternalSocket::Connected(new_socket),
         });
@@ -386,6 +384,20 @@ impl MySQLConnection {
 
         // if is connected or connecting we keep alive until idle timeout is reached
         true
+    }
+
+    /// verify-full's name check, asked inside the handshake.
+    pub fn server_identity(
+        &self,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        bun_boringssl::server_identity(ssl, self.native_identity_hostname())
+    }
+
+    /// The name verify-full matches, in and after the handshake. Empty (none configured) matches no certificate.
+    fn native_identity_hostname(&self) -> Option<&[u8]> {
+        (self.tls_config.reject_unauthorized() != 0 && self.ssl_mode == SSLMode::VerifyFull)
+            .then(|| self.tls_config.server_name_bytes())
     }
 
     pub(crate) fn do_handshake(
@@ -418,31 +430,24 @@ impl MySQLConnection {
                         // VerifyFull additionally requires the certificate identity to
                         // match the intended host. Absence of a configured server name is
                         // not a license to skip the check — fail closed.
-                        if self.ssl_mode == SSLMode::VerifyFull {
-                            let servername = self.tls_config.server_name();
-                            if servername.is_null() {
-                                self.tls_status = TLSStatus::SslFailed;
-                                return Ok(false);
-                            }
+                        let identity_ok = self.native_identity_hostname().is_none_or(|hostname| {
                             // SAFETY: native handle of a connected TLS socket is `SSL*`.
                             let ssl_ptr: *mut bun_boringssl_sys::SSL = self
                                 .socket
                                 .get_native_handle()
                                 .map(|h| h.cast())
                                 .unwrap_or(core::ptr::null_mut());
-                            // SAFETY: `server_name` is a NUL-terminated C string owned by
-                            // `tls_config` for the connection lifetime.
-                            let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                            if ssl_ptr.is_null()
-                                || !bun_boringssl::check_server_identity(
+                            !hostname.is_empty()
+                                && !ssl_ptr.is_null()
+                                && uws::check_server_identity(
                                     // SAFETY: `ssl_ptr` is non-null (checked by the short-circuit above) and live (handshake just succeeded).
                                     unsafe { &mut *ssl_ptr },
                                     hostname,
                                 )
-                            {
-                                self.tls_status = TLSStatus::SslFailed;
-                                return Ok(false);
-                            }
+                        });
+                        if !identity_ok {
+                            self.tls_status = TLSStatus::SslFailed;
+                            return Ok(false);
                         }
                     }
                     // require is the same as prefer

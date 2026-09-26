@@ -321,7 +321,7 @@ function hasServerResponseFinished(self, chunk, callback) {
       if (finished) {
         err = $ERR_STREAM_WRITE_AFTER_END();
       } else if (destroyed) {
-        err = $ERR_STREAM_DESTROYED("Stream is destroyed");
+        err = $ERR_STREAM_DESTROYED("write");
       }
 
       if (!destroyed) {
@@ -361,22 +361,22 @@ const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
+const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
 
-// Cached HTTP Date header value, refreshed once a second like Node.js does.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js
+// The `date` header, formatted once per second like Node.js does
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js). Keyed by the second rather than reset by a timer:
+// a timer belongs to whoever happened to be running when it was set, and if that was a
+// Bun.ModuleGraph disposed within the second, nothing would ever clear the cache again.
 let utcCache;
+let utcCacheSecond = -1;
 function utcDate() {
-  if (!utcCache) cacheUTCDate();
+  const now = Date.now();
+  const second = Math.floor(now / 1000);
+  if (second !== utcCacheSecond) {
+    utcCacheSecond = second;
+    utcCache = new Date(now).toUTCString();
+  }
   return utcCache;
-}
-function cacheUTCDate() {
-  const d = new Date();
-  utcCache = d.toUTCString();
-  const timer = setTimeout(resetUTCCache, 1000 - d.getMilliseconds());
-  if (typeof timer.unref === "function") timer.unref();
-}
-function resetUTCCache() {
-  utcCache = undefined;
 }
 
 function ipToInt(ip) {
@@ -384,6 +384,15 @@ function ipToInt(ip) {
   let result = 0;
   for (let i = 0; i < octets.length; i++) result = (result << 8) + Number.parseInt(octets[i]);
   return result >>> 0;
+}
+
+// Node prints these raw (nodejs/node@3e9954a88b lib/internal/http.js#L114). An unescaped "/" in a password ends the authority early, so cut at the last "@".
+function redactInvalidProxyUrl(proxyUrl) {
+  proxyUrl = `${proxyUrl}`;
+  const userinfoEnd = proxyUrl.lastIndexOf("@");
+  if (userinfoEnd === -1) return proxyUrl;
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//i.exec(proxyUrl);
+  return (scheme === null ? "" : scheme[0]) + proxyUrl.slice(userinfoEnd + 1);
 }
 
 class ProxyConfig {
@@ -398,11 +407,18 @@ class ProxyConfig {
     try {
       parsedURL = new URL(proxyUrl);
     } catch {
-      throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${proxyUrl}`);
+      throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${redactInvalidProxyUrl(proxyUrl)}`);
     }
     const { hostname, port, protocol, username, password } = parsedURL;
 
-    this.href = proxyUrl;
+    // `href` ends up in ERR_PROXY_TUNNEL messages, so it must not carry the credentials.
+    if (username || password) {
+      parsedURL.username = "";
+      parsedURL.password = "";
+      this.href = parsedURL.href;
+    } else {
+      this.href = proxyUrl;
+    }
     this.protocol = protocol;
 
     if (username || password) {
@@ -478,7 +494,7 @@ function parseProxyUrl(env, protocol) {
   }
 
   if (proxyUrl.includes("\r") || proxyUrl.includes("\n")) {
-    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${proxyUrl}`);
+    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${redactInvalidProxyUrl(proxyUrl)}`);
   }
 
   return proxyUrl;
@@ -525,6 +541,7 @@ export {
   kNeedDrain,
   kOutHeaders,
   kPendingCallbacks,
+  kPerRequestCheckServerIdentity,
   kProxyConfig,
   kRealListen,
   kRequest,
@@ -534,6 +551,7 @@ export {
   optionsSymbol,
   parseProxyConfigFromEnv,
   parseProxyUrl,
+  redactInvalidProxyUrl,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,

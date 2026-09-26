@@ -17,7 +17,7 @@ use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
 use bun_collections::VecExt;
 
-pub struct Cmd {
+pub(crate) struct Cmd {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Cmd>,
     pub(crate) io: IO,
@@ -46,7 +46,7 @@ pub enum CmdState {
 }
 
 #[derive(Default)]
-pub enum Exec {
+pub(crate) enum Exec {
     #[default]
     None,
     Builtin(Box<Builtin>),
@@ -65,7 +65,7 @@ impl Cmd {
     }
 }
 
-pub struct SubprocExec {
+pub(crate) struct SubprocExec {
     pub(crate) child: *mut ShellSubprocess,
     pub(crate) buffered_closed: BufferedIoClosed,
     /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
@@ -83,14 +83,14 @@ pub struct SubprocExec {
 /// completion. `Some(state)` means it was piped and must reach `Closed` before
 /// [`Cmd::has_finished`] returns true.
 #[derive(Default)]
-pub struct BufferedIoClosed {
+pub(crate) struct BufferedIoClosed {
     pub(crate) stdin: Option<bool>,
     pub(crate) stdout: Option<BufferedIoState>,
     pub(crate) stderr: Option<BufferedIoState>,
 }
 
 #[derive(Default)]
-pub enum BufferedIoState {
+pub(crate) enum BufferedIoState {
     #[default]
     Open,
     Closed(Vec<u8>),
@@ -235,6 +235,18 @@ impl Cmd {
                 this,
                 <&'static str>::from(&interp.as_cmd(this).state)
             );
+            if interp.failed()
+                && !matches!(
+                    interp.as_cmd(this).state,
+                    CmdState::WaitingWriteErr | CmdState::Done
+                )
+            {
+                // The script failed: expand nothing more and do not spawn.
+                let me = interp.as_cmd_mut(this);
+                me.exit_code = Some(1);
+                me.state = CmdState::Done;
+                continue;
+            }
             match interp.as_cmd(this).state {
                 CmdState::Idle => {
                     if !n.assigns.is_empty() {
@@ -300,7 +312,7 @@ impl Cmd {
     ) -> Yield {
         if let Some(err) = e {
             interp.throw(crate::shell::ShellErr::from_system(err));
-            return Yield::failed();
+            return Yield::Failed(this);
         }
         debug_assert!(matches!(
             interp.as_cmd(this).state,
@@ -552,7 +564,7 @@ impl Cmd {
             Err(_) => {
                 drop(spawn_args);
                 drop(arena);
-                return Yield::failed();
+                return Yield::Failed(this);
             }
         }
 
@@ -877,6 +889,20 @@ impl Cmd {
             }
         }
         Self::deinit(interp, this);
+    }
+
+    /// The script failed: stop the subprocess. Its exit finishes the Cmd through `on_exit`.
+    pub(crate) fn kill_subprocess(interp: &Interpreter, this: NodeId) {
+        let Exec::Subproc(sub) = &interp.as_cmd(this).exec else {
+            return;
+        };
+        if sub.child.is_null() {
+            return;
+        }
+        // SAFETY: `child` was set by `spawn_async` from a
+        // `heap::alloc(ShellSubprocess)` and stays valid until `deinit`
+        // reclaims the box. Single-threaded.
+        let _ = unsafe { (*sub.child).try_kill(bun_core::SignalCode::SIGKILL as i32) };
     }
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {

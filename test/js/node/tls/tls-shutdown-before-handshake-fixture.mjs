@@ -41,9 +41,9 @@ async function stalledPeer() {
   };
 }
 
-if (mode === "end" || mode === "destroySoon") {
+if (mode === "end" || mode === "end-strict" || mode === "destroySoon") {
   const peer = await stalledPeer();
-  const client = tls.connect({ port: peer.port, host: "127.0.0.1", rejectUnauthorized: false });
+  const client = tls.connect({ port: peer.port, host: "127.0.0.1", rejectUnauthorized: mode === "end-strict" });
   for (const event of ["secureConnect", "finish", "error", "close"]) {
     client.on(event, arg => log.push(arg?.code ? `${event}:${arg.code}` : event));
   }
@@ -51,10 +51,10 @@ if (mode === "end" || mode === "destroySoon") {
   // and with this peer it never will.
   client.on("connect", () => {
     log.push(`connect secureConnecting=${client.secureConnecting}`);
-    client[mode]();
+    client[mode === "destroySoon" ? "destroySoon" : "end"]();
   });
 
-  await Promise.all([once(client, mode === "end" ? "finish" : "close"), peer.sawFin]);
+  await Promise.all([once(client, mode === "destroySoon" ? "close" : "finish"), peer.sawFin]);
 
   const { writableFinished, readyState, destroyed } = client;
   client.destroy();

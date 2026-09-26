@@ -1,13 +1,15 @@
 import type * as BunSQLiteModule from "bun:sqlite";
-import type { BaseQueryHandle, Query, SQLQueryResultMode } from "./query";
+import type { BaseQueryHandle, Query, QueryStrings } from "./query";
 import type {
   ArrayType,
   DatabaseAdapter,
   OnConnected,
   SQLCommand as SharedSQLCommand,
   SQLArrayParameter,
-  SQLResultArray,
 } from "./shared";
+
+type SQLQueryResultMode = import("./query").SQLQueryResultMode;
+type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
 const { SQLResultArray, normalizeQuery, pushBindParam } = require("internal/sql/shared");
 const { SQLQueryResultMode } = require("internal/sql/query");
@@ -390,7 +392,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       errno: 0,
     });
   }
-  normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
+  normalizeQuery(strings: QueryStrings, values: unknown[], binding_idx = 1): [string, unknown[]] {
     return normalizeQuery(this, strings, values, binding_idx);
   }
 

@@ -3,6 +3,22 @@
 //! the trait here lets the resolver hold a `dyn` object without depending on
 //! the higher-tier crate that implements it.
 
+/// How many regions a bytecode payload laid out by an order file has (`JSC::BytecodeLinkRegions`): heads of evaluated
+/// modules, the function bodies the recorded run decoded, the ones its build did not have, heads of modules known not
+/// to be evaluated, all other bodies, expression info.
+pub const LINKED_BYTECODE_REGION_COUNT: usize = 6;
+
+/// A module of the executable together with its ahead-of-time bytecode.
+pub struct BytecodeModule {
+    pub source: bun_core::String,
+    /// The path the bytecode is keyed on.
+    pub origin_path: &'static [u8],
+    pub is_esm: bool,
+    /// The payload the module's cache entry is in, and where in it.
+    pub bytecode: *mut [u8],
+    pub bytecode_entry_offset: u32,
+}
+
 /// Resolver's view of a compiled-standalone-binary module graph. The concrete
 /// `bun_standalone_graph::Graph` (which depends on `bun_bundler`) implements
 /// this; the resolver holds a trait object so it stays below both in the dep
@@ -102,9 +118,12 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn compile_exec_argv(&self) -> &[u8];
     /// Ahead-of-time bytecode for InternalModuleRegistry module `id` embedded by `bun build --compile`, if any.
     /// A raw pointer because JSC reads (and may patch) it in place; the bytes live for the process.
-    fn builtin_module_bytecode(&self, _id: u32) -> Option<*mut [u8]> {
+    /// The payload internal module `id`'s ahead-of-time bytecode is in, and where in it its cache entry starts.
+    fn builtin_module_bytecode(&self, _id: u32) -> Option<(*mut [u8], u32)> {
         None
     }
+    /// Every internal module that has bytecode: `(id, payload, entry offset)`.
+    fn for_each_builtin_bytecode(&self, _each: &mut dyn FnMut(u32, *mut [u8], u32)) {}
     /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; empty when the executable has none.
     fn bytecode_string_table(&self) -> &'static [u8] {
         &[]
@@ -114,7 +133,14 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn module_graph_load_bytes(&self) -> usize {
         0
     }
-    /// Ask the kernel to reclaim the resident pages of the embedded graph (clean file-backed pages are dropped and
-    /// re-read from the executable when touched). May block on the syscall; call off the JS thread.
-    fn page_out(&self) {}
+    /// The bytecode payload an order file laid out (`--bytecode-order`), and where each of its regions ends.
+    fn linked_bytecode_payload(
+        &self,
+    ) -> Option<(*const [u8], [u32; LINKED_BYTECODE_REGION_COUNT])> {
+        None
+    }
+    /// The path of every file, and the path every module's bytecode is keyed on.
+    fn for_each_path(&self, _each: &mut dyn FnMut(&'static [u8])) {}
+    /// Every module that has bytecode (`BUN_BYTECODE_ORDER_OUT`, `BUN_BYTECODE_DIGEST_OUT`).
+    fn for_each_bytecode_module(&self, _each: &mut dyn FnMut(BytecodeModule)) {}
 }

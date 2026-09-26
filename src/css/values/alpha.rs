@@ -25,11 +25,3 @@ impl AlphaValue {
         CSSNumberFns::to_css(self.v, dest)
     }
 }
-
-impl crate::generics::CssHash for AlphaValue {
-    /// Field-wise: hash the single `f32` payload.
-    #[inline]
-    fn hash(&self, hasher: &mut crate::generics::Wyhash) {
-        crate::generics::CssHash::hash(&self.v, hasher);
-    }
-}

@@ -32,6 +32,11 @@ impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
     }
     #[inline]
     fn write(&mut self, buffer: &[u8]) {
+        // Same rule as `bun_io::StreamBuffer::compact`.
+        if self.cursor > 0 && self.cursor >= self.list.len() - self.cursor {
+            self.list.drain(..self.cursor);
+            self.cursor = 0;
+        }
         self.list.extend_from_slice(buffer);
     }
 }
@@ -89,7 +94,7 @@ pub(crate) fn create_bun_socket_error_to_js(
 // LAYERING: body sunk to `bun_jsc::system_error` so `bun_sql_jsc` (which this
 // crate depends on) shares the single canonical impl instead of carrying a
 // verbatim copy.
-pub use bun_jsc::system_error::verify_error_to_js;
+pub(crate) use bun_jsc::system_error::verify_error_to_js;
 
 // ── AnyWebSocket.getTopicsAsJSArray ────────────────────────────────────────
 // Declared inline; migrate into `bun_uws_sys` with the rest of the

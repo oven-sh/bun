@@ -73,6 +73,9 @@ pub struct Options {
 
     pub(crate) lockfile_only: bool,
 
+    /// Set by `init_with_runtime`: no install phase, so only a resolve downloads a package.
+    pub(crate) runtime_auto_install: bool,
+
     // `bun pm version` command options
     pub git_tag_version: bool,
     pub allow_same_version: bool,
@@ -161,6 +164,7 @@ impl Default for Options {
             ca_file_name: b"",
             save_text_lockfile: None,
             lockfile_only: false,
+            runtime_auto_install: false,
             git_tag_version: true,
             allow_same_version: false,
             preid: b"",

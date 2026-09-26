@@ -37,6 +37,7 @@ use crate::bun_fs;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::Do;
+use crate::package_manager_real::patch_package::CommittedPatch;
 
 /// The enum lives at module level in `crate::resolution`.
 type ResolutionTag = resolution::Tag;
@@ -1488,12 +1489,13 @@ impl Task {
                         symlinker::Strategy::ExpectMissing
                     };
 
-                    let changed = match installer.symlink_dependencies(self.entry_id, strategy) {
-                        sys::Result::Ok(changed) => changed,
-                        sys::Result::Err(err) => {
-                            return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
-                        }
-                    };
+                    let changed =
+                        match installer.symlink_dependencies(self.entry_id, strategy, None) {
+                            sys::Result::Ok(changed) => changed,
+                            sys::Result::Err(err) => {
+                                return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
+                            }
+                        };
 
                     if relinking {
                         if !changed {
@@ -1536,6 +1538,13 @@ impl Task {
 
                 Step::SymlinkDependencyBinaries => {
                     let current_step = Step::SymlinkDependencyBinaries;
+                    if matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
+                        if let sys::Result::Err(err) =
+                            installer.relink_committed_patch(self.entry_id)
+                        {
+                            return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
+                        }
+                    }
                     if let Err(err) = installer.link_dependency_bins(self.entry_id) {
                         return Ok(Yield::failure(TaskError::Binaries(err)));
                     }
@@ -2235,10 +2244,12 @@ impl<'a> Installer<'a> {
     }
 
     /// Ok(true) when at least one dependency link of the entry was written.
+    /// `only_committed` limits the links to the folder of that commit.
     fn symlink_dependencies(
         &self,
         entry_id: StoreEntryId,
         strategy: symlinker::Strategy,
+        only_committed: Option<&CommittedPatch>,
     ) -> sys::Result<bool> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2279,6 +2290,14 @@ impl<'a> Installer<'a> {
                 self.append_store_path(&mut dep_store_path, dep.entry_id);
             }
 
+            if let Some(committed) = only_committed {
+                if !committed.is_folder(dest.slice())
+                    || !self.store_holds_commit(committed, dep.entry_id, &mut dep_store_path)
+                {
+                    continue;
+                }
+            }
+
             let dest_len = dest.len();
             dest.undo(1);
             let target = dest.relative(&dep_store_path);
@@ -2296,6 +2315,72 @@ impl<'a> Installer<'a> {
         }
 
         Ok(changed)
+    }
+
+    /// `store_path` has the tag file of the committed patch, or exists when the diff was empty.
+    fn store_holds_commit(
+        &self,
+        committed: &CommittedPatch,
+        entry_id: StoreEntryId,
+        store_path: &mut AutoAbsPath,
+    ) -> bool {
+        if !committed.has_changes {
+            return sys::directory_exists_at(Fd::cwd(), store_path.slice_z()).unwrap_or(false);
+        }
+
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let pkgs = self.lockfile().packages.slice();
+        let Ok(PatchInfo::Patch(patch)) = self.package_patch_info(
+            pkgs.items_name()[pkg_id as usize],
+            pkgs.items_name_hash()[pkg_id as usize],
+            &pkgs.items_resolution()[pkg_id as usize],
+        ) else {
+            return false;
+        };
+
+        let mut tag_buf: install::BuntagHashBuf = Default::default();
+        let tag = install::buntaghashbuf_make(&mut tag_buf, patch.contents_hash);
+        let store_path_len = store_path.len();
+        store_path.append(&*tag).assume_ok();
+        let has_tag = sys::exists_z(store_path.slice_z());
+        store_path.set_length(store_path_len);
+        has_tag
+    }
+
+    /// For a root or workspace entry whose dependencies are installed, before its scripts run.
+    fn relink_committed_patch(&self, entry_id: StoreEntryId) -> sys::Result<()> {
+        let Some(committed) = self.manager().committed_patch.as_ref() else {
+            return Ok(());
+        };
+        self.symlink_dependencies(
+            entry_id,
+            symlinker::Strategy::ReplaceDirectory,
+            Some(committed),
+        )?;
+        Ok(())
+    }
+
+    /// An entry in a dependency cycle does not wait for its dependencies, so its task can be early.
+    pub(crate) fn relink_committed_patch_after_tasks(&mut self) {
+        if self.manager().committed_patch.is_none() {
+            return;
+        }
+        let pkg_resolutions = self.lockfile().packages.items_resolution();
+        let node_pkg_ids = self.store.nodes.items_pkg_id();
+
+        for (entry_id, node_id) in self.store.entries.items_node_id().iter().enumerate() {
+            let pkg_res = &pkg_resolutions[node_pkg_ids[node_id.get() as usize] as usize];
+            if !matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
+                continue;
+            }
+            let entry_id = StoreEntryId::from(u32::try_from(entry_id).expect("int cast"));
+            if let sys::Result::Err(err) = self.relink_committed_patch(entry_id) {
+                Output::err(err, "failed to link the patched package again", ());
+                Output::flush();
+                self.summary.fail += 1;
+            }
+        }
     }
 
     pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {

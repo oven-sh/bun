@@ -153,7 +153,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     options.lineOffset = clampOffsetForSource(options.lineOffset, program.length());
     options.columnOffset = clampOffsetForSource(options.columnOffset, program.length());
 
-    TextPosition position(options.lineOffset, options.columnOffset);
+    TextPosition position = providerStartPosition(options.lineOffset, options.columnOffset);
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
 
     // First try parsing the code as is without wrapping it in an anonymous function expression.
@@ -163,9 +163,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
         String code = args.at(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
 
-        SourceCode sourceCode(
-            JSC::StringSourceProvider::create(code, sourceOrigin, options.filename, sourceTaintOrigin, position, SourceProviderSourceType::Program),
-            position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
+        SourceCode sourceCode(JSC::StringSourceProvider::create(code, sourceOrigin, options.filename, sourceTaintOrigin, position, SourceProviderSourceType::Program));
 
         if (!checkSyntax(vm, sourceCode, error)) {
             ASSERT(error.isValid());
@@ -205,19 +203,10 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
         }
     }
 
-    // The user's body starts on line 2 of the wrapped program (after the
-    // "(function () {\n" prefix). Shift the provider's start position up one
-    // line so reported positions line up with the body the way V8's
-    // CompileFunction does: body line 1 reports as lineOffset+1. JSC clamps
-    // non-positive provider start positions to zero, so once the input is
-    // already <= 0 there is nothing to gain by going further negative; clamp
-    // there to keep the value bounded for downstream arithmetic.
-    int lineZeroBased = position.m_line.zeroBasedInt();
-    TextPosition wrappedPosition(OrdinalNumber::fromZeroBasedInt(lineZeroBased > 0 ? lineZeroBased - 1 : lineZeroBased), position.m_column);
+    // The body starts on line 2 of the wrapped program. V8's CompileFunction reports body line 1 as lineOffset + 1.
+    TextPosition wrappedPosition(OrdinalNumber::fromZeroBasedInt(std::max(position.m_line.zeroBasedInt() - 1, 0)), position.m_column);
 
-    SourceCode sourceCode(
-        JSC::StringSourceProvider::create(program, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program),
-        wrappedPosition.m_line.oneBasedInt(), wrappedPosition.m_column.oneBasedInt());
+    SourceCode sourceCode(JSC::StringSourceProvider::create(program, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, wrappedPosition, SourceProviderSourceType::Program));
 
     CodeCache* cache = vm.codeCache();
     ProgramExecutable* programExecutable = ProgramExecutable::create(globalObject, sourceCode);
@@ -638,22 +627,21 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
     // evalmachine.<anonymous> only when no filename was provided, while
     // compileFunction has no such default. An explicit "" renders as ":<line>".
 
-    // parseError.line() is already lineOffset-adjusted (JSC parses against a
-    // SourceCode whose start position carries the offset), but JSC clamps a
-    // negative provider start line to zero, so a negative offset comes back as
-    // the physical line. Undo/re-apply so Node's signed header still renders.
+    // parseError.line() is the provider's start line (providerStartPosition) plus the physical line.
     int lineOff = lineOffset.zeroBasedInt();
-    int jscLine = parseError.line();
-    int64_t physicalLine = lineOff < 0 ? static_cast<int64_t>(jscLine) : static_cast<int64_t>(jscLine) - lineOff;
+    int64_t physicalLine = static_cast<int64_t>(parseError.line()) - std::max(lineOff, 0);
     int reportedLine = static_cast<int>(physicalLine) + lineOff;
 
-    // JSTextPosition::column() = offset - lineStartOffset — physical 0-based
-    // column into sourceString, so columnOffset needs no adjustment.
     String sourceLineText = nthSourceLineForArrowHeader(sourceString, physicalLine);
     unsigned caretColumn = 0;
     if (!sourceLineText.isNull()) {
-        int col0 = parseError.token().m_startPosition.column();
-        caretColumn = col0 >= 0 ? static_cast<unsigned>(col0) + 1 : 1;
+        caretColumn = 1;
+        // The token offset is physical, so columnOffset needs no adjustment.
+        int offset = parseError.token().m_startPosition.offset;
+        if (offset >= 0 && static_cast<unsigned>(offset) <= sourceString.length()) {
+            size_t newline = offset ? sourceString.reverseFind('\n', offset - 1) : WTF::notFound;
+            caretColumn = offset - (newline == WTF::notFound ? 0 : newline + 1) + 1;
+        }
     }
 
     writeArrowHeaderStack(vm, errorInstance, url, reportedLine, sourceLineText, caretColumn, stack);
@@ -676,6 +664,13 @@ OrdinalNumber clampOffsetForSource(OrdinalNumber offset, unsigned sourceLength)
     if (offset.zeroBasedInt() <= maxOffset)
         return offset;
     return OrdinalNumber::fromZeroBasedInt(static_cast<int>(maxOffset));
+}
+
+TextPosition providerStartPosition(OrdinalNumber lineOffset, OrdinalNumber columnOffset)
+{
+    return TextPosition(
+        OrdinalNumber::fromZeroBasedInt(std::max(lineOffset.zeroBasedInt(), 0)),
+        OrdinalNumber::fromZeroBasedInt(std::max(columnOffset.zeroBasedInt(), 0)));
 }
 
 void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, const JSC::Identifier& codeGenerationKey, JSValue* importer)

@@ -5021,11 +5021,14 @@ pub(crate) mod testing_apis {
                 )));
             };
 
-            // "short" clamps a byte count, which only recv/send have; arming it
-            // on any other syscall would silently never fire.
-            if action == fi::ACTION_SHORT && syscall != fi::RECV && syscall != fi::SEND {
+            // "short" clamps a byte count, which only these have; arming it on any other syscall would silently never fire.
+            if action == fi::ACTION_SHORT
+                && syscall != fi::RECV
+                && syscall != fi::SEND
+                && syscall != fi::WRITEV
+            {
                 return Err(global.throw(format_args!(
-                    "rule.action \"short\" is only supported for syscall \"recv\" or \"send\""
+                    "rule.action \"short\" is only supported for syscall \"recv\", \"send\" or \"writev\""
                 )));
             }
 

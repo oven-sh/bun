@@ -1669,15 +1669,13 @@ where
             // SAFETY: from_js returns a live *mut NodeHTTPResponse; shared —
             // its mutable state is `Cell`/`JsCell` and `upgrade` takes `&self`.
             let node_http_response = unsafe { &*node_http_response };
-            if node_http_response
-                .flags
-                .get()
-                .contains(NodeHTTPResponseFlags::ENDED)
-                || node_http_response
+            let is_ended_or_closed = || {
+                node_http_response
                     .flags
                     .get()
-                    .contains(NodeHTTPResponseFlags::SOCKET_CLOSED)
-            {
+                    .intersects(NodeHTTPResponseFlags::ENDED | NodeHTTPResponseFlags::SOCKET_CLOSED)
+            };
+            if is_ended_or_closed() {
                 return Ok(JSValue::FALSE);
             }
 
@@ -1756,6 +1754,10 @@ where
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
+                        }
+                        // Option getters and the headers conversion may have ended the response.
+                        if is_ended_or_closed() {
+                            return Ok(JSValue::FALSE);
                         }
                         if let Some(raw_response) = node_http_response.raw_response.get() {
                             // we must write the status first so that 200 OK isn't written
@@ -3630,6 +3632,9 @@ fn server_set_on_connection(
                 // SAFETY: as_ returned a non-null *mut to a live server; nothing
                 // here re-enters through it, so each scoped access is exclusive.
                 if let Some(app) = unsafe { (*this_ptr).app } {
+                    // The filter is registered once per native server: `bun --hot` gets here again, and the thunk reads the slot at call time.
+                    // SAFETY: see above — shared read scoped to this statement.
+                    let first = unsafe { (*this_ptr).on_connection.is_empty() };
                     // SAFETY: see above — `&mut` scoped to this statement.
                     unsafe {
                         (*this_ptr).on_connection = callback;
@@ -3657,8 +3662,10 @@ fn server_set_on_connection(
                         let this = unsafe { &*user_data.cast::<$T>() };
                         crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
                     }
-                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).filter(thunk, this_ptr.cast::<c_void>());
+                    if first {
+                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                        bun_opaque::opaque_deref_mut(app).filter(thunk, this_ptr.cast::<c_void>());
+                    }
                 }
                 return Ok(JSValue::UNDEFINED);
             }
@@ -3757,6 +3764,31 @@ fn server_set_max_http_header_size(
     Ok(JSValue::UNDEFINED)
 }
 
+fn server_set_max_headers_count(
+    global: &JSGlobalObject,
+    server: JSValue,
+    max_headers_count: u32,
+) -> JsResult<JSValue> {
+    if server.is_object() {
+        macro_rules! handle {
+            ($T:ty) => {
+                if let Some(this) = server.as_::<$T>() {
+                    // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
+                    unsafe { &mut *this }.set_max_headers_count(max_headers_count);
+                    return Ok(JSValue::UNDEFINED);
+                }
+            };
+        }
+        handle!(HTTPServer);
+        handle!(HTTPSServer);
+        handle!(DebugHTTPServer);
+        handle!(DebugHTTPSServer);
+    }
+    Err(global.throw(format_args!(
+        "Failed to set maxHeadersCount: The 'this' value is not a Server."
+    )))
+}
+
 // `host_fn.wrap{3,4}` C-ABI shims: each forwards through `to_js_host_call`
 // (= `host_fn::to_js_host_fn_result`) so a `JsError` becomes `.zero` with the
 // exception left on the global. Signatures match the C++ callers in
@@ -3816,6 +3848,18 @@ extern "C" fn server_set_max_http_header_size_shim(
     host_fn::to_js_host_fn_result(
         global,
         server_set_max_http_header_size(global, server, max_header_size),
+    )
+}
+
+#[unsafe(export_name = "Server__setMaxHeadersCount")]
+extern "C" fn server_set_max_headers_count_shim(
+    global: &JSGlobalObject,
+    server: JSValue,
+    max_headers_count: u32,
+) -> JSValue {
+    host_fn::to_js_host_fn_result(
+        global,
+        server_set_max_headers_count(global, server, max_headers_count),
     )
 }
 

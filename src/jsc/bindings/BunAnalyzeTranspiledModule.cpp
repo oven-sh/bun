@@ -276,11 +276,15 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader
         auto actual = dumpRecordInfo(resultValue);
         auto expected = dumpRecordInfo(moduleRecord);
         if (actual != expected) {
-            dataLog("\n\n\n\n\n\n\x1b[95mBEGIN analyzeTranspiledModule\x1b(B\x1b[m\n  --- module key ---\n", moduleKey.utf8().data(), "\n  --- code ---\n\n", sourceCode.toUTF8().data(), "\n");
+            dataLog("\n\n\n\n\n\n\x1b[95mBEGIN analyzeTranspiledModule\x1b(B\x1b[m\n  --- module key ---\n", moduleKey.utf8(), "\n  --- code ---\n\n", sourceCode.toUTF8(), "\n");
             dataLog("  ------", "\n");
             dataLog("  BunAnalyzeTranspiledModule:", "\n");
 
-            zig__renderDiff(expected.utf8().data(), expected.utf8().length(), actual.utf8().data(), actual.utf8().length());
+            auto expectedUTF8 = expected.utf8();
+            auto actualUTF8 = actual.utf8();
+            auto expectedBytes = byteCast<char>(expectedUTF8.span());
+            auto actualBytes = byteCast<char>(actualUTF8.span());
+            zig__renderDiff(expectedBytes.data(), expectedBytes.size(), actualBytes.data(), actualBytes.size());
 
             RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("Imports different between parseFromSourceCode and fallbackParse")))));
         }

@@ -943,7 +943,10 @@ impl UnresolvedColor {
                 dest.write_char(b')')
             }
             UnresolvedColor::LightDark { light, dark } => {
-                if !dest.targets.is_compatible(css::compat::Feature::LightDark) {
+                if dest
+                    .targets
+                    .should_compile_same(css::compat::Feature::LightDark)
+                {
                     dest.write_str("var(--buncss-light")?;
                     dest.delim(b',', false)?;
                     light.to_css(dest, is_custom_property)?;

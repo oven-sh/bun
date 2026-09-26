@@ -20,6 +20,8 @@ impl Targets {
     pub(crate) fn browser_default() -> Targets {
         Targets {
             browsers: Some(*BROWSER_DEFAULT),
+            // The light-dark() polyfill depends on a compiled `color-scheme` rule (docs/bundler/css.mdx).
+            exclude: Features::LIGHT_DARK,
             ..Default::default()
         }
     }
@@ -435,6 +437,7 @@ bitflags::bitflags! {
         const DOUBLE_POSITION_GRADIENTS         = 1 << 17;
         const VENDOR_PREFIXES                   = 1 << 18;
         const LOGICAL_PROPERTIES                = 1 << 19;
+        const LIGHT_DARK                        = 1 << 20;
 
         const SELECTORS = Self::NESTING.bits()
             | Self::NOT_SELECTOR_LIST.bits()
@@ -451,7 +454,8 @@ bitflags::bitflags! {
             | Self::LAB_COLORS.bits()
             | Self::P3_COLORS.bits()
             | Self::HEX_ALPHA_COLORS.bits()
-            | Self::SPACE_SEPARATED_COLOR_NOTATION.bits();
+            | Self::SPACE_SEPARATED_COLOR_NOTATION.bits()
+            | Self::LIGHT_DARK.bits();
     }
 }
 
@@ -488,6 +492,7 @@ impl Features {
             Feature::SpaceSeparatedColorNotation => Features::SPACE_SEPARATED_COLOR_NOTATION,
             Feature::FontFamilySystemUi => Features::FONT_FAMILY_SYSTEM_UI,
             Feature::DoublePositionGradients => Features::DOUBLE_POSITION_GRADIENTS,
+            Feature::LightDark => Features::LIGHT_DARK,
             // A tag with no matching `Features` field is a programmer error,
             // guarded by a runtime unreachable.
             _ => unreachable!(

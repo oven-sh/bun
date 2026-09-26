@@ -370,6 +370,28 @@ describe("bundler", async () => {
     },
   });
 
+  // A "default" key gets no named export. When no key gets one, the module
+  // has no `var` statement: it is only `export default`.
+  const onlyDefaultKey = (ext: string, contents: string, value: unknown, loader?: Record<`.${string}`, Loader>) =>
+    itBundled(`bun/loader-${ext}-only-default-key-no-bundle`, {
+      target: "bun",
+      bundling: false,
+      entryPoints: [`/data.${ext}`],
+      loader,
+      files: {
+        [`/data.${ext}`]: contents,
+        "/check.js": `import * as data from "./out.js"; console.write(JSON.stringify(data));`,
+      },
+      run: { file: "/check.js", stdout: JSON.stringify({ default: { default: value } }) },
+    });
+  onlyDefaultKey("json", `{"default": 1}`, 1);
+  onlyDefaultKey("jsonc", `{"default": 1} // comment`, 1);
+  onlyDefaultKey("json5", `{default: 1}`, 1);
+  onlyDefaultKey("toml", `default = 1`, 1);
+  onlyDefaultKey("yaml", `default: 1`, 1);
+  // `bun build --no-bundle` gives ".xml" the file loader unless --loader names it.
+  onlyDefaultKey("xml", `<default>1</default>`, "1", { ".xml": "xml" });
+
   // The CSS-modules lazy export builds its object through `E::Object::put`.
   itBundled("bun/loader-css-module-proto-class-is-own-property", {
     target: "bun",

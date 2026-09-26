@@ -1,131 +1,107 @@
-import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
-describe("BUN_OPTIONS environment variable", () => {
-  test("basic usage - passes options to bun command", () => {
-    const result = spawnSync({
-      cmd: [bunExe()],
-      env: {
-        ...bunEnv,
-        BUN_OPTIONS: "--print='BUN_OPTIONS WAS A SUCCESS'",
-      },
-    });
+async function run(cmd: string[], BUN_OPTIONS: string) {
+  await using proc = Bun.spawn({
+    cmd,
+    env: { ...bunEnv, BUN_OPTIONS },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString()).toContain("BUN_OPTIONS WAS A SUCCESS");
+// CPU.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq>.cpuprofile
+const cpuProfileFileName = /^CPU\.\d{8}\.\d{6}\.\d+\.\d+\.\d{3}\.cpuprofile$/;
+
+async function expectOneCpuProfile(dir: string) {
+  const files = readdirSync(dir);
+  expect(files).toEqual([expect.stringMatching(cpuProfileFileName)]);
+  expect(await Bun.file(join(dir, files[0])).json()).toEqual({
+    nodes: expect.any(Array),
+    startTime: expect.any(Number),
+    endTime: expect.any(Number),
+    samples: expect.any(Array),
+    timeDeltas: expect.any(Array),
+  });
+}
+
+describe.concurrent("BUN_OPTIONS environment variable", () => {
+  test.each([
+    {
+      name: "passes an option to the bun command",
+      BUN_OPTIONS: "--print='BUN_OPTIONS WAS A SUCCESS'",
+      argv: [],
+      stdout: "BUN_OPTIONS WAS A SUCCESS\n",
+    },
+    {
+      name: "passes every option when a bare flag follows a flag with a value",
+      BUN_OPTIONS: "--print=typeof(gc) --expose-gc",
+      argv: [],
+      stdout: "function\n",
+    },
+    {
+      name: "keeps a double quoted value as one option",
+      BUN_OPTIONS: '--print="QUOTED OPTIONS"',
+      argv: [],
+      stdout: "QUOTED OPTIONS\n",
+    },
+    {
+      name: "puts environment options before command line options, so the command line wins",
+      BUN_OPTIONS: "--title=from-env",
+      argv: ["--title=from-cli", "--print=process.title"],
+      stdout: "from-cli\n",
+    },
+    {
+      name: "an empty value changes nothing",
+      BUN_OPTIONS: "",
+      argv: ["--print='NORMAL'"],
+      stdout: "NORMAL\n",
+    },
+  ])("$name", async ({ BUN_OPTIONS, argv, stdout }) => {
+    expect(await run([bunExe(), ...argv], BUN_OPTIONS)).toEqual({ stdout, stderr: "", exitCode: 0 });
   });
 
-  test("multiple options - passes all options to bun command", () => {
-    const result = spawnSync({
-      cmd: [bunExe()],
-      env: {
-        ...bunEnv,
-        BUN_OPTIONS: "--print='MULTIPLE OPTIONS' --quiet",
-      },
+  test("a bare flag before a flag with a value keeps no trailing whitespace", async () => {
+    // Before #26464 the parser received "--expose-gc " and skipped it as an unknown flag.
+    const code = "console.log(JSON.stringify(process.execArgv), typeof gc, process.title)";
+    expect(await run([bunExe(), "-e", code], "--expose-gc --title=bun-options-test")).toEqual({
+      stdout: `${JSON.stringify(["--expose-gc", "--title=bun-options-test", "-e", code])} function bun-options-test\n`,
+      stderr: "",
+      exitCode: 0,
     });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString()).toContain("MULTIPLE OPTIONS");
   });
 
-  test("options with quotes - properly handles quoted options", () => {
-    const result = spawnSync({
-      cmd: [bunExe()],
-      env: {
-        ...bunEnv,
-        BUN_OPTIONS: '--print="QUOTED OPTIONS"',
-      },
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString()).toContain("QUOTED OPTIONS");
-  });
-
-  test("priority - environment options go before command line options", () => {
-    // First BUN_OPTIONS arg should be inserted before command line args
-    const result = spawnSync({
-      cmd: [bunExe(), "--print='COMMAND LINE'"],
-      env: {
-        ...bunEnv,
-        BUN_OPTIONS: "--quiet",
-      },
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString()).toContain("COMMAND LINE");
-  });
-
-  test("bare flag before flag with value is recognized", () => {
-    // Bare flags (no =) that aren't the last option must not get a
-    // trailing space appended. --cpu-prof is a bare flag; --cpu-prof-dir
-    // uses = syntax. If --cpu-prof isn't recognized, no profile is written.
+  test("--cpu-prof before --cpu-prof-dir writes one profile", async () => {
     using dir = tempDir("bun-options-cpu-prof", {});
 
-    const result = spawnSync({
-      cmd: [bunExe(), "-e", "1"],
-      env: {
-        ...bunEnv,
-        BUN_OPTIONS: `--cpu-prof --cpu-prof-dir=${dir}`,
-      },
+    expect(await run([bunExe(), "-e", "1"], `--cpu-prof --cpu-prof-dir=${dir}`)).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
     });
-
-    expect(result.exitCode).toBe(0);
-
-    // --cpu-prof should have produced a .cpuprofile file in the dir
-    const files = readdirSync(String(dir));
-    const cpuProfiles = files.filter((f: string) => f.endsWith(".cpuprofile"));
-    expect(cpuProfiles.length).toBeGreaterThanOrEqual(1);
+    await expectOneCpuProfile(String(dir));
   });
 
-  // `bun build --compile` plus running the resulting standalone executable
-  // means two full Bun process lifecycles. Under sanitizer builds (ASAN/LSan)
-  // each exit pass + symbolization is slow enough that the pair blows past the
-  // default 5s test timeout, so give this test extra headroom.
-  test("bare flag before flag with value is recognized (standalone executable)", () => {
-    // Same test as above but with a compiled standalone executable.
+  test("--cpu-prof before --cpu-prof-dir writes one profile (standalone executable)", async () => {
     using dir = tempDir("bun-options-cpu-prof-compile", {
-      "entry.ts": "console.log('ok');",
+      "entry.ts": "console.log(JSON.stringify(process.execArgv));",
     });
+    const exePath = join(String(dir), "app");
+    const profDir = join(String(dir), "profiles");
 
-    const exePath = String(dir) + "/app";
-    const profDir = String(dir) + "/profiles";
-
-    // Compile
-    const build = spawnSync({
-      cmd: [bunExe(), "build", "--compile", String(dir) + "/entry.ts", "--outfile", exePath],
-      env: bunEnv,
-    });
+    const build = await run([bunExe(), "build", "--compile", join(String(dir), "entry.ts"), "--outfile", exePath], "");
+    expect(build.stderr).toBe("");
     expect(build.exitCode).toBe(0);
 
-    // Run with BUN_OPTIONS
-    const result = spawnSync({
-      cmd: [exePath],
-      env: {
-        ...bunEnv,
-        BUN_OPTIONS: `--cpu-prof --cpu-prof-dir=${profDir}`,
-      },
+    expect(await run([exePath], `--cpu-prof --cpu-prof-dir=${profDir}`)).toEqual({
+      stdout: `${JSON.stringify(["--cpu-prof", `--cpu-prof-dir=${profDir}`])}\n`,
+      stderr: "",
+      exitCode: 0,
     });
-
-    expect(result.stdout.toString()).toContain("ok");
-    expect(result.exitCode).toBe(0);
-
-    const files = readdirSync(profDir);
-    const cpuProfiles = files.filter((f: string) => f.endsWith(".cpuprofile"));
-    expect(cpuProfiles.length).toBeGreaterThanOrEqual(1);
-  }, 60_000);
-
-  test("empty BUN_OPTIONS - should work normally", () => {
-    const result = spawnSync({
-      cmd: [bunExe(), "--print='NORMAL'"],
-      env: {
-        ...bunEnv,
-        BUN_OPTIONS: "",
-      },
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString()).toContain("NORMAL");
+    await expectOneCpuProfile(profDir);
   });
 });

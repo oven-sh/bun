@@ -752,15 +752,6 @@ impl ReadFile {
             return self.on_finish();
         }
 
-        // Special files might report a size of > 0, and be wrong.
-        // so we should check specifically that its a regular file before trusting the size.
-        if self.size == 0 && bun_sys::is_regular_file(self.file_store.mode) {
-            self.buffer = Vec::new();
-
-            self.on_finish();
-            return;
-        }
-
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
         if !self.could_block || (self.size > 0 && self.size != MAX_SIZE) {
             let want = (self.size as usize).saturating_add(16);

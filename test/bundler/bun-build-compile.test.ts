@@ -3163,6 +3163,38 @@ describe("portable target", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("Bun.build refuses the metadata of a Windows executable", async () => {
+    using dir = tempDir("compile-portable-api-metadata", {
+      "app.js": `console.log("never compiled");`,
+      "build.js": `
+        const result = await Bun.build({
+          entrypoints: ["app.js"],
+          compile: {
+            target: "bun-portable-x64",
+            executablePath: "app.js",
+            outfile: "app",
+            windows: { title: "An app" },
+          },
+        }).catch(error => error);
+        console.log(result instanceof AggregateError ? result.errors.map(String) : "built");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(
+      "a portable executable takes no Windows icon, title, publisher, version, description or copyright",
+    );
+    expect(stdout).toContain("failed to write compiled executable");
+    expect(readdirSync(String(dir)).sort()).toEqual(["app.js", "build.js"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a file that is not a packed portable image is refused", async () => {
     using dir = tempDir("compile-portable-not-packed", { "app.js": `console.log("never compiled");` });
     const { stderr, exitCode } = await build(String(dir), [

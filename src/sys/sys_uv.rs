@@ -1,6 +1,6 @@
 //! bun.sys.sys_uv is a polyfill of bun.sys but with libuv.
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
-#![cfg(windows)]
+#![cfg(any(windows, bun_portable))]
 
 use core::ffi::{c_char, c_int, c_uint};
 

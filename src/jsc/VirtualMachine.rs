@@ -4596,6 +4596,9 @@ impl VirtualMachine {
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
         self.hot_reload_counter += 1;
+        // The previous generation's unhandled errors must not end this one.
+        self.unhandled_error_counter = 0;
+        self.exit_on_uncaught_exception = false;
         if self.pending_internal_promise_is_protected {
             if let Some(p) = self.pending_internal_promise {
                 JSValue::from_cell(p).unprotect();

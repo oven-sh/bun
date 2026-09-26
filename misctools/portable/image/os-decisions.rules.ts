@@ -32,9 +32,16 @@ const nativeInterface =
 export const rules: Rule[] = [
   // ── decided when the program runs ───────────────────────────────────────────────────────────────────────
   {
+    id: "dispatch-patterns",
+    class: "A",
+    why: "the definition of host_select!, host_dispatch!, host_const! and #[host_os]: what a use of them becomes",
+    kind: ["runtime-host"],
+    file: /^src\/(bun_core\/host_dispatch\.rs|portable_macros\/)/,
+  },
+  {
     id: "runtime-host",
     class: "R",
-    why: "asks bun_core::host or Bun::hostOS(): the host decides when the program runs",
+    why: "asks bun_core::host or Bun::hostOS(), or picks with a pattern of bun_core::host_dispatch: the host decides when the program runs",
     kind: ["runtime-host"],
     file: /\.(rs|cpp|h|c)$/,
   },

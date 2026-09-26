@@ -9,7 +9,8 @@
 //   B  behaviour that JavaScript can see and that has to follow the host OS when the program runs
 //   C  needs a native path through the host (spawn, event loop, console, file system semantics, sockets)
 //   D  does not apply to the image (native addons, tinycc, formats of the crash handler, ...)
-//   R  already decided when the program runs (bun_core::host, Bun::hostOS(), process.platform of a built-in)
+//   R  already decided when the program runs (bun_core::host and the patterns of bun_core::host_dispatch that
+//      pick by it, Bun::hostOS(), process.platform of a built-in)
 //
 // What counts as a decision:
 //   Rust   #[cfg(..)], #![cfg(..)], #[cfg_attr(.., ..)], cfg!(..) whose predicate names windows, unix, target_os,
@@ -191,7 +192,8 @@ function firstArgument(inner: string): string {
 const rustOsPredicate = /\b(windows|unix|target_os|target_family|target_vendor|target_env)\b/;
 const rustConstants =
   /\b(?:env|Environment)::(IS_WINDOWS|IS_MAC|IS_LINUX|IS_POSIX|IS_FREEBSD|IS_KQUEUE|IS_ANDROID|IS_MUSL|OS|OS_NAME_NPM)\b|\bplatform::Auto\b|\bPlatform::AUTO\b|\b(?:SEP|SEP_STR|DELIMITER|NODE_MODULES_NEEDLE)\b/g;
-const rustRuntimeHost = /\bhost::(os|is_windows|is_mac|is_linux)\s*\(\)|\bplatform::Host\b|\bPlatform::host\s*\(\)/g;
+const rustRuntimeHost =
+  /\bhost::(?:native::)?(os|is_windows|is_mac|is_linux)\s*\(\)|\bplatform::Host\b|\bPlatform::host\s*\(\)|\bhost_(select|dispatch|const)!|\bhost_os\s*\((?=\s*(windows|posix|linux|macos)\b)/g;
 
 function scopeAfter(lines: string[], line: number, count = 8): string {
   return collapse(lines.slice(line, line + count).join(" "), 800);

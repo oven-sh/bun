@@ -214,6 +214,49 @@ describe("MIME API", () => {
     expect(() => params.set("x", `${NOT_HTTP_QUOTED_STRING_CODE_POINT}x`)).toThrow(/parameter value/i);
     expect(() => params.set("x", `x${NOT_HTTP_QUOTED_STRING_CODE_POINT}`)).toThrow(/parameter value/i);
   });
+
+  test("get/has/delete do not stringify the lookup name", () => {
+    // Node.js forwards the argument directly to the internal Map, so non-string
+    // names never match stored (string) keys and toString is not invoked.
+    const mk = () => new MIMEType("a/b;undefined=u;null=n;1=one;true=t").params;
+
+    expect(mk().get(undefined as any)).toBe(null);
+    expect(mk().get(null as any)).toBe(null);
+    expect(mk().get(1 as any)).toBe(null);
+    expect(mk().get(true as any)).toBe(null);
+
+    expect(mk().has(undefined as any)).toBe(false);
+    expect(mk().has(null as any)).toBe(false);
+    expect(mk().has(1 as any)).toBe(false);
+    expect(mk().has(true as any)).toBe(false);
+
+    // delete(non-string) must be a no-op on the matching string key
+    const p = mk();
+    p.delete(1 as any);
+    expect(p.has("1")).toBe(true);
+    expect(p.get("1")).toBe("one");
+    p.delete(undefined as any);
+    expect(p.has("undefined")).toBe(true);
+
+    // toString must not be invoked on the argument
+    let called = false;
+    const obj = {
+      toString() {
+        called = true;
+        return "1";
+      },
+    };
+    expect(mk().get(obj as any)).toBe(null);
+    expect(mk().has(obj as any)).toBe(false);
+    const p2 = mk();
+    p2.delete(obj as any);
+    expect(p2.has("1")).toBe(true);
+    expect(called).toBe(false);
+
+    // string keys must still work
+    expect(mk().get("1")).toBe("one");
+    expect(mk().has("true")).toBe(true);
+  });
 });
 
 test("Exact match with node", () => {

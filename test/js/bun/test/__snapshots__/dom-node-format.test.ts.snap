@@ -1,0 +1,9 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`snapshots jsdom DocumentFragment 1`] = `
+<DocumentFragment>
+  <button>
+    Follow Auctioneer
+  </button>
+</DocumentFragment>
+`;

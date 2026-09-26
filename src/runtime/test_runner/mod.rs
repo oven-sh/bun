@@ -136,6 +136,7 @@ cfg_jsc! {
     #[path = "Collection.rs"]     pub(crate) mod collection;
     #[path = "debug.rs"]          pub(crate) mod debug;
     #[path = "diff_format.rs"]    pub(crate) mod diff_format;
+    #[path = "dom_node.rs"]       pub(crate) mod dom_node;
     #[path = "DoneCallback.rs"]   pub(crate) mod done_callback;
     #[path = "Execution.rs"]      pub(crate) mod execution;
     #[path = "jest.rs"]           pub(crate) mod jest;
@@ -274,18 +275,15 @@ pub(crate) mod expect {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub(crate) enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
-    /// The console formatter as `bun test` output uses it. Every
-    /// test-runner message that formats a user value goes through this or
-    /// [`make_formatter`], so a test-runner-wide formatter setting has one
-    /// place to live.
+    /// The console formatter for test-runner output. DOM nodes print as markup.
     #[inline]
     pub(crate) fn new_formatter(global: &JSGlobalObject) -> Formatter<'_> {
-        Formatter::new(global)
+        let mut f = Formatter::new(global);
+        f.print_dom_nodes_as_markup = true;
+        f
     }
 
-    /// [`new_formatter`] with strings quoted: the matcher `Received:` /
-    /// `Expected:` form. `Formatter` has no `Default` (it borrows
-    /// `global_this`), so this is the constructor every matcher uses.
+    /// [`new_formatter`] with strings quoted, for matcher messages.
     #[inline]
     pub(crate) fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
         let mut f = new_formatter(global);

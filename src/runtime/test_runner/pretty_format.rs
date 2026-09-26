@@ -9,6 +9,7 @@ use bun_jsc::{
 };
 use bun_core::{strings, EncodedSlice, Utf8Bytes};
 
+use super::dom_node;
 use super::expect;
 use crate::webcore::BlobExt as _;
 
@@ -749,6 +750,44 @@ impl<'a> Formatter<'a> {
     }
 }
 
+impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool> dom_node::NodePrinter<W, ENABLE_ANSI_COLORS>
+    for Formatter<'a>
+{
+    fn write_indent(&self, writer: &mut W) {
+        let _ = Formatter::write_indent(self, writer);
+    }
+    fn indent_push(&mut self) {
+        self.indent += 1;
+    }
+    fn indent_pop(&mut self) {
+        self.indent = self.indent.saturating_sub(1);
+    }
+    fn children_push(&mut self) {
+        self.indent += 1;
+    }
+    fn children_pop(&mut self) {
+        self.indent = self.indent.saturating_sub(1);
+    }
+    fn depth_exceeded(&self) -> bool {
+        false
+    }
+    fn multiline_start(&mut self, writer: &mut W) {
+        if self.indent == 0 {
+            let _ = writer.write_all(b"\n");
+        }
+    }
+    fn multiline_end(&mut self, writer: &mut W) {
+        if self.indent == 0 {
+            let _ = writer.write_all(b"\n");
+        }
+    }
+    fn print_value(&mut self, writer: &mut W, value: JSValue) -> JsResult<()> {
+        let global = self.global_this;
+        let tag = Tag::get(value, global)?;
+        self.format::<W, ENABLE_ANSI_COLORS>(tag, writer, value, global)
+    }
+}
+
 // split lifetimes — `&'a mut Formatter<'a>` is invariant and forces
 // the borrow of `self` at the call site to outlive `'a`, cascading into bogus
 // borrowck errors throughout `print_as`. Using a distinct `'f` for the
@@ -852,6 +891,8 @@ pub(crate) struct PropertyIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_C
     pub(crate) i: usize,
     pub(crate) always_newline: bool,
     pub(crate) parent: JSValue,
+    /// `parent.get_class_name()`, computed once by the `Tag::Object` arm.
+    pub(crate) class_name: bun_core::String,
 }
 
 impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
@@ -883,7 +924,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if self.formatter.indent == 0 {
             let _ = self.writer.write_all(b"\n");
         }
-        let classname = value.get_class_name(global_this)?;
+        let classname = &self.class_name;
         if !classname.is_empty() && !classname.eq_ascii(b"Object") {
             let _ = self.writer.write_fmt(format_args!("{} ", classname));
         }
@@ -2290,8 +2331,20 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b" />");
                 }
                 Tag::Object => {
+                    let class_name = value.get_class_name(self.global_this)?;
+                    let node_kind = dom_node::node_kind(self.global_this, value, &class_name)?;
+
                     let prev_quote_strings = self.quote_strings;
                     self.quote_strings = true;
+
+                    if let Some(kind) = node_kind {
+                        let global = self.global_this;
+                        let result = dom_node::print_node::<_, W, ENABLE_ANSI_COLORS>(
+                            self, global, writer.ctx, value, kind,
+                        );
+                        self.quote_strings = prev_quote_strings;
+                        return result;
+                    }
 
                     // We want to figure out if we should print this object
                     // on one line or multiple lines
@@ -2322,6 +2375,7 @@ impl<'a> Formatter<'a> {
                         i: 0,
                         always_newline,
                         parent: value,
+                        class_name,
                     };
 
                     let result = value.for_each_property_ordered(
@@ -2332,6 +2386,7 @@ impl<'a> Formatter<'a> {
 
                     let iter_i = iter.i;
                     let iter_always_newline = iter.always_newline;
+                    let object_name = iter.class_name;
                     // `always_newline_scope` / `quote_strings` must be restored on every
                     // exit — restore before propagating any exception from the property iterator.
                     self.always_newline_scope = prev_always_newline_scope;
@@ -2339,8 +2394,6 @@ impl<'a> Formatter<'a> {
                     result?;
 
                     if iter_i == 0 {
-                        let object_name = value.get_class_name(self.global_this)?;
-
                         if !object_name.eq_ascii(b"Object") {
                             writer.print(format_args!("{} {{}}", object_name));
                         } else {

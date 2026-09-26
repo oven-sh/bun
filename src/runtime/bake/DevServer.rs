@@ -1383,7 +1383,12 @@ pub(crate) fn is_allowed_host_header(
     {
         return true;
     }
-    if bun_core::ip_address::is_ip_address(bun_core::ip_address::strip_ipv6_brackets(host)) {
+    // A host that the resolver reads as a number is never looked up, so DNS cannot rebind it.
+    let numeric = bun_core::ip_address::strip_ipv6_brackets(host);
+    if bun_core::ip_address::is_ip_address(numeric)
+        || (numeric.first().is_some_and(u8::is_ascii_digit)
+            && bun_core::ip_address::to_ip_address(numeric).is_some_and(|ip| ip.is_ipv4()))
+    {
         return true;
     }
     if let Some(crate::server::server_config::Address::Tcp {

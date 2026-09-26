@@ -76,6 +76,13 @@ export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", 
 
 export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
 
+/** What a bytecode order file calls the code of `text`: `M <name>` and `<start> <kind> <name>` lines, or null. */
+export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "namesForTesting", 3) as (
+  text: string,
+  kind: "module" | "script" | "builtin" | "internal",
+  chunkPaths?: string,
+) => string | null | undefined;
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",

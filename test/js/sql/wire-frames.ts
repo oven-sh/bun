@@ -10,12 +10,13 @@ import net from "node:net";
 // Server helpers shared by every fault-injection test.
 // ---------------------------------------------------------------------------
 
-/** Start a TCP server on 127.0.0.1 with an ephemeral port. */
+/** Start a TCP server on `host` (127.0.0.1 unless given) with an ephemeral port. */
 export async function listeningServer(
   onSocket: (socket: net.Socket) => void,
+  host = "127.0.0.1",
 ): Promise<{ port: number; server: net.Server }> {
   const server = net.createServer(onSocket);
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>(resolve => server.listen(0, host, resolve));
   return { port: (server.address() as net.AddressInfo).port, server };
 }
 
@@ -263,6 +264,74 @@ export function pgBindParameters(body: Buffer): (Buffer | null)[] {
     if (len > 0) o += len;
   }
   return params;
+}
+
+// Frontend messages as a client writes them. The mocks only read these; the builders let a test state the exact
+// bytes it expects on the wire.
+
+function pgInt16List(values: number[]): Buffer {
+  const b = Buffer.alloc(2 + 2 * values.length);
+  b.writeInt16BE(values.length, 0);
+  for (let i = 0; i < values.length; i++) b.writeInt16BE(values[i], 2 + 2 * i);
+  return b;
+}
+
+// PostgreSQL FE/BE protocol §55.7 Parse: Byte1('P') Int32(len) String(statement) String(query) Int16(nparams) Int32[nparams](typeOid)
+export function pgParse(statement: string, query: string, typeOids: number[] = []): Buffer {
+  const oids = Buffer.alloc(2 + 4 * typeOids.length);
+  oids.writeInt16BE(typeOids.length, 0);
+  for (let i = 0; i < typeOids.length; i++) oids.writeInt32BE(typeOids[i], 2 + 4 * i);
+  return pgRaw("P", Buffer.concat([pgCString(statement), pgCString(query), oids]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 Describe: Byte1('D') Int32(len) Byte1('S' = statement | 'P' = portal) String(name)
+export function pgDescribe(kind: "S" | "P", name: string): Buffer {
+  return pgRaw("D", Buffer.concat([Buffer.from(kind, "latin1"), pgCString(name)]));
+}
+
+export type PgBindFrame = {
+  portal?: string;
+  statement: string;
+  /** One format code per parameter: 0 = text, 1 = binary. */
+  paramFormats: (0 | 1)[];
+  /** One value per parameter, already encoded; null is SQL NULL (length -1, no bytes). */
+  params: (Buffer | null)[];
+  /** Empty = every result column in text. Otherwise one code per column. */
+  resultFormats: (0 | 1)[];
+};
+
+// PostgreSQL FE/BE protocol §55.7 Bind: Byte1('B') Int32(len) String(portal) String(statement) Int16(nformats) Int16[nformats]
+//   Int16(nparams) per param: Int32(byteLen | -1) Byte[len], Int16(nresultformats) Int16[nresultformats]
+export function pgBind(bind: PgBindFrame): Buffer {
+  const count = Buffer.alloc(2);
+  count.writeInt16BE(bind.params.length, 0);
+  const values = bind.params.flatMap(p => (p === null ? [pgInt32(-1)] : [pgInt32(p.length), p]));
+  return pgRaw(
+    "B",
+    Buffer.concat([
+      pgCString(bind.portal ?? ""),
+      pgCString(bind.statement),
+      pgInt16List(bind.paramFormats),
+      count,
+      ...values,
+      pgInt16List(bind.resultFormats),
+    ]),
+  );
+}
+
+// PostgreSQL FE/BE protocol §55.7 Execute: Byte1('E') Int32(len) String(portal) Int32(maxRows, 0 = no limit)
+export function pgExecute(portal: string = "", maxRows: number = 0): Buffer {
+  return pgRaw("E", Buffer.concat([pgCString(portal), pgInt32(maxRows)]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 Flush: Byte1('H') Int32(4)
+export function pgFlush(): Buffer {
+  return pgRaw("H", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 Sync: Byte1('S') Int32(4)
+export function pgSync(): Buffer {
+  return pgRaw("S", Buffer.alloc(0));
 }
 
 // PostgreSQL FE/BE protocol §55.7 DataRow: Byte1('D') Int32(len) Int16(ncols) per col: Int32(byteLen | -1) Byte[len]

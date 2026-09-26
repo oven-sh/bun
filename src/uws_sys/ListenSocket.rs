@@ -1,5 +1,7 @@
 use core::ffi::{c_char, c_int, c_void};
 
+use bun_boringssl_sys::OwnedSslCtx;
+
 use crate::{SocketGroup, SslCtx, us_socket_t};
 
 bun_opaque::opaque_ffi! {
@@ -70,6 +72,12 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
+    /// Makes `ctx` the default `SSL_CTX` for sockets accepted from now on.
+    pub fn set_default_ssl_ctx(&mut self, ctx: &OwnedSslCtx) {
+        // SAFETY: `ctx` owns a live SSL_CTX, which C up-refs before it stores the pointer.
+        unsafe { us_listen_socket_set_default_ssl_ctx(self, ctx.as_ptr()) }
+    }
+
     pub fn on_server_name(
         &mut self,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
@@ -92,6 +100,7 @@ unsafe extern "C" {
         user: *mut c_void,
     ) -> c_int;
     fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
+    fn us_listen_socket_set_default_ssl_ctx(ls: *mut ListenSocket, ctx: *mut SslCtx);
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,

@@ -894,6 +894,10 @@ pub(crate) fn set_key_cert(
     unsafe {
         let ctx = &(*sc).ctx;
         ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
+        // A client keeps no session id context (see `us_internal_ssl_attach`).
+        if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) == 0 {
+            boringssl::SSL_set_session_id_context(ssl_ptr, core::ptr::null(), 0);
+        }
         // SSL_set_SSL_CTX stops retargeting the certificate once ClientHello
         // processing has reached ALPN selection, and Node supports calling
         // setKeyCert from ALPNCallback - apply the identity directly.

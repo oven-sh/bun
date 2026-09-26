@@ -1,10 +1,11 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tmpdirSync } from "harness";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
+import { inherits } from "node:util";
 
 type TLSOptions = {
   cert: string;
@@ -205,6 +206,72 @@ describe.concurrent("fetch-tls", () => {
     } finally {
       server.close();
     }
+  });
+
+  // Only an IP address in the strict form of net.isIP gets no SNI. The native
+  // client asked ares_inet_pton, which also reads "127.1" (as 127.1.0.0), "10",
+  // hex, zero-padded octets and a trailing "/bits". tls.connect() and Node.js
+  // send each of these names.
+  describe("tls.serverName in IP shorthand", () => {
+    // The path of the request names the row, so the rows run at the same time.
+    const seen = new Map<string, string | null>();
+    let server: tls.Server;
+    let port: number;
+    beforeAll(async () => {
+      server = tls.createServer(CERT_LOCALHOST_IP, socket => {
+        socket.on("error", () => {});
+        socket.once("data", data => {
+          seen.set(/^GET (\S+)/.exec(data.toString())![1], socket.servername || null);
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      port = (server.address() as net.AddressInfo).port;
+    });
+    afterAll(() => {
+      server.close();
+    });
+
+    async function sniOf(serverName: string) {
+      const path = `/${encodeURIComponent(serverName)}`;
+      const res = await fetch(`https://127.0.0.1:${port}${path}`, {
+        keepalive: false,
+        tls: { serverName, rejectUnauthorized: false },
+      });
+      await res.text();
+      return seen.get(path);
+    }
+
+    it.each([
+      "127.1",
+      "10",
+      "0x7f000001",
+      "127.000.000.001",
+      "1.2.3",
+      "08.1.1.1",
+      "1.2.3.4/8",
+      "127.0.0.1/32",
+      "::ffff:127.1",
+      "::1/64",
+      // Brackets come off an IPv6 address only.
+      "[::1/64]",
+    ])("fetch sends %j as SNI", async name => {
+      expect(await sniOf(name)).toBe(name);
+    });
+
+    it.each(["127.0.0.1", "::1", "[::1]"])("fetch sends no SNI for the address %j", async address => {
+      expect(await sniOf(address)).toBeNull();
+    });
+
+    it("tls.connect sends the name as well", async () => {
+      const socket = tls.connect({ host: "127.0.0.1", port, servername: "127.1", rejectUnauthorized: false });
+      await once(socket, "secureConnect");
+      socket.end("GET /tls.connect HTTP/1.1\r\n\r\n");
+      socket.resume();
+      await once(socket, "close");
+      expect(seen.get("/tls.connect")).toBe("127.1");
+    });
   });
 
   it.skipIf(!isIPv6())("verifies an IPv6-literal URL against the bare address and sends no SNI", async () => {
@@ -623,6 +690,205 @@ describe.concurrent("fetch-tls", () => {
       } catch (e: any) {
         expect(e.message).toBe("CustomError");
       }
+    });
+  });
+
+  const invalidReturnValue = (received: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_RETURN_VALUE",
+    message: `Expected undefined or an Error to be returned from the "tls.checkServerIdentity" function but got ${received}.`,
+  });
+  const settled = (response: Promise<Response>) =>
+    response.then(
+      async res => ({ body: await res.text() }),
+      e => ({ name: e?.name, code: e?.code, message: e?.message }),
+    );
+
+  // Node fails the connection for every truthy return value, not only for an
+  // Error (onConnectSecure in lib/internal/tls/wrap.js). An `async` callback
+  // returns a Promise, so it approves nothing.
+  it("checkServerIdentity approves the certificate only with a falsy return value", async () => {
+    const served: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      tls: CERT_LOCALHOST_IP,
+      fetch(req) {
+        served.push(decodeURIComponent(new URL(req.url).pathname.slice(1)));
+        return new Response("Hello World");
+      },
+    });
+    const request = (label: string, tlsOptions: object) =>
+      settled(
+        fetch(`https://localhost:${server.port}/${encodeURIComponent(label)}`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, ...tlsOptions },
+        }),
+      );
+    const verdicts: Record<string, () => unknown> = {
+      "undefined": () => undefined,
+      "null": () => null,
+      "false": () => false,
+      "0": () => 0,
+      "empty string": () => "",
+      "Error": () => new Error("pin mismatch"),
+      "thrown Error": () => {
+        throw new Error("thrown");
+      },
+      "true": () => true,
+      "1": () => 1,
+      "string": () => "pin mismatch",
+      "async, resolves to undefined": async () => undefined,
+      "async, resolves to an Error": async () => new Error("pin mismatch"),
+    };
+    const outcomes: Record<string, unknown> = {};
+    await Promise.all(
+      Object.entries(verdicts).map(async ([label, checkServerIdentity]) => {
+        outcomes[label] = await request(label, { checkServerIdentity });
+      }),
+    );
+    const approved = { body: "Hello World" };
+    expect(outcomes).toEqual({
+      "undefined": approved,
+      "null": approved,
+      "false": approved,
+      "0": approved,
+      "empty string": approved,
+      "Error": { name: "Error", code: undefined, message: "pin mismatch" },
+      "thrown Error": { name: "Error", code: undefined, message: "thrown" },
+      "true": invalidReturnValue("type boolean (true)"),
+      "1": invalidReturnValue("type number (1)"),
+      "string": invalidReturnValue("type string ('pin mismatch')"),
+      "async, resolves to undefined": invalidReturnValue("an instance of Promise"),
+      "async, resolves to an Error": invalidReturnValue("an instance of Promise"),
+    });
+    // A request never reaches a server whose certificate was not approved.
+    expect(served.sort()).toEqual(["0", "empty string", "false", "null", "undefined"]);
+
+    // With `rejectUnauthorized: false` the callback runs and what it returns is ignored.
+    const ignored = await request("ignored", { rejectUnauthorized: false, checkServerIdentity: () => true });
+    expect(ignored).toEqual(approved);
+  });
+
+  // Node fails the connection with the value the callback returned. An Error
+  // need not be an ErrorInstance cell, so every object is handed back as it is.
+  it("fetch() rejects with the object that checkServerIdentity returns", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      function LegacyError(this: { message: string }, message: string) {
+        this.message = message;
+      }
+      inherits(LegacyError, Error);
+      const reasons: Record<string, object> = {
+        "Error": new Error("pin mismatch"),
+        "DOMException": new DOMException("pin mismatch", "SecurityError"),
+        "util.inherits() error": new (LegacyError as any)("pin mismatch"),
+        "plain object": { message: "pin mismatch" },
+      };
+      const sameObject: Record<string, boolean> = {};
+      for (const [label, reason] of Object.entries(reasons)) {
+        const rejection = await fetch(`https://localhost:${port}`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, checkServerIdentity: () => reason } as any,
+        }).then(
+          () => "resolved",
+          e => e,
+        );
+        sameObject[label] = rejection === reason;
+      }
+      expect(sameObject).toEqual({
+        "Error": true,
+        "DOMException": true,
+        "util.inherits() error": true,
+        "plain object": true,
+      });
+    });
+  });
+
+  it("a session's checkServerIdentity approves the certificate only with a falsy return value", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      const outcomes: Record<string, unknown> = {};
+      const verdicts: Record<string, () => unknown> = {
+        "undefined": () => undefined,
+        "true": () => true,
+        "async": async () => undefined,
+      };
+      for (const [label, checkServerIdentity] of Object.entries(verdicts)) {
+        using session = new Bun.FetchSession({ tls: { ca: validTls.cert, checkServerIdentity } as any });
+        outcomes[label] = await settled(fetch(`https://localhost:${port}`, { session }));
+      }
+      expect(outcomes).toEqual({
+        "undefined": { body: "Hello World" },
+        "true": invalidReturnValue("type boolean (true)"),
+        "async": invalidReturnValue("an instance of Promise"),
+      });
+    });
+  });
+
+  // A function given here replaces Bun's own hostname check, so one that
+  // approves by mistake turns hostname verification off.
+  it("an async checkServerIdentity does not turn hostname verification off", async () => {
+    // This certificate names only DNS:localhost, and the request dials 127.0.0.1.
+    await createServer(CERT_LOCALHOST_ONLY, async port => {
+      const outcome = (checkServerIdentity?: unknown) =>
+        settled(
+          fetch(`https://127.0.0.1:${port}`, {
+            keepalive: false,
+            tls: { ca: CERT_LOCALHOST_ONLY.cert, checkServerIdentity } as any,
+          }),
+        );
+      expect({
+        none: await outcome(),
+        sync: await outcome((hostname: string, cert: tls.PeerCertificate) => tls.checkServerIdentity(hostname, cert)),
+        async: await outcome(async (hostname: string, cert: tls.PeerCertificate) =>
+          tls.checkServerIdentity(hostname, cert),
+        ),
+      }).toEqual({
+        none: {
+          name: "TypeError",
+          code: "ERR_TLS_CERT_ALTNAME_INVALID",
+          message: expect.stringContaining("ERR_TLS_CERT_ALTNAME_INVALID"),
+        },
+        sync: {
+          name: "Error",
+          code: "ERR_TLS_CERT_ALTNAME_INVALID",
+          message: "Hostname/IP does not match certificate's altnames: IP: 127.0.0.1 is not in the cert's list: ",
+        },
+        async: invalidReturnValue("an instance of Promise"),
+      });
+    });
+  });
+
+  // The Bun.FetchSession constructor has the same rule (fetch-session.test.ts).
+  it("fetch() rejects a tls.checkServerIdentity that is not a function", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      const outcome = (checkServerIdentity: unknown) =>
+        fetch(`https://localhost:${port}`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, checkServerIdentity } as any,
+        }).then(
+          res => res.text(),
+          e => `${e.code}: ${e.message}`,
+        );
+      const invalid = (received: string) =>
+        `ERR_INVALID_ARG_TYPE: The "tls.checkServerIdentity" property must be of type function. Received ${received}`;
+      expect({
+        string: await outcome("yes"),
+        true: await outcome(true),
+        false: await outcome(false),
+        number: await outcome(1),
+        object: await outcome({}),
+        null: await outcome(null),
+        undefined: await outcome(undefined),
+        function: await outcome(() => undefined),
+      }).toEqual({
+        string: invalid("string"),
+        true: invalid("boolean"),
+        false: invalid("boolean"),
+        number: invalid("number"),
+        object: invalid("object"),
+        null: "Hello World",
+        undefined: "Hello World",
+        function: "Hello World",
+      });
     });
   });
 

@@ -60,7 +60,7 @@ beforeAll(async () => {
   });
   n.rule("rust_rustc", { command: "rustc $manifest", description: "rustc $crate $what" });
   n.rule("cxx", { command: "c++ $cxxflags -c $in -o $out", description: "cxx $out" });
-  n.rule("link", { command: "ld $ldflags $in -o $out", description: "link $out" });
+  n.rule("link", { command: "ld $ldflags $in $lazy -o $out", description: "link $out" });
 
   n.build({
     outputs: [ref],
@@ -89,7 +89,12 @@ beforeAll(async () => {
     pool: "compile",
     vars: { cxxflags: "-O2" },
   });
-  n.build({ outputs: [out("exe")], rule: "link", inputs: [out("x.o"), out("libroot.a")], vars: { ldflags: "" } });
+  n.build({
+    outputs: [out("exe")],
+    rule: "link",
+    inputs: [out("x.o"), out("libroot.a")],
+    vars: { ldflags: "", lazy: "" },
+  });
   n.phony("all", [out("exe")]);
   await n.write();
 

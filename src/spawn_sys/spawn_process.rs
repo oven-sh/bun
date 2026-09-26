@@ -795,6 +795,8 @@ pub unsafe fn spawn_process_posix(
                 if closed_stdio[i] {
                     actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
                 } else {
+                    // process.stdout/stderr put O_NONBLOCK on the shared description; libuv clears it for child fds 0-2 too.
+                    let _ = bun_sys::update_nonblocking(fileno, false);
                     actions.inherit(fileno)?;
                 }
             }
@@ -921,6 +923,7 @@ pub unsafe fn spawn_process_posix(
                 set_spawned_stdio(&mut spawned, i, fds[0]);
             }
             PosixStdio::Pipe(fd) => {
+                let _ = bun_sys::update_nonblocking(*fd, false);
                 let src = match cleanup.source_above_slots(max_slot, *fd) {
                     Ok(src) => src,
                     Err(e) => return Ok(Err(e)),

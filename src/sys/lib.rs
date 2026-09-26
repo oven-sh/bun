@@ -3099,10 +3099,13 @@ mod posix_impl {
     }
     #[cfg(unix)]
     pub(crate) const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
-    // `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
-    // (Darwin defines MSG_NOSIGNAL=0x80000).
+    /// XNU's `sosend` only honours `MSG_NBIO` (private, 0x20000) for "don't wait for buffer space"; `MSG_DONTWAIT` alone still blocks there.
+    #[cfg(target_os = "macos")]
+    const MSG_NBIO: i32 = 0x20000;
+    #[cfg(not(target_os = "macos"))]
+    const MSG_NBIO: i32 = 0;
     #[cfg(unix)]
-    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | MSG_NBIO | libc::MSG_NOSIGNAL;
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
         let fl = fcntl(fd, libc::F_GETFD, 0)?;
@@ -7319,68 +7322,60 @@ unsafe extern "C" {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const RWF_NOWAIT: u32 = 0x00000008;
 
-/// Linux: `preadv2(.., RWF_NOWAIT)`; else plain `read`.
-pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    while linux::RWFFlagSupport::is_maybe_supported() {
+/// `preadv2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn read_nowait(fd: Fd, buf: &mut [u8]) -> Maybe<Option<usize>> {
+    if !linux::RWFFlagSupport::is_maybe_supported() {
+        return Ok(None);
+    }
+    loop {
         let iov = [libc::iovec {
             iov_base: buf.as_mut_ptr().cast(),
             iov_len: buf.len(),
         }];
         // SAFETY: fd valid; iov points at a live stack array.
         let rc = unsafe { sys_preadv2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
-        if rc < 0 {
-            let e = last_errno();
-            match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
-                    // Only fall through to BLOCKING read if the fd is
-                    // actually readable now; otherwise return retry (EAGAIN).
-                    return match bun_core::is_readable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
-                        _ => Err(Error::retry().with_fd(fd)),
-                    };
-                }
-                libc::EINTR => continue,
-                _ => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
-            }
+        if rc >= 0 {
+            return Ok(Some(rc as usize));
         }
-        return Ok(rc as usize);
+        match last_errno() {
+            libc::EINTR => continue,
+            libc::ENOSYS => {
+                linux::RWFFlagSupport::disable();
+                return Ok(None);
+            }
+            libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
+            e => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
+        }
     }
-    read(fd, buf)
 }
-/// Linux: `pwritev2(.., RWF_NOWAIT)`; else plain `write`.
-pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    while linux::RWFFlagSupport::is_maybe_supported() {
+
+/// `pwritev2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn write_nowait(fd: Fd, buf: &[u8]) -> Maybe<Option<usize>> {
+    if !linux::RWFFlagSupport::is_maybe_supported() {
+        return Ok(None);
+    }
+    loop {
         let iov = [libc::iovec {
             iov_base: buf.as_ptr().cast_mut().cast::<_>(),
             iov_len: buf.len(),
         }];
         // SAFETY: fd valid; iov points at a live stack array.
         let rc = unsafe { sys_pwritev2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
-        if rc < 0 {
-            let e = last_errno();
-            match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
-                    // Poll before issuing a blocking write.
-                    return match bun_core::is_writable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
-                        _ => {
-                            let mut e = Error::retry();
-                            e.syscall = Tag::write;
-                            Err(e.with_fd(fd))
-                        }
-                    };
-                }
-                libc::EINTR => continue,
-                _ => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
-            }
+        if rc >= 0 {
+            return Ok(Some(rc as usize));
         }
-        return Ok(rc as usize);
+        match last_errno() {
+            libc::EINTR => continue,
+            libc::ENOSYS => {
+                linux::RWFFlagSupport::disable();
+                return Ok(None);
+            }
+            libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
+            e => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
+        }
     }
-    write(fd, buf)
 }
 
 /// `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.
@@ -9254,6 +9249,18 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
         match write(fd, bytes) {
             Ok(0) => return false, // short write → give up
             Ok(n) => bytes = &bytes[n..],
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EAGAIN => {
+                // fd 1/2 are O_NONBLOCK once process.stdout/stderr exist (as in Node); wait instead of dropping output.
+                let mut pfd = [posix::PollFd {
+                    fd: fd.native(),
+                    events: posix::POLL_OUT,
+                    revents: 0,
+                }];
+                if posix::poll(&mut pfd, -1).is_err() {
+                    return false;
+                }
+            }
             Err(_) => return false,
         }
     }

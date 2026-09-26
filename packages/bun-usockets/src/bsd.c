@@ -62,6 +62,12 @@ static void init_debug_logging() {
 
 #if defined(__APPLE__)
 extern int Bun__doesMacOSVersionSupportSendRecvMsgX();
+/* XNU's sosend() only skips waiting for buffer space for MSG_NBIO (private, 0x20000); MSG_DONTWAIT alone still blocks there. */
+#define LIBUS_SEND_DONTWAIT (MSG_DONTWAIT | 0x20000)
+#elif defined(_WIN32)
+#define LIBUS_SEND_DONTWAIT 0
+#else
+#define LIBUS_SEND_DONTWAIT MSG_DONTWAIT
 #endif
 
 #if defined(_WIN32)
@@ -1017,7 +1023,7 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
 #endif
 
         // use TCP_NOPUSH
-        ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
+        ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | LIBUS_SEND_DONTWAIT);
 
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;
@@ -1044,7 +1050,7 @@ ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int fl
     if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) return injected;
     (void)unused;
     while (1) {
-        ssize_t rc = sendmsg(fd, msg, flags);
+        ssize_t rc = sendmsg(fd, msg, flags | MSG_NOSIGNAL | LIBUS_SEND_DONTWAIT);
 
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;

@@ -186,6 +186,8 @@ impl ReadLimit {
 
 pub struct PosixBufferedReader {
     pub handle: PollOrFd,
+    /// Set once `preadv2(RWF_NOWAIT)` said this fd's file type does not support it (tty), so we stop asking.
+    rwf_unsupported: core::cell::Cell<bool>,
     pub _buffer: Vec<u8>,
     pub(crate) _offset: usize,
     limit: ReadLimit,
@@ -223,6 +225,7 @@ impl PosixBufferedReader {
     pub fn init<T: BufferedReaderParent>() -> PosixBufferedReader {
         PosixBufferedReader {
             handle: PollOrFd::Closed,
+            rwf_unsupported: core::cell::Cell::new(false),
             _buffer: Vec::new(),
             _offset: 0,
             limit: ReadLimit::NONE,
@@ -261,6 +264,7 @@ impl PosixBufferedReader {
         let kind = self.vtable.kind;
         *self = PosixBufferedReader {
             handle: mem::replace(&mut other.handle, PollOrFd::Closed),
+            rwf_unsupported: other.rwf_unsupported.clone(),
             _buffer: mem::take(other.buffer()),
             _offset: other._offset,
             limit: other.limit,
@@ -674,7 +678,26 @@ impl PosixBufferedReader {
             }
             FileType::File => sys::read(fd, buf),
             FileType::Socket => sys::recv_non_block(fd, buf),
-            FileType::NonblockingPipe | FileType::Pipe => sys::read_nonblocking(fd, buf),
+            FileType::NonblockingPipe | FileType::Pipe => {
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    if !self.rwf_unsupported.get() {
+                        match sys::read_nowait(fd, buf) {
+                            Ok(None) => self.rwf_unsupported.set(true),
+                            Ok(Some(n)) => return Ok(n),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    // Poll first even when labelled nonblocking: some callers (FileResponseStream) label by fd kind, not by O_NONBLOCK.
+                    match bun_core::is_readable(fd) {
+                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::read(fd, buf),
+                        bun_core::Pollable::NotReady => Err(sys::Error::retry().with_fd(fd)),
+                    }
+                }
+                // macOS poll(2) is unreliable on FIFOs; the kqueue registration drives readiness there.
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                sys::read(fd, buf)
+            }
         }
     }
 

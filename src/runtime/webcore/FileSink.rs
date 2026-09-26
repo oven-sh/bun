@@ -47,6 +47,8 @@ pub struct FileSink {
     pub(crate) pollable: Cell<bool>,
     pub(crate) nonblocking: Cell<bool>,
     pub(crate) force_sync: Cell<bool>,
+    #[cfg(unix)]
+    pub(crate) is_tty: Cell<bool>,
 
     pub(crate) is_socket: Cell<bool>,
     pub(crate) fd: Cell<Fd>,
@@ -666,7 +668,7 @@ impl FileSink {
 
         // reshaped for borrowck — split into a local capture and apply after.
         // R-2: out-params for `bun_io::open_for_writing` are local then `Cell::set`.
-        let mut force_sync_out = self.force_sync.get();
+        let mut is_tty_out = false;
         let mut pollable_out = self.pollable.get();
         let mut is_socket_out = self.is_socket.get();
         let mut nonblocking_out = self.nonblocking.get();
@@ -681,7 +683,7 @@ impl FileSink {
         let open = |pollable_out: &mut bool,
                     is_socket_out: &mut bool,
                     nonblocking_out: &mut bool,
-                    force_sync_out: &mut bool| {
+                    is_tty_out: &mut bool| {
             bun_io::open_for_writing(
                 Fd::cwd(),
                 &io_path,
@@ -691,11 +693,11 @@ impl FileSink {
                 is_socket_out,
                 self.force_sync.get(),
                 nonblocking_out,
-                force_sync_out,
-                |_fs: &mut bool| {
+                is_tty_out,
+                |_tty: &mut bool| {
                     #[cfg(unix)]
                     {
-                        *_fs = true;
+                        *_tty = true;
                     }
                 },
                 is_pollable,
@@ -705,7 +707,7 @@ impl FileSink {
             &mut pollable_out,
             &mut is_socket_out,
             &mut nonblocking_out,
-            &mut force_sync_out,
+            &mut is_tty_out,
         );
         if options.mkdirp {
             if let (sys::Result::Err(err), bun_io::PathOrFileDescriptor::Path(path)) =
@@ -717,7 +719,7 @@ impl FileSink {
                             &mut pollable_out,
                             &mut is_socket_out,
                             &mut nonblocking_out,
-                            &mut force_sync_out,
+                            &mut is_tty_out,
                         ),
                         Err(err) => Err(err),
                     };
@@ -728,7 +730,9 @@ impl FileSink {
         self.is_socket.set(is_socket_out);
         self.nonblocking.set(nonblocking_out);
         #[cfg(unix)]
-        if force_sync_out {
+        if is_tty_out {
+            // TTY writes are synchronous, as in Node.
+            self.is_tty.set(true);
             self.force_sync.set(true);
             // SAFETY(JsCell): single-field write; does not call into JS.
             self.writer.with_mut(|w| w.force_sync = true);
@@ -793,6 +797,12 @@ impl FileSink {
                             .get_poll()
                             .unwrap()
                             .set_flag(bun_io::FilePollFlag::Socket);
+                    } else if self.is_tty.get() {
+                        self.writer
+                            .get()
+                            .get_poll()
+                            .unwrap()
+                            .set_flag(bun_io::FilePollFlag::Tty);
                     } else if self.pollable.get() {
                         self.writer
                             .get()
@@ -1619,6 +1629,8 @@ impl FileSink {
             pollable: Cell::new(false),
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),
+            #[cfg(unix)]
+            is_tty: Cell::new(false),
             is_socket: Cell::new(false),
             fd: Cell::new(fd),
             auto_flusher: JsCell::new(AutoFlusher::default()),

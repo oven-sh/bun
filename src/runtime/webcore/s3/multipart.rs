@@ -104,7 +104,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JsCell};
 use bun_ptr::RefPtr;
 use bun_s3_signing::acl::ACL;
-use bun_s3_signing::credentials::S3Credentials;
+use bun_s3_signing::credentials::{S3Credentials, encode_uri_component};
 use bun_s3_signing::error::S3Error;
 use bun_s3_signing::storage_class::StorageClass;
 
@@ -157,6 +157,7 @@ pub struct MultiPartUpload {
     pub(crate) content_type: Option<Box<[u8]>>,
     pub(crate) content_disposition: Option<Box<[u8]>>,
     pub(crate) content_encoding: Option<Box<[u8]>>,
+    /// Percent-encoded: the form the query string carries and SigV4 signs.
     pub(crate) upload_id: JsCell<Box<[u8]>>,
 
     pub(crate) multipart_etags: JsCell<Vec<UploadPartResult>>,
@@ -227,6 +228,7 @@ impl MultiPartUpload {
     }
 
     const MAX_QUEUE_SIZE: usize = MultiPartUploadOptions::MAX_QUEUE_SIZE as usize;
+    /// Of the percent-encoded id: each query built around it fits 2048 bytes.
     const MAX_UPLOAD_ID_LEN: usize = 2000;
     // `const AWS = S3Credentials;` — type alias unused in this file; dropped.
 
@@ -732,18 +734,17 @@ impl MultiPartUpload {
                 // <InitiateMultipartUploadResult><Bucket/><Key/><UploadId/></…>
                 let upload_id = xml_response::parse(slice, |root| {
                     (root.name == b"InitiateMultipartUploadResult")
-                        .then(|| root.child_text(b"UploadId"))
+                        .then(|| root.child_nonempty_text(b"UploadId"))
                         .flatten()
                 })
                 .flatten()
-                // It goes into query strings as is: printable, and nothing
-                // that would end or split a query value.
-                .filter(|id| {
-                    !id.is_empty()
-                        && id.len() <= Self::MAX_UPLOAD_ID_LEN
-                        && id
-                            .iter()
-                            .all(|&b| b.is_ascii_graphic() && !matches!(b, b'&' | b'#' | b'?'))
+                // Printable ASCII still holds `+`, `/`, `=` and `&`: store the id percent-encoded.
+                .filter(|id| id.iter().all(u8::is_ascii_graphic))
+                .and_then(|id| {
+                    let mut encoded = [0u8; Self::MAX_UPLOAD_ID_LEN];
+                    encode_uri_component::<true>(&id, &mut encoded)
+                        .ok()
+                        .map(Box::<[u8]>::from)
                 });
                 let valid = upload_id.is_some();
                 if let Some(upload_id) = upload_id {

@@ -75,8 +75,7 @@ impl PluginRunner {
             && colon == 1
             && specifier.len() > 3
             && bun_paths::resolve_path::is_sep_any(specifier[2])
-            && ((specifier[0] > b'a' && specifier[0] < b'z')
-                || (specifier[0] > b'A' && specifier[0] < b'Z'))
+            && bun_paths::resolve_path::is_drive_letter(specifier[0])
         {
             return b"";
         }
@@ -88,12 +87,7 @@ impl PluginRunner {
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
         if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
             let ext = &specifier[last_dot + 1..];
-            // '.' followed by either a letter or a non-ascii character
-            // maybe there are non-ascii file extensions?
-            // we mostly want to cheaply rule out "../" and ".." and "./"
-            if !ext.is_empty()
-                && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
-            {
+            if !ext.is_empty() && !matches!(ext[0], b'/' | b'\\') {
                 return true;
             }
         }

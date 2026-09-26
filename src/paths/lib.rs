@@ -66,6 +66,7 @@ pub const NODE_MODULES_NEEDLE: &[u8] =
 
 bun_core::host_fn!(
     /// [`NODE_MODULES_NEEDLE`] of the OS that runs this process.
+    #[inline(always)]
     pub fn node_modules_needle() -> &'static [u8] {
         if bun_core::host::is_windows() {
             b"\\node_modules\\"
@@ -132,6 +133,7 @@ pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };
 
 bun_core::host_fn!(
     /// [`DELIMITER`] of the OS that runs this process: what separates the directories of `PATH`.
+    #[inline(always)]
     pub fn delimiter() -> u8 {
         if bun_core::host::is_windows() {
             b';'
@@ -142,6 +144,7 @@ bun_core::host_fn!(
 );
 bun_core::host_fn!(
     /// [`delimiter`] as a string.
+    #[inline(always)]
     pub fn delimiter_str() -> &'static str {
         if bun_core::host::is_windows() {
             ";"
@@ -570,6 +573,9 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 
     let p = non_absolute_path;
     let dot_relative = p.starts_with(b"./") || p.starts_with(b"../") || p == b"." || p == b"..";
+    #[cfg(windows)]
+    let dot_relative = dot_relative || p.starts_with(b".\\") || p.starts_with(b"..\\");
+    #[cfg(bun_portable)]
     let dot_relative = dot_relative
         || (bun_core::host::is_windows() && (p.starts_with(b".\\") || p.starts_with(b"..\\")));
     !dot_relative

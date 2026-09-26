@@ -1,6 +1,7 @@
 // Modelled off of https://github.com/nodejs/node/blob/main/src/node_constants.cc
 // Note that if you change any of this code, you probably also have to change NodeConstantsModule.h
 #include "ProcessBindingConstants.h"
+#include "BunHostOS.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 
 // These headers may not all be needed, but they are the ones node references.
@@ -63,6 +64,26 @@ static void putNumericConstants(VM& vm, JSObject* object, const NumericConstant*
         object->putDirect(vm, Identifier::fromString(vm, ASCIILiteral::fromLiteralUnsafe(constants->name)), jsNumber(constants->value));
 }
 
+#if defined(BUN_PORTABLE)
+// The portable image is compiled with the headers of Linux. os.constants of another host comes from the
+// tables of src/errno/host_tables.rs.
+enum class HostConstants : uint8_t {
+    Errno = 0,
+    Signals = 1,
+    Dlopen = 2,
+};
+extern "C" bool Bun__hostConstant(uint8_t category, size_t index, const uint8_t** name, size_t* nameLength, int32_t* value);
+
+static void putHostConstants(VM& vm, JSObject* object, HostConstants category)
+{
+    const uint8_t* name = nullptr;
+    size_t nameLength = 0;
+    int32_t value = 0;
+    for (size_t index = 0; Bun__hostConstant(static_cast<uint8_t>(category), index, &name, &nameLength, &value); ++index)
+        object->putDirect(vm, Identifier::fromString(vm, String(std::span { name, nameLength })), jsNumber(value));
+}
+#endif
+
 static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
 {
     auto globalObject = bindingObject->globalObject();
@@ -80,6 +101,24 @@ static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
     Bun::putDirectNamed(vm, osObj, "errno"_s, errnoObj);
     Bun::putDirectNamed(vm, osObj, "signals"_s, signalsObj);
     Bun::putDirectNamed(vm, osObj, "priority"_s, priorityObj);
+#if defined(BUN_PORTABLE)
+    if (!Bun::hostIsLinux()) {
+        putHostConstants(vm, errnoObj, HostConstants::Errno);
+        putHostConstants(vm, signalsObj, HostConstants::Signals);
+        putHostConstants(vm, dlopenObj, HostConstants::Dlopen);
+        static constexpr NumericConstant kPriority[] = {
+            { "PRIORITY_LOW", static_cast<double>(19) },
+            { "PRIORITY_BELOW_NORMAL", static_cast<double>(10) },
+            { "PRIORITY_NORMAL", static_cast<double>(0) },
+            { "PRIORITY_ABOVE_NORMAL", static_cast<double>(-7) },
+            { "PRIORITY_HIGH", static_cast<double>(-14) },
+            { "PRIORITY_HIGHEST", static_cast<double>(-20) },
+            { nullptr, 0 },
+        };
+        putNumericConstants(vm, priorityObj, kPriority);
+        return osObj;
+    }
+#endif
     static constexpr NumericConstant kConstants2[] = {
 #ifdef E2BIG
         { "E2BIG", static_cast<double>(E2BIG) },

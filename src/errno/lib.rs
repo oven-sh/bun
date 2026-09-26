@@ -195,6 +195,8 @@ pub use linux_errno::*;
 pub mod windows_errno;
 #[cfg(windows)]
 pub use windows_errno::{posix, *};
+#[cfg(bun_portable)]
+pub mod host;
 
 // ──────────────────────────────────────────────────────────────────────────
 // posix — mode_t, the errno enum, S_* mode bits, and the C errno accessor

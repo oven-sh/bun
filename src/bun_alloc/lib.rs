@@ -284,12 +284,14 @@ pub mod host;
 
 crate::host_fn!(
     /// [`SEP`] of the OS that runs this process: `SEP` itself, except in the portable image.
+    #[inline(always)]
     pub fn sep() -> u8 {
         if host::is_windows() { b'\\' } else { b'/' }
     }
 );
 crate::host_fn!(
     /// [`SEP_STR`] of the OS that runs this process: `SEP_STR` itself, except in the portable image.
+    #[inline(always)]
     pub fn sep_str() -> &'static str {
         if host::is_windows() { "\\" } else { "/" }
     }

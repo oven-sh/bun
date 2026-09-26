@@ -647,12 +647,16 @@ pub mod fs {
             &self,
             alloc: &bun_alloc::MimallocArena,
         ) -> crate::CrateResult<Path<'static>> {
-            #[cfg(not(windows))]
+            #[cfg(all(not(windows), not(bun_portable)))]
             {
                 self.dupe_alloc(alloc)
             }
-            #[cfg(windows)]
+            #[cfg(any(windows, bun_portable))]
             {
+                #[cfg(bun_portable)]
+                if !bun_core::host::is_windows() {
+                    return self.dupe_alloc(alloc);
+                }
                 // If `pretty` contains no backslashes it is already POSIX-style.
                 // Short-circuiting preserves the `pretty.ptr == text.ptr` aliasing
                 // optimisation inside `dupe_alloc` and avoids a fresh FilenameStore alloc.

@@ -30,8 +30,10 @@
 #include <algorithm>
 #include <chrono>
 #include <climits>
+#include <functional>
 #include <string_view>
 #include <span>
+#include <utility>
 #include <wtf/Vector.h>
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
@@ -633,15 +635,36 @@ struct HttpResponseData;
     private:
         std::string fallback;
     public:
-        /* node:http flood prevention. HTTP_NODE_READS_PAUSED (state bit) = the socket's raw reads are
-         * paused and stays set through spill replay; this flag = "the parse loop running now must stop
-         * at the next request boundary and park the rest", cleared for replay so it can make progress. */
-        bool nodeHttpParkAtNextBoundary = false;
+        /* The parse loop must stop at the next request boundary and park the rest in
+         * parkedRequestBytes. Bun.serve: a response is pending (HttpContext::onData
+         * derives it). node:http: set on the flood-prevention pause edge, cleared for
+         * the replay so it can make progress (HTTP_NODE_READS_PAUSED stays set). */
+        bool parkAtNextBoundary = false;
         bool nodeHttpSpillReplayScheduled = false;
         /* A request on this connection had Connection: close or was HTTP/1.0, or a Bun.serve response closed it (RFC 9112 9.6). */
         bool sawConnectionClose = false;
-        WTF::Vector<char> nodeHttpPausedSpill;
+        /* Where the parked bytes start in parkedRequestBytes: a replay that parks
+         * again gives its buffer back instead of copying what it did not reach. */
+        unsigned int parkedRequestBytesStart = 0;
+        WTF::Vector<char> parkedRequestBytes;
+        /* The buffer being replayed, during HttpContext::replayParkedRequestBytes. */
+        WTF::Vector<char> *replayedRequestBytes = nullptr;
     private:
+        /* In a replay, [data, data + length) is the tail of the replayed buffer: it
+         * comes back whole, less the replay's fence, and only the start moves. */
+        void parkRequestBytes(char *data, unsigned int length) {
+            if (WTF::Vector<char> *replayed = std::exchange(replayedRequestBytes, nullptr)) {
+                char *begin = replayed->mutableSpan().data();
+                if (parkedRequestBytes.isEmpty() && std::greater_equal<char *>{}(data, begin)
+                    && std::less_equal<char *>{}(data + length, begin + replayed->size())) {
+                    parkedRequestBytesStart = (unsigned int) (data - begin);
+                    replayed->shrink(parkedRequestBytesStart + length);
+                    parkedRequestBytes = std::exchange(*replayed, {});
+                    return;
+                }
+            }
+            parkedRequestBytes.append(std::span<const char>(data, length));
+        }
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
 
@@ -1150,15 +1173,21 @@ struct HttpResponseData;
                 consumedTotal += length;
                 return HttpParserResult::success(consumedTotal, returnedUser);
             }
-            /* node:http flood prevention: a dispatch earlier in this buffer paused reads.
-             * Stop at this request boundary, park the rest, report it as consumed so the
-             * caller does not spill it into the size-capped header fallback buffer. */
-            if constexpr (IsNodeHttp) {
-                if (nodeHttpParkAtNextBoundary) [[unlikely]] {
-                    nodeHttpPausedSpill.append(std::span<const char>(data, length));
-                    consumedTotal += length;
-                    return HttpParserResult::success(consumedTotal, user);
+            /* Bun.serve: a closing connection takes nothing more (RFC 9112 9.6). Ahead
+             * of the park, which pauses reads: a close over bytes left unread resets
+             * the connection behind the complete response. */
+            if constexpr (!IsNodeHttp) {
+                if (sawConnectionClose) [[unlikely]] {
+                    return HttpParserResult::success(consumedTotal + length, user);
                 }
+            }
+            /* Before getHeaders touches the next head. Reported as consumed so the
+             * caller does not spill it into the size-capped fallback buffer. Reads
+             * that arrive while bytes are parked go behind them, to keep wire order. */
+            if (parkAtNextBoundary || !parkedRequestBytes.isEmpty()) [[unlikely]] {
+                parkRequestBytes(data, length);
+                consumedTotal += length;
+                return HttpParserResult::success(consumedTotal, user);
             }
             /* RFC 9112 2.2: ignore empty lines (CRLF) received prior to the
              * request-line, like Node/llhttp - e.g. a stray "\r\n" sent on an
@@ -1182,11 +1211,10 @@ struct HttpResponseData;
                 }
             }
             /* Must stay below the tunnel check, the park and the CR/LF skip, like llhttp's closed state. */
-            if (sawConnectionClose) {
-                if constexpr (IsNodeHttp) {
+            if constexpr (IsNodeHttp) {
+                if (sawConnectionClose) {
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CLOSED_CONNECTION);
                 }
-                return HttpParserResult::success(consumedTotal + length, user);
             }
             auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
             if(result.isError()) {

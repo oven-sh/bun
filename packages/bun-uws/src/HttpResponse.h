@@ -92,17 +92,59 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
+    /* How long a close lingers, and how much it drops (onData counts). The
+     * timeout sweep runs every 4 seconds, so this is between 4 and 8 seconds. */
+    static constexpr uint8_t LINGERING_CLOSE_SECONDS = 8;
+    static constexpr unsigned int LINGERING_CLOSE_MAX_BYTES = 8 * 1024 * 1024;
+
+    /* Sends the FIN and closes: the end of every close gate. Bun.serve: reads are
+     * paused while requests are parked, so what the peer wrote since then is
+     * unread, and more can wait behind its closed receive window. A close over
+     * those bytes, or ahead of them, resets the connection, and the kernel then
+     * drops what it has not sent yet: the peer loses the end of a complete
+     * response. A connection that closes dispatches none of those bytes. So when
+     * some are queued the close lingers: FIN now, reads stay open and onData
+     * drops them, and the peer's FIN, the timeout or the byte limit closes the
+     * socket. */
+    void shutdownAndClose(HttpResponseData<SSL> *httpResponseData) {
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_LINGERING_CLOSE) [[unlikely]] {
+            return;
+        }
+        bool readsWerePaused = !httpResponseData->parkedRequestBytes.isEmpty() || httpResponseData->replayedRequestBytes;
+        /* A parse error closes with a response still pending: closing now aborts its handler. */
+        bool responsePending = httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+        if (readsWerePaused && !responsePending && !HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()
+            && us_socket_queued_input((us_socket_t *) this) == LIBUS_QUEUED_INPUT_DATA) [[unlikely]] {
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_LINGERING_CLOSE;
+            httpResponseData->received_bytes_per_timeout = 0;
+            /* The teardown of the response still calls resetTimeout(), also with
+             * idleTimeout: 0. It has to arm this bound again, not remove it. */
+            httpResponseData->idleTimeout = LINGERING_CLOSE_SECONDS;
+            /* markDone() in a replay sees no parked bytes and sets isIdle: keep closeIdle() off this socket. */
+            httpResponseData->isIdle = false;
+            /* Can close the socket, which destructs httpResponseData. */
+            Super::resume();
+            if (!us_socket_is_closed((us_socket_t *) this)) {
+                Super::shutdown();
+                Super::timeout(LINGERING_CLOSE_SECONDS);
+            }
+            return;
+        }
+        Super::shutdown();
+        /* We need to force close after sending FIN since we want to hinder
+         * clients from keeping to send their huge data */
+        Super::close();
+    }
+
     /* Shutdown+close when the connection is marked to close (Connection:
      * close, peer FIN, close-when-idle), the response is complete and every
-     * outgoing byte has been flushed. Returns true when the socket was closed. */
+     * outgoing byte has been flushed. Returns true when the socket was closed or
+     * left to a lingering close: the caller is done with it either way. */
     bool closeIfDoneAndMarked(HttpResponseData<SSL> *httpResponseData) {
         if (httpResponseData->shouldCloseConnection()) {
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                 if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                    ((AsyncSocket<SSL> *) this)->shutdown();
-                    /* We need to force close after sending FIN since we want to hinder
-                     * clients from keeping to send their huge data */
-                    ((AsyncSocket<SSL> *) this)->close();
+                    shutdownAndClose(httpResponseData);
                     return true;
                 }
             }
@@ -391,13 +433,20 @@ public:
             }
         }
 
+        auto* responseData = getHttpResponseData();
+
+        /* Bytes parked behind this handshake are frames of a client that did not
+         * wait for the 101. Taken before markDone() arms a replay for them and before
+         * the HTTP state that owns them is destructed. Dispatched after open. */
+        WTF::Vector<char> earlyFrames = std::exchange(responseData->parkedRequestBytes, {});
+        size_t earlyFramesStart = std::exchange(responseData->parkedRequestBytesStart, 0);
+
         endUpgradeHandshake();
 
         /* Grab the httpContext from res */
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
 
         /* Move any backpressure out of HttpResponse */
-        auto* responseData = getHttpResponseData();
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
 
         auto* socketData = responseData->socketData;
@@ -475,6 +524,25 @@ public:
             webSocketContextData->openHandler(webSocket);
         }
 
+        if (!earlyFrames.isEmpty()) [[unlikely]] {
+            /* Parking paused reads, and us_socket_adopt keeps the flag. Not resumed
+             * before the adoption: us_socket_resume can close the socket, which from
+             * here on is an ordinary WebSocket close. It also re-arms writable, so
+             * one drain callback with nothing to drain follows. */
+            us_socket_resume(usSocket);
+        }
+
+        if (!earlyFrames.isEmpty() && !us_socket_is_closed(usSocket) && !us_socket_is_shut_down(usSocket)) [[unlikely]] {
+            /* The frame parser may write on both sides of its input, as it can in
+             * the loop's padded receive buffer. */
+            size_t length = earlyFrames.size() - earlyFramesStart;
+            WTF::Vector<char> padded;
+            padded.grow(LIBUS_RECV_BUFFER_PADDING + length + LIBUS_RECV_BUFFER_PADDING);
+            char *frames = padded.mutableSpan().data() + LIBUS_RECV_BUFFER_PADDING;
+            memcpy(frames, earlyFrames.span().data() + earlyFramesStart, length);
+            us_dispatch_data(usSocket, frames, (int) length);
+        }
+
         return usSocket;
     }
 
@@ -494,7 +562,12 @@ public:
     }
 
     HttpResponse *resume() {
-        Super::resume();
+        /* While requests are parked the pause belongs to the replay. A resume that
+         * releases a request-body pause can land after they were parked; reading on
+         * would queue more behind them, or take a FIN that closes over them. */
+        if (getHttpResponseData()->parkedRequestBytes.isEmpty()) [[likely]] {
+            Super::resume();
+        }
         this->resetTimeout();
         return this;
     }
@@ -892,17 +965,7 @@ public:
             }
 
             /* If we have no backbuffer and we are connection close and we responded fully then close */
-            HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-            if (httpResponseData->shouldCloseConnection()) {
-                if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                    if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                        ((AsyncSocket<SSL> *) this)->shutdown();
-                        /* We need to force close after sending FIN since we want to hinder
-                        * clients from keeping to send their huge data */
-                        ((AsyncSocket<SSL> *) this)->close();
-                    }
-                }
-            }
+            closeIfDoneAndMarked(getHttpResponseData());
         } else {
             /* We are already corked, or can't cork so let's just call the handler */
             handler();

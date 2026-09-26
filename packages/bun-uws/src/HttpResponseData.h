@@ -59,8 +59,17 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         /* A queued pipelined response (node:http) still owes output on this
-         * connection, so it is not idle between the responses. */
-        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0;
+         * connection, and parked requests are still owed a dispatch, so it is not
+         * idle: a graceful stop closes it after the last of them, not here. */
+        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0
+            && this->parkedRequestBytes.isEmpty();
+
+        /* Parked requests are replayed from HttpContext::onWritable and not here:
+         * every caller still tears this response down after we return. node:http's
+         * onWritable hook tolerates the extra dispatch. */
+        if (!this->parkedRequestBytes.isEmpty()) [[unlikely]] {
+            us_socket_request_writable((us_socket_t *) uwsRes);
+        }
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
@@ -158,6 +167,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 19,
+        /* Bun.serve: a close gate sent the FIN and left the socket open to drop
+         * what the peer still sends (HttpResponse::shutdownAndClose). */
+        HTTP_LINGERING_CLOSE = 1 << 20,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -165,7 +177,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * word (resetResponseState) - these have to survive that. */
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
-            | HTTP_NODE_PEER_ENDED,
+            | HTTP_NODE_PEER_ENDED | HTTP_LINGERING_CLOSE,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -235,10 +247,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
     /* Whether the connection should be torn down once the in-flight response (if
-     * any) has completed and all buffered outgoing data has been flushed. */
+     * any) has completed and all buffered outgoing data has been flushed. A peer
+     * that sent its FIN still gets the requests it sent before it answered. */
     bool shouldCloseConnection() const {
         return (state & HTTP_CONNECTION_CLOSE)
-            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
+            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0 && this->parkedRequestBytes.isEmpty())
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
 };

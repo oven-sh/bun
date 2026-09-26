@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
@@ -3257,6 +3257,78 @@ test.skipIf(!isDebug && !isASAN)("react-compiler reports which kind of function 
       Object.entries(localReassignmentCases).map(([name, { error }]) => [name, { error, memoized: error === null }]),
     ),
   );
+});
+
+// ValidateNoRefAccessInRender gives a function a type that holds the type of
+// what the function returns, so N nested arrows make a type of N levels. Every
+// fixpoint pass of every enclosing function copied that type level by level,
+// and copied it again at each level of a join. PropagateScopeDependenciesHIR
+// computed the set of functions that are assumed to be invoked once more for
+// every nested function. Both took about N^4 steps: on a release build, 200
+// nested arrows in one component took 6.7 seconds and 400 took 152.
+test("react-compiler compile time per function does not grow with the function nesting depth", async () => {
+  // The test runner collects garbage after every `expect`, on threads of this
+  // process. That must not run into the next measurement.
+  using _ = disableAggressiveGCScope();
+
+  // `components` components that nest `deep` arrows each, against the same
+  // number of arrows in components that nest `shallow` of them. The stack of a
+  // bundler thread (4 MB, 18 MB on Windows) holds about 400 nested arrows on a
+  // release build and about 80 on a debug build.
+  const shallow = 10;
+  const { deep, components, rounds, limit } = isDebug
+    ? { deep: 50, components: 1, rounds: 2, limit: 3 }
+    : isASAN
+      ? { deep: 50, components: 10, rounds: 3, limit: 3 }
+      : { deep: 100, components: 20, rounds: 3, limit: 5 };
+  const arrow = "() => ";
+  const source = (arrows: number, perComponent: number) =>
+    Array.from(
+      { length: arrows / perComponent },
+      (_, c) =>
+        `export function App${c}(props) {\n` +
+        `  const f = ${Buffer.alloc(arrow.length * perComponent, arrow)}props.x;\n` +
+        `  return <div>{f}</div>;\n}\n`,
+    ).join("");
+  using dir = tempDir("react-compiler-nesting-depth", {
+    "warmup.jsx": source(1, 1),
+    "shallow.jsx": source(deep * components, shallow),
+    "deep.jsx": source(deep * components, deep),
+  });
+
+  // The bundler runs on threads of this process. `cpuUsage` counts them all.
+  const cpuTime = async (entry: string, compiled: number) => {
+    const before = process.cpuUsage();
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), entry)],
+      target: "browser",
+      external: ["*"],
+      reactCompiler: true,
+      throw: false,
+    });
+    const { user, system } = process.cpuUsage(before);
+    expect(result.logs.map(log => String(log.message))).toEqual([]);
+    expect(result.success).toBe(true);
+    // A component that the compiler leaves as written has no memo cache.
+    expect((await result.outputs[0].text()).match(/\b_c\(\d+\)/g)).toHaveLength(compiled);
+    return user + system;
+  };
+
+  // Both files hold the same number of arrows, so the two times are about
+  // equal when the time per arrow does not depend on the depth. With the fix
+  // the ratio is 0.9 to 1.3 on a debug build and 1.2 to 1.7 on a release
+  // build. Without it, it is 6 on a debug build and 60 on a release build.
+  // The garbage collector and the JIT of this process add to a CPU time, so
+  // the test takes the best of a few rounds.
+  await cpuTime("warmup.jsx", 1);
+  let shallowTime = Infinity;
+  let deepTime = Infinity;
+  for (let round = 0; round < rounds; round++) {
+    shallowTime = Math.min(shallowTime, await cpuTime("shallow.jsx", (deep * components) / shallow));
+    deepTime = Math.min(deepTime, await cpuTime("deep.jsx", components));
+    if (deepTime / shallowTime < limit) break;
+  }
+  expect(deepTime / shallowTime).toBeLessThan(limit);
 });
 
 // RenameVariables reaches a nested function expression through its

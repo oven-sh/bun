@@ -2971,7 +2971,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let byte_length: usize = 'brk: {
             if length_value.is_undefined() {
-                break 'brk buffer.slice().len();
+                break 'brk buffer.slice().len().saturating_sub(byte_offset);
             }
             if !length_value.is_any_int() {
                 let _ = global.throw_invalid_argument_type(label, "byteLength", "integer");

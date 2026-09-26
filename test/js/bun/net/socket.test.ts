@@ -2158,6 +2158,49 @@ it("node:net connect() reusing a server-accepted handle keeps the listener's han
   void stderr;
 });
 
+it.concurrent("write() and end() with a byteOffset and no byteLength send the rest of the buffer", async () => {
+  const received: Buffer[] = [];
+  const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(_socket, chunk) {
+        received.push(chunk);
+      },
+      close() {
+        resolve();
+      },
+      error(_socket, err) {
+        reject(err);
+      },
+    },
+  });
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    socket: { data() {} },
+  });
+
+  const buf = Buffer.from("0123456789");
+  expect(() => client.write(buf, 11)).toThrow(
+    expect.objectContaining({ code: "ERR_OUT_OF_RANGE", message: expect.stringContaining('"byteOffset"') }),
+  );
+  const wrote = {
+    fromOffset: client.write(buf, 4),
+    // The offset counts from the start of the view, not of its ArrayBuffer.
+    fromOffsetInView: client.write(buf.subarray(2, 8), 3),
+    fromEnd: client.write(buf, 10),
+    end: client.end(buf, 7),
+  };
+  await closed;
+
+  expect({ wrote, received: Buffer.concat(received).toString() }).toEqual({
+    wrote: { fromOffset: 6, fromOffsetInView: 3, fromEnd: 0, end: 3 },
+    received: "456789" + "567" + "789",
+  });
+});
+
 it.concurrent("setTypeOfService validates its argument instead of asserting", async () => {
   // The unfixed native binding called JSValue::asInt32() on the raw argument,
   // which asserts isInt32() on assert builds and silently feeds garbage to

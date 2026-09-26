@@ -3189,6 +3189,25 @@ it.each([
   },
 );
 
+// expect() from bun:test also works in a script. toThrow() reads the rejection
+// of an async function itself, so that rejection is not an uncaught error.
+it("expect(fn).toThrow() in a script reads the rejection of an async function", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { expect } from "bun:test";
+       expect(async () => { throw new Error("captured"); }).toThrow("captured");
+       console.log("after");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "after\n", stderr: "", exitCode: 0 });
+});
+
 it("a throwing Bun.spawn ipc handler keeps the parent alive", async () => {
   using dir = tempDir("spawn-ipc-throw", {
     "parent.js": `

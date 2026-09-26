@@ -855,7 +855,7 @@ impl Expect {
         let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
         vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
-        vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+        vm.quiet_unhandled_rejections();
         return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
             Ok(v) => v,
             Err(err) => global_this.take_exception(err),

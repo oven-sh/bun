@@ -320,6 +320,9 @@ pub struct VirtualMachine {
     /// terminating the session. Node's REPL wraps evaluation in a domain for the same reason:
     /// https://github.com/nodejs/node/blob/main/lib/repl.js
     pub suppress_fatal_uncaught: bool,
+    /// Set while `expect(fn).toThrow()` reads what `fn` rejects (`quiet_unhandled_rejections`). A
+    /// rejection that arrives then goes to the hook. It is not a report and does not end the process.
+    pub(crate) unhandled_rejections_quiet: bool,
 
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
@@ -536,6 +539,7 @@ pub struct UnhandledRejectionScope {
     pub ctx: Option<*mut c_void>,
     pub(crate) on_unhandled_rejection: OnUnhandledRejection,
     pub(crate) count: usize,
+    pub(crate) quiet: bool,
 }
 
 impl UnhandledRejectionScope {
@@ -543,6 +547,7 @@ impl UnhandledRejectionScope {
         vm.on_unhandled_rejection = self.on_unhandled_rejection;
         vm.on_unhandled_rejection_ctx = self.ctx;
         vm.unhandled_error_counter = self.count;
+        vm.unhandled_rejections_quiet = self.quiet;
     }
 }
 
@@ -1392,7 +1397,15 @@ impl VirtualMachine {
             on_unhandled_rejection: self.on_unhandled_rejection,
             ctx: self.on_unhandled_rejection_ctx,
             count: self.unhandled_error_counter,
+            quiet: self.unhandled_rejections_quiet,
         }
+    }
+
+    /// What `expect(fn).toThrow()` installs around its call of `fn`.
+    /// `UnhandledRejectionScope::apply` puts the reporter back.
+    pub fn quiet_unhandled_rejections(&mut self) {
+        self.on_unhandled_rejection = Self::on_quiet_unhandled_rejection_handler_capture_value;
+        self.unhandled_rejections_quiet = true;
     }
 
     pub(crate) fn handled_promise(&self, global_object: &JSGlobalObject, promise: JSValue) -> bool {
@@ -1756,6 +1769,7 @@ impl VirtualMachine {
             }
             if fatal_exit
                 && !self.suppress_fatal_uncaught
+                && !self.unhandled_rejections_quiet
                 && self.is_main_thread()
                 && self.hot_reload == HotReload::None
                 && origin != UncaughtExceptionOrigin::EntryPointRejection
@@ -3875,7 +3889,8 @@ impl VirtualMachine {
                 if handle_unhandled() {
                     return;
                 }
-                if self.hot_reload == HotReload::None {
+                // `expect(fn).toThrow()` reads the rejection itself: it goes to the hook below.
+                if self.hot_reload == HotReload::None && !self.unhandled_rejections_quiet {
                     // The listeners get node's wrapper for a reason that is not an error. The
                     // report shows the reason itself: a ResolveMessage, a BuildMessage or a plain
                     // value says more than the wrapper's "[object Object]".

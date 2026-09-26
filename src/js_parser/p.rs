@@ -9353,15 +9353,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
         }
 
+        let force_cjs_to_esm = self.unwrap_all_requires
+            || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
+
         let wrapper_ref: Ref = 'brk: {
             if self.options.features.hot_module_reloading {
                 break 'brk self.hmr_api_ref;
             }
 
             // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
+            // The linker wraps every CommonJS file, and may wrap a FORCE_CJS_TO_ESM one, so they need it.
             // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
             if self.options.bundle
-                && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice()))
+                && (self.options.code_splitting
+                    || exports_kind == js_ast::ExportsKind::Cjs
+                    || force_cjs_to_esm
+                    || self.needs_wrapper_ref(parts.as_slice()))
             {
                 use core::fmt::Write as _;
                 let mut buf = bun_alloc::ArenaString::new_in(arena);
@@ -9441,9 +9448,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let symbols = core::mem::replace(&mut self.symbols, BumpVec::new_in(arena));
         let parts_list = core::mem::replace(parts, BumpVec::new_in(arena));
         let import_records = self.import_records.move_to_baby_list(arena);
-
-        let force_cjs_to_esm = self.unwrap_all_requires
-            || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
 
         // PERF: box at the construction site so the ~1 KB `Ast` is written
         // straight into the heap allocation and only the thin `Box` pointer is

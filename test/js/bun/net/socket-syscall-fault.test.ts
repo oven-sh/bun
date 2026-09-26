@@ -124,6 +124,38 @@ test.concurrent(
   60_000,
 );
 
+// us_socket_pause on a socket that is parked in the low-priority handshake
+// queue only sets is_paused (parking switched its reads off already), and the
+// queue drain used to switch the reads back on without looking at the flag:
+// the handshake ran, and `handshake` and `data` reached a socket whose pause()
+// had returned. This fixture keeps its clients in its own process, so it needs
+// no grandchild. It parks 27 of 32 accepted sockets, pauses all 32, and turns
+// the loop until the queue has drained several times over.
+// `clientHandshakesWhilePaused` counts the clients that completed their
+// handshake in that time: exactly the 5-per-iteration budget, read before the
+// pause, which also proves that the other 27 were parked. resume() then brings
+// all 32 back.
+test.concurrent(
+  "TLS low-prio queue: the drain does not resume a socket that was paused while parked",
+  async () => {
+    expect(await runFixture("tls-pause-parked-handshake-fixture.ts")).toEqual({
+      summary: {
+        opened: 32,
+        whilePaused: { handshake: 0, data: 0 },
+        clientHandshakesWhilePaused: 5,
+        serverHandshakes: 32,
+        serverData: 32,
+        pongs: 32,
+        errors: 0,
+      },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  },
+  60_000,
+);
+
 // us_poll_start_rc wraps uv_poll_init_socket on Windows and EPOLL_CTL_ADD /
 // kevent on posix. On Windows the return value was ignored, so an ioctlsocket
 // FIONBIO failure left a never-initialized uv_poll_t that uv_unref/uv_poll_start

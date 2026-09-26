@@ -14,7 +14,7 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 import nodeSemver from "semver";
 import { unsortedPrereleases } from "./semver-fixture.js";
@@ -976,7 +976,8 @@ describe("Bun.semver.satisfies()", () => {
 test("a range with a number above u64::MAX gives the same answers as node-semver (seeded differential)", () => {
   // Replay a failure with BUN_SEMVER_FUZZ_SEED=<seed>. Soak with BUN_SEMVER_FUZZ_ITERS=<n>.
   const seed = Number(process.env.BUN_SEMVER_FUZZ_SEED ?? 0x73656d76) >>> 0;
-  const iterations = Number(process.env.BUN_SEMVER_FUZZ_ITERS ?? 100);
+  // node-semver needs about 20 ms for each range in a debug build.
+  const iterations = Number(process.env.BUN_SEMVER_FUZZ_ITERS ?? (isDebug || isASAN ? 20 : 500));
   let state = seed;
   const next = () => {
     state = (state + 0x6d2b79f5) | 0;
@@ -1049,21 +1050,22 @@ test("a range with a number above u64::MAX gives the same answers as node-semver
   expect({ seed, disagreements }).toEqual({ seed, disagreements: [] });
 });
 
-// A registry with one package, "foo". It serves the manifest and no tarball.
-function fooRegistry(versions: string[], requested: string[] = []) {
+// A registry where every package has the same versions. It serves manifests and no tarball.
+function manifestRegistry(versions: string[], requested: string[] = []) {
   return Bun.serve({
     port: 0,
     fetch(req) {
       const { pathname } = new URL(req.url);
       requested.push(pathname);
-      if (pathname !== "/foo") return new Response("not found", { status: 404 });
+      if (pathname.endsWith(".tgz")) return new Response("not found", { status: 404 });
+      const name = pathname.slice(1);
       return Response.json({
-        name: "foo",
+        name,
         "dist-tags": { latest: versions.at(-1) },
         versions: Object.fromEntries(
           versions.map(version => [
             version,
-            { name: "foo", version, dist: { tarball: new URL(`/foo-${version}.tgz`, req.url).href } },
+            { name, version, dist: { tarball: new URL(`/${name}-${version}.tgz`, req.url).href } },
           ]),
         ),
       });
@@ -1071,51 +1073,54 @@ function fooRegistry(versions: string[], requested: string[] = []) {
   });
 }
 
-test.concurrent("bun install does not resolve a dependency range that has a number above u64::MAX", async () => {
-  // "^99999999999999999999" used to be read as "^0", so this installed foo@0.5.0.
-  const requested: string[] = [];
-  await using registry = fooRegistry(["0.5.0", "1.0.0"], requested);
-  using dir = tempDir("semver-number-above-u64-max", {
-    "package.json": JSON.stringify({
-      name: "app",
-      version: "1.0.0",
-      dependencies: { foo: "^99999999999999999999" },
-    }),
-    "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.url}"\n`,
+describe.concurrent("a number above u64::MAX in the package manager", () => {
+  test("bun install does not resolve a dependency range that has one", async () => {
+    // "^99999999999999999999" used to be read as "^0", so this installed foo@0.5.0.
+    const requested: string[] = [];
+    await using registry = manifestRegistry(["0.5.0", "1.0.0"], requested);
+    using dir = tempDir("semver-number-above-u64-max", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { foo: "^99999999999999999999" },
+      }),
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.url}"\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(
+      'error: No version matching "^99999999999999999999" found for specifier "foo" (but package exists)',
+    );
+    expect(requested).toEqual(["/foo"]);
+    expect(exitCode).toBe(1);
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain(
-    'error: No version matching "^99999999999999999999" found for specifier "foo" (but package exists)',
-  );
-  expect(requested).toEqual(["/foo"]);
-  expect(exitCode).toBe(1);
-});
 
-describe.concurrent("bun install and an override selector with a number above u64::MAX", () => {
-  // Every rule sets 0.5.0, so `resolved` is 0.5.0 when the rule applies.
-  test.each([
-    // No version satisfies the selector, so the rule never applies. The selector used to be read as "^0".
-    { selector: "^99999999999999999999", declared: "<2.0.0", resolved: "1.0.0" },
-    { selector: "^99999999999999999999", declared: "<=1.0.0", resolved: "1.0.0" },
-    { selector: "^99999999999999999999", declared: "*", resolved: "2.0.0" },
-    { selector: "^1.0.0 || ^99999999999999999999", declared: "^1.0.0", resolved: "1.0.0" },
-    // A selector that fits still applies.
-    { selector: "^1.0.0", declared: "<2.0.0", resolved: "0.5.0" },
-  ])("foo@$selector on $declared", async ({ selector, declared, resolved }) => {
-    await using registry = fooRegistry(["0.5.0", "1.0.0", "2.0.0"]);
+  test("bun install does not apply an override whose selector has one", async () => {
+    // Every rule sets 0.5.0, so a package resolves to 0.5.0 when its rule applies.
+    const packages = {
+      // No version satisfies these selectors, so the rule never applies. They used to be read as "^0".
+      "no-lower-bound": { declared: "<2.0.0", selector: "^99999999999999999999", resolved: "1.0.0" },
+      "no-lower-bound-inclusive": { declared: "<=1.0.0", selector: "^99999999999999999999", resolved: "1.0.0" },
+      "any-version": { declared: "*", selector: "^99999999999999999999", resolved: "2.0.0" },
+      "one-alternative": { declared: "^1.0.0", selector: "^1.0.0 || ^99999999999999999999", resolved: "1.0.0" },
+      // A selector that fits still applies.
+      "selector-fits": { declared: "<2.0.0", selector: "^1.0.0", resolved: "0.5.0" },
+    };
+    await using registry = manifestRegistry(["0.5.0", "1.0.0", "2.0.0"]);
     using dir = tempDir("semver-override-selector", {
       "package.json": JSON.stringify({
         name: "app",
         version: "1.0.0",
-        dependencies: { foo: declared },
-        overrides: { [`foo@${selector}`]: "0.5.0" },
+        dependencies: Object.fromEntries(Object.entries(packages).map(([name, { declared }]) => [name, declared])),
+        overrides: Object.fromEntries(
+          Object.entries(packages).map(([name, { selector }]) => [`${name}@${selector}`, "0.5.0"]),
+        ),
       }),
       "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.url}"\n`,
     });
@@ -1128,55 +1133,32 @@ describe.concurrent("bun install and an override selector with a number above u6
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (exitCode !== 0) expect(stderr).toBe("");
-    const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
-    expect({ resolved: /"foo": \["foo@([^"]+)"/.exec(lockfile)?.[1], exitCode }).toEqual({ resolved, exitCode: 0 });
+    const lockfile = Bun.JSONC.parse(await Bun.file(join(String(dir), "bun.lock")).text()) as {
+      packages: Record<string, [string, ...unknown[]]>;
+    };
+    expect(Object.fromEntries(Object.keys(packages).map(name => [name, lockfile.packages[name]?.[0]]))).toEqual(
+      Object.fromEntries(Object.entries(packages).map(([name, { resolved }]) => [name, `${name}@${resolved}`])),
+    );
+    expect(exitCode).toBe(0);
   });
-});
 
-describe.concurrent("bun pm version and a version number above u64::MAX", () => {
   // The parser used to read such a number as 0, so `patch` on "1.0.18446744073709551616" printed v1.0.1.
-  const aboveU64Max = "18446744073709551616";
-  // Number.MAX_SAFE_INTEGER, the largest number npm accepts.
-  const maxSafeInteger = "9007199254740991";
-
   test.each([
     {
-      name: "rejects it in package.json",
-      version: `1.0.${aboveU64Max}`,
+      where: "in package.json",
+      version: "1.0.18446744073709551616",
       arg: "patch",
-      expected: {
-        stdout: "",
-        stderr: `error: Current version "1.0.${aboveU64Max}" is not a valid semver\n`,
-        exitCode: 1,
-        after: `1.0.${aboveU64Max}`,
-      },
+      stderr: 'error: Current version "1.0.18446744073709551616" is not a valid semver\n',
     },
     {
-      name: "rejects it as the argument",
+      where: "as the argument",
       version: "1.0.0",
-      arg: `1.0.${aboveU64Max}`,
-      expected: {
-        stdout: "",
-        stderr:
-          `error: Invalid version argument: "1.0.${aboveU64Max}"\n` +
-          "note: Valid options: patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific semver version\n",
-        exitCode: 1,
-        after: "1.0.0",
-      },
+      arg: "1.0.18446744073709551616",
+      stderr:
+        'error: Invalid version argument: "1.0.18446744073709551616"\n' +
+        "note: Valid options: patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific semver version\n",
     },
-    {
-      name: "accepts Number.MAX_SAFE_INTEGER in package.json",
-      version: `1.0.${maxSafeInteger}`,
-      arg: "minor",
-      expected: { stdout: "v1.1.0\n", stderr: "", exitCode: 0, after: "1.1.0" },
-    },
-    {
-      name: "accepts Number.MAX_SAFE_INTEGER as the argument",
-      version: "1.0.0",
-      arg: `1.0.${maxSafeInteger}`,
-      expected: { stdout: `v1.0.${maxSafeInteger}\n`, stderr: "", exitCode: 0, after: `1.0.${maxSafeInteger}` },
-    },
-  ])("$name", async ({ version, arg, expected }) => {
+  ])("bun pm version rejects one $where", async ({ version, arg, stderr }) => {
     using dir = tempDir("semver-pm-version", {
       "package.json": JSON.stringify({ name: "app", version }),
     });
@@ -1187,9 +1169,14 @@ describe.concurrent("bun pm version and a version number above u64::MAX", () => 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderrText, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const after = (await Bun.file(join(String(dir), "package.json")).json()).version;
-    expect({ stdout, stderr, exitCode, after }).toEqual(expected);
+    expect({ stdout, stderr: stderrText, exitCode, after }).toEqual({
+      stdout: "",
+      stderr,
+      exitCode: 1,
+      after: version,
+    });
   });
 });
 

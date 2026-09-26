@@ -601,7 +601,7 @@ pub mod entry {
 }
 
 pub(crate) use entry::EntryColumns;
-pub use entry::{Entry, StoreKeyFormatter, fmt_store_key};
+pub use entry::{Entry, fmt_store_key};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Node

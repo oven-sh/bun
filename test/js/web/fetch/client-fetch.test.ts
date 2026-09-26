@@ -85,6 +85,7 @@ test("pre aborted with readable request body", async () => {
     ).rejects.toThrow();
   } finally {
     server.closeAllConnections();
+    server.close();
   }
 });
 
@@ -559,6 +560,7 @@ test("fetching with Request object - issue #1527", async () => {
     expect(await fetch(request)).resolves.pass();
   } finally {
     server.closeAllConnections();
+    server.close();
   }
 });
 

@@ -1466,6 +1466,8 @@ pub mod bv2_impl {
 
         /// Opaque `JSC::EncoderStringTable` — one instance shared by every chunk's `encodeCodeBlock` in a `--compile --bytecode` build.
         pub(crate) enum EncoderStringTable {}
+        /// Opaque `JSC::BytecodeLinkEncoder` — every chunk of a `--compile --bytecode` link encoded into one payload (`bytecode_order`).
+        pub(crate) enum BytecodeLinkEncoder {}
 
         unsafe extern "Rust" {
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Generic
@@ -1506,7 +1508,46 @@ pub mod bv2_impl {
             pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
             safe fn __bun_jsc_encoder_string_table_take(
                 table: core::ptr::NonNull<EncoderStringTable>,
+                hot_strings: &[u64],
             ) -> Box<[u8]>;
+            safe fn __bun_jsc_bytecode_link_encoder_new(
+                external_strings: core::ptr::NonNull<EncoderStringTable>,
+                hot_functions: &[u64],
+                known_functions: &[u64],
+                evaluated_modules: &[u64],
+                not_evaluated_modules: &[u64],
+            ) -> core::ptr::NonNull<BytecodeLinkEncoder>;
+            safe fn __bun_jsc_bytecode_link_encoder_destroy(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+            );
+            safe fn __bun_jsc_bytecode_link_encoder_add_module(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                format: crate::options_impl::Format,
+                source: &[u8],
+                source_provider_url: &bun_core::String,
+                depth: u32,
+                optimize: bool,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_add_internal_module(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                id: u32,
+                depth: u32,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                source: &[u8],
+                name: &[u8],
+                url: &[u8],
+                source_stamp: u32,
+                depth: u32,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_finish(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                module_count: usize,
+            ) -> Option<crate::bytecode_order::LinkedPayload>;
             /// The runtime-resolvable slot for one module-info string (`EncoderStringTable::slot_for_wtf8`).
             safe fn __bun_jsc_encoder_string_table_slot(
                 table: core::ptr::NonNull<EncoderStringTable>,
@@ -1588,9 +1629,10 @@ pub mod bv2_impl {
             pub(crate) fn get(&self) -> Option<core::ptr::NonNull<EncoderStringTable>> {
                 self.0
             }
+            /// `hot_strings`: a payload order file's strings (`bytecode_order`), whose records go first.
             #[inline]
-            pub(crate) fn take(mut self) -> Box<[u8]> {
-                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"))
+            pub(crate) fn take(mut self, hot_strings: &[u64]) -> Box<[u8]> {
+                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"), hot_strings)
             }
             #[inline]
             pub(crate) fn slot(&self, wtf8: &[u8]) -> u32 {
@@ -1601,8 +1643,101 @@ pub mod bv2_impl {
         impl Drop for EncoderStringTableHandle {
             fn drop(&mut self) {
                 if let Some(table) = self.0.take() {
-                    drop(__bun_jsc_encoder_string_table_take(table));
+                    drop(__bun_jsc_encoder_string_table_take(table, &[]));
                 }
+            }
+        }
+
+        /// Owns a `JSC::BytecodeLinkEncoder`. Lives and dies on the thread that created it (it uses that thread's bytecode VM).
+        pub(crate) struct BytecodeLinkEncoderHandle {
+            encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+            module_count: usize,
+        }
+
+        impl BytecodeLinkEncoderHandle {
+            pub(crate) fn new(
+                external_strings: core::ptr::NonNull<EncoderStringTable>,
+                order: &crate::bytecode_order::BytecodeOrder,
+            ) -> Self {
+                Self {
+                    encoder: __bun_jsc_bytecode_link_encoder_new(
+                        external_strings,
+                        &order.hot_functions,
+                        &order.known_functions,
+                        &order.evaluated_modules,
+                        &order.not_evaluated_modules,
+                    ),
+                    module_count: 0,
+                }
+            }
+            /// Same arguments as `generate_cached_bytecode`, and what an order file calls the chunk's code; false on a
+            /// parse error. A module's position among the successful calls is its index into `finish()`'s lists.
+            pub(crate) fn add_module(
+                &mut self,
+                format: crate::options_impl::Format,
+                source: &[u8],
+                source_provider_url: &bun_core::String,
+                depth: u32,
+                optimize: bool,
+                names: Option<&crate::bytecode_order::CodeNames>,
+            ) -> bool {
+                let depth = match format {
+                    crate::options_impl::Format::Cjs => depth.saturating_add(1),
+                    _ => depth,
+                };
+                let ok = __bun_jsc_bytecode_link_encoder_add_module(
+                    self.encoder,
+                    format,
+                    source,
+                    source_provider_url,
+                    depth,
+                    optimize,
+                    &names.into(),
+                );
+                self.module_count += ok as usize;
+                ok
+            }
+            /// An internal module (this executable's, or with `target_source_stamp` another executable's) as its
+            /// builtins section has it, as one more module of the link.
+            pub(crate) fn add_internal_module(
+                &mut self,
+                id: u32,
+                module: &bun_exe_format::builtins::Module<'_>,
+                target_source_stamp: Option<u32>,
+                depth: u32,
+                names: Option<&crate::bytecode_order::CodeNames>,
+            ) -> bool {
+                let names = names.into();
+                let ok = match target_source_stamp {
+                    Some(source_stamp) => {
+                        __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
+                            self.encoder,
+                            module.source,
+                            module.name,
+                            module.url,
+                            source_stamp,
+                            depth,
+                            &names,
+                        )
+                    }
+                    None => __bun_jsc_bytecode_link_encoder_add_internal_module(
+                        self.encoder,
+                        id,
+                        depth,
+                        &names,
+                    ),
+                };
+                self.module_count += ok as usize;
+                ok
+            }
+            pub(crate) fn finish(&mut self) -> Option<crate::bytecode_order::LinkedPayload> {
+                __bun_jsc_bytecode_link_encoder_finish(self.encoder, self.module_count)
+            }
+        }
+
+        impl Drop for BytecodeLinkEncoderHandle {
+            fn drop(&mut self) {
+                __bun_jsc_bytecode_link_encoder_destroy(self.encoder);
             }
         }
 
@@ -1725,6 +1860,39 @@ pub mod bv2_impl {
     fn path_as_static(p: &Fs::Path<'_>) -> Fs::Path<'static> {
         // SAFETY: caller contract above.
         unsafe { (*p).into_static() }
+    }
+
+    /// Logs resolver errors that `resolve()` returns without writing to any
+    /// log so `has_errors()` actually fires. Returns `true` when `err` is one
+    /// of those; shared by `run_resolver` and `resolve_import_records`.
+    #[cold]
+    pub(crate) fn log_unhandled_resolve_error(
+        log: &mut bun_ast::Log,
+        source: Option<&bun_ast::Source>,
+        range: bun_ast::Range,
+        err: _resolver::Error,
+        specifier: &[u8],
+        kind: ImportKind,
+        report: bool,
+    ) -> bool {
+        if err == _resolver::Error::InvalidDataURL {
+            if report {
+                bun_ast::Log::add_resolve_error_with_text_dupe(
+                    log,
+                    source,
+                    range,
+                    format_args!(
+                        "Could not resolve data URL: \"{}\"",
+                        bstr::BStr::new(specifier)
+                    ),
+                    specifier,
+                    kind,
+                );
+            }
+            return true;
+        }
+        // Other errors are logged by the resolver before it returns Failure.
+        false
     }
 
     // Unified with the canonical definitions at the parent module level (this
@@ -2636,8 +2804,18 @@ pub mod bv2_impl {
                                     );
                                 }
                             }
+                        } else {
+                            log_unhandled_resolve_error(
+                                log,
+                                source,
+                                import_record.range,
+                                err,
+                                &import_record.specifier,
+                                import_record.kind,
+                                !handles_import_errors
+                                    && !self.transpiler.options.ignore_module_resolution_errors,
+                            );
                         }
-                        // assume other errors are already in the log
                         return;
                     }
                 }
@@ -3124,6 +3302,10 @@ pub mod bv2_impl {
                     crate::options::default_min_chunk_size(this.transpiler.options.target)
                 });
             this.linker.options.fold_chunks = this.transpiler.options.fold_chunks;
+            this.linker.options.entry_naming_has_hash = crate::options::path_template_needs(
+                &this.transpiler.options.entry_naming,
+                crate::options::PlaceholderField::Hash,
+            );
             this.linker.options.module_preload = this.transpiler.options.module_preload;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
@@ -3148,6 +3330,45 @@ pub mod bv2_impl {
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
+            // Read now, once and in full (a pipe will do): a path that is wrong fails the build here, before anything
+            // is parsed, not after the link.
+            if this.transpiler.options.bytecode
+                && this.transpiler.options.compile_mode.is_executable()
+            {
+                let paths = this
+                    .transpiler
+                    .options
+                    .bytecode_order
+                    .iter()
+                    .map(|path| &path[..]);
+                match crate::bytecode_order::BytecodeOrder::load(paths) {
+                    Ok((order, without_hints)) => {
+                        for (path, unusable) in without_hints {
+                            this.transpiler.log_mut().add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "the bytecode order file {} {}",
+                                    bstr::BStr::new(path),
+                                    unusable.why()
+                                ),
+                            );
+                        }
+                        this.linker.options.bytecode_order = order;
+                    }
+                    Err((path, err)) => {
+                        this.transpiler.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "cannot read the bytecode order file {}: {}",
+                                bstr::BStr::new(path),
+                                err
+                            ),
+                        );
+                    }
+                }
+            }
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
@@ -6701,8 +6922,22 @@ pub mod bv2_impl {
                                     }
                                 }
                             } else {
-                                // assume other errors are already in the log
-                                last_error = Some(err.into());
+                                let report = !import_record
+                                    .flags
+                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                                    && !self.transpiler.options.ignore_module_resolution_errors;
+                                let ours = log_unhandled_resolve_error(
+                                    log,
+                                    Some(source),
+                                    import_record.range,
+                                    err,
+                                    import_record.path.text,
+                                    import_record.kind,
+                                    report,
+                                );
+                                if !ours || report {
+                                    last_error = Some(err.into());
+                                }
                             }
                             continue 'outer;
                         }

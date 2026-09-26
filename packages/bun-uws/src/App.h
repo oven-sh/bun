@@ -230,7 +230,7 @@ public:
      * then BACKPRESSURE beats SUCCESS. */
     PublishStatus publish(std::string_view topic, std::string_view message, OpCode opCode, bool compress = false) {
         /* Anything big bypasses corking efforts */
-        if (message.length() >= LoopData::CORK_BUFFER_SIZE) {
+        if (message.length() >= LoopData::CORK_COPY_MAX) {
             PublishStatus worst = PublishStatus::SUCCESS;
             bool hasReceivers = false;
             topicTree->publishBig(nullptr, topic, {message, opCode, compress}, [&worst, &hasReceivers](Subscriber *s, TopicTreeBigMessage &message) {
@@ -427,13 +427,7 @@ public:
              * adopted into its own group), so the ext block is an HttpResponseData. */
             auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
             struct us_socket_t *next = s->next;
-            if (data->isIdle) {
-                /* A socket is idle from the moment its response completes. When
-                 * that happens inside onData's parse loop the response can still
-                 * sit in the cork buffer, and JS that runs before the loop ends
-                 * (a graceful stop() from a microtask) gets here. close() sends
-                 * it first. */
-                ((AsyncSocket<SSL> *) s)->close();
+            if (((HttpResponse<SSL> *) s)->closeIfIdle()) {
                 closed++;
             } else if (closeWhenIdle) {
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
@@ -806,6 +800,11 @@ public:
 
     TemplatedApp &&setMaxHTTPHeaderSize(uint64_t maxHeaderSize) {
         httpContext->getSocketContextData()->maxHeaderSize = maxHeaderSize;
+        return std::move(*this);
+    }
+
+    TemplatedApp &&setMaxHeadersCount(uint32_t maxHeadersCount) {
+        httpContext->getSocketContextData()->maxHeadersCount = maxHeadersCount;
         return std::move(*this);
     }
 

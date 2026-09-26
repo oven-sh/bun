@@ -75,9 +75,9 @@ struct SecretsJobOptions {
     };
 
     Operation op;
-    CString service; // UTF-8 encoded, thread-safe
-    CString name; // UTF-8 encoded, thread-safe
-    CString password; // UTF-8 encoded, thread-safe (only for SET)
+    UTF8CString service; // thread-safe
+    UTF8CString name; // thread-safe
+    UTF8CString password; // thread-safe (only for SET)
     bool allowUnrestrictedAccess = false; // Controls security vs headless access (only for SET)
     Secrets::Persist persist; // Windows only (only for SET)
 
@@ -86,7 +86,7 @@ struct SecretsJobOptions {
     std::optional<WTF::Vector<uint8_t>> resultPassword;
     bool deleted = false;
 
-    SecretsJobOptions(Operation op, CString&& service, CString&& name, CString&& password, bool allowUnrestrictedAccess, Secrets::Persist persist)
+    SecretsJobOptions(Operation op, UTF8CString&& service, UTF8CString&& name, UTF8CString&& password, bool allowUnrestrictedAccess, Secrets::Persist persist)
         : op(op)
         , service(service)
         , name(name)

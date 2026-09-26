@@ -372,6 +372,11 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 /// monomorphizations share one copy.
 #[inline(never)]
 fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
+    if let Body::Value::Locked(locked) = response.get_body_value()
+        && locked.has_consumer()
+    {
+        return;
+    }
     if let Some(stream) = response.get_body_readable_stream() {
         stream.value.ensure_still_alive();
         response.detach_readable_stream(global_this);
@@ -736,8 +741,13 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Cancel the body stream of a Response the server will not transmit.
+    /// Cancel the body stream of a Response the server will not transmit, unless a consumer reads it.
     fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
+        if let Body::Value::Locked(locked) = response.get_body_value()
+            && locked.has_consumer()
+        {
+            return;
+        }
         if let Some(stream) = response.get_body_readable_stream() {
             let _keep = jsc::EnsureStillAlive(stream.value);
             response.detach_readable_stream(global_this);
@@ -3052,6 +3062,21 @@ where
         true
     }
 
+    #[cold]
+    fn refuse_used_body(&self) {
+        let js_err = self
+            .server()
+            .global_this()
+            .err(
+                jsc::ErrorCode::BODY_ALREADY_USED,
+                format_args!(
+                    "Response body already used. A Response body can only be sent once; create a new Response for each request."
+                ),
+            )
+            .to_js();
+        self.run_error_handler(js_err);
+    }
+
     pub(crate) fn do_render_with_body(
         &self,
         value: *mut Body::Value,
@@ -3085,15 +3110,7 @@ where
                 if this.is_aborted_or_ended() {
                     return;
                 }
-                let js_err = global_this
-                    .err(
-                        jsc::ErrorCode::BODY_ALREADY_USED,
-                        format_args!(
-                            "Response body already used. A Response body can only be sent once; create a new Response for each request."
-                        ),
-                    )
-                    .to_js();
-                this.run_error_handler(js_err);
+                this.refuse_used_body();
                 return;
             }
             Body::Value::WTFStringImpl(_) | Body::Value::InternalBlob(_) | Body::Value::Blob(_) => {
@@ -3246,8 +3263,13 @@ where
                     }
                 }
 
-                if lock.on_receive_value.is_some() || lock.task.is_some() {
-                    // someone else is waiting for the stream or waiting for `onStartStreaming`
+                if lock.has_consumer() {
+                    this.refuse_used_body();
+                    return;
+                }
+
+                if lock.task.is_some() {
+                    // The producer waits for `onStartStreaming`.
                     let context = this.script_context();
                     let readable = match value.to_readable_stream(&global_this.js_thread(context)) {
                         Ok(readable) => readable,

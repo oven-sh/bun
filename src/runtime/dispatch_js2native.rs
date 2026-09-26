@@ -35,6 +35,7 @@ pub(crate) use bun_install_jsc::ini_jsc::ini_testing_load_npmrc_from_js as ini_i
 pub(crate) use bun_install_jsc::ini_jsc::ini_testing_parse as ini_ini_ini_testing_ap_is_parse;
 
 pub(crate) use bun_jsc::bindgen_test::get_bindgen_test_functions as jsc_bindgen_test_get_bindgen_test_functions;
+pub(crate) use bun_jsc::bytecode_order_recorder::names_for_testing as jsc_bytecode_order_recorder_names_for_testing;
 pub(crate) use bun_jsc::counters::create_counters_object as jsc_counters_create_counters_object;
 pub(crate) use bun_jsc::event_loop::get_active_tasks as jsc_event_loop_get_active_tasks;
 pub(crate) use bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTesting as jsc_virtual_machine_exports_bun__set_synthetic_allocation_limit_for_testing;

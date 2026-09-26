@@ -26,7 +26,8 @@ rt=$($llvm/clang --print-libgcc-file-name --rtlib=compiler-rt)
 $llvm/clang -O2 --target=x86_64-linux-musl -nostdinc -isystem "$sys/include" \
   -isystem "$($llvm/clang -print-resource-dir)/include" \
   -femulated-tls -mno-red-zone -fno-stack-protector -fPIE -c -o "$out/threads.o" "$here/test/threads.c"
-$llvm/ld.lld -static -pie --no-dynamic-linker -z noexecstack -o "$out/threads.img" \
+$llvm/ld.lld -static -pie --no-dynamic-linker -z noexecstack \
+  -z max-page-size=65536 -z separate-loadable-segments -o "$out/threads.img" \
   "$sys/lib/rcrt1.o" "$sys/lib/crti.o" "$out/threads.o" -L"$sys/lib" -lc "$rt" -lc "$sys/lib/crtn.o"
 cc -O2 -o "$out/host-linux" "$here/host/host_posix.c" -lpthread
 echo "direct:" && "$out/threads.img" "$out/probe.tmp" || [ $? -eq 42 ]

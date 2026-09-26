@@ -356,29 +356,60 @@ int main(int argc, char **argv) {
   fds[1] = GetStdHandle(STD_OUTPUT_HANDLE);
   fds[2] = GetStdHandle(STD_ERROR_HANDLE);
 
-  FILE *f = fopen(argv[1], "rb");
-  if (!f) { perror(argv[1]); return 2; }
-  fseek(f, 0, SEEK_END);
-  long size = ftell(f);
-  fseek(f, 0, SEEK_SET);
-  unsigned char *file = malloc(size);
-  if (fread(file, 1, size, f) != (size_t)size) return 2;
-  fclose(f);
+  wchar_t wpath[4096];
+  if (!to_wide(argv[1], wpath, 4096)) return 2;
+  HANDLE file_handle = CreateFileW(wpath, GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_DELETE, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+  if (file_handle == INVALID_HANDLE_VALUE) { fprintf(stderr, "host: cannot open %s\n", argv[1]); return 2; }
+  LARGE_INTEGER file_size;
+  GetFileSizeEx(file_handle, &file_size);
+  long size = (long)file_size.QuadPart;
+  HANDLE mapping = CreateFileMappingW(file_handle, 0, PAGE_EXECUTE_READ, 0, 0, 0);
+  if (!mapping) { fprintf(stderr, "host: cannot create an executable file mapping (%lu)\n", GetLastError()); return 2; }
+  unsigned char *file = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+  if (!file) return 2;
   Ehdr *eh = (Ehdr *)file;
   Phdr *ph = (Phdr *)(file + eh->phoff);
   uint64_t top = 0;
   for (int i = 0; i < eh->phnum; i++)
     if (ph[i].type == 1 && ph[i].vaddr + ph[i].memsz > top) top = ph[i].vaddr + ph[i].memsz;
   top = (top + 0xffff) & ~0xffffull;
-  unsigned char *base = VirtualAlloc(0, top, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-  if (!base) return 2;
-  for (int i = 0; i < eh->phnum; i++)
-    if (ph[i].type == 1) memcpy(base + ph[i].vaddr, file + ph[i].offset, ph[i].filesz);
-  for (int i = 0; i < eh->phnum; i++) {
-    if (ph[i].type != 1 || (ph[i].flags & 2)) continue;
-    uint64_t lo = ph[i].vaddr & ~(PAGE - 1), hi = (ph[i].vaddr + ph[i].memsz + PAGE - 1) & ~(PAGE - 1);
-    DWORD old;
-    VirtualProtect(base + lo, hi - lo, ph[i].flags & 1 ? PAGE_EXECUTE_READ : PAGE_READONLY, &old);
+
+  /* Read-only and executable segments are views of the file: no copy, shared
+     between processes. Writable segments are small and are copied. Views and
+     allocations start on 64 KiB boundaries, so the image is linked that way. */
+  unsigned char *base = 0;
+  size_t mapped_bytes = 0, copied_bytes = 0;
+  for (int attempt = 0; attempt < 16 && !base; attempt++) {
+    unsigned char *want = VirtualAlloc(0, top, MEM_RESERVE, PAGE_NOACCESS);
+    if (!want) return 2;
+    VirtualFree(want, 0, MEM_RELEASE);
+    int ok = 1;
+    mapped_bytes = copied_bytes = 0;
+    for (int i = 0; i < eh->phnum && ok; i++) {
+      if (ph[i].type != 1) continue;
+      if ((ph[i].vaddr | ph[i].offset) & 0xffff) { fprintf(stderr, "host: segment %d is not aligned to 64 KiB\n", i); return 2; }
+      size_t mem = (ph[i].memsz + PAGE - 1) & ~(PAGE - 1);
+      if (ph[i].flags & 2) {
+        unsigned char *p = VirtualAlloc(want + ph[i].vaddr, mem, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (p) { memcpy(p, file + ph[i].offset, ph[i].filesz); copied_bytes += ph[i].filesz; }
+        ok = p != 0;
+      } else {
+        DWORD access = FILE_MAP_READ | (ph[i].flags & 1 ? FILE_MAP_EXECUTE : 0);
+        ok = MapViewOfFileEx(mapping, access, (DWORD)(ph[i].offset >> 32), (DWORD)ph[i].offset, ph[i].filesz, want + ph[i].vaddr) != 0;
+        mapped_bytes += ph[i].filesz;
+      }
+    }
+    if (ok) base = want;
+    else
+      for (int i = 0; i < eh->phnum; i++)
+        if (ph[i].type == 1 && !UnmapViewOfFile(want + ph[i].vaddr)) VirtualFree(want + ph[i].vaddr, 0, MEM_RELEASE);
+  }
+  if (!base) { fprintf(stderr, "host: cannot place the image (%lu)\n", GetLastError()); return 2; }
+  if (trace) {
+    MEMORY_BASIC_INFORMATION info;
+    VirtualQuery(base + eh->entry, &info, sizeof info);
+    fprintf(stderr, "[host] code is %s, %zu bytes mapped from the file, %zu bytes copied\n",
+            info.Type == MEM_MAPPED ? "a file view (MEM_MAPPED)" : info.Type == MEM_PRIVATE ? "private memory" : "an image section", mapped_bytes, copied_bytes);
   }
   Phdr *image_ph = (Phdr *)(base + eh->phoff);
 

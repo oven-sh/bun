@@ -289,16 +289,31 @@ int main(int argc, char **argv) {
   for (int i = 0; i < eh->phnum; i++)
     if (ph[i].type == 1 && ph[i].vaddr + ph[i].memsz > top) top = ph[i].vaddr + ph[i].memsz;
   top = (top + 0xffff) & ~0xffffull;
-  unsigned char *base = mmap(0, top, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON_HOST, -1, 0);
-  if (base == MAP_FAILED) { perror("map image"); return 2; }
-  for (int i = 0; i < eh->phnum; i++)
-    if (ph[i].type == 1) memcpy(base + ph[i].vaddr, file + ph[i].offset, ph[i].filesz);
+  /* Read-only and executable segments are mapped from the file: no copy,
+     shared between processes. Writable segments are small and are copied. */
+  unsigned char *base = mmap(0, top, PROT_NONE, MAP_PRIVATE | MAP_ANON_HOST, -1, 0);
+  if (base == MAP_FAILED) { perror("reserve image"); return 2; }
   long host_page = sysconf(_SC_PAGESIZE);
+  size_t mapped_bytes = 0, copied_bytes = 0;
+  const char *code_is = "mapped from the file";
   for (int i = 0; i < eh->phnum; i++) {
-    if (ph[i].type != 1 || (ph[i].flags & 2)) continue;
-    uint64_t lo = ph[i].vaddr & ~(host_page - 1), hi = (ph[i].vaddr + ph[i].memsz + host_page - 1) & ~(host_page - 1);
-    if (mprotect(base + lo, hi - lo, PROT_READ | (ph[i].flags & 1 ? PROT_EXEC : 0))) { perror("protect image"); return 2; }
+    if (ph[i].type != 1) continue;
+    if ((ph[i].vaddr | ph[i].offset) & (host_page - 1)) { fprintf(stderr, "host: segment %d is not aligned to the host page\n", i); return 2; }
+    size_t mem = (ph[i].memsz + host_page - 1) & ~(host_page - 1);
+    int prot = PROT_READ | (ph[i].flags & 1 ? PROT_EXEC : 0);
+    if (!(ph[i].flags & 2)) {
+      void *p = mmap(base + ph[i].vaddr, mem, prot, MAP_PRIVATE | MAP_FIXED, fd, (off_t)ph[i].offset);
+      if (p != MAP_FAILED) { mapped_bytes += ph[i].filesz; continue; }
+      if (trace) fprintf(stderr, "[host] file mapping with prot %d refused (%s), copying\n", prot, strerror(errno));
+      if (ph[i].flags & 1) code_is = "copied (file mapping refused)";
+    }
+    void *p = mmap(base + ph[i].vaddr, mem, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANON_HOST, -1, 0);
+    if (p == MAP_FAILED) { perror("map segment"); return 2; }
+    memcpy(p, file + ph[i].offset, ph[i].filesz);
+    copied_bytes += ph[i].filesz;
+    if (!(ph[i].flags & 2) && mprotect(p, mem, prot)) { perror("protect segment"); return 2; }
   }
+  if (trace) fprintf(stderr, "[host] code is %s, %zu bytes mapped from the file, %zu bytes copied\n", code_is, mapped_bytes, copied_bytes);
 
   pthread_key_create(&tp_key, 0);
   pthread_key_create(&thread_key, 0);

@@ -2743,10 +2743,10 @@ pub struct RuntimeHooks {
     /// `heap::take`s it and clears its thread-local cache. Without this slot
     /// every worker leaked one box.
     pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
-    /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
+    /// `ServerEntryPoint.generate(entry_path)` — produces the synthetic
     /// `bun:main` module body for `entry_path`. Returns `false` on error
     /// (error already logged into `vm.log`).
-    pub generate_entry_point: fn(vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
+    pub generate_entry_point: fn(vm: &VirtualMachine, entry_path: &[u8]) -> bool,
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
     /// preload promise if any, else null. Errors propagate
     /// (resolver failures / `ModuleNotFound`).
@@ -3457,8 +3457,7 @@ impl VirtualMachine {
 
         if !self.main_is_html_entrypoint {
             if let Some(hooks) = hooks {
-                let watch = self.is_watcher_enabled();
-                if !(hooks.generate_entry_point)(self, watch, entry_path) {
+                if !(hooks.generate_entry_point)(self, entry_path) {
                     return Err(crate::CrateError::ServerEntryPointGenerate);
                 }
             }

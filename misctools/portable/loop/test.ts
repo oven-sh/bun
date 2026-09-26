@@ -9,6 +9,8 @@
 //                 first call of Windows or of libuv has to stop it with a message
 //   imports       the import table has the functions of libuv, of Winsock and of kernel32 that bun's
 //                 event loop for Windows calls, from Rust and from C, and none of them resolves on Linux
+//   entries       the functions of the image that the host OS calls check the slot of the thread
+//                 pointer before anything that needs one (../image/entries.ts), in Rust and in C
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -74,5 +76,16 @@ check("imports", () => {
   return r.code === 1 && summary?.total === summary?.missing && summary.total > 100 && absent.length === 0 ? undefined : `exit code ${r.code}, ${JSON.stringify(summary)}, not in the table: ${JSON.stringify(absent)}`;
 });
 
+{
+  const analysed = Bun.spawnSync(["bun", join(tree, "image/entries.ts"), image], { stdout: "pipe", stderr: "pipe" });
+  const report = analysed.stdout.toString().startsWith("{") ? JSON.parse(analysed.stdout.toString()) : {};
+  const ok = analysed.exitCode === 0 && report.functions_that_check > 0 && report.check_written_by_the_compiler > 0;
+  results.push({
+    test: `entries: ${report.functions_that_check} functions check, ${report.check_written_by_the_compiler} of them where the compiler wrote it`,
+    passes: ok ? 1 : 0,
+    runs: 1,
+    note: ok ? undefined : analysed.stdout.toString().slice(0, 600) + analysed.stderr.toString().slice(0, 300),
+  });
+}
 for (const result of results) console.log(JSON.stringify(result));
 process.exit(results.every(result => result.passes === result.runs) ? 0 : 1);

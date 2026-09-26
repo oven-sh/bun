@@ -68,6 +68,10 @@ pub fn run(program: &'static [u8], arguments: &[&'static [u8]]) -> i32 {
             passed &= tcp::steps(&mut report, &event_loop);
             passed &= pool::step(&mut report, &event_loop);
             passed &= child::steps(&mut report, &event_loop, program);
+            #[cfg(windows)]
+            {
+                passed &= timer::step_of_usockets(&mut report, &event_loop);
+            }
             if report.print() && passed { 0 } else { 1 }
         }
         _ => 2,

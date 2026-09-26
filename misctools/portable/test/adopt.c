@@ -20,6 +20,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,10 +29,16 @@
 
 extern unsigned long __bun_tp_offset;
 void __bun_thread_adopt(void);
+void __bun_thread_enter(void);
 unsigned long __bun_adopted_threads(unsigned long *ever);
 void *__bun_host_lookup(const char *library, const char *symbol);
 
+// What the host calls has the calling convention of Windows, which arm64 shares with the image.
+#if defined(__x86_64__)
 #define WIN64 __attribute__((ms_abi))
+#else
+#define WIN64
+#endif
 typedef WIN64 long long Callback(void *context, long long thread, long long call);
 typedef WIN64 long long TestThreads(Callback *callback, void *context, long long threads, long long calls);
 // adopt_cpp.cpp
@@ -48,15 +55,21 @@ static long long shared_calls;
 static pthread_key_t key;
 static volatile int destructors_ran;
 static volatile int stop_image_threads;
+static volatile int image_threads_at_work;
 
 static _Thread_local long long calls_on_this_thread;
 static _Thread_local char name_of_this_thread[32] = "unset";
 
-// What an entry of the image does first: a load of the slot and a branch.
+// What an entry of the image does first. x86-64: a load of the slot and a branch, gs is the thread's
+// on every host. arm64: the register is the host's choice, and the C library has the check.
 static inline void enter(void) {
+#if defined(__x86_64__)
   void *thread_pointer;
   __asm__("mov %%gs:(%1), %0" : "=r"(thread_pointer) : "r"(__bun_tp_offset));
   if (__builtin_expect(!thread_pointer, 0)) __bun_thread_adopt();
+#else
+  __bun_thread_enter();
+#endif
 }
 
 static void destructor(void *value) {
@@ -86,6 +99,14 @@ long long adopt_work(void *context, long long thread, long long call) {
   snprintf(expected, sizeof expected, "host-%lld", thread);
   if (strcmp(name_of_this_thread, expected) || !pthread_getspecific(key)) return -6000000;
 
+  // The stack of the thread, which the thread's maker made: this frame is on it.
+  pthread_attr_t attributes;
+  void *stack = 0;
+  size_t stack_size = 0;
+  if (pthread_getattr_np(pthread_self(), &attributes) || pthread_attr_getstack(&attributes, &stack, &stack_size)) return -9000000;
+  pthread_attr_destroy(&attributes);
+  if ((char *)&attributes < (char *)stack || (char *)&attributes >= (char *)stack + stack_size) return -9000000;
+
   // The allocator, and a lock that the threads of the image take too.
   size_t size = 100 + (size_t)(thread * 37 + call * 11) % 5000;
   unsigned char *block = malloc(size);
@@ -113,15 +134,18 @@ WIN64 static long long unlisted_callback(void *context, long long thread, long l
   return adopt_work(context, thread, call);
 }
 
+// A thread of the image, at work while the threads of the host enter: it takes the allocator and the
+// lock that they take.
 static void *image_thread(void *arg) {
   long long rounds = 0;
-  while (!stop_image_threads) {
+  do {
     void *block = malloc(64 + (size_t)(rounds % 1000));
     pthread_mutex_lock(&lock);
     rounds++;
     pthread_mutex_unlock(&lock);
     free(block);
-  }
+    if (rounds == 1) __sync_fetch_and_add(&image_threads_at_work, 1);
+  } while (!stop_image_threads);
   return (void *)(intptr_t)(rounds > 0 && !strcmp(name_of_this_thread, "unset") && arg == (void *)&lock);
 }
 
@@ -152,6 +176,7 @@ int main(int argc, char **argv) {
   pthread_t image_threads[IMAGE_THREADS];
   for (int i = 0; i < IMAGE_THREADS; i++)
     if (pthread_create(&image_threads[i], 0, image_thread, &lock)) return 1;
+  while (image_threads_at_work < IMAGE_THREADS) sched_yield();
   long long sum = test_threads(entered, &shared_calls, HOST_THREADS, CALLS);
   stop_image_threads = 1;
   int image_threads_ok = 0;

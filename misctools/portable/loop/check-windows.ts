@@ -9,9 +9,11 @@
 //   host              host_win.c and host_win_uv.c, linked with libuv: a name of the table that this
 //                     libuv does not define, or a function of Windows that no library has, fails here
 //   headers of the C  check_on_windows.c: the constants, sizes and offsets that the C of the image for
-//                     Windows was compiled against (uv_header.ts), against the SDK and libuv
+//                     Windows was compiled against (uv_header.ts), against the SDK and libuv.
+//                     check_on_windows.cpp: the arguments and results of the functions it calls
 //   layout            the structures and constants of bun's Rust bindings as the image has them
-//                     against the SDK and libuv (../bindings/verify.ts --table, compare.ts)
+//                     against the SDK and libuv (../bindings/verify.ts --table, compare.ts). The
+//                     structures that only the Windows Driver Kit declares are not compared
 //   imports           every import of the image against the import libraries of the SDK and the
 //                     table of the host (../bindings/imports-libraries.ts)
 //
@@ -22,7 +24,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { headerCheckFlags, host, libuv } from "./windows_build.ts";
+import { headerCheckFlags, host, libuv, signatureCheckFlags } from "./windows_build.ts";
 
 const here = dirname(import.meta.path);
 const tree = resolve(here, "..");
@@ -40,7 +42,8 @@ function run(cmd: string[], log?: string, cwd?: string) {
 }
 const count = (text: string, what: RegExp) => [...text.matchAll(what)].length;
 
-if (!existsSync(join(sdk, "windows-x64.cfg"))) {
+{
+  // What is there is checked against its hash and kept.
   const fetched = run(["bun", join(tree, "tools/windows-sdk.ts"), sdk], join(out, "sdk.log"));
   if (!fetched.ok) throw new Error(`the SDK could not be fetched: ${join(out, "sdk.log")}`);
 }
@@ -129,6 +132,18 @@ mkdirSync(objects, { recursive: true });
     log: join(out, "check-windows-c.txt"),
   });
 }
+{
+  const source = join(work, "usockets/windows-include/check_on_windows.cpp");
+  const compiled = run([`${llvm}/clang++`, ...clang.slice(1), ...signatureCheckFlags, "-ferror-limit=0", `-I${join(checkout, "include")}`, source], join(out, "check-windows-cpp.txt"));
+  const text = readFileSync(source, "utf8");
+  check("functions that the C of the image calls", compiled.ok, {
+    source,
+    functions: count(text, /^static_assert\(Same<decltype\(/gm),
+    callbacks: count(text, /^static_assert\(Same<uv_[a-z_]+_cb,/gm),
+    errors: [...compiled.text.matchAll(/error: (.*)$/gm)].map(match => match[1].slice(0, 200)),
+    log: join(out, "check-windows-cpp.txt"),
+  });
+}
 
 // ---- the layout of the bindings ----
 {
@@ -136,7 +151,7 @@ mkdirSync(objects, { recursive: true });
   const ours = run([image, "--layout"]);
   writeFileSync(join(out, "layout.image.json"), ours.stdout);
   const verified = run(
-    ["bun", join(tree, "bindings/verify.ts"), "--libuv", checkout, "--table", "--cc", clang.join(" "), "--out", join(out, "layout.headers.json")],
+["bun", join(tree, "bindings/verify.ts"), "--libuv", checkout, "--table", "--cc", clang.join(" "), "--out", join(out, "layout.headers.json")],
     join(out, "layout-verify.log"),
   );
   const compared = verified.ok ? run(["bun", join(tree, "bindings/compare.ts"), join(out, "layout.image.json"), join(out, "layout.headers.json")]) : undefined;
@@ -147,6 +162,7 @@ mkdirSync(objects, { recursive: true });
     differ: last ? Number(last[2]) : null,
     not_compared: Number(last?.[3] ?? 0),
     different: [...(compared?.text ?? "").matchAll(/^DIFFERENT\s+(.*)$/gm)].map(match => match[1]),
+    not_compared_only_the_driver_kit_declares: /^not compared  \d+ structures that only the Windows Driver Kit declares: (.*)$/m.exec(compared?.text ?? "")?.[1].split(" ") ?? [],
     report: join(out, "layout-compare.txt"),
   });
 }

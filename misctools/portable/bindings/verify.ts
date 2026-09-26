@@ -46,29 +46,27 @@ function macroOf(line: number): string | undefined {
   return open[open.length - 1];
 }
 
-const skipped = new Set<string>();
-let compiled = false;
-let lastErrors = "";
-for (let round = 0; round < 40 && !compiled; round++) {
-  const command = [...cc, "-ferror-limit=0", "-w", `-I${join(libuv, "include")}`, ...[...skipped].map(m => `-D${m}`), ...(table ? ["-DBUN_LAYOUT_TABLE", "-c"] : []), "-o", exe, source];
-  const result = Bun.spawnSync(command, { stdout: "pipe", stderr: "pipe" });
-  if (result.exitCode === 0) {
-    compiled = true;
-    break;
+/** Compiles the program, leaving out what the headers do not have: the macros of what was left out. */
+function compile(flags: string[], output: string, what: string) {
+  const skipped = new Set<string>();
+  let lastErrors = "";
+  for (let round = 0; round < 40; round++) {
+    const command = [...cc, "-ferror-limit=0", "-w", ...flags, ...[...skipped].map(m => `-D${m}`), "-o", output, source];
+    const result = Bun.spawnSync(command, { stdout: "pipe", stderr: "pipe", maxBuffer: 1 << 28 });
+    if (result.exitCode === 0) return skipped;
+    lastErrors = result.stderr.toString();
+    const before = skipped.size;
+    for (const match of lastErrors.matchAll(/windows_layout\.c[:(](\d+)[:,)][^\n]*?(?:error|fatal error)/g)) {
+      const macro = macroOf(Number(match[1]));
+      if (macro) skipped.add(macro);
+    }
+    console.log(`${what}, round ${round + 1}: ${skipped.size} facts left out`);
+    if (skipped.size === before) break;
   }
-  lastErrors = result.stderr.toString();
-  const before = skipped.size;
-  for (const match of lastErrors.matchAll(/windows_layout\.c[:(](\d+)[:,)][^\n]*?(?:error|fatal error)/g)) {
-    const macro = macroOf(Number(match[1]));
-    if (macro) skipped.add(macro);
-  }
-  console.log(`round ${round + 1}: ${skipped.size} facts left out`);
-  if (skipped.size === before) break;
-}
-if (!compiled) {
   console.error(lastErrors.split("\n").slice(0, 40).join("\n"));
-  throw new Error("windows_layout.c does not compile, and no line that can be left out is the reason");
+  throw new Error(`windows_layout.c does not compile (${what}), and no line that can be left out is the reason`);
 }
+const skipped = compile([`-I${join(libuv, "include")}`, ...(table ? ["-DBUN_LAYOUT_TABLE", "-c"] : [])], exe, "the headers of the SDK and of libuv");
 /** The table `bun_layout_facts` of an object file for Windows (COFF), as the program would have printed it. */
 function factsOfTable(path: string) {
   const file = readFileSync(path);

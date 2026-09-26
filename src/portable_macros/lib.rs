@@ -38,11 +38,13 @@ pub fn imports(args: TokenStream, item: TokenStream) -> TokenStream {
 
 /// On a function that Windows or libuv calls, or on a type, a field or an item that names the type of a
 /// pointer to such a function: every `extern "C" fn` and `extern "system" fn` in it is `extern "win64" fn`
-/// on x86-64. On arm64 the two conventions agree for functions that are not variadic, and nothing changes.
+/// on x86-64. On arm64 the two conventions agree for functions that are not variadic, and the convention
+/// stays as it is written.
 ///
 /// A function with a body is one that the host OS enters, on a thread of the image or on one of its own.
 /// Its body begins with `bun_windows_sys::host_thread::enter()`, which gives a thread that has none the
-/// thread pointer of the image: the body that was written follows it, as it was written.
+/// thread pointer of the image: the body that was written follows it, as it was written. That is so on
+/// every processor.
 ///
 /// `extern` blocks inside the item are left alone: what they declare is linked into the image.
 ///
@@ -233,28 +235,36 @@ fn renamed(stream: Tokens, os: &str, names: &[String]) -> Tokens {
         .collect()
 }
 
-/// The item for x86-64 with the calling convention of Windows, and as it is for every other processor.
+/// The item for x86-64 with the calling convention of Windows, and with the convention it has for every
+/// other processor.
 fn per_architecture(item: Tokens) -> Tokens {
-    let windows = with_windows_abi(item.clone());
+    let windows = entered_by_the_host(item.clone(), Convention::OfWindows);
+    let other = entered_by_the_host(item, Convention::AsWritten);
     quote! {
         #[cfg(target_arch = "x86_64")]
         #windows
         #[cfg(not(target_arch = "x86_64"))]
-        #item
+        #other
     }
 }
 
-/// Replaces the ABI of every `extern ".." fn` whose ABI is the platform's C convention, and writes the
-/// check of the thread pointer at the start of the body of each such function.
-fn with_windows_abi(stream: Tokens) -> Tokens {
+#[derive(Clone, Copy, PartialEq)]
+enum Convention {
+    OfWindows,
+    AsWritten,
+}
+
+/// Writes the check of the thread pointer at the start of the body of every `extern ".." fn` whose ABI
+/// is the platform's C convention, and replaces that ABI where the convention of Windows is another.
+fn entered_by_the_host(stream: Tokens, convention: Convention) -> Tokens {
     let mut out = Tokens::new();
     let mut tokens = stream.into_iter().peekable();
-    // An `extern ".." fn name` was rewritten and its body has not come yet.
+    // An `extern ".." fn name` was found and its body has not come yet.
     let mut body_is_due = false;
     while let Some(token) = tokens.next() {
         match token {
             TokenTree::Group(group) => {
-                let mut stream = with_windows_abi(group.stream());
+                let mut stream = entered_by_the_host(group.stream(), convention);
                 if body_is_due && group.delimiter() == Delimiter::Brace {
                     body_is_due = false;
                     let mut body = quote!(::bun_windows_sys::host_thread::enter(););
@@ -275,7 +285,9 @@ fn with_windows_abi(stream: Tokens) -> Tokens {
                 out.extend([token]);
                 match tokens.peek() {
                     Some(TokenTree::Ident(next)) if next == "fn" => {
-                        out.extend([abi_literal("win64", span)]);
+                        if convention == Convention::OfWindows {
+                            out.extend([abi_literal("win64", span)]);
+                        }
                         let keyword = tokens.next().expect("peeked");
                         body_is_due = matches!(tokens.peek(), Some(TokenTree::Ident(_)));
                         out.extend([keyword]);
@@ -291,7 +303,11 @@ fn with_windows_abi(stream: Tokens) -> Tokens {
                             matches!(tokens.peek(), Some(TokenTree::Ident(next)) if next == "fn");
                         match replacement {
                             Some(name) if declares_function => {
-                                out.extend([abi_literal(name, abi.span())]);
+                                if convention == Convention::OfWindows {
+                                    out.extend([abi_literal(name, abi.span())]);
+                                } else {
+                                    out.extend([abi.clone()]);
+                                }
                                 // `fn name` is a function, `fn(` the type of a pointer to one.
                                 let keyword = tokens.next().expect("peeked");
                                 body_is_due = matches!(tokens.peek(), Some(TokenTree::Ident(_)));

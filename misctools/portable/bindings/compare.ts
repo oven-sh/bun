@@ -4,6 +4,10 @@
 //
 // <image.json> is the output of `bun_fs_slice.img --layout`, <headers.json> the one of verify.ts on
 // Windows. Prints every difference and what could not be compared, and fails if there is a difference.
+//
+// The structures of the NT API that bun's code for Windows passes to ntdll are declared by the Windows
+// Driver Kit (ntifs.h) and not by the Windows SDK. The Driver Kit is not used, so the headers do not
+// have them: they are not compared, and the line says so.
 import { readFileSync } from "node:fs";
 
 type Facts = {
@@ -15,6 +19,19 @@ type Facts = {
   system?: string;
   left_out?: { types: string[]; fields: string[]; constants: string[] };
 };
+/** Declared by the Windows Driver Kit only. */
+const ofTheDriverKit = new Set([
+  "FILE_BASIC_INFORMATION",
+  "FILE_DIRECTORY_INFORMATION",
+  "FILE_STANDARD_INFORMATION",
+  "FILE_INTERNAL_INFORMATION",
+  "FILE_ALL_INFORMATION",
+  "FILE_FS_DEVICE_INFORMATION",
+  "FILE_FS_VOLUME_INFORMATION",
+  "FILE_END_OF_FILE_INFORMATION",
+  "FILE_DISPOSITION_INFORMATION",
+  "FILE_DISPOSITION_INFORMATION_EX",
+]);
 const [imagePath, headersPath] = process.argv.slice(2);
 if (!imagePath || !headersPath) throw new Error("usage: bun compare.ts <image.json> <headers.json>");
 const image: Facts = JSON.parse(readFileSync(imagePath, "utf8"));
@@ -23,11 +40,15 @@ const headers: Facts = JSON.parse(readFileSync(headersPath, "utf8"));
 const differences: string[] = [];
 const notCompared: string[] = [];
 const partial: string[] = [];
+const driverKit: string[] = [];
 let same = 0;
 for (const [name, ours] of Object.entries(image.types)) {
   const theirs = headers.types[name];
   if (!theirs) {
-    notCompared.push(`type ${name}: not in the headers`);
+    if (ofTheDriverKit.has(name)) {
+      notCompared.push(`type ${name}: only the Windows Driver Kit declares it, and the Driver Kit is not used`);
+      driverKit.push(name);
+    } else notCompared.push(`type ${name}: not in the headers`);
     continue;
   }
   if (ours.partial) {
@@ -86,5 +107,7 @@ if (headers.system && headers.system !== "win32")
 for (const line of notCompared) console.log(`not compared  ${line}`);
 for (const line of partial) console.log(`partial view  ${line}`);
 for (const line of differences) console.log(`DIFFERENT     ${line}`);
+if (driverKit.length)
+  console.log(`not compared  ${driverKit.length} structures that only the Windows Driver Kit declares: ${driverKit.join(" ")}`);
 console.log(`${same} facts are the same, ${differences.length} differ, ${notCompared.length} could not be compared`);
 process.exit(differences.length ? 1 : 0);

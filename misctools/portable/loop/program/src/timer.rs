@@ -1,8 +1,11 @@
-//! A timer.
+//! Timers.
 //!
-//! bun's timers are timers of libuv on Windows (`bun_uws_sys::Timer`). Everywhere else bun keeps its
-//! timers itself and gives the loop the time until the next one as the longest it may wait
-//! (`Loop::tick_with_timeout`): no timer of the OS is involved.
+//! bun's timers are timers of libuv on Windows. Everywhere else bun keeps its timers itself and gives
+//! the loop the time until the next one as the longest it may wait (`Loop::tick_with_timeout`): no
+//! timer of the OS is involved.
+//!
+//! On Windows bun also has a timer of uSockets (`bun_uws_sys::Timer`, which keeps its loop from ending),
+//! and the program has a step for it there: uSockets calls back from its C, which libuv called.
 
 use bun_core::Timespec;
 
@@ -56,6 +59,44 @@ fn wait(event_loop: &Loop, _started: Timespec) -> i64 {
     }
     let _ = event_loop.uws();
     fired.get()
+}
+
+/// A timer of uSockets, as `bun_jsc::event_loop` makes one on Windows.
+#[cfg(windows)]
+pub(crate) fn step_of_usockets(report: &mut Report, event_loop: &Loop) -> bool {
+    use bun_uws_sys::Timer;
+    use core::ffi::c_void;
+    use core::sync::atomic::{AtomicI64, Ordering};
+
+    static FIRED: AtomicI64 = AtomicI64::new(0);
+    extern "C" fn on_timer(_: *mut Timer) {
+        FIRED.fetch_add(1, Ordering::SeqCst);
+    }
+
+    let started = Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+    // SAFETY: the loop of this thread, and nothing else holds a reference into it here.
+    let mut timer = Timer::create(
+        unsafe { &mut *event_loop.uws() },
+        core::ptr::null_mut::<c_void>(),
+    );
+    // SAFETY: `timer` is the timer that was made above, with room for the pointer.
+    unsafe { timer.as_mut() }.set(
+        core::ptr::null_mut::<c_void>(),
+        Some(on_timer),
+        MILLISECONDS as i32,
+        0,
+    );
+    event_loop.run_until(|| FIRED.load(Ordering::SeqCst) > 0);
+    let elapsed = Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns() - started.ns();
+    // SAFETY: the timer is live, and uSockets frees it once libuv has closed it.
+    unsafe { Timer::close::<false>(timer.as_ptr()) };
+    let fired = FIRED.load(Ordering::SeqCst);
+    let not_early = elapsed >= (MILLISECONDS as u64) * 1_000_000;
+    report.begin("timer of uSockets");
+    report.number("fired", fired);
+    report.boolean("not_early", not_early);
+    report.end_ok();
+    fired == 1 && not_early
 }
 
 #[cfg(not(windows))]

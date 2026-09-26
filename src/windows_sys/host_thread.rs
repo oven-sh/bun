@@ -17,6 +17,8 @@ unsafe extern "C" {
     static __bun_tp_offset: usize;
     /// The C library of the image: gives the calling thread, which has none, a thread pointer.
     safe fn __bun_thread_adopt();
+    /// The C library of the image: the check of the slot, and the adoption of a thread whose slot is empty.
+    safe fn __bun_thread_enter();
     /// The C library of the image: how many adopted threads there are, and how many there were.
     fn __bun_adopted_threads(ever: *mut core::ffi::c_ulong) -> core::ffi::c_ulong;
 }
@@ -49,6 +51,15 @@ pub fn enter() {
 #[inline(never)]
 fn adopt() {
     __bun_thread_adopt();
+}
+
+/// arm64 has no register that is the thread's on every host (x18 on Windows, tpidrro_el0 on macOS), so
+/// the check is the one of the C library, which knows the host: a call, and in it a branch on the host
+/// and the load of the slot.
+#[cfg(not(target_arch = "x86_64"))]
+#[inline(always)]
+pub fn enter() {
+    __bun_thread_enter();
 }
 
 /// The threads that were adopted and have not ended, and every thread that was adopted.

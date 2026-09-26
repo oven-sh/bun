@@ -266,10 +266,6 @@ pub mod Runtime {
         /// - Wraps last expression in { value: expr } for result capture
         /// - Assigns functions to context for persistence
         pub repl_mode: bool,
-
-        // Vestigial bool stub retained until its last reader (parseJSXElement.rs)
-        // is ported to the real predicate; defaults false and is otherwise inert.
-        pub jsx_optimization_inline: bool,
     }
 
     impl Default for Features {
@@ -309,7 +305,6 @@ pub mod Runtime {
                 bundler_feature_flags: None,
                 define_hash: None,
                 repl_mode: false,
-                jsx_optimization_inline: false,
             }
         }
     }

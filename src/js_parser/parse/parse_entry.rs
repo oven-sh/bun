@@ -259,7 +259,6 @@ impl<'a> Options<'a> {
                 bundler_feature_flags: None,
                 define_hash: f.define_hash,
                 repl_mode: f.repl_mode,
-                jsx_optimization_inline: f.jsx_optimization_inline,
             },
             tree_shaking: self.tree_shaking,
             bundle: self.bundle,

@@ -4153,8 +4153,6 @@ mod v8_api {
 /// V8 API functions whose Itanium mangled name is platform-dependent: the C++
 /// stdlib inline namespace (std:: vs std::__1:: vs std::__ndk1::) and the
 /// int64_t/uint64_t underlying type (long `l`/`m` vs long long `x`/`y`).
-#[cfg(windows)]
-mod posix_platform_specific_v8_apis {}
 #[cfg(all(not(windows), target_os = "android"))]
 mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
@@ -4539,8 +4537,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_wtf8_to_utf16();
     }
 }
-#[cfg(not(unix))]
-mod uv_functions_to_export {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // fix_dead_code_elimination

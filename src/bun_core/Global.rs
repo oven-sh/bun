@@ -422,8 +422,7 @@ pub mod analytics {
 }
 
 // ─── mark_binding! (MOVE_DOWN from bun_jsc, for aio/event_loop/http_jsc) ──
-// Pure logging; no jsc dep. Declares the JSC scope on first use.
-crate::declare_scope!(JSC, hidden);
+// Pure logging; no jsc dep. Logs to `JSC_SCOPE` below.
 #[macro_export]
 macro_rules! mark_binding {
     () => {

@@ -1,247 +1,270 @@
-import { write } from "bun";
-import { expect, setDefaultTimeout, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { file, write } from "bun";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { VerdaccioRegistry, bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot } from "harness";
 import { join } from "path";
 
-setDefaultTimeout(1000 * 60 * 5);
+// Fixtures from ./registry/packages used below:
+//   no-deps        1.0.0, 1.0.1, 1.1.0 and 2.0.0 (latest), the package the overrides target
+//   one-dep        1.0.0, depends on no-deps@1.0.1
+//   one-range-dep  1.0.0, depends on no-deps@^1.0.0
+//   a-dep          1.0.1 to 1.0.10 (latest), no dependencies
+const registry = new VerdaccioRegistry();
 
-function install(cwd: string, args: string[]) {
-  const exec = Bun.spawnSync({
-    cmd: [bunExe(), ...args, "--linker=hoisted"],
-    cwd,
-    stdout: "inherit",
-    stdin: "inherit",
-    stderr: "inherit",
-    env: bunEnv,
+beforeAll(async () => {
+  await registry.start();
+});
+
+afterAll(() => {
+  registry.stop();
+});
+
+async function project(packageJson: Record<string, unknown>, files: Record<string, string> = {}) {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "hoisted" },
+    files: { "package.json": JSON.stringify(packageJson), ...files },
   });
-  if (exec.exitCode !== 0) {
-    throw new Error(`bun install exited with code ${exec.exitCode}`);
-  }
-  return exec;
+  return packageDir;
 }
 
-function installExpectFail(cwd: string, args: string[]) {
-  const exec = Bun.spawnSync({
+// Printed only by installs that had registry work to do; the bracketed task count is not what these tests check.
+const progressLine = /^Resolv(?:ing dependencies|ed, downloaded and extracted \[\d+\])\r?\n?/gm;
+
+async function bun(dir: string, ...args: string[]) {
+  await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
-    cwd,
-    stdout: "inherit",
-    stdin: "inherit",
-    stderr: "inherit",
-    env: bunEnv,
+    cwd: dir,
+    // CI exports BUN_INSTALL_CACHE_DIR, which overrides the bunfig's per-test `cache`; concurrent tests sharing one cache race on Windows.
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  if (exec.exitCode === 0) {
-    throw new Error(`bun install exited with code ${exec.exitCode}, (expected failure)`);
-  }
-  return exec;
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return {
+    stdout: normalizeBunSnapshot(stdout, dir),
+    stderr: normalizeBunSnapshot(stderr.replace(progressLine, ""), dir),
+    exitCode,
+  };
 }
 
-function versionOf(cwd: string, path: string) {
-  const data = readFileSync(join(cwd, path));
-  const json = JSON.parse(data.toString());
-  return json.version;
+const lockfile = (dir: string) => file(join(dir, "bun.lock")).text();
+
+async function editPackageJson(dir: string, edit: (pkg: Record<string, unknown>) => void) {
+  const path = join(dir, "package.json");
+  const pkg = await file(path).json();
+  edit(pkg);
+  await write(path, JSON.stringify(pkg));
 }
 
-function ensureLockfileDoesntChangeOnBunI(cwd: string) {
-  install(cwd, ["install"]);
-  const lockb1 = readFileSync(join(cwd, "bun.lock"));
-  install(cwd, ["install", "--frozen-lockfile"]);
-  install(cwd, ["install", "--force"]);
-  const lockb2 = readFileSync(join(cwd, "bun.lock"));
+// `lock` is the bun.lock written by the install under test. The frozen install checks that bun considers it in sync with
+// package.json; the plain install checks that it is neither re-resolved nor re-saved (each goes through its own comparison).
+async function expectLockfileStable(dir: string, lock: string) {
+  const frozen = await bun(dir, "install", "--frozen-lockfile");
+  expect(frozen.stderr).toBe("");
+  expect(frozen.exitCode).toBe(0);
 
-  expect(lockb1.toString("hex")).toEqual(lockb2.toString("hex"));
+  const plain = await bun(dir, "install");
+  expect(plain.stderr).toBe("");
+  expect(plain.exitCode).toBe(0);
+
+  expect(await lockfile(dir)).toBe(lock);
 }
 
-test("overrides affect your own packages", async () => {
-  const tmp = tmpdirSync();
-  writeFileSync(
-    join(tmp, "package.json"),
-    JSON.stringify({
-      dependencies: {},
-      overrides: {
-        lodash: "4.0.0",
-      },
-    }),
-  );
-  install(tmp, ["install", "lodash"]);
-  expect(versionOf(tmp, "node_modules/lodash/package.json")).toBe("4.0.0");
-  ensureLockfileDoesntChangeOnBunI(tmp);
+test.concurrent("overrides affect your own packages", async () => {
+  const dir = await project({ dependencies: {}, overrides: { "no-deps": "1.0.0" } });
+
+  const { stdout, stderr, exitCode } = await bun(dir, "install", "no-deps", "a-dep");
+
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun add <version> (<revision>)
+
+    installed no-deps@1.0.0
+    installed a-dep@1.0.10
+
+    2 packages installed"
+  `);
+  expect(stderr).toMatchInlineSnapshot(`"Saved lockfile"`);
+  expect(exitCode).toBe(0);
+  expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
+    "node_modules/a-dep/a-dep@1.0.10
+    node_modules/no-deps/no-deps@1.0.0"
+  `);
+  await expectLockfileStable(dir, await lockfile(dir));
 });
 
-test("overrides affects all dependencies", async () => {
-  const tmp = tmpdirSync();
-  writeFileSync(
-    join(tmp, "package.json"),
-    JSON.stringify({
-      dependencies: {},
-      overrides: {
-        bytes: "1.0.0",
-      },
-    }),
-  );
-  install(tmp, ["install", "express@4.18.2"]);
-  expect(versionOf(tmp, "node_modules/bytes/package.json")).toBe("1.0.0");
+test.concurrent("overrides affects all dependencies", async () => {
+  const dir = await project({ dependencies: {}, overrides: { "no-deps": "1.0.0" } });
 
-  ensureLockfileDoesntChangeOnBunI(tmp);
+  const { stdout, stderr, exitCode } = await bun(dir, "install", "one-dep", "one-range-dep");
+
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun add <version> (<revision>)
+
+    installed one-dep@1.0.0
+    installed one-range-dep@1.0.0
+
+    3 packages installed"
+  `);
+  expect(stderr).toMatchInlineSnapshot(`"Saved lockfile"`);
+  expect(exitCode).toBe(0);
+  expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
+    "node_modules/no-deps/no-deps@1.0.0
+    node_modules/one-dep/one-dep@1.0.0
+    node_modules/one-range-dep/one-range-dep@1.0.0"
+  `);
+  await expectLockfileStable(dir, await lockfile(dir));
 });
 
-test("overrides being set later affects all dependencies", async () => {
-  const tmp = tmpdirSync();
-  writeFileSync(
-    join(tmp, "package.json"),
-    JSON.stringify({
-      dependencies: {},
-    }),
-  );
-  install(tmp, ["install", "express@4.18.2"]);
-  expect(versionOf(tmp, "node_modules/bytes/package.json")).not.toBe("1.0.0");
+test.concurrent("overrides being set later affects all dependencies", async () => {
+  const dir = await project({ dependencies: {} });
+  const add = await bun(dir, "install", "one-dep");
+  expect(add.stderr).toMatchInlineSnapshot(`"Saved lockfile"`);
+  expect(add.exitCode).toBe(0);
+  expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
+    "node_modules/no-deps/no-deps@1.0.1
+    node_modules/one-dep/one-dep@1.0.0"
+  `);
+  await expectLockfileStable(dir, await lockfile(dir));
 
-  ensureLockfileDoesntChangeOnBunI(tmp);
+  await editPackageJson(dir, pkg => (pkg.overrides = { "no-deps": "1.0.0" }));
+  const { stdout, stderr, exitCode } = await bun(dir, "install");
 
-  writeFileSync(
-    join(tmp, "package.json"),
-    JSON.stringify({
-      ...JSON.parse(readFileSync(join(tmp, "package.json")).toString()),
-      overrides: {
-        bytes: "1.0.0",
-      },
-    }),
-  );
-  install(tmp, ["install"]);
-  expect(versionOf(tmp, "node_modules/bytes/package.json")).toBe("1.0.0");
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun install <version> (<revision>)
 
-  ensureLockfileDoesntChangeOnBunI(tmp);
+    1 package installed"
+  `);
+  expect(stderr).toMatchInlineSnapshot(`"Saved lockfile"`);
+  expect(exitCode).toBe(0);
+  expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
+    "node_modules/no-deps/no-deps@1.0.0
+    node_modules/one-dep/one-dep@1.0.0"
+  `);
+  await expectLockfileStable(dir, await lockfile(dir));
 });
 
-test("overrides to npm specifier", async () => {
-  const tmp = tmpdirSync();
-  writeFileSync(
-    join(tmp, "package.json"),
-    JSON.stringify({
-      dependencies: {},
-      overrides: {
-        bytes: "npm:lodash@4.0.0",
-      },
-    }),
-  );
-  install(tmp, ["install", "express@4.18.2"]);
+test.concurrent("overrides to npm specifier", async () => {
+  const dir = await project({ dependencies: {}, overrides: { "no-deps": "npm:a-dep@1.0.1" } });
 
-  const bytes = JSON.parse(readFileSync(join(tmp, "node_modules/bytes/package.json"), "utf-8"));
+  const { stdout, stderr, exitCode } = await bun(dir, "install", "one-dep");
 
-  expect(bytes.name).toBe("lodash");
-  expect(bytes.version).toBe("4.0.0");
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun add <version> (<revision>)
 
-  ensureLockfileDoesntChangeOnBunI(tmp);
+    installed one-dep@1.0.0
+
+    2 packages installed"
+  `);
+  expect(stderr).toMatchInlineSnapshot(`"Saved lockfile"`);
+  expect(exitCode).toBe(0);
+  expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
+    "node_modules/no-deps/a-dep@1.0.1
+    node_modules/one-dep/one-dep@1.0.0"
+  `);
+  await expectLockfileStable(dir, await lockfile(dir));
 });
 
-test("changing overrides makes the lockfile changed, prevent frozen install", async () => {
-  const tmp = tmpdirSync();
-  writeFileSync(
-    join(tmp, "package.json"),
-    JSON.stringify({
-      dependencies: {},
-      overrides: {
-        bytes: "1.0.0",
-      },
-    }),
-  );
-  install(tmp, ["install", "express@4.18.2"]);
+test.concurrent("changing overrides makes the lockfile changed, prevent frozen install", async () => {
+  const dir = await project({ dependencies: {}, overrides: { "no-deps": "1.0.0" } });
+  const add = await bun(dir, "install", "one-dep");
+  expect(add.stderr).toMatchInlineSnapshot(`"Saved lockfile"`);
+  expect(add.exitCode).toBe(0);
+  const lock = await lockfile(dir);
+  const tree = nodeModulesPackages(dir);
+  expect(tree).toMatchInlineSnapshot(`
+    "node_modules/no-deps/no-deps@1.0.0
+    node_modules/one-dep/one-dep@1.0.0"
+  `);
 
-  writeFileSync(
-    join(tmp, "package.json"),
-    JSON.stringify({
-      ...JSON.parse(readFileSync(join(tmp, "package.json")).toString()),
-      overrides: {
-        bytes: "1.0.1",
-      },
-    }),
-  );
+  await editPackageJson(dir, pkg => (pkg.overrides = { "no-deps": "1.1.0" }));
+  const { stdout, stderr, exitCode } = await bun(dir, "install", "--frozen-lockfile");
 
-  installExpectFail(tmp, ["install", "--frozen-lockfile"]);
+  expect(stdout).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+  expect(stderr).toMatchInlineSnapshot(`
+    "error: lockfile had changes, but lockfile is frozen
+    note: overrides in package.json changed since bun.lock was saved
+    note: try re-running without --frozen-lockfile and commit the updated lockfile"
+  `);
+  expect(exitCode).toBe(1);
+  expect(await lockfile(dir)).toBe(lock);
+  expect(nodeModulesPackages(dir)).toBe(tree);
 });
 
-test("overrides reset when removed", async () => {
-  const tmp = tmpdirSync();
-  writeFileSync(
-    join(tmp, "package.json"),
-    JSON.stringify({
-      overrides: {
-        bytes: "1.0.0",
-      },
-    }),
-  );
-  install(tmp, ["install", "express@4.18.2"]);
-  expect(versionOf(tmp, "node_modules/bytes/package.json")).toBe("1.0.0");
+test.concurrent("overrides reset when removed", async () => {
+  const dir = await project({ overrides: { "no-deps": "1.0.0" } });
+  const add = await bun(dir, "install", "one-dep");
+  expect(add.stderr).toMatchInlineSnapshot(`"Saved lockfile"`);
+  expect(add.exitCode).toBe(0);
+  expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
+    "node_modules/no-deps/no-deps@1.0.0
+    node_modules/one-dep/one-dep@1.0.0"
+  `);
+  expect(await lockfile(dir)).toContain('"overrides"');
 
-  writeFileSync(
-    join(tmp, "package.json"),
-    JSON.stringify({
-      ...JSON.parse(readFileSync(join(tmp, "package.json")).toString()),
-      overrides: undefined,
-    }),
-  );
-  install(tmp, ["install"]);
-  expect(versionOf(tmp, "node_modules/bytes/package.json")).not.toBe("1.0.0");
+  await editPackageJson(dir, pkg => delete pkg.overrides);
+  const { stdout, stderr, exitCode } = await bun(dir, "install");
 
-  ensureLockfileDoesntChangeOnBunI(tmp);
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun install <version> (<revision>)
+
+    1 package installed"
+  `);
+  expect(stderr).toMatchInlineSnapshot(`"Saved lockfile"`);
+  expect(exitCode).toBe(0);
+  expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
+    "node_modules/no-deps/no-deps@1.0.1
+    node_modules/one-dep/one-dep@1.0.0"
+  `);
+  const lock = await lockfile(dir);
+  expect(lock).not.toContain('"overrides"');
+  await expectLockfileStable(dir, lock);
 });
 
-test("overrides do not apply to workspaces", async () => {
-  const tmp = tmpdirSync();
-  await Promise.all([
-    write(
-      join(tmp, "package.json"),
-      JSON.stringify({ name: "monorepo-root", workspaces: ["packages/*"], overrides: { "pkg1": "file:pkg2" } }),
-    ),
-    write(
-      join(tmp, "packages", "pkg1", "package.json"),
-      JSON.stringify({
-        name: "pkg1",
-        version: "1.1.1",
-      }),
-    ),
-    write(
-      join(tmp, "pkg2", "package.json"),
-      JSON.stringify({
-        name: "pkg2",
-        version: "2.2.2",
-      }),
-    ),
-  ]);
+test.concurrent("overrides do not apply to workspaces", async () => {
+  const dir = await project(
+    { name: "monorepo-root", workspaces: ["packages/*"], overrides: { pkg1: "file:pkg2" } },
+    {
+      "packages/pkg1/package.json": JSON.stringify({ name: "pkg1", version: "1.1.1" }),
+      "pkg2/package.json": JSON.stringify({ name: "pkg2", version: "2.2.2" }),
+    },
+  );
 
-  let { exited, stderr } = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: tmp,
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "inherit",
+  const { stdout, stderr, exitCode } = await bun(dir, "install");
+
+  expect(stdout).toMatchInlineSnapshot(`
+    "bun install <version> (<revision>)
+
+    1 package installed"
+  `);
+  expect(stderr).toMatchInlineSnapshot(`"Saved lockfile"`);
+  expect(exitCode).toBe(0);
+  // node_modules/pkg1 links to the workspace; the override is recorded but does not redirect it to pkg2.
+  expect(await file(join(dir, "node_modules", "pkg1", "package.json")).json()).toEqual({
+    name: "pkg1",
+    version: "1.1.1",
   });
-
-  expect(await exited).toBe(0);
-  expect(await stderr.text()).toContain("Saved lockfile");
-
-  // --frozen-lockfile works
-  ({ exited, stderr } = Bun.spawn({
-    cmd: [bunExe(), "install", "--frozen-lockfile"],
-    cwd: tmp,
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "inherit",
-  }));
-
-  expect(await exited).toBe(0);
-  expect(await stderr.text()).not.toContain("Frozen lockfile");
-
-  // lockfile is not changed
-
-  ({ exited, stderr } = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: tmp,
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "inherit",
-  }));
-
-  expect(await exited).toBe(0);
-  expect(await stderr.text()).not.toContain("Saved lockfile");
+  const lock = await lockfile(dir);
+  expect(lock).toMatchInlineSnapshot(`
+    "{
+      "lockfileVersion": 2,
+      "configVersion": 1,
+      "workspaces": {
+        "": {
+          "name": "monorepo-root",
+        },
+        "packages/pkg1": {
+          "name": "pkg1",
+          "version": "1.1.1",
+        },
+      },
+      "overrides": {
+        "pkg1": "file:pkg2",
+      },
+      "packages": {
+        "pkg1": ["pkg1@workspace:packages/pkg1"],
+      }
+    }
+    "
+  `);
+  await expectLockfileStable(dir, lock);
 });

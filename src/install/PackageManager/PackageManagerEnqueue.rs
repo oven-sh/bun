@@ -2891,7 +2891,7 @@ fn get_or_put_resolved_package(
         dependency::version::Tag::Folder => {
             let folder = *version.folder();
             let res: FolderResolutionValue = 'res: {
-                if this.lockfile.is_workspace_dependency(dependency_id) {
+                if this.lockfile.is_dependency_of_local_package(dependency_id) {
                     // relative to cwd
                     // reshaped for borrowck — `folder_path` borrows
                     // `string_bytes`; detach the slice lifetime so the
@@ -2925,13 +2925,13 @@ fn get_or_put_resolved_package(
                     );
                 }
 
-                // transitive folder dependencies do not have their dependencies resolved
                 if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
                     && !this.lockfile.is_trusted_folder_dependency(dependency_id)
                 {
                     break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                 }
 
+                // Declared by a remote package that is not on disk yet: stub it.
                 let mut package = Package::default();
 
                 {

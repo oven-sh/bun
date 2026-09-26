@@ -1252,7 +1252,11 @@ impl Readable {
 
         debug_assert!(redirect_buf.is_none() || matches!(stdio, Stdio::Pipe | Stdio::Capture(_)));
         let buffered_output = match redirect_buf {
-            Some(buf) => BufferedOutput::ArrayBuffer { buf, i: 0 },
+            Some(buf) => BufferedOutput::ArrayBuffer {
+                buf,
+                i: 0,
+                overflow: false,
+            },
             None => BufferedOutput::default(),
         };
         // Note: `Stdio` impls Drop, so dispatch on `&mut` instead of partial moves (E0509).
@@ -1512,7 +1516,12 @@ pub(crate) struct PipeReader {
 
 pub(crate) enum BufferedOutput {
     Bytelist(Vec<u8>),
-    ArrayBuffer { buf: jsc::PinnedArrayBuffer, i: u32 },
+    ArrayBuffer {
+        buf: jsc::PinnedArrayBuffer,
+        i: u32,
+        /// The target was too small: `append` dropped the bytes that did not fit.
+        overflow: bool,
+    },
 }
 
 impl Default for BufferedOutput {
@@ -1542,18 +1551,23 @@ impl BufferedOutput {
             BufferedOutput::Bytelist(b) => {
                 let _ = b.append_slice(bytes); // OOM/capacity: fire-and-forget
             }
-            BufferedOutput::ArrayBuffer { buf, i } => {
+            BufferedOutput::ArrayBuffer { buf, i, overflow } => {
                 let array_buf_slice = buf.slice_mut();
                 let idx = *i as usize;
-                // TODO: We should probably throw error here?
-                if idx >= array_buf_slice.len() {
-                    return;
+                let length = array_buf_slice.len().saturating_sub(idx).min(bytes.len());
+                if length > 0 {
+                    array_buf_slice[idx..idx + length].copy_from_slice(&bytes[..length]);
+                    *i += u32::try_from(length).expect("int cast");
                 }
-                let length = (array_buf_slice.len() - idx).min(bytes.len());
-                array_buf_slice[idx..idx + length].copy_from_slice(&bytes[..length]);
-                *i += u32::try_from(length).expect("int cast");
+                if length < bytes.len() {
+                    *overflow = true;
+                }
             }
         }
+    }
+
+    pub(crate) fn overflowed(&self) -> bool {
+        matches!(self, BufferedOutput::ArrayBuffer { overflow: true, .. })
     }
 }
 
@@ -1971,11 +1985,16 @@ impl PipeReader {
     /// (single JS-thread; see [`arc_as_mut_ptr`]). No `&`/`&mut PipeReader`
     /// to the same object may be live across this call.
     pub(crate) unsafe fn try_signal_done_to_cmd(this: *mut Self) -> Yield {
-        let (done, out_type, process) = {
+        let (done, out_type, process, overflow) = {
             // SAFETY: caller contract — short-lived shared borrow for the
             // read-only `is_done()` / log; no Cmd re-entry yet.
             let me = unsafe { &*this };
-            (me.is_done(), me.out_type, me.process)
+            (
+                me.is_done(),
+                me.out_type,
+                me.process,
+                me.buffered_output.overflowed(),
+            )
         };
         if !done {
             return Yield::Suspended;
@@ -2001,7 +2020,7 @@ impl PipeReader {
             // No `&`/`&mut PipeReader` is live here; `buffered_output_close`
             // is free to deref the sibling `Arc<PipeReader>` in
             // `Readable::Pipe` for `pipe.slice()` / `close_io`.
-            return cmd.buffered_output_close(out_type, e);
+            return cmd.buffered_output_close(out_type, e, overflow);
         }
         Yield::Suspended
     }

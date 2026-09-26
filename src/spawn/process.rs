@@ -1993,6 +1993,7 @@ mod spawn_process_body {
                                 return Err(crate::Error::Sys(e));
                             }
                         };
+                        let trunc: c_int = if fd_i == 0 { 0 } else { uv::O::TRUNC };
                         // SAFETY: `req` is a fresh `fs_t`, `loop_` is the live uv
                         // loop, `path_z` is NUL-terminated and outlives the call
                         // (sync — no callback).
@@ -2001,7 +2002,7 @@ mod spawn_process_body {
                                 loop_,
                                 &mut req,
                                 path_z.as_ptr(),
-                                flag | uv::O::CREAT,
+                                flag | uv::O::CREAT | trunc,
                                 0o644,
                                 None,
                             )

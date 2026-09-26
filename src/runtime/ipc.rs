@@ -1191,13 +1191,21 @@ impl SendQueue {
                 log!("SendQueue#_onAfterIPCClosed");
                 if !sq.close_event_sent.replace(true) {
                     let global = sq.get_global_this();
+                    let mut behind_handle = false;
                     if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
+                        behind_handle = true;
                         item.complete(&global);
                     }
-                    // on_write_complete already dequeued everything fully written; the rest was never delivered.
+                    // As node: a submitted write calls back with null even if the close cancels it, a send parked behind an unacked handle never does. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L818-L874
                     for item in sq.queue.with_mut(std::mem::take) {
-                        item.abort_unsent(&global);
+                        if behind_handle {
+                            item.abort_unsent(&global);
+                        } else {
+                            behind_handle = item.handle.is_some();
+                            item.complete(&global);
+                        }
                     }
+                    // The callbacks are queued first on purpose: ChildProcess queues 'disconnect' and 'close' from this call, and they must not run after 'close'.
                     if let Some(owner) = sq.owner.get() {
                         owner.handle_ipc_close();
                     }

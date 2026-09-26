@@ -703,6 +703,155 @@ describe("bundler", () => {
       `,
     },
   });
+  // A later `var x` merges with an earlier `export var x`: the parser links the
+  // exported symbol to the later one. The export has to name the merged symbol,
+  // or tree shaking drops every declaration of `x` and the importer throws
+  // "ReferenceError: x is not defined".
+  itBundled("edgecase/ExportVarRedeclaredLater", {
+    files: {
+      "/entry.js": /* js */ `
+        import { twice } from "./twice.ts";
+        import { thrice } from "./thrice.js";
+        import { first, second } from "./destructured.js";
+        import { nested } from "./nested.js";
+        console.log(twice, thrice, first, second, nested);
+      `,
+      "/twice.ts": /* ts */ `
+        export var twice: number = 1;
+        var twice: number = 2;
+      `,
+      "/thrice.js": /* js */ `
+        export var thrice = 1;
+        var thrice = 2;
+        var thrice = 3;
+      `,
+      // The destructuring statement is never removed, so before the fix this
+      // printed the stale "1 2" instead of throwing.
+      "/destructured.js": /* js */ `
+        export var [first, { second }] = [1, { second: 2 }];
+        var first = 10;
+        var second = 20;
+      `,
+      // Hoisting links the other way, from the nested symbol to the exported one.
+      "/nested.js": /* js */ `
+        export var nested = 1;
+        {
+          var nested = 2;
+        }
+      `,
+    },
+    run: {
+      stdout: "2 3 10 20 2",
+    },
+  });
+  itBundled("edgecase/ExportVarRedeclaredLaterOtherImportForms", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./namespace.js";
+        import { reExported, starReExported } from "./barrel.js";
+        const { required } = require("./required.js");
+        const { dynamic } = await import("./dynamic.js");
+        console.log(JSON.stringify(ns), reExported, starReExported, required, dynamic);
+      `,
+      "/namespace.js": /* js */ `
+        export var viaNamespace = 1;
+        var viaNamespace = 2;
+      `,
+      "/barrel.js": /* js */ `
+        export { reExported } from "./re-exported.js";
+        export * from "./star-re-exported.js";
+      `,
+      "/re-exported.js": /* js */ `
+        export var reExported = 1;
+        var reExported = 2;
+      `,
+      "/star-re-exported.js": /* js */ `
+        export var starReExported = 1;
+        var starReExported = 2;
+      `,
+      "/required.js": /* js */ `
+        export var required = 1;
+        var required = 2;
+      `,
+      "/dynamic.js": /* js */ `
+        export var dynamic = 1;
+        var dynamic = 2;
+      `,
+    },
+    run: {
+      stdout: `{"viaNamespace":2} 2 2 2 2`,
+    },
+  });
+  itBundled("edgecase/ExportVarRedeclaredLaterEntryPoint", {
+    files: {
+      "/entry.js": /* js */ `
+        export var x = 1;
+        var x = 2;
+      `,
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { x } from "./out.js";
+        console.log(x);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "2",
+    },
+  });
+  itBundled("edgecase/ExportVarRedeclaredLaterSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        import { x } from "./shared.js";
+        console.log("a", x);
+      `,
+      "/b.js": /* js */ `
+        import { x } from "./shared.js";
+        console.log("b", x);
+      `,
+      "/shared.js": /* js */ `
+        export var x = 1;
+        var x = 2;
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a 2" },
+      { file: "/out/b.js", stdout: "b 2" },
+    ],
+  });
+  // Without bundling, the minifier pins the name of each exported symbol. It
+  // pinned the replaced symbol, so the export was renamed. The name of the
+  // default export links to its parameter, which is not a module-scope merge:
+  // pinning that parameter would let a local take the same short name.
+  itBundled("edgecase/ExportVarRedeclaredLaterKeepsNameWhenMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        export var x = 1;
+        var x = 2;
+        export default (function a(a) {
+          var longname = 5;
+          var othername = 7;
+          return a + longname * othername;
+        });
+      `,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import f, { x } from "./out.js";
+        console.log(x, f(1));
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "2 36",
+    },
+  });
   // https://github.com/oven-sh/bun/issues/30271
   //
   // When dead-code elimination prunes an if/else body, the scaffolding

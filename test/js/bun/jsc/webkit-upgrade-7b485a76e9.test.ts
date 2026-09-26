@@ -1,5 +1,7 @@
 import { edenGC, fullGC } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
+import { toASCII } from "node:punycode";
 import vm from "node:vm";
 
 // Coverage for the WebKit 7b485a76e9 sync. The first group pins observable differences
@@ -202,7 +204,7 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     expect(sourceHasLineStarts((0, eval)(long + "(function () {\n})"))).toBe(true);
     expect(sourceHasLineStarts(vm.runInThisContext(long + "(function () {\n})"))).toBe(true);
     expect(sourceHasLineStarts(new vm.Script(long + "(function () {\n})").runInNewContext())).toBe(true);
-    expect(sourceHasLineStarts(require("node:punycode").toASCII)).toBe(true);
+    expect(sourceHasLineStarts(toASCII)).toBe(true);
     // That is not worth its cost to a short source, which is read if it is asked.
     const short = (0, eval)("(function () {\n  return new Error().stack;\n})");
     expect(sourceHasLineStarts(short)).toBe(false);
@@ -213,7 +215,15 @@ describe("WebKit 7b485a76e9 upgrade", () => {
   });
 
   test("a position in a builtin counts from where the builtin starts (c76c52f5b1)", () => {
-    // The builtins share one text. With offsets only, upstream reports the line in that text.
+    // The builtins share one text. With offsets only, upstream reports the line in that text, which is in the
+    // thousands. A release build has no positions for the code of a builtin, so a frame is where the builtin starts.
+    const inBuiltin = (stack: string, name: string) =>
+      new RegExp(`at ${name} \\(native:(\\d+):(\\d+)\\)`).exec(stack)?.slice(1).map(Number);
+    const expectCountedFromTheBuiltin = (position: number[] | undefined) => {
+      if (isDebug || isASAN) expect(position?.[0]).toBeLessThan(100);
+      else expect(position).toEqual([1, 11]);
+    };
+
     let stack = "";
     try {
       [1].map(() => {
@@ -222,7 +232,7 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     } catch (e) {
       stack = (e as Error).stack!;
     }
-    expect(stack).toContain("at map (native:1:11)");
+    expectCountedFromTheBuiltin(inBuiltin(stack, "map"));
 
     let thrownInside: any;
     try {
@@ -230,8 +240,8 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     } catch (e) {
       thrownInside = e;
     }
-    expect(thrownInside.stack).toContain("at reduce (native:1:11)");
-    expect([thrownInside.line, thrownInside.column]).toEqual([1, 11]);
+    expectCountedFromTheBuiltin(inBuiltin(thrownInside.stack, "reduce"));
+    expect([thrownInside.line, thrownInside.column]).toEqual(inBuiltin(thrownInside.stack, "reduce")!);
   });
 
   test("Reflect.construct call sites keep the semantics of the function (7b485a76e9)", () => {

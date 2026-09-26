@@ -33,7 +33,7 @@ ALWAYS_INLINE JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::
  */
 JSC::JSValue getOwnPropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name);
 
-// [[DefineOwnProperty]] of a data property that is not an index, and a throw when `object` rejects it. A plain object takes the direct store.
+// [[DefineOwnProperty]] of a data property that is not an index. A rejection throws (a Proxy refuses a private name in silence). A plain object takes the direct store.
 ALWAYS_INLINE bool defineOwnDataProperty(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName, JSC::JSValue value, unsigned attributes)
 {
     auto& vm = JSC::getVM(globalObject);

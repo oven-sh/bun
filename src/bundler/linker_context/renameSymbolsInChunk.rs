@@ -59,6 +59,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     // borrow does not assert immutability over the heap cells written below.
     // SAFETY: see fn safety doc — `c` is live for the call.
     let c: &LinkerContext<'_> = unsafe { &*c };
+    let has_bun_cjs_wrapper = c.chunk_has_bun_cjs_wrapper(chunk);
 
     // ── raw SoA column pointers (root provenance) ────────────────────────
     // `split_raw()` derives `*mut [T]` directly from the buffer base with no
@@ -144,6 +145,10 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     };
 
     let mut reserved_names = renamer::compute_initial_reserved_names(c.options.output_format)?;
+    if has_bun_cjs_wrapper {
+        // The printer refers to this wrapper parameter by name.
+        reserved_names.put(bun_ast::E::ImportMeta::CJS_WRAPPER_ARG, 1)?;
+    }
     for &source_index in files_in_order {
         renamer::compute_reserved_names_for_scope(
             &all_module_scopes[source_index as usize],

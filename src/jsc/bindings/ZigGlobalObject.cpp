@@ -279,6 +279,9 @@ extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #include <JavaScriptCore/ExecutableAllocator.h>
 extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 #endif
+#if !OS(WINDOWS)
+extern "C" void CrashHandler__keepSignalHandlersOnAltStack();
+#endif
 
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
@@ -487,6 +490,12 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     if (!vmPtr) [[unlikely]] {
         BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
     }
+#if !OS(WINDOWS)
+    // The first VM construction ran WTF::SignalHandlers::finalize(), which
+    // installs the JIT's SIGSEGV/SIGBUS handler without SA_ONSTACK.
+    static std::once_flag keepSignalHandlersOnAltStack;
+    std::call_once(keepSignalHandlersOnAltStack, CrashHandler__keepSignalHandlersOnAltStack);
+#endif
     vmPtr->refSuppressingSaferCPPChecking();
     JSC::VM& vm = *vmPtr;
     // This must happen before JSVMClientData::create

@@ -959,6 +959,118 @@ describe("fs.watch", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  // `fs.rmSync(dir, { recursive: true })` takes seconds on a chain of nested
+  // directories this deep, so the two tests below remove theirs bottom-up.
+  function removeChain(deepest: string, levels: number) {
+    for (let i = 0; i < levels; i++) {
+      try {
+        fs.rmdirSync(deepest);
+      } catch {}
+      deepest = path.dirname(deepest);
+    }
+  }
+
+  // A directory moved into a recursive watch is crawled on the inotify reader
+  // thread so its nested directories get watched too. That crawl used to recurse
+  // once per level with an 8 KiB readdir buffer per frame, so a tree a few
+  // hundred levels deep overflowed the thread's stack and killed the process
+  // with SIGSEGV. Runs in a subprocess because the unfixed behavior is a crash.
+  test.skipIf(!isLinux)("recursive watch survives a deep tree moved into the watched directory", async () => {
+    const depth = 300;
+    const deep = Array(depth).fill("a").join("/");
+
+    using dir = tempDir("fs-watch-deep-move", {});
+    const root = String(dir);
+    fs.mkdirSync(path.join(root, "src", deep), { recursive: true });
+    fs.mkdirSync(path.join(root, "watched"));
+
+    const fixture = /* js */ `
+      const fs = require("fs"), path = require("path");
+      const root = process.env.WATCH_ROOT;
+
+      // The crawl reports every directory it finds, deepest last; a file created
+      // at the bottom afterwards proves the deepest directory is being watched.
+      const deepest = path.join("moved", ${JSON.stringify(deep)});
+      const file = path.join(deepest, "f.txt");
+      const events = [];
+      const sawDeepest = Promise.withResolvers();
+      const sawFile = Promise.withResolvers();
+      const watcher = fs.watch(path.join(root, "watched"), { recursive: true }, (type, name) => {
+        events.push(name);
+        if (name === deepest) sawDeepest.resolve();
+        if (name === file) sawFile.resolve();
+      });
+
+      const deadline = setTimeout(() => {
+        console.log(JSON.stringify({ timedOut: true, count: events.length, last: events.slice(-3) }));
+        process.exit(1);
+      }, 30_000);
+
+      fs.renameSync(path.join(root, "src"), path.join(root, "watched", "moved"));
+      await sawDeepest.promise;
+      fs.writeFileSync(path.join(root, "watched", file), "x");
+      await sawFile.promise;
+
+      clearTimeout(deadline);
+      watcher.close();
+      console.log("OK");
+    `;
+
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, WATCH_ROOT: root },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("OK\n");
+      expect(exitCode).toBe(0);
+    } finally {
+      const moved = path.join(root, "watched", "moved", deep);
+      fs.rmSync(path.join(moved, "f.txt"), { force: true });
+      removeChain(moved, depth + 1);
+      removeChain(path.join(root, "src", deep), depth + 1);
+    }
+  });
+
+  // The initial crawl of a recursive watch runs on the calling thread and used
+  // the same recursion, so a deep enough tree crashed fs.watch() itself. The
+  // main thread's stack is as large as `ulimit -s` allows (unlimited on some CI
+  // machines), so the child gets 4 MiB, which 600 levels overflowed. 600 levels
+  // of "a/" is 1200 bytes: under Linux's 4096 PATH_MAX, over macOS's 1024
+  // (macOS uses FSEvents and has no crawl).
+  test.skipIf(!isLinux)("recursive watch of a tree deeper than the stack allows does the initial crawl", async () => {
+    const depth = 600;
+
+    using dir = tempDir("fs-watch-deep-crawl", {});
+    const root = String(dir);
+    const deepest = path.join(root, Array(depth).fill("a").join("/"));
+    fs.mkdirSync(deepest, { recursive: true });
+
+    const fixture = /* js */ `
+      const watcher = require("fs").watch(process.env.WATCH_ROOT, { recursive: true }, () => {});
+      watcher.close();
+      console.log("OK");
+    `;
+
+    try {
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", 'ulimit -s 4096; exec "$0" "$@"', bunExe(), "-e", fixture],
+        env: { ...bunEnv, WATCH_ROOT: root },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("OK\n");
+      expect(exitCode).toBe(0);
+    } finally {
+      removeChain(deepest, depth);
+    }
+  });
 });
 
 describe("fs.promises.watch", () => {

@@ -150,6 +150,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         let ptr = SendPtr(instance);
         let thread = std::thread::Builder::new()
             .name("Bundler".into())
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
                 let ptr = ptr;
                 // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`

@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -10,6 +10,13 @@ const { getMachOImageZeroOffset } = crash_handler;
 // deliberate crashes must not upload there or the runner pins them on the
 // next unrelated failing test as "crash reported" and blocks its retries.
 const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
+
+// For children that die via SIG_DFL (rather than via a test hook that calls
+// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
+// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
+// wrapper is inherited by the bun child (and by anything it spawns); every
+// user is isPosix-gated so /bin/sh is available.
+const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
 
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
@@ -149,6 +156,113 @@ test("the crash report lists the CPU features", async () => {
     expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
   }
   expect(exitCode).not.toBe(0);
+});
+
+// A native stack overflow faults on the guard page, so the kernel can only run
+// a signal handler on an alternate signal stack. Two things used to break that:
+// JSC's VM initialization re-registers SIGSEGV/SIGBUS for the JIT without
+// SA_ONSTACK, and only the main thread had a sigaltstack. Every native
+// recursion that lost its stack, on any thread, died with the default action:
+// exit 139 and nothing on stderr.
+//
+// Under ASAN bun leaves SIGSEGV to the sanitizer, which chains behind JSC's
+// handler and prints its own stack-overflow report.
+describe.if(isPosix)("native stack overflow is reported", () => {
+  const expected = isASAN ? "AddressSanitizer: stack-overflow" : "Stack overflow";
+  // The one-line ASAN report is enough; symbolizing its frames takes seconds.
+  const env = { ...noReportEnv, ASAN_OPTIONS: [noReportEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") };
+
+  // The CI agents run with `ulimit -s unlimited`, where the main thread's stack
+  // grows until it exhausts memory instead of hitting a guard page. Give the
+  // child the usual 8 MiB so the overflow is a fault, not an OOM kill.
+  test.concurrent("on the main thread", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        'ulimit -s 8192; exec "$0" "$@"',
+        bunExe(),
+        path.join(import.meta.dir, "fixture-crash.js"),
+        "stackOverflow",
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(expected);
+    if (!isASAN) {
+      expect(stderr).toContain("panic(main thread): Stack overflow");
+      expect(proc.signalCode).toBe("SIGSEGV");
+    }
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("on a worker thread", async () => {
+    using dir = tempDir("stack-overflow-worker", {
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href, { name: "deep" });
+        worker.onerror = e => console.error("worker error: " + e.message);
+      `,
+      "worker.js": `
+        require("bun:internal-for-testing").crash_handler.stackOverflow();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "main.js"],
+      env,
+      cwd: String(dir),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(expected);
+    if (!isASAN) {
+      expect(stderr).toContain("panic(deep): Stack overflow");
+      expect(proc.signalCode).toBe("SIGSEGV");
+    }
+    expect(exitCode).not.toBe(0);
+  });
+
+  // A fault close to the stack pointer is not always an overflow. An overflow
+  // is a data access in the frame being entered, so an instruction fetch and an
+  // access above the frame pointer keep the segmentation fault report and its
+  // address. Linux: the addresses come from /proc/self/maps.
+  describe.if(isLinux && !isASAN)("a fault near the stack pointer that is not an overflow keeps its address", () => {
+    const prelude = `
+      const { CFunction, read } = require("bun:ffi");
+      const maps = require("fs").readFileSync("/proc/self/maps", "utf8").split("\\n").filter(Boolean)
+        .map(line => ({ start: Number("0x" + line.split("-")[0]), end: Number("0x" + line.split(/[- ]/)[1]), name: line }));
+      const stack = maps.find(m => m.name.endsWith("[stack]"));
+      let past = stack.end;
+      for (let next; (next = maps.find(m => m.start === past)); ) past = next.end;
+      const crashAt = (address, crash) => {
+        require("fs").writeSync(1, address.toString(16).toUpperCase());
+        crash(address);
+      };
+    `;
+
+    test.concurrent.each([
+      [
+        "a call through a pointer into the stack",
+        `crashAt(stack.end - 4096, ptr => new CFunction({ ptr, args: [], returns: "void" })());`,
+      ],
+      ["a read past the top of the stack", `crashAt(past, ptr => read.u8(ptr, 0));`],
+    ])("%s", async (_, crash) => {
+      await using proc = Bun.spawn({
+        cmd: noCoreCmd([bunExe(), "--debug-crash-handler-use-trace-string", "-e", prelude + crash]),
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [address, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(address).toMatch(/^[0-9A-F]+$/);
+      expect(stderr).toContain(`panic(main thread): Segmentation fault at address 0x${address}\n`);
+      expect(proc.signalCode).toBe("SIGSEGV");
+      expect(exitCode).not.toBe(0);
+    });
+  });
 });
 
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.
@@ -406,13 +520,6 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
 });
-
-// For children that die via SIG_DFL (rather than via a test hook that calls
-// suppress_core_dumps_if_necessary()): on the --coredump-upload CI lane the
-// runner flags leaked core files as a hard failure. ulimit -c 0 in a shell
-// wrapper is inherited by the bun child (and by anything it spawns); every
-// user is isPosix-gated so /bin/sh is available.
-const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
 
 // SIGABRT (libc abort(), mimalloc/glibc heap-corruption, std::terminate) and
 // SIGTRAP (WTF CRASH()/RELEASE_ASSERT, __builtin_trap() -> `brk` on aarch64)

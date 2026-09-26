@@ -581,36 +581,75 @@ pub(crate) fn watch(
 // Platform backends
 // ────────────────────────────────────────────────────────────────────────────────
 
-/// Shared recursive directory walk for Linux and Kqueue: open `abs_dir`, iterate,
-/// and for every entry call `cb` with (abs, rel, is_file); recurse into
-/// subdirectories. When `dirs_only`, non-directory entries are skipped entirely
-/// (inotify delivers file events on the parent dir's wd so we only need a watch
-/// per directory; kqueue needs an fd per file too). Best-effort — an unreadable
-/// subdirectory just stops that branch (matches Node).
+/// Shared directory walk for Linux and Kqueue: call `cb` with (abs, rel, is_file)
+/// for every entry under `abs_dir`, depth-first pre-order. Iterative: each open
+/// directory holds an 8 KiB `getdents` buffer, and recursing through a tree a few
+/// hundred levels deep overflowed the watcher thread's stack. `DIRS_ONLY` skips
+/// non-directories (inotify reports files on the parent's wd; kqueue needs an fd
+/// per file). Best-effort: an unreadable subdirectory just ends that branch
+/// (matches Node).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
     rel_dir: &[u8],
     cb: &mut impl FnMut(&ZStr, &[u8], bool),
 ) {
-    let dfd = match sys::open(
-        abs_dir,
-        sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
-        0,
-    ) {
-        Err(_) => return,
-        Ok(f) => f,
-    };
-    let _close = sys::CloseOnDrop::new(dfd);
-    let mut it = sys::dir_iterator::iterate(dfd);
+    /// One depth of the walk. Its buffers serve every directory opened at that
+    /// depth, so a walk allocates per level reached, not per directory.
+    struct Level {
+        /// `Some` while a directory is open at this depth.
+        dir: Option<sys::CloseOnDrop>,
+        /// Boxed: `IteratorResult.name` points into the iterator's inline buffer,
+        /// which must not move when `levels` grows.
+        it: Box<sys::dir_iterator::WrappedIterator>,
+        abs: Vec<u8>,
+        rel: Vec<u8>,
+    }
+
+    /// Open `abs` as the directory at `depth`. `false` when it cannot be opened.
+    fn enter(levels: &mut Vec<Level>, depth: &mut usize, abs: &ZStr, rel: &[u8]) -> bool {
+        let Ok(dfd) = sys::open(abs, sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC, 0)
+        else {
+            return false;
+        };
+        let it = sys::dir_iterator::iterate(dfd);
+        match levels.get_mut(*depth) {
+            Some(level) => *level.it = it,
+            None => levels.push(Level {
+                dir: None,
+                it: Box::new(it),
+                abs: Vec::new(),
+                rel: Vec::new(),
+            }),
+        }
+        let level = &mut levels[*depth];
+        level.dir = Some(sys::CloseOnDrop::new(dfd));
+        level.abs.clear();
+        level.abs.extend_from_slice(abs.as_bytes());
+        level.rel.clear();
+        level.rel.extend_from_slice(rel);
+        *depth += 1;
+        true
+    }
+
+    let mut levels: Vec<Level> = Vec::new();
+    let mut depth: usize = 0;
+    if !enter(&mut levels, &mut depth, abs_dir, rel_dir) {
+        return;
+    }
     let mut abs_buf = path::path_buffer_pool::get();
     let mut abs_spill: Vec<u8> = Vec::new();
     let mut rel_buf = path::path_buffer_pool::get();
     let mut rel_spill: Vec<u8> = Vec::new();
-    loop {
-        let entry = match it.next() {
-            Err(_) => return,
-            Ok(None) => return,
+    while depth > 0 {
+        let level = &mut levels[depth - 1];
+        let entry = match level.it.next() {
+            // End of this directory, or a read error: back up to the parent.
+            Err(_) | Ok(None) => {
+                level.dir = None;
+                depth -= 1;
+                continue;
+            }
             Ok(Some(e)) => e,
         };
         let child_is_file = entry.kind != sys::EntryKind::Directory;
@@ -622,21 +661,21 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         let child_abs = join_z_buf_spill::<platform::Posix>(
             abs_buf.as_mut_slice(),
             &mut abs_spill,
-            &[abs_dir.as_bytes(), name],
+            &[&level.abs, name],
         );
-        let child_rel: &[u8] = if rel_dir.is_empty() {
+        let child_rel: &[u8] = if level.rel.is_empty() {
             name
         } else {
             join_z_buf_spill::<platform::Posix>(
                 rel_buf.as_mut_slice(),
                 &mut rel_spill,
-                &[rel_dir, name],
+                &[&level.rel, name],
             )
             .as_bytes()
         };
         cb(child_abs, child_rel, child_is_file);
         if !child_is_file {
-            walk_subtree::<DIRS_ONLY>(child_abs, child_rel, cb);
+            enter(&mut levels, &mut depth, child_abs, child_rel);
         }
     }
 }
@@ -745,7 +784,10 @@ impl Linux {
         manager.platform_fd.set(Fd::from_native(rc));
         // The manager is process-global and never torn down, so the reader thread is
         // a daemon — detach it instead of stashing a handle we'd never join.
-        match std::thread::Builder::new().spawn(move || Linux::thread_main(manager)) {
+        match std::thread::Builder::new()
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+            .spawn(move || Linux::thread_main(manager))
+        {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
                 manager.platform_fd.get().close();
@@ -1407,7 +1449,10 @@ impl Kqueue {
         let manager: &'static PathWatcherManager = unsafe { &*manager_ptr };
         manager.platform_fd.set(kq);
         // Daemon reader — the manager is process-global and never torn down.
-        match std::thread::Builder::new().spawn(move || Kqueue::thread_main(manager)) {
+        match std::thread::Builder::new()
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+            .spawn(move || Kqueue::thread_main(manager))
+        {
             Ok(handle) => drop(handle), // detach
             Err(_) => {
                 manager.platform_fd.get().close();

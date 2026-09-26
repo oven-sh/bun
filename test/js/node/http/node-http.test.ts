@@ -3607,6 +3607,179 @@ it("HEAD response with explicit chunked TE carries no terminating chunk", async 
   }
 });
 
+// https://github.com/oven-sh/bun/issues/43302
+it("a chunked framing error in the body of an accepted Upgrade request does not fire 'clientError'", async () => {
+  // Node v26.3.0 contract (verified): Parser::Execute returns a parse error to
+  // JS only when parser.upgrade is not set. The 'upgrade' listener keeps its
+  // socket, no 'clientError' fires, and the bytes after the error go nowhere.
+  const events: string[] = [];
+  let serverSocket: import("node:net").Socket | undefined;
+  let client: import("node:net").Socket | undefined;
+  const server = createServer(() => events.push("request"));
+  server.on("upgrade", (req, socket, head) => {
+    serverSocket = socket;
+    events.push(`upgrade head=${head.toString()}`);
+    socket.on("error", () => {});
+    socket.on("close", () => events.push("tunnel close"));
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    client = connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    await once(client, "connect");
+    const received = new Promise<string>((resolve, reject) => {
+      let buf = "";
+      client.on("data", d => {
+        buf += d;
+        if (buf.includes("\r\n\r\n") && !buf.endsWith("alive")) {
+          // The 101 arrived. The server side must still be writable.
+          serverSocket!.write("alive");
+        }
+        if (buf.endsWith("alive")) resolve(buf);
+      });
+      client!.on("close", () => reject(new Error("the server closed the socket: " + buf)));
+    });
+    // "zz" is not a valid hex chunk size.
+    client.write(
+      "GET /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n",
+    );
+    const out = await received;
+    expect(out).toStartWith("HTTP/1.1 101 Switching Protocols");
+    expect(events).toEqual(["upgrade head="]);
+    expect(serverSocket!.destroyed).toBe(false);
+  } finally {
+    client?.destroy();
+    serverSocket?.destroy();
+    server.close();
+  }
+});
+
+it("an Upgrade request with a non-chunked Transfer-Encoding switches protocols right after the head", async () => {
+  // Node v26.3.0 contract (verified): llhttp decides the body of an upgrade as
+  // chunked or Content-Length > 0 and exits the HTTP parser at the end of the
+  // head before it checks the framing. "Transfer-Encoding: identity" means no
+  // body, no HPE_INVALID_TRANSFER_ENCODING, the bytes after the head are the
+  // upgradeHead and req ends.
+  const events: string[] = [];
+  let serverSocket: import("node:net").Socket | undefined;
+  let client: import("node:net").Socket | undefined;
+  const server = createServer(() => events.push("request"));
+  const { promise: tunneled, resolve: onTunneled, reject: onTunnelClosed } = Promise.withResolvers<void>();
+  server.on("upgrade", (req, socket, head) => {
+    serverSocket = socket;
+    events.push(`upgrade head=${head.toString()}`);
+    req.on("data", d => events.push(`req data=${d.toString()}`));
+    req.on("end", () => events.push("req end"));
+    socket.on("error", () => {});
+    socket.on("close", () => onTunnelClosed(new Error("the upgrade socket closed: " + JSON.stringify(events))));
+    socket.on("data", d => {
+      events.push(`tunnel data=${d.toString()}`);
+      onTunneled();
+    });
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    client = connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    await once(client, "connect");
+    const got101 = new Promise<void>((resolve, reject) => {
+      let buf = "";
+      client!.on("data", d => {
+        buf += d;
+        if (buf.includes("\r\n\r\n")) resolve();
+      });
+      client!.on("close", () => {
+        const err = new Error("the server closed the socket: " + buf);
+        reject(err);
+        onTunnelClosed(err);
+      });
+    });
+    client.write(
+      "GET /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nTransfer-Encoding: identity\r\n\r\nhead",
+    );
+    await got101;
+    client.write("more");
+    await tunneled;
+    expect(events).toEqual(["upgrade head=head", "req end", "tunnel data=more"]);
+  } finally {
+    client?.destroy();
+    serverSocket?.destroy();
+    server.close();
+  }
+});
+
+it("the Connection header's upgrade and close tokens are whole comma-separated members, like llhttp", async () => {
+  // Node v26.3.0 contract (verified): "x-upgrade", "upgrade;foo" and
+  // "\"upgrade\"" do not make the request an upgrade. "keep-alive, Upgrade"
+  // does. "x-close" does not close the connection, "keep-alive, close" does.
+  const seen: string[] = [];
+  const server = createServer((req, res) => {
+    seen.push(`request ${req.url} upgrade=${req.upgrade}`);
+    res.end("ok");
+  });
+  server.on("upgrade", (req, socket) => {
+    seen.push(`upgrade ${req.url}`);
+    socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    for (const [path, connection] of [
+      ["/a", "x-upgrade"],
+      ["/b", "upgrade;foo"],
+      ["/c", '"upgrade"'],
+      ["/d", "keep-alive, Upgrade"],
+      ["/e", "x-close"],
+      ["/f", "keep-alive, close"],
+    ]) {
+      const client = connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      await once(client, "connect");
+      const response = new Promise<string>(resolve => {
+        let buf = "";
+        client.on("data", d => {
+          buf += d;
+          if (buf.endsWith("ok") || buf.endsWith("\r\n\r\n")) resolve(buf);
+        });
+        client.on("close", () => resolve(buf));
+      });
+      client.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: ${connection}\r\nUpgrade: x\r\n\r\n`);
+      const out = await response;
+      client.destroy();
+      expect(out.split("\r\n")[0]).toBe(path === "/d" ? "HTTP/1.1 101 Switching Protocols" : "HTTP/1.1 200 OK");
+      if (path === "/e") expect(out).toContain("\r\nConnection: keep-alive\r\n");
+      if (path === "/f") expect(out).toContain("\r\nConnection: close\r\n");
+    }
+    expect(seen).toEqual([
+      "request /a upgrade=false",
+      "request /b upgrade=false",
+      "request /c upgrade=false",
+      "upgrade /d",
+      "request /e upgrade=false",
+      "request /f upgrade=false",
+    ]);
+  } finally {
+    server.close();
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/34158
 it("server.close(cb) completes after a raw upgrade once both sockets are destroyed", async () => {
   // Node v26.3.0 contract (verified): after the 'upgrade' handoff, destroying

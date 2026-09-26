@@ -293,6 +293,17 @@ struct HttpResponseData;
         /* RFC 9112 9.6: "close" is a case-insensitive token in the Connection list. */
         bool hasConnectionClose()
         {
+            return hasConnectionToken("close");
+        }
+
+        /* RFC 9110 7.8: the "upgrade" token in the Connection list. */
+        bool hasConnectionUpgrade()
+        {
+            return hasConnectionToken("upgrade");
+        }
+
+        bool hasConnectionToken(std::string_view token)
+        {
             if (!bf.mightHave("connection")) {
                 return false;
             }
@@ -314,7 +325,7 @@ struct HttpResponseData;
                     while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
                         tokenEnd--;
                     }
-                    if (tokenEnd - tokenStart == 5 && !strncasecmp(value.data() + tokenStart, "close", 5)) {
+                    if (tokenEnd - tokenStart == token.length() && !strncasecmp(value.data() + tokenStart, token.data(), token.length())) {
                         return true;
                     }
                     if (pos < value.length()) {
@@ -1277,6 +1288,18 @@ struct HttpResponseData;
              * after the request handler below; no body data is ever emitted. */
             bool deferredTransferEncodingError = IsNodeHttp && transferEncoding.has
                 && !transferEncoding.invalid && !transferEncoding.chunked && !contentLengthStringLen;
+
+            /* node:http compat: llhttp leaves the HTTP parser at the end of the
+             * head of every CONNECT request, and of an Upgrade request (Upgrade
+             * header plus a Connection: upgrade token) whose body is neither
+             * chunked nor Content-Length > 0, before it checks the framing. Such
+             * a request with a non-chunked Transfer-Encoding has no body and no
+             * error, whether or not the handler accepts the upgrade. */
+            if (deferredTransferEncodingError
+                && (isConnectRequest || (req->getHeader("upgrade").data() && req->hasConnectionUpgrade()))) {
+                deferredTransferEncodingError = false;
+                transferEncoding.has = false;
+            }
 
             /* llhttp LENIENT_TRANSFER_ENCODING (kLenientAll / "insecure", never "relaxed")
              * accepts chunked with another value after it. It does not relax the TE+CL

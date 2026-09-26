@@ -682,6 +682,17 @@ private:
              * parsing further requests on this connection. */
             if (IsNodeHttp && httpContextData->onClientError) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
+                /* The socket was already handed to the 'upgrade' listener and the
+                 * error is in the request body that is still being parsed. Node's
+                 * Parser::Execute returns a parse error to JS only when
+                 * parser.upgrade is not set, so no 'clientError' fires: the
+                 * parser stays in its error state, later bytes go nowhere and
+                 * the socket stays open for the 'upgrade' listener. */
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) {
+                    us_socket_unref(s);
+                    ((AsyncSocket<SSL> *) s)->uncork();
+                    return s;
+                }
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 if (!us_socket_is_closed(s)) {
                     /* Balance the parsing ref taken at the top of onData (the

@@ -278,6 +278,169 @@ describe("fs.watch", () => {
     }
   });
 
+  // node registers the listener argument with watcher.addListener("change", listener):
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2540-L2542
+  describe("the listener argument", () => {
+    type Listener = (eventType: string, filename: string | null) => void;
+    type WatcherWithHandle = FSWatcher & {
+      _handle: { onchange(status: number, eventType: string, filename: string): void };
+    };
+    const missing = path.join(testDir, "listener-argument-404");
+
+    test.each<[string, (listener: Listener) => FSWatcher]>([
+      ["(path, listener)", listener => fs.watch(testDir, listener)],
+      ["(path, options, listener)", listener => fs.watch(testDir, { persistent: false }, listener)],
+      ["(path, encoding, listener)", listener => fs.watch(testDir, "utf8", listener)],
+      ["(path, null, listener)", listener => fs.watch(testDir, null, listener)],
+      ["(path, listener, ignored)", listener => (fs.watch as any)(testDir, listener, () => {})],
+      [
+        "(missing path, { throwIfNoEntry: false }, listener)",
+        listener => fs.watch(missing, { throwIfNoEntry: false } as fs.WatchOptionsWithStringEncoding, listener),
+      ],
+    ])("is a 'change' listener of the returned watcher: fs.watch%s", (_, watch) => {
+      const listener = () => {};
+      const watcher = watch(listener);
+      try {
+        expect(watcher.listeners("change")).toEqual([listener]);
+        expect(watcher.rawListeners("change")).toEqual([listener]);
+        expect(watcher.eventNames()).toEqual(["change"]);
+      } finally {
+        watcher.close();
+      }
+    });
+
+    // node's guard is `if (listener)`: a falsy value that is not a function is ignored, not rejected.
+    test.each([undefined, null, 0, "", false])("%p registers no listener", listener => {
+      const watcher = fs.watch(testDir, {}, listener as any);
+      try {
+        expect(watcher.eventNames()).toEqual([]);
+      } finally {
+        watcher.close();
+      }
+    });
+
+    test.each([
+      ["str", "type string ('str')"],
+      [1, "type number (1)"],
+      [{}, "an instance of Object"],
+      [true, "type boolean (true)"],
+    ])("%p is rejected by addListener", (listener, received) => {
+      const rejected = expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "listener" argument must be of type function. Received ${received}`,
+      });
+      expect(() => fs.watch(testDir, {}, listener as any).close()).toThrow(rejected);
+      // The suppressed ENOENT leaves the watch unstarted, and the listener is still registered.
+      expect(() => fs.watch(missing, { throwIfNoEntry: false } as fs.WatchOptions, listener as any).close()).toThrow(
+        rejected,
+      );
+      // The watch starts before the listener is registered, so its error wins.
+      expect(() => fs.watch(missing, {}, listener as any).close()).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    });
+
+    // node leaves the started handle open when addListener throws, and a persistent one keeps
+    // the process alive. Bun closes it.
+    test("a rejected listener does not leave the started watch open", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const fs = require("fs");
+          const live = new AbortController();
+          const shapes = {
+            "default": {},
+            "recursive": { recursive: true },
+            "aborted signal": { signal: AbortSignal.abort() },
+            "live signal": { signal: live.signal },
+          };
+          for (const [name, options] of Object.entries(shapes)) {
+            try {
+              fs.watch(${JSON.stringify(testDir)}, options, "not a function").close();
+              console.log(name + ": no throw");
+            } catch (err) {
+              console.log(name + ": " + err.code);
+            }
+          }
+          live.abort();
+          setImmediate(() => Bun.gc(true));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split(/\r?\n/), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: [
+          "default: ERR_INVALID_ARG_TYPE",
+          "recursive: ERR_INVALID_ARG_TYPE",
+          "aborted signal: ERR_INVALID_ARG_TYPE",
+          "live signal: ERR_INVALID_ARG_TYPE",
+        ],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    test("runs in registration order and removeAllListeners('change') removes it", async () => {
+      using dir = tempDir("fs-watch-listener-argument", {});
+      const root = String(dir);
+      const calls: string[] = [];
+      const watcher = fs.watch(root, () => void calls.push("listener argument"));
+      let files = 0;
+      const interval = repeat(() => fs.writeFileSync(path.join(root, `file-${files++}.txt`), "hello"));
+      try {
+        watcher.on("change", () => void calls.push("on('change')"));
+        await EventEmitter.once(watcher, "change");
+        expect(calls.slice(0, 2)).toEqual(["listener argument", "on('change')"]);
+
+        watcher.removeAllListeners("change");
+        calls.length = 0;
+        await EventEmitter.once(watcher, "change");
+        expect(calls).toEqual([]);
+      } finally {
+        clearInterval(interval);
+        watcher.close();
+      }
+    });
+
+    test("receives what _handle.onchange dispatches until it is removed", () => {
+      const calls: unknown[][] = [];
+      const listener = (...args: unknown[]) => void calls.push(["listener argument", ...args]);
+      const watcher = fs.watch(testDir, listener) as WatcherWithHandle;
+      try {
+        watcher.on("change", (...args) => void calls.push(["on('change')", ...args]));
+        watcher._handle.onchange(0, "rename", "a.txt");
+        watcher.off("change", listener);
+        watcher._handle.onchange(0, "change", "b.txt");
+        expect(calls).toEqual([
+          ["listener argument", "rename", "a.txt"],
+          ["on('change')", "rename", "a.txt"],
+          ["on('change')", "change", "b.txt"],
+        ]);
+      } finally {
+        watcher.close();
+      }
+    });
+
+    test("a throw from it stops the 'change' listeners added after it", () => {
+      const later = mock();
+      const watcher = fs.watch(testDir, () => {
+        throw new Error("from the listener argument");
+      }) as WatcherWithHandle;
+      try {
+        watcher.on("change", later);
+        expect(() => watcher._handle.onchange(0, "change", "a.txt")).toThrow("from the listener argument");
+        expect(later).not.toHaveBeenCalled();
+      } finally {
+        watcher.close();
+      }
+    });
+  });
+
   test("errors from watching a missing path keep path and filename properties", () => {
     const missing = path.join(testDir, "missing-subdir", "404.txt");
     try {

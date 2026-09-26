@@ -33,6 +33,51 @@ describe.concurrent("bunfig.toml type-mismatch error messages", () => {
   });
 });
 
+describe.concurrent("bunfig.toml invalid-value error messages name every accepted value", () => {
+  const settings: [key: string, accepted: string[], expected: string][] = [
+    [
+      "prefer",
+      [`"online"`, `"offline"`, `"latest"`],
+      `Invalid prefer setting, must be one of "online", "offline", or "latest"`,
+    ],
+    [
+      "auto",
+      [`true`, `false`, `"auto"`, `"force"`, `"fallback"`, `"disable"`],
+      `Invalid auto install setting, must be one of true, false, "auto", "force", "fallback", or "disable"`,
+    ],
+  ];
+
+  async function runWithInstallSetting(key: string, value: string) {
+    using dir = tempDir("bunfig-invalid-value", {
+      "bunfig.toml": `[install]\n${key} = ${value}\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "console.log('ran')"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each(settings)('install.%s = "bogus"', async (key, accepted, expected) => {
+    const { stdout, stderr, exitCode } = await runWithInstallSetting(key, `"bogus"`);
+    const errorLine = stderr.split("\n").find(l => l.startsWith("error:")) ?? stderr;
+    expect(errorLine).toBe(`error: ${expected}`);
+    // The message names every value that the next test shows bun accepts.
+    expect(accepted.filter(value => !expected.includes(value))).toEqual([]);
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
+
+  const acceptedCases = settings.flatMap(([key, accepted]) => accepted.map((value): [string, string] => [key, value]));
+  test.each(acceptedCases)("install.%s = %s is accepted", async (key, value) => {
+    expect(await runWithInstallSetting(key, value)).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+  });
+});
+
 // bun builds every config path in a stack buffer of MAX_PATH_BYTES (the platform's
 // PATH_MAX, see bun_core), so the longest path it can hold is MAX_PATH_BYTES - 1
 // bytes plus the NUL terminator. Paths that do not fit used to overflow the buffer

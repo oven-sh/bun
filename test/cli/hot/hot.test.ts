@@ -1,7 +1,27 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  copyFileSync,
+  cpSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import {
+  bunEnv,
+  bunExe,
+  forEachLine,
+  isDebug,
+  isLinux,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+  waitForFileToExist,
+} from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +795,73 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+// The Windows watcher only covers the working directory tree.
+it.skipIf(isWindows)(
+  "should hot reload an import outside the working directory that is replaced by an atomic save",
+  async () => {
+    // Nothing watches a directory outside the working directory, so the watch on
+    // the file itself is the only signal. An inotify watch follows the inode: the
+    // kernel reports the inode an atomic save replaced as deleted (which makes the
+    // reloader evict and re-import the file) only once nothing holds that inode
+    // open. So the watchlist must not keep the descriptor the file was read
+    // through. kqueue watches through a descriptor and reports the replaced inode
+    // as deleted at rename time.
+    using outside = tempDir("hot-atomic-outside", { "dep.js": "export const value = 1;\n" });
+    const dep = join(String(outside), "dep.js");
+    using project = tempDir("hot-atomic-project", {
+      "entry.js": `import { value } from ${JSON.stringify(dep)};\nconsole.log("value", value);\n`,
+    });
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", "entry.js"],
+      env: bunEnv,
+      cwd: String(project),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const lines = forEachLine(runner.stdout);
+    const exited: Promise<never> = runner.exited.then(code => {
+      throw new Error(`bun --hot exited with code ${code}`);
+    });
+    // The test kills the process at the end; only the races below should observe this rejection.
+    exited.catch(() => {});
+    async function nextValueLine() {
+      // A reload that never comes (the bug) leaves the process running silently,
+      // so bound the wait instead of relying on the test timeout.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("bun --hot did not print a new value")), 30_000);
+      });
+      try {
+        while (true) {
+          const { value: line, done } = await Promise.race([lines.next(), exited, deadline]);
+          if (done) throw new Error("stdout closed before the next value was printed");
+          if (line.startsWith("value ")) return line;
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    expect(await nextValueLine()).toBe("value 1");
+
+    if (isLinux) {
+      const fdDir = `/proc/${runner.pid}/fd`;
+      const openFiles = readdirSync(fdDir).flatMap(fd => {
+        try {
+          return [readlinkSync(`${fdDir}/${fd}`)];
+        } catch {
+          // A descriptor closed between readdir and readlink.
+          return [];
+        }
+      });
+      expect(openFiles).not.toContain(dep);
+    }
+
+    for (const round of [2, 3]) {
+      writeHotFileAtomicSync(dep, `export const value = ${round};\n`);
+      expect(await nextValueLine()).toBe(`value ${round}`);
+    }
+  },
 );

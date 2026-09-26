@@ -99,11 +99,13 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     30000,
   ); // 30 second timeout
 
-  // The watchlist owns one descriptor per watched file, closed only when the
-  // entry is evicted or the watcher shuts down. Re-transpiles during a reload
-  // open the file by path and must not stack additional descriptors on top of
-  // the stored one (previously the entrypoint gained one open fd per reload).
-  // /proc/<pid>/fd is Linux-only.
+  // On inotify the watchlist registers paths: it keeps a descriptor for each
+  // watched directory but none for a watched file (an open descriptor would pin
+  // the inode an atomic save replaces). Each transpile opens the file by path,
+  // hands the descriptor to the watcher, and closes it when the watcher
+  // declines it, so no file descriptor may stay open after a reload
+  // (previously the watchlist kept one per file, and the entrypoint gained one
+  // more per reload). /proc/<pid>/fd is Linux-only.
   test.skipIf(!isLinux)(
     "keeps a stable number of file descriptors across reloads",
     async () => {
@@ -121,8 +123,8 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
         stderr: "inherit",
       });
 
-      const countFileFds = () => {
-        const counts = { entry: 0, dep: 0 };
+      const countFds = () => {
+        const counts = { entry: 0, dep: 0, libDir: 0 };
         for (const fd of readdirSync(`/proc/${proc.pid}/fd`)) {
           let target: string;
           try {
@@ -132,6 +134,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
           }
           if (target === join(dirReal, "entry.js")) counts.entry++;
           else if (target === join(dirReal, "lib", "dep.js")) counts.dep++;
+          else if (target === join(dirReal, "lib")) counts.libDir++;
         }
         return counts;
       };
@@ -146,39 +149,23 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
       };
 
       await waitForReload(0);
-      // Warm up so both files reach their steady state in the watchlist (the
-      // entrypoint is added fd-less before its first transpile; dep's stored
-      // fd settles on its first edited reload).
-      for (let i = 1; i <= 2; i++) {
-        writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
-        await waitForReload(i);
-      }
-      const before = countFileFds();
-      // Guard against a vacuous pass: the entrypoint's stored descriptor must
-      // be visible in the baseline. (dep's can be transiently closed by a
-      // directory-event eviction, so it gets no such guard.)
-      expect(before.entry).toBeGreaterThan(0);
+      // A transpile closes its descriptor before it hands the module to the JS
+      // thread, so once RELOAD is printed nothing for either file may be open.
+      // The watch on lib/ holds the directory open; it guards against a
+      // vacuous pass if /proc stops being readable or the paths stop matching.
+      // (The resolver's directory cache holds lib/ too, so only its presence is
+      // checked.)
+      const before = countFds();
+      expect(before).toEqual({ entry: 0, dep: 0, libDir: before.libDir });
+      expect(before.libDir).toBeGreaterThan(0);
 
       const reloads = 15;
-      for (let i = 3; i <= reloads + 2; i++) {
+      for (let i = 1; i <= reloads; i++) {
         writeFileSync(join(dir, "lib", "dep.js"), `export const value = ${i};`);
         await waitForReload(i);
       }
-      const after = countFileFds();
-
-      // One handle's transient presence between samples is not a leak; a
-      // per-reload leak shows up as +reloads.
-      expect({
-        before,
-        after,
-        entryDelta: Math.min(after.entry - before.entry, 1),
-        depDelta: Math.min(after.dep - before.dep, 1),
-      }).toEqual({
-        before,
-        after,
-        entryDelta: after.entry - before.entry,
-        depDelta: after.dep - before.dep,
-      });
+      const after = countFds();
+      expect(after).toEqual({ entry: 0, dep: 0, libDir: after.libDir });
     },
     60000,
   );

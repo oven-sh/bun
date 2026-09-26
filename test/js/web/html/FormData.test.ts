@@ -63,6 +63,37 @@ describe("FormData", () => {
     expect(b1.name).toBe("foo.txt");
   });
 
+  // #43691
+  it("set/append with a filename renames a File entry", async () => {
+    const file = new File(["hello"], "original.txt", { lastModified: 1000 });
+    const form = new FormData();
+    form.set("set", file, "renamed.txt");
+    form.append("append", file, "appended.txt");
+    form.append("wrapped", new Blob([file]), "wrapped.txt");
+    form.append("unnamed", file);
+
+    const entries = [...form.entries()].map(([key, value]) => [key, (value as File).name]);
+    expect(entries).toEqual([
+      ["set", "renamed.txt"],
+      ["append", "appended.txt"],
+      ["wrapped", "wrapped.txt"],
+      ["unnamed", "original.txt"],
+    ]);
+    expect((form.get("set") as File).lastModified).toBe(1000);
+    expect(await (form.get("set") as File).text()).toBe("hello");
+    // the caller's File keeps its name
+    expect(file.name).toBe("original.txt");
+
+    const body = await new Response(form).text();
+    const dispositions = body.split("\r\n").filter(line => line.startsWith("Content-Disposition"));
+    expect(dispositions).toEqual([
+      'Content-Disposition: form-data; name="set"; filename="renamed.txt"',
+      'Content-Disposition: form-data; name="append"; filename="appended.txt"',
+      'Content-Disposition: form-data; name="wrapped"; filename="wrapped.txt"',
+      'Content-Disposition: form-data; name="unnamed"; filename="original.txt"',
+    ]);
+  });
+
   const multipartFormDataFixturesRawBody = [
     {
       name: "simple",

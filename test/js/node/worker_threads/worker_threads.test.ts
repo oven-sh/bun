@@ -1456,6 +1456,116 @@ test("MessagePort NodeEventTarget methods", () => {
   port1.close();
 });
 
+// emit() previously did `new MessageEvent("message", payload)` / `new
+// ErrorEvent("error", err)`, so the payload was (mis)read as an init dict and
+// .on() listeners received null/undefined. It also returned `this`. Verified
+// against node: .on() sees the raw arg by identity; addEventListener sees a
+// MessageEvent (data = arg) for message/messageerror and a CustomEvent
+// (detail = arg) otherwise; emit() returns a boolean.
+test("MessagePort emit() delivers the raw payload and returns a boolean", () => {
+  // message: .on() gets the payload by identity, addEventListener gets a
+  // MessageEvent whose .data is the payload; emit() -> true.
+  {
+    const { port1: p } = new MessageChannel();
+    const payload = { id: 42 };
+    let onArg: unknown = "unset";
+    let aelData: unknown = "unset";
+    let aelCtor = "";
+    p.on("message", x => (onArg = x));
+    p.addEventListener("message", e => ((aelData = e.data), (aelCtor = e.constructor.name)));
+    const ret = p.emit("message", payload);
+    expect({ onArg, aelData, aelCtor, ret }).toEqual({
+      onArg: payload,
+      aelData: payload,
+      aelCtor: "MessageEvent",
+      ret: true,
+    });
+    expect(onArg).toBe(payload);
+    expect(aelData).toBe(payload);
+    p.close();
+  }
+
+  // error: .on() gets the Error by identity; addEventListener gets a
+  // CustomEvent whose .detail is the Error (node's NodeEventTarget default).
+  {
+    const { port1: p } = new MessageChannel();
+    const err = new Error("boom");
+    let onArg: unknown = "unset";
+    let aelDetail: unknown = "unset";
+    let aelCtor = "";
+    p.on("error", x => (onArg = x));
+    p.addEventListener("error", (e: any) => ((aelDetail = e.detail), (aelCtor = e.constructor.name)));
+    const ret = p.emit("error", err);
+    expect({ onArg, aelDetail, aelCtor, ret }).toEqual({
+      onArg: err,
+      aelDetail: err,
+      aelCtor: "CustomEvent",
+      ret: true,
+    });
+    expect(onArg).toBe(err);
+    p.close();
+  }
+
+  // messageerror: same shape as message (MessageEvent, .data = arg).
+  {
+    const { port1: p } = new MessageChannel();
+    const err = new Error("boom");
+    let onArg: unknown = "unset";
+    let aelData: unknown = "unset";
+    p.on("messageerror", x => (onArg = x));
+    p.addEventListener("messageerror", (e: any) => (aelData = e.data));
+    p.emit("messageerror", err);
+    expect(onArg).toBe(err);
+    expect(aelData).toBe(err);
+    p.close();
+  }
+
+  // No listeners: emit() -> false (not `this`).
+  {
+    const { port1: p } = new MessageChannel();
+    expect(p.emit("message", 1)).toBe(false);
+    expect(p.emit("custom", 1)).toBe(false);
+    p.close();
+  }
+
+  // addEventListener-only: emit() -> true and listenerCount() sees it (node's
+  // NodeEventTarget counts both styles from one store).
+  {
+    const { port1: p } = new MessageChannel();
+    p.addEventListener("message", () => {});
+    expect({ emit: p.emit("message", 1), count: p.listenerCount("message") }).toEqual({ emit: true, count: 1 });
+    p.close();
+  }
+
+  // listenerCount reads the native EventTarget map directly, not via a
+  // user-overridable `.listeners` duck-type (tamper-resistance).
+  {
+    const { port1: p } = new MessageChannel();
+    p.on("message", () => {});
+    (p as any).listeners = () => [];
+    try {
+      (MessagePort.prototype as any).listeners = () => [];
+      expect({ count: p.listenerCount("message"), emit: p.emit("message", 1) }).toEqual({ count: 1, emit: true });
+    } finally {
+      delete (MessagePort.prototype as any).listeners;
+    }
+    p.close();
+  }
+
+  // Custom events (unchanged behaviour, guards against regression): .on() gets
+  // the arg, addEventListener gets CustomEvent with .detail = arg.
+  {
+    const { port1: p } = new MessageChannel();
+    let onArg: unknown = "unset";
+    let aelDetail: unknown = "unset";
+    p.on("foo", (x: unknown) => (onArg = x));
+    p.addEventListener("foo", (e: any) => (aelDetail = e.detail));
+    p.emit("foo", 123);
+    expect({ onArg, aelDetail }).toEqual({ onArg: 123, aelDetail: 123 });
+    p.close();
+  }
+});
+
 // jsRef() only gated on m_isDetached, so .ref()/onmessage= after the peer closed
 // re-took an event-loop ref that nothing releases and the process hung. Node no-ops
 // both. Spawned, because the symptom is "the process never exits".

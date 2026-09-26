@@ -3,7 +3,7 @@
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
 
-#![cfg(windows)]
+#![cfg(any(windows, bun_portable))]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
 use core::ffi::{c_char, c_int, c_void};
@@ -36,6 +36,7 @@ pub mod kernel32 {
     pub use bun_windows_sys::kernel32::*;
     use core::ffi::c_void;
 
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
     #[link(name = "kernel32")]
     unsafe extern "system" {
         // safe: by-value DWORD write to the TEB; cannot fault.
@@ -361,6 +362,7 @@ pub use bun_windows_sys::externs::FILE_FLAG_BACKUP_SEMANTICS;
 pub use bun_windows_sys::externs::GetFileInformationByHandle;
 pub use bun_windows_sys::externs::OPEN_EXISTING;
 
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
 unsafe extern "system" {
     // safe: `HANDLE` is a by-value opaque; bad handle → FILE_TYPE_UNKNOWN +
     // GetLastError, no UB.
@@ -467,6 +469,7 @@ pub fn GetProcAddressA(ptr: Option<*mut c_void>, utf8: &bun_core::ZStr) -> Optio
 
 pub use bun_windows_sys::externs::LoadLibraryA;
 
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
 unsafe extern "system" {
     #[link_name = "CreateHardLinkW"]
     fn CreateHardLinkW_raw(
@@ -547,6 +550,7 @@ pub use bun_windows_sys::externs::GetTempPathW;
 /// the underlying call has no preconditions and never fails.
 #[inline]
 pub fn GetCurrentProcessId() -> DWORD {
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
     unsafe extern "system" {
         // No preconditions; reads thread-local kernel state.
         safe fn GetCurrentProcessId() -> DWORD;
@@ -1211,6 +1215,7 @@ pub fn detect_runtime_version() -> &'static str {
         dwPlatformId: u32,
         szCSDVersion: [u16; 128],
     }
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "ntdll"))]
     unsafe extern "system" {
         // safe: out-param is `&mut OSVERSIONINFOW` (non-null, valid for write);
         // ntdll only writes the struct and returns NTSTATUS — no preconditions.
@@ -1435,6 +1440,7 @@ pub struct PROCESS_MEMORY_COUNTERS {
 /// psapi `K32GetProcessMemoryInfo`
 /// (kernel32 hosts the K32* shims since Windows 7, no separate psapi.lib).
 pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, Win32Error> {
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
     unsafe extern "system" {
         // safe: `HANDLE` is a by-value opaque (bad handle → BOOL 0, no UB);
         // out-param is `&mut PROCESS_MEMORY_COUNTERS` sized by `cb`.
@@ -1943,6 +1949,7 @@ pub(crate) fn rename_at_w(
 
 mod kernel32_2 {
     use super::*;
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
     unsafe extern "system" {
         /// No preconditions; allocates and returns the env block (or null).
         pub(super) safe fn GetEnvironmentStringsW() -> LPWSTR;

@@ -33,5 +33,8 @@ thiserror.workspace = true
 # Android: same kernel ABI; rustix's linux_raw backend supports it directly.
 rustix = { workspace = true }
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(windows, bun_portable))'.dependencies]
 bun_libuv_sys.workspace = true
+
+[target.'cfg(bun_portable)'.dependencies]
+bun_portable_macros.workspace = true

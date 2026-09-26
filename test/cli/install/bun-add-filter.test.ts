@@ -1,7 +1,7 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmod, exists, mkdir, rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -996,6 +996,34 @@ test.concurrent("add --filter with an existing lockfile re-resolves only the add
     name: "no-deps",
     version: "2.0.0",
   });
+});
+
+test.concurrent("add/remove --filter updates bun.lock for a workspace outside the root", async () => {
+  using dir = tempDir("add-filter-outside-root", {
+    "root/package.json": JSON.stringify({ name: "root", workspaces: ["../x", "../y"] }),
+    "x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+    "y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+  });
+  const root = join(String(dir), "root");
+  const x = () => file(join(String(dir), "x", "package.json")).json();
+  const lockedX = async () => (await lockfileJson(root)).workspaces["../x"];
+  // Hoisted: on Windows the isolated linker fails to link the dependencies of a workspace outside the root (ENOENT).
+  async function runOk(args: string[]) {
+    const { stderr, exitCode } = await run(args, String(dir), { cwd: root, linker: "hoisted" });
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  await runOk(["install"]);
+  expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0" });
+
+  await runOk(["add", "--filter", "x", "y@workspace:*"]);
+  expect(await x()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
+  expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
+
+  await runOk(["remove", "--filter", "x", "y"]);
+  expect(await x()).toStrictEqual({ name: "x", version: "1.0.0" });
+  expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0" });
 });
 
 test.concurrent("--dry-run writes nothing", async () => {

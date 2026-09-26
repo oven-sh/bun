@@ -4,7 +4,7 @@ use core::mem;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet, index_sort};
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, resolve_path};
+use bun_paths::{self as path, MAX_PATH_BYTES, resolve_path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
@@ -1465,12 +1465,11 @@ impl Diff {
                             break 'update_mapping false;
                         };
 
-                        let mut package_json_path: AutoAbsPath = AutoAbsPath::init_top_level_dir();
-
-                        let _ = package_json_path.append(
+                        let Some(package_json_path) = lockfile::workspace_package_json_path(
                             workspace_path.slice(to_lockfile.buffers.string_bytes.as_slice()),
-                        );
-                        let _ = package_json_path.append(b"package.json");
+                        ) else {
+                            break 'update_mapping false;
+                        };
 
                         // `bun.sys.File.toSource` was removed from
                         // T1 (`bun_sys`) because `bun_ast::Source` lives in T2.

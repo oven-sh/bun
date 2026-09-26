@@ -1150,7 +1150,7 @@ impl MultiPartUpload {
     }
 
     pub(crate) fn is_queue_empty(&self) -> bool {
-        self.available.get().mask == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::init_full().mask
+        self.available.get() == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::init_full()
     }
 
     fn append_chunk(&self, encoding: WriteEncoding, chunk: &[u8]) -> Result<(), AllocError> {

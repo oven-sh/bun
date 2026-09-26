@@ -1568,13 +1568,14 @@ pub mod node {
         }
     }
 
+    // `stack` keeps HAS_CACHE and IS_CONSUMING in the low bits of a `*mut Node`.
+    const _: () =
+        assert!(core::mem::align_of::<Node>() >= ((Queue::IS_CONSUMING | Queue::HAS_CACHE) + 1));
+
     impl Queue {
         const HAS_CACHE: usize = 0b01;
         const IS_CONSUMING: usize = 0b10;
         const PTR_MASK: usize = !(Self::HAS_CACHE | Self::IS_CONSUMING);
-
-        const _ALIGN_CHECK: () =
-            assert!(core::mem::align_of::<Node>() >= ((Self::IS_CONSUMING | Self::HAS_CACHE) + 1));
 
         pub(super) fn push(&self, list: &List) {
             let List { head, tail } = *list;

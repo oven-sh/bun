@@ -105,13 +105,12 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
 /// This set is good for sets with a small size, but may generate
 /// inefficient code for larger sets, especially in debug mode.
 ///
-// Backed by `usize`; requires `SIZE <= usize::BITS` (misuse surfaces via
-// `FULL_MASK` saturation + debug asserts).
+// Backed by `usize`. `from_mask` rejects `SIZE > usize::BITS` at compile time (use `ArrayBitSet`).
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IntegerBitSet<const SIZE: usize> {
-    /// The bit mask, as a single integer
-    pub mask: usize,
+    /// The bit mask, as a single integer. Private so that every value comes from `from_mask`.
+    mask: usize,
 }
 
 impl<const SIZE: usize> IntegerBitSet<SIZE> {
@@ -119,24 +118,31 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
     pub(crate) const BIT_LENGTH: usize = SIZE;
 
     const FULL_MASK: usize = if SIZE as u32 >= usize::BITS {
-        // SIZE > usize::BITS is a caller error (use ArrayBitSet); saturating
-        // here avoids a const-eval shift-overflow at monomorphization time so
-        // the misuse surfaces as a runtime debug_assert instead.
+        // `SIZE == usize::BITS` is valid, and `1 << usize::BITS` overflows.
         usize::MAX
     } else {
         (1usize << (SIZE as u32)) - 1
     };
 
+    /// Both constructors go through here, so one assertion covers them.
+    const fn from_mask(mask: usize) -> Self {
+        const {
+            assert!(
+                SIZE <= usize::BITS as usize,
+                "IntegerBitSet: SIZE must fit in one usize (use ArrayBitSet)"
+            )
+        };
+        Self { mask }
+    }
+
     /// Creates a bit set with no elements present.
     pub const fn init_empty() -> Self {
-        Self { mask: 0 }
+        Self::from_mask(0)
     }
 
     /// Creates a bit set with all elements present.
     pub const fn init_full() -> Self {
-        Self {
-            mask: Self::FULL_MASK,
-        }
+        Self::from_mask(Self::FULL_MASK)
     }
 
     /// Returns true if the bit at the specified index
@@ -282,10 +288,13 @@ pub const fn num_masks_for(bit_length: usize) -> usize {
 /// more bytes than necessary if your set is small.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ArrayBitSet<const SIZE: usize, const NUM_MASKS: usize> {
+pub struct ArrayBitSet<
+    const SIZE: usize,
+    const NUM_MASKS: usize, // = num_masks_for(SIZE), asserted in init_empty()
+> {
     /// The bit masks, ordered with lower indices first.
     /// Padding bits at the end are undefined.
-    pub(crate) masks: [usize; NUM_MASKS],
+    masks: [usize; NUM_MASKS],
 }
 
 impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
@@ -300,11 +309,6 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
 
     // bits in one mask
     const MASK_LEN: u32 = usize::BITS;
-    // total number of masks
-    const _ASSERT: () = assert!(
-        NUM_MASKS == num_masks_for(SIZE),
-        "ArrayBitSet: NUM_MASKS must equal num_masks_for(SIZE)"
-    );
     // padding bits in the last mask (may be 0)
     const LAST_PAD_BITS: u32 = (Self::MASK_LEN as usize * NUM_MASKS - SIZE) as u32;
     /// Mask of valid bits in the last mask.
@@ -314,6 +318,13 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
 
     /// Creates a bit set with no elements present.
     pub const fn init_empty() -> Self {
+        // The only constructor, so this check covers every ArrayBitSet.
+        const {
+            assert!(
+                NUM_MASKS == num_masks_for(SIZE),
+                "ArrayBitSet: NUM_MASKS must equal num_masks_for(SIZE)"
+            )
+        };
         Self {
             masks: [0usize; NUM_MASKS],
         }
@@ -1402,3 +1413,38 @@ pub struct Range {
     /// The index immediately after the last bit of interest.
     pub end: usize,
 }
+
+#[cfg(doctest)]
+#[doc = "
+```
+use bun_collections::IntegerBitSet;
+use bun_collections::bit_set::ArrayBitSet;
+const _: IntegerBitSet<64> = IntegerBitSet::init_empty();
+const _: IntegerBitSet<64> = IntegerBitSet::init_full();
+const _: ArrayBitSet<64, 1> = ArrayBitSet::init_empty();
+const _: ArrayBitSet<65, 2> = ArrayBitSet::init_empty();
+```
+
+```compile_fail,E0080
+const _: bun_collections::IntegerBitSet<65> = bun_collections::IntegerBitSet::init_empty();
+```
+
+```compile_fail,E0080
+const _: bun_collections::IntegerBitSet<65> = bun_collections::IntegerBitSet::init_full();
+```
+
+```compile_fail,E0080
+use bun_collections::bit_set::ArrayBitSet;
+const _: ArrayBitSet<65, 1> = ArrayBitSet::init_empty();
+```
+
+```compile_fail,E0080
+use bun_collections::bit_set::ArrayBitSet;
+const _: ArrayBitSet<64, 2> = ArrayBitSet::init_empty();
+```
+
+```compile_fail,E0451
+let _ = bun_collections::IntegerBitSet::<3> { mask: 0 };
+```
+"]
+mod size_guards {}

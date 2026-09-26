@@ -162,6 +162,8 @@ public:
     void onClose(int readError, bool peerEnded);
     void onDrain();
     void onData(const char* data, int length, bool last);
+    /* A read gave JS nothing: calls the duplex's _unrefTimer(), as Node does on every socket read. */
+    void onActivity();
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     void finishCreation(JSC::VM& vm);

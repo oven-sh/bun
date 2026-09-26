@@ -1453,13 +1453,12 @@ function onSocketTimeoutTimerExpired(socket) {
   const idleStart = socket[kKeepAliveIdleStart];
   if (idleStart !== undefined && socket[kKeepAliveTimeoutSet]) {
     socket[kKeepAliveIdleStart] = undefined;
-    const remaining = socket.timeout - (DateNow() - idleStart);
-    if (remaining > 0) {
-      const existingTimer = socket[kSocketTimeoutTimer];
-      if (existingTimer !== undefined) clearTimeout(existingTimer);
-      const timer = setTimeout(onSocketTimeoutTimerExpired, remaining, socket);
-      timer.unref();
-      socket[kSocketTimeoutTimer] = timer;
+    const idleFor = DateNow() - idleStart;
+    const timer = socket[kSocketTimeoutTimer];
+    if (idleFor < socket.timeout && timer !== undefined) {
+      // The timer keeps its full interval for the next refresh(). Moving _idleStart back moves only this deadline.
+      timer.refresh();
+      timer._idleStart -= idleFor;
       return;
     }
   }

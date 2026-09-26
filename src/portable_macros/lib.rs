@@ -41,6 +41,9 @@ pub fn imports(args: TokenStream, item: TokenStream) -> TokenStream {
 /// on x86-64. On arm64 the two conventions agree for functions that are not variadic, and nothing changes.
 ///
 /// `extern` blocks inside the item are left alone: what they declare is linked into the image.
+///
+/// On a module that is a file of its own the attribute is written in the file, `#![cfg_attr(bun_portable,
+/// bun_portable_macros::win_abi)]`: an attribute on `mod name;` is given that line and not the file.
 #[proc_macro_attribute]
 pub fn win_abi(args: TokenStream, item: TokenStream) -> TokenStream {
     if !args.is_empty() {
@@ -48,7 +51,10 @@ pub fn win_abi(args: TokenStream, item: TokenStream) -> TokenStream {
             .into_compile_error()
             .into();
     }
-    per_architecture(item.into()).into()
+    if let Err(error) = refuse_module_declaration(&item.clone().into()) {
+        return error.into_compile_error().into();
+    }
+    per_architecture(with_paths_of_the_file(item.into())).into()
 }
 
 /// On a function or a method that has one definition for each host OS.
@@ -66,6 +72,9 @@ pub fn win_abi(args: TokenStream, item: TokenStream) -> TokenStream {
 /// The function is renamed `<name>__<os>`. With `dispatch(..)`, which the last definition carries, the
 /// function `<name>` is added: it calls the definition for the host OS (`bun_core::host`). The kinds are
 /// `windows`, `macos`, `linux`, and `posix` for every host that is not Windows.
+///
+/// `flavor(Name, ..)` names what the definition calls by a name that each OS gives another meaning, a
+/// type in its signature for one: inside of the definition it is `<Name>__<os>` (see [`flavor`]).
 #[proc_macro_attribute]
 pub fn host_os(args: TokenStream, item: TokenStream) -> TokenStream {
     host_os::expand(args.into(), item.into())
@@ -100,7 +109,107 @@ pub fn flavor(args: TokenStream, item: TokenStream) -> TokenStream {
             .into();
     };
     let names: Vec<String> = names.collect();
-    renamed(item.into(), &os, &names).into()
+    if let Err(error) = refuse_module_declaration(&item.clone().into()) {
+        return error.into_compile_error().into();
+    }
+    renamed(with_paths_of_the_file(item.into()), &os, &names).into()
+}
+
+/// `mod name;` with an attribute macro on it: the macro is given these three tokens, and the file is read
+/// after it ran. The attribute has to be in the file.
+fn refuse_module_declaration(item: &Tokens) -> syn::Result<()> {
+    let tokens: Vec<TokenTree> = item.clone().into_iter().collect();
+    let Some(TokenTree::Punct(last)) = tokens.last() else {
+        return Ok(());
+    };
+    let declares_module = tokens
+        .iter()
+        .rev()
+        .nth(2)
+        .is_some_and(|token| matches!(token, TokenTree::Ident(keyword) if keyword == "mod"));
+    if last.as_char() == ';' && declares_module {
+        return Err(syn::Error::new(
+            last.span(),
+            "the attribute does not reach the file of this module: write it in the file, `#![cfg_attr(bun_portable, ..)]`",
+        ));
+    }
+    Ok(())
+}
+
+/// A module that is a file of its own is, once an attribute macro of the file expanded it, a module
+/// written in the file of its parent, and `#[path = ".."]` of a module inside of it is then relative to
+/// a directory of the module's name. The paths are made absolute, from the directory of the file that
+/// has them.
+fn with_paths_of_the_file(item: Tokens) -> Tokens {
+    let mut tokens: Vec<TokenTree> = item.into_iter().collect();
+    let is_module = tokens
+        .iter()
+        .any(|token| matches!(token, TokenTree::Ident(keyword) if keyword == "mod"));
+    let Some(TokenTree::Group(body)) = tokens.last().cloned() else {
+        return tokens.into_iter().collect();
+    };
+    if !is_module || body.delimiter() != Delimiter::Brace {
+        return tokens.into_iter().collect();
+    }
+    let inner: Vec<TokenTree> = body.stream().into_iter().collect();
+    let mut rewritten = Vec::with_capacity(inner.len());
+    for (index, token) in inner.iter().enumerate() {
+        let follows_hash = index > 0
+            && matches!(&inner[index - 1], TokenTree::Punct(hash) if hash.as_char() == '#');
+        match token {
+            TokenTree::Group(attribute)
+                if follows_hash && attribute.delimiter() == Delimiter::Bracket =>
+            {
+                rewritten.push(TokenTree::Group(absolute_path_attribute(attribute)));
+            }
+            other => rewritten.push(other.clone()),
+        }
+    }
+    let mut group = Group::new(Delimiter::Brace, rewritten.into_iter().collect());
+    group.set_span(body.span());
+    let last = tokens.len() - 1;
+    tokens[last] = TokenTree::Group(group);
+    tokens.into_iter().collect()
+}
+
+/// `[path = "relative"]` with the path made absolute; every other attribute as it is.
+fn absolute_path_attribute(attribute: &Group) -> Group {
+    let tokens: Vec<TokenTree> = attribute.stream().into_iter().collect();
+    let [
+        TokenTree::Ident(name),
+        TokenTree::Punct(equals),
+        TokenTree::Literal(value),
+    ] = tokens.as_slice()
+    else {
+        return attribute.clone();
+    };
+    if name != "path" || equals.as_char() != '=' {
+        return attribute.clone();
+    }
+    let Ok(relative) = syn::parse2::<syn::LitStr>(value.to_token_stream()) else {
+        return attribute.clone();
+    };
+    let Some(file) = value.span().unwrap().local_file() else {
+        return attribute.clone();
+    };
+    let file = std::path::absolute(&file).unwrap_or(file);
+    let Some(directory) = file.parent() else {
+        return attribute.clone();
+    };
+    let mut path = Literal::string(&directory.join(relative.value()).to_string_lossy());
+    path.set_span(value.span());
+    let mut group = Group::new(
+        Delimiter::Bracket,
+        [
+            tokens[0].clone(),
+            tokens[1].clone(),
+            TokenTree::Literal(path),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    group.set_span(attribute.span());
+    group
 }
 
 fn renamed(stream: Tokens, os: &str, names: &[String]) -> Tokens {

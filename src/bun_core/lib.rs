@@ -40,8 +40,300 @@ pub mod heap;
 
 pub mod debug;
 pub mod env;
+#[cfg(bun_portable)]
 pub mod host;
+#[cfg(bun_portable)]
 pub mod host_dispatch;
+
+// ── Code that has one definition for each OS ─────────────────────────────
+// The macros `host_dispatch.rs` describes. Each has two definitions: the one of a build for one OS, which
+// expands to the `cfg` attributes and the code that would be written without it, and the one of the portable
+// image, which picks when it runs. They are here, and not in a module of their own, so that a build for one
+// OS has no item they add.
+
+/// The block for the OS, where statements are written. A build for one OS compiles one block; the
+/// portable image compiles the ones for its hosts and runs the one for the host it is on.
+///
+/// ```ignore
+/// bun_core::host_select! {
+///     windows => { kernel32_path(path) }
+///     posix => { path }
+/// }
+/// ```
+///
+/// An arm is named as the `cfg` it stands for: `windows`, `posix` (`not(windows)`), `unix`, `linux`
+/// (Linux and Android), `macos`, `freebsd`. The portable image is compiled for Linux: it runs the arm
+/// `windows` on a Windows host and the arm `linux`, `posix` or `unix` on every other one, and has no
+/// use for the other arms.
+///
+/// As the last statement of a block it is the value of the block, as the blocks under `cfg` are.
+///
+/// An arm that is not a block is an expression and ends with a comma: `windows => match kind { .. },`
+/// stands for `#[cfg(windows)] match kind { .. }`.
+#[cfg(not(bun_portable))]
+#[macro_export]
+macro_rules! host_select {
+    () => {};
+    ($os:ident => $block:block $($rest:tt)*) => {
+        $crate::__host_select_arm! { $os $block }
+        $crate::host_select! { $($rest)* }
+    };
+    ($os:ident => $expression:expr, $($rest:tt)*) => {
+        $crate::__host_select_arm! { $os $expression }
+        $crate::host_select! { $($rest)* }
+    };
+}
+
+#[cfg(not(bun_portable))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __host_select_arm {
+    (windows $($code:tt)*) => {
+        #[cfg(windows)]
+        $($code)*
+    };
+    (posix $($code:tt)*) => {
+        #[cfg(not(windows))]
+        $($code)*
+    };
+    (unix $($code:tt)*) => {
+        #[cfg(unix)]
+        $($code)*
+    };
+    (linux $($code:tt)*) => {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        $($code)*
+    };
+    (macos $($code:tt)*) => {
+        #[cfg(target_os = "macos")]
+        $($code)*
+    };
+    (freebsd $($code:tt)*) => {
+        #[cfg(target_os = "freebsd")]
+        $($code)*
+    };
+}
+
+#[cfg(bun_portable)]
+#[macro_export]
+macro_rules! host_select {
+    ($($arms:tt)+) => {
+        $crate::__host_select_portable!([] [] $($arms)+)
+    };
+}
+
+#[cfg(bun_portable)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __host_select_portable {
+    ([$windows:block] [$other:block]) => {
+        if $crate::host::is_windows() $windows else $other
+    };
+    ([$windows:block] []) => {
+        if $crate::host::is_windows() $windows else {
+            $crate::host_dispatch::no_definition_for_this_host(concat!(file!(), ":", line!()))
+        }
+    };
+    ([] [$other:block]) => {
+        if $crate::host::is_windows() {
+            $crate::host_dispatch::no_definition_for_this_host(concat!(file!(), ":", line!()))
+        } else $other
+    };
+    ([] [$($other:block)?] windows => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$block] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [] linux => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$block] $($rest)*)
+    };
+    ([$($windows:block)?] [] posix => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$block] $($rest)*)
+    };
+    ([$($windows:block)?] [] unix => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$block] $($rest)*)
+    };
+    ([$($windows:block)?] [$($other:block)?] macos => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [$($other:block)?] freebsd => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($other)?] $($rest)*)
+    };
+    // An arm that is an expression: the block it is in the image.
+    ([$($windows:block)?] [$($other:block)?] $os:ident => $expression:expr, $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($other)?] $os => { $expression } $($rest)*)
+    };
+}
+
+/// A statement of one OS, where the others have none.
+///
+/// ```ignore
+/// bun_core::host_only! { windows => windows_stdio::init(); }
+/// ```
+///
+/// A build for one OS has the statement under the `cfg` of the OS. The portable image runs it on the
+/// host it names. The OS is named as in [`host_select!`].
+#[cfg(not(bun_portable))]
+#[macro_export]
+macro_rules! host_only {
+    ($os:ident => $($statement:tt)+) => {
+        $crate::__host_select_arm! { $os $($statement)+ }
+    };
+}
+
+#[cfg(bun_portable)]
+#[macro_export]
+macro_rules! host_only {
+    (windows => $($statement:tt)+) => {
+        if $crate::host::is_windows() {
+            $($statement)+
+        }
+    };
+    (posix => $($statement:tt)+) => {
+        if !$crate::host::is_windows() {
+            $($statement)+
+        }
+    };
+    (unix => $($statement:tt)+) => {
+        if !$crate::host::is_windows() {
+            $($statement)+
+        }
+    };
+    (linux => $($statement:tt)+) => {
+        if !$crate::host::is_windows() {
+            $($statement)+
+        }
+    };
+    (macos => $($statement:tt)+) => {};
+    (freebsd => $($statement:tt)+) => {};
+}
+
+/// A `let` whose value depends on the OS.
+///
+/// ```ignore
+/// bun_core::host_let! {
+///     let js_errno = { windows => uv_code(errno), posix => -errno };
+/// }
+/// ```
+///
+/// A build for one OS has the `let` of its OS, under its `cfg`.
+#[cfg(not(bun_portable))]
+#[macro_export]
+macro_rules! host_let {
+    (let $name:ident $(: $ty:ty)? = { windows => $windows:expr, posix => $posix:expr $(,)? };) => {
+        #[cfg(windows)]
+        let $name $(: $ty)? = $windows;
+        #[cfg(not(windows))]
+        let $name $(: $ty)? = $posix;
+    };
+}
+
+#[cfg(bun_portable)]
+#[macro_export]
+macro_rules! host_let {
+    (let $name:ident $(: $ty:ty)? = { windows => $windows:expr, posix => $posix:expr $(,)? };) => {
+        let $name $(: $ty)? = if $crate::host::is_windows() { $windows } else { $posix };
+    };
+}
+
+/// `cfg!(..)` for a decision that the portable image takes when it runs.
+///
+/// ```ignore
+/// if !bun_core::host_cfg!(windows) {
+///     return path;
+/// }
+/// ```
+///
+/// A build for one OS has `cfg!` of the same predicate. The portable image asks [`crate::host`]; the
+/// predicates it knows are `windows`, `unix`, `target_os = "linux" | "android" | "macos" | "freebsd"`,
+/// and `not`, `any` and `all` of them.
+#[cfg(not(bun_portable))]
+#[macro_export]
+macro_rules! host_cfg {
+    ($($predicate:tt)*) => {
+        cfg!($($predicate)*)
+    };
+}
+
+#[cfg(bun_portable)]
+#[macro_export]
+macro_rules! host_cfg {
+    (windows) => { $crate::host::is_windows() };
+    (unix) => { !$crate::host::is_windows() };
+    (target_os = "windows") => { $crate::host::is_windows() };
+    (target_os = "macos") => { $crate::host::is_mac() };
+    (target_os = "linux") => { $crate::host::is_linux() };
+    (target_os = "android") => { false };
+    (target_os = "freebsd") => { false };
+    (not($($predicate:tt)*)) => { !$crate::host_cfg!($($predicate)*) };
+    (any($($name:ident $(= $value:literal)? $(($($arguments:tt)*))?),* $(,)?)) => {
+        (false $(|| $crate::host_cfg!($name $(= $value)? $(($($arguments)*))?))*)
+    };
+    (all($($name:ident $(= $value:literal)? $(($($arguments:tt)*))?),* $(,)?)) => {
+        (true $(&& $crate::host_cfg!($name $(= $value)? $(($($arguments)*))?))*)
+    };
+}
+
+/// `$fd.native()` in code for POSIX, at a place that does not say it takes an `int`: an argument of a
+/// variadic function, the operand of a cast, an argument of a format string. `Fd::native` of the portable
+/// image gives what its place asks for, and such a place does not ask.
+#[macro_export]
+macro_rules! fd_int {
+    ($fd:expr) => {
+        cfg_select! {
+            bun_portable => $fd.posix(),
+            _ => $fd.native(),
+        }
+    };
+}
+
+/// `$fd.native()` in code for Windows, at a place that does not say it takes a HANDLE. See [`fd_int!`].
+#[macro_export]
+macro_rules! fd_handle {
+    ($fd:expr) => {
+        cfg_select! {
+            bun_portable => $fd.native::<*mut ::core::ffi::c_void>(),
+            _ => $fd.native(),
+        }
+    };
+}
+
+/// The functions that two modules both define, one module for Windows and one for every other host, as
+/// functions of the module that invokes the macro: each calls the module for the host.
+///
+/// ```ignore
+/// #[cfg(bun_portable)]
+/// bun_core::host_dispatch! {
+///     windows = windows_impl, posix = posix_impl;
+///     pub fn close(fd: Fd) -> Maybe<()>;
+///     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize>;
+/// }
+/// ```
+///
+/// Only the portable image has two such modules at once. The list is checked against both: a function
+/// that one module lacks, or declares with other types, does not compile.
+#[cfg(bun_portable)]
+#[macro_export]
+macro_rules! host_dispatch {
+    (
+        windows = $windows:path, posix = $posix:path;
+        $(
+            $(#[$attribute:meta])*
+            $visibility:vis fn $name:ident $(<$lifetime:lifetime>)? ($($argument:ident: $ty:ty),* $(,)?) $(-> $result:ty)?;
+        )*
+    ) => {$(
+        $(#[$attribute])*
+        #[inline]
+        $visibility fn $name $(<$lifetime>)? ($($argument: $ty),*) $(-> $result)? {
+            if $crate::host::is_windows() {
+                use $windows as for_host;
+                for_host::$name($($argument),*)
+            } else {
+                use $posix as for_host;
+                for_host::$name($($argument),*)
+            }
+        }
+    )*};
+}
+
 #[cfg(bun_portable)]
 extern crate self as bun_core;
 #[cfg(bun_portable)]

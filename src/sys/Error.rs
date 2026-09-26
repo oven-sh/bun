@@ -14,8 +14,19 @@ fn fd_unwrap_valid(fd: Fd) -> Option<Fd> {
     if fd == Fd::INVALID { None } else { Some(fd) }
 }
 
-bun_core::host_const! {
-    const RETRY_ERRNO: Int, fn retry_errno = { windows => E::EINTR as Int, posix => E::EAGAIN as Int };
+#[cfg(windows)]
+const RETRY_ERRNO: Int = E::EINTR as Int;
+#[cfg(all(not(windows), not(bun_portable)))]
+const RETRY_ERRNO: Int = E::EAGAIN as Int;
+/// `RETRY_ERRNO` of the host.
+#[cfg(bun_portable)]
+#[inline]
+fn retry_errno() -> Int {
+    if bun_core::host::is_windows() {
+        E::EINTR as Int
+    } else {
+        E::EAGAIN as Int
+    }
 }
 
 const TODO_ERRNO: Int = Int::MAX - 1;
@@ -135,7 +146,10 @@ impl Error {
     #[inline]
     pub fn retry() -> Error {
         Error {
-            errno: retry_errno(),
+            errno: cfg_select! {
+                bun_portable => retry_errno(),
+                _ => RETRY_ERRNO,
+            },
             syscall: Tag::read,
             ..Default::default()
         }
@@ -268,15 +282,13 @@ impl Error {
         // Node reports libuv's codes in `err.errno` on every platform. On POSIX
         // that is just the negated host errno; on Windows the discriminant maps
         // back to its `UV_E*` value.
-        let js_errno = bun_core::host_select! {
-            windows => {
-                crate::windows::libuv::e_discriminant_to_uv(self.errno)
-                    .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg())
-            }
-            posix => {
-                c_int::from(self.errno).wrapping_neg()
-            }
-        };
+        bun_core::host_let! {
+            let js_errno = {
+                windows => crate::windows::libuv::e_discriminant_to_uv(self.errno)
+                    .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg()),
+                posix => c_int::from(self.errno).wrapping_neg(),
+            };
+        }
 
         let mut err = SystemError {
             errno: js_errno,
@@ -301,11 +313,9 @@ impl Error {
         if let Some(valid) = fd_unwrap_valid(self.fd) {
             // When the FD is a windows handle, there is no sane way to report this.
             bun_core::host_select! {
-                windows => {
-                    if valid.kind() == crate::FdKind::Uv {
-                        err.fd = Some(valid.uv());
-                    }
-                }
+                windows => if valid.kind() == crate::FdKind::Uv {
+                    err.fd = Some(valid.uv());
+                },
                 posix => {
                     err.fd = Some(valid.uv());
                 }

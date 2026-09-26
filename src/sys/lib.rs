@@ -4,6 +4,7 @@
 // IS the bun_sys::File the lint routes everyone else through.
 #![allow(clippy::disallowed_types, clippy::disallowed_methods)]
 #![warn(unused_must_use)]
+#![cfg_attr(bun_portable, feature(custom_inner_attributes))]
 //! `bun_sys` — syscall wrappers.
 
 // `Fd` struct + pure-data accessors are hoisted to `bun_core::Fd`
@@ -54,12 +55,11 @@ impl SystemError {
         // On Windows `self.errno` is a libuv code (e.g. UV_EBUSY = -4082);
         // canonicalize to the small `E` discriminant so Rust-side callers that
         // compare against `E::BUSY`/`E::BADF` keep matching.
-        #[cfg(any(windows, bun_portable))]
-        if bun_core::host::is_windows()
-            && let Some(d) = crate::windows::libuv::uv_err_to_e_discriminant(self.errno)
-        {
-            if let Some(e) = E::try_from_raw(d) {
-                return e;
+        bun_core::host_only! {
+            windows => if let Some(d) = crate::windows::libuv::uv_err_to_e_discriminant(self.errno) {
+                if let Some(e) = E::try_from_raw(d) {
+                    return e;
+                }
             }
         }
         e_from_negated(self.errno)
@@ -199,13 +199,20 @@ pub mod dir_iterator {
     #[cfg_attr(bun_portable, bun_portable_macros::flavor(posix, Name))]
     unsafe impl Sync for Name {}
     #[cfg(any(windows, bun_portable))]
-    #[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, Name))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, Name, OSPathChar))]
     pub struct Name {
-        native: Vec<u16>,
+        native: Vec<OSPathChar>,
         utf8: Vec<u8>,
     }
+    /// `OSPathChar` of the code for each OS, in the portable image.
+    #[cfg(bun_portable)]
+    #[allow(non_camel_case_types)]
+    type OSPathChar__posix = u8;
+    #[cfg(bun_portable)]
+    #[allow(non_camel_case_types)]
+    type OSPathChar__windows = u16;
     #[cfg(not(windows))]
-    #[cfg_attr(bun_portable, bun_portable_macros::flavor(posix, Name))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(posix, Name, OSPathChar))]
     impl Name {
         #[inline]
         fn borrow(s: &[u8]) -> Name {
@@ -220,10 +227,15 @@ pub mod dir_iterator {
         }
         /// Borrow the name as `&[OSPathChar]` (no NUL).
         #[inline]
-        pub fn slice(&self) -> &[u8] {
+        pub fn slice(&self) -> &[OSPathChar] {
             // SAFETY: `borrow()` was given a live slice into the iterator's
             // `buf`; caller honours the streaming-iterator contract.
             unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        }
+        #[cfg(not(bun_portable))]
+        #[inline]
+        pub(crate) fn as_slice(&self) -> &[OSPathChar] {
+            self.slice()
         }
         /// Borrow the entry name as UTF-8 bytes (no NUL): the native slice.
         #[inline]
@@ -238,10 +250,10 @@ pub mod dir_iterator {
         }
     }
     #[cfg(any(windows, bun_portable))]
-    #[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, Name))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, Name, OSPathChar))]
     impl Name {
         #[inline]
-        fn from_slice(s: &[u16]) -> Name {
+        fn from_slice(s: &[OSPathChar]) -> Name {
             let mut v = Vec::with_capacity(s.len() + 1);
             v.extend_from_slice(s);
             v.push(0);
@@ -251,8 +263,13 @@ pub mod dir_iterator {
         }
         /// Borrow the name as `&[OSPathChar]` (no NUL).
         #[inline]
-        pub fn slice(&self) -> &[u16] {
+        pub fn slice(&self) -> &[OSPathChar] {
             &self.native[..self.native.len() - 1]
+        }
+        #[cfg(not(bun_portable))]
+        #[inline]
+        pub(crate) fn as_slice(&self) -> &[OSPathChar] {
+            self.slice()
         }
         /// Borrow the entry name as UTF-8 bytes (no NUL): the cached
         /// `fromWPath` transcode.
@@ -311,6 +328,7 @@ pub mod dir_iterator {
             }
         }
     }
+    #[cfg(bun_portable)]
     impl Name {
         #[inline]
         pub(crate) fn as_slice(&self) -> &[OSPathChar] {
@@ -932,11 +950,13 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
         } else {
             libc::AT_FDCWD
         };
-        let stat = linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
-            .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
-        #[cfg(bun_portable)]
-        let stat = stat.map(Stat::from);
-        stat
+        cfg_select! {
+            bun_portable => linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
+                .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()))
+                .map(Stat::from),
+            _ => linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
+                .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes())),
+        }
     }
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     {
@@ -1361,7 +1381,6 @@ pub(crate) mod flavor {
     }
     pub(crate) mod windows {
         pub(crate) use crate::PlatformIoVecConst__windows as PlatformIOVecConst;
-        pub(crate) use crate::platform_iovec_const_create__windows as platform_iovec_const_create;
         pub(crate) use bun_libuv_sys::uv_buf_t as PlatformIOVec;
         pub(crate) use bun_libuv_sys::uv_stat_t as Stat;
         pub(crate) use bun_libuv_sys::uv_statfs_t as StatFS;
@@ -2425,23 +2444,15 @@ mod posix_impl {
             } else {
                 stat(p)
             };
-            r.map(|s| posix_stat(&s))
+            cfg_select! {
+                bun_portable => r.map(|s| PosixStat::init(&crate::Stat::from(s))),
+                _ => r.map(|s| PosixStat::init(&s)),
+            }
         } else {
-            fstat(fd).map(|s| posix_stat(&s))
-        }
-    }
-
-    /// `PosixStat` of what `stat` of this module returns.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    #[inline]
-    fn posix_stat(stat: &Stat) -> PosixStat {
-        #[cfg(not(bun_portable))]
-        {
-            PosixStat::init(stat)
-        }
-        #[cfg(bun_portable)]
-        {
-            PosixStat::init(&crate::Stat::from(*stat))
+            cfg_select! {
+                bun_portable => fstat(fd).map(|s| PosixStat::init(&crate::Stat::from(s))),
+                _ => fstat(fd).map(|s| PosixStat::init(&s)),
+            }
         }
     }
 
@@ -2476,7 +2487,10 @@ mod posix_impl {
             }
             if rc < 0 {
                 let raw_errno = last_errno();
-                let errno = SystemErrno::init(raw_errno as i64);
+                let errno = SystemErrno::init(cfg_select! {
+                    bun_portable => raw_errno as i64,
+                    _ => raw_errno as _,
+                });
                 // Retry on EINTR.
                 if errno == Some(E::EINTR) {
                     continue;
@@ -2664,9 +2678,9 @@ mod posix_impl {
                 unsafe {
                     libc::syscall(
                         libc::SYS_renameat2,
-                        from_dir.posix() as libc::c_long,
+                        bun_core::fd_int!(from_dir) as libc::c_long,
                         from.as_ptr(),
-                        to_dir.posix() as libc::c_long,
+                        bun_core::fd_int!(to_dir) as libc::c_long,
                         to.as_ptr(),
                         flags.int() as libc::c_long,
                     )
@@ -2863,7 +2877,7 @@ mod posix_impl {
                 let n = {
                     use std::io::Write as _;
                     let mut c = std::io::Cursor::new(&mut buf[..]);
-                    let _ = write!(c, "/proc/self/fd/{}\0", tmpfd.posix());
+                    let _ = write!(c, "/proc/self/fd/{}\0", bun_core::fd_int!(tmpfd));
                     c.position() as usize - 1
                 };
                 let _ = n;
@@ -2981,7 +2995,7 @@ mod posix_impl {
                 let rc = unsafe {
                     libc::syscall(
                         SYS_FCHMODAT2,
-                        Fd::cwd().posix() as libc::c_long,
+                        bun_core::fd_int!(Fd::cwd()) as libc::c_long,
                         path.as_ptr(),
                         mode as libc::c_long,
                         libc::AT_SYMLINK_NOFOLLOW as libc::c_long,
@@ -3712,6 +3726,14 @@ pub mod sys_uv {
 #[path = "sys_uv.rs"]
 #[allow(unreachable_pub, dead_code)]
 pub mod sys_uv_windows;
+/// What the code for Windows calls by these names, as `flavor` writes them in `sys_uv.rs`.
+#[cfg(bun_portable)]
+#[allow(non_camel_case_types, unused_imports)]
+pub(crate) use flavor::windows::{
+    PlatformIOVec as PlatformIOVec__windows, PlatformIOVecConst as PlatformIOVecConst__windows,
+    Stat as Stat__windows, StatFS as StatFS__windows,
+    platform_iovec_create as platform_iovec_create__windows,
+};
 #[cfg(bun_portable)]
 pub mod sys_uv {
     pub use super::sys_uv_windows::*;
@@ -4132,7 +4154,7 @@ mod windows_impl {
         let out = unsafe {
             w::kernel32::DuplicateHandle(
                 process,
-                fd.native(),
+                bun_core::fd_handle!(fd) as w::HANDLE,
                 process,
                 &mut target,
                 0,
@@ -4143,7 +4165,10 @@ mod windows_impl {
         if out == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::dup).with_fd(fd));
         }
-        Ok(Fd::from_native(target as u64))
+        Ok(Fd::from_native(cfg_select! {
+            bun_portable => target,
+            _ => target as _,
+        }))
     }
     pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd> {
         // No POSIX dup2 on Windows.
@@ -4491,7 +4516,8 @@ mod windows_impl {
     pub fn get_file_size(fd: Fd) -> Maybe<u64> {
         // GetFileSizeEx.
         let mut size: i64 = 0;
-        let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native(), &mut size) };
+        let ok =
+            unsafe { w::kernel32::GetFileSizeEx(bun_core::fd_handle!(fd) as w::HANDLE, &mut size) };
         if ok == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::fstat).with_fd(fd));
         }
@@ -4530,7 +4556,14 @@ mod windows_impl {
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         // SetFilePointerEx.
         let mut new: i64 = 0;
-        let ok = unsafe { w::SetFilePointerEx(fd.native(), offset, &mut new, whence as u32) };
+        let ok = unsafe {
+            w::SetFilePointerEx(
+                bun_core::fd_handle!(fd) as w::HANDLE,
+                offset,
+                &mut new,
+                whence as u32,
+            )
+        };
         if ok == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
         }
@@ -4541,7 +4574,14 @@ mod windows_impl {
     pub fn set_file_offset_to_end_windows(fd: Fd) -> Maybe<usize> {
         let mut new: i64 = 0;
         // SAFETY: `fd` is a valid kernel handle (caller invariant).
-        let ok = unsafe { w::SetFilePointerEx(fd.native(), 0, &mut new, w::FILE_END) };
+        let ok = unsafe {
+            w::SetFilePointerEx(
+                bun_core::fd_handle!(fd) as w::HANDLE,
+                0,
+                &mut new,
+                w::FILE_END,
+            )
+        };
         if ok == w::FALSE {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
         }
@@ -4582,9 +4622,14 @@ mod windows_impl {
         // before the `usize → i32` cast — otherwise ≥2 GiB buffers wrap to a
         // negative length and Winsock fails with WSAEFAULT.
         let len = buf.len().min(i32::MAX as usize) as i32;
-        let socket: w::HANDLE = fd.native();
-        let rc =
-            unsafe { w::ws2_32::recv(socket as usize, buf.as_mut_ptr().cast::<_>(), len, flags) };
+        let rc = unsafe {
+            w::ws2_32::recv(
+                bun_core::fd_handle!(fd) as _,
+                buf.as_mut_ptr().cast::<_>(),
+                len,
+                flags,
+            )
+        };
         if rc < 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::recv).with_fd(fd));
         }
@@ -4594,8 +4639,14 @@ mod windows_impl {
         // Winsock `send`. Clamp to `i32::MAX` so the
         // `usize → i32` cast can't wrap to a negative length on huge buffers.
         let len = buf.len().min(i32::MAX as usize) as i32;
-        let socket: w::HANDLE = fd.native();
-        let rc = unsafe { w::ws2_32::send(socket as usize, buf.as_ptr().cast::<_>(), len, flags) };
+        let rc = unsafe {
+            w::ws2_32::send(
+                bun_core::fd_handle!(fd) as _,
+                buf.as_ptr().cast::<_>(),
+                len,
+                flags,
+            )
+        };
         if rc < 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::send).with_fd(fd));
         }
@@ -5813,9 +5864,9 @@ pub mod linux {
         unsafe {
             libc::syscall(
                 libc::SYS_ioctl,
-                dest_fd.posix() as libc::c_long,
+                bun_core::fd_int!(dest_fd) as libc::c_long,
                 FICLONE,
-                src_fd.posix() as libc::c_long,
+                bun_core::fd_int!(src_fd) as libc::c_long,
             ) as isize
         }
     }
@@ -7844,7 +7895,7 @@ fn get_fd_path_freebsd_linuxulator<'a>(
     let n = {
         use std::io::Write as _;
         let mut c = std::io::Cursor::new(&mut dev[..]);
-        let _ = write!(c, "/dev/fd/{}\0", fd.posix());
+        let _ = write!(c, "/dev/fd/{}\0", bun_core::fd_int!(fd));
         c.position() as usize - 1
     };
     // SAFETY: NUL written above.
@@ -7867,7 +7918,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         let n = {
             use std::io::Write as _;
             let mut c = std::io::Cursor::new(&mut proc[..]);
-            let _ = write!(c, "/proc/self/fd/{}\0", fd.posix());
+            let _ = write!(c, "/proc/self/fd/{}\0", bun_core::fd_int!(fd));
             c.position() as usize - 1
         };
         // SAFETY: NUL written above.
@@ -8059,7 +8110,9 @@ pub fn move_file_z_with_handle(
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // Preallocation is best-effort.
-                #[allow(clippy::unnecessary_cast)]
+                #[cfg(not(bun_portable))]
+                let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
+                #[cfg(bun_portable)]
                 let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size as i64);
             }
             // Seek input to 0 — caller may have left offset at EOF after writing.
@@ -8069,9 +8122,13 @@ pub fn move_file_z_with_handle(
             // the partially-written dest keeps its openat() defaults.
             #[cfg(unix)]
             if r.is_ok() {
-                #[allow(clippy::unnecessary_cast)]
+                #[cfg(not(bun_portable))]
+                let _ = safe_libc::fchmod(dst.native(), st.st_mode);
+                #[cfg(not(bun_portable))]
+                let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
+                #[cfg(bun_portable)]
                 let _ = safe_libc::fchmod(dst.native(), st.st_mode as libc::mode_t);
-                #[allow(clippy::unnecessary_cast)]
+                #[cfg(bun_portable)]
                 let _ = safe_libc::fchown(
                     dst.native(),
                     st.st_uid as libc::uid_t,
@@ -9323,7 +9380,9 @@ pub(crate) fn copy_file_z_slow_with_handle(
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Preallocation is best-effort.
-        #[allow(clippy::unnecessary_cast)]
+        #[cfg(not(bun_portable))]
+        let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
+        #[cfg(bun_portable)]
         let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size as i64);
     }
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
@@ -9332,9 +9391,13 @@ pub(crate) fn copy_file_z_slow_with_handle(
     // partially-written dest keeps its openat() defaults.
     #[cfg(unix)]
     if r.is_ok() {
-        #[allow(clippy::unnecessary_cast)]
+        #[cfg(not(bun_portable))]
+        let _ = safe_libc::fchmod(dst.native(), st.st_mode);
+        #[cfg(not(bun_portable))]
+        let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
+        #[cfg(bun_portable)]
         let _ = safe_libc::fchmod(dst.native(), st.st_mode as libc::mode_t);
-        #[allow(clippy::unnecessary_cast)]
+        #[cfg(bun_portable)]
         let _ = safe_libc::fchown(
             dst.native(),
             st.st_uid as libc::uid_t,
@@ -9592,13 +9655,10 @@ fn qw_fd(qw: &bun_core::output::QuietWriter) -> Fd {
     // first word through a same-align pointer cast of a live `&QuietWriter`
     // is in-bounds and aligned.
     let raw = unsafe { *core::ptr::from_ref(qw).cast::<*mut ()>() };
-    bun_core::host_select! {
-        windows => {
-            Fd::from_native(raw as usize as u64)
-        }
-        posix => {
-            Fd::from_native(raw as usize as i32)
-        }
+    cfg_select! {
+        // The image keeps the bits of the `Fd` on every host.
+        bun_portable => Fd(raw as usize as u64),
+        _ => Fd::from_native(raw as usize as _),
     }
 }
 #[inline]
@@ -9607,17 +9667,11 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
     // carries fd-as-usize-as-ptr. Writing the first word through a same-align
     // pointer cast of a live `&mut QuietWriter` is in-bounds, aligned, and
     // exclusively borrowed.
-    let word = bun_core::host_select! {
-        windows => {
-            let handle: *mut c_void = fd.native();
-            handle as usize
-        }
-        posix => {
-            fd.posix() as usize
-        }
-    };
     unsafe {
-        *core::ptr::from_mut(qw).cast::<*mut ()>() = word as *mut ();
+        *core::ptr::from_mut(qw).cast::<*mut ()>() = cfg_select! {
+            bun_portable => fd.0,
+            _ => fd.native(),
+        } as usize as *mut ();
     }
 }
 

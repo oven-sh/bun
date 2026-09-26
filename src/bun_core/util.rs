@@ -839,13 +839,7 @@ impl Fd {
     #[cfg(any(windows, bun_portable))]
     pub const INVALID: Fd = Fd(0);
 
-    /// The file descriptor, for code of a POSIX system that passes it where the type of the argument
-    /// does not say `int`: a variadic `syscall`, a cast, a formatted string. Elsewhere `native`.
-    #[cfg(not(any(windows, bun_portable)))]
-    #[inline]
-    pub const fn posix(self) -> i32 {
-        self.0
-    }
+    /// The file descriptor of a POSIX host: the `int` kind of the portable image's `Fd`.
     #[cfg(bun_portable)]
     #[inline]
     pub const fn posix(self) -> i32 {
@@ -892,12 +886,15 @@ impl Fd {
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn native(self) -> FdNative {
-        self.posix()
+        cfg_select! {
+            bun_portable => self.posix(),
+            _ => self.0,
+        }
     }
     #[cfg(any(windows, bun_portable))]
-    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, flavor(FdNative)))]
     #[inline]
-    pub fn native(self) -> *mut core::ffi::c_void {
+    pub fn native(self) -> FdNative {
         match self.decode_windows() {
             DecodeWindows::Windows(handle) => handle,
             DecodeWindows::Uv(file_number) => fd::uv_get_osfhandle(file_number),
@@ -915,7 +912,14 @@ impl Fd {
     #[cfg(unix)]
     #[inline]
     pub fn as_borrowed_fd(&self) -> std::os::fd::BorrowedFd<'_> {
-        let raw: std::os::fd::RawFd = self.native();
+        cfg_select! {
+            bun_portable => {
+                let raw = self.posix();
+            }
+            _ => {
+                let raw = self.native();
+            }
+        }
         // `BorrowedFd`'s niche is `-1`; constructing one with that value is
         // immediate UB regardless of later use. `Fd::INVALID` (i32::MIN) and
         // `Fd::cwd()` (AT_FDCWD, -100) are both ≠ -1, so the only way to hit
@@ -938,7 +942,10 @@ impl Fd {
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn uv(self) -> i32 {
-        self.posix()
+        cfg_select! {
+            bun_portable => self.posix(),
+            _ => self.0,
+        }
     }
     #[cfg(any(windows, bun_portable))]
     #[cfg_attr(
@@ -987,25 +994,37 @@ impl Fd {
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn stdin() -> Fd {
-        Fd::from_uv(0)
+        cfg_select! {
+            bun_portable => Fd::from_uv(0),
+            _ => Fd(0),
+        }
     }
     #[cfg(not(windows))]
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn stdout() -> Fd {
-        Fd::from_uv(1)
+        cfg_select! {
+            bun_portable => Fd::from_uv(1),
+            _ => Fd(1),
+        }
     }
     #[cfg(not(windows))]
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn stderr() -> Fd {
-        Fd::from_uv(2)
+        cfg_select! {
+            bun_portable => Fd::from_uv(2),
+            _ => Fd(2),
+        }
     }
     #[cfg(not(windows))]
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub fn cwd() -> Fd {
-        Fd::from_uv(libc::AT_FDCWD)
+        cfg_select! {
+            bun_portable => Fd::from_uv(libc::AT_FDCWD),
+            _ => Fd(libc::AT_FDCWD),
+        }
     }
 
     #[cfg(any(windows, bun_portable))]
@@ -1066,7 +1085,13 @@ impl Fd {
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn is_stdio(self) -> bool {
-        matches!(self.posix(), 0..=2)
+        matches!(
+            cfg_select! {
+                bun_portable => self.posix(),
+                _ => self.0,
+            },
+            0..=2
+        )
     }
     #[cfg(any(windows, bun_portable))]
     #[cfg_attr(
@@ -1139,22 +1164,20 @@ impl Fd {
     pub fn make_libuv_owned(self) -> Result<Fd, ()> {
         debug_assert!(self.is_valid());
         crate::host_select! {
-            windows => {
-                match self.kind() {
-                    FdKind::Uv => Ok(self),
-                    FdKind::System => {
-                        let crt_fd = fd::uv_open_osfhandle(self.native());
-                        if crt_fd == -1 {
-                            Err(())
-                        } else {
-                            Ok(Fd::from_uv(crt_fd))
-                        }
-                    }
-                }
-            }
             posix => {
                 Ok(self)
             }
+            windows => match self.kind() {
+                FdKind::Uv => Ok(self),
+                FdKind::System => {
+                    let crt_fd = fd::uv_open_osfhandle(self.native());
+                    if crt_fd == -1 {
+                        Err(())
+                    } else {
+                        Ok(Fd::from_uv(crt_fd))
+                    }
+                }
+            },
         }
     }
 
@@ -1209,7 +1232,10 @@ impl Fd {
                 }
             }
             posix => {
-                match self.posix() {
+                match cfg_select! {
+                    bun_portable => { self.posix() }
+                    _ => { self.0 }
+                } {
                     0 => Some(Stdio::StdIn),
                     1 => Some(Stdio::StdOut),
                     2 => Some(Stdio::StdErr),
@@ -1225,6 +1251,10 @@ impl Fd {
 pub type FdNative = i32;
 #[cfg(windows)]
 pub type FdNative = *mut core::ffi::c_void;
+/// `FdNative` of the code for Windows, in the portable image.
+#[cfg(bun_portable)]
+#[allow(non_camel_case_types)]
+pub type FdNative__windows = *mut core::ffi::c_void;
 
 /// Fd kind — tag in bit 63 on Windows; single-variant on POSIX.
 #[cfg(not(any(windows, bun_portable)))]
@@ -1287,7 +1317,14 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         let mut proc = [0u8; 32];
         use std::io::Write as _;
         let mut c = std::io::Cursor::new(&mut proc[..]);
-        let _ = write!(c, "/proc/self/fd/{}\0", fd.posix());
+        let _ = write!(
+            c,
+            "/proc/self/fd/{}\0",
+            cfg_select! {
+                bun_portable => fd.posix(),
+                _ => fd.0,
+            }
+        );
         // SAFETY: proc is NUL-terminated above; buf has cap bytes.
         let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.cast(), cap) };
         if n < 0 {
@@ -1450,9 +1487,24 @@ impl core::fmt::Display for Fd {
                 }
             }
             posix => {
-                write!(w, "{}", fd.posix())?;
+                cfg_select! {
+                    bun_portable => { let int = fd.posix(); }
+                    _ => {}
+                }
+                write!(
+                    w,
+                    "{}",
+                    cfg_select! {
+                        bun_portable => { int }
+                        _ => { fd.0 }
+                    }
+                )?;
                 #[cfg(debug_assertions)]
-                if fd.posix() >= 3 {
+                if cfg_select! {
+                    bun_portable => { int }
+                    _ => { fd.0 }
+                } >= 3
+                {
                     let mut buf = [0u8; 1024];
                     // SAFETY: buf is 1024 bytes, passed with matching cap.
                     let n = unsafe { fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };

@@ -9,30 +9,37 @@
 //! `-lntdll`/`-lkernel32`/... into the rlib and break linking any standalone
 //! test/bench binary on a non-Windows host.
 
+#[cfg(not(bun_portable))]
+use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
+#[cfg(bun_portable)]
 use core::ffi::{c_char, c_int, c_short, c_uint, c_ushort, c_void};
+
+/// `long` of Windows, 32 bits. `core::ffi::c_long` is the `long` of the compilation target: the same
+/// in a build for Windows, 64 bits where the portable image is compiled.
+#[cfg(bun_portable)]
+pub type c_long = i32;
+/// `unsigned long` of Windows, see [`c_long`].
+#[cfg(bun_portable)]
+pub type c_ulong = u32;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Basic Win32 typedefs (owned here; mirror winnt.h)
-//
-// `long` is 32 bits on Windows. `core::ffi::c_long` is the `long` of the
-// compilation target, which is 64 bits where this crate is compiled for the
-// portable image, so the typedefs name their width.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type BOOL = c_int;
 pub type BOOLEAN = u8;
 pub type WORD = c_ushort;
-pub type DWORD = u32;
+pub type DWORD = c_ulong;
 type DWORD_PTR = usize;
 pub type UINT = c_uint;
-pub type ULONG = u32;
-pub type LONG = i32;
+pub type ULONG = c_ulong;
+pub type LONG = c_long;
 pub type LARGE_INTEGER = i64;
 pub type WCHAR = u16;
 pub type CHAR = c_char;
 pub type HANDLE = *mut c_void;
 pub type HMODULE = *mut c_void;
-pub type HRESULT = i32;
+pub type HRESULT = c_long;
 pub type LPVOID = *mut c_void;
 pub type LPCVOID = *const c_void;
 pub type LPSTR = *mut CHAR;
@@ -187,9 +194,11 @@ pub struct INPUT_RECORD {
 }
 
 // Layout pins: a typo in any of the above is a silent ABI break across the
-// libuv embed boundary; assert the authoritative Windows-x64 sizes. They hold
-// on every 64-bit target: no field has a width that depends on the target.
-#[cfg(target_pointer_width = "64")]
+// libuv embed boundary; assert the authoritative Windows-x64 sizes. Gated on
+// `windows` (not just pointer width) because `DWORD = c_ulong` is 4 bytes
+// under LLP64 but 8 under LP64, so the sizes differ on a Linux cross-check.
+// The portable image has the `c_ulong` of Windows.
+#[cfg(all(any(windows, bun_portable), target_pointer_width = "64"))]
 const _: () = {
     assert!(core::mem::size_of::<OVERLAPPED>() == 32);
     assert!(core::mem::size_of::<CRITICAL_SECTION>() == 40);
@@ -452,8 +461,11 @@ pub struct FILE_FS_VOLUME_INFORMATION {
     pub VolumeLabel: [WCHAR; 1],
 }
 
-// Layout asserts against the C headers (checked via clang on Windows).
-#[cfg(target_pointer_width = "64")]
+// Layout asserts against the C headers (checked via clang on Windows). Gated on
+// `windows` because this crate is also compiled on LP64 targets where
+// `c_ulong` is 64-bit, which perturbs these offsets. The portable image has
+// the `c_ulong` of Windows.
+#[cfg(any(windows, bun_portable))]
 const _: () = {
     assert!(core::mem::size_of::<FILE_ALL_INFORMATION>() == 104);
     assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, StandardInformation) == 40);

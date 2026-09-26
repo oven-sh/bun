@@ -43,6 +43,9 @@ struct Arguments {
     /// The function is called through `Self`: an associated function that has no `self` argument and
     /// does not name `Self` in its signature says so with `associated`.
     associated: bool,
+    /// Names that mean something else in the code for each OS: inside of the definition they are
+    /// `<name>__<os>`, as `flavor` writes them.
+    flavor: Vec<String>,
     dispatch: Option<Vec<Kind>>,
 }
 
@@ -51,16 +54,24 @@ impl Parse for Arguments {
         let kind = Kind::parse(&input.parse::<Ident>()?)?;
         let mut dispatch = None;
         let mut associated = false;
+        let mut flavor = Vec::new();
         while input.parse::<Option<Token![,]>>()?.is_some() && !input.is_empty() {
             let keyword: Ident = input.parse()?;
             if keyword == "associated" {
                 associated = true;
                 continue;
             }
+            if keyword == "flavor" {
+                let list;
+                syn::parenthesized!(list in input);
+                let names = Punctuated::<Ident, Token![,]>::parse_terminated(&list)?;
+                flavor.extend(names.iter().map(Ident::to_string));
+                continue;
+            }
             if keyword != "dispatch" {
                 return Err(syn::Error::new(
                     keyword.span(),
-                    "expected `associated` or `dispatch(..)`",
+                    "expected `associated`, `flavor(..)` or `dispatch(..)`",
                 ));
             }
             let list;
@@ -89,6 +100,7 @@ impl Parse for Arguments {
         Ok(Arguments {
             kind,
             associated,
+            flavor,
             dispatch,
         })
     }
@@ -96,6 +108,11 @@ impl Parse for Arguments {
 
 pub(crate) fn expand(args: Tokens, item: Tokens) -> syn::Result<Tokens> {
     let arguments: Arguments = syn::parse2(args)?;
+    let item = if arguments.flavor.is_empty() {
+        item
+    } else {
+        crate::renamed(item, arguments.kind.suffix(), &arguments.flavor)
+    };
     // A free function parses as a method without a receiver, so one parser takes both.
     let mut function: ImplItemFn = syn::parse2(item)?;
     let name = function.sig.ident.clone();

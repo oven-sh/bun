@@ -1,17 +1,18 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
+#![cfg_attr(bun_portable, feature(custom_inner_attributes))]
 //! Raw libuv FFI (Windows only). Re-exports the `libuv` module's contents at
 //! crate root so callers can write `bun_libuv_sys::fs_t` /
 //! `bun_sys::windows::libuv::uv_fs_open`.
 //!
 //! The portable image (`cfg(bun_portable)`) has the module too: there libuv is
 //! part of the Windows host, and every function pointer that crosses into it
-//! has the calling convention of Windows.
-#[cfg_attr(bun_portable, bun_portable_macros::win_abi)]
+//! has the calling convention of Windows (the attribute at the top of `libuv.rs`).
 pub mod libuv;
 
 // The log macro of `libuv`. It is defined here because a macro that is exported from a module an
-// attribute macro expands cannot be named by its path.
+// attribute macro expands, as the one of `libuv.rs` does in the portable image, cannot be named by
+// its path.
 #[cfg(any(windows, bun_portable))]
 #[doc(hidden)]
 #[macro_export]

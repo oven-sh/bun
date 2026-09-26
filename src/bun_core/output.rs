@@ -649,10 +649,7 @@ pub mod stdio {
     pub fn init() {
         bun_initialize_process();
 
-        #[cfg(any(windows, bun_portable))]
-        if crate::host::is_windows() {
-            super::windows_stdio::init();
-        }
+        crate::host_only! { windows => super::windows_stdio::init(); }
 
         let stdout = File::from(Fd::stdout());
         let stderr = File::from(Fd::stderr());
@@ -2615,7 +2612,10 @@ static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> = crate::RacyCell::new(Buf
         }
         #[cfg(not(windows))]
         {
-            Fd::from_uv(0)
+            cfg_select! {
+                bun_portable => Fd::from_uv(0),
+                _ => Fd::stdin(),
+            }
         }
     },
     buf: [0; 4096],

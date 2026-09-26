@@ -1146,6 +1146,9 @@ pub const MS_VC_EXCEPTION: u32 = 0x406d1388;
 /// 1` here); mixing the two turns "continue search" into "resume at fault".
 #[allow(nonstandard_style)]
 pub mod disposition {
+    #[cfg(bun_portable)]
+    use bun_windows_sys::c_long;
+    #[cfg(not(bun_portable))]
     use core::ffi::c_long;
     pub const ExceptionContinueExecution: c_long = 0;
     pub const ExceptionContinueSearch: c_long = 1;
@@ -1323,7 +1326,8 @@ pub mod rescle {
         description: Option<&[u8]>,
         copyright: Option<&[u8]>,
     ) -> Result<(), RescleError> {
-        const _: () = assert!(cfg!(any(windows, bun_portable)));
+        #[cfg(not(bun_portable))]
+        const _: () = assert!(cfg!(windows));
 
         // Validate version string format if provided
         if let Some(v) = version {

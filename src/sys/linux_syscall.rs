@@ -314,7 +314,14 @@ pub(crate) unsafe fn readv(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result
     sys_retry(|| {
         // SAFETY: caller guarantees `vecs[..n]` are valid iovecs whose
         // `iov_base` are writable for `iov_len` bytes.
-        unsafe { libc::syscall(libc::SYS_readv, fd.posix(), vecs, n as libc::c_long) }
+        unsafe {
+            libc::syscall(
+                libc::SYS_readv,
+                bun_core::fd_int!(fd),
+                vecs,
+                n as libc::c_long,
+            )
+        }
     })
 }
 
@@ -328,7 +335,14 @@ pub(crate) unsafe fn writev(fd: Fd, vecs: *const libc::iovec, n: usize) -> Resul
     sys_retry(|| {
         // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s whose
         // `iov_base` are readable for `iov_len` bytes.
-        unsafe { libc::syscall(libc::SYS_writev, fd.posix(), vecs, n as libc::c_long) }
+        unsafe {
+            libc::syscall(
+                libc::SYS_writev,
+                bun_core::fd_int!(fd),
+                vecs,
+                n as libc::c_long,
+            )
+        }
     })
 }
 
@@ -352,7 +366,7 @@ pub(crate) unsafe fn preadv(
         unsafe {
             libc::syscall(
                 libc::SYS_preadv,
-                fd.posix(),
+                bun_core::fd_int!(fd),
                 vecs,
                 n as libc::c_long,
                 lo,
@@ -381,7 +395,7 @@ pub(crate) unsafe fn pwritev(
         unsafe {
             libc::syscall(
                 libc::SYS_pwritev,
-                fd.posix(),
+                bun_core::fd_int!(fd),
                 vecs,
                 n as libc::c_long,
                 lo,

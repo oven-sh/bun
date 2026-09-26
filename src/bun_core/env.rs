@@ -108,7 +108,7 @@ impl OperatingSystem {
     }
 
     /// same format as `process.platform`
-    pub const fn name_string(self) -> &'static str {
+    pub(crate) const fn name_string(self) -> &'static str {
         match self {
             Self::Mac => "darwin",
             Self::Linux => "linux",

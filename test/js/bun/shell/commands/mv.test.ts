@@ -63,7 +63,7 @@ describe("mv", async () => {
 
   TestBuilder.command`touch a; mkdir -p foo; mv foo/ a`
     .ensureTempDir()
-    .exitCode(20 /* ENOTDIR */)
+    .exitCode(1)
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
 
@@ -207,7 +207,7 @@ describe("mv", async () => {
           expect(lstatSync(join(dst, "tree"), { throwIfNoEntry: false })).toBeUndefined();
           chmodSync(srcDir, 0o700);
           expect(readFileSync(join(srcDir, "a.txt"), "utf8")).toBe("A\n");
-          expect(r.exitCode).toBe(13);
+          expect(r.exitCode).toBe(1);
         } finally {
           if (existsSync(srcDir)) chmodSync(srcDir, 0o700);
           rmSync(src, { recursive: true, force: true });
@@ -234,4 +234,16 @@ describe("mv", async () => {
       }
     });
   });
+
+  TestBuilder.command`mv nosuchsrc dst`
+    .ensureTempDir()
+    .exitCode(1)
+    .stderr_contains("No such file or directory")
+    .runAsTest("missing source exits 1 (not ENOENT)");
+
+  TestBuilder.command`mkdir -p d/x; mv d d/inside`
+    .ensureTempDir()
+    .exitCode(1)
+    .stderr_contains("mv:")
+    .runAsTest("move dir into own subdir exits 1 (not EINVAL)");
 });

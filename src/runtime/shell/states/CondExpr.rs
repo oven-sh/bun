@@ -156,9 +156,7 @@ impl CondExpr {
         }
     }
 
-    /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: on write failure finish with the errno as the exit
-    /// code, otherwise finish with exit code 1.
+    /// IOWriter completion for the `WaitingWriteErr` message: always finish 1.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -166,10 +164,8 @@ impl CondExpr {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         let parent = interp.as_condexpr(this).base.parent;
-        if let Some(e) = err {
-            // Recover the positive errno (`to_shell_system_error` negated it).
-            let exit_code: ExitCode = e.errno.unsigned_abs() as ExitCode;
-            return interp.child_done(parent, this, exit_code);
+        if err.is_some() {
+            return interp.child_done(parent, this, 1);
         }
         if matches!(
             interp.as_condexpr(this).state,

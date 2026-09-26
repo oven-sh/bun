@@ -216,7 +216,7 @@ impl<'a> Writable<'a> {
                 Stdio::Inherit => {
                     return Ok(Writable::Inherit);
                 }
-                Stdio::Memfd(_) | Stdio::Path(_) | Stdio::Ignore => {
+                Stdio::Memfd(_) | Stdio::OwnedFd(_) | Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
                 Stdio::Ipc | Stdio::Capture(_) => {
@@ -318,7 +318,7 @@ impl<'a> Writable<'a> {
             }
             Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
             Stdio::Inherit => Ok(Writable::Inherit),
-            Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
+            Stdio::OwnedFd(_) | Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
             Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
             // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
             Stdio::SocketFd => unreachable!("SocketFd at stdin"),

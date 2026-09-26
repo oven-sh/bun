@@ -32,7 +32,7 @@ bun_core::define_scoped_log!(debug, Blob, visible);
 pub(crate) mod store;
 use crate::node::types::{PathLikeExt as _, PathOrFdExt as _};
 pub(crate) use store::Store;
-use store::{BytesExt as _, FileExt as _, S3Ext as _, StoreExt as _};
+use store::{BytesExt as _, FileExt as _, PinnedFileExt as _, S3Ext as _, StoreExt as _};
 
 #[path = "blob/copy_file.rs"]
 pub(crate) mod copy_file;
@@ -72,6 +72,53 @@ pub(crate) extern "C" fn blob_store_array_buffer_deallocator(
 /// verbatim into outgoing HTTP headers.
 pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
+}
+
+/// What every failed read of an `fs.openAsBlob` file rejects with, as in node.
+pub(crate) fn not_readable_error(global: &JSGlobalObject) -> JSValue {
+    EncodedSlice::latin1(b"The blob could not be read")
+        .to_dom_exception_instance(global, bun_jsc::DOMExceptionCode::NotReadableError)
+}
+
+/// What a synchronous `NodeFS` read of `file` reads from. A pinned file: its verified descriptor.
+pub(crate) fn sync_read_source(
+    file: &store::File,
+) -> bun_sys::Result<(PathOrFileDescriptor<'static>, VerifiedRead<'_>)> {
+    match file.source() {
+        store::FileSource::Lazy(pathlike) => Ok((pathlike.clone(), VerifiedRead(None))),
+        store::FileSource::Pinned(pinned) => {
+            let (fd, _) = pinned.open_verified(bun_sys::O::RDONLY | bun_sys::O::NOCTTY)?;
+            Ok((
+                PathOrFileDescriptor::Fd(fd),
+                VerifiedRead(Some((pinned, fd))),
+            ))
+        }
+    }
+}
+
+/// The open descriptor of a pinned file, for the length of one [`sync_read_source`] read.
+pub(crate) struct VerifiedRead<'a>(Option<(&'a store::PinnedFile, Fd)>);
+
+impl VerifiedRead<'_> {
+    pub(crate) fn is_pinned(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// node compares a pinned file again after it has read it.
+    pub(crate) fn finish(self) -> bun_sys::Result<()> {
+        match self.0 {
+            Some((pinned, fd)) => pinned.recheck(fd),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for VerifiedRead<'_> {
+    fn drop(&mut self) {
+        if let Some((_, fd)) = self.0 {
+            bun_sys::FdExt::close(fd);
+        }
+    }
 }
 
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
@@ -584,7 +631,10 @@ impl BlobExt for Blob {
                                 code: BunString::clone_utf8(e.code),
                                 message: BunString::clone_utf8(e.message),
                                 path: BunString::clone_utf8(
-                                    t.blob.store().and_then(|s| s.get_path()).unwrap_or(b""),
+                                    t.blob
+                                        .store()
+                                        .and_then(|s| s.path_for_display())
+                                        .unwrap_or(b""),
                                 ),
                                 syscall: BunString::static_("fetch"),
                                 ..Default::default()
@@ -726,10 +776,12 @@ impl BlobExt for Blob {
         writer.write_int_le::<u8>(self.content_type_was_set.get() as u8)?;
 
         let store_tag: store::SerializeTag = if let Some(store) = self.store.get() {
-            if matches!(store.data, store::Data::File(_)) {
-                store::SerializeTag::File
-            } else {
-                store::SerializeTag::Bytes
+            match &store.data {
+                store::Data::File(file) if file.pinned().is_some() => {
+                    store::SerializeTag::PinnedFile
+                }
+                store::Data::File(_) => store::SerializeTag::File,
+                store::Data::Bytes(_) | store::Data::S3(_) => store::SerializeTag::Bytes,
             }
         } else {
             store::SerializeTag::Empty
@@ -775,10 +827,20 @@ impl BlobExt for Blob {
 
     fn on_structured_clone_serialize(
         &self,
-        _global_this: &JSGlobalObject,
+        global_this: &JSGlobalObject,
         ctx: *mut c_void,
         write_bytes: crate::generated_classes::WriteBytesFn,
     ) {
+        if self.not_cloneable.get() {
+            // As in node. The serializer stops at the pending exception.
+            let _ = global_this
+                .err(
+                    jsc::ErrorCode::INVALID_STATE_TypeError,
+                    format_args!("Invalid state: File-backed Blobs are not cloneable"),
+                )
+                .throw();
+            return;
+        }
         let mut writer = StructuredCloneWriter {
             ctx,
             impl_: write_bytes,
@@ -1020,16 +1082,16 @@ impl BlobExt for Blob {
                 }
                 store::Data::File(file) => {
                     bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r>FileRef<r>")?;
-                    match &file.pathlike {
-                        PathOrFileDescriptor::Path(path) => {
+                    match (file.display_path(), file.fd()) {
+                        (Some(path), _) => {
                             bun_core::write_pretty!(
                                 writer,
                                 ENABLE_ANSI_COLORS,
                                 " (<green>\"{s}\"<r>)<r>",
-                                bstr::BStr::new(path.slice()),
+                                bstr::BStr::new(path),
                             )?;
                         }
-                        PathOrFileDescriptor::Fd(fd) => {
+                        (None, Some(fd)) => {
                             #[cfg(windows)]
                             match fd.decode_windows() {
                                 bun_sys::fd::DecodeWindows::Uv(uv_file) => {
@@ -1062,6 +1124,7 @@ impl BlobExt for Blob {
                                 fd.native(),
                             )?;
                         }
+                        (None, None) => {}
                     }
                 }
                 store::Data::Bytes(_) => {
@@ -1195,7 +1258,7 @@ impl BlobExt for Blob {
 
         if let Some(store) = self.store.get() {
             if let store::Data::File(f) = &store.data {
-                if let PathOrFileDescriptor::Fd(_) = f.pathlike {
+                if f.fd().is_some() {
                     // in the case we have a file descriptor store, we want to de-duplicate
                     // readable streams. in every other case we want `.stream()` to be its
                     // own stream.
@@ -1277,7 +1340,15 @@ impl BlobExt for Blob {
         let store::Data::File(file) = &store.data else {
             return JSValue::FALSE;
         };
-        JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
+        // The `mode` of a pinned file is the one of its creation. Its path can be gone.
+        let mode = match file.pinned() {
+            Some(_) => match stat_file(file.pathlike_ignoring_pin()) {
+                Ok(stat) => stat.st_mode as bun_sys::Mode,
+                Err(_) => return JSValue::FALSE,
+            },
+            None => file.mode,
+        };
+        JSValue::from(bun_sys::S::ISREG(mode) || bun_sys::S::ISFIFO(mode))
     }
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let cx = global_this.js_thread_of_caller(callframe);
@@ -1433,11 +1504,11 @@ impl BlobExt for Blob {
             )
             .to_js());
         }
+        let pathlike = store.data.as_file().pathlike_ignoring_pin();
 
         let file_sink: RefPtr<webcore::FileSink> = 'brk_sink: {
             #[cfg(windows)]
             {
-                let pathlike = &store.data.as_file().pathlike;
                 let fd: Fd = if let PathOrFileDescriptor::Fd(fd) = pathlike {
                     *fd
                 } else {
@@ -1540,8 +1611,7 @@ impl BlobExt for Blob {
                     ),
                 );
 
-                let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike
-                {
+                let input_path: webcore::PathOrFileDescriptor = match pathlike {
                     PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
                     PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
                         bun_core::Utf8Bytes::Owned(p.slice().to_vec()),
@@ -1659,11 +1729,12 @@ impl BlobExt for Blob {
             );
         }
 
+        let pathlike = store.data.as_file().pathlike_ignoring_pin();
+
         #[cfg(windows)]
         {
             use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
-            let pathlike = &store.data.as_file().pathlike;
             // SAFETY: bun_vm() never returns null for a Bun-owned global.
             let vm = global_this.bun_vm().as_mut();
             let fd: Fd = match pathlike {
@@ -1750,7 +1821,7 @@ impl BlobExt for Blob {
                 ),
             );
             // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
-            let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
+            let input_path: webcore::PathOrFileDescriptor = match pathlike {
                 PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
                 PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
                     bun_core::Utf8Bytes::Owned(p.slice().to_vec()),
@@ -1921,7 +1992,7 @@ impl BlobExt for Blob {
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
-        if let Some(path) = self.store_path() {
+        if let Some(path) = self.path_for_display() {
             self.name.set(BunString::clone_utf8(path));
             return Some(self.name.get());
         }
@@ -2035,8 +2106,8 @@ impl BlobExt for Blob {
                     .expect("infallible: store present")
                     .data
                     .as_file();
-                match &file.pathlike {
-                    PathOrFileDescriptor::Path(path_like) => {
+                match file.fd() {
+                    None => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
                         // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
@@ -2046,12 +2117,14 @@ impl BlobExt for Blob {
                         Ok(crate::node::fs::async_::Stat::create(
                             &global_this.js_thread_of_caller(callback),
                             binding,
-                            crate::node::fs::args::Stat::owned(path_like.slice().to_vec()),
+                            crate::node::fs::args::Stat::owned(
+                                file.display_path().unwrap_or_default().to_vec(),
+                            ),
                             vm,
                             None,
                         ))
                     }
-                    PathOrFileDescriptor::Fd(fd) => {
+                    Some(fd) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
                         // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
@@ -2061,7 +2134,7 @@ impl BlobExt for Blob {
                         Ok(crate::node::fs::async_::Fstat::create(
                             &global_this.js_thread_of_caller(callback),
                             binding,
-                            crate::node::fs::args::Fstat::for_fd(*fd),
+                            crate::node::fs::args::Fstat::for_fd(fd),
                             vm,
                             None,
                         ))
@@ -3091,6 +3164,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    not_cloneable: Cell::new(false),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -3323,7 +3397,7 @@ impl BlobExt for Blob {
                         bytes.len() as usize
                     };
                 }
-                store::Data::File(file) => size += file.pathlike.estimated_size(),
+                store::Data::File(file) => size += file.estimated_size(),
                 store::Data::S3(s3) => size += s3.estimated_size(),
             }
         }
@@ -3676,6 +3750,13 @@ impl FormDataContext<'_> {
                             // we need to make this async and use download/downloadSlice
                         }
                         store::Data::File(file) => {
+                            // Only the verified open of a pinned file can fail here.
+                            let Ok((path, read)) = sync_read_source(file) else {
+                                self.failed = true;
+                                let _ = global_this.throw_value(not_readable_error(global_this));
+                                return;
+                            };
+                            let is_pinned = read.is_pinned();
                             // TODO: make this async + lazy
                             // Use a fresh stack
                             // `NodeFS` (it is stateless aside from a path scratch
@@ -3684,11 +3765,27 @@ impl FormDataContext<'_> {
                             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
                             let mut rf_args = crate::node::fs::args::ReadFile::default();
                             rf_args.encoding = crate::node::types::Encoding::Buffer;
-                            rf_args.path = file.pathlike.clone();
+                            rf_args.path = path;
                             rf_args.offset = blob.offset.get();
                             rf_args.max_size = Some(blob.size.get());
-                            let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
+                            let mut res =
+                                node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
+                            if let Err(err) = read.finish()
+                                && res.is_ok()
+                            {
+                                if let Ok(crate::node::types::StringOrBuffer::Buffer(buf)) =
+                                    &mut res
+                                {
+                                    buf.destroy();
+                                }
+                                res = Err(err);
+                            }
                             match res {
+                                Err(_) if is_pinned => {
+                                    self.failed = true;
+                                    let _ =
+                                        global_this.throw_value(not_readable_error(global_this));
+                                }
                                 Err(err) => {
                                     self.failed = true;
                                     let js_err = err.to_js(global_this);
@@ -3781,6 +3878,39 @@ fn read_slice<B: AsRef<[u8]>>(
     Ok(slice)
 }
 
+/// The clone of a Blob of a pinned file: the same pin, and the `stat` fields of its store.
+fn read_pinned_file<B: AsRef<[u8]>>(
+    global_this: &JSGlobalObject,
+    reader: &mut bun_io::FixedBufferStream<B>,
+    path: &[u8],
+) -> crate::Result<Blob> {
+    let size = reader.read_int_le::<u64>()?;
+    let mtime_nsec = reader.read_int_le::<i64>()?;
+    let mode = reader.read_int_le::<u32>()?;
+    let last_modified = reader.read_int_le::<u64>()?;
+
+    let mut file =
+        store::File::init_pinned_to(path, size, mtime_nsec, bun_http_types::MimeType::NONE);
+    let is_regular = bun_sys::S::ISREG(mode as _);
+    file.max_size = if is_regular || size > 0 {
+        size as SizeType
+    } else {
+        MAX_SIZE
+    };
+    file.mode = mode;
+    file.seekable = Some(is_regular);
+    file.last_modified = last_modified;
+    Ok(Blob::init_with_store(
+        RefPtr::new(Store {
+            data: store::Data::File(file),
+            mime_type: bun_http_types::MimeType::NONE,
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            is_all_ascii: store::IsAllAscii::default(),
+        }),
+        global_this,
+    ))
+}
+
 fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
@@ -3837,7 +3967,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             let blob = scopeguard::ScopeGuard::into_inner(guard);
             break 'bytes Blob::new(blob);
         }
-        store::SerializeTag::File => 'file: {
+        store::SerializeTag::File | store::SerializeTag::PinnedFile => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
             if version >= 4 {
                 file_size = Some(reader.read_int_le::<u64>()?);
@@ -3847,6 +3977,11 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     .ok_or(crate::Error::InvalidValue)?;
 
             match pathlike_tag {
+                PathOrFileDescriptorSerializeTag::Fd
+                    if matches!(store_tag, store::SerializeTag::PinnedFile) =>
+                {
+                    return Err(crate::Error::InvalidValue);
+                }
                 PathOrFileDescriptorSerializeTag::Fd => {
                     let fd: Fd = reader.read_struct()?;
                     // Wire bytes are untrusted: enforce the same range as `FdJsc::from_js_validated`
@@ -3871,6 +4006,9 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     // syscall layer (`ZStr::as_cstr` would truncate / panic).
                     if strings::index_of_char(&path, 0).is_some() {
                         return Err(crate::Error::InvalidValue);
+                    }
+                    if matches!(store_tag, store::SerializeTag::PinnedFile) {
+                        break 'file Blob::new(read_pinned_file(global_this, reader, &path)?);
                     }
                     let mut dest = PathOrFileDescriptor::Path(PathLike::owned(path));
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
@@ -4152,6 +4290,7 @@ fn write_file_with_empty_source_to_destination(
 
     match &destination_store.data {
         store::Data::File(file) => {
+            let pathlike = file.pathlike_ignoring_pin();
             // TODO: make this async
             // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
             // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh
@@ -4160,7 +4299,7 @@ fn write_file_with_empty_source_to_destination(
             let mut node_fs = node::fs::NodeFS::default();
             let mut result = node_fs.truncate(
                 &node::fs::args::Truncate {
-                    path: file.pathlike.clone(),
+                    path: pathlike.clone(),
                     len: 0,
                     flags: bun_sys::O::CREAT,
                 },
@@ -4186,7 +4325,7 @@ fn write_file_with_empty_source_to_destination(
                                 if options.mkdirp_if_not_exists == Some(false) {
                                     break 'err;
                                 }
-                                let dirpath: &[u8] = match &file.pathlike {
+                                let dirpath: &[u8] = match pathlike {
                                     PathOrFileDescriptor::Path(path) => {
                                         match bun_core::dirname(path.slice()) {
                                             Some(d) => d,
@@ -4214,12 +4353,12 @@ fn write_file_with_empty_source_to_destination(
                                     break 'err;
                                 }
 
-                                // SAFETY: we check if `file.pathlike` is an fd above, returning if it is.
+                                // SAFETY: we check if `pathlike` is an fd above, returning if it is.
                                 let mut buf = bun_paths::path_buffer_pool::get();
                                 let mode: bun_sys::Mode =
                                     options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
                                 match bun_sys::File::open(
-                                    file.pathlike.path().slice_z(&mut buf),
+                                    pathlike.path().slice_z(&mut buf),
                                     bun_sys::O::CREAT | bun_sys::O::TRUNC,
                                     mode,
                                 ) {
@@ -4241,7 +4380,7 @@ fn write_file_with_empty_source_to_destination(
                     }
                 }
 
-                *err = sys_error_with_path_like(err, &file.pathlike);
+                *err = sys_error_with_path_like(err, pathlike);
                 return Ok(
                     JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
                 );
@@ -4279,7 +4418,7 @@ fn write_file_with_empty_source_to_destination(
                             let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
                                 &err,
                                 global,
-                                this.store.get_path(),
+                                this.store.path_for_display(),
                                 this.promise.get(),
                             );
                             this.promise.reject(global, Ok(err_js))?;
@@ -4402,6 +4541,16 @@ pub(crate) fn write_file_with_source_destination(
     }
     // If this is file <> file, we can just copy the file
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
+        // The size of a pin is for a read. It is not a limit for a copy into the file.
+        let max_length = match destination_blob.pinned_file() {
+            Some(pinned)
+                if destination_blob.offset.get() == 0
+                    && destination_blob.size.get() == pinned.size_and_mtime_nsec().0 =>
+            {
+                MAX_SIZE
+            }
+            _ => destination_blob.size.get(),
+        };
         #[cfg(windows)]
         {
             return Ok(copy_file::CopyFileWindows::init(
@@ -4410,7 +4559,7 @@ pub(crate) fn write_file_with_source_destination(
                 cx.vm().event_loop_shared(),
                 cx.context(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
-                destination_blob.size.get(),
+                max_length,
                 options.mode,
             ));
         }
@@ -4420,7 +4569,7 @@ pub(crate) fn write_file_with_source_destination(
                 destination_store,
                 source_store,
                 destination_blob.offset.get(),
-                destination_blob.size.get(),
+                max_length,
                 cx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,
@@ -4539,7 +4688,7 @@ pub(crate) fn write_file_with_source_destination(
                                         s3_client::error_jsc::s3_error_to_js_with_async_stack(
                                             &err,
                                             global,
-                                            this.store.get_path(),
+                                            this.store.path_for_display(),
                                             this.promise.get(),
                                         );
                                     this.promise.reject(global, Ok(err_js))?;
@@ -4667,7 +4816,7 @@ pub(crate) fn write_file_internal(
             && matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.store.get().is_some()
                     && matches!(b.store().expect("infallible: store present").data, store::Data::File(ref f)
-                        if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))))
+                        if f.fd().is_some()))
         {
             return Err(cx.global().throw_invalid_arguments(format_args!(
                 "Cannot create a directory for a file descriptor"
@@ -4695,13 +4844,12 @@ pub(crate) fn write_file_internal(
                     let str = data.to_bun_string(cx.global())?;
                     let pathlike: &PathOrFileDescriptor = match &*path_or_blob {
                         PathOrBlob::Path(p) => p,
-                        PathOrBlob::Blob(b) => {
-                            &b.store()
-                                .expect("infallible: store present")
-                                .data
-                                .as_file()
-                                .pathlike
-                        }
+                        PathOrBlob::Blob(b) => b
+                            .store()
+                            .expect("infallible: store present")
+                            .data
+                            .as_file()
+                            .pathlike_ignoring_pin(),
                     };
                     let result = if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
                         write_string_to_file_fast::<true>(
@@ -4726,13 +4874,12 @@ pub(crate) fn write_file_internal(
                 if buffer_view.byte_len < 256 * 1024 {
                     let pathlike: &PathOrFileDescriptor = match &*path_or_blob {
                         PathOrBlob::Path(p) => p,
-                        PathOrBlob::Blob(b) => {
-                            &b.store()
-                                .expect("infallible: store present")
-                                .data
-                                .as_file()
-                                .pathlike
-                        }
+                        PathOrBlob::Blob(b) => b
+                            .store()
+                            .expect("infallible: store present")
+                            .data
+                            .as_file()
+                            .pathlike_ignoring_pin(),
                     };
                     let result = if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
                         write_bytes_to_file_fast::<true>(
@@ -5473,6 +5620,60 @@ pub(crate) fn construct_bun_file(
     Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
 }
 
+/// `fs.openAsBlob`: pins the `Bun.file(path)` that `src/js/node/fs.ts` made, and sets its `type`.
+pub(crate) fn pin_open_as_blob(
+    global_object: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [value, file_type] = callframe.arguments_as_array::<2>();
+    let Some(blob) = value.as_class_ref::<Blob>() else {
+        return Ok(value);
+    };
+    let Some(store) = blob.store.get() else {
+        return Ok(value);
+    };
+
+    let file_type = file_type.to_utf8(global_object)?;
+    let slice = file_type.slice();
+    let mime_type = if slice.is_empty() || !is_valid_blob_type(slice) {
+        bun_http_types::MimeType::NONE
+    } else {
+        // `MimeType::init` would intern `text/plain` as `text/plain;charset=utf-8`.
+        bun_http_types::MimeType::MimeType {
+            value: std::borrow::Cow::Owned(slice.to_vec()),
+            category: bun_http_types::MimeType::MimeType::init(slice, false, None).category,
+        }
+    };
+
+    match Store::data_mut(store) {
+        store::Data::File(file) => match stat_file(file.pathlike_ignoring_pin()) {
+            Ok(stat) => {
+                file.pin(&stat);
+                apply_file_stat(file, &stat);
+                blob.content_type
+                    .set(BlobContentType::from_mime(&mime_type));
+                file.mime_type = mime_type;
+                blob.resolve_size();
+                blob.not_cloneable.set(true);
+            }
+            // node throws the `stat` error: https://github.com/nodejs/node/pull/65517
+            Err(err) => {
+                let err = err.with_path(file.display_path().unwrap_or_default());
+                return Err(global_object.throw_value(err.to_js(global_object)));
+            }
+        },
+        // A file embedded in a compiled executable is bytes in memory. It cannot change.
+        store::Data::Bytes(_) => {
+            blob.content_type_was_set.set(!mime_type.value.is_empty());
+            blob.content_type
+                .set(BlobContentType::from_mime(&mime_type));
+        }
+        // `Bun.file("s3://...")` is not a file of this machine. It stays as it was.
+        store::Data::S3(_) => {}
+    }
+    Ok(value)
+}
+
 // `find_or_create_file_from_path`: canonical impl lives later in this file
 // (runtime `check_s3: bool` form). Const-generic duplicate removed here.
 
@@ -5535,7 +5736,7 @@ impl S3BlobDownloadTask {
             }
             crate::webcore::__s3_client::S3DownloadResult::NotFound(err)
             | crate::webcore::__s3_client::S3DownloadResult::Failure(err) => {
-                let path = this.blob.store().and_then(|s| s.get_path());
+                let path = this.blob.store().and_then(|s| s.path_for_display());
                 let promise = this.promise.get();
                 let value = crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack(
                     &err, global, path, promise,
@@ -5797,38 +5998,37 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     // `RefPtr<Store>` liveness invariant; the caller holds the only ref across
     // this call, so an exclusive borrow is sound.
     let file = Store::data_mut(store).as_file_mut();
-    match &file.pathlike {
+    // the file may not exist yet. That's okay.
+    let Ok(stat) = stat_file(file.pathlike_ignoring_pin()) else {
+        return;
+    };
+    if file.pinned().is_some() {
+        // The size stays the one of the pin. A write through the Blob asks for the time again.
+        file.last_modified = stat_to_js_mtime(&stat);
+        return;
+    }
+    apply_file_stat(file, &stat);
+}
+
+fn stat_file(pathlike: &PathOrFileDescriptor) -> bun_sys::Result<bun_sys::Stat> {
+    match pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::path_buffer_pool::get();
-            match bun_sys::stat(path.slice_z(&mut buffer)) {
-                bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                        ((stat.st_size.max(0)) as u64) as SizeType
-                    } else {
-                        MAX_SIZE
-                    };
-                    file.mode = stat.st_mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = stat_to_js_mtime(&stat);
-                }
-                // the file may not exist yet. That's okay.
-                _ => {}
-            }
+            bun_sys::stat(path.slice_z(&mut buffer))
         }
-        PathOrFileDescriptor::Fd(fd) => match bun_sys::fstat(*fd) {
-            bun_sys::Result::Ok(stat) => {
-                file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                    ((stat.st_size.max(0)) as u64) as SizeType
-                } else {
-                    MAX_SIZE
-                };
-                file.mode = stat.st_mode as bun_sys::Mode;
-                file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                file.last_modified = stat_to_js_mtime(&stat);
-            }
-            _ => {}
-        },
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
     }
+}
+
+fn apply_file_stat(file: &mut store::File, stat: &bun_sys::Stat) {
+    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
+        ((stat.st_size.max(0)) as u64) as SizeType
+    } else {
+        MAX_SIZE
+    };
+    file.mode = stat.st_mode as bun_sys::Mode;
+    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
+    file.last_modified = stat_to_js_mtime(stat);
 }
 
 /// Whether a second Blob over `store` reads the same bytes from the start.
@@ -5839,7 +6039,7 @@ pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
     match Store::data_mut(store).tag() {
         store::DataTag::Bytes | store::DataTag::S3 => true,
         store::DataTag::File => {
-            if let PathOrFileDescriptor::Fd(_) = Store::data_mut(store).as_file().pathlike {
+            if Store::data_mut(store).as_file().fd().is_some() {
                 return false;
             }
             if Store::data_mut(store).as_file().seekable.is_none() {

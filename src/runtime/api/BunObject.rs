@@ -2827,7 +2827,6 @@ pub(crate) mod JSZstd {
 // `RefPtr<Store>`s here.
 mod stdio_stores {
     use super::*;
-    use crate::node::types::PathOrFileDescriptor;
     use crate::webcore::blob::store::{Data, File as FileStore, IsAllAscii};
     use crate::webcore::blob::{Blob, BlobExt as _, Store};
     use bun_ptr::RefPtr;
@@ -2845,12 +2844,7 @@ mod stdio_stores {
             Err(_) => 0,
         };
         RefPtr::new(Store {
-            data: Data::File(FileStore {
-                pathlike: PathOrFileDescriptor::Fd(fd),
-                is_atty: Some(is_atty),
-                mode,
-                ..Default::default()
-            }),
+            data: Data::File(FileStore::stdio(fd, is_atty, mode)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: IsAllAscii::default(),

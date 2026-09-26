@@ -706,7 +706,7 @@ impl AnyRoute {
             // that out immediately so that the health check on startup fails
             // and the process exits with a non-zero status code.
             if let Some(store) = blob.store.get().as_deref() {
-                if let Some(store_path) = store.get_path() {
+                if let Some(store_path) = store.path_for_display() {
                     // NOTE: `sys::exists_at_type` takes `&ZStr`; the store
                     // path is a borrowed byte slice. NUL-terminate into a path
                     // buffer for the syscall.

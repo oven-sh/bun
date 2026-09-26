@@ -58,11 +58,13 @@
     "unsafe impl Send": [
       "Blob",
       "Bytes",
+      "PinnedFile",
       "Store"
     ],
     "unsafe impl Sync": [
       "Blob",
       "Bytes",
+      "PinnedFile",
       "Store"
     ]
   },

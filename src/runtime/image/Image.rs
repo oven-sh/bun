@@ -15,6 +15,7 @@ use crate::generated_classes::PropertyName;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::store as blob_store;
+use crate::webcore::blob::store::PinnedFileExt as _;
 use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
@@ -1181,12 +1182,25 @@ impl Image {
             // unreachable, but this path should throw, not abort, when it isn't.)
             if let Some(store) = blob.store.get() {
                 if let blob_store::Data::File(file) = &store.data {
-                    if let PathOrFileDescriptor::Path(path) = &file.pathlike {
-                        let p = ZBox::from_bytes(path.slice());
-                        // `Source::Blob`'s `Strong` Drop releases the JS ref.
-                        self.source.set(Source::Path(p));
-                    } else {
-                        return Err(global.throw(format_args!("{REFUSE}")));
+                    match file.source() {
+                        blob_store::FileSource::Pinned(pinned) => {
+                            // The open of a FIFO waits for a writer, and a device has no end.
+                            let is_regular = sys::S::ISREG(file.mode as _);
+                            let Some(bytes) = is_regular.then(|| read_pinned(pinned)).flatten()
+                            else {
+                                let err = crate::webcore::blob::not_readable_error(global);
+                                return Err(global.throw_value(err));
+                            };
+                            self.source.set(Source::Owned(bytes));
+                        }
+                        blob_store::FileSource::Lazy(PathOrFileDescriptor::Path(path)) => {
+                            let p = ZBox::from_bytes(path.slice());
+                            // `Source::Blob`'s `Strong` Drop releases the JS ref.
+                            self.source.set(Source::Path(p));
+                        }
+                        blob_store::FileSource::Lazy(PathOrFileDescriptor::Fd(_)) => {
+                            return Err(global.throw(format_args!("{REFUSE}")));
+                        }
                     }
                 } else {
                     return Err(global.throw(format_args!("{REFUSE}")));
@@ -1230,6 +1244,18 @@ impl Image {
             TaskResult::Meta { .. } => unreachable!(),
         }
     }
+}
+
+/// The bytes of a pinned file, read on this thread. `None`: it changed, or it cannot be read.
+fn read_pinned(pinned: &blob_store::PinnedFile) -> Option<Vec<u8>> {
+    let (fd, stat) = pinned.open_verified(sys::O::RDONLY | sys::O::NOCTTY).ok()?;
+    let file = sys::File::from_fd(fd);
+    if u64::try_from(stat.st_size).ok()? > MAX_INPUT_FILE_BYTES {
+        return None;
+    }
+    let bytes = file.read_to_end().ok()?;
+    pinned.recheck(fd).ok()?;
+    Some(bytes)
 }
 
 // ───────────────────────────── worker task ──────────────────────────────────
@@ -1360,7 +1386,19 @@ impl<'a> BlobReadChain<'a> {
             }
             ReadBytesResult::Err(e) => {
                 drop(deliver);
-                outer.reject(global, Ok(e.to_error_instance(global)))
+                let pinned = matches!(
+                    image.source.get(),
+                    Source::Blob(blob) if blob
+                        .get()
+                        .as_class_ref::<Blob>()
+                        .is_some_and(|blob| blob.pinned_file().is_some())
+                );
+                let err = if pinned {
+                    crate::webcore::blob::not_readable_error(global)
+                } else {
+                    e.to_error_instance(global)
+                };
+                outer.reject(global, Ok(err))
             }
         }
     }

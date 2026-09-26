@@ -1064,7 +1064,7 @@ impl Writable {
                 Stdio::Inherit => {
                     return Ok(Writable::Inherit);
                 }
-                Stdio::Memfd(_) | Stdio::Path(_) | Stdio::Ignore => {
+                Stdio::Memfd(_) | Stdio::OwnedFd(_) | Stdio::Path(_) | Stdio::Ignore => {
                     return Ok(Writable::Ignore);
                 }
                 Stdio::Ipc | Stdio::Capture(_) => {
@@ -1122,7 +1122,7 @@ impl Writable {
                 }
                 Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
                 Stdio::Inherit => Ok(Writable::Inherit),
-                Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
+                Stdio::OwnedFd(_) | Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
                 Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
                 Stdio::ReadableStream(_) => {
                     // The shell never uses this
@@ -1262,7 +1262,7 @@ impl Readable {
             return match &mut stdio {
                 Stdio::Inherit => Readable::Inherit,
                 Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
-                Stdio::Path(_) => Readable::Ignore,
+                Stdio::Path(_) | Stdio::OwnedFd(_) => Readable::Ignore,
                 Stdio::Fd(_) => Readable::Fd,
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd
@@ -1297,7 +1297,7 @@ impl Readable {
             match &mut stdio {
                 Stdio::Inherit => Readable::Inherit,
                 Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
-                Stdio::Path(_) => Readable::Ignore,
+                Stdio::Path(_) | Stdio::OwnedFd(_) => Readable::Ignore,
                 Stdio::Fd(_) => Readable::Fd,
                 // blobs are immutable, so we should only ever get the case
                 // where the user passed in a Blob with an fd

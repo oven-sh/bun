@@ -339,7 +339,9 @@ public:
 
     uint8_t drainMicrotasks();
 
-    void handleRejectedPromises();
+    bool hasRejectedPromises() const { return !m_aboutToBeNotifiedRejectedPromises.isEmpty(); }
+    // True when a process 'unhandledRejection' listener ran: run a microtask checkpoint, then call again.
+    bool handleRejectedPromises();
     ALWAYS_INLINE void initGeneratedLazyClasses();
 
     template<typename Visitor>

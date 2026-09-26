@@ -3349,16 +3349,17 @@ RefPtr<Performance> GlobalObject::performance()
     return m_performance;
 }
 
-extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
+extern "C" bool Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
 
-void GlobalObject::handleRejectedPromises()
+bool GlobalObject::handleRejectedPromises()
 {
     if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]
-        return;
+        return false;
 
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(virtual_machine);
     do {
+        bool listenerRan = false;
         // Move the whole list out under one cellLock, then iterate linearly —
         // the same pattern JSC's VM::didExhaustMicrotaskQueue and WebCore's
         // RejectedPromiseTracker use.
@@ -3373,17 +3374,21 @@ void GlobalObject::handleRejectedPromises()
             // From here on a handler on this promise is late: promiseRejectionTracker(Handle) owes it 'rejectionHandled'.
             m_aboutToBeNotifiedRejectedPromises.markReported(this, promise);
 
-            Bun__handleRejectedPromise(this, promise, JSValue::encode(rejectionOwners.at(i)));
+            listenerRan |= Bun__handleRejectedPromise(this, promise, JSValue::encode(rejectionOwners.at(i)));
             if (auto ex = scope.exception()) {
                 if (virtual_machine.isTerminationException(ex)) [[unlikely]]
-                    return;
+                    return false;
                 (void)scope.tryClearException();
                 this->reportUncaughtExceptionAtEventLoop(this, ex);
             }
         }
+        // Node runs the listeners of the whole batch before the ticks and microtasks they queued.
+        if (listenerRan)
+            return true;
         // An unhandledRejection handler may itself reject a promise; loop
         // until the list stays empty.
     } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
+    return false;
 }
 
 DEFINE_VISIT_CHILDREN(GlobalObject);

@@ -4142,7 +4142,13 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
 // Rust -> C++ boundary function).
 __attribute__((__always_inline__)) JSC::VM* JSC__JSGlobalObject__vm(JSC::JSGlobalObject* arg0) { return &arg0->vm(); };
 
-void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0)
+// One load and a compare, asked at the end of every loop turn. always_inline as JSC__JSGlobalObject__vm above.
+__attribute__((__always_inline__)) bool JSC__JSGlobalObject__hasRejectedPromises(JSC::JSGlobalObject* arg0)
+{
+    return uncheckedDowncast<Zig::GlobalObject>(arg0)->hasRejectedPromises();
+}
+
+bool JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0)
 {
     return uncheckedDowncast<Zig::GlobalObject>(arg0)->handleRejectedPromises();
 }

@@ -344,17 +344,6 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         }
     }
 
-    let has_scripts = package.scripts.has_any()
-        || 'brk: {
-            let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
-            let binding_dot_gyp_path = bun_paths::resolve_path::join_abs_string_z::<
-                bun_paths::platform::Auto,
-            >(dir, &[b"binding.gyp" as &[u8]]);
-            break 'brk bun_sys::exists(binding_dot_gyp_path.as_bytes());
-        };
-
-    package.meta.set_has_install_script(has_scripts);
-
     if let Some(existing_id) =
         manager
             .lockfile

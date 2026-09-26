@@ -1186,15 +1186,15 @@ describe("hostile option objects", () => {
     expect(a.byteLength).toBe(0); // pin released with the task
   });
 
-  test("transfer + GC under a decode does not free the bytes the pool thread reads", async () => {
-    // The same sequence in a loop, with a decode long enough to still be
-    // running when the collection happens. Without the pin, `.buffer` +
-    // transfer moves the storage to an ArrayBuffer nothing references,
-    // Heap::sweepArrayBuffers frees it, and the pool thread reads the freed
-    // block: an ASAN heap-use-after-free, or a decode error / wrong image on a
-    // build without ASAN. `Malloc=1` routes the Gigacage through system malloc
-    // so ASAN sees the free. Windows is left alone: bmalloc's SystemHeap is
-    // unimplemented there and `Malloc=1` would RELEASE_BASSERT.
+  test("transfer + GC after the borrow does not free the bytes the pool thread reads", async () => {
+    // The borrow happens on the JS thread inside `.bytes()`, so the transfer
+    // and the collection below both land before the pool job runs: no race on
+    // how long the decode takes. Without the pin, `.buffer` + transfer moves
+    // the storage to an ArrayBuffer nothing references, the collection frees
+    // it, and the job reads the freed block. `Malloc=1` routes the Gigacage
+    // through system malloc so ASAN sees the free; stock bun rejects with
+    // ERR_IMAGE_UNKNOWN_FORMAT instead. Windows is left alone: bmalloc's
+    // SystemHeap is unimplemented there and `Malloc=1` would RELEASE_BASSERT.
     using dir = tempDir("image-oversize-transfer", {
       "repro.ts": `
         import zlib from "node:zlib";
@@ -1202,48 +1202,48 @@ describe("hostile option objects", () => {
         const chunk = (t: string, d: Buffer) =>
           Buffer.concat([be32(d.length), Buffer.from(t), d,
             be32(zlib.crc32(Buffer.concat([Buffer.from(t), d])) >>> 0)]);
-        const w = 900, h = 700, stride = w * 4 + 1;
-        const raw = Buffer.alloc(stride * h);
-        // Noise, so the JPEG below stays large and its decode outlives the
-        // collection. One 64 KB tile (the getRandomValues limit), repeated.
-        const tile = new Uint8Array(65536);
-        crypto.getRandomValues(tile);
-        for (let off = 0; off < raw.length; off += tile.length) raw.set(tile.subarray(0, Math.min(tile.length, raw.length - off)), off);
-        for (let y = 0; y < h; y++) raw[y * stride] = 0; // filter byte: none
+        const w = 64, h = 64, stride = w * 4 + 1;
+        // Noise, so the IDAT does not compress below fastSizeLimit: the input
+        // has to stay an OversizeTypedArray to reach the pin at all.
+        const rows = Buffer.alloc(stride * h);
+        crypto.getRandomValues(rows);
+        for (let y = 0; y < h; y++) rows[y * stride] = 0; // filter byte: none
         const png = Buffer.concat([
           Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
           chunk("IHDR", Buffer.concat([be32(w), be32(h), Buffer.from([8, 6, 0, 0, 0])])),
-          chunk("IDAT", zlib.deflateSync(raw)),
+          chunk("IDAT", zlib.deflateSync(rows)),
           chunk("IEND", Buffer.alloc(0)),
         ]);
-        const jpeg = Buffer.from(await new Bun.Image(png).jpeg({ quality: 90 }).bytes());
-        const want = Bun.hash(await new Bun.Image(new Uint8Array(jpeg)).bytes());
-        const rounds = Number(process.argv[2]);
-        let ok = 0, wrong = 0, rejected = 0;
-        for (let i = 0; i < rounds; i++) {
-          const input = new Uint8Array(jpeg);       // OversizeTypedArray: no ArrayBuffer yet
-          const decode = new Bun.Image(input).bytes(); // the pool thread reads input's storage
-          const ab = input.buffer;                  // an ArrayBuffer over the same storage
-          structuredClone(ab, { transfer: [ab] });  // storage moves to an unreferenced owner
-          Bun.gc(true);                             // ... which this collection sweeps
-          for (let k = 0; k < 8; k++) new Uint8Array(jpeg.length).fill(0xee); // reuse the block
-          await decode.then(r => { Bun.hash(r) === want ? ok++ : wrong++; }, () => { rejected++; });
-        }
-        console.log(JSON.stringify({ ok, wrong, rejected }));
+        const want = Bun.hash(await new Bun.Image(new Uint8Array(png)).bytes());
+        const input = new Uint8Array(png);           // OversizeTypedArray: no ArrayBuffer yet
+        const decode = new Bun.Image(input).bytes(); // borrows input's storage for the pool
+        input.buffer.transfer(0);                    // storage moves to an unreferenced owner
+        Bun.gc(true);                                // ... which this collection sweeps
+        for (let k = 0; k < 8; k++) new Uint8Array(png.length).fill(0xee); // reuse the block
+        const decoded = await decode.then(
+          r => (Bun.hash(r) === want ? "same" : "different"),
+          e => "rejected:" + (e.code ?? e.message),
+        );
+        console.log(JSON.stringify({ pngBytes: png.length, byteLength: input.byteLength, decoded }));
       `,
     });
-    const rounds = 3;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "repro.ts", String(rounds)],
+      cmd: [bunExe(), "repro.ts"],
       env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
       cwd: String(dir),
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe(JSON.stringify({ ok: rounds, wrong: 0, rejected: 0 }));
+    const out = JSON.parse(stdout.trim());
+    expect(out.pngBytes).toBeGreaterThan(1000); // else the input is a FastTypedArray and gets duped
+    expect({ byteLength: out.byteLength, decoded: out.decoded }).toEqual({
+      byteLength: out.pngBytes, // pinned: the transfer copied and left `input` attached
+      decoded: "same",
+    });
     expect(exitCode).toBe(0);
-  });
+    // A spawned child that decodes twice: a few seconds on a loaded ASAN lane.
+  }, 30_000);
 
   test("SharedArrayBuffer input is refused (cross-thread mutation surface)", () => {
     const sab = new SharedArrayBuffer(tinyPng.byteLength);

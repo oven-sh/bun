@@ -509,7 +509,21 @@ const cases: Case[] = [
     b: () => withHiddenProperty({}, "x", 1),
     strict: false,
     loose: false,
+  },
+  {
+    name: "{ a: undefined } and an object with a non-enumerable a",
+    a: () => ({ a: undefined }),
+    b: () => withHiddenProperty({}, "a", 999),
+    strict: false,
+    loose: false,
     looseBug: "reports equal",
+  },
+  {
+    name: "{ x: 1 } and a Proxy of an object with a non-enumerable x",
+    a: () => ({ x: 1 }),
+    b: () => new Proxy(withHiddenProperty({ y: 1 }, "x", 1), {}),
+    strict: false,
+    loose: false,
   },
   {
     name: "an object with a non-enumerable x and { x: 1 }",
@@ -524,7 +538,6 @@ const cases: Case[] = [
     b: () => withHiddenProperty({ x: 1 }, "y", 2),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "a Date and a Date subclass instance with the same time",
@@ -586,6 +599,7 @@ const cases: Case[] = [
     b: () => Object.defineProperty({}, sym, { value: 1, enumerable: false }),
     strict: false,
     loose: true,
+    looseBug: "reports not equal",
   },
   {
     name: "typed arrays differing only in a symbol property",

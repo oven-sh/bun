@@ -575,7 +575,8 @@ extern "C"
 
   void uws_ws(int ssl, uws_app_t *app, void *upgradeContext, const char *pattern,
               size_t pattern_length, size_t id,
-              const uws_socket_behavior_t *behavior_)
+              const uws_socket_behavior_t *behavior_,
+              const void *shared_context_key)
   {
     uws_socket_behavior_t behavior = *behavior_;
 
@@ -635,7 +636,7 @@ extern "C"
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
 
       uwsApp->ws<void *>(std::string(pattern, pattern_length),
-                         std::move(generic_handler));
+                         std::move(generic_handler), shared_context_key);
     }
     else
     {
@@ -692,7 +693,7 @@ extern "C"
         };
       uWS::App *uwsApp = (uWS::App *)app;
       uwsApp->ws<void *>(std::string(pattern, pattern_length),
-                         std::move(generic_handler));
+                         std::move(generic_handler), shared_context_key);
     }
   }
 

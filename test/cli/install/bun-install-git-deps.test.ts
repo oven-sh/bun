@@ -453,6 +453,98 @@ test.concurrent(
   30_000,
 );
 
+// The URL parser hands back the owner, repo and committish of a GitHub
+// dependency percent-decoded, and a part that was written with an escape was
+// then dropped from the request: `#feat%2Fx` asked for `/tarball/` (the default
+// branch) and an escaped owner for `/repos//<repo>/`. Each part goes into the
+// request as written, and GitHub decodes it.
+test.concurrent(
+  "requests a github: dependency as written when its owner, repo or committish holds a percent-escape",
+  async () => {
+    using dir = tempDir("github-dep-escapes", {});
+    const root = String(dir);
+
+    // letter -> [what package.json has for `@scope/pkg-<letter>`, the path bun must request]
+    const cases: Record<string, [spec: string, path: string]> = {
+      a: ["github:scope/pkg-a#feat%2Fx", "/repos/scope/pkg-a/tarball/feat%2Fx"],
+      b: ["scope/pkg-b#feat%2Fx", "/repos/scope/pkg-b/tarball/feat%2Fx"],
+      c: ["https://github.com/scope/pkg-c#feat%2Fx", "/repos/scope/pkg-c/tarball/feat%2Fx"],
+      d: ["git+https://github.com/scope/pkg-d.git#feat%2Fx", "/repos/scope/pkg-d/tarball/feat%2Fx"],
+      // the decoded `100%` is also a prefix of `100%25`, and `/tarball/100%` is not a valid path
+      e: ["github:scope/pkg-e#100%25", "/repos/scope/pkg-e/tarball/100%25"],
+      f: ["github:sc%6Fpe/pkg-f#main", "/repos/sc%6Fpe/pkg-f/tarball/main"],
+      g: ["github:scope/pkg%2Dg#main", "/repos/scope/pkg%2Dg/tarball/main"],
+      // the decoded committish is also the text in front of the `#`, written with no escape
+      h: ["github:scope/pkg-h#scope%2Fpkg-h", "/repos/scope/pkg-h/tarball/scope%2Fpkg-h"],
+    };
+    const letters = Object.keys(cases);
+    const tarballs = await packageTarballs(letters, {}, l => `scope-pkg-${l}-0000000`);
+
+    const requests: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        // like GitHub, find the repository by the decoded path
+        const decoded = pathname.replace(/%([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+        const match = /^\/repos\/scope\/pkg-([a-z])\/tarball\//.exec(decoded);
+        const tarball = match && tarballs.get(match[1]);
+        return tarball ? new Response(tarball) : new Response("not found", { status: 404 });
+      },
+    });
+
+    const project = writeProject(root, Object.fromEntries(letters.map(l => [nameOf(l), cases[l][0]])));
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {
+      GITHUB_API_URL: `http://localhost:${server.port}`,
+    });
+    expect(requests.sort()).toEqual(letters.map(l => cases[l][1]).sort());
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [16]
+      Saved lockfile"
+    `);
+    expect(await installedVersions(project, letters.map(nameOf))).toEqual(markers(letters));
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The URL parser removes a tab, so the committish it hands back (`feat`) is
+// not in the fragment as written. The committish was then left empty and the
+// default branch was installed. A part that cannot be found fails to resolve.
+test.concurrent("does not install the default branch for a github: committish it cannot find", async () => {
+  using dir = tempDir("github-dep-tab", {});
+  const root = String(dir);
+  const tarball = await tarballOf("scope-pkg-a-0000000", packageFiles(nameOf("a"), "default-branch"));
+
+  const requests: string[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requests.push(new URL(req.url).pathname);
+      return new Response(tarball);
+    },
+  });
+
+  const project = writeProject(root, {
+    [nameOf("a")]: "github:scope/pkg-a#fe\tat",
+    // `feat` in front of the `#` is not the committish
+    [nameOf("b")]: "github:scope/feat-b#fe\tat",
+  });
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {
+    GITHUB_API_URL: `http://localhost:${server.port}`,
+  });
+  expect({ requests, installed: await installedVersions(project, [nameOf("a"), nameOf("b")]) }).toEqual({
+    requests: [],
+    installed: { [nameOf("a")]: null, [nameOf("b")]: null },
+  });
+  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+    "error: @scope/pkg-a@ failed to resolve
+    error: @scope/pkg-b@ failed to resolve"
+  `);
+  expect(exitCode).toBe(1);
+});
+
 // issue #35420 bug 2: installing from a complete lockfile with a cold cache
 // only checked out the single dependency stored on the shared clone task; the
 // other branches of the same repo were silently skipped with exit code 0.

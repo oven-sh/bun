@@ -1,6 +1,8 @@
 use core::cmp::Ordering;
 use core::mem::ManuallyDrop;
+use core::ops::Range;
 
+use bun_core::fmt::hex_digit_value;
 use bun_paths::strings;
 use bun_semver as Semver;
 use bun_semver::{SlicedString, String};
@@ -1273,49 +1275,19 @@ pub(crate) fn parse_with_tag(
                 Ok(None) | Err(_) => return None,
             };
 
-            // Now we have parsed info, we need to find these substrings in the original dependency
-            // to create String objects that point to the original buffer
-            let owner_str: &[u8] = info.user().unwrap_or(b"");
-            let repo_str: &[u8] = info.project();
-            let committish_str: &[u8] = info.committish().unwrap_or(b"");
-
-            // Find owner in dependency string
-            let owner_idx = strings::index_of(dependency, owner_str);
-            let owner = if let Some(idx) = owner_idx {
-                sliced.sub(&dependency[idx..idx + owner_str.len()]).value()
-            } else {
-                String::from(b"")
-            };
-
-            // Find repo in dependency string
-            let repo_idx = strings::index_of(dependency, repo_str);
-            let repo = if let Some(idx) = repo_idx {
-                sliced.sub(&dependency[idx..idx + repo_str.len()]).value()
-            } else {
-                String::from(b"")
-            };
-
-            // Find committish in dependency string
-            let committish = if !committish_str.is_empty() {
-                let committish_idx = strings::index_of(dependency, committish_str);
-                if let Some(idx) = committish_idx {
-                    sliced
-                        .sub(&dependency[idx..idx + committish_str.len()])
-                        .value()
-                } else {
-                    String::from(b"")
-                }
-            } else {
-                String::from(b"")
-            };
+            // `info` is percent-decoded, and a `String` can only point into `dependency`.
+            let (before_fragment, fragment) =
+                strings::split_once_char(dependency, b'#').unwrap_or((dependency, b""));
+            let owner = info.user().unwrap_or(b"");
+            let committish = info.committish().unwrap_or(b"");
 
             Some(Version {
                 literal: sliced.value(),
                 value: Value {
                     github: ManuallyDrop::new(Repository {
-                        owner,
-                        repo,
-                        committish,
+                        owner: percent_encoded_part(*sliced, before_fragment, owner)?,
+                        repo: percent_encoded_part(*sliced, before_fragment, info.project())?,
+                        committish: percent_encoded_part(*sliced, fragment, committish)?,
                         ..Default::default()
                     }),
                 },
@@ -1575,4 +1547,48 @@ fn hgi_to_tag(info: &hosted_git_info::HostedGitInfo) -> Tag {
         | hosted_git_info::HostProvider::Gist
         | hosted_git_info::HostProvider::Sourcehut => Tag::Git,
     }
+}
+
+/// The first span of `region` that percent-decodes to `decoded`, as a `String` into `sliced`.
+fn percent_encoded_part<'a>(
+    sliced: SlicedString<'a>,
+    region: &'a [u8],
+    decoded: &[u8],
+) -> Option<String> {
+    if decoded.is_empty() {
+        return Some(String::default());
+    }
+    // `None` and not an empty `String`: an empty committish installs the default branch.
+    let span = index_of_percent_encoded(region, decoded)?;
+    Some(sliced.sub(&region[span]).value())
+}
+
+/// The first span of `haystack` that percent-decodes to `decoded`.
+fn index_of_percent_encoded(haystack: &[u8], decoded: &[u8]) -> Option<Range<usize>> {
+    if !strings::contains_char(haystack, b'%') {
+        let at = strings::index_of(haystack, decoded)?;
+        return Some(at..at + decoded.len());
+    }
+
+    // `bytes` is `haystack` decoded, and `starts[i]` is where `bytes[i]` starts in `haystack`.
+    let mut bytes = Vec::with_capacity(haystack.len());
+    let mut starts = Vec::with_capacity(haystack.len() + 1);
+    let mut at = 0;
+    while at < haystack.len() {
+        let escape = match haystack[at..] {
+            [b'%', hi, lo, ..] => hex_digit_value(hi).zip(hex_digit_value(lo)),
+            _ => None,
+        };
+        let (byte, len) = match escape {
+            Some((hi, lo)) => ((hi << 4) | lo, 3),
+            None => (haystack[at], 1),
+        };
+        bytes.push(byte);
+        starts.push(at);
+        at += len;
+    }
+    starts.push(haystack.len());
+
+    let found = strings::index_of(&bytes, decoded)?;
+    Some(starts[found]..starts[found + decoded.len()])
 }

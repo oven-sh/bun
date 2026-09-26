@@ -235,6 +235,16 @@ pub enum ReactRefreshExportKind {
     Default,
 }
 
+/// The export that an entry of `exports.replace` or `exports.eliminate` applies to.
+#[derive(Clone, Copy)]
+pub(crate) enum ReplacedExport<'a> {
+    /// A declaration of this module, by its symbol.
+    Declaration(Ref),
+    /// A name that this module exports and does not bind: `export { a as name } from`, `export * as name from`.
+    Name(&'a [u8]),
+    Default,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // P — the parser struct.
 // `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
@@ -6780,73 +6790,123 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn inject_replacement_export(
         &mut self,
         stmts: &mut crate::parser::StmtList<'a>,
-        name_ref: Ref,
+        target: ReplacedExport<'a>,
         loc: bun_ast::Loc,
         replacement: &crate::parser::Runtime::ReplaceableExport,
     ) -> bool {
+        use crate::parser::Runtime::ReplaceableExport;
         match replacement {
-            crate::parser::Runtime::ReplaceableExport::Delete => false,
-            crate::parser::Runtime::ReplaceableExport::Replace(value) => {
-                debug_assert!(name_ref.is_symbol());
-                let count = stmts.len();
-                let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
-                    binding: self.b(B::Identifier { r#ref: name_ref }, loc),
-                    value: Some(*value),
-                }]);
-                let mut local = self.s(
-                    S::Local {
-                        is_export: true,
-                        decls,
-                        ..Default::default()
-                    },
-                    loc,
-                );
-                self.visit_and_append_stmt(stmts, &mut local)
-                    .expect("unreachable");
-                count != stmts.len()
-            }
-            crate::parser::Runtime::ReplaceableExport::Inject { name, value } => {
-                let count = stmts.len();
-                // `ReplaceableExport::Inject` boxes the name, so copy into the bump
-                // arena to satisfy `declare_symbol`'s `&'a [u8]`.
+            ReplaceableExport::Delete => false,
+            ReplaceableExport::Replace(value) => match target {
+                ReplacedExport::Declaration(name_ref) => {
+                    debug_assert!(name_ref.is_symbol());
+                    self.inject_export_var(stmts, name_ref, loc, *value)
+                }
+                ReplacedExport::Name(name) => self.inject_export_named(stmts, name, loc, *value),
+                ReplacedExport::Default => {
+                    self.inject_export_named(stmts, js_ast::ClauseItem::DEFAULT_ALIAS, loc, *value)
+                }
+            },
+            ReplaceableExport::Inject { name, value } => {
                 let name: &'a [u8] = self.arena.alloc_slice_copy(name);
-                let inject_ref = self
-                    .declare_symbol(js_ast::symbol::Kind::Other, loc, name)
-                    .expect("unreachable");
-                let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
-                    binding: self.b(B::Identifier { r#ref: inject_ref }, loc),
-                    value: Some(*value),
-                }]);
-                let mut local = self.s(
-                    S::Local {
-                        is_export: true,
-                        decls,
-                        ..Default::default()
-                    },
-                    loc,
-                );
-                self.visit_and_append_stmt(stmts, &mut local)
-                    .expect("unreachable");
-                count != stmts.len()
+                self.inject_export_named(stmts, name, loc, *value)
             }
         }
     }
 
-    /// Not visited: the visitor of `export default` would look `default` up and replace it again.
-    pub(crate) fn inject_replacement_export_default(
+    fn inject_export_var(
         &mut self,
         stmts: &mut crate::parser::StmtList<'a>,
+        name_ref: Ref,
+        loc: bun_ast::Loc,
         value: Expr,
-    ) {
-        let default_name = self.create_default_name(bun_ast::Loc::EMPTY);
-        self.record_declared_symbol(default_name.ref_);
-        stmts.push(self.s(
-            S::ExportDefault {
-                default_name,
-                value: js_ast::StmtOrExpr::Expr(value),
+    ) -> bool {
+        let count = stmts.len();
+        let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
+            binding: self.b(B::Identifier { r#ref: name_ref }, loc),
+            value: Some(value),
+        }]);
+        let mut local = self.s(
+            S::Local {
+                is_export: true,
+                decls,
+                ..Default::default()
             },
-            bun_ast::Loc::EMPTY,
+            loc,
+        );
+        self.visit_and_append_stmt(stmts, &mut local)
+            .expect("unreachable");
+        count != stmts.len()
+    }
+
+    /// `export default value`, `export var name = value`, or an export by name when the module cannot bind `name`.
+    fn inject_export_named(
+        &mut self,
+        stmts: &mut crate::parser::StmtList<'a>,
+        name: &'a [u8],
+        loc: bun_ast::Loc,
+        value: Expr,
+    ) -> bool {
+        if name == js_ast::ClauseItem::DEFAULT_ALIAS {
+            // Not visited: the visitor of `export default` would look `default` up and replace it again.
+            let default_name = self.create_default_name(loc);
+            self.record_declared_symbol(default_name.ref_);
+            stmts.push(self.s(
+                S::ExportDefault {
+                    default_name,
+                    value: js_ast::StmtOrExpr::Expr(value),
+                },
+                loc,
+            ));
+            return true;
+        }
+
+        let can_bind = crate::parser::can_be_binding_identifier(name)
+            && !self
+                .module_scope()
+                .get_member_with_hash(name, Scope::get_member_hash(name))
+                .is_some_and(|member| {
+                    self.symbols[member.ref_.inner_index() as usize].kind
+                        != js_ast::symbol::Kind::Unbound
+                });
+        if can_bind {
+            let name_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
+            VecExt::append(&mut self.module_scope_mut().generated, name_ref);
+            return self.inject_export_var(stmts, name_ref, loc, value);
+        }
+
+        // Not visited: a binding of this name would not parse, or would collide.
+        let local_ref = self.generate_temp_ref_with_scope(None, self.module_scope);
+        self.record_declared_symbol(local_ref);
+        self.record_usage(local_ref);
+        let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
+            binding: self.b(B::Identifier { r#ref: local_ref }, loc),
+            value: Some(value),
+        }]);
+        stmts.push(self.s(
+            S::Local {
+                decls,
+                ..Default::default()
+            },
+            loc,
         ));
+        let items = core::slice::from_mut(self.arena.alloc(js_ast::ClauseItem {
+            alias: js_ast::StoreStr::new(name),
+            alias_loc: loc,
+            name: js_ast::LocRef {
+                loc,
+                ref_: local_ref,
+            },
+            ..Default::default()
+        }));
+        stmts.push(self.s(
+            S::ExportClause {
+                items: bun_ast::StoreSlice::new_mut(items),
+                is_single_line: true,
+            },
+            loc,
+        ));
+        true
     }
 
     pub(crate) fn replace_decl_and_possibly_remove(

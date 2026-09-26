@@ -2527,6 +2527,190 @@ export default class {
       });
     });
 
+    describe("an export name that the module cannot bind", () => {
+      const byName = (name, value = 1, n = 1) =>
+        `var __bun_temp_ref_${n}$ = ${value};\n\nexport { __bun_temp_ref_${n}$ as ${name} };\n`;
+      const reserved = ["class", "if", "static", "let", "await", "eval", "arguments", "module", "exports"];
+
+      // [label, options, source, printed module, exports that scan() reports]
+      const cases = [
+        ...reserved.map(name => [
+          `export { a as ${name} } from`,
+          { exports: { replace: { [name]: 1 } } },
+          `export { a as ${name}, b } from "x";`,
+          byName(name) + `export { b } from "x";\n`,
+          ["b", name].sort(),
+        ]),
+        ...reserved.map(name => [
+          `export * as ${name} from`,
+          { exports: { replace: { [name]: 1 } } },
+          `export * as ${name} from "x";`,
+          byName(name),
+          [name],
+        ]),
+        ...reserved.map(name => [
+          `replace that injects ${name}`,
+          { exports: { replace: { f: [name, 1] } } },
+          `export function f() {}`,
+          byName(name),
+          [name],
+        ]),
+        [
+          "two names in one module",
+          { exports: { replace: { class: 1, if: 2 } } },
+          `export { a as class, b as if, c } from "x";`,
+          byName("class") + byName("if", 2, 2) + `export { c } from "x";\n`,
+          ["c", "class", "if"],
+        ],
+        [
+          "minify.identifiers",
+          { minify: { identifiers: true }, exports: { replace: { class: 1 } } },
+          `export * as class from "x";`,
+          byName("class"),
+          ["class"],
+        ],
+        [
+          "export * as default from",
+          { exports: { replace: { default: 1 } } },
+          `export * as default from "x";`,
+          `export default 1;\n`,
+          ["default"],
+        ],
+        [
+          "a re-export list injects default",
+          { exports: { replace: { a: ["default", 1] } } },
+          `export { a, b } from "x";`,
+          `export default 1;\nexport { b } from "x";\n`,
+          ["b", "default"],
+        ],
+        [
+          "a function injects default",
+          { exports: { replace: { f: ["default", 1] } } },
+          `export function f() {}`,
+          `export default 1;\n`,
+          ["default"],
+        ],
+        [
+          "a class injects default",
+          { exports: { replace: { K: ["default", 1] } } },
+          `export class K {}`,
+          `export default 1;\n`,
+          ["default"],
+        ],
+        [
+          "an export clause injects default",
+          { exports: { replace: { a: ["default", 1] } } },
+          `const a = 0; export { a };`,
+          `const a = 0;\nexport default 1;\n`,
+          ["default"],
+        ],
+        [
+          "export default injects default",
+          { deadCodeElimination: false, exports: { replace: { default: ["default", 1] } } },
+          `export default 5;`,
+          `export default 1;\n`,
+          ["default"],
+        ],
+        [
+          "export default injects a reserved word",
+          { deadCodeElimination: false, exports: { replace: { default: ["class", 1] } } },
+          `export default function f() {}`,
+          byName("class"),
+          ["class"],
+        ],
+        [
+          "const of the same name",
+          { exports: { replace: { a: 1 } } },
+          `const a = 0; export { a } from "x";`,
+          `const a = 0;\n` + byName("a") + `export {  } from "x";\n`,
+          ["a"],
+        ],
+        [
+          "var of the same name",
+          { exports: { replace: { ns: 1 } } },
+          `var ns = 0; export * as ns from "x";`,
+          `var ns = 0;\n` + byName("ns"),
+          ["ns"],
+        ],
+        [
+          "function of the same name",
+          { exports: { replace: { a: 1 } } },
+          `function a() {} export { a } from "x";`,
+          `function a() {}\n` + byName("a") + `export {  } from "x";\n`,
+          ["a"],
+        ],
+        [
+          "let of the same name, declared later",
+          { exports: { replace: { ns: 1 } } },
+          `export * as ns from "x"; let ns = 0;`,
+          byName("ns") + `let ns = 0;\n`,
+          ["ns"],
+        ],
+        [
+          "import of the same name",
+          { exports: { replace: { a: 1 } } },
+          `import { a } from "y"; console.log(a); export { a } from "x";`,
+          `import { a } from "y";\nconsole.log(a);\n` + byName("a") + `export {  } from "x";\n`,
+          ["a"],
+        ],
+        [
+          "injected name that the module binds",
+          { exports: { replace: { f: ["N", true] } } },
+          `let N = 0; export function f() {}`,
+          `let N = 0;\n` + byName("N", true),
+          ["N"],
+        ],
+        [
+          "name of a nested binding",
+          { exports: { replace: { a: 1 } } },
+          `function f() { let a = 0; return a; } export { a } from "x";`,
+          `function f() {\n  let a = 0;\n  return a;\n}\nexport var a = 1;\nexport {  } from "x";\n`,
+          ["a"],
+        ],
+        ["eliminate a reserved word", { exports: { eliminate: ["static"] } }, `export * as static from "x";`, ``, []],
+        [
+          "eliminate a name that the module binds",
+          { exports: { eliminate: ["ns"] } },
+          `const ns = 1; export * as ns from "x";`,
+          `const ns = 1;\n`,
+          [],
+        ],
+        [
+          "replace that injects another name, next to a binding",
+          { exports: { replace: { ns: ["N", true] } } },
+          `const ns = 1; export * as ns from "x";`,
+          `const ns = 1;\nexport var N = true;\n`,
+          ["N"],
+        ],
+        [
+          "replacement of a replacement",
+          { exports: { replace: { a: ["N", 1], N: 2 } } },
+          `export { a, b } from "x";`,
+          `export var N = 2;\nexport { b } from "x";\n`,
+          ["N", "b"],
+        ],
+      ];
+
+      it.each(["ts", "js"])("loader %s", async loader => {
+        const printed = [];
+        for (const [label, options, source] of cases) {
+          const transpiler = new Bun.Transpiler({ loader, ...options });
+          const module = transpiler.transformSync(source);
+          printed.push([
+            label,
+            module,
+            await transpiler.transform(source),
+            transpiler.scan(source).exports,
+            // The printed module parses, and it exports the same names.
+            new Bun.Transpiler({ loader }).scan(module).exports,
+          ]);
+        }
+        expect(printed).toEqual(
+          cases.map(([label, , , printed, exported]) => [label, printed, printed, exported, exported]),
+        );
+      });
+    });
+
     it.todo("supports replacing exports", () => {
       const output = transpiler.transformSync(`
         import deadFS from 'fs';

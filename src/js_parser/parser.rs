@@ -1062,6 +1062,15 @@ pub(crate) fn is_eval_or_arguments(name: &[u8]) -> bool {
     name == b"eval" || name == b"arguments"
 }
 
+/// Whether `name` can be the name of a binding in a module, which is strict mode code.
+pub(crate) fn can_be_binding_identifier(name: &[u8]) -> bool {
+    js_lexer::identifier::is_identifier(name)
+        && js_lexer::keyword(name).is_none()
+        && !js_lexer::is_strict_mode_reserved_word(name)
+        && name != b"await"
+        && !is_eval_or_arguments(name)
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct PrependTempRefsOpts {
     pub(crate) kind: StmtsKind,

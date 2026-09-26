@@ -333,6 +333,7 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
 
     if (new_s->flags.low_prio_state == 1) {
         /* update pointers in low-priority queue */
+        if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = new_s;
         if (!new_s->prev) loop->data.low_prio_head = new_s;
         else new_s->prev->next = new_s;
 
@@ -363,6 +364,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
+    s->hangup_closes_unsent = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -543,6 +545,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
+    s->hangup_closes_unsent = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }

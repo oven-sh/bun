@@ -276,7 +276,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // BoringSSL is a fork of OpenSSL 1.1.0, so we can report OpenSSL 1.1.0
         { "openssl", "1.1.0" },
         // keep in sync with src/jsc/bindings/node/http/llhttp/README.md
-        { "llhttp", "9.3.0" },
+        { "llhttp", "9.4.2" },
         { "libarchive", BUN_VERSION_LIBARCHIVE },
         { "mimalloc", BUN_VERSION_MIMALLOC },
         { "picohttpparser", BUN_VERSION_PICOHTTPPARSER },
@@ -327,7 +327,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     auto* release = JSC::constructEmptyObject(globalObject);
 
     release->putDirect(vm, vm.propertyNames->name, jsOwnedString(vm, String("node"_s)), 0); // maybe this should be 'bun' eventually
-    putDirectNamed(vm, release, "sourceUrl"_s, jsOwnedString(vm, WTF::String(std::span { Bun__githubURL, strlen(Bun__githubURL) })));
+    putDirectNamed(vm, release, "sourceUrl"_s, jsOwnedString(vm, String::fromLatin1(Bun__githubURL)));
     putDirectNamed(vm, release, "headersUrl"_s, jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -3373,7 +3373,7 @@ static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
     auto str = value.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     auto utf8 = str.utf8();
-    auto name = utf8.data();
+    auto name = utf8.legacyCStringPointer();
     struct passwd pwd;
     struct passwd* pp = nullptr;
     char buf[8192];
@@ -3395,7 +3395,7 @@ static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
     auto str = value.getString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     auto utf8 = str.utf8();
-    auto name = utf8.data();
+    auto name = utf8.legacyCStringPointer();
     struct group pwd;
     struct group* pp = nullptr;
     char buf[8192];

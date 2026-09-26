@@ -330,6 +330,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
             JSC::Options::useWasmMemory64() = false;
+            // Node.js defaults Error.stackTraceLimit to 10.
+            JSC::Options::defaultErrorStackTraceLimit() = DEFAULT_ERROR_STACK_TRACE_LIMIT;
 #if OS(WINDOWS)
             // oven-sh/WebKit#553 starts the MarkedBlock warm-up helper thread from
             // the allocation slow path once the heap has ramped; on Windows that
@@ -1862,7 +1864,7 @@ JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globa
     auto attributeName = callFrame->uncheckedArgument(1).getString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto error = static_cast<ErrorInstance*>(createTypeError(globalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(interfaceName.utf8().data(), attributeName)));
+    auto error = static_cast<ErrorInstance*>(createTypeError(globalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(interfaceName.utf8().legacyCStringPointer(), attributeName)));
     error->setNativeGetterTypeError();
     return JSValue::encode(error);
 }
@@ -2103,10 +2105,6 @@ void initLazyClassStructures(GlobalObject* globalObject)
 
 void GlobalObject::finishCreation(VM& vm)
 {
-    // Node.js defaults to 10. Must run before Base::finishCreation() materializes
-    // errorConstructor(), which snapshots this value into Error.stackTraceLimit.
-    setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
-
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 

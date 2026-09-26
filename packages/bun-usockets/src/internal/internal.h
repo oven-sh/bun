@@ -257,6 +257,7 @@ int us_internal_ssl_handshake_callback_has_fired(us_socket_r s);
 int us_internal_ssl_is_shut_down(us_socket_r s);
 void us_internal_ssl_shutdown(us_socket_r s);
 int us_internal_ssl_write(us_socket_r s, const char *data, int length);
+int us_internal_ssl_writev(us_socket_r s, const struct us_iovec_t *iov, int count);
 unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
@@ -338,6 +339,8 @@ struct us_socket_t {
   unsigned char ssl_verify_failed : 1;
   /* The owner checked the server's name inside this handshake. */
   unsigned char ssl_identity_checked : 1;
+  /* The peer sent a certificate chain in this handshake, and it was checked. */
+  unsigned char ssl_peer_chain_checked : 1;
   /* US_SNI_*: an async SNICallback has the handshake suspended. */
   unsigned char ssl_sni_pending : 2;
   /* Server-side socket adopted into TLS with its own SNICallback. */
@@ -346,6 +349,9 @@ struct us_socket_t {
   unsigned char ssl_has_pending_events : 1;
   /* Peer FIN was dispatched as on_end on a half-open socket; readable interest is never re-added and on_end never re-fires. */
   unsigned char read_eof : 1;
+  /* A hangup that leaves bytes unsent closes the socket even while it is paused (loop.c defers it otherwise).
+   * For an owner whose pause can wait for those bytes to drain: node:http's pipelining. */
+  unsigned char hangup_closes_unsent : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
@@ -430,7 +436,6 @@ struct us_udp_socket_t {
      * and use it to build a proper and full sockaddr_in or sockaddr_in6 for every received packet */
     uint16_t port;
     uint16_t closed : 1;
-    uint16_t connected : 1;
     uint16_t shared_fd : 1;
     struct us_udp_socket_t *next;
 };

@@ -49,7 +49,7 @@ pub enum MessageType {
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
-pub(crate) fn write_bind<Context: WriterContext>(
+fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: &BunString,
     global: &JSGlobalObject,
@@ -288,7 +288,7 @@ pub(crate) fn write_query<Context: WriterContext>(
     Ok(())
 }
 
-pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
+fn prepare_and_query_with_signature<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],
     array_value: JSValue,
@@ -326,7 +326,7 @@ pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     })
 }
 
-pub(crate) fn bind_and_execute<Context: WriterContext>(
+fn bind_and_execute<Context: WriterContext>(
     global: &JSGlobalObject,
     statement: &PostgresSQLStatement,
     array_value: JSValue,
@@ -363,7 +363,7 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
 /// like PgBouncer in transaction mode, which may reassign server connections between protocol
 /// round-trips. Without this, Parse and Bind+Execute could be routed to different backend
 /// connections, causing queries to execute against the wrong prepared statement.
-pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
+fn parse_and_bind_and_execute<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],
     statement: &PostgresSQLStatement,
@@ -427,6 +427,68 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
         writer.write(&protocol::SYNC)?;
         Ok(())
     })
+}
+
+/// One batch whose Bind encodes a request's parameters.
+pub(crate) enum EncodeRequest<'a> {
+    /// Bind + Execute for a statement the server has already parsed.
+    BindAndExecute {
+        statement: &'a PostgresSQLStatement,
+        binding_value: JSValue,
+        columns_value: JSValue,
+    },
+    /// Parse + [Describe] + Bind + Execute for an unnamed statement (`prepare: false`).
+    ParseBindAndExecute {
+        query: &'a [u8],
+        statement: &'a PostgresSQLStatement,
+        binding_value: JSValue,
+        columns_value: JSValue,
+        include_describe: bool,
+    },
+    /// Parse + Describe + Bind + Execute for a query without parameters.
+    PrepareAndQuery {
+        query: &'a [u8],
+        signature: &'a mut Signature,
+        binding_value: JSValue,
+    },
+}
+
+impl PostgresSQLConnection {
+    /// The only caller of the batch writers above.
+    pub(crate) fn encode_request(
+        &self,
+        global: &JSGlobalObject,
+        request: EncodeRequest<'_>,
+    ) -> Result<(), AnyPostgresError> {
+        let writer = self.writer();
+        match request {
+            EncodeRequest::BindAndExecute {
+                statement,
+                binding_value,
+                columns_value,
+            } => bind_and_execute(global, statement, binding_value, columns_value, writer),
+            EncodeRequest::ParseBindAndExecute {
+                query,
+                statement,
+                binding_value,
+                columns_value,
+                include_describe,
+            } => parse_and_bind_and_execute(
+                global,
+                query,
+                statement,
+                binding_value,
+                columns_value,
+                include_describe,
+                writer,
+            ),
+            EncodeRequest::PrepareAndQuery {
+                query,
+                signature,
+                binding_value,
+            } => prepare_and_query_with_signature(global, query, binding_value, writer, signature),
+        }
+    }
 }
 
 pub(crate) fn execute_query<Context: WriterContext>(

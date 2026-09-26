@@ -71,7 +71,7 @@ const cfg = (overrides: Partial<Config> = {}) =>
     windows: false,
     freebsd: false,
     canary: true,
-    mode: "archive-link",
+    mode: "full",
     crossTarget: undefined,
     canRunOnHost: true,
     host: { os: "linux" },

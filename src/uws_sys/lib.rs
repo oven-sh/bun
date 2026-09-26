@@ -169,10 +169,7 @@ pub use bun_core::Timespec;
 // `UnsafeCell<[u8;0]>` / `!Freeze` rationale; with UnsafeCell the reference is
 // ABI-identical to a non-null pointer, which lets us declare value-typed shims
 // as `safe fn` and drop per-call-site `unsafe { }`.
-bun_core::opaque_extern!(
-    pub us_loop_t, pub us_socket_context_t, pub us_udp_socket_t, pub us_udp_packet_buffer_t,
-    pub UpgradedDuplex, pub WindowsNamedPipe,
-);
+bun_core::opaque_extern!(pub UpgradedDuplex, pub WindowsNamedPipe);
 
 pub mod socket_transfer {
     use super::LIBUS_SOCKET_DESCRIPTOR;
@@ -507,7 +504,7 @@ pub use socket::{
 pub use internal_loop_data::InternalLoopData;
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
-pub use loop_::{Loop, NOW_NS_UNKNOWN, PosixLoop};
+pub use loop_::{Loop, NOW_NS_UNKNOWN};
 pub use socket_kind::SocketKind;
 #[cfg(windows)]
 pub use timer::Timer;

@@ -1833,6 +1833,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // node:tls sockets defer the hostname verdict: their JS layer applies
         // `checkServerIdentity` (default or user override) itself.
         let flags = this.flags.get();
+        // node:tls closes its own sockets, and nothing marks the ones its servers accept.
+        let failed_native_client = SSL
+            && success == 0
+            && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)
+            && !this.acts_as_tls_server();
         // Deliberately independent of `success`: the inline-reject path
         // dispatches with success=0 after suppressing the client Finished, and
         // REJECTED must still be set there or the write-refusal guards are
@@ -1841,6 +1846,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // failure flavor).
         let reject_unauthorized = flags.contains(Flags::REJECT_UNAUTHORIZED)
             && (verify_failed
+                || failed_native_client
                 || (hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)));
         // A handshake that failed outright (success == 0 with no policy
         // verdict: protocol error, peer alert, EOF mid-handshake) never has a
@@ -2403,7 +2409,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
 
-        if this.socket.get().is_detached() {
+        let socket = this.socket.get();
+        if socket.is_detached() {
             // The verdict must survive the forced close.
             return Ok(this
                 .stored_verify_error_to_js(global)
@@ -2412,7 +2419,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // this error can change if called in different stages of hanshake
         // is very usefull to have this feature depending on the user workflow
-        let ssl_error = this.socket.get().get_verify_error();
+        let ssl_error = socket.get_verify_error();
         // `on_handshake` stores the name verdict, with its full message, for the in-handshake check too.
         if ssl_error.error_no == 0
             || ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH
@@ -2423,6 +2430,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             if ssl_error.error_no == 0 {
                 return Ok(JSValue::NULL);
             }
+        } else if this.flags.get().contains(Flags::HANDSHAKE_COMPLETE) && socket.is_shutdown() {
+            // What `on_handshake` reported stands.
+            return Ok(this
+                .stored_verify_error_to_js(global)
+                .unwrap_or(JSValue::NULL));
         }
 
         let code: &[u8] = ssl_error.code_bytes();
@@ -5212,11 +5224,14 @@ pub(crate) mod testing_apis {
                 )));
             };
 
-            // "short" clamps a byte count, which only recv/send have; arming it
-            // on any other syscall would silently never fire.
-            if action == fi::ACTION_SHORT && syscall != fi::RECV && syscall != fi::SEND {
+            // "short" clamps a byte count, which only these have; arming it on any other syscall would silently never fire.
+            if action == fi::ACTION_SHORT
+                && syscall != fi::RECV
+                && syscall != fi::SEND
+                && syscall != fi::WRITEV
+            {
                 return Err(global.throw(format_args!(
-                    "rule.action \"short\" is only supported for syscall \"recv\" or \"send\""
+                    "rule.action \"short\" is only supported for syscall \"recv\", \"send\" or \"writev\""
                 )));
             }
 

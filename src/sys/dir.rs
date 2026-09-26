@@ -142,6 +142,8 @@ impl Dir {
         'process_stack: while let Some(top) = stack.last_mut() {
             while let Some(entry) = top.iter.next()? {
                 let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
+                // Set on EPERM, returned on ENOTDIR: the entry is a file that cannot be deleted.
+                let mut unlink_err: Option<Error> = None;
                 'handle_entry: loop {
                     if treat_as_dir {
                         let new_dir = match openat_a(
@@ -152,10 +154,13 @@ impl Dir {
                         ) {
                             Ok(fd) => fd,
                             Err(e) => match e.get_errno() {
-                                E::ENOTDIR => {
-                                    treat_as_dir = false;
-                                    continue 'handle_entry;
-                                }
+                                E::ENOTDIR => match unlink_err.take() {
+                                    Some(unlink_err) => return Err(unlink_err),
+                                    None => {
+                                        treat_as_dir = false;
+                                        continue 'handle_entry;
+                                    }
+                                },
                                 // That's fine, we were trying to remove this directory anyway.
                                 E::ENOENT => break 'handle_entry,
                                 _ => return Err(e),
@@ -175,7 +180,12 @@ impl Dir {
                             Err(e) => match e.get_errno() {
                                 E::ENOENT => break 'handle_entry,
                                 // EISDIR (Linux) / EPERM (POSIX rmdir-required)
-                                E::EISDIR | E::EPERM => {
+                                E::EISDIR => {
+                                    treat_as_dir = true;
+                                    continue 'handle_entry;
+                                }
+                                E::EPERM => {
+                                    unlink_err = Some(e);
                                     treat_as_dir = true;
                                     continue 'handle_entry;
                                 }
@@ -248,35 +258,34 @@ impl Dir {
     /// directory and return the fd. Returns `None` when removal succeeded or
     /// the path doesn't exist.
     fn delete_tree_open_initial_subpath(&self, sub_path: &[u8]) -> Maybe<Option<Fd>> {
-        let mut treat_as_dir = false;
+        let mut unlink_err: Option<Error> = None;
         loop {
-            if !treat_as_dir {
-                match unlinkat_a(self.fd, sub_path, 0) {
-                    Ok(()) => return Ok(None),
-                    Err(e) => match e.get_errno() {
-                        E::ENOENT => return Ok(None),
-                        // Linux: EISDIR. POSIX: EPERM when target is a directory.
-                        E::EISDIR | E::EPERM => treat_as_dir = true,
-                        _ => return Err(e),
+            match unlinkat_a(self.fd, sub_path, 0) {
+                Ok(()) => return Ok(None),
+                Err(e) => match e.get_errno() {
+                    E::ENOENT => return Ok(None),
+                    // Linux: EISDIR. POSIX: EPERM when target is a directory.
+                    E::EISDIR => {}
+                    // Returned on ENOTDIR: the path is a file that cannot be deleted.
+                    E::EPERM => unlink_err = Some(e),
+                    _ => return Err(e),
+                },
+            }
+            match openat_a(
+                self.fd,
+                sub_path,
+                O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
+                0,
+            ) {
+                Ok(fd) => return Ok(Some(fd)),
+                Err(e) => match e.get_errno() {
+                    E::ENOENT => return Ok(None),
+                    E::ENOTDIR => match unlink_err.take() {
+                        Some(unlink_err) => return Err(unlink_err),
+                        None => continue,
                     },
-                }
-            } else {
-                return match openat_a(
-                    self.fd,
-                    sub_path,
-                    O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
-                    0,
-                ) {
-                    Ok(fd) => Ok(Some(fd)),
-                    Err(e) => match e.get_errno() {
-                        E::ENOENT => Ok(None),
-                        E::ENOTDIR => {
-                            treat_as_dir = false;
-                            continue;
-                        }
-                        _ => Err(e),
-                    },
-                };
+                    _ => return Err(e),
+                },
             }
         }
     }

@@ -36,6 +36,7 @@
 #include <wtf/ThreadSafeRefCounted.h>
 
 namespace JSC {
+class Heap;
 class JSGlobalObject;
 class JSPromise;
 class JSValue;
@@ -97,6 +98,22 @@ public:
     uint64_t registerCrossVMRequest(JSC::VM&, JSC::JSPromise*);
     JSC::Strong<JSC::JSPromise> takeCrossVMRequest(uint64_t id);
 
+    struct HeapStatistics {
+        size_t size { 0 };
+        size_t capacity { 0 };
+        size_t extraMemory { 0 };
+        // The thread that owns `heap`.
+        static HeapStatistics measure(JSC::Heap&);
+    };
+    struct CpuUsage {
+        double userMicroseconds { 0 };
+        double systemMicroseconds { 0 };
+    };
+    // What the worker last published; empty when the caller has to ask the worker.
+    std::optional<HeapStatistics> heapStatistics();
+    // Never below an earlier answer. Given the worker's own reading it answers whenever the worker did.
+    std::optional<CpuUsage> cpuUsage(std::optional<CpuUsage> measuredByWorker = std::nullopt);
+
     // -- WorkerObjectProxy / WorkerReportingProxy (worker thread) ---------------------------------
     // Before the entry point loads: posts 'online' to the parent, as node does before user code.
     void workerThreadStarted();
@@ -108,6 +125,8 @@ public:
     // stoppedByParent: it stopped because it was asked to and never called process.exit() itself.
     void workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent);
     void drainMessagesToWorkerGlobalScope(ScriptExecutionContext&);
+    // The worker's heap as of its last collection, or nothing once its VM goes away. Also its collector thread.
+    void publishHeapStatistics(std::optional<HeapStatistics>);
 
     // -- Either thread ---------------------------------------------------------------------------
     WorkerOptions& options() { return m_options; }
@@ -126,6 +145,8 @@ private:
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
+    // The parent answers by itself once it has seen the thread start and until it asks it to stop.
+    bool answersOnParentThread() const;
     void postMessageErrorToWorkerObject(String&& message);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
 
@@ -134,6 +155,8 @@ private:
     Worker* m_workerObject;
     bool m_askedToTerminate { false };
     bool m_keepAliveReleased { false };
+    // The task workerThreadStarted() posted has run.
+    bool m_sawThreadStart { false };
 
     const ScriptExecutionContextIdentifier m_loaderContextIdentifier;
     // The parent loop that was current at `new Worker()`: a macro that creates a worker and awaits
@@ -154,6 +177,9 @@ private:
     Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks WTF_GUARDED_BY_LOCK(m_pendingTasksLock);
     HashMap<uint64_t, JSC::Strong<JSC::JSPromise>> m_pendingCrossVMRequests WTF_GUARDED_BY_LOCK(m_pendingTasksLock);
     std::atomic<uint64_t> m_nextRequestId { 1 };
+
+    Lock m_heapStatisticsLock;
+    std::optional<HeapStatistics> m_heapStatistics WTF_GUARDED_BY_LOCK(m_heapStatisticsLock);
 
     MessageInbox m_toWorker;
     MessageInbox m_toParent;

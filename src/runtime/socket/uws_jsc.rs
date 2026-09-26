@@ -124,6 +124,18 @@ pub(crate) fn any_web_socket_get_topics_as_js_array(
     uws_ws_get_topics_as_js_array(ssl, ws, global_object)
 }
 
+/// `read_error_from_close_code` for C++: the `closeError` getter of `JSNodeHTTPServerSocket`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
+    global: &JSGlobalObject,
+    code: core::ffi::c_int,
+) -> JSValue {
+    <bun_sys::Error as bun_jsc::SysErrorJsc>::to_js(
+        &super::socket_body::read_error_from_close_code(code),
+        global,
+    )
+}
+
 unsafe extern "C" {
     /// JSNodeHTTPServerSocket.cpp. Writes through the uWS buffer of the connection and returns whether uWS still holds bytes.
     fn Bun__NodeHTTPServerSocket__writeBehindResponse(

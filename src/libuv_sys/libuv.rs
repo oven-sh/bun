@@ -653,11 +653,6 @@ pub unsafe trait UvHandle: Sized {
         // SAFETY: caller contract — `p` came from `set_owned_data::<T>`.
         Some(unsafe { Box::from_raw(p) })
     }
-    #[inline]
-    fn get_loop(&self) -> *mut Loop {
-        // SAFETY: handle prefix invariant.
-        unsafe { uv_handle_get_loop(self.as_handle()) }
-    }
     /// `HandleMixin::close` — `cb` receives the same pointer cast back to
     /// `*mut Self`. ABI-identical to `uv_close_cb` modulo the pointee type.
     #[inline]
@@ -1505,6 +1500,24 @@ impl Timer {
         if unsafe { uv_timer_stop(self) } != 0 {
             panic!("internal error: uv_timer_stop failed");
         }
+    }
+    /// Milliseconds until the timer is due (0 if overdue, stopped, or never `init`ed).
+    #[inline]
+    pub fn get_due_in(&self) -> u64 {
+        if self.loop_.is_null() {
+            return 0;
+        }
+        // SAFETY: `loop_` is set, so the timer was `init`ed (reads `self.timeout` and `loop_->time`).
+        unsafe { uv_timer_get_due_in(self) }
+    }
+    /// `uv_update_time` on the loop this timer was `init`ed on; no-op before `init`.
+    #[inline]
+    pub fn update_loop_time(&self) {
+        if self.loop_.is_null() {
+            return;
+        }
+        // SAFETY: `loop_` is set, so it is the live loop this timer was `init`ed on.
+        unsafe { uv_update_time(self.loop_) }
     }
 }
 

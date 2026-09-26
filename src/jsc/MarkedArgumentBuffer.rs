@@ -49,7 +49,7 @@ impl MarkedArgumentBuffer {
         ctx.r.unwrap()
     }
 
-    pub fn append(&mut self, value: JSValue) {
+    pub fn append(&self, value: JSValue) {
         MarkedArgumentBuffer__append(self, value)
     }
 

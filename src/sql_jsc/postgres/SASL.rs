@@ -67,35 +67,14 @@ impl SASL {
         password: &[u8],
     ) -> crate::Result<()> {
         // Note: `bun_runtime::crypto::EVP::pbkdf2` is a thin wrapper over
-        // BoringSSL's `PKCS5_PBKDF2_HMAC` with `EVP_sha256`. Inlined here to
-        // avoid the `bun_runtime` dep (which would create a cycle through
-        // `bun_jsc`); `bun_boringssl_sys` is already a direct dependency.
+        // BoringSSL's `PKCS5_PBKDF2_HMAC` with `EVP_sha256`.
         use bun_boringssl_sys as boringssl;
-        use core::ffi::c_uint;
 
         self.salted_password_created = true;
         let out = &mut self.salted_password_bytes;
         out.fill(0);
         boringssl::ERR_clear_error();
-        // SAFETY: password/salt/out are valid for the given lengths;
-        // `EVP_sha256()` returns a static EVP_MD singleton.
-        let rc = unsafe {
-            boringssl::PKCS5_PBKDF2_HMAC(
-                if password.is_empty() {
-                    core::ptr::null()
-                } else {
-                    password.as_ptr()
-                },
-                password.len(),
-                salt_bytes.as_ptr(),
-                salt_bytes.len(),
-                iteration_count as c_uint,
-                boringssl::EVP_sha256(),
-                out.len(),
-                out.as_mut_ptr(),
-            )
-        };
-        if rc <= 0 {
+        if !boringssl::pbkdf2_hmac_sha256(password, salt_bytes, iteration_count as u32, out) {
             return Err(crate::Error::PBKDFD2);
         }
         Ok(())
@@ -133,13 +112,9 @@ impl SASL {
     pub(crate) fn client_key_signature(&self, client_key: &[u8], auth_string: &[u8]) -> [u8; 32] {
         use bun_sha_hmac::SHA256;
         let mut sha_digest = [0u8; SHA256::DIGEST];
-        // BoringSSL's `EVP_DigestInit_ex` never reads its `ENGINE*`
-        // argument (see vendor/boringssl/crypto/fipsmodule/digest/digest.cc.inc;
-        // the parameter exists only for OpenSSL API compatibility). Passing
-        // null is bit-identical, so the upward hook is intentionally dropped —
-        // same rationale as `s3_signing::credentials::boring_engine`.
-        // SAFETY: engine is null (default).
-        unsafe { SHA256::hash(client_key, &mut sha_digest, core::ptr::null_mut()) };
+        // BoringSSL's `EVP_DigestInit_ex` never reads its `ENGINE*` argument,
+        // so the default engine is bit-identical to the VM's.
+        SHA256::digest(client_key, &mut sha_digest);
         hmac(&sha_digest, auth_string).unwrap()
     }
 

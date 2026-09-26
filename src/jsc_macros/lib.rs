@@ -118,11 +118,25 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2>
     // shim is emitted *inside* the surrounding `impl` block so it can name
     // `Self`; the C-ABI signature passes `*mut Self` as the first argument
     // (the codegen'd C++ passes `m_ctx`).
-    let has_receiver = func
-        .sig
-        .inputs
-        .first()
-        .is_some_and(|a| matches!(a, FnArg::Receiver(_)));
+    // A typed `this: ThisPtr<Self>` first parameter gets the root pointer
+    // wrapped instead of reborrowed, and counts as a receiver.
+    let first_is_this_ptr = func.sig.inputs.first().is_some_and(|a| match a {
+        FnArg::Typed(pt) => match &*pt.ty {
+            syn::Type::Path(tp) => tp
+                .path
+                .segments
+                .last()
+                .is_some_and(|seg| seg.ident == "ThisPtr"),
+            _ => false,
+        },
+        _ => false,
+    });
+    let has_receiver = first_is_this_ptr
+        || func
+            .sig
+            .inputs
+            .first()
+            .is_some_and(|a| matches!(a, FnArg::Receiver(_)));
 
     // R-2 (PORT_NOTES_PLAN): for `&self` receivers, materialise `&*__this`
     // (NOT `&mut *__this`). A method that calls back into JS can be re-entered
@@ -136,7 +150,9 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2>
         .inputs
         .first()
         .is_some_and(|a| matches!(a, FnArg::Receiver(r) if r.mutability.is_none()));
-    let this_reborrow = if receiver_is_shared {
+    let this_reborrow = if first_is_this_ptr {
+        quote! { let __t = unsafe { ::bun_ptr::ThisPtr::new(__this) }; }
+    } else if receiver_is_shared {
         quote! { let __t = unsafe { &*__this }; }
     } else {
         quote! { let __t = unsafe { &mut *__this }; }

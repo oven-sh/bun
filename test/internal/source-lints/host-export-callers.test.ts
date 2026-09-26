@@ -15,12 +15,16 @@ import path from "path";
 // boundary naming them.
 //
 // The check is textual: the exported symbol must appear as a whole word in a
-// tracked C, C++, Objective-C++, or header file under `src/`. A
+// tracked C, C++, Objective-C++, or header file under `src/`, or in uSockets
+// or uWebSockets (`packages/bun-usockets`, `packages/bun-uws`), which are
+// compiled into bun and call back into Rust. A
 // declaration-only mention counts (the C++ side routinely declares these in
 // `headers.h`); the linker is the strict judge of liveness, this lint only
 // catches the export nobody names at all.
 //
 // Exempt:
+// - Symbols the WebKit fork calls (`WEBKIT_CALLERS`). Its sources are not in
+//   this tree, so each one is listed with the file that calls it.
 // - `rust`-abi markers. Their thunk is `extern "Rust"` and its consumers are
 //   `extern "Rust" {}` blocks in other Rust crates (cycle-breaking hooks), so a
 //   C++ search cannot see them.
@@ -53,9 +57,22 @@ const CALLER_PATHSPECS = [
   ":(glob)src/**/*.h",
   ":(glob)src/**/*.hpp",
   ":(glob)src/**/*.mm",
+  ":(glob)packages/bun-usockets/src/**/*.c",
+  ":(glob)packages/bun-usockets/src/**/*.h",
+  ":(glob)packages/bun-uws/src/**/*.cpp",
+  ":(glob)packages/bun-uws/src/**/*.h",
   ":(exclude)src/jsc/bindings/sqlite/",
   ":(exclude)src/jsc/bindings/node/http/llhttp/",
 ];
+
+// symbol -> the file of oven-sh/WebKit that calls it. `nm` on the `libWTF.a`
+// of a WebKit build shows the reference: `nm -A libWTF.a | grep WTFTimer__`.
+const WEBKIT_CALLERS = new Map([
+  ["WTFTimer__create", "Source/WTF/wtf/bun/RunLoopBun.cpp"],
+  ["WTFTimer__update", "Source/WTF/wtf/bun/RunLoopBun.cpp"],
+  ["WTFTimer__cancel", "Source/WTF/wtf/bun/RunLoopBun.cpp"],
+  ["WTFTimer__deinit", "Source/WTF/wtf/bun/RunLoopBun.cpp"],
+]);
 
 function gitGrep(args: string[]): string[] {
   const r = Bun.spawnSync({
@@ -101,7 +118,10 @@ for (const hit of markerLines) {
 }
 
 const checked = [...exports.keys()].filter(
-  symbol => !rustAbi.has(symbol) && !GENERATED_PREFIXES.some(prefix => symbol.startsWith(prefix)),
+  symbol =>
+    !rustAbi.has(symbol) &&
+    !WEBKIT_CALLERS.has(symbol) &&
+    !GENERATED_PREFIXES.some(prefix => symbol.startsWith(prefix)),
 );
 
 // One `git grep` for every symbol at once: `-w` gives whole-word matches (so
@@ -129,6 +149,14 @@ test("the caller scan still sees the C++ side of the boundary", () => {
   // Guards against the pathspecs above over-excluding and turning the orphan
   // check into a vacuous pass.
   expect(named.size).toBeGreaterThan(50);
+});
+
+test("every symbol listed for WebKit is a host export with no caller in this tree", () => {
+  // An entry for an export that is gone, or that this tree now calls, is stale.
+  const listed = [...WEBKIT_CALLERS.keys()];
+  expect(listed.filter(symbol => !exports.has(symbol))).toEqual([]);
+  const namedHere = gitGrep(["-h", "-o", "-w", "-F", ...listed.flatMap(s => ["-e", s]), "--", ...CALLER_PATHSPECS]);
+  expect(namedHere).toEqual([]);
 });
 
 test("every HOST_EXPORT symbol is named by a C or C++ source", () => {

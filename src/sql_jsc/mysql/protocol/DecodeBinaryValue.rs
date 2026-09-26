@@ -1,6 +1,6 @@
 use crate::jsc::JSGlobalObject;
 use crate::mysql::my_sql_value::{DateTime, Time};
-use crate::shared::sql_data_cell::SQLDataCell;
+use crate::shared::sql_data_cell::{CellStorage, SQLDataCell};
 use bun_sql::mysql::mysql_types as types;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
@@ -13,6 +13,7 @@ bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 pub(crate) const BINARY_CHARSET: u16 = 63;
 
 pub(crate) fn decode_binary_value<Context: ReaderContext>(
+    storage: &mut CellStorage,
     global_object: &JSGlobalObject,
     field_type: types::FieldType,
     column_length: u32,
@@ -96,7 +97,7 @@ pub(crate) fn decode_binary_value<Context: ReaderContext>(
                 }
                 let mut buffer = bun_core::fmt::ItoaBuf::new();
                 let slice = bun_core::fmt::itoa(&mut buffer, val);
-                return Ok(SQLDataCell::string(slice));
+                return Ok(SQLDataCell::string(storage, slice));
             }
             let val = reader.int::<i64>()?;
             if val >= i32::MIN as i64 && val <= i32::MAX as i64 {
@@ -107,7 +108,7 @@ pub(crate) fn decode_binary_value<Context: ReaderContext>(
             }
             let mut buffer = bun_core::fmt::ItoaBuf::new();
             let slice = bun_core::fmt::itoa(&mut buffer, val);
-            Ok(SQLDataCell::string(slice))
+            Ok(SQLDataCell::string(storage, slice))
         }
         FieldType::MYSQL_TYPE_FLOAT => {
             if raw {
@@ -127,7 +128,7 @@ pub(crate) fn decode_binary_value<Context: ReaderContext>(
         }
         FieldType::MYSQL_TYPE_TIME => {
             match reader.byte()? {
-                0 => Ok(SQLDataCell::string(b"00:00:00")),
+                0 => Ok(SQLDataCell::string(storage, b"00:00:00")),
                 l @ (8 | 12) => {
                     let data = reader.read(l as usize)?;
                     let time = Time::from_data(&data)?;
@@ -168,7 +169,7 @@ pub(crate) fn decode_binary_value<Context: ReaderContext>(
                         break 'brk &buffer[..32 - remaining];
                     };
                     // reshaped for borrowck — compute remaining before re-borrowing buffer
-                    Ok(SQLDataCell::string(slice))
+                    Ok(SQLDataCell::string(storage, slice))
                 }
                 _ => Err(crate::Error::InvalidBinaryValue),
             }
@@ -204,7 +205,7 @@ pub(crate) fn decode_binary_value<Context: ReaderContext>(
                 return Ok(SQLDataCell::raw(Some(&data)));
             }
             let string_data = reader.encode_len_string()?;
-            Ok(SQLDataCell::string(string_data.slice()))
+            Ok(SQLDataCell::string(storage, string_data.slice()))
         }
 
         // When the column contains a binary string we return a Buffer otherwise a string
@@ -230,7 +231,7 @@ pub(crate) fn decode_binary_value<Context: ReaderContext>(
             if binary && character_set == BINARY_CHARSET {
                 return Ok(SQLDataCell::raw(Some(&string_data)));
             }
-            Ok(SQLDataCell::string(string_data.slice()))
+            Ok(SQLDataCell::string(storage, string_data.slice()))
         }
 
         FieldType::MYSQL_TYPE_JSON => {
@@ -239,7 +240,7 @@ pub(crate) fn decode_binary_value<Context: ReaderContext>(
                 return Ok(SQLDataCell::raw(Some(&data)));
             }
             let string_data = reader.encode_len_string()?;
-            Ok(SQLDataCell::json(string_data.slice()))
+            Ok(SQLDataCell::json(storage, string_data.slice()))
         }
         FieldType::MYSQL_TYPE_BIT => {
             // BIT(1) is a special case, it's a boolean

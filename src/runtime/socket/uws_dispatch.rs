@@ -260,12 +260,12 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
     ssl: *mut bun_boringssl_sys::SSL,
 ) -> c_int {
     use bun_boringssl::ServerIdentity::Unchecked;
-    use bun_uws_sys::thunk::ExtSlot;
+    use bun_ptr::ThisPtr;
     let s_ref = us_socket_t::opaque_mut(s);
     let ssl = bun_boringssl_sys::SSL::opaque_mut(ssl);
     let verdict = match s_ref.kind() {
         SocketKind::BunSocketTls => s_ref
-            .ext::<Option<bun_ptr::ThisPtr<super::NewSocket<true>>>>()
+            .ext::<Option<ThisPtr<super::NewSocket<true>>>>()
             .map_or(Unchecked, |tls| tls.server_identity(ssl)),
         SocketKind::HttpClientTls => s_ref
             .ext::<Option<core::ptr::NonNull<c_void>>>()
@@ -273,21 +273,18 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
                 bun_http::http_context::Handler::<true>::server_identity(ext.as_ptr(), ssl)
             }),
         SocketKind::WsClientUpgradeTls => s_ref
-            .ext::<Option<bun_ptr::ThisPtr<handlers::WSUpgradeClient<true>>>>()
+            .ext::<Option<ThisPtr<handlers::WSUpgradeClient<true>>>>()
             .map_or(Unchecked, |client| client.server_identity(ssl)),
         SocketKind::PostgresTls => s_ref
-            .ext::<ExtSlot<bun_sql_jsc::postgres::PostgresSQLConnection>>()
-            .owner_ref()
+            .ext::<Option<ThisPtr<bun_sql_jsc::postgres::PostgresSQLConnection>>>()
             .map_or(Unchecked, |connection| connection.server_identity(ssl)),
         SocketKind::MysqlTls => s_ref
-            .ext::<ExtSlot<bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection>>()
-            .owner_ref()
+            .ext::<Option<ThisPtr<bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection>>>()
             .map_or(Unchecked, |connection| connection.server_identity(ssl)),
         SocketKind::ValkeyTls => s_ref
-            .ext::<ExtSlot<crate::valkey_jsc::js_valkey::JSValkeyClient>>()
-            .owner_ref()
+            .ext::<Option<ThisPtr<crate::valkey_jsc::js_valkey::JSValkeyClient>>>()
             .map_or(Unchecked, |client| {
-                crate::valkey_jsc::js_valkey::SocketHandler::<true>::server_identity(client, ssl)
+                crate::valkey_jsc::js_valkey::SocketHandler::<true>::server_identity(&client, ssl)
             }),
         _ => Unchecked,
     };
@@ -311,7 +308,10 @@ pub(crate) extern "C" fn us_dispatch_new_session(
             let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
                 return 0;
             };
-            tls.set_latest_session(session);
+            tls.set_latest_session(
+                core::ptr::NonNull::new(session)
+                    .map(|session| bun_boringssl_sys::SSL_SESSION::opaque_ref(session.as_ptr())),
+            );
             1
         }
         _ => 0,

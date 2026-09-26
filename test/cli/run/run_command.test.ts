@@ -40,6 +40,31 @@ describe("bun", () => {
     expect(stderr.toString()).toMatch(/Script not found/);
     expect(exitCode).toBe(1);
   });
+
+  // With no inherited PATH, the stitched PATH must not end in a delimiter.
+  // A trailing delimiter is an empty entry, which the shell resolves
+  // against the cwd, so a planted `./tsc` would run as `tsc`.
+  test.skipIf(isWindows)("an unset PATH does not add an empty (cwd) entry to the script PATH", () => {
+    using dir = tempDir("run-empty-path", {
+      "package.json": JSON.stringify({ scripts: { build: 'echo "[$PATH]"; tsc' } }),
+      "tsc": "#!/bin/sh\necho PLANTED\n",
+    });
+    chmodSync(join(String(dir), "tsc"), 0o755);
+    const env = { ...bunEnv };
+    delete env.PATH;
+
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "build"],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = stdout.toString();
+    expect(out).toMatch(/^\[.*node_modules\/\.bin\]\n/);
+    expect(out).not.toContain("PLANTED");
+    expect(exitCode).not.toBe(0);
+  });
 });
 
 test.if(isWindows)("[windows] A file in drive root runs", async () => {

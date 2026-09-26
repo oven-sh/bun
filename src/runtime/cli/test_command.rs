@@ -2034,9 +2034,7 @@ impl TestCommand {
             }
             false
         };
-        // Every path argument that selects no test file is reported. Only one
-        // that does not exist fails the run: a shell glob can expand to a
-        // directory with no test files, and that is not a mistake.
+        // `./test/*` can expand to a directory with no test files, so only a missing path fails the run.
         let mut unmatched_path_args: Vec<&'static [u8]> = Vec::new();
         let mut has_missing_path_arg = false;
         if has_relative_path {

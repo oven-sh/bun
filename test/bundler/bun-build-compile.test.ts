@@ -1987,7 +1987,7 @@ export function inOther() {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // A parse collects the line starts too, so that the code came out of the bytecode is a check of its own.
-      const lines = stderr.split("\n").filter(Boolean);
+      const lines = stderr.split(/\r?\n/).filter(Boolean);
       expect(lines.filter(line => !line.startsWith("[Disk Cache] "))).toEqual([]);
       expect(lines.includes("[Disk Cache] Cache hit for sourceCode")).toBe(bytecode);
       const { before, fromBytecode, positions } = JSON.parse(stdout.trim());

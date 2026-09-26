@@ -1194,6 +1194,8 @@ bun_core::comptime_string_map! {
     };
 }
 
+pub const DEFAULT_ASSET_INLINE_LIMIT: u32 = 128 * 1024;
+
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
@@ -1327,6 +1329,8 @@ pub struct BundleOptions<'a> {
     pub fold_chunks: bool,
     /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
     pub module_preload: bool,
+    /// Threshold in bytes for auto-inlining small CSS `url(...)` assets.
+    pub asset_inline_limit: u32,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1538,6 +1542,7 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: self.min_chunk_size,
             fold_chunks: self.fold_chunks,
             module_preload: self.module_preload,
+            asset_inline_limit: self.asset_inline_limit,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
@@ -1721,6 +1726,7 @@ impl<'a> BundleOptions<'a> {
             min_chunk_size: None,
             fold_chunks: true,
             module_preload: true,
+            asset_inline_limit: DEFAULT_ASSET_INLINE_LIMIT,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 

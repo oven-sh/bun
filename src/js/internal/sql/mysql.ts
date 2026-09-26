@@ -118,6 +118,7 @@ export interface MySQLDotZig {
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
     allowPublicKeyRetrieval: boolean,
+    foundRows: boolean,
   ) => $ZigGeneratedClasses.MySQLConnection;
   createQuery: (
     sql: string,

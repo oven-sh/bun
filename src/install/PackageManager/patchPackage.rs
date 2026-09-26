@@ -945,17 +945,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // meaning that changes to the folder will also change the package in the cache.
     //
     // So we will overwrite the folder by directly copying the package in cache into it
-    //
-    // With the isolated linker's global virtual store, `module_folder` is
-    // reached *through* a `node_modules/.bun/<storepath>` symlink that points
-    // into `<cache>/links/`. `deleteTree(module_folder)` would follow that
-    // symlink and wipe the shared global entry (and its dep symlinks)
-    // underneath every other project, then FileCopier would write the user's
-    // edits into the shared cache. Detach first: walk up `module_folder` to
-    // find the first symlink ancestor, replace it with a real directory, and
-    // recreate the path below it so the copy lands in a project-local tree.
-    detach_module_folder_from_shared_store(module_folder);
-
     if let Err(e) =
         overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, module_folder)
     {
@@ -1144,7 +1133,24 @@ fn overwrite_package_in_node_modules_folder(
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
 ) -> Result<(), crate::Error> {
-    let _ = Fd::cwd().delete_tree(node_modules_folder_path);
+    // Copy into a sibling staging folder, then swap it in. Detach the parent
+    // first so the staging folder is not written into the shared global store.
+    let node_modules_folder_path = strings::without_trailing_slash(node_modules_folder_path);
+    let parent = resolve_path::dirname::<platform::Auto>(node_modules_folder_path);
+    if !parent.is_empty() {
+        detach_module_folder_from_shared_store(parent);
+        let _ = Fd::cwd().make_path(parent);
+    }
+
+    let mut tmpname_buf = bun_paths::path_buffer_pool::get();
+    let tmpname = bun_paths::fs::FileSystem::tmpname(
+        b"patch_tmp",
+        &mut tmpname_buf[..],
+        bun_core::fast_random(),
+    )?;
+    let staging_path =
+        resolve_path::join::<platform::Posix>(&[parent, tmpname.as_bytes()]).to_vec();
+    let staging_path: &[u8] = &staging_path;
 
     // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
     // is generic over the *input* width and converts internally, so accepting
@@ -1155,7 +1161,7 @@ fn overwrite_package_in_node_modules_folder(
         bun_paths::OSPathChar,
         { bun_paths::path_options::Kind::ANY },
         { bun_paths::path_options::PathSeparators::AUTO },
-    >::from(node_modules_folder_path)
+    >::from(staging_path)
     .unwrap();
 
     let src_path: bun_paths::AbsPath<
@@ -1205,7 +1211,78 @@ fn overwrite_package_in_node_modules_folder(
         ignore_directories,
     )?;
 
-    copier.copy()?;
+    if let Err(e) = copier.copy() {
+        let _ = Fd::cwd().delete_tree(staging_path);
+        return Err(e.into());
+    }
+
+    // Old package aside, staging folder in: the destination is never deleted
+    // before the new copy is in place. A leaf symlink moves as a link.
+    let mut oldname_buf = bun_paths::path_buffer_pool::get();
+    let oldname = bun_paths::fs::FileSystem::tmpname(
+        b"patch_old",
+        &mut oldname_buf[..],
+        bun_core::fast_random(),
+    )?;
+    let old_path = resolve_path::join::<platform::Posix>(&[parent, oldname.as_bytes()]).to_vec();
+    let old_path: &[u8] = &old_path;
+
+    let mut staging_z = bun_paths::Path::<u8>::from(staging_path)?;
+    let mut old_z = bun_paths::Path::<u8>::from(old_path)?;
+    let mut dest_z = bun_paths::Path::<u8>::from(node_modules_folder_path)?;
+
+    let (has_old, dest_deleted) =
+        match sys::renameat(Fd::cwd(), dest_z.slice_z(), Fd::cwd(), old_z.slice_z()) {
+            Ok(()) => (true, false),
+            Err(e) if e.get_errno() == sys::E::ENOENT => (false, false),
+            // overlayfs (Docker) refuses to rename a directory from a lower
+            // layer. The copy is complete, so delete the old package instead.
+            Err(e) if e.get_errno() == sys::E::EXDEV => {
+                if let Err(e) = Fd::cwd().delete_tree(node_modules_folder_path) {
+                    let _ = Fd::cwd().delete_tree(staging_path);
+                    return Err(e.into());
+                }
+                (false, true)
+            }
+            Err(e) => {
+                let _ = Fd::cwd().delete_tree(staging_path);
+                return Err(e.into());
+            }
+        };
+
+    if let Err(e) = sys::renameat(Fd::cwd(), staging_z.slice_z(), Fd::cwd(), dest_z.slice_z()) {
+        if has_old {
+            if let Err(restore_err) =
+                sys::renameat(Fd::cwd(), old_z.slice_z(), Fd::cwd(), dest_z.slice_z())
+            {
+                bun_core::warn!(
+                    "failed to move the previous package folder back to {}, it is at {}: {}",
+                    bstr::BStr::new(node_modules_folder_path),
+                    bstr::BStr::new(old_path),
+                    restore_err
+                );
+            }
+        }
+        if dest_deleted {
+            bun_core::warn!(
+                "the copy of the package is at {}",
+                bstr::BStr::new(staging_path)
+            );
+        } else {
+            let _ = Fd::cwd().delete_tree(staging_path);
+        }
+        return Err(e.into());
+    }
+
+    if has_old {
+        if let Err(e) = Fd::cwd().delete_tree(old_path) {
+            bun_core::warn!(
+                "failed to delete the previous package folder {}: {}",
+                bstr::BStr::new(old_path),
+                e
+            );
+        }
+    }
     Ok(())
 }
 

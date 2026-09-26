@@ -1,7 +1,8 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstatSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { readdir } from "fs/promises";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -1232,5 +1233,88 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+// `bun patch <pkg>` replaces node_modules/<pkg> with a copy of the package from the cache.
+// RLIMIT_FSIZE makes the copy of a file larger than the limit fail with EFBIG.
+describe.skipIf(isWindows).each([
+  { linker: "hoisted", bunfig: "" },
+  { linker: "isolated, global store", bunfig: `[install]\nlinker = "isolated"\nglobalStore = true\n` },
+])("bun patch with the $linker linker", ({ bunfig }) => {
+  test.concurrent("leaves node_modules/<pkg> as it was when the copy from the cache fails", async () => {
+    const big = Buffer.alloc(64 * 1024, "x").toString();
+    await using dir = tempDir("patch-copy-fails", {
+      "package.json": JSON.stringify({
+        name: "test-patch-copy-fails",
+        dependencies: { "pkg-to-patch": "file:./dep.tgz" },
+      }),
+      "bunfig.toml": bunfig,
+      "tarball-src": {
+        "package": {
+          "package.json": JSON.stringify({ name: "pkg-to-patch", version: "1.0.0" }),
+          "index.js": `module.exports = "original";\n`,
+          "big.js": big,
+        },
+      },
+    });
+
+    await using tarProc = Bun.spawn({
+      cmd: ["tar", "-czf", join(String(dir), "dep.tgz"), "-C", join(String(dir), "tarball-src"), "package"],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await tarProc.exited).toBe(0);
+
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [installStdout, installStderr, installExit] = await Promise.all([
+      install.stdout.text(),
+      install.stderr.text(),
+      install.exited,
+    ]);
+    expect(installStderr).not.toContain("error");
+    expect(installStdout).toContain("1 package installed");
+    expect(installExit).toBe(0);
+
+    const pkgDir = join(String(dir), "node_modules", "pkg-to-patch");
+    const snapshot = async () =>
+      Object.fromEntries(
+        await Promise.all(
+          (await readdir(pkgDir)).sort().map(async name => [name, await Bun.file(join(pkgDir, name)).text()]),
+        ),
+      );
+    const before = await snapshot();
+    expect(Object.keys(before)).toEqual(["big.js", "index.js", "package.json"]);
+    const nodeModules = join(String(dir), "node_modules");
+    const nodeModulesBefore = (await readdir(nodeModules)).sort();
+    // With the global store this is a symlink into the shared cache.
+    const wasSymlink = lstatSync(pkgDir).isSymbolicLink();
+    expect(wasSymlink).toBe(bunfig !== "");
+
+    // 16 blocks of 512 bytes: big.js (64 KiB) does not fit.
+    await using patch = Bun.spawn({
+      cmd: ["sh", "-c", `ulimit -f 16 && exec "$0" patch pkg-to-patch`, bunExe()],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, patchStderr, patchExit] = await Promise.all([patch.stdout.text(), patch.stderr.text(), patch.exited]);
+    expect(patchStderr).toContain("error overwriting folder in node_modules: EFBIG");
+    expect(patchExit).toBe(1);
+
+    // The package is unchanged and no staging folder is left behind.
+    expect(lstatSync(pkgDir).isSymbolicLink()).toBe(wasSymlink);
+    expect(await snapshot()).toEqual(before);
+    expect((await readdir(nodeModules)).sort()).toEqual(nodeModulesBefore);
   });
 });

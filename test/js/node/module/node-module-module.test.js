@@ -923,11 +923,7 @@ console.log("survived", require("./late.js"));`,
     expect(Object.keys(require.cache)).not.toContain("bun:sqlite");
   });
 
-  // In Node, `cache` and `extensions` are own data properties of each require function. Here they
-  // are accessors on the prototype that every require function shares, and an assignment shadows
-  // the accessor with an own data property on `this`. The setters wrote that property directly,
-  // which skipped the receiver's own [[DefineOwnProperty]]: a frozen object gained a property, a
-  // Proxy saw no trap, and a WebAssembly GC reference aborted the process.
+  // An assignment shadows the shared accessor with an own data property, and the receiver can reject it.
   describe.each(["cache", "extensions"])("assigning require.%s", key => {
     const { set } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(require), key);
     const dataProperty = value => ({ value, writable: true, enumerable: true, configurable: true });
@@ -974,7 +970,7 @@ console.log("survived", require("./late.js"));`,
       expect(() => set.call(refusing, 1)).toThrow(TypeError);
     });
 
-    // In a subprocess because this aborted the process.
+    // In a subprocess because the failure is an abort of the process.
     test("a WebAssembly GC reference as the receiver throws a TypeError", async () => {
       const src = `
         // (module (type $s (struct (field (mut i32))))

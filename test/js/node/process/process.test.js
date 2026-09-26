@@ -3205,3 +3205,108 @@ it("no socket close handler runs after the 'exit' event", async () => {
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
 });
+
+// As in Node, ppid is a writable data property, so an assignment through another receiver is an ordinary [[Set]].
+describe("process.ppid is a data property", () => {
+  const dataProperty = value => ({ value, writable: true, enumerable: true, configurable: true });
+
+  it("an object that inherits from process gets an own data property", () => {
+    const child = Object.create(process);
+    child.ppid = "assigned";
+    expect(Object.getOwnPropertyDescriptor(child, "ppid")).toEqual(dataProperty("assigned"));
+    expect(process.ppid).toBeNumber();
+  });
+
+  it("a receiver that is not extensible rejects the property", () => {
+    for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
+      const receiver = lock({});
+      expect(Reflect.set(process, "ppid", 7, receiver)).toBe(false);
+      expect(Reflect.ownKeys(receiver)).toEqual([]);
+
+      const child = lock(Object.create(process));
+      expect(() => {
+        child.ppid = 7;
+      }).toThrow(TypeError);
+      expect(Reflect.ownKeys(child)).toEqual([]);
+      expect(child.ppid).toBe(process.ppid);
+    }
+  });
+
+  it("a Proxy receiver gets its defineProperty trap called", () => {
+    const calls = [];
+    const target = {};
+    const proxy = new Proxy(target, {
+      defineProperty(target, key, descriptor) {
+        calls.push([key, descriptor]);
+        return Reflect.defineProperty(target, key, descriptor);
+      },
+    });
+    expect(Reflect.set(process, "ppid", 7, proxy)).toBe(true);
+    expect(calls).toEqual([["ppid", dataProperty(7)]]);
+    expect(target).toEqual({ ppid: 7 });
+
+    const refusing = new Proxy({}, { defineProperty: () => false });
+    expect(Reflect.set(process, "ppid", 7, refusing)).toBe(false);
+  });
+
+  // In a subprocess because it seals or freezes process.
+  it.concurrent.each([
+    ["seal", { ppid: "assigned", isSealed: true, isFrozen: false }],
+    ["freeze", { ppid: "number", isSealed: true, isFrozen: true }],
+  ])("process stays as Object.%s left it after an assignment", async (lock, expected) => {
+    const src = `
+      Object.${lock}(process);
+      try {
+        process.ppid = "assigned";
+      } catch {}
+      console.log(JSON.stringify({
+        ppid: process.ppid === "assigned" ? "assigned" : typeof process.ppid,
+        isSealed: Object.isSealed(process),
+        isFrozen: Object.isFrozen(process),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  // In a subprocess because the failure is an abort of the process, and the second part replaces process.ppid.
+  it.concurrent(
+    "a WebAssembly GC reference as the receiver is left alone, and process keeps an assigned value",
+    async () => {
+      const src = `
+      // (module (type $s (struct (field (mut i32))))
+      //   (func (export "mk") (result (ref null $s)) struct.new_default $s))
+      const bytes = new Uint8Array([
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x0a, 0x02, 0x5f, 0x01, 0x7f, 0x01, 0x60, 0x00, 0x01, 0x63, 0x00,
+        0x03, 0x02, 0x01, 0x01,
+        0x07, 0x06, 0x01, 0x02, 0x6d, 0x6b, 0x00, 0x00,
+        0x0a, 0x07, 0x01, 0x05, 0x00, 0xfb, 0x01, 0x00, 0x0b,
+      ]);
+      const ref = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+      console.log(Reflect.set(process, "ppid", 7, ref));
+
+      process.ppid = "assigned";
+      console.log(JSON.stringify(Object.getOwnPropertyDescriptor(process, "ppid")));
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.split("\n")).toEqual(["false", JSON.stringify(dataProperty("assigned")), ""]);
+      expect(exitCode).toBe(0);
+    },
+  );
+});

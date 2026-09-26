@@ -309,10 +309,6 @@ describe("StringDecoder called without new", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
   });
 
-  // Node's constructor assigns `this.encoding` and `this[kNativeDecoder]`. The native constructor
-  // used to write its two properties onto an explicit receiver directly, which skipped the
-  // receiver's own [[DefineOwnProperty]]: a frozen object gained a property, a Proxy saw no trap,
-  // and a WebAssembly GC reference aborted the process.
   // A plain extensible receiver takes a direct store, every other receiver its own [[DefineOwnProperty]].
   it("every kind of extensible receiver gets the same encoding property and a working decoder", () => {
     const receivers = [{}, Object.create(null), { encoding: "own" }, [], function () {}, new Date(0), new Map()];
@@ -355,7 +351,7 @@ describe("StringDecoder called without new", () => {
     expect(() => RealStringDecoder.call(refusing, "latin1")).toThrow(TypeError);
   });
 
-  // In a subprocess because this aborted the process.
+  // In a subprocess because the failure is an abort of the process.
   it("a WebAssembly GC reference as the receiver throws a TypeError", async () => {
     const src = `
       // (module (type $s (struct (field (mut i32))))

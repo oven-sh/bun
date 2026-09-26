@@ -1207,11 +1207,7 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
   });
 });
 
-// Node's EventEmitter methods reach their state through `this._events`. Only the addListener family
-// and setMaxListeners assign to `this`. The native prototype (process's) used to store a new
-// `_events` from every method, and directly, which skipped the receiver's own [[DefineOwnProperty]]:
-// a frozen object gained a property, a Proxy saw no trap, and a WebAssembly GC reference aborted
-// the process.
+// As in Node, only the addListener family and setMaxListeners assign `this._events`, and the receiver can reject it.
 describe("native EventEmitter with a receiver that is not an emitter", () => {
   const nativeProto = Object.getPrototypeOf(process);
   const listener = () => {};
@@ -1307,7 +1303,7 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
     expect(() => nativeProto.on.call(refusing, "x", listener)).toThrow(TypeError);
   });
 
-  // In a subprocess because this aborted the process.
+  // In a subprocess because the failure is an abort of the process.
   test.concurrent("a WebAssembly GC reference as the receiver throws from the methods that assign", async () => {
     const src = `
       // (module (type $s (struct (field (mut i32))))
@@ -1332,8 +1328,7 @@ describe("native EventEmitter with a receiver that is not an emitter", () => {
       attempt("setMaxListeners", 20);
       attempt("listenerCount", "x");
       attempt("emit", "x");
-      // An "error" event with no listener goes to the uncaught exception handler. That path read
-      // the global object off the receiver, and a WebAssembly GC reference has none.
+      // An "error" event with no listener is reported as uncaught. A WebAssembly GC reference has no global object.
       process.on("uncaughtException", e => {
         result.uncaught = e.message;
       });

@@ -143,8 +143,8 @@ Bun then:
 
 - Downloads the template
 - Copies all template files into the destination folder
-- Installs dependencies with `bun install`
 - Initializes a fresh Git repo. Opt out with the `--no-git` flag.
+- Installs dependencies with `bun install`
 
 <Note>By default Bun does _not overwrite_ existing files. Use the `--force` flag to overwrite them.</Note>
 
@@ -255,12 +255,12 @@ ELSE IF local template
 THEN, for remote templates, GitHub repos, and local templates alike:
 
 4. Parse the `package.json` (again!), update `name` to be `${basename(destination)}`, remove the `bun-create` section from the `package.json` and save the updated `package.json` to disk.
-5. Run any tasks defined in `"bun-create": { "preinstall" }`
-6. Run `bun install` unless you pass `--no-install` OR no dependencies are in package.json
-7. Run any tasks defined in `"bun-create": { "postinstall" }`
-8. Run `git init; git add -A .; git commit -am "Initial Commit";`
+5. Run `git init; git add -A .; git commit -am "Initial Commit";`
    - Rename `gitignore` to `.gitignore`. npm strips `.gitignore` files from published packages.
-   - If there are dependencies, this step runs in a separate thread concurrently while Bun installs node_modules
+   - Git finishes before the tasks and `bun install` start.
    - We tested using libgit2 if available, and it performed 3x slower in microbenchmarks
+6. Run any tasks defined in `"bun-create": { "preinstall" }`
+7. Run `bun install` unless you pass `--no-install` OR no dependencies are in package.json
+8. Run any tasks defined in `"bun-create": { "postinstall" }`
 
 </Accordion>

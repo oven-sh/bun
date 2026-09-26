@@ -282,10 +282,10 @@ it("reports an error and exits when the template's package.json entry body is tr
   expect(exitCode).toBe(1);
 });
 
-// GitHandler::wait() used Futex::wait(.., Some(1000)) (1us timeout) in a loop,
-// issuing ~18k futex syscalls/sec while the git thread ran. POSIX-only: stub
+// The wait for the old git thread used Futex::wait(.., Some(1000)) (1us timeout)
+// in a loop, issuing ~18k futex syscalls/sec while git ran. POSIX-only: stub
 // `git` is a shell script and ru_nvcsw is always 0 on Windows.
-it.skipIf(!isPosix)("does not busy-wait on the futex while git runs", async () => {
+it.skipIf(!isPosix)("does not busy-wait while git runs", async () => {
   using dir = tempDir("create-git-futex", {
     "bin/git": "#!/bin/sh\nsleep 0.5\nexit 0\n",
     "bun-create/tmpl/index.js": "// hi\n",
@@ -316,6 +316,113 @@ it.skipIf(!isPosix)("does not busy-wait on the futex while git runs", async () =
   expect(proc.exitCode).toBe(0);
   // Before the fix this was ~27,000 over the ~1.5s git wait; after, a few dozen.
   expect(proc.resourceUsage!.contextSwitches.voluntary).toBeLessThan(2000);
+});
+
+// git used to run on a thread while the template's tasks and `bun install` ran
+// in the same directory, so `git add` could index files that the install was
+// writing (on Windows CI, the lockfile's temp file just before its rename).
+// bun create prints a `$ ...` line to stdout before each task and before
+// `bun install`. For each call, the stub `git` logs whether stdout has such a
+// line yet, and the files it sees. POSIX-only: the stub is a shell script.
+it.skipIf(!isPosix)("runs git to completion before the template's tasks and install", async () => {
+  using dir = tempDir("create-git-order", {
+    "bin/git": `#!/bin/sh
+started=no
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in '$ '*) started=yes ;; esac
+done < "$CREATE_STDOUT"
+files=$(LC_ALL=C ls -A)
+echo "$1" "started=$started" $files >> "$GIT_LOG"
+`,
+    "bun-create/tmpl/index.js": "// hi\n",
+    "bun-create/tmpl/package.json": JSON.stringify({
+      name: "tmpl",
+      version: "1.0.0",
+      scripts: { pre: "echo pre > pre.txt", post: "echo post > post.txt" },
+      dependencies: { localdep: "file:./localdep" },
+      "bun-create": { preinstall: "pre", postinstall: "post" },
+    }),
+    "bun-create/tmpl/localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }),
+  });
+  const root = String(dir);
+  chmodSync(join(root, "bin", "git"), 0o755);
+  const stdoutPath = join(root, "stdout.txt");
+  const gitLogPath = join(root, "git.log");
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "tmpl", join(root, "dest")],
+    cwd: root,
+    env: {
+      ...env,
+      PATH: join(root, "bin") + ":" + process.env.PATH,
+      BUN_CREATE_DIR: join(root, "bun-create"),
+      CREATE_STDOUT: stdoutPath,
+      GIT_LOG: gitLogPath,
+    },
+    stdin: "ignore",
+    stdout: Bun.file(stdoutPath),
+    stderr: "pipe",
+  });
+
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const out = await Bun.file(stdoutPath).text();
+  const gitLog = await Bun.file(gitLogPath).text();
+
+  expect(gitLog.trim().split("\n")).toEqual([
+    "init started=no index.js localdep package.json",
+    "add started=no index.js localdep package.json",
+    "commit started=no index.js localdep package.json",
+  ]);
+  expect(out).toContain("$ bun install");
+  expect(out).toContain("A local git repository was created for you and dependencies were installed automatically.");
+  expect(err).not.toContain("error:");
+  // The git timing line comes before the install's, not in the middle of task output.
+  expect(err).toContain("] git");
+  expect(err.indexOf("] git")).toBeLessThan(err.indexOf("] bun install"));
+  const dest = join(root, "dest");
+  expect(await Bun.file(join(dest, "pre.txt")).text()).toBe("pre\n");
+  expect(await Bun.file(join(dest, "post.txt")).text()).toBe("post\n");
+  expect(await exists(join(dest, "node_modules", "localdep", "package.json"))).toBe(true);
+  expect(exitCode).toBe(0);
+});
+
+// With nothing to install, git's outcome was stored without the `!`, so the
+// message was missing when git ran and printed when git was not found.
+it.skipIf(!isPosix)("reports the git repository when there is nothing to install", async () => {
+  using dir = tempDir("create-git-no-deps", {
+    "bin/git": "#!/bin/sh\nexit 0\n",
+    "empty/.keep": "",
+    "bun-create/tmpl/index.js": "// hi\n",
+    "bun-create/tmpl/package.json": JSON.stringify({ name: "tmpl", version: "1.0.0" }),
+  });
+  const root = String(dir);
+  chmodSync(join(root, "bin", "git"), 0o755);
+
+  // `pathDir` is the whole PATH, so `git` is found only in "bin".
+  async function create(pathDir: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "tmpl", join(root, `dest-${pathDir}`)],
+      cwd: root,
+      env: { ...env, PATH: join(root, pathDir), BUN_CREATE_DIR: join(root, "bun-create") },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  const withGit = await create("bin");
+  expect(withGit.err).not.toContain("error:");
+  expect(withGit.err).toContain("] git");
+  expect(withGit.out).toContain("A local git repository was created for you.");
+  expect(withGit.exitCode).toBe(0);
+
+  const withoutGit = await create("empty");
+  expect(withoutGit.err).not.toContain("error:");
+  expect(withoutGit.err).not.toContain("] git");
+  expect(withoutGit.out).not.toContain("A local git repository");
+  expect(withoutGit.exitCode).toBe(0);
 });
 
 it("should create template from local folder", async () => {

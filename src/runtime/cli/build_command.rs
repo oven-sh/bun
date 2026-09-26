@@ -1390,7 +1390,17 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
         if has_glob_metachar(trimmed) {
             // Walk only the glob's literal leading directories (`./a/b/*.js` walks
             // `a/b`, not the whole cwd); a leading `./` is not part of the match.
-            let pattern = trimmed.strip_prefix(b"./").unwrap_or(trimmed);
+            // `\` separates path components on Windows but escapes in `bun_glob`.
+            #[cfg(windows)]
+            let normalized: Vec<u8> = trimmed
+                .iter()
+                .map(|&b| if b == b'\\' { b'/' } else { b })
+                .collect();
+            #[cfg(windows)]
+            let glob_src: &[u8] = &normalized;
+            #[cfg(not(windows))]
+            let glob_src: &[u8] = trimmed;
+            let pattern = glob_src.strip_prefix(b"./").unwrap_or(glob_src);
             let mut prefix_len = 0usize;
             let mut pos = 0usize;
             for part in pattern.split(|&c| c == b'/') {

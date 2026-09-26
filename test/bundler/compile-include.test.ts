@@ -262,6 +262,35 @@ describe.concurrent("compile include", () => {
       },
       TIMEOUT,
     );
+
+    // On Windows `\` separates path components, so the glob must match; elsewhere it
+    // escapes the `*`, so the pattern is the literal file name `plugins*.js` and matches nothing.
+    test(
+      "a backslash-separated glob follows the platform's separator rules",
+      async () => {
+        using dir = tempDir(`compile-include-backslash-${via}`, {
+          "index.ts": /* ts */ `
+            async function main() {
+              const mod = await import("./plugins/" + "target" + ".js");
+              console.log(JSON.stringify({ value: mod.default }));
+            }
+            main();
+          `,
+          "plugins/target.js": `export default "included-value";`,
+        });
+        const built = await build(String(dir), via, ["plugins\\*.js"]);
+        if (process.platform === "win32") {
+          expect(built.failed).toBe(false);
+          const { stdout, exitCode } = await run(String(dir));
+          expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+          expect(exitCode).toBe(0);
+        } else {
+          expect(built.message).toContain("matched no files");
+          expect(built.failed).toBe(true);
+        }
+      },
+      TIMEOUT,
+    );
   });
 
   test(

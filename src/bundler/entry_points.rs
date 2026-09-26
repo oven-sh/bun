@@ -4,7 +4,6 @@ use bstr::BStr;
 
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;
-use bun_paths::MAX_PATH_BYTES;
 use bun_wyhash::{self, Wyhash11};
 
 use crate::Transpiler;
@@ -127,18 +126,10 @@ impl ServerEntryPoint {
 // happens in VirtualMachine We "register" it which just marks the JSValue as
 // protected. This is mostly a workaround for being unable to call ESM exported
 // functions from C++. When that is resolved, we should remove this.
+#[derive(Default)]
 pub struct MacroEntryPoint {
-    pub(crate) code_buffer: [u8; MAX_PATH_BYTES * 2 + 500],
+    pub(crate) code_buffer: Vec<u8>,
     pub source: bun_ast::Source,
-}
-
-impl Default for MacroEntryPoint {
-    fn default() -> Self {
-        Self {
-            code_buffer: [0u8; MAX_PATH_BYTES * 2 + 500],
-            source: bun_ast::Source::default(),
-        }
-    }
 }
 
 impl MacroEntryPoint {
@@ -192,98 +183,62 @@ impl MacroEntryPoint {
         } else {
             import_path.dir_with_trailing_slash()
         };
-        // reshaped for borrowck — capture the label length, write the
-        // body via a scoped &mut borrow, then re-borrow `code_buffer` immutably
-        // for the (label, code) slices passed to `init_path_string`.
         let label_len = macro_label_.len();
-        entry.code_buffer[..label_len].copy_from_slice(macro_label_);
+        let buf = &mut entry.code_buffer;
+        buf.clear();
+        buf.extend_from_slice(macro_label_);
 
-        let code_len: usize = 'brk: {
-            if import_path.base == b"bun" {
-                let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
-                write!(
-                    &mut cursor,
-                    "//Auto-generated file\n\
-                     var Macros;\n\
-                     try {{\n\
-                     \x20 Macros = globalThis.Bun;\n\
-                     }} catch (err) {{\n\
-                     \x20  console.error(\"Error importing macro\");\n\
-                     \x20  throw err;\n\
-                     }}\n\
-                     const macro = Macros['{}'];\n\
-                     if (!macro) {{\n\
-                     \x20 throw new Error(\"Macro '{}' not found in 'bun'\");\n\
-                     }}\n\
-                     \n\
-                     Bun.registerMacro({}, macro);",
-                    BStr::new(function_name),
-                    BStr::new(function_name),
-                    macro_id,
-                )
-                .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-                break 'brk cursor.position() as usize;
-            }
+        // A JSON string literal is a valid JS string literal.
+        let quoted = bun_fmt::JSONFormatterUTF8Options { quote: true };
+        let unquoted = bun_fmt::JSONFormatterUTF8Options { quote: false };
+        let name = bun_fmt::format_json_string_utf8(function_name, quoted);
 
-            let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
+        if import_path.base == b"bun" {
             write!(
-                &mut cursor,
+                buf,
                 "//Auto-generated file\n\
                  var Macros;\n\
                  try {{\n\
-                 \x20 Macros = await import('{}{}');\n\
+                 \x20 Macros = globalThis.Bun;\n\
                  }} catch (err) {{\n\
                  \x20  console.error(\"Error importing macro\");\n\
                  \x20  throw err;\n\
                  }}\n\
-                 if (!('{}' in Macros)) {{\n\
-                 \x20 throw new Error(\"Macro '{}' not found in '{}{}'\");\n\
+                 const macro = Macros[{name}];\n\
+                 if (!macro) {{\n\
+                 \x20 throw new Error(\"Macro '\" + {name} + \"' not found in 'bun'\");\n\
                  }}\n\
                  \n\
-                 Bun.registerMacro({}, Macros['{}']);",
-                bun_fmt::fmt_path_u8(
-                    dir_to_use,
-                    bun_fmt::PathFormatOptions {
-                        escape_backslashes: true,
-                        ..Default::default()
-                    }
-                ),
-                bun_fmt::fmt_path_u8(
-                    import_path.filename,
-                    bun_fmt::PathFormatOptions {
-                        escape_backslashes: true,
-                        ..Default::default()
-                    }
-                ),
-                BStr::new(function_name),
-                BStr::new(function_name),
-                bun_fmt::fmt_path_u8(
-                    dir_to_use,
-                    bun_fmt::PathFormatOptions {
-                        escape_backslashes: true,
-                        ..Default::default()
-                    }
-                ),
-                bun_fmt::fmt_path_u8(
-                    import_path.filename,
-                    bun_fmt::PathFormatOptions {
-                        escape_backslashes: true,
-                        ..Default::default()
-                    }
-                ),
-                macro_id,
-                BStr::new(function_name),
+                 Bun.registerMacro({macro_id}, macro);",
             )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-            cursor.position() as usize
-        };
+            .expect("unreachable");
+        } else {
+            let dir = bun_fmt::format_json_string_utf8(dir_to_use, unquoted);
+            let filename = bun_fmt::format_json_string_utf8(import_path.filename, unquoted);
+            write!(
+                buf,
+                "//Auto-generated file\n\
+                 var Macros;\n\
+                 try {{\n\
+                 \x20 Macros = await import(\"{dir}{filename}\");\n\
+                 }} catch (err) {{\n\
+                 \x20  console.error(\"Error importing macro\");\n\
+                 \x20  throw err;\n\
+                 }}\n\
+                 if (!({name} in Macros)) {{\n\
+                 \x20 throw new Error(\"Macro '\" + {name} + \"' not found in '{dir}{filename}'\");\n\
+                 }}\n\
+                 \n\
+                 Bun.registerMacro({macro_id}, Macros[{name}]);",
+            )
+            .expect("unreachable");
+        }
 
         // INVARIANT: self-referential — `macro_label`/`code` borrow
         // `entry.code_buffer` and are stored into `entry.source` (lifetime erased
-        // via `IntoStr`), so `entry` must not move or drop while `entry.source`
-        // is in use.
-        let macro_label: &[u8] = &entry.code_buffer[..label_len];
-        let code: &[u8] = &entry.code_buffer[label_len..label_len + code_len];
+        // via `IntoStr`), so `entry.code_buffer` must not be resized or dropped
+        // while `entry.source` is in use.
+        let (macro_label, code) = entry.code_buffer.split_at(label_len);
         entry.source = bun_ast::Source::init_path_string(macro_label, code);
         // `Path::init` already set `text = macro_label`; only override namespace.
         entry.source.path.namespace = js_ast::Macro::NAMESPACE;

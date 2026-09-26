@@ -1,7 +1,7 @@
 import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, ospath, tempDir, wasmGCStructRefSource } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -922,6 +922,77 @@ console.log("survived", require("./late.js"));`,
     expect(Object.getOwnPropertyDescriptor(require.cache, "bun:sqlite")).toBeUndefined();
     expect(Object.keys(require.cache)).not.toContain("bun:sqlite");
   });
+
+  // An assignment shadows the shared accessor with an own data property, and the receiver can reject it.
+  describe.each(["cache", "extensions"])("assigning require.%s", key => {
+    const { set } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(require), key);
+    const dataProperty = value => ({ value, writable: true, enumerable: true, configurable: true });
+
+    test("shadows the accessor on that require function only", () => {
+      const assigned = createRequire(import.meta.url);
+      const value = {};
+      assigned[key] = value;
+      expect(Object.getOwnPropertyDescriptor(assigned, key)).toEqual(dataProperty(value));
+      expect(createRequire(import.meta.url)[key]).toBe(require[key]);
+      expect(require[key]).not.toBe(value);
+    });
+
+    test("a receiver that is not extensible rejects the property", () => {
+      for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
+        const receiver = lock({});
+        expect(() => set.call(receiver, 1)).toThrow(TypeError);
+        expect(Reflect.ownKeys(receiver)).toEqual([]);
+
+        const locked = lock(createRequire(import.meta.url));
+        const keys = Reflect.ownKeys(locked);
+        expect(() => {
+          locked[key] = 1;
+        }).toThrow(TypeError);
+        expect(Reflect.ownKeys(locked)).toEqual(keys);
+        expect(locked[key]).toBe(require[key]);
+      }
+    });
+
+    test("a Proxy receiver gets its defineProperty trap called", () => {
+      const calls = [];
+      const target = {};
+      const proxy = new Proxy(target, {
+        defineProperty(target, key, descriptor) {
+          calls.push([key, descriptor]);
+          return Reflect.defineProperty(target, key, descriptor);
+        },
+      });
+      set.call(proxy, 1);
+      expect(calls).toEqual([[key, dataProperty(1)]]);
+      expect(target).toEqual({ [key]: 1 });
+
+      const refusing = new Proxy({}, { defineProperty: () => false });
+      expect(() => set.call(refusing, 1)).toThrow(TypeError);
+    });
+
+    // In a subprocess because the failure is an abort of the process.
+    test("a WebAssembly GC reference as the receiver throws a TypeError", async () => {
+      const src = `
+        const ref = ${wasmGCStructRefSource};
+        const { set } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(require), ${JSON.stringify(key)});
+        try {
+          set.call(ref, 1);
+          console.log("no error");
+        } catch (e) {
+          console.log(e.constructor.name);
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "TypeError\n", stderr: "", exitCode: 0 });
+    });
+  });
+
   test("require a cjs file uses the 'module.exports' export", () => {
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });

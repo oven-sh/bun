@@ -1,6 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, wasmGCStructRefSource } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -1204,5 +1204,239 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
     nativeProto.on.call(obj, "x", () => fired++);
     nativeProto.emit.call(obj, "x");
     expect(fired).toBe(1);
+  });
+});
+
+// As in Node, only the addListener family and setMaxListeners assign `this._events`, and the receiver can reject it.
+describe("native EventEmitter with a receiver that is not an emitter", () => {
+  const nativeProto = Object.getPrototypeOf(process);
+  const listener = () => {};
+  const RECEIVER = Symbol("the receiver");
+
+  // [name, call, result for a receiver with no listeners]
+  const readers: Array<[string, (receiver: object) => unknown, unknown]> = [
+    ["emit", receiver => nativeProto.emit.call(receiver, "x"), false],
+    ["removeListener", receiver => nativeProto.removeListener.call(receiver, "x", listener), RECEIVER],
+    ["off", receiver => nativeProto.off.call(receiver, "x", listener), RECEIVER],
+    ["removeAllListeners", receiver => nativeProto.removeAllListeners.call(receiver), RECEIVER],
+    ["eventNames", receiver => nativeProto.eventNames.call(receiver), []],
+    ["listenerCount", receiver => nativeProto.listenerCount.call(receiver, "x"), 0],
+    ["listeners", receiver => nativeProto.listeners.call(receiver, "x"), []],
+    ["rawListeners", receiver => nativeProto.rawListeners.call(receiver, "x"), []],
+    ["getMaxListeners", receiver => nativeProto.getMaxListeners.call(receiver), 10],
+  ];
+  const writers: Array<[string, (receiver: object) => unknown]> = [
+    ["on", receiver => nativeProto.on.call(receiver, "x", listener)],
+    ["addListener", receiver => nativeProto.addListener.call(receiver, "x", listener)],
+    ["once", receiver => nativeProto.once.call(receiver, "x", listener)],
+    ["prependListener", receiver => nativeProto.prependListener.call(receiver, "x", listener)],
+    ["prependOnceListener", receiver => nativeProto.prependOnceListener.call(receiver, "x", listener)],
+    ["setMaxListeners", receiver => nativeProto.setMaxListeners.call(receiver, 20)],
+  ];
+
+  test.each(readers)("%s does not define _events", (_name, call, expected) => {
+    for (const receiver of [{}, Object.freeze({})]) {
+      const result = call(receiver);
+      if (expected === RECEIVER) expect(result).toBe(receiver);
+      else expect(result).toEqual(expected);
+      expect(Reflect.ownKeys(receiver)).toEqual([]);
+    }
+  });
+
+  // Node also defines _eventsCount, setMaxListeners() defines _maxListeners, and once() needs a receiver with on().
+  test.each(writers)("%s defines _events the way an assignment does", (_name, call) => {
+    const plain = {};
+    call(plain);
+    expect(Object.getOwnPropertyDescriptor(plain, "_events")).toEqual({
+      value: expect.any(Object),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+
+    for (const lock of [Object.freeze, Object.seal, Object.preventExtensions]) {
+      const receiver = lock({});
+      expect(() => call(receiver)).toThrow(TypeError);
+      expect(Reflect.ownKeys(receiver)).toEqual([]);
+    }
+  });
+
+  test("setMaxListeners on a plain receiver is read back", () => {
+    const receiver = {};
+    nativeProto.setMaxListeners.call(receiver, 20);
+    expect(nativeProto.getMaxListeners.call(receiver)).toBe(20);
+  });
+
+  // Node returns 0 for a primitive receiver.
+  test("listenerCount on a primitive receiver throws an error that names listenerCount", () => {
+    expect(() => nativeProto.listenerCount.call(5, "x")).toThrow(
+      "Can only call EventEmitter.listenerCount on instances of EventEmitter",
+    );
+  });
+
+  // In Node the object shares the listeners of process, through the _events that it inherits.
+  test("an object that inherits from process has its own listeners", () => {
+    const child = Object.create(process);
+    let fired = 0;
+    child.on("x", () => fired++);
+    expect(child.emit("x")).toBe(true);
+    expect(fired).toBe(1);
+    expect(Reflect.ownKeys(child)).toEqual(["_events"]);
+    expect(process.listenerCount("x")).toBe(0);
+  });
+
+  // Node defines _eventsCount through the trap too.
+  test("a Proxy receiver gets its defineProperty trap called and keeps its listeners", () => {
+    const calls: PropertyKey[] = [];
+    const target = {};
+    const proxy = new Proxy(target, {
+      defineProperty(target, key, descriptor) {
+        calls.push(key);
+        return Reflect.defineProperty(target, key, descriptor);
+      },
+    });
+    let fired = 0;
+    nativeProto.on.call(proxy, "x", () => fired++);
+    expect(calls).toEqual(["_events"]);
+    expect(Reflect.ownKeys(target)).toEqual(["_events"]);
+    expect(nativeProto.emit.call(proxy, "x")).toBe(true);
+    expect(fired).toBe(1);
+    expect(nativeProto.listenerCount.call(proxy, "x")).toBe(1);
+
+    const refusing = new Proxy({}, { defineProperty: () => false });
+    expect(() => nativeProto.on.call(refusing, "x", listener)).toThrow(TypeError);
+  });
+
+  // In a subprocess because the failure is an abort of the process.
+  test.concurrent("a WebAssembly GC reference as the receiver throws from the methods that assign", async () => {
+    const src = `
+      const ref = ${wasmGCStructRefSource};
+      const result = {};
+      const attempt = (name, ...args) => {
+        try {
+          result[name] = process[name].call(ref, ...args);
+        } catch (e) {
+          result[name] = e.constructor.name;
+        }
+      };
+      for (const name of ["on", "addListener", "once", "prependListener", "prependOnceListener"]) attempt(name, "x", () => {});
+      attempt("setMaxListeners", 20);
+      attempt("listenerCount", "x");
+      attempt("emit", "x");
+      // An "error" event with no listener is reported as uncaught (Node throws it from emit()).
+      process.on("uncaughtException", e => {
+        result.uncaught = e.message;
+      });
+      result.emitError = process.emit.call(ref, "error", new Error("boom"));
+      console.log(JSON.stringify(result));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      on: "TypeError",
+      addListener: "TypeError",
+      once: "TypeError",
+      prependListener: "TypeError",
+      prependOnceListener: "TypeError",
+      setMaxListeners: "TypeError",
+      listenerCount: 0,
+      emit: false,
+      uncaught: "boom",
+      emitError: false,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("removeListener checks the listener when there is no emitter", () => {
+    expect(() => nativeProto.removeListener.call({}, "x", 5)).toThrow(TypeError);
+  });
+
+  // The emitter keeps the receiver of the last call that changed it, weakly. Node throws the error from emit().
+  test.concurrent('an "error" event with no listener is reported when the emitter has no receiver', async () => {
+    const src = `
+      const reported = [];
+      process.on("uncaughtException", e => reported.push(e.message));
+
+      const cleared = {};
+      process.on.call(cleared, "x", () => {});
+      process.removeAllListeners.call(cleared);
+      process.emit.call(cleared, "error", new Error("after removeAllListeners()"));
+
+      const target = {};
+      (function () {
+        process.on.call(new Proxy(target, {}), "x", () => {});
+      })();
+      Bun.gc(true);
+      process.emit.call(target, "error", new Error("after a collection"));
+
+      console.log(JSON.stringify(reported));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["after removeAllListeners()", "after a collection"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent('process reports an "error" event with no listener after removeAllListeners()', async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.removeAllListeners(); process.emit("error", new Error("boom"));`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: boom");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  // In a subprocess because a collected emitter is a use after free. `this._events` is the only
+  // reference to the emitter, and the event name conversion runs user code that can delete it.
+  test.concurrent("the emitter survives when the call deletes this._events and collects", async () => {
+    const src = `
+      let wrong = 0;
+      for (let i = 0; i < 5; i++) {
+        const receiver = {};
+        process.on.call(receiver, "x", () => {});
+        const keep = [];
+        const count = process.listenerCount.call(receiver, {
+          toString() {
+            delete receiver._events;
+            Bun.gc(true);
+            // Emitters with two listeners, to take the memory of a collected one.
+            for (let j = 0; j < 50; j++) {
+              const other = {};
+              process.on.call(other, "x", () => {});
+              process.on.call(other, "x", () => {});
+              keep.push(other);
+            }
+            return "x";
+          },
+        });
+        if (count !== 1) wrong++;
+      }
+      console.log(wrong);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      // Malloc=1: the emitter comes from the system allocator, so a sanitizer build reports the read.
+      env: { ...bunEnv, Malloc: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
   });
 });

@@ -184,21 +184,26 @@ impl PathWatcherManager {
         }
     }
 
-    /// The reader thread's fd failed for good: every JS `FSWatcher` gets
-    /// `err` and closes. Takes `mutex`.
+    /// The reader thread's fd failed for good: every JS `FSWatcher` behind one
+    /// of `registered` (the backend's dispatch map, which also holds a watcher
+    /// that left the dedup map) gets `err` and closes. Caller holds `mutex`.
     #[cfg(not(windows))]
-    fn fail_all_watchers(&self, err: &sys::Error) {
-        self.mutex.lock();
-        // SAFETY: holding self.mutex.
-        let watchers = unsafe { &*self.watchers.get() };
-        for &w in watchers.values() {
-            // SAFETY: holding self.mutex; w is live.
+    fn fail_watchers_locked(
+        &self,
+        registered: impl Iterator<Item = *mut PathWatcher>,
+        err: &sys::Error,
+    ) {
+        let mut seen: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
+        for w in registered {
+            if handle_oom(seen.get_or_put(w)).found_existing {
+                continue;
+            }
+            // SAFETY: caller holds self.mutex; w is live while its registration is.
             unsafe {
                 (*w).emit_error(err, true);
                 (*w).flush();
             }
         }
-        self.mutex.unlock();
     }
 }
 
@@ -919,7 +924,14 @@ impl Linux {
                 E::EAGAIN | E::EINTR => continue,
                 errno => {
                     // Fatal: surface to every watcher, then exit the thread.
-                    manager.fail_all_watchers(&sys::Error::from_code(errno, Tag::read));
+                    manager.mutex.lock();
+                    // SAFETY: holding manager.mutex.
+                    let wd_map = unsafe { &(*plat).wd_map };
+                    manager.fail_watchers_locked(
+                        wd_map.values().flatten().map(|o| o.watcher),
+                        &sys::Error::from_code(errno, Tag::read),
+                    );
+                    manager.mutex.unlock();
                     return;
                 }
             }
@@ -1442,8 +1454,8 @@ pub(crate) struct KqueueWatch {
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 impl PathWatcherManager {
     /// The kqueue fd. Written in [`Kqueue::start`] before the reader thread is
-    /// spawned and not afterwards, so reading it from either thread races with
-    /// nothing.
+    /// spawned, and reset to `INVALID` under `mutex` when that thread exits, so
+    /// reading it from either thread races with nothing.
     #[inline]
     fn kq_fd(&self) -> Fd {
         self.platform_fd.get()
@@ -1650,7 +1662,17 @@ impl Kqueue {
                 Err(err) => {
                     // `sys::kevent` retried EINTR; anything else is fatal, as in
                     // the inotify reader.
-                    manager.fail_all_watchers(&sys::Error::from_code(err.get_errno(), Tag::kevent));
+                    manager.mutex.lock();
+                    // SAFETY: holding manager.mutex.
+                    let entries = unsafe { &(*plat).entries };
+                    manager.fail_watchers_locked(
+                        entries.values().iter().map(|e| e.watcher),
+                        &sys::Error::from_code(err.get_errno(), Tag::kevent),
+                    );
+                    // macOS: the next file watch starts a fresh kqueue and reader.
+                    #[cfg(target_os = "macos")]
+                    manager.platform_fd.set(Fd::INVALID);
+                    manager.mutex.unlock();
                     return;
                 }
             };

@@ -3548,6 +3548,30 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  // Node runs an lstat() before the removal and rethrows its error. A path
+  // that goes through a regular file is ENOTDIR, tagged lstat, for every
+  // option set that lstats (everything except { recursive, force }).
+  it.skipIf(isWindows)("reports ENOTDIR from lstat for a path that goes through a file", async () => {
+    using dir = tempDir("rm-enotdir", { "file.txt": "x" });
+    const path = join(String(dir), "file.txt", "child");
+    const pick = (e: any) => ({ code: e.code, syscall: e.syscall, path: e.path });
+    const expected = { code: "ENOTDIR", syscall: "lstat", path };
+
+    for (const options of [undefined, { force: true }, { recursive: true }]) {
+      expect(() => rmSync(path, options)).toThrow(expect.objectContaining(expected));
+      expect(await fs.promises.rm(path, options).then(() => null, pick)).toEqual(expected);
+      const cbErr = await new Promise(resolve => fs.rm(path, options, resolve));
+      expect(pick(cbErr)).toEqual(expected);
+    }
+
+    expect(await fs.promises.rm(path, { recursive: true, force: true }).then(() => null, pick)).toEqual({
+      code: "ENOTDIR",
+      syscall: "rm",
+      path,
+    });
+    expect(readFileSync(join(String(dir), "file.txt"), "utf8")).toBe("x");
+  });
+
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
   // "rooted" and must be resolved against the cwd's drive. existsSync/
   // statSync/unlinkSync all do this; recursive rmSync must agree
@@ -3748,6 +3772,36 @@ describe("rmdirSync", () => {
 });
 
 describe("createReadStream", () => {
+  // Node hands the path to open() as given. It does not path.resolve() it, so
+  // a ".." through a missing directory fails and stream.path keeps the input.
+  it("keeps the path as given and does not resolve it before open", async () => {
+    using dir = tempDir("read-stream-path", { "file.txt": "hello" });
+    const file = join(String(dir), "file.txt");
+    const openResult = (stream: fs.ReadStream) =>
+      new Promise<any>(resolve => {
+        stream.on("open", () => resolve("open"));
+        stream.on("error", e => resolve({ code: e.code, syscall: e.syscall, path: e.path }));
+      }).finally(() => stream.destroy());
+
+    const bufferStream = createReadStream(Buffer.from(file));
+    expect(bufferStream.path).toEqual(Buffer.from(file));
+    expect(await openResult(bufferStream)).toBe("open");
+
+    const urlStream = createReadStream(Bun.pathToFileURL(file));
+    expect(urlStream.path).toBe(file);
+    expect(await openResult(urlStream)).toBe("open");
+
+    // Windows normalizes ".." in the path inside the open() call itself.
+    if (!isWindows) {
+      for (const path of [`${String(dir)}/nope/../file.txt`, file + "/"]) {
+        const stream = createReadStream(path);
+        expect(stream.path).toBe(path);
+        const code = path.endsWith("/") ? "ENOTDIR" : "ENOENT";
+        expect(await openResult(stream)).toEqual({ code, syscall: "open", path });
+      }
+    }
+  });
+
   it("works (1 chunk)", async () => {
     return await new Promise((resolve, reject) => {
       var stream = createReadStream(import.meta.dir + "/readFileSync.txt", {});
@@ -4291,6 +4345,28 @@ describe("fs.ReadStream", () => {
 });
 
 describe("createWriteStream", () => {
+  it("keeps the path as given and does not resolve it before open", async () => {
+    using dir = tempDir("write-stream-path", { "file.txt": "hello" });
+    const file = join(String(dir), "file.txt");
+    const openResult = (stream: fs.WriteStream) =>
+      new Promise<any>(resolve => {
+        stream.on("open", () => resolve("open"));
+        stream.on("error", e => resolve({ code: e.code, syscall: e.syscall, path: e.path }));
+      }).finally(() => stream.destroy());
+
+    const bufferStream = createWriteStream(Buffer.from(file), { flags: "a" });
+    expect(bufferStream.path).toEqual(Buffer.from(file));
+    expect(await openResult(bufferStream)).toBe("open");
+
+    if (!isWindows) {
+      const path = `${String(dir)}/nope/../file.txt`;
+      const stream = createWriteStream(path, { flags: "a" });
+      expect(stream.path).toBe(path);
+      expect(await openResult(stream)).toEqual({ code: "ENOENT", syscall: "open", path });
+    }
+    expect(readFileSync(file, "utf8")).toBe("hello");
+  });
+
   it.todoIf(isBroken && isWindows)("simple write stream finishes", async () => {
     const streamPath = join(tmpdirSync(), "create-write-stream.txt");
     const { promise: done, resolve, reject } = Promise.withResolvers();

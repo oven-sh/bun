@@ -494,6 +494,9 @@ declare module "bun" {
      * Sets the number of seconds to wait before timing out a connection
      * due to no messages or pings.
      *
+     * The maximum value is `960`. `0` disables the timeout. Values from
+     * `1` to `7` are rounded up to `8`.
+     *
      * @default 120
      */
     idleTimeout?: number;

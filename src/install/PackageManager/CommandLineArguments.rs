@@ -255,6 +255,9 @@ pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--depth <NUM>                          Maximum depth of the dependency tree to display"
         ),
+        clap::param!(
+            "--max-age <NUM>                        Remove cache entries downloaded more than this many days ago (bun pm cache prune, default 30)"
+        ),
         clap::param!("<POS> ...                         "),
     ]
 ];
@@ -595,6 +598,9 @@ pub struct CommandLineArguments {
     pub diff_stat: bool,
     pub diff_context: Option<usize>,
 
+    // `bun pm cache prune` options
+    pub cache_max_age_days: Option<u32>,
+
     // `bun audit` options
     pub audit_level: Option<AuditLevel>,
     pub audit_ignore_list: &'static [&'static [u8]],
@@ -692,6 +698,8 @@ impl Default for CommandLineArguments {
             diff_ignore_space: false,
             diff_stat: false,
             diff_context: None,
+
+            cache_max_age_days: None,
 
             audit_level: None,
             audit_ignore_list: &[],
@@ -1786,7 +1794,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.diff_name_only = args.flag(b"--name-only");
             cli.diff_raw = args.flag(b"--raw") || args.flag(b"--unformatted");
             cli.no_project_ok = cli.positionals.first().is_some_and(|p| *p == b"pm")
-                && cli.positionals.get(1).is_some_and(|p| *p == b"diff");
+                && (cli.positionals.get(1).is_some_and(|p| *p == b"diff")
+                    || (cli.positionals.get(1).is_some_and(|p| *p == b"cache")
+                        && cli.positionals.get(2).is_some_and(|p| *p == b"prune")));
             cli.diff_unminify = args.flag(b"--unminify");
             cli.diff_minify = args.flag(b"--minify");
             cli.diff_ignore_space = args.flag(b"--ignore-space");
@@ -1797,6 +1807,18 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                     Err(_) => {
                         Output::err_generic(
                             "invalid --unified value: {}, expected a non-negative integer",
+                            (bstr::BStr::new(n),),
+                        );
+                        Global::exit(1);
+                    }
+                }
+            }
+            if let Some(n) = args.option(b"--max-age") {
+                match strings::parse_int::<u32>(n, 10) {
+                    Ok(v) => cli.cache_max_age_days = Some(v),
+                    Err(_) => {
+                        Output::err_generic(
+                            "invalid --max-age value: {}, expected a number of days",
                             (bstr::BStr::new(n),),
                         );
                         Global::exit(1);

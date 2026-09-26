@@ -274,10 +274,16 @@ _bun_pm_completion() {
     args)
         case $line[2] in
         cache)
+            pmargs=(
+                "--max-age[remove packages downloaded more than this many days ago (prune, default 30)]:days"
+                "--dry-run[print what would be removed without deleting anything (prune)]"
+            )
+
             _arguments -s -C \
                 '1: :->cmd' \
                 '2: :->cmd2' \
-                ':::(rm)' &&
+                ':::(rm prune)' \
+                $pmargs &&
                 ret=0
 
             ;;

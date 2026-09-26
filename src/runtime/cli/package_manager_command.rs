@@ -18,6 +18,7 @@ use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
+use crate::cli::pm_cache_prune_command::{DEFAULT_MAX_AGE_DAYS, PmCachePruneCommand};
 use crate::cli::pm_diff_command as PmDiffCommand;
 use crate::cli::pm_licenses_command::{LicensesFlags, PmLicensesCommand};
 use crate::cli::pm_pkg_command::PmPkgCommand;
@@ -217,6 +218,9 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile\n\
   <b><green>bun pm<r> <blue>cache<r>                print the path to the cache folder\n\
   <b><green>bun pm<r> <blue>cache rm<r>             clear the cache\n\
+  <b><green>bun pm<r> <blue>cache prune<r>          remove packages downloaded more than 30 days ago\n\
+  <d>├<r> <cyan>--max-age<r> <d>\\<days\\><r>          age threshold in days (default 30)\n\
+  <d>└<r> <cyan>--dry-run<r>                 print what would be removed without deleting anything\n\
   <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything\n\
   <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts\n\
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`\n\
@@ -261,6 +265,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             context: cli.diff_context.unwrap_or(3),
         };
         let diff_args: Vec<&'static [u8]> = cli.diff_args.clone();
+        let cache_max_age_days = cli.cache_max_age_days.unwrap_or(DEFAULT_MAX_AGE_DAYS);
         let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
             Ok(v) => v,
             Err(err) => {
@@ -432,6 +437,20 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {
+            if pm.options.positionals.len() > 1
+                && strings::eql_comptime(pm.options.positionals[1], b"prune")
+            {
+                let mut process_env = bun_dotenv::Loader::init();
+                process_env.load_process()?;
+                let cache_dir = fetch_cache_directory_path(&mut process_env, None);
+                let exit_code = PmCachePruneCommand::exec(
+                    &cache_dir.path,
+                    cache_max_age_days,
+                    pm.options.dry_run,
+                );
+                Global::exit(u32::from(exit_code));
+            }
+
             if pm.options.positionals.len() > 1
                 && strings::eql_comptime(pm.options.positionals[1], b"rm")
             {

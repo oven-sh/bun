@@ -420,6 +420,47 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 
 // ─────────────────────── cached folder name printers ──────────────────────────
 //
+/// What a cache root entry (or an entry of a `@scope` directory) is, by name.
+/// Every writer into the cache root is listed next to its variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheEntryKind {
+    /// `<name>@<version>...`, `@G@...`, `@GH@...`, `@T@...` (the printers below).
+    Package,
+    /// `@<scope>`: holds scoped `Package` and `Index` entries.
+    Scope,
+    /// `<name>/<version>...` symlinks to `Package` directories (`ExtractTarball::extract`).
+    Index,
+    /// `links/` (isolated installer), `<hex>.git` (`GitRunner`), `@t@`
+    /// (`RuntimeTranspilerCache`), `.<tmp>` staging, and non-directories
+    /// (`.npm` manifests, `bun-<os>-<arch>-v*` from `StandaloneModuleGraph`).
+    Other,
+}
+
+impl CacheEntryKind {
+    pub fn from_name(name: &[u8], kind: bun_sys::EntryKind, in_scope: bool) -> CacheEntryKind {
+        if kind != bun_sys::EntryKind::Directory || name.is_empty() || name[0] == b'.' {
+            return CacheEntryKind::Other;
+        }
+        if name[0] == b'@' {
+            if in_scope || name.starts_with(b"@t@") {
+                return CacheEntryKind::Other;
+            }
+            return if bun_core::strings::contains_char(&name[1..], b'@') {
+                CacheEntryKind::Package
+            } else {
+                CacheEntryKind::Scope
+            };
+        }
+        if bun_core::strings::contains_char(name, b'@') {
+            return CacheEntryKind::Package;
+        }
+        if name == b"links" || name.ends_with(b".git") {
+            return CacheEntryKind::Other;
+        }
+        CacheEntryKind::Index
+    }
+}
+
 // PERF: an earlier version used `core::fmt::write` over a `format_args!` of
 // `bun_fmt::s` / `hex_int_*` pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
 // `&dyn Display` whose vtable lives in `.data.rel.ro`, and every

@@ -179,13 +179,13 @@ test.concurrent("-F alias with --dev and --exact", async () => {
     expect(await pkg(dir, "web")).toStrictEqual(WEB);
   }
 
-  // Same as unfiltered `bun add -d`: an entry that already exists in another list is updated in place.
+  // Same as unfiltered `bun add -d`: an entry that already exists in another list is moved to the requested one.
   {
     const { stderr, exitCode } = await run(["add", "a-dep", "-F", "web", "-d", "-E"], dir);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect(await pkg(dir, "web")).toStrictEqual({ name: "web", dependencies: { "a-dep": "1.0.10" } });
+    expect(await pkg(dir, "web")).toStrictEqual({ name: "web", devDependencies: { "a-dep": "1.0.10" } });
     expect(await pkg(dir, "api")).toStrictEqual({ name: "api", devDependencies: { "a-dep": "1.0.10" } });
     expect(await pkg(dir, "root")).toStrictEqual(ROOT);
   }
@@ -2340,12 +2340,11 @@ test.concurrent("a name declared in two groups stays in sync with bun.lock after
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
-  // Same as an unfiltered add: the entry that already exists (in dependencies) is updated in place.
+  // Same as an unfiltered add: the dependencies entry is dropped and the existing peer entry takes the new range.
   const api = await pkg(dir, "api");
   expect(api).toStrictEqual({
     name: "api",
-    dependencies: { "no-deps": "^2.0.0" },
-    peerDependencies: { "no-deps": "*" },
+    peerDependencies: { "no-deps": "^2.0.0" },
   });
   const { workspaces } = await lockfileJson(dir);
   expect(workspaces["packages/api"]).toStrictEqual(api);

@@ -8,7 +8,7 @@
 //! Generates type equations from the HIR, unifies them, and applies the
 //! resolved types back to identifiers. Analogous to TS `InferTypes.ts`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
@@ -1233,106 +1233,81 @@ impl Unifier {
             }
         }
 
-        if self.occurs_check(&v, &ty) {
-            let resolved_type = self.try_resolve_type(&v, &ty);
-            if let Some(resolved) = resolved_type {
-                self.substitutions.insert(v_id, resolved);
-                return Ok(());
-            }
-            return Err(CompilerDiagnostic {
-                category: ErrorCategory::Invariant,
-                reason: "cycle detected".to_string(),
-                description: None,
-                details: vec![],
-                suggestions: None,
-            });
+        let mut ty = ty;
+        if matches!(ty, Type::Phi { .. } | Type::Function { .. }) {
+            self.remove_from_reachable_phis(v_id, &mut ty);
         }
-
         self.substitutions.insert(v_id, ty);
         Ok(())
     }
 
-    fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
-        match ty {
-            Type::Phi { operands } => {
-                let mut new_operands = AstAlloc::vec();
-                for operand in operands {
-                    if let Type::TypeVar { id } = operand {
-                        if let Type::TypeVar { id: v_id } = v {
-                            if id == v_id {
-                                continue; // skip self-reference
-                            }
-                        }
-                    }
-                    let resolved = self.try_resolve_type(v, operand)?;
-                    new_operands.push(resolved);
-                }
-                Some(Type::Phi {
-                    operands: new_operands,
-                })
-            }
-            Type::TypeVar { id } => {
-                let substitution = self.get(ty);
-                if !type_equals(&substitution, ty) {
-                    let resolved = self.try_resolve_type(v, &substitution)?;
-                    self.substitutions.insert(*id, resolved.clone());
-                    Some(resolved)
-                } else {
-                    Some(ty.clone())
+    /// Breaks the cycle that binding `v_id` to `ty` would close: every phi reachable from `ty` drops the operands that resolve to `v_id`.
+    fn remove_from_reachable_phis(&mut self, v_id: TypeId, ty: &mut Type) {
+        let mut reachable: HashSet<TypeId> = HashSet::new();
+        let mut pending: Vec<TypeId> = Vec::new();
+        collect_type_vars(ty, &mut pending);
+        while let Some(id) = pending.pop() {
+            if reachable.insert(id) {
+                if let Some(sub) = self.substitutions.get(&id) {
+                    collect_type_vars(sub, &mut pending);
                 }
             }
-            Type::Property {
-                object_type,
-                object_name,
-                property_name,
-            } => {
-                let resolved_obj = self.get(object_type);
-                let object_type = self.try_resolve_type(v, &resolved_obj)?;
-                Some(Type::Property {
-                    object_type: Box::new(object_type),
-                    object_name: *object_name,
-                    property_name: property_name.clone(),
-                })
-            }
-            Type::Function {
-                shape_id,
-                return_type,
-                is_constructor,
-            } => {
-                let resolved_ret = self.get(return_type);
-                let return_type = self.try_resolve_type(v, &resolved_ret)?;
-                Some(Type::Function {
-                    shape_id: *shape_id,
-                    return_type: Box::new(return_type),
-                    is_constructor: *is_constructor,
-                })
-            }
-            Type::ObjectMethod | Type::Object { .. } | Type::Primitive | Type::Poly => {
-                Some(ty.clone())
+        }
+        if !reachable.contains(&v_id) {
+            return;
+        }
+
+        self.remove_phi_operand(v_id, ty);
+        for id in reachable {
+            let Some(sub) = self.substitutions.get_mut(&id) else {
+                continue;
+            };
+            if matches!(sub, Type::Phi { .. } | Type::Function { .. }) {
+                let mut sub = std::mem::replace(sub, Type::Poly);
+                self.remove_phi_operand(v_id, &mut sub);
+                self.substitutions.insert(id, sub);
             }
         }
     }
 
-    fn occurs_check(&self, v: &Type, ty: &Type) -> bool {
-        if type_equals(v, ty) {
-            return true;
+    fn remove_phi_operand(&self, v_id: TypeId, ty: &mut Type) {
+        match ty {
+            Type::Phi { operands } => {
+                operands.retain(|operand| {
+                    !matches!(self.resolve_type_var(operand), Type::TypeVar { id } if *id == v_id)
+                });
+                for operand in operands.iter_mut() {
+                    self.remove_phi_operand(v_id, operand);
+                }
+            }
+            Type::Function { return_type, .. } => self.remove_phi_operand(v_id, return_type),
+            _ => {}
         }
+    }
 
-        if let Type::TypeVar { id } = ty {
-            if let Some(sub) = self.substitutions.get(id) {
-                return self.occurs_check(v, sub);
+    /// Follows a chain of bound type variables to its last variable or to the first type that is not one.
+    fn resolve_type_var<'a>(&'a self, mut ty: &'a Type) -> &'a Type {
+        while let Type::TypeVar { id } = ty {
+            match self.substitutions.get(id) {
+                Some(sub) => ty = sub,
+                None => break,
             }
         }
+        ty
+    }
 
-        if let Type::Phi { operands } = ty {
-            return operands.iter().any(|o| self.occurs_check(v, o));
+    /// A phi keeps an operand that is itself a phi or a function as the type variable bound to it, so no phi is copied into another.
+    fn get_phi_operand(&self, operand: &Type) -> Type {
+        let mut last = operand;
+        loop {
+            let Type::TypeVar { id } = last else { break };
+            match self.substitutions.get(id) {
+                Some(sub @ Type::TypeVar { .. }) => last = sub,
+                Some(sub) if is_leaf_type(sub) => return sub.clone(),
+                _ => break,
+            }
         }
-
-        if let Type::Function { return_type, .. } = ty {
-            return self.occurs_check(v, return_type);
-        }
-
-        false
+        last.clone()
     }
 
     fn get(&self, ty: &Type) -> Type {
@@ -1344,7 +1319,7 @@ impl Unifier {
 
         if let Type::Phi { operands } = ty {
             return Type::Phi {
-                operands: AstAlloc::vec_from_iter(operands.iter().map(|o| self.get(o))),
+                operands: AstAlloc::vec_from_iter(operands.iter().map(|o| self.get_phi_operand(o))),
             };
         }
 
@@ -1362,6 +1337,22 @@ impl Unifier {
         }
 
         ty.clone()
+    }
+}
+
+fn is_leaf_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Primitive | Type::Poly | Type::Object { .. } | Type::ObjectMethod
+    )
+}
+
+fn collect_type_vars(ty: &Type, out: &mut Vec<TypeId>) {
+    match ty {
+        Type::TypeVar { id } => out.push(*id),
+        Type::Phi { operands } => operands.iter().for_each(|o| collect_type_vars(o, out)),
+        Type::Function { return_type, .. } => collect_type_vars(return_type, out),
+        _ => {}
     }
 }
 

@@ -5127,6 +5127,22 @@ impl H2FrameParser {
         ))
     }
 
+    /// DATA bytes the send windows allow right now, capped at one frame.
+    fn sendable_data_size(&self, stream: &Stream) -> usize {
+        MAX_PAYLOAD_SIZE_WITHOUT_FRAME
+            .min(
+                (self
+                    .remote_window_size
+                    .get()
+                    .saturating_sub(self.remote_used_window_size.get())) as usize,
+            )
+            .min(
+                (stream
+                    .remote_window_size
+                    .saturating_sub(stream.remote_used_window_size)) as usize,
+            )
+    }
+
     /// Returns `(settled_state, callback_deferred)`: the state the close tail settled on (5 =
     /// HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none) and whether `callback` was left to the caller.
     fn send_data(
@@ -5141,6 +5157,8 @@ impl H2FrameParser {
             suppress_half_closed_local_dispatch,
             defer_write_callback,
         } = options;
+        // JS under a transport write below updates this `Stream` through the map's pointer.
+        let stream: &mut Stream = core::hint::black_box(stream);
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_DATA {} sendData({}, {}, {})",
@@ -5183,20 +5201,16 @@ impl H2FrameParser {
 
             while offset < payload.len() {
                 // max frame size will always be at least 16384 (but we need to respect the flow control)
-                let mut max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME
-                    .min(
-                        (self
-                            .remote_window_size
-                            .get()
-                            .saturating_sub(self.remote_used_window_size.get()))
-                            as usize,
-                    )
-                    .min(
-                        (stream
-                            .remote_window_size
-                            .saturating_sub(stream.remote_used_window_size))
-                            as usize,
-                    );
+                let mut max_size = self.sendable_data_size(stream);
+                if max_size == 0 {
+                    // A synchronous JS transport handles the peer's answer inside this write.
+                    self.flush_batch_buffer();
+                    if !stream.can_send_data() {
+                        self.dispatch_write_callback(callback);
+                        return (0, false);
+                    }
+                    max_size = self.sendable_data_size(stream);
+                }
                 let mut is_flow_control_limited = false;
                 if max_size == 0 {
                     is_flow_control_limited = true;
@@ -5213,9 +5227,8 @@ impl H2FrameParser {
                     || self.outbound_queue_size.get() > 0
                     || is_flow_control_limited
                 {
-                    // Preserve wire order: anything already batched goes out before the
-                    // queued remainder is flushed later by the drain path.
-                    self.flush_batch_buffer();
+                    // Wire order: nothing may still be batched when frames start to queue.
+                    debug_assert!(BATCH_BUFFER.with_borrow(|batch| batch.is_empty()));
                     enqueued = true;
                     // write the full frame in memory and queue the frame
                     // the callback will only be called after the last frame is sended

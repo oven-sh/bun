@@ -1759,6 +1759,22 @@ static int64_t indexOfBuffer(JSC::JSGlobalObject* lexicalGlobalObject, bool last
                 : indexOf(typedVector, searchEnd, typedVectorValue, needleLength, byteOffset);
 }
 
+// Node never coerces `end`. It reaches the native search last (after the
+// byteOffset coercion, the encoding lookup and the value type check), which
+// CHECK()s (aborts) on a non-number. Bun coerces it at that point instead.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L1044-L1087
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L977
+static double toIndexOfEnd(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    double end = std::numeric_limits<double>::infinity();
+    if (!value.isUndefined()) {
+        end = value.toNumber(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (std::isnan(end)) end = std::numeric_limits<double>::infinity();
+    }
+    return end;
+}
+
 static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter buffer, bool last)
 {
     bool dir = !last;
@@ -1782,13 +1798,6 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
     if (endValue.isString()) {
         encodingValue = endValue;
         endValue = jsUndefined();
-    }
-
-    double endD = std::numeric_limits<double>::infinity();
-    if (!endValue.isUndefined()) {
-        endD = endValue.toNumber(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, -1);
-        if (std::isnan(endD)) endD = std::numeric_limits<double>::infinity();
     }
 
     if (byteOffsetValue.isString()) {
@@ -1829,6 +1838,8 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
     if (valueValue.isNumber()) {
         auto byteValue = static_cast<uint8_t>((valueValue.toInt32(lexicalGlobalObject)) % 256);
         RETURN_IF_EXCEPTION(scope, -1);
+        double endD = toIndexOfEnd(scope, lexicalGlobalObject, endValue);
+        RETURN_IF_EXCEPTION(scope, -1);
         const uint8_t* typedVector;
         if (!refetchBufferState(typedVector, byteLength)) return -1;
         return indexOfNumber(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, endD, byteValue);
@@ -1849,6 +1860,8 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
         }
         auto* str = valueValue.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
+        double endD = toIndexOfEnd(scope, lexicalGlobalObject, endValue);
+        RETURN_IF_EXCEPTION(scope, -1);
         const uint8_t* typedVector;
         if (!refetchBufferState(typedVector, byteLength)) return -1;
         return indexOfString(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, endD, str, encoding.value());
@@ -1856,6 +1869,8 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
 
     if (auto* array = dynamicDowncast<JSC::JSUint8Array>(valueValue)) {
         if (!encoding.has_value()) encoding = BufferEncodingType::utf8;
+        double endD = toIndexOfEnd(scope, lexicalGlobalObject, endValue);
+        RETURN_IF_EXCEPTION(scope, -1);
         const uint8_t* typedVector;
         if (!refetchBufferState(typedVector, byteLength)) return -1;
         // A needle whose backing buffer was detached by a valueOf/toPrimitive

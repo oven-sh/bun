@@ -88,6 +88,10 @@ def common():
 #define BUN_OS_WINDOWS 2
 #define BUN_OS_MACOS 3
 #define AT_BUN_HOST 0x62756e00
+/* How many entries of struct bun_host the host filled. A host that does not
+   say has the first five. */
+#define AT_BUN_HOST_ENTRIES 0x62756e10
+#define BUN_HOST_ENTRIES_MIN 5
 
 /* A request to the host that is not a Linux syscall. It goes through
    __bun_host.syscall with a number that Linux does not use.
@@ -107,23 +111,55 @@ struct bun_host {
 	long (*syscall)(long, long, long, long, long, long, long);
 	long (*thread_create)(int (*)(void *), void *, long, void *, int *, void *, int *);
 	void (*thread_exit)(void *, unsigned long);
+	/* The address of a function of the host OS, 0 if the library or the
+	   symbol is not there. The Windows host: LoadLibraryW and
+	   GetProcAddress, and the libuv that is linked into the host for the
+	   library "libuv". The function has the calling convention of the host
+	   OS, not the one of the image. */
+	void *(*lookup)(const char *library, const char *symbol);
+	/* The OS that runs the host, when os does not say it: the test host on
+	   Linux reaches the kernel the way another host does. 0: the same as os. */
+	unsigned long native_os;
 };
 
 extern struct bun_host __bun_host __attribute__((__visibility__("hidden")));
+
+/* For the program in the image. */
+unsigned long __bun_host_os(void);
+void *__bun_host_lookup(const char *library, const char *symbol);
 
 #endif
 """)
 
     write("src/internal/bun_host.c", """#include "bun_host.h"
 
-struct bun_host __bun_host = { BUN_OS_LINUX, 0, 0, 0, 0 };
+struct bun_host __bun_host = { BUN_OS_LINUX, 0, 0, 0, 0, 0, 0 };
+
+unsigned long __bun_host_os(void)
+{
+	return __bun_host.native_os ? __bun_host.native_os : __bun_host.os;
+}
+
+void *__bun_host_lookup(const char *library, const char *symbol)
+{
+	if (__bun_host.os == BUN_OS_LINUX || !__bun_host.lookup) return 0;
+	return __bun_host.lookup(library, symbol);
+}
 """)
 
     replace("src/env/__libc_start_main.c", """	libc.auxv = auxv = (void *)(envp+i+1);
 """, """	libc.auxv = auxv = (void *)(envp+i+1);
-	for (i=0; auxv[i]; i+=2) if (auxv[i]==AT_BUN_HOST) __bun_host = *(struct bun_host *)auxv[i+1];
+	{
+		size_t *table = 0, entries = BUN_HOST_ENTRIES_MIN;
+		for (i=0; auxv[i]; i+=2) {
+			if (auxv[i]==AT_BUN_HOST) table = (void *)auxv[i+1];
+			if (auxv[i]==AT_BUN_HOST_ENTRIES) entries = auxv[i+1];
+		}
+		if (entries > sizeof __bun_host / sizeof(size_t)) entries = sizeof __bun_host / sizeof(size_t);
+		if (table) memcpy(&__bun_host, table, entries * sizeof(size_t));
+	}
 """)
-    replace("src/env/__libc_start_main.c", '#include "libc.h"', '#include "libc.h"\n#include "bun_host.h"')
+    replace("src/env/__libc_start_main.c", '#include "libc.h"', '#include "libc.h"\n#include <string.h>\n#include "bun_host.h"')
 
     # Cancellable syscalls: the assembly (__syscall_cp_asm, it issues the
     # syscall itself on every architecture) is used on a Linux host only.

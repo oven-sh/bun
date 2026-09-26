@@ -112,13 +112,11 @@ impl Router {
         log: &mut bun_ast::Log,
         root_dir_info: &DirInfo,
         resolver: &mut R,
-        base_dir: &[u8],
     ) -> Result<(), CoreError> {
         if self.loaded_routes {
             return Ok(());
         }
-        self.routes =
-            RouteLoader::load_all(self.config.clone(), log, resolver, root_dir_info, base_dir);
+        self.routes = RouteLoader::load_all(self.config.clone(), log, resolver, root_dir_info);
         self.loaded_routes = true;
         Ok(())
     }
@@ -339,7 +337,6 @@ struct RouteLoader<'a> {
     // allocator dropped — global mimalloc
     fs: &'static FileSystem,
     config: RouteConfig,
-    route_dirname_len: u16,
 
     dedupe_dynamic: ArrayHashMap<u32, &'static [u8]>,
     log: &'a mut bun_ast::Log,
@@ -460,17 +457,7 @@ impl<'a> RouteLoader<'a> {
         log: &'a mut bun_ast::Log,
         resolver: &mut R,
         root_dir_info: &DirInfo,
-        base_dir: &[u8],
     ) -> Routes {
-        let mut route_dirname_len: u16 = 0;
-
-        // Call bun_paths directly to avoid the higher-tier bun_resolver dep.
-        let relative_dir = bun_paths::resolve_path::relative(base_dir, &config.dir);
-        if !relative_dir.starts_with(b"..") {
-            route_dirname_len =
-                (relative_dir.len() + usize::from(config.dir[config.dir.len() - 1] != SEP)) as u16;
-        }
-
         let mut this = RouteLoader {
             log,
             fs: resolver.fs(),
@@ -479,9 +466,9 @@ impl<'a> RouteLoader<'a> {
             dedupe_dynamic: ArrayHashMap::new(),
             all_routes: Vec::new(),
             index: None,
-            route_dirname_len,
         };
-        this.load(resolver, root_dir_info, base_dir);
+        let mut public_dir = Vec::new();
+        this.load(resolver, root_dir_info, &mut public_dir);
         if this.all_routes.is_empty() {
             return Routes {
                 static_: this.static_list,
@@ -542,11 +529,15 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
+    /// `public_dir` is the path of `dir_info` below the routes directory, one
+    /// `SEP` + name per level (empty for the routes directory itself). It is
+    /// built from the walk, so it does not depend on how the resolver spelled
+    /// the cached directory paths.
     fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
-        root_dir_info: &DirInfo,
-        base_dir: &[u8],
+        dir_info: &DirInfo,
+        public_dir: &mut Vec<u8>,
     ) {
         let fs = self.fs;
 
@@ -555,7 +546,7 @@ impl<'a> RouteLoader<'a> {
         // under that lock, so iterating it live would walk freed buckets.
         let entry_ptrs: Vec<*mut Fs::Entry> = {
             let _entries_lock = fs.fs.entries_mutex.lock_guard();
-            match root_dir_info.get_entries_const() {
+            match dir_info.get_entries_const() {
                 Some(entries) => entries.data.values().copied().collect(),
                 None => return,
             }
@@ -594,7 +585,11 @@ impl<'a> RouteLoader<'a> {
                     let abs_parts = [entry.dir(), entry.base()];
                     if let Some(dir_info) = resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
                     {
-                        self.load(resolver, &dir_info, base_dir);
+                        let parent_len = public_dir.len();
+                        public_dir.push(SEP);
+                        public_dir.extend_from_slice(entry.base());
+                        self.load(resolver, &dir_info, public_dir);
+                        public_dir.truncate(parent_len);
                     }
                 }
 
@@ -607,32 +602,10 @@ impl<'a> RouteLoader<'a> {
 
                     for _extname in self.config.extensions.iter() {
                         if &extname[1..] == _extname.as_ref() {
-                            // `entry.dir()` is `base_dir` or a subdirectory of it, cached
-                            // with or without a trailing slash depending on which resolver
-                            // spelled it first (`base_dir` always has one). Both spellings
-                            // trim to the same `public_dir`.
-                            let entry_dir = entry.dir();
-                            debug_assert!(entry_dir.len() + 1 >= base_dir.len());
-                            if entry_dir.len() >= base_dir.len() {
-                                debug_assert!(bun_paths::resolve_path::is_sep_any(
-                                    entry_dir[base_dir.len() - 1]
-                                ));
-                            }
-
-                            // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
-                            let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
-
                             // SAFETY: `entry_ptr` is EntryStore-owned (process
                             // lifetime) with no other live `&mut` borrow here.
                             let route = unsafe {
-                                Route::parse(
-                                    entry.base(),
-                                    extname,
-                                    entry_ptr,
-                                    self.log,
-                                    public_dir,
-                                    self.route_dirname_len,
-                                )
+                                Route::parse(entry.base(), extname, entry_ptr, self.log, public_dir)
                             };
                             if let Some(route) = route {
                                 self.append_route(route);
@@ -714,6 +687,9 @@ pub struct Route {
 impl Route {
     pub(crate) const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
+    /// `public_dir_` is the file's directory below the routes directory,
+    /// empty for a file in the routes directory itself.
+    ///
     /// # Safety
     /// `entry` must point to a live `Fs::Entry` (EntryStore-owned) with no
     /// other active `&mut` borrow for the duration of the call. `base_` and
@@ -724,7 +700,6 @@ impl Route {
         entry: *mut Fs::Entry,
         log: &mut bun_ast::Log,
         public_dir_: &[u8],
-        routes_dirname_len: u16,
     ) -> Option<Route> {
         // NOTE: `entry` is a raw `*mut Entry`
         // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
@@ -792,8 +767,6 @@ impl Route {
             while name.len() > 1 && name[name.len() - 1] == b'/' {
                 name = &name[0..name.len() - 1];
             }
-
-            name = &name[routes_dirname_len as usize..];
 
             if name.ends_with(b"/index") {
                 name = &name[0..name.len() - 6];

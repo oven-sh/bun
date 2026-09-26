@@ -174,11 +174,46 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread, for an existing project-local store entry.
     pub(crate) fn start_relink_task(&mut self, entry_id: StoreEntryId) {
-        self.tasks[entry_id.get() as usize].relink = Relink::Pending;
+        let newly_trusted = self.is_newly_trusted(entry_id);
+        let task = &mut self.tasks[entry_id.get() as usize];
+        task.relink = Relink::Pending;
+        task.newly_trusted = newly_trusted;
         // .monotonic is okay because the task isn't running yet.
         self.store.entries.items_step()[entry_id.get() as usize]
             .store(Step::SymlinkDependencies as u32, Ordering::Relaxed);
         self.start_task(entry_id);
+    }
+
+    /// `--trust` names this entry's package, or its `trustedDependencies` entry
+    /// was added since the lockfile was last saved. The store directory already
+    /// exists, so the relink pass must continue into the lifecycle-script steps
+    /// or the scripts blocked on the earlier install never run.
+    /// `Step::RunPreinstall` still decides whether it is trusted and has scripts.
+    fn is_newly_trusted(&self, entry_id: StoreEntryId) -> bool {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        if self
+            .trusted_dependencies_from_update_requests
+            .contains(&pkg_id)
+        {
+            return true;
+        }
+
+        let added = &self.manager().summary.added_trusted_dependencies;
+        if added.count() == 0 {
+            return false;
+        }
+        let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+        if dep_id == invalid_dependency_id {
+            return false;
+        }
+        let lockfile = self.lockfile();
+        let dep = &lockfile.buffers.dependencies[dep_id as usize];
+        added
+            .get(&(dep.name_hash as TruncatedPackageNameHash))
+            .is_some_and(|added| {
+                *added.name == *dep.name.slice(lockfile.buffers.string_bytes.as_slice())
+            })
     }
 
     pub(crate) fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
@@ -662,6 +697,10 @@ pub struct Task {
 
     pub(crate) result: Result,
     pub(crate) relink: Relink,
+    /// Set with `relink`, see `Installer::is_newly_trusted`. The relink pass
+    /// continues into the lifecycle-script steps instead of stopping once the
+    /// dependency symlinks are verified.
+    pub(crate) newly_trusted: bool,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
@@ -785,7 +824,7 @@ impl Task {
             Step::SymlinkDependencies => Step::CheckIfBlocked,
             Step::CheckIfBlocked => Step::SymlinkDependencyBinaries,
             Step::SymlinkDependencyBinaries => {
-                if self.relink == Relink::Off {
+                if self.relink == Relink::Off || self.newly_trusted {
                     Step::RunPreinstall
                 } else {
                     Step::Done
@@ -1496,13 +1535,16 @@ impl Task {
                     };
 
                     if relinking {
-                        if !changed {
+                        if changed {
+                            self.relink = Relink::Changed;
+                        } else {
                             self.relink = Relink::Unchanged;
-                            entry_steps[self.entry_id.get() as usize]
-                                .store(Step::Done as u32, Ordering::Release);
-                            return Ok(Yield::Done);
+                            if !self.newly_trusted {
+                                entry_steps[self.entry_id.get() as usize]
+                                    .store(Step::Done as u32, Ordering::Release);
+                                return Ok(Yield::Done);
+                            }
                         }
-                        self.relink = Relink::Changed;
                     } else if installer.entry_uses_global_store(self.entry_id) {
                         match installer.link_project_to_global_store(self.entry_id) {
                             sys::Result::Ok(()) => {}

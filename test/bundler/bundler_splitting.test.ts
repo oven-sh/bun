@@ -736,6 +736,110 @@ describe("bundler", () => {
     run: { file: "/out/api/index.js", stdout: "out/api util\nroute util" },
   });
 
+  // Tree shaking may drop each of these when it is unused. Each still reads what setup.js wrote.
+  for (const [name, shared, extra] of [
+    ["Typeof", `export const value = typeof APP !== "undefined";`, {}],
+    ["PureCall", `function read() { return !!globalThis.APP.name; }\nexport const value = /* @__PURE__ */ read();`, {}],
+    [
+      "NoSideEffectsPackage",
+      `export { value } from "pkg";`,
+      {
+        "/node_modules/pkg/package.json": `{ "name": "pkg", "sideEffects": false, "main": "index.js" }`,
+        "/node_modules/pkg/index.js": `export const value = !!globalThis.APP.name;`,
+      },
+    ],
+  ] as const) {
+    itBundled("splitting/EntrySetupImportRunsBeforeSharedCodeThatCanBeDropped/" + name, {
+      files: {
+        "/index.js": /* js */ `
+          import "./setup.js";
+          import { value } from "./shared.js";
+          console.log("index", value);
+          import("./settings.js");
+        `,
+        "/setup.js": `globalThis.APP = { name: "app" };`,
+        "/shared.js": shared,
+        "/settings.js": `import { value } from "./shared.js"; console.log("settings", value);`,
+        ...extra,
+      },
+      entryPoints: ["/index.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/index.js", stdout: "index true\nsettings true" },
+    });
+  }
+  itBundled("splitting/SharedCodeRunsAfterChunkThatItImports", {
+    files: {
+      "/a.js": /* js */ `
+        import { S1 } from "./store1.js";
+        import { S2 } from "./store2.js";
+        console.log("a", S1, S2);
+        import("./lazy.js");
+      `,
+      "/b.js": `import "./globals.js"; console.log("b", globalThis.G.v);`,
+      "/globals.js": `console.log("globals"); globalThis.G = { v: 1 };`,
+      "/store1.js": `console.log("store1"); export const S1 = 1;`,
+      "/store2.js": `import "./globals.js"; console.log("store2", globalThis.G.v); export const S2 = 2;`,
+      "/lazy.js": /* js */ `
+        import { S1 } from "./store1.js";
+        import { S2 } from "./store2.js";
+        console.log("lazy", S1, S2);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/a.js", stdout: "globals\nstore1\nstore2 1\na 1 2\nlazy 1 2" },
+  });
+  itBundled("splitting/EntryFileAfterOneThatStaysAlsoStays", {
+    files: {
+      "/index.js": /* js */ `
+        import "./a.js";
+        import "./b.js";
+        import { Store } from "./store.js";
+        export const name = "index";
+        console.log("index", new Store().name);
+        import("./lazy.js");
+      `,
+      "/a.js": `import { name } from "./index.js"; console.log("a"); globalThis.A = { get: () => name };`,
+      "/b.js": `console.log("b", typeof globalThis.A.get);`,
+      "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+      "/lazy.js": `import { Store } from "./store.js"; console.log("lazy", new Store().name);`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "store\na\nb function\nindex s\nlazy s" },
+  });
+  itBundled("splitting/EntryFilesAfterSharedCodeStay", {
+    files: {
+      ...setupBeforeShared(""),
+      "/index.js": /* js */ `
+        import "./setup.js";
+        import { Store } from "./store.js";
+        import "./after.js";
+        import { declared } from "./declared.js";
+        console.log("index", new Store().name, declared());
+        import("./settings.js");
+      `,
+      "/after.js": `console.log("after");`,
+      "/declared.js": `export function declared() { return "declared"; }`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").toContain(`"after"`);
+      api.expectFile("/out/index.js").toContain(`"declared"`);
+      api.expectFile("/out/index.js").not.toContain("globalThis.APP");
+    },
+    run: { file: "/out/index.js", stdout: "after\nindex app declared\nsettings app" },
+  });
+
   itFolds("splitting/FoldsSharedIntoEntry", {
     files: {
       "/entry.js": /* js */ `
@@ -4118,6 +4222,42 @@ describe("bundler", () => {
       api.expectFile("/out/index.js").not.toContain("globalThis.devtools");
     },
     run: { file: "/test.js", stdout: 'util\nindex util\n["modulepreload index.js"]\ndevtools dep' },
+  });
+  itBundled("splitting/ModulePreloadFromChunkThatRunsBeforeSecondEntry", {
+    files: Object.fromEntries(
+      ["a", "b"].flatMap(e => [
+        [
+          `/${e}.js`,
+          `import "./boot-${e}.js"; import { util } from "./util-${e}.js"; console.log("${e}", util);
+           export const later = [() => import("./route-${e}.js"), () => import("./other-${e}.js")];`,
+        ],
+        [`/boot-${e}.js`, `globalThis.dev_${e} = import("./devtools-${e}.js");`],
+        [`/util-${e}.js`, `console.log("util-${e}"); export const util = "util-${e}";`],
+        [`/route-${e}.js`, `import { util } from "./util-${e}.js"; console.log("route", util);`],
+        [`/devtools-${e}.js`, `import { dep } from "./dep-${e}.js"; console.log("devtools-${e}", dep);`],
+        [`/other-${e}.js`, `import { dep } from "./dep-${e}.js"; console.log("other", dep);`],
+        [`/dep-${e}.js`, `export const dep = "dep-${e}";`],
+      ]),
+    ),
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        await import("./out/a.js");
+        await dev_a;
+        console.log("links", links.length);
+        await import("./out/b.js");
+        await dev_b;
+        console.log("links", links.length);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "util-a\na util-a\ndevtools-a dep-a\nlinks 1\nutil-b\nb util-b\ndevtools-b dep-b\nlinks 2",
+    },
   });
   itBundled("splitting/ModulePreloadSyntaxShapes", {
     files: {

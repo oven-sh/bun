@@ -320,7 +320,7 @@ impl WalkPlan {
 }
 
 #[derive(Clone, Copy)]
-enum Edge {
+pub(crate) enum Edge {
     /// `file` runs here, under the same load.
     Import(IndexInt),
     /// A split `require()` in a part that runs at load: the chunk of `file` runs here.
@@ -330,7 +330,7 @@ enum Edge {
 }
 
 /// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
-fn for_each_edge(
+pub(crate) fn for_each_edge(
     c: &LinkerContext,
     source_index: IndexInt,
     runs: bool,
@@ -837,7 +837,6 @@ fn reached_chunks_in_order(
 
     let mut reached: Vec<u32> = Vec::new();
     let mut reached_set = AutoBitSet::init_empty(chunks_len)?;
-    // Holds files of a pinned entry point's chunk, which ran after every chunk that it imports.
     let mut last = AutoBitSet::init_empty(chunks_len)?;
     let mut visited = AutoBitSet::init_empty(c.graph.files.len())?;
     let mut stack: Vec<Frame> = Vec::new();
@@ -852,9 +851,9 @@ fn reached_chunks_in_order(
                     if other == u32::MAX || other == chunk_index {
                         continue;
                     }
-                    if c.left_entry_chunk
+                    if c.runs_last
                         .as_ref()
-                        .is_some_and(|left| left.is_set(source_index as usize))
+                        .is_some_and(|files| files.is_set(source_index as usize))
                     {
                         last.set(other as usize);
                     }

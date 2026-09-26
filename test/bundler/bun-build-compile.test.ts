@@ -3367,30 +3367,34 @@ describe("portable target", () => {
       return { stdout, stderr, exitCode };
     }
 
-    test("the result is one file, a packed image with the graph in its image", () => {
-      expect(readdirSync(join(String(dir), "out"))).toEqual(["app"]);
-      expect(statSync(app).mode & 0o777).toBe(0o755);
+    test(
+      "the result is one file, a packed image with the graph in its image",
+      () => {
+        expect(readdirSync(join(String(dir), "out"))).toEqual(["app"]);
+        expect(statSync(app).mode & 0o777).toBe(0o755);
 
-      const { checks } = inspect(appBytes, { path: app });
-      expect(checks.filter(check => !check.ok)).toEqual([]);
+        const { checks } = inspect(appBytes, { path: app });
+        expect(checks.filter(check => !check.ok)).toEqual([]);
 
-      const toc = decodeToc(appBytes)!;
-      expect(toc).toEqual({
-        ...templateToc,
-        fileSize: appBytes.length,
-        imageLen: expect.any(Number),
-        codeLen: expect.any(Number),
-        sigOff: expect.any(Number),
-        sigLen: expect.any(Number),
-      });
-      expect(toc.imageLen).toBeGreaterThan(templateToc.imageLen);
-      // The modules are in the image, not behind it.
-      const image = appBytes.subarray(toc.imageOff, toc.imageOff + toc.imageLen);
-      expect(image.includes("TWO MODULES".toLowerCase())).toBe(true);
-      expect(image.includes("the embedded file\n")).toBe(true);
-      expect(image.includes("the worker got ")).toBe(true);
-      expect(appBytes.subarray(toc.imageOff + toc.imageLen).includes("the worker got ")).toBe(false);
-    });
+        const toc = decodeToc(appBytes)!;
+        expect(toc).toEqual({
+          ...templateToc,
+          fileSize: appBytes.length,
+          imageLen: expect.any(Number),
+          codeLen: expect.any(Number),
+          sigOff: expect.any(Number),
+          sigLen: expect.any(Number),
+        });
+        expect(toc.imageLen).toBeGreaterThan(templateToc.imageLen);
+        // The modules are in the image, not behind it.
+        const image = appBytes.subarray(toc.imageOff, toc.imageOff + toc.imageLen);
+        expect(image.includes("TWO MODULES".toLowerCase())).toBe(true);
+        expect(image.includes("the embedded file\n")).toBe(true);
+        expect(image.includes("the worker got ")).toBe(true);
+        expect(appBytes.subarray(toc.imageOff + toc.imageLen).includes("the worker got ")).toBe(false);
+      },
+      imageTimeout,
+    );
 
     test("what is in front of the image is the template's, but for the length of the image in the script", () => {
       const toc = decodeToc(appBytes)!;
@@ -3400,54 +3404,66 @@ describe("portable target", () => {
       expect(appBytes.toString("latin1", 0, from)).toContain(`image_len=${toc.imageLen}\n`);
     });
 
-    test.each(shells)("%s starts it: arguments, standard input and the exit code pass through", async shell => {
-      const { stdout, stderr, exitCode } = await run(
-        [shell, app, "first", "the second", "--third=3"],
-        { PORTABLE_EXIT: "7" },
-        "from standard input",
-      );
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({
-        shout: "TWO MODULES!",
-        notes: "the embedded file\n",
-        worker: "the worker got ping",
-        args: ["first", "the second", "--third=3"],
-        stdin: "from standard input",
-        platform: "linux",
-        windows: "no",
-        arch: `arch-is-${arch}`,
-        main: expect.stringMatching(/^\/\$bunfs\/root\/app(\.ts)?$/),
-        execPath: realpathSync(app),
-        self: null,
-      });
-      expect(exitCode).toBe(7);
-    });
+    test.each(shells)(
+      "%s starts it: arguments, standard input and the exit code pass through",
+      async shell => {
+        const { stdout, stderr, exitCode } = await run(
+          [shell, app, "first", "the second", "--third=3"],
+          { PORTABLE_EXIT: "7" },
+          "from standard input",
+        );
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          shout: "TWO MODULES!",
+          notes: "the embedded file\n",
+          worker: "the worker got ping",
+          args: ["first", "the second", "--third=3"],
+          stdin: "from standard input",
+          platform: "linux",
+          windows: "no",
+          arch: `arch-is-${arch}`,
+          main: expect.stringMatching(/^\/\$bunfs\/root\/app(\.ts)?$/),
+          execPath: realpathSync(app),
+          self: null,
+        });
+        expect(exitCode).toBe(7);
+      },
+      imageTimeout,
+    );
 
-    test.skipIf(!shells.length)("a relative path and another working directory", async () => {
-      await using proc = Bun.spawn({
-        cmd: [shells[0], "./app"],
-        env,
-        cwd: join(String(dir), "out"),
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toMatchObject({ execPath: realpathSync(app), args: [] });
-      expect(exitCode).toBe(0);
-    });
+    test.skipIf(!shells.length)(
+      "a relative path and another working directory",
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [shells[0], "./app"],
+          env,
+          cwd: join(String(dir), "out"),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toMatchObject({ execPath: realpathSync(app), args: [] });
+        expect(exitCode).toBe(0);
+      },
+      imageTimeout,
+    );
 
-    test.skipIf(!shells.length)("the program starts itself by process.execPath", async () => {
-      const { stdout, stderr, exitCode } = await run([shells[0], app, "--start-itself"]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout).self).toEqual({
-        stdout: { args: ["from", "the parent"], execPath: realpathSync(app) },
-        stderr: "",
-        exitCode: 0,
-      });
-      expect(exitCode).toBe(0);
-    });
+    test.skipIf(!shells.length)(
+      "the program starts itself by process.execPath",
+      async () => {
+        const { stdout, stderr, exitCode } = await run([shells[0], app, "--start-itself"]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout).self).toEqual({
+          stdout: { args: ["from", "the parent"], execPath: realpathSync(app) },
+          stderr: "",
+          exitCode: 0,
+        });
+        expect(exitCode).toBe(0);
+      },
+      imageTimeout,
+    );
 
     test.skipIf(!shells.length)(
       "process.platform is answered when the program runs, process.arch when it is built",
@@ -3462,6 +3478,7 @@ describe("portable target", () => {
         expect(appBytes.includes(`"arch-is-" + "${arch}"`)).toBe(true);
         expect(appBytes.includes("platform: process.platform")).toBe(true);
       },
+      imageTimeout,
     );
 
     test(
@@ -3650,20 +3667,24 @@ describe("portable target", () => {
       imageTimeout,
     );
 
-    test("a template for another processor is refused", async () => {
-      const { stderr, exitCode } = await build(String(dir), [
-        `--target=bun-portable-${otherArch}`,
-        `--compile-executable-path=${template}`,
-        "app.ts",
-        "--outfile",
-        "other/app",
-      ]);
-      const named = `bun-portable-${otherArch === "arm64" ? "aarch64" : "x64"}-v${Bun.version.split("-")[0]}`;
-      expect(stderr).toContain(
-        `${JSON.stringify(template)} holds an image for ${arch}, '${named}' is for another processor`,
-      );
-      expect(existsSync(join(String(dir), "other", "app"))).toBe(false);
-      expect(exitCode).toBe(1);
-    });
+    test(
+      "a template for another processor is refused",
+      async () => {
+        const { stderr, exitCode } = await build(String(dir), [
+          `--target=bun-portable-${otherArch}`,
+          `--compile-executable-path=${template}`,
+          "app.ts",
+          "--outfile",
+          "other/app",
+        ]);
+        const named = `bun-portable-${otherArch === "arm64" ? "aarch64" : "x64"}-v${Bun.version.split("-")[0]}`;
+        expect(stderr).toContain(
+          `${JSON.stringify(template)} holds an image for ${arch}, '${named}' is for another processor`,
+        );
+        expect(existsSync(join(String(dir), "other", "app"))).toBe(false);
+        expect(exitCode).toBe(1);
+      },
+      imageTimeout,
+    );
   });
 });

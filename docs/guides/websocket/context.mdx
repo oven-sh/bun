@@ -37,7 +37,7 @@ Bun.serve({
 
 ---
 
-It's common to read cookies/headers from the incoming request to identify the connecting client.
+It's common to read cookies/headers from the incoming request to identify the connecting client. When doing so, validate the `Origin` header before calling `server.upgrade()`. Depending on the cookie's `SameSite` attribute, browsers can attach session cookies to cross-origin WebSocket handshakes, so without this check another website may be able to open a socket authenticated as the current user ([cross-site WebSocket hijacking](https://portswigger.net/web-security/websockets/cross-site-websocket-hijacking)).
 
 ```ts server.ts icon="/icons/typescript.svg"
 type WebSocketData = {
@@ -46,8 +46,16 @@ type WebSocketData = {
   userId: string;
 };
 
+const ALLOWED_ORIGINS = new Set(["https://my-app.example"]);
+
 Bun.serve({
   async fetch(req, server) {
+    // reject cross-origin upgrade attempts before reading cookies
+    const origin = req.headers.get("origin");
+    if (!origin || !ALLOWED_ORIGINS.has(origin)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
     // use a library to parse cookies
     const cookies = parseCookies(req.headers.get("Cookie"));
     const token = cookies["X-Token"];

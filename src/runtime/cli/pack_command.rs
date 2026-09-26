@@ -31,9 +31,7 @@ use bun_core::{ZStr, strings};
 use bun_paths::resolve_path;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
-use bun_sys::{
-    self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
-};
+use bun_sys::{self, Dir, Fd, FdDirExt as _, File, dir_iterator as DirIterator};
 
 // ───────────────────────────────────────────────────────────────────────────
 // local shims for upstream-stub gaps
@@ -791,15 +789,14 @@ fn add_entire_tree(
     Ok(())
 }
 
+/// For iteration, and never through a symlink that replaced a directory the walk listed.
+pub(crate) const WALK_DIR_OPTIONS: bun_sys::OpenDirOptions = bun_sys::OpenDirOptions {
+    iterate: true,
+    no_follow: true,
+};
+
 fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
-    match dir_open_dir_z(
-        dir,
-        entry_name_z(entry_name, entry_subpath),
-        bun_sys::OpenDirOptions {
-            iterate: true,
-            ..Default::default()
-        },
-    ) {
+    match dir.open_dir(entry_name, WALK_DIR_OPTIONS) {
         Ok(d) => d,
         Err(err) => {
             Output::err(
@@ -809,6 +806,152 @@ fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
             );
             Global::crash();
         }
+    }
+}
+
+/// Windows resolves a `\` inside a package.json `bin` path as a separator too.
+#[cfg(windows)]
+const PATH_SEPARATORS: &[u8] = b"/\\";
+#[cfg(not(windows))]
+const PATH_SEPARATORS: &[u8] = b"/";
+
+/// The non-empty components of a relative path, `.` dropped.
+fn path_components<'a>(path: &'a [u8]) -> impl Iterator<Item = &'a [u8]> + 'a {
+    strings::tokenize_any(path, PATH_SEPARATORS).filter(|c| !strings::eql(c, b"."))
+}
+
+/// `..` is the one component that leaves the directory a walk started from.
+fn check_path_component(name: &[u8]) -> bun_sys::Maybe<()> {
+    if strings::eql(name, b"..") {
+        return Err(
+            bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::open).with_path(name),
+        );
+    }
+    Ok(())
+}
+
+/// Opens `sub_path` below `root` one component at a time, never through a symlink.
+pub(crate) fn open_walk_dir_beneath(root: &Dir, sub_path: &[u8]) -> bun_sys::Maybe<Dir> {
+    let mut dir: Option<Dir> = None;
+    for component in path_components(sub_path) {
+        check_path_component(component)?;
+        let next = dir
+            .as_ref()
+            .unwrap_or(root)
+            .open_dir(component, WALK_DIR_OPTIONS)?;
+        dir = Some(next);
+    }
+    // `.` or empty names the root itself, which the tree walk covers: report it absent, not twice.
+    dir.ok_or_else(|| bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::open))
+}
+
+/// Opens tarball members below the root one component at a time, never through a symlink.
+pub(crate) struct PackFileOpener {
+    /// Directory of the last member, relative to the root.
+    dir_path: Vec<u8>,
+    /// (end offset in `dir_path`, open directory) per component; sorted input opens each once.
+    dirs: Vec<(usize, Dir)>,
+}
+
+impl PackFileOpener {
+    /// Passed through, not listed.
+    const DIR_OPTIONS: bun_sys::OpenDirOptions = bun_sys::OpenDirOptions {
+        iterate: false,
+        no_follow: true,
+    };
+
+    /// `O_NONBLOCK` so a FIFO fails the type check in `open()` below instead of blocking.
+    #[cfg(not(windows))]
+    const FILE_FLAGS: i32 =
+        bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
+    #[cfg(windows)]
+    const FILE_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW;
+
+    /// `openat(O_NOFOLLOW)`; Windows opens a link itself under that flag, so it is refused after.
+    fn open_file_no_follow(dir: Fd, name: &[u8]) -> bun_sys::Maybe<File> {
+        let file = File::openat(dir, name, Self::FILE_FLAGS, 0)?;
+        #[cfg(windows)]
+        let file = File::from_fd(bun_sys::finish_no_follow_open(
+            file.into_raw(),
+            name,
+            || {
+                File::openat(dir, name, Self::FILE_FLAGS & !bun_sys::O::NOFOLLOW, 0)
+                    .map(File::into_raw)
+            },
+        )?);
+        Ok(file)
+    }
+
+    pub(crate) fn new() -> PackFileOpener {
+        PackFileOpener {
+            dir_path: Vec::new(),
+            dirs: Vec::new(),
+        }
+    }
+
+    /// Fails `ELOOP`/`ENOTDIR` at a symlink, `EISDIR` at a directory, `ENODEV` at another non-file.
+    pub(crate) fn open(
+        &mut self,
+        root: &Dir,
+        path: &ZStr,
+    ) -> bun_sys::Maybe<(File, bun_sys::Stat)> {
+        let bytes = path.as_bytes();
+        let (dirname, basename) = match strings::last_index_of_any(bytes, PATH_SEPARATORS) {
+            Some(slash) => (&bytes[..slash], &bytes[slash + 1..]),
+            None => (&b""[..], bytes),
+        };
+        let dir = self.open_dir(root, dirname)?;
+        let file = Self::open_file_no_follow(dir, basename).map_err(|err| err.with_path(bytes))?;
+        let stat = file.stat().map_err(|err| err.with_path(bytes))?;
+        match bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) {
+            bun_sys::FileKind::File => Ok((file, stat)),
+            bun_sys::FileKind::Directory => Err(bun_sys::Error::from_code(
+                bun_sys::E::EISDIR,
+                bun_sys::Tag::open,
+            )
+            .with_path(bytes)),
+            _ => Err(
+                bun_sys::Error::from_code(bun_sys::E::ENODEV, bun_sys::Tag::open).with_path(bytes),
+            ),
+        }
+    }
+
+    fn open_dir(&mut self, root: &Dir, dirname: &[u8]) -> bun_sys::Maybe<Fd> {
+        // Keep the open directories that `dirname` starts with.
+        let mut reused = 0usize;
+        let mut offset = 0usize;
+        for component in path_components(dirname) {
+            let end = offset + component.len();
+            match self.dirs.get(reused) {
+                Some(&(cached_end, _))
+                    if cached_end == end
+                        && strings::eql(&self.dir_path[offset..end], component) =>
+                {
+                    reused += 1;
+                    offset = end + 1;
+                }
+                _ => break,
+            }
+        }
+        self.dirs.truncate(reused);
+        self.dir_path
+            .truncate(self.dirs.last().map_or(0, |&(end, _)| end));
+
+        let mut current = match self.dirs.last() {
+            Some((_, dir)) => dir.fd(),
+            None => root.fd(),
+        };
+        for component in path_components(dirname).skip(reused) {
+            check_path_component(component)?;
+            let dir = Dir::borrow(&current).open_dir(component, Self::DIR_OPTIONS)?;
+            current = dir.fd();
+            if !self.dir_path.is_empty() {
+                self.dir_path.push(b'/');
+            }
+            self.dir_path.extend_from_slice(component);
+            self.dirs.push((self.dir_path.len(), dir));
+        }
+        Ok(current)
     }
 }
 
@@ -847,20 +990,13 @@ fn iterate_bundled_deps(
         return Ok(bundled_pack_queue);
     }
 
-    let dir: Dir = match dir_open_dir_z(
-        root_dir,
-        ZStr::from_static(b"node_modules\0"),
-        bun_sys::OpenDirOptions {
-            iterate: true,
-            ..Default::default()
-        },
-    ) {
+    let dir: Dir = match root_dir.open_dir(b"node_modules", WALK_DIR_OPTIONS) {
         Ok(d) => d,
         Err(err) => {
             // ignore node_modules if it isn't a directory, or doesn't exist
             if matches!(
-                err,
-                crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR | bun_errno::SystemErrno::ENOENT)
+                err.get_errno(),
+                bun_sys::E::ENOTDIR | bun_sys::E::ENOENT | bun_sys::E::ELOOP
             ) {
                 return Ok(bundled_pack_queue);
             }
@@ -892,22 +1028,18 @@ fn iterate_bundled_deps(
 
         if strings::starts_with_char(entry_name, b'@') {
             let scope_name = entry_name;
-            let scope_subpath = entry_subpath(b"node_modules", scope_name)?;
 
-            let scope_dir: Dir = match dir_open_dir_z(
-                root_dir,
-                &scope_subpath,
-                bun_sys::OpenDirOptions {
-                    iterate: true,
-                    ..Default::default()
-                },
-            ) {
+            let scope_dir: Dir = match dir.open_dir(scope_name, WALK_DIR_OPTIONS) {
                 Ok(d) => d,
                 Err(_) => continue,
             };
 
             let mut scope_iter = DirIterator::iterate(Fd::from_std_dir(&scope_dir));
             while let Some(scope_entry) = scope_iter.next().ok().flatten() {
+                if scope_entry.kind != bun_sys::FileKind::Directory {
+                    continue;
+                }
+
                 let dep_name = entry_subpath(scope_name, scope_entry.name.slice_u8())?;
 
                 let Some(dep) = bundled_deps.iter_mut().find(|dep| {
@@ -926,7 +1058,7 @@ fn iterate_bundled_deps(
                     continue;
                 }
 
-                let subdir = open_subdir(&dir, dep_name.as_bytes(), &dep_subpath);
+                let subdir = open_subdir(&scope_dir, scope_entry.name.slice_u8(), &dep_subpath);
                 add_bundled_dep(
                     stats,
                     log,
@@ -1109,14 +1241,7 @@ fn add_bundled_dep(
                                 // starting at `node_modules/is-even/node_modules/is-odd`
                                 let mut dep_dir_depth: usize = bundled_root_depth + 2;
 
-                                match dir_open_dir_z(
-                                    root_dir,
-                                    dep_subpath,
-                                    bun_sys::OpenDirOptions {
-                                        iterate: true,
-                                        ..Default::default()
-                                    },
-                                ) {
+                                match open_walk_dir_beneath(root_dir, dep_subpath.as_bytes()) {
                                     Ok(dep_dir) => {
                                         let dedupe_entry =
                                             dedupe.get_or_put(dep_subpath.as_bytes())?;
@@ -1155,13 +1280,9 @@ fn add_bundled_dep(
                                                 ZStr::from_buf(&dep_subpath_buf[..], parent_len);
                                             remain_end = node_modules_start;
 
-                                            let parent_dep_dir = match dir_open_dir_z(
+                                            let parent_dep_dir = match open_walk_dir_beneath(
                                                 root_dir,
-                                                parent_dep_subpath,
-                                                bun_sys::OpenDirOptions {
-                                                    iterate: true,
-                                                    ..Default::default()
-                                                },
+                                                parent_dep_subpath.as_bytes(),
                                             ) {
                                                 Ok(d) => d,
                                                 Err(_) => continue,
@@ -1830,7 +1951,7 @@ fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader
 /// would create.
 ///
 /// `unbuffered_reader` is a *view* of a fd that the call site owns (e.g. via
-/// a `CloseOnDrop` or a `File` whose Drop fires after the read loop). The
+/// a `File` whose Drop fires after the read loop). The
 /// previous fd may already be closed; disarm its `File::Drop` before
 /// overwriting so we never close a stale (potentially-recycled) fd.
 #[inline]
@@ -1909,14 +2030,7 @@ pub(crate) fn published_files(
                 })?;
             }
             BinType::Dir => {
-                let bin_dir = match dir_open_dir_z(
-                    root_dir,
-                    &bin.path,
-                    bun_sys::OpenDirOptions {
-                        iterate: true,
-                        ..Default::default()
-                    },
-                ) {
+                let bin_dir = match open_walk_dir_beneath(root_dir, bin.path.as_bytes()) {
                     Ok(d) => d,
                     Err(_) => {
                         // non-existent bins are ignored
@@ -2619,14 +2733,11 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 .complete_one();
         }
 
+        let mut opener = PackFileOpener::new();
+
         while let Some(item) = pack_queue.remove_or_null() {
-            let file = match bun_sys::openat(
-                Fd::from_std_dir(&root_dir),
-                &item.path,
-                bun_sys::O::RDONLY,
-                0,
-            ) {
-                Ok(f) => f,
+            let (file, stat) = match opener.open(&root_dir, &item.path) {
+                Ok(opened) => opened,
                 Err(err) => {
                     if item.optional {
                         ctx.stats.total_files -= 1;
@@ -2646,34 +2757,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 }
             };
 
-            let fd: Fd = match file
-                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
-            {
-                Ok(fd) => fd,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to open file: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-
-            let _close_fd = CloseOnDrop::new(fd);
-
-            let stat = match bun_sys::sys_uv::fstat(fd) {
-                Ok(s) => s,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to stat file: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-
             pack_list.push(PackListEntry {
                 subpath: ZBox::from_bytes(item.path.as_bytes()),
                 size: usize::try_from(stat.st_size).expect("int cast"),
@@ -2681,7 +2764,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
             entry = add_archive_entry(
                 ctx,
-                fd,
+                file.handle,
                 &stat,
                 &item.path,
                 &mut read_buf,
@@ -2703,8 +2786,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         }
 
         while let Some(item) = bundled_pack_queue.remove_or_null() {
-            let file = match root_dir.open_file(&item.path, bun_sys::O::RDONLY, 0) {
-                Ok(f) => f,
+            let (file, stat) = match opener.open(&root_dir, &item.path) {
+                Ok(opened) => opened,
                 Err(err) => {
                     if item.optional {
                         ctx.stats.total_files -= 1;
@@ -2718,17 +2801,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     Output::err(
                         err,
                         "failed to open file: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-            let stat = match file.stat() {
-                Ok(s) => s,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to stat file: \"{}\"",
                         format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
                     );
                     Global::crash();
@@ -3855,9 +3927,10 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
             "package.json",
         );
 
+        let mut opener = PackFileOpener::new();
         while let Some(item) = pack_queue.remove_or_null() {
-            let stat = match bun_sys::fstatat(root_dir, &item.path) {
-                Ok(s) => s,
+            let stat = match opener.open(root_dir_std, &item.path) {
+                Ok((_, stat)) => stat,
                 Err(err) => {
                     if item.optional {
                         ctx.stats.total_files -= 1;

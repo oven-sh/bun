@@ -140,6 +140,7 @@ pub use bun_windows_sys::FILE_ATTRIBUTE_HIDDEN;
 pub use bun_windows_sys::FILE_ATTRIBUTE_NORMAL;
 pub use bun_windows_sys::FILE_ATTRIBUTE_READONLY;
 pub use bun_windows_sys::FILE_ATTRIBUTE_REPARSE_POINT;
+pub use bun_windows_sys::FILE_ATTRIBUTE_TAG_INFORMATION;
 pub use bun_windows_sys::FILE_ATTRIBUTE_TEMPORARY;
 pub use bun_windows_sys::FILE_BASIC_INFORMATION;
 pub use bun_windows_sys::FILE_DEVICE_CONSOLE;

@@ -635,7 +635,7 @@ server.listen(0, '127.0.0.1', () => {
   test.concurrent(
     "sending an http.Server throws ERR_INVALID_HANDLE_TYPE instead of silently dropping the handle",
     async () => {
-      // An http.Server is a net.Server, but it listens through Bun.serve and has no handle to pass.
+      // An http.Server listens through Bun.serve and has no handle to pass.
       using dir = tempDir("ipc-handle-http-server", {
         "parent.js": `
 const { fork } = require('node:child_process');

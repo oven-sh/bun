@@ -303,7 +303,6 @@ interface Server extends NodeHTTPServer {
 }
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
-  if (!linkedToNetServer) linkToNetServer();
   EventEmitter.$call(this);
   this.on("listening", setupConnectionsTracking);
   this.on("connection", connectionListener);
@@ -423,16 +422,6 @@ function Server(options, callback): void {
 }
 $toClass(Server, "Server", EventEmitter);
 
-// Node's http.Server extends net.Server. node:net loads lazily, so the chain is linked when the first server is constructed.
-let linkedToNetServer = false;
-function linkToNetServer() {
-  linkedToNetServer = true;
-  const NetServer = require("node:net").Server;
-  Object.setPrototypeOf(Server.prototype, NetServer.prototype);
-  Object.setPrototypeOf(Server, NetServer);
-}
-
-// net.Server's getter reads `_handle`, which a server backed by Bun.serve never sets.
 Object.defineProperty(Server.prototype, "listening", {
   __proto__: null,
   get() {

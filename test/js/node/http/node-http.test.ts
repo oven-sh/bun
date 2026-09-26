@@ -146,18 +146,8 @@ describe("node:http", () => {
       listenResponse.close();
     });
 
-    // https://github.com/oven-sh/bun/issues/4360
-    it("http.Server inherits from net.Server", async () => {
-      expect(http.Server.prototype instanceof net.Server).toBe(true);
-      expect(net.Server.prototype instanceof http.Server).toBe(false);
-      expect(Object.getPrototypeOf(http.Server.prototype)).toBe(net.Server.prototype);
-      expect(Object.getPrototypeOf(http.Server)).toBe(net.Server);
-
+    it("server.listening follows listen() and close()", async () => {
       const server = createServer();
-      expect(server instanceof http.Server).toBe(true);
-      expect(server instanceof net.Server).toBe(true);
-      expect(server instanceof EventEmitter).toBe(true);
-
       expect(server.listening).toBe(false);
       server.listen(0);
       try {

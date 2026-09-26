@@ -340,19 +340,36 @@ fn parse_classic(
     out.root = match materialize_impl(&out.root, source, bump, opts.was_originally_macro) {
         Ok(root) => root,
         Err(e) => {
-            log.add_error_fmt_opts(
-                format_args!("JSON document is too deeply nested"),
-                bun_ast::AddErrorOptions {
-                    source: Some(source),
+            add_too_deeply_nested_error(
+                log,
+                source,
+                bun_ast::Range {
                     loc: out.root.loc,
-                    ..Default::default()
+                    len: 0,
                 },
+                "JSON document",
             );
             return Err(e);
         }
     };
     out.tape = None;
     Ok(out)
+}
+
+/// Logs the depth-limit error at `range`. `what` names the document, as in
+/// `Source::check_parseable_len` ("JSON document", "XML document").
+#[cold]
+pub(crate) fn add_too_deeply_nested_error(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    range: bun_ast::Range,
+    what: &str,
+) {
+    log.add_range_error_fmt(
+        Some(source),
+        range,
+        format_args!("{what} is too deeply nested"),
+    );
 }
 
 impl ParsedJson {
@@ -901,20 +918,25 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
 }
 
 /// Deep-convert an immutable-AST document into the classic `E::Object` / `E::Array` tree.
+///
+/// `what` names the document in the depth-limit error ("JSON document",
+/// "XML document"): the XML parser writes the same tape rows.
 pub fn materialize(
     root: &Expr,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
+    what: &str,
 ) -> crate::Result<Expr> {
     materialize_impl(root, source, bump, false).inspect_err(|_| {
-        log.add_error_fmt_opts(
-            format_args!("Document is too deeply nested"),
-            bun_ast::AddErrorOptions {
-                source: Some(source),
+        add_too_deeply_nested_error(
+            log,
+            source,
+            bun_ast::Range {
                 loc: root.loc,
-                ..Default::default()
+                len: 0,
             },
+            what,
         );
     })
 }
@@ -1706,8 +1728,14 @@ mod tests {
                 let source = bun_ast::Source::init_path_string("fixture.json", doc.as_bytes());
                 let bump = Bump::new();
                 let mut mlog = bun_ast::Log::init();
-                let root =
-                    materialize(p.root.as_ref().unwrap(), &source, &mut mlog, &bump).unwrap();
+                let root = materialize(
+                    p.root.as_ref().unwrap(),
+                    &source,
+                    &mut mlog,
+                    &bump,
+                    "JSON document",
+                )
+                .unwrap();
                 (root.loc, canon_full(&root))
             };
             assert_eq!(full, materialized, "materialized tree differs for {doc:?}");

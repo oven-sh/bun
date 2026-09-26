@@ -15,7 +15,7 @@ bun_core::declare_scope!(const_call, hidden);
 /// `export { x } from` chains longer than this are not followed.
 const MAX_HOPS: u32 = 8;
 /// A function of the imported file can return a call of an import of that file. This many files are parsed inside each other.
-const MAX_DEPTH: u8 = 2;
+const MAX_DEPTH: u8 = 1;
 
 /// One per build: what the exports of each file that an importer asked about return. `None`: the file has no answer.
 #[derive(Default)]

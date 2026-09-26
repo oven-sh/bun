@@ -278,7 +278,7 @@ impl ConstCalls {
     }
 
     /// What importers may fold: only function declarations, which exist before any module runs.
-    fn exports(&self, ast: &js_ast::Ast<'_>, module_scope: &js_ast::Scope) -> ConstCallExports {
+    fn exports(&self, ast: &js_ast::Ast<'_>) -> ConstCallExports {
         let mut exports = ConstCallExports::default();
         let symbols = ast.symbols.as_slice();
         let records = ast.import_records.as_slice();
@@ -286,7 +286,8 @@ impl ConstCalls {
             let symbol = &symbols[export.ref_.inner_index() as usize];
             if let Some(fact) = self.values.get(&export.ref_) {
                 if symbol.kind == SymbolKind::HoistedFunction
-                    && module_scope
+                    && ast
+                        .module_scope
                         .members
                         .get(symbol.original_name.slice())
                         .is_some_and(|member| member.ref_ == export.ref_)
@@ -557,7 +558,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         };
         if self.const_calls_enabled {
-            exports.set(Some(Box::new(calls.exports(ast, self.module_scope()))));
+            exports.set(Some(Box::new(calls.exports(ast))));
         }
     }
 

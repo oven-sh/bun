@@ -40,6 +40,15 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
+// Set by node:_http_server while the body of an accepted Upgrade request arrives: releases its socket.
+const kFinishUpgradeHandoff = Symbol("finishUpgradeHandoff");
+function finishUpgradeHandoff(req) {
+  const finish = req[kFinishUpgradeHandoff];
+  if (finish !== undefined) {
+    req[kFinishUpgradeHandoff] = undefined;
+    finish();
+  }
+}
 
 // node:_http_server registers its pipelined-response machinery here at module
 // initialization, letting internal/http1_server_fallback drive the same
@@ -149,6 +158,7 @@ function emitEOFIncomingMessageOuter(self) {
   // schedules 'end' via nextTick (endReadableNT); a second nextTick scheduled
   // here runs after that.
   self.push(null);
+  if (self.upgrade) finishUpgradeHandoff(self);
   const socket = self.socket;
   if (socket != null) {
     const parser = socket.parser;
@@ -529,6 +539,7 @@ export {
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
+  finishUpgradeHandoff,
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,
@@ -536,6 +547,7 @@ export {
   isTlsSymbol,
   kAbortController,
   kCloseCallback,
+  kFinishUpgradeHandoff,
   kHandle,
   kInternalSocketData,
   kNeedDrain,

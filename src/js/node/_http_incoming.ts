@@ -18,6 +18,8 @@ const {
   emitErrorNextTickIfErrorListenerNT,
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
+  finishUpgradeHandoff,
+  kFinishUpgradeHandoff,
   onDataIncomingMessage,
   kAbortController,
 } = require("internal/http");
@@ -56,6 +58,8 @@ function onIncomingMessagePauseNodeHTTPResponse(this: IncomingMessage) {
   const handle = this[kHandle];
   if (handle && !this.destroyed) {
     handle.pause();
+    // No reads from here on, so the end of an Upgrade request's body can go unseen.
+    if (this.upgrade) finishUpgradeHandoff(this);
   }
 }
 
@@ -92,6 +96,7 @@ function IncomingMessage(socket) {
   this[kTrailersCount] = 0;
   this.rawTrailers = [];
   this[kAbortController] = null;
+  this[kFinishUpgradeHandoff] = undefined;
 
   if (socket === kHandle) {
     // Native server fast-path: (kHandle, url, method, headers, rawHeaders, handle, hasBody, socket)

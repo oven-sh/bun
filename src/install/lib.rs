@@ -911,7 +911,7 @@ impl RunCommand {
         }
     }
 
-    /// `None` when no file is at `buf[..dest_len]`. Without `src_stat`, trusts it.
+    /// `None` when no file is at `buf[..dest_len]`. Without `src_stat`, never a match.
     fn shim_matches(
         buf: &[u16],
         dest_len: usize,
@@ -931,7 +931,7 @@ impl RunCommand {
             Err(_) => return Some(false),
         };
         let Some(src) = src_stat else {
-            return Some(true);
+            return Some(false);
         };
         Some(match kind {
             ShimKind::HardLink => dest.st_dev == src.st_dev && dest.st_ino == src.st_ino,

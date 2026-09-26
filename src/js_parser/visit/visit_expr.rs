@@ -150,6 +150,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Substitute user-specified defines
                 *e =
                     p.value_for_define(expr.loc, in_.assign_target, is_delete_target, &define.data);
+                p.build_time_values = p.build_time_values.wrapping_add(1);
                 return;
             }
         }
@@ -273,6 +274,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         p.ignore_usage(e_.ref_);
                         *e = newvalue;
+                        // `undefined` and `NaN` are in the table of pure globals, not in this one.
+                        if defines.identifiers.contains_key(name) {
+                            p.build_time_values = p.build_time_values.wrapping_add(1);
+                        }
                         return;
                     }
 
@@ -1346,6 +1351,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 is_delete_target,
                                 &define.data,
                             );
+                            p.build_time_values = p.build_time_values.wrapping_add(1);
                             return;
                         }
 
@@ -1826,7 +1832,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_should_fold_typescript_constant_expressions = true;
         p.should_fold_typescript_constant_expressions = true;
 
+        let prev_in_import_specifier = core::mem::replace(&mut p.in_import_specifier, true);
         p.visit_expr(&mut e_.expr);
+        p.in_import_specifier = prev_in_import_specifier;
         p.visit_expr(&mut e_.options);
 
         // Already transposed (this is a re-visit, e.g. after the minifier
@@ -1919,6 +1927,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         == b"eval"
                 {
                     e_.is_direct_eval = true;
+                    p.const_call_direct_eval();
 
                     // Pessimistically assume that if this looks like a CommonJS module
                     // (e.g. no "export" keywords), a direct call to "eval" means that
@@ -2131,9 +2140,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
+            let prev_in_import_specifier = p.in_import_specifier;
+            if matches!(
+                e_.target.data,
+                Data::ERequireCallTarget | Data::ERequireResolveCallTarget
+            ) {
+                p.in_import_specifier = true;
+            }
             for arg in e_.args.slice_mut() {
                 p.visit_expr(arg);
             }
+            p.in_import_specifier = prev_in_import_specifier;
 
             // Restore saved state.
             p.options.ignore_dce_annotations = old_ce;
@@ -2155,6 +2172,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // to avoid stack memory usage from copying values back and forth.
         if p.bundler_feature_flag_ref.is_valid() {
             if let Some(result) = Self::maybe_replace_bundler_feature_call(p, &mut *e_, expr.loc) {
+                *e = result;
+                p.build_time_values = p.build_time_values.wrapping_add(1);
+                return;
+            }
+        }
+
+        if p.const_calls.is_some() {
+            if let Some(result) = p.fold_const_call(&e_, expr.loc) {
                 *e = result;
                 return;
             }

@@ -88,8 +88,11 @@ impl JavaScript {
 
         let result = match parser.parse() {
             Ok(r) => {
-                // The parser halts on every logged error.
-                debug_assert_eq!(temp_log.errors, 0);
+                // The parser halts on every logged error, unless a value of an import can remove it.
+                debug_assert!(
+                    temp_log.errors == 0
+                        || matches!(&r, js_parser::Result::NeedsConstCallValues(stop) if stop.ast.is_none())
+                );
                 r
             }
             Err(err) => {

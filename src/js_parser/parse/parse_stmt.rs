@@ -211,6 +211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TOpenParen)?;
             let test = p.parse_expr(Level::Lowest)?;
             p.lexer.expect(T::TCloseParen)?;
+            p.note_const_call_guard(&test, true);
             let mut stmt_opts = ParseStatementOptions {
                 lexical_decl: LexicalDecl::AllowFnInsideIf,
                 ..Default::default()

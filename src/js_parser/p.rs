@@ -681,6 +681,16 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
 
+    /// See `visit/const_call.rs`. Allocated by the first function that folds.
+    pub(crate) const_calls: Option<Box<crate::visit::const_call::ConstCalls>>,
+    pub(crate) const_calls_enabled: bool,
+    /// Visiting the argument of `import()`, `require()` or `require.resolve()`.
+    pub(crate) in_import_specifier: bool,
+    /// Counts the `--define` values, `feature()` calls and folded calls that the visit pass substituted.
+    pub(crate) build_time_values: u32,
+    /// The parse pass looks for imports that a branch condition calls.
+    pub(crate) const_call_prefilter: bool,
+
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     pub(crate) binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
     // Reusable stack for `SideEffects::simplify_unused_binary_comma_expr`;
@@ -2139,6 +2149,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let symbol = &mut self.symbols[ref_.inner_index() as usize];
             if !symbol.has_link() {
                 symbol.set_has_been_assigned_to(true);
+                if let Some(calls) = self.const_calls.as_mut() {
+                    calls.rebound(ref_);
+                }
                 return;
             }
             ref_ = symbol.link.get();
@@ -3705,12 +3718,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .value_ptr = member_in_scope;
 
                                 // "function foo() {} { var foo; }"
-                                if _scope_ptr == self.module_scope
-                                    && self.symbols[symbol_idx].kind
-                                        == js_ast::symbol::Kind::Hoisted
+                                if self.symbols[symbol_idx].kind == js_ast::symbol::Kind::Hoisted
                                     && Symbol::is_kind_function(existing_kind)
                                 {
-                                    self.has_top_level_function_merged_with_var = true;
+                                    self.note_function_merged_with_var(member_in_scope.ref_);
+                                    if _scope_ptr == self.module_scope {
+                                        self.has_top_level_function_merged_with_var = true;
+                                    }
                                 }
                                 continue 'next_member;
                             }
@@ -5216,13 +5230,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
-                    } else if self.current_scope == self.module_scope
-                        && ((existing_kind == js_ast::symbol::Kind::Hoisted && kind.is_function())
-                            || (existing_kind.is_function()
-                                && kind == js_ast::symbol::Kind::Hoisted))
-                    {
-                        // "var foo; function foo() {}" or "function foo() {} var foo;"
-                        self.has_top_level_function_merged_with_var = true;
+                    } else {
+                        // "var foo; function foo() {}" keeps the function's symbol.
+                        if existing_kind == js_ast::symbol::Kind::Hoisted && kind.is_function() {
+                            self.note_function_merged_with_var(ref_);
+                        }
+                        if self.current_scope == self.module_scope
+                            && ((existing_kind == js_ast::symbol::Kind::Hoisted
+                                && kind.is_function())
+                                || (existing_kind.is_function()
+                                    && kind == js_ast::symbol::Kind::Hoisted))
+                        {
+                            // "var foo; function foo() {}" or "function foo() {} var foo;"
+                            self.has_top_level_function_merged_with_var = true;
+                        }
                     }
                 }
                 MR::BecomePrivateGetSetPair => {
@@ -9393,6 +9414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let ts_enums = self.compute_ts_enums_map(arena)?;
+        let const_call_values = self.const_call_exports();
 
         let char_freq = self.compute_character_frequency().map(bun_alloc::ast_box);
         let scope_uses = self.take_scope_uses();
@@ -9493,6 +9515,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // TODO: cross-module constant inlining
             // const_values: self.const_values,
             ts_enums,
+            const_call_values,
             import_meta_ref: self.import_meta_ref,
 
             symbols,
@@ -9707,6 +9730,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // literal below is the *only* write to `*out`). ───
         lexer.track_comments = opts.features.minify_identifiers;
         let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
+        // Almost no file in a package gets a value, so only first-party files stop for one.
+        let const_call_prefilter = crate::visit::const_call::const_calls_allowed(&opts)
+            && opts.const_call_seeds.is_none()
+            && !source.path.is_node_module();
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
 
         if !TYPESCRIPT {
@@ -9902,6 +9929,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
+            const_calls: None,
+            const_calls_enabled: false,
+            in_import_specifier: false,
+            build_time_values: 0,
+            const_call_prefilter,
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),

@@ -49,6 +49,8 @@ pub struct Graph<'a> {
     /// - onResolve and onLoad functions
     /// - Resolving an onDefer promise
     pub(crate) pending_items: u32,
+    /// Files that are parsed and wait for a value before they are visited.
+    pub(crate) const_calls: crate::const_call_inlining::State,
     /// When an `onLoad` plugin calls `.defer()`, the count from `pending_items`
     /// is "moved" into this counter (pending_items -= 1; deferred_pending += 1)
     ///
@@ -150,6 +152,8 @@ bitflags::bitflags! {
     pub struct InputFileFlags: u8 {
         /// Set when a barrel-eligible file has `export * from` this file.
         const IS_EXPORT_STAR_TARGET = 1 << 1;
+        /// A pure re-export file whose import records `apply_barrel_optimization` can defer.
+        const IS_BARREL = 1 << 2;
     }
 }
 
@@ -165,6 +169,7 @@ impl<'a> Graph<'a> {
             input_files: MultiArrayList::default(),
             ast: MultiArrayList::default(),
             pending_items: 0,
+            const_calls: Default::default(),
             deferred_pending: 0,
             defer_epoch: 0,
             cancelled: false,

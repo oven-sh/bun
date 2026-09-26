@@ -494,6 +494,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
         }
+        p.note_const_call_guard(&value, false);
 
         Ok(p.new_expr(
             E::Unary {

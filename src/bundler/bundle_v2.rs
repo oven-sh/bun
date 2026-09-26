@@ -2453,6 +2453,9 @@ pub mod bv2_impl {
                 );
             }
 
+            // A held file that goes on without a second run finishes here, so the count can reach zero.
+            while self.graph.pending_items != 0 && self.release_held_files_if_idle() {}
+
             if self.graph.pending_items == 0 {
                 let this: *mut Self = self;
                 // reshaped for borrowck — `&self.graph` and
@@ -7490,6 +7493,12 @@ pub mod bv2_impl {
             this: &mut BundleV2,
         ) {
             let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
+            // Not a completion yet: the file keeps its unit of `pending_items` while its result is held.
+            if let Some(scheduled) = this.hold_for_const_call_values(parse_result) {
+                this.graph.pending_items += u32::try_from(scheduled).expect("int cast");
+                this.drain_ready_held_files();
+                return;
+            }
             // Borrowck rejects holding a `&this.graph` alias
             // across the `this.*` method calls below (each takes
             // `&mut BundleV2`), so re-borrow `this.graph` at each use site instead.
@@ -7558,6 +7567,7 @@ pub mod bv2_impl {
                     let empty_idx = (*empty_source_index).get() as usize;
                     this.graph.input_files.items_side_effects_mut()[empty_idx] =
                         bun_ast::SideEffects::NoSideEffectsEmptyAst;
+                    this.on_file_finished_for_const_calls(empty_idx as IndexInt, None);
                     if cfg!(debug_assertions) {
                         bun_core::scoped_log!(
                             Bundle,
@@ -7744,6 +7754,16 @@ pub mod bv2_impl {
                         result_source_index,
                         core::mem::replace(&mut result.ast, JSAst::empty_in(result_heap)),
                     );
+                    // A file with a directive is a reference to the other graph, not the code.
+                    let const_call_values = core::mem::take(&mut result.const_call_values);
+                    this.on_file_finished_for_const_calls(
+                        result_source_index as IndexInt,
+                        Some(if result.use_directive == crate::UseDirective::None {
+                            const_call_values
+                        } else {
+                            Default::default()
+                        }),
+                    );
 
                     // Barrel optimization: eagerly record import requests and
                     // un-defer barrel records that are now needed.
@@ -7910,7 +7930,9 @@ pub mod bv2_impl {
                                 == 0
                         );
                     }
+                    this.on_file_finished_for_const_calls(err.source_index.get(), None);
                 }
+                parse_task::ResultValue::NeedsConstCallValues(_) => unreachable!(),
             }
 
             // `defer { graph.pending_items += diff; if diff < 0 on_after_decrement }`
@@ -7923,6 +7945,7 @@ pub mod bv2_impl {
             this.graph.pending_items =
                 u32::try_from(i32::try_from(this.graph.pending_items).expect("int cast") + diff)
                     .expect("int cast");
+            this.drain_ready_held_files();
             if diff < 0 {
                 this.on_after_decrement_scan_counter();
             }

@@ -248,6 +248,7 @@ impl<'arena> BundledAst<'arena> {
 
             // const_values: self.const_values,
             ts_enums: self.ts_enums,
+            const_call_values: Default::default(),
 
             uses_exports_ref: self.flags.contains(Flags::USES_EXPORTS_REF),
             uses_module_ref: self.flags.contains(Flags::USES_MODULE_REF),

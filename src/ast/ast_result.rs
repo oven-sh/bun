@@ -95,6 +95,8 @@ pub struct Ast<'a> {
     pub target: Target,
     // const_values: ConstValuesMap,
     pub ts_enums: TsEnumsMap,
+    /// Top-level functions whose every call returns this primitive (`js_parser/visit/const_call.rs`).
+    pub const_call_values: ConstCallValues,
 
     /// Not to be confused with `commonjs_named_exports`
     /// This is a list of named exports that may exist in a CommonJS module
@@ -144,6 +146,7 @@ impl<'a> Ast<'a> {
             redirect_import_record_index: None,
             target: Target::Browser,
             ts_enums: Default::default(),
+            const_call_values: Default::default(),
             has_commonjs_export_names: false,
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
@@ -257,6 +260,7 @@ pub struct DynamicImportItem {
 pub type DynamicImportAliases = ArrayHashMap<u32, DynamicImportUse, AutoContext, AstAlloc>;
 pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
 pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
+pub type ConstCallValues = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
 pub type TsEnumsMap =
     ArrayHashMap<Ref, StringHashMap<InlinedEnumValue, AstAlloc>, AutoContext, AstAlloc>;
 /// `import X ...; X.name` where `X` resolved to a module namespace while

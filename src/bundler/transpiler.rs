@@ -1603,6 +1603,8 @@ impl<'a> Transpiler<'a> {
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,
                     is_entry_point: false,
+                    const_call_retry: None,
+                    const_call_seeds: None,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
@@ -1729,6 +1731,9 @@ impl<'a> Transpiler<'a> {
                         empty: false,
                         source_contents_backing: source_backing,
                     },
+                    js_ast::Result::NeedsConstCallValues(_) => {
+                        unreachable!("only a bundling parse stops before its visit pass")
+                    }
                     js_ast::Result::Cached => ParseResult {
                         ast: bun_ast::Ast::empty_in(arena),
                         runtime_transpiler_cache: rtc_ptr,

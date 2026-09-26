@@ -434,6 +434,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let loc = left.loc;
         let prev = *left;
+        p.note_const_call_guard(&prev, true);
         // The `Data::EIf(StoreRef<E::If>)` payload is a
         // boxed arena slot: allocate first, then fill via DerefMut on StoreRef.
         let ternary = p.new_expr(
@@ -1106,6 +1107,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(Continuation::Done);
         }
         p.lexer.next()?;
+        p.note_const_call_guard(left, false);
         let prev = *left;
         let loc = left.loc;
         let right = p.parse_expr(Level::NullishCoalescing)?;
@@ -1151,6 +1153,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.next()?;
+        p.note_const_call_guard(left, false);
         let right = p.parse_expr(Level::LogicalOr)?;
         let loc = left.loc;
         let prev = *left;
@@ -1210,6 +1213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.next()?;
+        p.note_const_call_guard(left, false);
         let loc = left.loc;
         let prev = *left;
         let right = p.parse_expr(Level::LogicalAnd)?;

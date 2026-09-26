@@ -79,6 +79,11 @@ pub(crate) fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut
         &processed_instrs_in_optional,
     );
 
+    // A walk that ran out of stack leaves scopes out of `hoistable_property_loads`.
+    if crate::stack_guard::overflowed() {
+        return;
+    }
+
     // Derive the minimal set of hoistable dependencies for each scope.
     for (scope_id, deps) in &scope_deps {
         if deps.is_empty() {
@@ -264,6 +269,9 @@ fn collect_temporaries_sidemap_impl(
     temporaries: &mut IdMap<IdentifierId, ReactiveScopeDependency>,
     inner_fn_context: Option<EvaluationOrder>,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
@@ -441,6 +449,9 @@ fn traverse_function_optional(
     env: &Environment,
     ctx: &mut OptionalTraversalContext,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
@@ -557,6 +568,9 @@ fn traverse_optional_block(
     ctx: &mut OptionalTraversalContext,
     outer_alternate: Option<BlockId>,
 ) -> Option<IdentifierId> {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return None;
+    }
     ctx.seen_optionals.insert(optional_block.id);
 
     let (test_block_id, is_optional, fallthrough_block_id) = match &optional_block.terminal {
@@ -1013,6 +1027,9 @@ fn get_assumed_invoked_functions_impl(
     env: &Environment,
     temporaries: &mut IdMap<IdentifierId, (FunctionId, HashSet<FunctionId>)>,
 ) -> HashSet<FunctionId> {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return HashSet::default();
+    }
     let mut hoistable: HashSet<FunctionId> = HashSet::default();
 
     // Step 1: Collect identifier to function expression mappings
@@ -1149,6 +1166,9 @@ fn collect_non_nulls_in_blocks(
     ctx: &CollectHoistableContext,
     registry: &mut PropertyPathRegistry,
 ) -> IdMap<BlockId, BlockInfo> {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return IdMap::new();
+    }
     // Known non-null identifiers (e.g. component props)
     let mut known_non_null: BTreeSet<usize> = BTreeSet::new();
     if func.fn_type == ReactFunctionType::Component && !func.params.is_empty() {
@@ -1378,6 +1398,9 @@ fn recursively_propagate_non_null(
     block_successors: &[BTreeSet<BlockId>],
     registry: &mut PropertyPathRegistry,
 ) -> bool {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return false;
+    }
     // Avoid re-visiting computed or currently active nodes
     if traversal_state[node_id.0 as usize].is_some() {
         return false;
@@ -1694,6 +1717,9 @@ fn collect_minimal_deps_in_subtree(
     path: &[DependencyPathEntry],
     results: &mut Vec<ReactiveScopeDependency>,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     if is_dependency_access(node.access_type) {
         results.push(ReactiveScopeDependency {
             identifier: root_id,
@@ -1964,6 +1990,9 @@ fn visit_inner_function_blocks(
     ctx: &mut DependencyCollectionContext,
     env: &mut Environment,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     // Clone inner function's instructions and block structure to avoid
     // borrow conflicts when mutating env through handle_instruction.
     let inner_instrs: HirVec<Instruction> = env.functions[func_id.0 as usize].instructions.clone();

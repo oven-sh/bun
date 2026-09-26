@@ -510,6 +510,9 @@ fn propagate_reactivity_to_inner_functions_inner(
     env: &Environment,
     reactive_map: &mut ReactivityMap,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     let inner_func = &env.functions[func_id.0 as usize];
 
     for (_block_id, block) in &inner_func.body.blocks {
@@ -739,6 +742,9 @@ fn apply_reactive_flags_to_inner_func(
     env: &mut Environment,
     reactive_ids: &[bool],
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     // Collect nested function IDs first to avoid borrow issues
     let nested_func_ids: Vec<FunctionId> = {
         let func = &env.functions[func_id.0 as usize];

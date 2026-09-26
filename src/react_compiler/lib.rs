@@ -24,6 +24,7 @@ pub use hir::environment_config::EnvironmentConfig;
 mod compile_result;
 mod imports;
 mod options;
+pub(crate) mod stack_guard;
 
 pub mod codegen;
 pub mod lowering;

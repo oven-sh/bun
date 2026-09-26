@@ -683,6 +683,9 @@ fn returns_non_node_in_stmts(stmts: &[Stmt]) -> bool {
 }
 
 fn returns_non_node_in_stmt(stmt: &Stmt, result: &mut bool) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     match &stmt.data {
         StmtData::SReturn(ret) => {
             // Visit folds `return undefined` → bare `return;`, so None ≡ undefined here.
@@ -743,6 +746,9 @@ fn calls_hooks_or_creates_jsx_in_stmts(host: &dyn Host, stmts: &[Stmt]) -> bool 
 }
 
 fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return false;
+    }
     match &stmt.data {
         StmtData::SExpr(e) => calls_hooks_or_creates_jsx_in_expr(host, &e.value),
         StmtData::SReturn(ret) => ret
@@ -830,6 +836,9 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
 }
 
 fn calls_hooks_or_creates_jsx_in_expr(host: &dyn Host, expr: &Expr) -> bool {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return false;
+    }
     match &expr.data {
         ExprData::EJsxElement(_) => true,
         ExprData::ECall(call) => {
@@ -1322,6 +1331,7 @@ fn maybe_compile_node(
         return None;
     }
 
+    crate::stack_guard::reset();
     let body_directives = collect_body_directives(node.body().stmts.slice());
     let fn_type = get_react_function_type(
         &*host,
@@ -1332,6 +1342,10 @@ fn maybe_compile_node(
         &state.options,
     );
     bun_core::scoped_log!(react_compiler, "  -> fn_type={:?}", fn_type);
+    if crate::stack_guard::overflowed() {
+        bun_core::scoped_log!(react_compiler, "  -> bail: nested too deeply");
+        return None;
+    }
     let fn_type = fn_type?;
 
     let fn_name: Option<String> =

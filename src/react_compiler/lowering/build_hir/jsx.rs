@@ -92,6 +92,7 @@ fn lower_jsx_member_expression(
     expr: &E::Dot,
     expr_loc: Loc,
 ) -> Result<Place, CompilerError> {
+    crate::stack_guard::check()?;
     // Use the full member expression's loc for instruction locs (matching TS: exprPath.node.loc)
     let expr_loc = convert_loc(expr_loc);
     let object = match expr.target.data {
@@ -401,10 +402,13 @@ fn jsx_import_kind(builder: &HirBuilder, expr: &Expr) -> Option<JsxImportKind> {
 /// The identifier `a` of an `a.b.c` callee. An import is not a local, so an
 /// `EImportIdentifier` root is of no interest.
 fn member_expression_root(expr: &Expr) -> Option<Ref> {
-    match expr.data {
-        ExprData::EIdentifier(id) => Some(id.ref_),
-        ExprData::EDot(dot) => member_expression_root(&dot.target),
-        _ => None,
+    let mut expr = expr;
+    loop {
+        match &expr.data {
+            ExprData::EIdentifier(id) => return Some(id.ref_),
+            ExprData::EDot(dot) => expr = &dot.target,
+            _ => return None,
+        }
     }
 }
 

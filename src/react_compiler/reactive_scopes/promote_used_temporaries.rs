@@ -120,6 +120,9 @@ fn collect_promotable_block(
     active_scopes: &mut Vec<ScopeId>,
     env: &Environment,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     for stmt in block {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
@@ -185,6 +188,9 @@ fn collect_promotable_value(
     active_scopes: &mut Vec<ScopeId>,
     env: &Environment,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     match value {
         ReactiveValue::Instruction(instr_value) => {
             // Visit operands
@@ -330,6 +336,9 @@ fn collect_promotable_terminal(
 // =============================================================================
 
 fn promote_temporaries_block(block: &ReactiveBlock, state: &mut State, env: &mut Environment) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     for stmt in block {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
@@ -381,6 +390,9 @@ fn promote_temporaries_block(block: &ReactiveBlock, state: &mut State, env: &mut
 }
 
 fn promote_temporaries_value(value: &ReactiveValue, state: &mut State, env: &mut Environment) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     match value {
         ReactiveValue::Instruction(instr_value) => {
             // Visit inner functions: promote params and recurse into nested functions
@@ -510,6 +522,9 @@ fn promote_temporaries_terminal(
 /// Other `visitHirFunction` behaviors (visitPlace on terminal operands, visitInstruction
 /// on all instructions) are no-ops for this phase and are intentionally omitted.
 fn visit_hir_function_for_promotion(func_id: FunctionId, state: &mut State, env: &mut Environment) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     // Promote params of this function
     let param_ids: Vec<IdentifierId> = {
         let func = &env.functions[func_id.0 as usize];
@@ -661,6 +676,9 @@ fn promote_interposed_block(
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     for stmt in block {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
@@ -758,6 +776,9 @@ fn promote_interposed_operands(
     consts: &HashSet<IdentifierId>,
     env: &mut Environment,
 ) -> Effect {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return Effect::None;
+    }
     operands.sort_by_key(|place| {
         let declaration_id = env.identifiers[place.identifier.0 as usize].declaration_id;
         std::cmp::Reverse(
@@ -970,6 +991,9 @@ fn promote_interposed_value(
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
 ) -> Effect {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return Effect::None;
+    }
     match value {
         ReactiveValue::Instruction(iv) => {
             let operands = crate::hir::visitors::each_instruction_value_operand(iv, env);
@@ -1172,6 +1196,9 @@ fn promote_all_instances_params(func: &ReactiveFunction, state: &mut State, env:
 }
 
 fn promote_all_instances_block(block: &ReactiveBlock, state: &mut State, env: &mut Environment) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     for stmt in block {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
@@ -1251,6 +1278,9 @@ fn promote_all_instances_instruction(
 }
 
 fn promote_all_instances_value(value: &ReactiveValue, state: &mut State, env: &mut Environment) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     match value {
         ReactiveValue::Instruction(iv) => {
             for place in crate::hir::visitors::each_instruction_value_operand(iv, env) {

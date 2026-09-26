@@ -22,6 +22,7 @@ pub(crate) fn lower_expression(
     builder: &mut HirBuilder,
     expr: &Expr,
 ) -> Result<InstructionValue, CompilerError> {
+    crate::stack_guard::check()?;
     let loc = convert_loc(expr.loc);
     match &expr.data {
         Data::EObjectJSON(_) | Data::EArrayJSON(_) => Ok(unsupported_node("JSONValue", loc)),
@@ -614,6 +615,7 @@ fn lower_sequence(
 
     let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
         fn flatten_comma(builder: &mut HirBuilder, e: &Expr) -> Result<Place, CompilerError> {
+            crate::stack_guard::check()?;
             if let Data::EBinary(b) = &e.data {
                 if b.op == OpCode::BinComma {
                     flatten_comma(builder, &b.left)?;
@@ -1338,6 +1340,9 @@ fn is_reorderable_expression(
     expr: &Expr,
     allow_local_identifiers: bool,
 ) -> bool {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return false;
+    }
     match &expr.data {
         Data::EIdentifier(ident) => {
             if is_module_level_or_global(builder, ident.ref_) {

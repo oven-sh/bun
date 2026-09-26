@@ -190,6 +190,9 @@ fn lower_block_statement_inner(
 }
 
 fn collect_binding_refs(binding: &Binding, f: &mut impl FnMut(Ref, ast::Loc)) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     match &binding.data {
         b::B::BIdentifier(id) => f(id.r#ref, binding.loc),
         b::B::BArray(arr) => {
@@ -219,6 +222,9 @@ fn catch_param_referenced_in_nested_fn(builder: &HirBuilder, target: Ref, body: 
 }
 
 fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: u32) -> bool {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return false;
+    }
     match &stmt.data {
         Data::SBlock(b) => b
             .stmts
@@ -326,6 +332,9 @@ fn ref_in_nested_fn_binding(
     binding: &Binding,
     depth: u32,
 ) -> bool {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return false;
+    }
     match &binding.data {
         b::B::BArray(arr) => arr.items().iter().any(|item| {
             ref_in_nested_fn_binding(builder, target, &item.binding, depth)
@@ -388,6 +397,9 @@ fn ref_in_nested_fn_class(builder: &HirBuilder, target: Ref, class: &G::Class, d
 
 #[allow(clippy::too_many_lines)]
 fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32) -> bool {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return false;
+    }
     match &e.data {
         ExprData::EIdentifier(id) => depth > 0 && builder.resolve_ref(id.ref_) == target,
         ExprData::EImportIdentifier(id) => depth > 0 && builder.resolve_ref(id.ref_) == target,
@@ -499,6 +511,7 @@ fn lower_statement(
     stmt: &Stmt,
     label: Option<String>,
 ) -> Result<(), CompilerDiagnostic> {
+    crate::stack_guard::check()?;
     let stmt_loc = stmt.loc;
     match stmt.data {
         Data::SEmpty(_) => {
@@ -1301,6 +1314,9 @@ fn lower_statement(
                         pat: &Binding,
                         locs: &mut Vec<Option<SourceLocation>>,
                     ) {
+                        if !crate::stack_guard::is_safe_to_recurse() {
+                            return;
+                        }
                         match pat.data {
                             b::B::BIdentifier(_) => {
                                 locs.push(convert_loc(pat.loc));
@@ -1711,6 +1727,7 @@ pub(super) fn lower_assignment_binding(
     value: Place,
     assignment_style: AssignmentStyle,
 ) -> Result<Option<Place>, CompilerError> {
+    crate::stack_guard::check()?;
     match target.data {
         b::B::BIdentifier(id) => {
             let id_loc = convert_loc(target.loc);

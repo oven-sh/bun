@@ -23,6 +23,9 @@ fn eliminate_redundant_phi_impl(
     env: &mut Environment,
     rewrites: &mut IdMap<IdentifierId, IdentifierId>,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     let ir = &mut func.body;
 
     let mut has_back_edge = false;

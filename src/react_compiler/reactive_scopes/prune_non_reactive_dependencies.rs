@@ -114,12 +114,14 @@ fn is_set_optimistic_type(ty: &crate::hir::Type) -> bool {
 
 /// Prunes dependencies that are guaranteed to be non-reactive.
 /// TS: `pruneNonReactiveDependencies`
-pub(crate) fn prune_non_reactive_dependencies(func: &mut ReactiveFunction, env: &mut Environment) {
+pub(crate) fn prune_non_reactive_dependencies(
+    func: &mut ReactiveFunction,
+    env: &mut Environment,
+) -> Result<(), crate::diagnostics::CompilerError> {
     let reactive_ids = collect_reactive_identifiers(func, env);
     let mut visitor = PruneVisitor { env };
     let mut state = reactive_ids;
     visitors::transform_reactive_function(func, &mut visitor, &mut state)
-        .expect("PruneNonReactiveDependencies should not fail");
 }
 
 struct PruneVisitor<'a> {

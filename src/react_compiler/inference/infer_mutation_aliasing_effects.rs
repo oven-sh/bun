@@ -1690,6 +1690,9 @@ fn freeze_function_captures_transitive(
     value_id: ValueId,
     reason: ValueReason,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     if let Some(&func_id) = context.function_values.get(&value_id) {
         let ctx_ids: Vec<IdentifierId> = env.functions[func_id.0 as usize]
             .context
@@ -1733,6 +1736,7 @@ fn apply_effect(
     env: &mut Environment,
     func: &HirFunction,
 ) -> Result<(), CompilerDiagnostic> {
+    crate::stack_guard::check()?;
     let effect = context.intern_effect(effect);
     match effect {
         AliasingEffect::Freeze { ref value, reason } => {

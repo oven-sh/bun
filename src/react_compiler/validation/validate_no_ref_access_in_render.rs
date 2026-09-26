@@ -530,6 +530,9 @@ fn collect_temporaries_sidemap(
     types: &[Type],
     functions: &[HirFunction],
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     for (_, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
@@ -586,6 +589,9 @@ fn validate_no_ref_access_in_render_impl(
     ref_env: &mut Env,
     errors: &mut Vec<CompilerDiagnostic>,
 ) -> RefAccessType {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return RefAccessType::None;
+    }
     let mut return_values: Vec<RefAccessType> = Vec::new();
 
     // Process params

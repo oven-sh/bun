@@ -687,7 +687,7 @@ describe("bundler", () => {
   ])("top-level await error note with $name", ({ flags, config, format, cliNote, apiNote }) => {
     const files = {
       "entry.mjs": `export const v = await Promise.resolve("TLA-OK");`,
-      "build.mjs": /* js */ `
+      "build.fixture.mjs": /* js */ `
         const result = await Bun.build({
           entrypoints: ["./entry.mjs"],
           throw: false,
@@ -727,7 +727,7 @@ note: ${cliNote}`,
     test.concurrent("Bun.build()", async () => {
       using dir = tempDir("tla-format-note-api", files);
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "build.mjs", JSON.stringify(config)],
+        cmd: [bunExe(), "build.fixture.mjs", JSON.stringify(config)],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",

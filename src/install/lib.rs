@@ -724,9 +724,10 @@ impl RunCommand {
 
         let image = win::exe_path_w();
         let exe_dir = bun_paths::resolve_path::dirname_w(image);
-        let image_stat = bun_sys::File::openat_os_path(bun_sys::Fd::cwd(), image, bun_sys::O::RDONLY, 0)
-            .and_then(|f| f.stat())
-            .ok();
+        let image_stat =
+            bun_sys::File::openat_os_path(bun_sys::Fd::cwd(), image, bun_sys::O::RDONLY, 0)
+                .and_then(|f| f.stat())
+                .ok();
 
         let mut buf = bun_paths::w_path_buffer_pool::get();
 
@@ -833,7 +834,10 @@ impl RunCommand {
                     ShimKind::HardLink => bun_sys::link_w(image, WStr::from_buf(buf, dest_len)),
                     ShimKind::Copy => match Self::shim_matches(buf, dest_len, image_stat, kind) {
                         Some(true) => Ok(()),
-                        Some(false) => Err(bun_sys::Error::new(bun_sys::E::EEXIST, bun_sys::Tag::copyfile)),
+                        Some(false) => Err(bun_sys::Error::new(
+                            bun_sys::E::EEXIST,
+                            bun_sys::Tag::copyfile,
+                        )),
                         None => Self::copy_windows_node_shim(buf, dest_len, image),
                     },
                 };
@@ -938,11 +942,15 @@ impl RunCommand {
 
         // SAFETY: `image` and `buf[..=tmp_len]` are NUL-terminated wide strings.
         if unsafe { win::CopyFileW(image.as_ptr(), buf.as_ptr(), 0) } == 0 {
-            return Err(bun_sys::Error::from_win32(win::Win32Error::get(), bun_sys::Tag::copyfile));
+            return Err(bun_sys::Error::from_win32(
+                win::Win32Error::get(),
+                bun_sys::Tag::copyfile,
+            ));
         }
         // SAFETY: both arguments are NUL-terminated wide strings.
-        if unsafe { win::kernel32::MoveFileExW(buf.as_ptr(), dest.as_ptr(), MOVEFILE_REPLACE_EXISTING) }
-            == 0
+        if unsafe {
+            win::kernel32::MoveFileExW(buf.as_ptr(), dest.as_ptr(), MOVEFILE_REPLACE_EXISTING)
+        } == 0
         {
             let err = bun_sys::Error::from_win32(win::Win32Error::get(), bun_sys::Tag::rename);
             let _ = bun_sys::unlink_w(WStr::from_buf(buf, tmp_len));

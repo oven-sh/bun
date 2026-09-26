@@ -1759,7 +1759,9 @@ impl RunCommand {
         }
         #[cfg(windows)]
         {
-            Ok(bun_install::RunCommand::windows_node_shim()?.node_exe.as_zstr())
+            Ok(bun_install::RunCommand::windows_node_shim()?
+                .node_exe
+                .as_zstr())
         }
     }
 

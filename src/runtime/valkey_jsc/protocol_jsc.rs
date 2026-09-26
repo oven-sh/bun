@@ -147,11 +147,12 @@ pub(crate) fn resp_value_to_js_with_options(
 
             Ok(js_obj)
         }
-        // BigInt when the payload is an integer literal; modules and Lua can
-        // put anything after `(`, so other text stays a string.
+        // BigInt when the payload is an integer literal that fits in one;
+        // modules and Lua can put anything after `(`, so other text stays a
+        // string.
         RESPValue::BigNumber(str) => {
             if !options.return_as_buffer
-                && let Some(big) = JSValue::big_int_from_decimal(global, str)?
+                && let Some(big) = JSValue::big_int_from_decimal(global, str)
             {
                 return Ok(big);
             }

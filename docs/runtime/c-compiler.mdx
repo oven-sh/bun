@@ -202,6 +202,39 @@ cc({
 });
 ```
 
+### Standalone executables
+
+`cc` works inside a `bun build --compile` executable. Import the C source `with { type: "file" }` so the bundler embeds it, and pass the imported path as `source`. TinyCC compiles the C code when `cc` is called, on the machine that runs the executable.
+
+```ts
+import { cc } from "bun:ffi";
+import source from "./hello.c" with { type: "file" };
+
+const { symbols } = cc({
+  source,
+  symbols: { hello: { args: [], returns: "int" } },
+});
+```
+
+TinyCC reads embedded files, so `#include "..."` and the `include` option also work for embedded headers. The bundler renames a file imported `with { type: "file" }` to `[name]-[hash].[ext]`, which does not match the name in an `#include`. Embed a directory with `--asset` instead. It keeps the relative paths of the files inside it, and the directory is available under `import.meta.dir` at runtime:
+
+```sh
+bun build --compile ./app.ts --asset ./csrc --outfile app
+```
+
+```ts
+import { cc } from "bun:ffi";
+import path from "path";
+
+const { symbols } = cc({
+  source: path.join(import.meta.dir, "csrc", "hello.c"), // #include "util.h" finds csrc/util.h
+  include: [path.join(import.meta.dir, "csrc", "vendor")],
+  symbols: { hello: { args: [], returns: "int" } },
+});
+```
+
+System headers and libraries still come from the machine that runs the executable.
+
 ### Disabling `cc`
 
 Pass `--no-ffi-cc` to disable the C compiler for a process. Any call to `cc()` then throws an error with the code `ERR_FFI_CC_DISABLED`. The `--no-addons` flag also disables `cc()`, in addition to `process.dlopen`.

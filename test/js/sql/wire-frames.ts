@@ -11,22 +11,21 @@ import net from "node:net";
 // Server helpers shared by every fault-injection test.
 // ---------------------------------------------------------------------------
 
-/** Start a TCP server on `host` (127.0.0.1 unless given) with an ephemeral port. Rejects when the bind fails. */
+/** Start a TCP server on `host` (127.0.0.1 unless given), on an ephemeral port unless given. Rejects when the bind fails. */
 export async function listeningServer(
   onSocket: (socket: net.Socket) => void,
   host = "127.0.0.1",
+  port = 0,
 ): Promise<{ port: number; server: net.Server }> {
   const server = net.createServer(onSocket);
-  server.listen(0, host);
+  server.listen(port, host);
   await once(server, "listening");
   return { port: (server.address() as net.AddressInfo).port, server };
 }
 
 /** Reserve and immediately release a port so connecting to it is refused. */
 export async function closedPort(): Promise<number> {
-  const server = net.createServer();
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as net.AddressInfo).port;
+  const { port, server } = await listeningServer(() => {});
   await new Promise<void>(resolve => server.close(() => resolve()));
   return port;
 }

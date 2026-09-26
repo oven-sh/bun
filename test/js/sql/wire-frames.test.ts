@@ -5,6 +5,7 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
+import type net from "node:net";
 import {
   listeningServer,
   mysqlAckSessionSetup,
@@ -77,12 +78,22 @@ test("frontend message builders encode per §55.7", () => {
 });
 
 test("listeningServer rejects when the bind fails", async () => {
-  // 203.0.113.1 is in TEST-NET-3 (RFC 5737). No interface has it, so the bind fails and nothing leaves the machine.
-  const outcome = await listeningServer(() => {}, "203.0.113.1").then(
-    () => "listening",
-    error => error.code,
-  );
-  expect(outcome).toBe("EADDRNOTAVAIL");
+  // A port that is in use: the second bind fails on every platform, whatever the network setup is.
+  const occupant = await listeningServer(() => {});
+  let second: net.Server | undefined;
+  try {
+    const outcome = await listeningServer(() => {}, "127.0.0.1", occupant.port).then(
+      ({ server }) => {
+        second = server;
+        return "listening";
+      },
+      error => error.code,
+    );
+    expect(outcome).toBe("EADDRINUSE");
+  } finally {
+    second?.close();
+    occupant.server.close();
+  }
 });
 
 test("postgres: pgAuthenticationOk + pgReadyForQuery are accepted by Bun's parser", async () => {

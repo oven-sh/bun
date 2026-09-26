@@ -40,6 +40,8 @@ pub mod shared {
     #[path = "SQLDataCell.rs"]
     pub mod sql_data_cell;
 
+    pub mod socket_teardown;
+
     pub use cached_structure::CachedStructure;
     pub(crate) use query_binding_iterator::QueryBindingIterator;
 }

@@ -1,6 +1,6 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -294,6 +294,111 @@ describe("tcp socket binaryType", () => {
       })();
     });
   }
+});
+
+// The libuv backend (Windows) does not count tick depth, so there the nested
+// tick still frees the closed sockets.
+it.skipIf(isWindows)("stop(true) outside a tick, with a close handler that ticks the loop", async () => {
+  // stop(true) closes the listen socket first, then each connection, and then
+  // closes the listen socket again (a no-op on a closed socket). The loop frees
+  // closed sockets at the end of its outermost tick. When stop() runs outside a
+  // tick, a tick that a close handler starts is the outermost one, so it freed
+  // the listen socket before stop() read it again (heap-use-after-free).
+  // Run in a subprocess so that a crash is a non-zero exit code.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { expect } from "bun:test";
+        const events = [];
+        const { promise: bothOpen, resolve: onBothOpen } = Promise.withResolvers();
+        let opened = 0;
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open() {
+              if (++opened === 2) onBothOpen();
+            },
+            data() {},
+            close() {
+              events.push("close");
+              if (events.length === 1) {
+                // Blocks until the promise settles, and ticks the event loop
+                // while it waits. A timer fires only after the loop polls for
+                // I/O, so "timer" before "ticked" shows that a tick ran here.
+                const timer = new Promise(resolve =>
+                  setTimeout(() => {
+                    events.push("timer");
+                    resolve();
+                  }),
+                );
+                expect(timer).resolves.toBeUndefined();
+                events.push("ticked");
+              }
+            },
+          },
+        });
+        for (let i = 0; i < 2; i++) {
+          await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+        }
+        await bothOpen;
+        // An immediate runs between event loop ticks, not inside one.
+        setImmediate(() => {
+          server.stop(true);
+          events.push("stopped");
+          console.log(events.join(","));
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("close,timer,ticked,close,stopped\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(!isWindows)("stop(true) on a named-pipe listener with an open connection", async () => {
+  // A named-pipe listener never initializes its socket group, and stop(true)
+  // still closes that group when a connection is open. The group is empty, so
+  // the pipe connection stays open until the client ends it. Run in a
+  // subprocess so that a crash is a non-zero exit code.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-stop-" + Math.random().toString(36).slice(2);
+        const { promise: opened, resolve: onOpen } = Promise.withResolvers();
+        const { promise: closed, resolve: onClose } = Promise.withResolvers();
+        const server = Bun.listen({
+          unix: pipe,
+          socket: {
+            open() { onOpen(); },
+            data() {},
+            close() { onClose(); },
+          },
+        });
+        const client = await Bun.connect({ unix: pipe, socket: { data() {} } });
+        await opened;
+        server.stop(true);
+        client.end();
+        await closed;
+        console.log("stopped");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("stopped\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 it("should not leak memory", async () => {

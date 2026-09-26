@@ -2,8 +2,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { connect } from "node:net";
-import { DEFAULT_CREDENTIALS, SigningClient } from "../index.ts";
 import type { RequestOptions, S3ServerOptions, SignedRequest, SigningClientOptions } from "../index.ts";
+import { DEFAULT_CREDENTIALS, SigningClient } from "../index.ts";
 import { digest, type ChecksumAlgorithm } from "../src/checksums.ts";
 import { Query } from "../src/context.ts";
 import * as v4 from "../src/signature.ts";

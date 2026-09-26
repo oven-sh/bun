@@ -6,7 +6,7 @@ use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap}
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::SEP;
-use bun_sys::{self as sys, Dir, Fd};
+use bun_sys::{Dir, Fd};
 
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
@@ -171,35 +171,39 @@ pub(crate) fn install_hoisted_packages(
     let cwd = Fd::cwd();
     let node_modules_folder: Dir = 'brk: {
         // Attempt to open the existing node_modules folder
-        match sys::openat_os_path(
-            cwd,
-            bun_paths::os_path_literal!("node_modules"),
-            sys::O::DIRECTORY | sys::O::RDONLY,
-            0o755,
-        ) {
-            Ok(fd) => break 'brk Dir::from_fd(fd),
+        match Dir::borrow(&cwd).open_real_dir(b"node_modules") {
+            Ok(dir) => break 'brk dir,
             Err(_) => {}
         }
 
         new_node_modules = true;
 
-        // Attempt to create a new node_modules folder
-        if let Err(err) = sys::mkdir(bun_core::zstr!("node_modules"), 0o755) {
-            if err.errno != sys::E::EEXIST as _ {
+        // A symlink at `node_modules` is not an install tree, and following it
+        // writes the tree into the link target. Say so, because a person can
+        // have put it there on purpose, then replace the link with a real
+        // directory. The link target itself is left alone.
+        match Dir::borrow(&cwd).remove_symlink(b"node_modules") {
+            Ok(false) => {}
+            Ok(true) => bun_core::warn!(
+                "replaced the <b>\"node_modules\"<r> symlink with a real directory: bun install writes inside the project"
+            ),
+            Err(err) => {
                 Output::err(
                     err,
-                    "could not create the <b>\"node_modules\"<r> directory",
+                    "could not replace the <b>\"node_modules\"<r> symlink with a directory",
                     (),
                 );
                 Global::crash();
             }
         }
-        match Dir::borrow(&cwd).open_at(b"node_modules") {
+
+        // Attempt to create a new node_modules folder
+        match Dir::borrow(&cwd).make_open_real_dir(b"node_modules") {
             Ok(dir) => break 'brk dir,
             Err(err) => {
                 Output::err(
                     err,
-                    "could not open the <b>\"node_modules\"<r> directory",
+                    "could not create the <b>\"node_modules\"<r> directory",
                     (),
                 );
                 Global::crash();

@@ -1654,8 +1654,6 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       );
       const script = `
         const fs = require("fs");
-        // The default action of SIGXFSZ ends the process before write() returns the error.
-        process.on("SIGXFSZ", () => {});
         const results = [];
         for (const [i, cell] of ${JSON.stringify(cells)}.entries()) {
           const file = ${JSON.stringify(String(dir))} + "/" + i + ".bin";
@@ -1743,7 +1741,16 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
     it("a write to a terminal is complete when write() returns", async () => {
       let output = "";
-      const { promise: sawOutput, resolve } = Promise.withResolvers();
+      const sawOutput = Promise.withResolvers();
+      await using terminal = new Bun.Terminal({
+        data(_, chunk) {
+          output += new TextDecoder().decode(chunk);
+          if (output.includes("on stdout")) sawOutput.resolve();
+        },
+        exit() {
+          sawOutput.reject(new Error("the terminal closed, output: " + JSON.stringify(output)));
+        },
+      });
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -1751,15 +1758,9 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           `process.exitCode = Bun.peek.status(Bun.write(Bun.stdout, "on stdout")) === "fulfilled" ? 0 : 1`,
         ],
         env: bunEnv,
-        terminal: {
-          data(_, chunk) {
-            output += new TextDecoder().decode(chunk);
-            if (output.includes("on stdout")) resolve();
-          },
-        },
+        terminal,
       });
-      const [exitCode] = await Promise.all([proc.exited, sawOutput]);
-      proc.terminal.close();
+      const [exitCode] = await Promise.all([proc.exited, sawOutput.promise]);
 
       expect(output).toContain("on stdout");
       expect(exitCode).toBe(0);

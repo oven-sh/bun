@@ -625,6 +625,19 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
             }
 
+            /* A paused IPC channel is not under flow control: its owner holds its messages back
+             * (ipc.rs apply_socket_reading), so the drain must not hand them to on_data yet. The
+             * error waits for the resume like a paused EOF further down: us_socket_resume arms the reads
+             * again, the error is reported again, and the tail is delivered ahead of the close. */
+            if (error && s->flags.is_ipc && s->flags.is_paused) {
+#ifdef LIBUS_USE_EPOLL
+                /* EPOLLERR is unmaskable: leave epoll so it cannot re-fire (us_poll_change re-adds the fd). */
+                us_poll_stop(&s->p, loop);
+                s->p.state.poll_type = us_internal_poll_type(&s->p);
+#endif
+                break;
+            }
+
             /* An error event (EPOLLERR, EV_EOF with the socket error in fflags, an AFD
              * abort) is the connection's death and this dispatch closes the socket with
              * it below. The kernel keeps the receive queue on a reset, so the tail of the

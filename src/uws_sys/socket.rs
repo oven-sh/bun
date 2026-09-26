@@ -738,12 +738,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
-    /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd`.
+    /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd`. `options`
+    /// are `LIBUS_SOCKET_*` flags.
     pub fn from_fd<This>(
         g: &mut SocketGroup,
         k: SocketKind,
         handle: Fd,
         this: *mut This,
+        options: c_int,
         is_ipc: bool,
     ) -> Option<Self> {
         // The dispatch trampolines read the ext slot as `Option<NonNull<_>>`
@@ -755,7 +757,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             None,
             ext_size,
             handle.native() as LIBUS_SOCKET_DESCRIPTOR,
-            0,
+            options,
             is_ipc,
         );
         if raw.is_null() {

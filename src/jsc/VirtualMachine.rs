@@ -2752,6 +2752,10 @@ pub struct RuntimeHooks {
     /// (resolver failures / `ModuleNotFound`).
     pub load_preloads:
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
+    /// Stops (`true`) or restarts the reads of the process's inherited IPC
+    /// channel, which lives in `bun_runtime::ipc_host`. See
+    /// `RuntimeTranspilerStore::has_ipc_channel`.
+    pub hold_ipc_reads: fn(hold: bool),
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
@@ -4271,7 +4275,8 @@ impl VirtualMachine {
                         self.pending_ipc = Some(PendingIpc {
                             fd: bun_sys::Fd::from_uv(fd),
                             advanced,
-                        })
+                        });
+                        self.transpiler_store.has_ipc_channel = true;
                     }
                     None => bun_core::warn!(
                         "Failed to parse IPC channel number '{}'",

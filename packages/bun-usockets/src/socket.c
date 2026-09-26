@@ -689,7 +689,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
     if (sent < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
             s->flags.last_write_failed = 1;
-            us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            us_internal_rearm_writable(s);
             return 0;
         }
         return -1;
@@ -853,12 +853,20 @@ void us_socket_unref(struct us_socket_t *s) {
     // do nothing if not using libuv
 }
 
+/* An IPC socket's pause and resume toggle only its read interest. Forcing WRITABLE costs an
+ * idle channel a writable dispatch and two more poll changes per pause, and nothing paused an
+ * IPC socket before its owner held the reads (ipc.rs apply_socket_reading). Other sockets keep
+ * the forced WRITABLE: their owners' drain callbacks see that dispatch. */
+static int us_internal_ipc_write_interest(struct us_socket_t *s) {
+    return (us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE) | (s->flags.last_write_failed ? LIBUS_SOCKET_WRITABLE : 0);
+}
+
 void us_socket_pause(struct us_socket_t *s) {
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if (us_socket_is_closed(s)) return;
     // we are readable and writable so we can just pause readable side
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_WRITABLE);
+    us_poll_change(&s->p, s->group->loop, s->flags.is_ipc ? us_internal_ipc_write_interest(s) : LIBUS_SOCKET_WRITABLE);
     s->flags.is_paused = 1;
 }
 
@@ -869,7 +877,9 @@ void us_socket_resume(struct us_socket_t *s) {
     if (us_socket_is_closed(s)) return;
 
     int events = s->read_eof ? 0 : LIBUS_SOCKET_READABLE;
-    if (!us_socket_is_shut_down(s)) {
+    if (s->flags.is_ipc) {
+        events |= us_internal_ipc_write_interest(s);
+    } else if (!us_socket_is_shut_down(s)) {
         // still writable: a FIN of ours would have left the socket read-only
         events |= LIBUS_SOCKET_WRITABLE;
     }

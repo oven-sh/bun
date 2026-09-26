@@ -2691,6 +2691,19 @@ describe("process.exitCode", () => {
     );
   });
 
+  // Node exits at the rejection. Bun goes on while the entry's await is pending, and keeps the 1.
+  it("process.exit() after an unhandled rejection", async () => {
+    await runInlineFixture(
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      await new Promise(resolve => setTimeout(() => { Promise.reject(new Error("boom")); setImmediate(resolve); }, 1));
+      process.exit();
+    `,
+      "exit 1 1\n",
+      1,
+    );
+  });
+
   // Node's fatal-exception handler leaves process.exitCode alone once 'exit' is
   // being emitted (process._exiting), and the process then exits with
   // process.exitCode, or with 1 when that is still undefined.

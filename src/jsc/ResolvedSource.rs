@@ -33,6 +33,9 @@ pub struct ResolvedSource {
     pub tag: Tag,
 
     pub already_bundled: bool,
+    /// An ES module of the executable's pre-resolved module graph: it carries no `module_info`; the loader builds its
+    /// record from the graph.
+    pub is_prelinked_module: bool,
 
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).
@@ -42,7 +45,8 @@ pub struct ResolvedSource {
     pub origin_path: BunString,
 }
 
-/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; }`.
+/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; uint32_t entry_offset; }`
+/// (headers-handwritten.h flattens these into `ResolvedSource`; keep the two in step).
 /// When `owned`, `ptr` is a `heap::into_raw(Box<[u8]>)` freed on drop (or by
 /// the C++ consumer once it `std::exchange`s the pointer out); otherwise it is
 /// borrowed from the standalone module graph or the compile cache.
@@ -53,6 +57,9 @@ pub struct Bytecode {
     owned: bool,
     /// The bytes outlive every VM (executable section, retired compile-cache blob), so JSC may alias them instead of copying.
     persistent: bool,
+    /// Where the module's cache entry starts in the bytes: non-zero when they are one payload shared by every module
+    /// of an executable (`JSC::BytecodeLinkEncoder`).
+    entry_offset: u32,
 }
 
 impl Default for Bytecode {
@@ -62,28 +69,29 @@ impl Default for Bytecode {
             len: 0,
             owned: false,
             persistent: false,
+            entry_offset: 0,
         }
     }
 }
 
 impl Bytecode {
-    pub fn borrowed(bytes: &[u8]) -> Self {
-        if bytes.is_empty() {
-            return Self::default();
-        }
-        Self {
-            ptr: bytes.as_ptr().cast_mut(),
-            len: bytes.len(),
-            owned: false,
-            persistent: false,
-        }
-    }
     /// Borrowed from memory the caller guarantees is never freed or unmapped for the rest of the process
     /// (the executable's module graph section, NodeCompileCache's retired blobs).
     pub fn persistent(bytes: &[u8]) -> Self {
+        Self::persistent_at(bytes, 0)
+    }
+    /// `persistent`, for a module whose cache entry starts `entry_offset` into a payload it shares with others. Not a
+    /// `&[u8]`: in the executable's section, JavaScriptCore patches what it decoded from, on any thread.
+    pub fn persistent_at(payload: *const [u8], entry_offset: u32) -> Self {
+        if payload.is_empty() {
+            return Self::default();
+        }
         Self {
-            persistent: !bytes.is_empty(),
-            ..Self::borrowed(bytes)
+            ptr: payload.cast::<u8>().cast_mut(),
+            len: payload.len(),
+            owned: false,
+            persistent: true,
+            entry_offset,
         }
     }
     pub fn owned(bytes: Box<[u8]>) -> Self {
@@ -96,6 +104,7 @@ impl Bytecode {
             len,
             owned: true,
             persistent: false,
+            entry_offset: 0,
         }
     }
 }
@@ -117,4 +126,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

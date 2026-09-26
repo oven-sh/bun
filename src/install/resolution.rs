@@ -963,13 +963,6 @@ fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value<Sem
 #[derive(Clone, Copy, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
 pub struct Tag(pub u8);
 
-impl Default for Tag {
-    #[inline]
-    fn default() -> Self {
-        Tag::Uninitialized
-    }
-}
-
 #[allow(non_upper_case_globals)]
 impl Tag {
     pub(crate) const Uninitialized: Tag = Tag(0);
@@ -1012,6 +1005,13 @@ impl Tag {
 impl Tag {
     pub(crate) fn is_git(self) -> bool {
         self == Tag::Git || self == Tag::Github
+    }
+
+    /// The root, a workspace, or a `file:` folder package: a package.json on
+    /// disk rather than content fetched from a registry, git host, or tarball.
+    /// These get `local_package_features`.
+    pub(crate) fn is_local_package(self) -> bool {
+        self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
     }
 
     pub(crate) fn can_enqueue_install_task(self) -> bool {

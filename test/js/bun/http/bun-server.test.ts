@@ -517,6 +517,32 @@ test.concurrent("unref keeps process alive for ongoing connections", async () =>
   expect(await bunRun(path.join(import.meta.dir, "unref-fixture-2.ts"))).toSpawn("Completed: 10");
 });
 
+// By not timing out, this test passes: ref() on a server whose stop() has
+// completed must not take a loop ref that nothing will ever release.
+test.concurrent("ref() after a completed stop() does not keep the process alive", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const fetch = () => new Response("x");
+        const graceful = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch });
+        const abrupt = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch });
+        await graceful.stop();
+        await abrupt.stop(true);
+        graceful.ref();
+        abrupt.ref();
+        console.log("stopped", graceful.port, abrupt.port);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "stopped 0 0\n", stderr: "", exitCode: 0 });
+});
+
 test.concurrent("Bun does not crash when given invalid config", async () => {
   await using server1 = Bun.serve({
     fetch(request, server) {
@@ -1701,9 +1727,10 @@ test.concurrent("late keep-alive request to a node:http server after close() sti
   );
 });
 
-test("node:http close() drops the loop ref once in-flight requests finish, without waiting for the surviving connection", async () => {
+test("node:http close() holds the loop ref while the connection that survived it is open, and drops it when that connection closes", async () => {
+  // Node.js prints the same. A server that dropped the loop ref with the connection open would print true.
   expect(await bunRun(path.join(import.meta.dir, "node-http-close-unref-fixture.ts"))).toSpawn(
-    JSON.stringify({ status: "HTTP/1.1 200 OK", connectionOpenAtExit: true }),
+    JSON.stringify({ status: "HTTP/1.1 200 OK", connectionOpenAtExit: false }),
   );
 });
 

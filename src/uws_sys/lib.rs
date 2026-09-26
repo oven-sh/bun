@@ -46,6 +46,11 @@ pub struct us_bun_verify_error_t {
     pub code: *const core::ffi::c_char,
     pub reason: *const core::ffi::c_char,
 }
+impl us_bun_verify_error_t {
+    /// `X509_V_ERR_HOSTNAME_MISMATCH`, from the in-handshake server identity check (`ERR_TLS_CERT_ALTNAME_INVALID`).
+    pub const HOSTNAME_MISMATCH: core::ffi::c_int = 62;
+}
+
 impl Default for us_bun_verify_error_t {
     fn default() -> Self {
         Self {
@@ -209,6 +214,10 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__is_closed(this: &UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__is_shutdown(this: &UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> *mut bun_boringssl_sys::SSL;
+    safe fn UpgradedDuplex__set_inline_reject(this: &UpgradedDuplex);
+    safe fn UpgradedDuplex__latest_session(
+        this: &UpgradedDuplex,
+    ) -> *mut bun_boringssl_sys::SSL_SESSION;
     safe fn UpgradedDuplex__set_timeout(this: &mut UpgradedDuplex, seconds: core::ffi::c_uint);
     safe fn UpgradedDuplex__flush(this: &mut UpgradedDuplex);
     fn UpgradedDuplex__encode_and_write(
@@ -243,6 +252,14 @@ impl UpgradedDuplex {
     pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         let p = UpgradedDuplex__ssl(self);
         if p.is_null() { None } else { Some(p) }
+    }
+    #[inline]
+    pub(crate) fn set_inline_reject(&self) {
+        UpgradedDuplex__set_inline_reject(self)
+    }
+    #[inline]
+    pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
+        UpgradedDuplex__latest_session(self)
     }
     #[inline]
     pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
@@ -296,6 +313,10 @@ unsafe extern "C" {
     safe fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__is_shutdown(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut bun_boringssl_sys::SSL;
+    safe fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamedPipe);
+    safe fn WindowsNamedPipe__latest_session(
+        this: &WindowsNamedPipe,
+    ) -> *mut bun_boringssl_sys::SSL_SESSION;
     safe fn WindowsNamedPipe__set_timeout(this: &mut WindowsNamedPipe, seconds: core::ffi::c_uint);
     safe fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe);
     fn WindowsNamedPipe__encode_and_write(
@@ -332,6 +353,14 @@ impl WindowsNamedPipe {
     pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         let p = WindowsNamedPipe__ssl(self);
         if p.is_null() { None } else { Some(p) }
+    }
+    #[inline]
+    pub(crate) fn set_inline_reject(&self) {
+        WindowsNamedPipe__set_inline_reject(self)
+    }
+    #[inline]
+    pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
+        WindowsNamedPipe__latest_session(self)
     }
     #[inline]
     pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
@@ -478,7 +507,7 @@ pub use socket::{
 pub use internal_loop_data::InternalLoopData;
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
-pub use loop_::{Loop, NOW_NS_UNKNOWN, PosixLoop};
+pub use loop_::{Loop, NOW_NS_UNKNOWN};
 pub use socket_kind::SocketKind;
 #[cfg(windows)]
 pub use timer::Timer;
@@ -492,7 +521,7 @@ pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;
-pub use us_socket::{CloseCode, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
+pub use us_socket::{CloseCode, QueuedInput, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
 pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 
 /// Legacy aliases for `App<SSL>` / `Response<SSL>`.

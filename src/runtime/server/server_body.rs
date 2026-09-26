@@ -780,7 +780,7 @@ impl AnyRoute {
         Ok(None)
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global: &JSGlobalObject,
         path: &[u8],
         argument: JSValue,
@@ -877,11 +877,7 @@ impl AnyRoute {
                         limit
                     )));
                 }
-                return Ok(Some(AnyRoute::FrameworkRouter(
-                    FrameworkRouter::TypeIndex::init(
-                        u8::try_from(init_ctx.framework_router_list.len() - 1).expect("int cast"),
-                    ),
-                )));
+                return Ok(Some(AnyRoute::FrameworkRouter));
             }
         }
 
@@ -895,7 +891,7 @@ impl AnyRoute {
     }
 }
 
-pub struct ServerInitContext<'a> {
+pub(crate) struct ServerInitContext<'a> {
     pub(crate) dedupe_html_bundle_map:
         HashMap<*const HTMLBundle, bun_ptr::BackRef<html_bundle::Route, bun_ptr::Root>>,
     pub(crate) js_string_allocations: bake::StringRefList,
@@ -907,7 +903,7 @@ pub struct ServerInitContext<'a> {
 // ─── ServePlugins ────────────────────────────────────────────────────────────
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 #[derive(bun_ptr::CellRefCounted)]
-pub struct ServePlugins {
+pub(crate) struct ServePlugins {
     state: ServePluginsState,
     ref_count: core::cell::Cell<u32>,
 }
@@ -934,7 +930,7 @@ pub(crate) enum ServePluginsState {
     Err,
 }
 
-pub enum GetOrStartLoadResult<'a> {
+pub(crate) enum GetOrStartLoadResult<'a> {
     /// None = no plugins, used by server implementation
     Ready(Option<&'a JSBundler::Plugin>),
     Pending,
@@ -942,7 +938,7 @@ pub enum GetOrStartLoadResult<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub enum ServePluginsCallback<'a> {
+pub(crate) enum ServePluginsCallback<'a> {
     HtmlBundleRoute(bun_ptr::ThisPtr<html_bundle::Route>),
     DevServer(&'a DevServer),
 }
@@ -1527,7 +1523,7 @@ where
     }
 
     pub(crate) fn request_ip(&self, request: &Request) -> JsResult<JSValue> {
-        if matches!(self.config.address, server_config::Address::Unix(_)) {
+        if self.config.address.is_unix() {
             return Ok(JSValue::NULL);
         }
         let Some(info) = request.request_context.get_remote_socket_info() else {
@@ -1554,7 +1550,7 @@ where
 
         let seconds = arguments[1];
 
-        if matches!(self.config.address, server_config::Address::Unix(_)) {
+        if self.config.address.is_unix() {
             return Ok(JSValue::NULL);
         }
 
@@ -1673,15 +1669,13 @@ where
             // SAFETY: from_js returns a live *mut NodeHTTPResponse; shared —
             // its mutable state is `Cell`/`JsCell` and `upgrade` takes `&self`.
             let node_http_response = unsafe { &*node_http_response };
-            if node_http_response
-                .flags
-                .get()
-                .contains(NodeHTTPResponseFlags::ENDED)
-                || node_http_response
+            let is_ended_or_closed = || {
+                node_http_response
                     .flags
                     .get()
-                    .contains(NodeHTTPResponseFlags::SOCKET_CLOSED)
-            {
+                    .intersects(NodeHTTPResponseFlags::ENDED | NodeHTTPResponseFlags::SOCKET_CLOSED)
+            };
+            if is_ended_or_closed() {
                 return Ok(JSValue::FALSE);
             }
 
@@ -1760,6 +1754,10 @@ where
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
+                        }
+                        // Option getters and the headers conversion may have ended the response.
+                        if is_ended_or_closed() {
+                            return Ok(JSValue::FALSE);
                         }
                         if let Some(raw_response) = node_http_response.raw_response.get() {
                             // we must write the status first so that 200 OK isn't written
@@ -2355,7 +2353,7 @@ where
             // SAFETY: JsClass::from_js returns a live *mut Request.
             // NOTE: `Request::clone()` (Request.rs:1627) seeds a fully-initialized
             // sentinel and calls `clone_into(.., preserve_url=false)`.
-            unsafe { (*request_).clone(ctx)? }
+            unsafe { (*request_).clone(&ctx.js_thread_of_caller(callframe))? }
         } else {
             let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
@@ -2496,54 +2494,51 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        match &self.config.address {
+        let mut port: u16 = match &self.config.address {
             server_config::Address::Unix(unix) => {
-                bun_string_jsc::create_utf8_for_js(global, unix.as_bytes())
+                return bun_string_jsc::create_utf8_for_js(global, unix.as_bytes());
             }
-            server_config::Address::Tcp { port: tcp_port, .. } => {
-                let mut port: u16 = *tcp_port;
+            server_config::Address::Tcp { port, .. } => *port,
+        };
 
-                if let Some(listener) = self.listener {
-                    // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-                    let listener = bun_opaque::opaque_deref_mut(listener);
-                    port = listener.get_local_port().unwrap_or(port);
+        if let Some(listener) = self.listener {
+            // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+            let listener = bun_opaque::opaque_deref_mut(listener);
+            port = listener.get_local_port().unwrap_or(port);
 
-                    let mut buf = [0u8; 64];
-                    let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
+            let mut buf = [0u8; 64];
+            let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
+                return Ok(JSValue::NULL);
+            };
+            let addr = match SocketAddress::init(address_bytes, port) {
+                Ok(a) => a,
+                Err(_) => {
+                    bun_core::hint::cold();
+                    return Ok(JSValue::NULL);
+                }
+            };
+            return addr.into_dto(&self.global());
+        }
+        if Self::HAS_H3 {
+            if let Some(h3l) = self.h3_listener {
+                // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                let h3l = bun_opaque::opaque_deref_mut(h3l);
+                port = h3l.get_local_port().unwrap_or(port);
+                let mut buf = [0u8; 64];
+                let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
+                    return Ok(JSValue::NULL);
+                };
+                let addr = match SocketAddress::init(address_bytes, port) {
+                    Ok(a) => a,
+                    Err(_) => {
+                        bun_core::hint::cold();
                         return Ok(JSValue::NULL);
-                    };
-                    let addr = match SocketAddress::init(address_bytes, port) {
-                        Ok(a) => a,
-                        Err(_) => {
-                            bun_core::hint::cold();
-                            return Ok(JSValue::NULL);
-                        }
-                    };
-                    return addr.into_dto(&self.global());
-                }
-                if Self::HAS_H3 {
-                    if let Some(h3l) = self.h3_listener {
-                        // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                        let h3l = bun_opaque::opaque_deref_mut(h3l);
-                        port = h3l.get_local_port().unwrap_or(port);
-                        let mut buf = [0u8; 64];
-                        let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
-                            return Ok(JSValue::NULL);
-                        };
-                        let addr = match SocketAddress::init(address_bytes, port) {
-                            Ok(a) => a,
-                            Err(_) => {
-                                bun_core::hint::cold();
-                                return Ok(JSValue::NULL);
-                            }
-                        };
-                        return addr.into_dto(&self.global());
                     }
-                }
-                let _ = port;
-                Ok(JSValue::NULL)
+                };
+                return addr.into_dto(&self.global());
             }
         }
+        Ok(JSValue::NULL)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2556,35 +2551,26 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_hostname(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        match &self.config.address {
+        let hostname = match &self.config.address {
             server_config::Address::Unix(_) => return Ok(JSValue::UNDEFINED),
-            server_config::Address::Tcp { .. } => {}
-        }
-        {
-            if let Some(listener) = self.listener {
-                let mut buf = [0u8; 1024];
-                // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
-                if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
-                    .socket()
-                    .remote_address(&mut buf[..1024])
-                {
-                    if !addr.is_empty() {
-                        return bun_string_jsc::create_utf8_for_js(global, addr);
-                    }
-                }
-            }
+            server_config::Address::Tcp { hostname, .. } => hostname,
+        };
+        if let Some(listener) = self.listener {
+            let mut buf = [0u8; 1024];
+            // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
+            if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
+                .socket()
+                .remote_address(&mut buf[..1024])
             {
-                match &self.config.address {
-                    server_config::Address::Tcp { hostname, .. } => {
-                        if let Some(hostname) = hostname {
-                            return bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes());
-                        } else {
-                            return BunString::static_("localhost").to_js(global);
-                        }
-                    }
-                    server_config::Address::Unix(_) => unreachable!(),
+                if !addr.is_empty() {
+                    return bun_string_jsc::create_utf8_for_js(global, addr);
                 }
             }
+        }
+        if let Some(hostname) = hostname {
+            bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes())
+        } else {
+            BunString::static_("localhost").to_js(global)
         }
     }
 
@@ -2603,7 +2589,7 @@ where
         JSValue::from(DEBUG)
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         httplog!("finalize");
         let this_ptr = bun_core::heap::into_raw(self);
         // SAFETY: just unboxed; uniquely owned here until either the inline
@@ -2696,7 +2682,7 @@ where
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         jsc::mark_binding!();
-        if !matches!(self.config.address, server_config::Address::Unix(_))
+        if !self.config.address.is_unix()
             && (!bake::is_allowed_host_header(req, Some(&self.config.address))
                 || !resp
                     .get_remote_socket_info()
@@ -3014,6 +3000,7 @@ where
         // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
         ctx.set_request_body(Some(body_hive.clone()));
 
+        let _context = server.vm().enter_context(server.context.get());
         let signal = AbortSignal::new(&server.global());
         ctx.set_signal(signal);
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
@@ -3266,6 +3253,9 @@ where
             resp.end_without_body(true);
             return;
         }
+        // Same as `prepare_js_request_context`, which this path does not use.
+        resp.send_corked();
+        resp.send_when_complete();
         let _entered = this.vm().enter_event_loop_scope_without_checkpoint();
         this.on_pending_request();
         req.set_yield(false);
@@ -3290,6 +3280,7 @@ where
         // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
         ctx.request_body.set(Some(body_hive.clone()));
 
+        let _context = this.vm().enter_context(this.context.get());
         let signal = AbortSignal::new(&this.global());
         // The
         // RequestContext owns one ref so aborts during the WS-upgrade fallback
@@ -3641,6 +3632,9 @@ fn server_set_on_connection(
                 // SAFETY: as_ returned a non-null *mut to a live server; nothing
                 // here re-enters through it, so each scoped access is exclusive.
                 if let Some(app) = unsafe { (*this_ptr).app } {
+                    // The filter is registered once per native server: `bun --hot` gets here again, and the thunk reads the slot at call time.
+                    // SAFETY: see above — shared read scoped to this statement.
+                    let first = unsafe { (*this_ptr).on_connection.is_empty() };
                     // SAFETY: see above — `&mut` scoped to this statement.
                     unsafe {
                         (*this_ptr).on_connection = callback;
@@ -3668,8 +3662,10 @@ fn server_set_on_connection(
                         let this = unsafe { &*user_data.cast::<$T>() };
                         crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
                     }
-                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).filter(thunk, this_ptr.cast::<c_void>());
+                    if first {
+                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                        bun_opaque::opaque_deref_mut(app).filter(thunk, this_ptr.cast::<c_void>());
+                    }
                 }
                 return Ok(JSValue::UNDEFINED);
             }
@@ -3768,6 +3764,31 @@ fn server_set_max_http_header_size(
     Ok(JSValue::UNDEFINED)
 }
 
+fn server_set_max_headers_count(
+    global: &JSGlobalObject,
+    server: JSValue,
+    max_headers_count: u32,
+) -> JsResult<JSValue> {
+    if server.is_object() {
+        macro_rules! handle {
+            ($T:ty) => {
+                if let Some(this) = server.as_::<$T>() {
+                    // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
+                    unsafe { &mut *this }.set_max_headers_count(max_headers_count);
+                    return Ok(JSValue::UNDEFINED);
+                }
+            };
+        }
+        handle!(HTTPServer);
+        handle!(HTTPSServer);
+        handle!(DebugHTTPServer);
+        handle!(DebugHTTPSServer);
+    }
+    Err(global.throw(format_args!(
+        "Failed to set maxHeadersCount: The 'this' value is not a Server."
+    )))
+}
+
 // `host_fn.wrap{3,4}` C-ABI shims: each forwards through `to_js_host_call`
 // (= `host_fn::to_js_host_fn_result`) so a `JsError` becomes `.zero` with the
 // exception left on the global. Signatures match the C++ callers in
@@ -3827,6 +3848,18 @@ extern "C" fn server_set_max_http_header_size_shim(
     host_fn::to_js_host_fn_result(
         global,
         server_set_max_http_header_size(global, server, max_header_size),
+    )
+}
+
+#[unsafe(export_name = "Server__setMaxHeadersCount")]
+extern "C" fn server_set_max_headers_count_shim(
+    global: &JSGlobalObject,
+    server: JSValue,
+    max_headers_count: u32,
+) -> JSValue {
+    host_fn::to_js_host_fn_result(
+        global,
+        server_set_max_headers_count(global, server, max_headers_count),
     )
 }
 

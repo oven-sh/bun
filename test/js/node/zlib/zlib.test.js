@@ -162,6 +162,89 @@ describe("zlib.gunzip", () => {
   });
 });
 
+describe("one-shot results", () => {
+  const input = Buffer.alloc(1024, "a");
+  const pairs = [
+    ["gzip", "gunzip"],
+    ["deflate", "inflate"],
+    ["deflateRaw", "inflateRaw"],
+    ["gzip", "unzip"],
+    ["brotliCompress", "brotliDecompress"],
+    ["zstdCompress", "zstdDecompress"],
+  ];
+  const backingStores = (compressed, decompressed) => ({
+    compressed: compressed.buffer.byteLength,
+    decompressed: decompressed.buffer.byteLength,
+  });
+
+  it.each(pairs)("%sSync and %sSync do not keep the 16 KB output chunk alive", (compress, decompress) => {
+    const compressed = zlib[`${compress}Sync`](input);
+    const decompressed = zlib[`${decompress}Sync`](compressed);
+    expect(decompressed).toEqual(input);
+    expect(backingStores(compressed, decompressed)).toEqual({
+      compressed: compressed.byteLength,
+      decompressed: decompressed.byteLength,
+    });
+  });
+
+  it.each(pairs)("%s and %s do not keep the 16 KB output chunk alive", async (compress, decompress) => {
+    const compressed = await util.promisify(zlib[compress])(input);
+    const decompressed = await util.promisify(zlib[decompress])(compressed);
+    expect(decompressed).toEqual(input);
+    expect(backingStores(compressed, decompressed)).toEqual({
+      compressed: compressed.byteLength,
+      decompressed: decompressed.byteLength,
+    });
+  });
+
+  // Random bytes do not compress, so both directions produce the same number of chunks.
+  // A fractional chunkSize is valid. It makes the offsets into the chunk fractional.
+  describe.each([
+    ["exactly one chunk", 16 * 1024, undefined],
+    ["full chunks and a small rest", 3 * 16 * 1024 + 5, undefined],
+    ["a large part of one large chunk", 40_000, 64 * 1024],
+    ["many small chunks", 10_000, 64],
+    ["a fractional chunkSize", 1000, 100.5],
+    ["a fractional chunkSize above the input size", 1000, 16 * 1024 + 0.5],
+  ])("%s", (_, size, chunkSize) => {
+    const data = randomFillSync(Buffer.alloc(size));
+    const options = { chunkSize };
+
+    it("round-trips with the sync functions", () => {
+      expect(zlib.inflateRawSync(zlib.deflateRawSync(data, options), options)).toEqual(data);
+      expect(zlib.zstdDecompressSync(zlib.zstdCompressSync(data, options), options)).toEqual(data);
+    });
+
+    it("round-trips with the callback functions", async () => {
+      const deflated = await util.promisify(zlib.deflateRaw)(data, options);
+      expect(await util.promisify(zlib.inflateRaw)(deflated, options)).toEqual(data);
+      const compressed = await util.promisify(zlib.zstdCompress)(data, options);
+      expect(await util.promisify(zlib.zstdDecompress)(compressed, options)).toEqual(data);
+    });
+
+    it("round-trips with _processChunk on one engine", () => {
+      const deflated = zlib.deflateRawSync(data);
+      const engine = new zlib.InflateRaw(options);
+      const half = deflated.length >> 1;
+      // The sync _processChunk closes the handle when it is done. minizlib keeps it open like this.
+      const handle = engine._handle;
+      const close = handle.close;
+      handle.close = () => {};
+      const parts = [];
+      try {
+        parts.push(Buffer.from(engine._processChunk(deflated.subarray(0, half), zlib.constants.Z_SYNC_FLUSH)));
+        engine._handle = handle;
+        parts.push(Buffer.from(engine._processChunk(deflated.subarray(half), zlib.constants.Z_SYNC_FLUSH)));
+      } finally {
+        handle.close = close;
+        engine._handle = handle;
+        engine.close();
+      }
+      expect(Buffer.concat(parts)).toEqual(data);
+    });
+  });
+});
+
 describe("zlib.brotli", () => {
   const inputString =
     "ΩΩLorem ipsum dolor sit amet, consectetur adipiscing eli" +

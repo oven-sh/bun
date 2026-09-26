@@ -33,7 +33,7 @@ mod _impl {
 
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
-    pub struct NativeZlib {
+    pub(crate) struct NativeZlib {
         pub(crate) ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
@@ -268,11 +268,11 @@ mod _impl {
     crate::__compression_stream_mixin_reexports!(NativeZlib);
 } // mod _impl
 
-pub use _impl::NativeZlib;
+pub(crate) use _impl::NativeZlib;
 
 // ─── non-JSC body (real): zlib stream Context ─────────────────────────────
 
-pub struct Context {
+pub(crate) struct Context {
     pub(crate) mode: c::NodeMode,
     pub(crate) state: c::z_stream,
     pub(crate) err: c::ReturnCode,
@@ -438,7 +438,7 @@ impl Context {
         }
     }
 
-    pub fn reset(&mut self) -> Error {
+    pub(crate) fn reset(&mut self) -> Error {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
         match self.mode {
@@ -458,7 +458,7 @@ impl Context {
         self.set_dictionary()
     }
 
-    pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
+    pub(crate) fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
         self.state.avail_in = match &in_ {
             Some(p) => u32::try_from(p.len()).expect("int cast"),
             None => 0,
@@ -477,11 +477,11 @@ impl Context {
         };
     }
 
-    pub fn flush_value_is_valid(flush: u32) -> bool {
+    pub(crate) fn flush_value_is_valid(flush: u32) -> bool {
         flush <= 6
     }
 
-    pub fn set_flush(&mut self, flush: c_int) {
+    pub(crate) fn set_flush(&mut self, flush: c_int) {
         // Checked conversion;
         // transmuting an arbitrary c_int into a Rust enum is UB.
         self.flush = match flush {
@@ -496,7 +496,7 @@ impl Context {
         };
     }
 
-    pub fn do_work(&mut self) {
+    pub(crate) fn do_work(&mut self) {
         use c::NodeMode::*;
         let mut next_expected_header_byte: Option<*const u8> = None;
 
@@ -598,12 +598,12 @@ impl Context {
         }
     }
 
-    pub fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
+    pub(crate) fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
         *avail_in = self.state.avail_in;
         *avail_out = self.state.avail_out;
     }
 
-    pub fn get_error_info(&self) -> Error {
+    pub(crate) fn get_error_info(&self) -> Error {
         match self.err {
             c::ReturnCode::Ok | c::ReturnCode::BufError => {
                 if self.state.avail_out != 0 && self.flush == c::FlushValue::Finish {
@@ -625,7 +625,7 @@ impl Context {
         Error::ok()
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         use c::NodeMode::*;
         let mut status = c::ReturnCode::Ok;
         match self.mode {

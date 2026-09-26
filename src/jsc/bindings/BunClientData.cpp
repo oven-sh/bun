@@ -14,6 +14,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/CachedTypes.h>
+#include <JavaScriptCore/PrelinkedModuleGraph.h>
 #include <wtf/MainThread.h>
 
 #include "JSDOMConstructorBase.h"
@@ -28,6 +29,7 @@
 #include "../../runtime/bake/BakeGlobalObject.h"
 #include "napi_handle_scope.h"
 #include "NativePromiseContext.h"
+#include "ModuleGraph.h"
 #include "StrongRootBlock.h"
 
 namespace WebCore {
@@ -41,6 +43,7 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_heapCellTypeForBakeGlobalObject(JSC::IsoHeapCellType::Args<Bake::GlobalObject>())
     , m_heapCellTypeForNapiHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::NapiHandleScopeImpl>())
     , m_heapCellTypeForNativePromiseContext(JSC::IsoHeapCellType::Args<Bun::NativePromiseContext>())
+    , m_heapCellTypeForJSModuleGraph(JSC::IsoHeapCellType::Args<Bun::JSModuleGraph>())
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
     , m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())
@@ -165,7 +168,7 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     // (~VM -> lastChanceToFinalize -> delete clientData), so the capture stays
     // valid for every collection.
     vm->heap.addMarkingConstraint(makeUnique<JSC::SimpleMarkingConstraint>(
-        "Srb", "Bun StrongRootBlocks",
+        "Srb"_s, "Bun StrongRootBlocks"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([clientData](auto& visitor) {
             JSC::SetRootMarkReasonScope rootScope(visitor, JSC::RootMarkReason::StrongHandles);
             visitor.appendUnbarriered(clientData->m_strongRootBlockHead);
@@ -176,7 +179,7 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
 
     // The common string cache: slots filled by the JS thread, read here with the world stopped (as above).
     vm->heap.addMarkingConstraint(makeUnique<JSC::SimpleMarkingConstraint>(
-        "Bcs", "Bun CommonStrings",
+        "Bcs"_s, "Bun CommonStrings"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([clientData](auto& visitor) {
             JSC::SetRootMarkReasonScope rootScope(visitor, JSC::RootMarkReason::StrongHandles);
             clientData->commonStrings.visit(visitor);
@@ -277,7 +280,33 @@ DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
 
 void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)
 {
+    if (m_decoderStringTable)
+        return; // slots may already hold cells this VM visits; never replace
     m_decoderStringTable = makeUnique<JSC::DecoderStringTable>(bytes);
+}
+
+extern "C" bool Bun__standalonePrelinkedModuleGraph(const uint8_t** blob, size_t* blobLength, const uint8_t** slotTable, size_t* slotTableLength);
+
+JSC::PrelinkedModuleGraph* JSVMClientData::prelinkedModuleGraph(JSC::VM& vm)
+{
+    if (!m_prelinkedModuleGraphChecked) [[unlikely]] {
+        if (!m_decoderStringTable)
+            return nullptr; // not installed (yet): a later call may still build the graph
+        m_prelinkedModuleGraphChecked = true;
+        const uint8_t* blob = nullptr;
+        size_t blobLength = 0;
+        const uint8_t* slotTable = nullptr;
+        size_t slotTableLength = 0;
+        if (Bun__standalonePrelinkedModuleGraph(&blob, &blobLength, &slotTable, &slotTableLength) && slotTableLength >= sizeof(uint32_t)) {
+            // ModuleInfoSlotTable: u32 count, then `count` u32 slots (4-byte aligned in the mapped section).
+            ASSERT(!(reinterpret_cast<uintptr_t>(slotTable) % alignof(uint32_t)));
+            uint32_t count = 0;
+            memcpy(&count, slotTable, sizeof(count));
+            if (count <= (slotTableLength - sizeof(uint32_t)) / sizeof(uint32_t))
+                m_prelinkedModuleGraph = JSC::PrelinkedModuleGraph::tryCreate(vm, *m_decoderStringTable, { blob, blobLength }, { reinterpret_cast<const uint32_t*>(slotTable + sizeof(uint32_t)), count });
+        }
+    }
+    return m_prelinkedModuleGraph.get();
 }
 
 } // namespace WebCore

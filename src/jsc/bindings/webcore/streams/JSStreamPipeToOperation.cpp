@@ -73,16 +73,7 @@ void JSStreamPipeToOperation::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<JSStreamPipeToOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_source);
-    visitor.appendHidden(thisObject->m_destination);
-    visitor.appendHidden(thisObject->m_reader);
-    visitor.appendHidden(thisObject->m_writer);
-    visitor.appendHidden(thisObject->m_signal);
-    visitor.appendHidden(thisObject->m_promise);
-    visitor.appendHidden(thisObject->m_currentWrite);
-    visitor.appendHidden(thisObject->m_shutdownActionPromise);
-    visitor.appendHidden(thisObject->m_shutdownError);
+    visitInternalFieldsHidden(thisObject, visitor);
 }
 
 void JSStreamPipeToOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -90,22 +81,22 @@ void JSStreamPipeToOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = uncheckedDowncast<JSStreamPipeToOperation>(cell);
     auto& vm = cell->vm();
     Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_source, "source"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_destination, "destination"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_reader, "reader"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_writer, "writer"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_signal, "signal"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_promise, "promise"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_currentWrite, "currentWrite"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_shutdownActionPromise, "shutdownActionPromise"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_shutdownError, "shutdownError"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Source), "source"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Destination), "destination"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Reader), "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Writer), "writer"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Signal), "signal"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Promise), "promise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::CurrentWrite), "currentWrite"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ShutdownActionPromise), "shutdownActionPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ShutdownError), "shutdownError"_s);
 }
 
 static JSValue pipeShutdownError(JSStreamPipeToOperation* op)
 {
     if (!op->m_hasShutdownError)
         return jsUndefined();
-    JSValue error = op->m_shutdownError.get();
+    JSValue error = op->shutdownError();
     return error ? error : jsUndefined();
 }
 
@@ -130,12 +121,12 @@ static void queuePipeReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFu
     vm.queueMicrotask(WTF::move(task));
 }
 
-// Publish a write for the shutdown paths: m_currentWrite is the newest write, and every
+// Publish a write for the shutdown paths: currentWrite is the newest write, and every
 // write gets the settled reaction that re-checks the pipe's state.
 static void publishPipeWrite(JSGlobalObject* globalObject, JSStreamPipeToOperation* op, JSPromise* writePromise)
 {
     auto& vm = getVM(globalObject);
-    op->m_currentWrite.set(vm, op, writePromise);
+    op->setCurrentWrite(vm, writePromise);
     auto* settledHandler = JSStreamsRuntime::from(globalObject)->onPipeWriteSettled();
     registerPipeReaction(globalObject, writePromise, settledHandler, settledHandler, op);
 }
@@ -147,7 +138,7 @@ static void pipeToLoopStep(JSGlobalObject* globalObject, JSStreamPipeToOperation
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (op->m_shuttingDown || op->m_finalized || op->m_readInFlight)
         return;
-    auto* writer = op->m_writer.get();
+    auto* writer = op->writer();
     auto desiredSize = writableStreamDefaultWriterGetDesiredSize(writer);
     // null: the destination is erroring/errored; the backward error observer shuts the pipe down.
     if (!desiredSize)
@@ -160,7 +151,7 @@ static void pipeToLoopStep(JSGlobalObject* globalObject, JSStreamPipeToOperation
     }
     auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::PipeTo, op);
     op->m_readInFlight = true;
-    readableStreamDefaultReaderRead(globalObject, op->m_reader.get(), readRequest);
+    readableStreamDefaultReaderRead(globalObject, op->reader(), readRequest);
     RETURN_IF_EXCEPTION(scope, );
 }
 
@@ -173,7 +164,7 @@ static void startPipeAbortBothActions(JSC::VM& vm, JSGlobalObject* globalObject,
     JSPromise* actions[2] = { nullptr, nullptr };
     unsigned actionCount = 0;
     if (!op->m_preventAbort) {
-        auto* destination = op->m_destination.get();
+        auto* destination = op->destination();
         if (destination->m_state == WritableStreamState::Writable)
             actions[actionCount] = writableStreamAbort(globalObject, destination, error);
         else
@@ -183,7 +174,7 @@ static void startPipeAbortBothActions(JSC::VM& vm, JSGlobalObject* globalObject,
     }
     if (!op->m_preventCancel) {
         // The per-action state guard is evaluated when the action is invoked (after the abort).
-        auto* source = op->m_source.get();
+        auto* source = op->source();
         if (source->m_state == ReadableStreamState::Readable)
             actions[actionCount] = readableStreamCancel(globalObject, source, error);
         else
@@ -193,7 +184,7 @@ static void startPipeAbortBothActions(JSC::VM& vm, JSGlobalObject* globalObject,
     }
     if (!actionCount)
         RELEASE_AND_RETURN(scope, op->finalize(globalObject));
-    op->m_shutdownActionPromise.set(vm, op, actions[0]);
+    op->setShutdownActionPromise(vm, actions[0]);
     op->m_pendingShutdownActions = static_cast<uint8_t>(actionCount);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     for (unsigned i = 0; i < actionCount; i++)
@@ -205,7 +196,7 @@ static void performPipeShutdownAction(JSGlobalObject* globalObject, JSStreamPipe
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (op->m_finalized || op->m_shutdownActionPromise)
+    if (op->m_finalized || op->shutdownActionPromise())
         return;
     JSValue error = pipeShutdownError(op);
     JSPromise* actionPromise = nullptr;
@@ -213,26 +204,26 @@ static void performPipeShutdownAction(JSGlobalObject* globalObject, JSStreamPipe
     case JSStreamPipeToOperation::ShutdownAction::None:
         RELEASE_AND_RETURN(scope, op->finalize(globalObject));
     case JSStreamPipeToOperation::ShutdownAction::AbortDestination:
-        actionPromise = writableStreamAbort(globalObject, op->m_destination.get(), error);
+        actionPromise = writableStreamAbort(globalObject, op->destination(), error);
         break;
     case JSStreamPipeToOperation::ShutdownAction::CancelSource:
-        actionPromise = readableStreamCancel(globalObject, op->m_source.get(), error);
+        actionPromise = readableStreamCancel(globalObject, op->source(), error);
         break;
     case JSStreamPipeToOperation::ShutdownAction::CloseDestinationWithErrorPropagation:
-        actionPromise = writableStreamDefaultWriterCloseWithErrorPropagation(globalObject, op->m_writer.get());
+        actionPromise = writableStreamDefaultWriterCloseWithErrorPropagation(globalObject, op->writer());
         break;
     case JSStreamPipeToOperation::ShutdownAction::AbortBoth:
         RELEASE_AND_RETURN(scope, startPipeAbortBothActions(vm, globalObject, op, error));
     }
     RETURN_IF_EXCEPTION(scope, );
-    op->m_shutdownActionPromise.set(vm, op, actionPromise);
+    op->setShutdownActionPromise(vm, actionPromise);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     registerPipeReaction(globalObject, actionPromise, runtime->onPipeShutdownActionFulfilled(), runtime->onPipeShutdownActionRejected(), op);
 }
 
 void JSStreamPipeToOperation::checkErrorsMustBePropagatedForward(JSGlobalObject* globalObject)
 {
-    const auto* source = m_source.get();
+    const auto* source = this->source();
     if (source->m_state != ReadableStreamState::Errored)
         return;
     JSValue storedError = source->m_storedError.get();
@@ -246,7 +237,7 @@ void JSStreamPipeToOperation::checkErrorsMustBePropagatedForward(JSGlobalObject*
 
 void JSStreamPipeToOperation::checkErrorsMustBePropagatedBackward(JSGlobalObject* globalObject)
 {
-    const auto* destination = m_destination.get();
+    const auto* destination = this->destination();
     if (destination->m_state != WritableStreamState::Errored)
         return;
     JSValue storedError = destination->m_storedError.get();
@@ -260,7 +251,7 @@ void JSStreamPipeToOperation::checkErrorsMustBePropagatedBackward(JSGlobalObject
 
 void JSStreamPipeToOperation::checkClosingMustBePropagatedForward(JSGlobalObject* globalObject)
 {
-    if (m_source->m_state != ReadableStreamState::Closed)
+    if (source()->m_state != ReadableStreamState::Closed)
         return;
     if (!m_preventClose)
         shutdownWithAction(globalObject, ShutdownAction::CloseDestinationWithErrorPropagation, jsUndefined(), false);
@@ -270,7 +261,7 @@ void JSStreamPipeToOperation::checkClosingMustBePropagatedForward(JSGlobalObject
 
 void JSStreamPipeToOperation::checkClosingMustBePropagatedBackward(JSGlobalObject* globalObject)
 {
-    auto* destination = m_destination.get();
+    auto* destination = this->destination();
     if (!writableStreamCloseQueuedOrInFlight(destination) && destination->m_state != WritableStreamState::Closed)
         return;
     JSValue destClosed = createTypeError(globalObject, "The destination WritableStream closed before all of the data could be piped to it"_s);
@@ -289,11 +280,11 @@ void JSStreamPipeToOperation::shutdownWithAction(JSGlobalObject* globalObject, S
     m_pendingShutdownAction = action;
     if (hasError) {
         m_hasShutdownError = true;
-        m_shutdownError.set(vm, this, error);
+        setShutdownError(vm, error);
     }
-    auto* destination = m_destination.get();
+    auto* destination = this->destination();
     if (destination->m_state == WritableStreamState::Writable && !writableStreamCloseQueuedOrInFlight(destination)) {
-        if (auto* currentWrite = m_currentWrite.get(); currentWrite && currentWrite->status() == JSPromise::Status::Pending) {
+        if (auto* currentWrite = this->currentWrite(); currentWrite && currentWrite->status() == JSPromise::Status::Pending) {
             onWritesFinishedForShutdown(globalObject);
             return;
         }
@@ -317,18 +308,18 @@ void JSStreamPipeToOperation::finalize(JSGlobalObject* globalObject)
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     m_finalized = true;
-    auto* writer = m_writer.get();
-    auto* reader = m_reader.get();
+    auto* writer = this->writer();
+    auto* reader = this->reader();
     // Unconditional obligations first (back-edges, abort-algorithm removal, the promise and
     // error to settle with) so a throwing release cannot skip them.
     writer->m_pipeOperation.clear();
     reader->m_pipeOperation.clear();
     if (m_abortAlgorithmId) {
-        auto& signal = downcast<JSAbortSignal>(m_signal.get())->wrapped();
+        auto& signal = downcast<JSAbortSignal>(this->signal())->wrapped();
         AbortSignal::removeAbortAlgorithmFromSignal(signal, m_abortAlgorithmId);
         m_abortAlgorithmId = 0;
     }
-    auto* promise = m_promise.get();
+    auto* promise = this->promise();
     bool hasShutdownError = m_hasShutdownError;
     JSValue shutdownError = pipeShutdownError(this);
     writableStreamDefaultWriterRelease(globalObject, writer);
@@ -385,7 +376,7 @@ void JSStreamPipeToOperation::onWritesFinishedForShutdown(JSGlobalObject* global
 {
     if (m_finalized)
         return;
-    if (auto* currentWrite = m_currentWrite.get(); currentWrite && currentWrite->status() == JSPromise::Status::Pending) {
+    if (auto* currentWrite = this->currentWrite(); currentWrite && currentWrite->status() == JSPromise::Status::Pending) {
         auto* handler = JSStreamsRuntime::from(globalObject)->onPipeWritesFinishedForShutdown();
         registerPipeReaction(globalObject, currentWrite, handler, handler, this);
         return;
@@ -406,7 +397,7 @@ void JSStreamPipeToOperation::onShutdownActionRejected(JSGlobalObject* globalObj
         return;
     auto& vm = getVM(globalObject);
     m_hasShutdownError = true;
-    m_shutdownError.set(vm, this, error);
+    setShutdownError(vm, error);
     finalize(globalObject);
 }
 
@@ -465,17 +456,17 @@ static void pipeChunkDeferredWrite(JSGlobalObject* globalObject, JSStreamPipeToO
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (op->m_finalized)
         RELEASE_AND_RETURN(scope, resolvePromise(globalObject, trackingPromise, jsUndefined()));
-    auto* writePromise = writableStreamDefaultWriterWrite(globalObject, op->m_writer.get(), chunk);
+    auto* writePromise = writableStreamDefaultWriterWrite(globalObject, op->writer(), chunk);
     RETURN_IF_EXCEPTION(scope, );
     writePromise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), jsUndefined(), trackingPromise, jsUndefined());
     RETURN_IF_EXCEPTION(scope, );
 
     while (!op->m_finalized && !op->m_shuttingDown) {
-        auto* writer = op->m_writer.get();
+        auto* writer = op->writer();
         auto desiredSize = writableStreamDefaultWriterGetDesiredSize(writer);
         if (!desiredSize || *desiredSize <= 0)
             return;
-        auto* reader = op->m_reader.get();
+        auto* reader = op->reader();
         if (!reader)
             return;
         JSValue next = readableStreamDefaultReaderTryReadFromQueue(globalObject, reader);
@@ -484,9 +475,9 @@ static void pipeChunkDeferredWrite(JSGlobalObject* globalObject, JSStreamPipeToO
             return;
         // The dequeue can run the source's pull(): re-check before touching the writer.
         // A dequeued chunk must still be written if a shutdown merely began (the
-        // shutdown waits on m_currentWrite); only a finalized op or a replaced writer
+        // shutdown waits on currentWrite); only a finalized op or a replaced writer
         // makes the write invalid.
-        if (op->m_finalized || op->m_writer.get() != writer)
+        if (op->m_finalized || op->writer() != writer)
             return;
         auto* nextWrite = writableStreamDefaultWriterWrite(globalObject, writer, next);
         RETURN_IF_EXCEPTION(scope, );
@@ -497,7 +488,7 @@ static void pipeChunkDeferredWrite(JSGlobalObject* globalObject, JSStreamPipeToO
 
 // [reaction-convention] the deferred sink write, queued as a plain job (enterStreams).
 // argument(0) = the chunk; context = InternalFieldTuple{op, the promise published as
-// m_currentWrite}, which adopts the real write's settlement. The shutdown paths wait on that
+// currentWrite}, which adopts the real write's settlement. The shutdown paths wait on that
 // published promise, so a throw here must never leave it pending: it is rejected with the error.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onPipeChunkDeferredWrite, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -574,7 +565,7 @@ void startPipeToOperation(JSGlobalObject* globalObject, JSStreamPipeToOperation*
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
-    if (JSObject* signalObject = op->m_signal.get()) {
+    if (JSObject* signalObject = op->signal()) {
         auto& signal = downcast<WebCore::JSAbortSignal>(signalObject)->wrapped();
         if (signal.aborted()) {
             JSValue reason = signal.jsReason(*globalObject);
@@ -591,8 +582,8 @@ void startPipeToOperation(JSGlobalObject* globalObject, JSStreamPipeToOperation*
         RETURN_IF_EXCEPTION(scope, );
     }
 
-    const auto* reader = op->m_reader.get();
-    const auto* writer = op->m_writer.get();
+    const auto* reader = op->reader();
+    const auto* writer = op->writer();
     WebCore::registerPipeReaction(globalObject, reader->m_closedPromise.get(), runtime->onPipeSourceClosedFulfilled(), runtime->onPipeSourceClosedRejected(), op);
     WebCore::registerPipeReaction(globalObject, writer->m_closedPromise.get(), runtime->onPipeDestClosedFulfilled(), runtime->onPipeDestClosedRejected(), op);
 
@@ -616,17 +607,17 @@ void pipeToReadRequestChunkSteps(JSGlobalObject* globalObject, JSStreamPipeToOpe
     op->m_readInFlight = false;
     if (op->m_finalized)
         return;
-    auto* writer = op->m_writer.get();
+    auto* writer = op->writer();
     auto* runtime = JSStreamsRuntime::from(globalObject);
     // The sink write is deferred by one microtask so an enqueue() inside the source never
-    // synchronously reenters the destination's write algorithm. m_currentWrite is the deferred
+    // synchronously reenters the destination's write algorithm. currentWrite is the deferred
     // write's promise, so a shutdown that must drain the pending writes still waits for it.
     auto* writePromise = JSPromise::create(vm, globalObject->promiseStructure());
     auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), op, writePromise);
     queuePipeReactionJob(vm, globalObject, runtime->onPipeChunkDeferredWrite(), chunk, context);
     publishPipeWrite(globalObject, op, writePromise);
     RETURN_IF_EXCEPTION(scope, );
-    // A shutdown that is waiting on m_currentWrite re-checks it when its reaction fires.
+    // A shutdown that is waiting on currentWrite re-checks it when its reaction fires.
     if (op->m_shuttingDown)
         return;
     RELEASE_AND_RETURN(scope, WebCore::registerPipeReaction(globalObject, writer->readyPromise(globalObject), runtime->onPipeWriterReadyFulfilled(), nullptr, op));

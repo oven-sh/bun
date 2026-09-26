@@ -15,6 +15,8 @@ namespace WebStreams {
 JSC::EncodedJSValue customInspect(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::JSValue thisValue, ASCIILiteral name, JSC::JSObject* data);
 // Same, with a runtime-computed class name (subclass-aware inspectors).
 JSC::EncodedJSValue customInspect(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::JSValue thisValue, const WTF::String& name, JSC::JSObject* data);
+// `{ ...options }`: the options node's hooks pass to their nested inspect call.
+JSC::JSObject* copyInspectOptions(JSC::JSGlobalObject*, JSC::JSValue options);
 // getConstructorOf(obj).name (node lib/internal/util.js) with `fallback` when
 // no named constructor is found on the prototype chain.
 WTF::String constructorNameOf(JSC::JSGlobalObject*, JSC::JSValue thisValue, ASCIILiteral fallback);

@@ -583,53 +583,61 @@ test("a bad record behind the client's Finished does not make a server accept an
 // The peer can go away while the handshake of a socket that called end() still runs. The socket closes with no error,
 // and the server reports the handshake that never finished. `half`: the peer sends the first half of its last flight
 // before its FIN.
-for (const half of [false, true]) {
-  test(`a server that end()s reports the handshake that its peer left ${half ? "in the middle of a flight" : "before its last flight"}`, async () => {
-    const events = [];
-    const refused = Promise.withResolvers();
-    const serverClosed = Promise.withResolvers();
-    let serverSocket;
-    const server = tls.createServer({ key, cert, maxVersion: "TLSv1.3" }, () => events.push("secureConnection"));
-    server.on("tlsClientError", err => {
-      events.push(`tlsClientError ${err.code}`);
-      refused.resolve();
+for (const maxVersion of ["TLSv1.2", "TLSv1.3"]) {
+  for (const half of [false, true]) {
+    test(`${maxVersion}: a server that end()s reports the handshake that its peer left ${half ? "in the middle of a flight" : "before its last flight"}`, async () => {
+      const events = [];
+      const refused = Promise.withResolvers();
+      const serverClosed = Promise.withResolvers();
+      let serverSocket;
+      const server = tls.createServer({ key, cert, maxVersion }, () => events.push("secureConnection"));
+      server.on("tlsClientError", err => {
+        events.push(`tlsClientError ${err.code}`);
+        refused.resolve();
+      });
+      server.on("connection", socket => {
+        serverSocket = socket;
+        socket.on("error", () => {});
+        socket.on("close", serverClosed.resolve);
+      });
+      const { port, close } = await behindProxy(
+        server,
+        (downstream, upstream) => {
+          let chunks = 0;
+          const held = [];
+          downstream.on("data", chunk => {
+            // The ClientHello goes through. The proxy holds the client's last flight, and the server calls end().
+            if (++chunks === 1) return void upstream.write(chunk);
+            held.push(chunk);
+            if (held.length === 1) serverSocket.end();
+          });
+          upstream.on("data", chunk => downstream.write(chunk));
+          upstream.on("end", async () => {
+            const flight = Buffer.concat(held.splice(0));
+            if (half) {
+              upstream.write(flight.subarray(0, Math.ceil(flight.length / 2)));
+              await pendingReadsDone();
+            }
+            upstream.end();
+          });
+        },
+        { allowHalfOpen: true },
+      );
+      const client = tls.connect({
+        port,
+        host: "127.0.0.1",
+        servername: "agent1",
+        rejectUnauthorized: false,
+        maxVersion,
+      });
+      client.on("error", () => {});
+      try {
+        await Promise.all([refused.promise, serverClosed.promise]);
+        assert.deepStrictEqual(events, ["tlsClientError ECONNRESET"]);
+      } finally {
+        client.destroy();
+        close();
+      }
     });
-    server.on("connection", socket => {
-      serverSocket = socket;
-      socket.on("error", () => {});
-      socket.on("close", serverClosed.resolve);
-    });
-    const { port, close } = await behindProxy(
-      server,
-      (downstream, upstream) => {
-        let chunks = 0;
-        const held = [];
-        downstream.on("data", chunk => {
-          // The ClientHello goes through. The proxy holds the client's last flight, and the server calls end().
-          if (++chunks === 1) return void upstream.write(chunk);
-          held.push(chunk);
-          if (held.length === 1) serverSocket.end();
-        });
-        upstream.on("data", chunk => downstream.write(chunk));
-        upstream.on("end", async () => {
-          const flight = Buffer.concat(held.splice(0));
-          if (half) {
-            upstream.write(flight.subarray(0, Math.ceil(flight.length / 2)));
-            await pendingReadsDone();
-          }
-          upstream.end();
-        });
-      },
-      { allowHalfOpen: true },
-    );
-    const client = tls.connect({ port, host: "127.0.0.1", servername: "agent1", rejectUnauthorized: false });
-    client.on("error", () => {});
-    try {
-      await Promise.all([refused.promise, serverClosed.promise]);
-      assert.deepStrictEqual(events, ["tlsClientError ECONNRESET"]);
-    } finally {
-      client.destroy();
-      close();
-    }
-  });
+  }
 }

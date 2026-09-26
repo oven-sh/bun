@@ -582,6 +582,96 @@ describe("bundler", () => {
     },
   });
 
+  const setupBeforeShared = (entryTail: string) => ({
+    "/index.js": /* js */ `
+      import "./setup.js";
+      import { Store } from "./store.js";
+      console.log("index", new Store().name);
+      import("./settings.js");
+      ${entryTail}
+    `,
+    "/setup.js": `globalThis.APP = { name: "app" };`,
+    "/store.js": /* js */ `
+      const NAME = globalThis.APP.name;
+      export class Store { name = NAME; }
+    `,
+    "/settings.js": /* js */ `
+      import { Store } from "./store.js";
+      console.log("settings", new Store().name);
+    `,
+  });
+  itFolds("splitting/EntrySetupImportRunsBeforeSharedCode", {
+    files: setupBeforeShared(""),
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["index.js", "index.js", "settings.js"]);
+      api.expectFile("/out/index.js").not.toContain("globalThis.APP");
+    },
+    folded(api) {
+      expect(jsOutputs(api)).toEqual(["index.entry.js", "settings.js"]);
+    },
+    run: { file: "/out/index.js", stdout: "index app\nsettings app" },
+  });
+  itBundled("splitting/EntryWithExportsSetupImportRunsBeforeSharedCode", {
+    files: setupBeforeShared("export const version = 1;"),
+    entryPoints: ["/index.js"],
+    entryNaming: "[name].entry-[hash].[ext]",
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["index.js", "index.entry.js", "settings.js"]);
+      launchHashedEntry(api, "index");
+    },
+    run: { file: "/out/index.js", stdout: "index app\nsettings app" },
+  });
+  itBundled("splitting/LazyRouteSetupImportRunsBeforeSharedCode", {
+    files: {
+      "/main.js": `import("./route.js").then(m => console.log(m.default));`,
+      "/route.js": /* js */ `
+        import "./route-setup.js";
+        import { value } from "./route-shared.js";
+        import("./panel.js");
+        export default "route " + value;
+      `,
+      "/route-setup.js": `globalThis.ROUTE = "ready";`,
+      "/route-shared.js": `export const value = globalThis.ROUTE;`,
+      "/panel.js": `import { value } from "./route-shared.js"; console.log("panel", value);`,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/main.js", stdout: "route ready\npanel ready" },
+  });
+  itBundled("splitting/FileThatImportsEntryStaysInEntryChunk", {
+    files: {
+      "/index.js": /* js */ `
+        import { helper } from "./helper.js";
+        import { shared } from "./shared.js";
+        export function name() { return "index"; }
+        console.log(helper(), shared);
+        import("./lazy.js");
+      `,
+      "/helper.js": `import { name } from "./index.js"; export const helper = () => "helper of " + name();`,
+      "/shared.js": `export const shared = "shared";`,
+      "/lazy.js": `import { shared } from "./shared.js"; console.log("lazy", shared);`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/index.js").toContain("helper of");
+      for (const file of jsFilesIn(api))
+        api.expectFile("/out/" + file).not.toMatch(/(from|import)\s*\(?"\.\/index\.js"/);
+    },
+    run: { file: "/out/index.js", stdout: "helper of index shared\nlazy shared" },
+  });
+
   itFolds("splitting/FoldsSharedIntoEntry", {
     files: {
       "/entry.js": /* js */ `

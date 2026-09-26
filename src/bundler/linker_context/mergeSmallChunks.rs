@@ -167,6 +167,8 @@ struct Group {
     wants_inits: bool,
     /// Neither merged nor merged into.
     pinned: bool,
+    /// The files keyed like a pinned entry point's file, without that file. Merged, never merged into.
+    beside_pinned_entry: bool,
     /// See `entries_loaded_mid_evaluation`.
     loads_mid_evaluation: Option<AutoBitSet>,
     /// Every live part of every file is side-effect free.
@@ -215,6 +217,7 @@ impl Group {
             recheck: false,
             wants_inits: false,
             pinned,
+            beside_pinned_entry: false,
             loads_mid_evaluation: None,
             pure: true,
             deps: Vec::new(),
@@ -1045,7 +1048,22 @@ pub(crate) fn merge_small_chunks(
         }
         inits.sort_unstable();
         inits.dedup();
-        let entry = groups.entry(temp.alloc_slice_copy(bits.bytes(entry_points_len)));
+        let pinned_entry = (bits.count() == 1)
+            .then(|| bits.find_first_set().expect("one bit set"))
+            .filter(|&entry_id| pin_entry_chunk(entry_id));
+        let pinned = pinned_entry.is_some();
+        let beside_pinned_entry = pinned_entry.is_some_and(|entry_id| {
+            entry_source_indices[entry_id] != source_index
+                && is_live_js(entry_source_indices[entry_id])
+        });
+        let key = bits.bytes(entry_points_len);
+        let entry = groups.entry(if beside_pinned_entry {
+            let longer = temp.alloc_slice_fill_copy(key.len() + 1, 0u8);
+            longer[..key.len()].copy_from_slice(key);
+            longer
+        } else {
+            temp.alloc_slice_copy(key)
+        });
         let group_index = match &entry {
             MapEntry::Occupied(entry) => entry.index(),
             MapEntry::Vacant(entry) => entry.index(),
@@ -1061,9 +1079,10 @@ pub(crate) fn merge_small_chunks(
                         e.insert((class, vec![group_index]));
                     }
                 }
-                let pinned = bits.count() == 1
-                    && pin_entry_chunk(bits.find_first_set().expect("one bit set"));
-                entry.insert(Group::new(target, bits, pinned, source_index)?)
+                let mut group =
+                    Group::new(target, bits, pinned && !beside_pinned_entry, source_index)?;
+                group.beside_pinned_entry = beside_pinned_entry;
+                entry.insert(group)
             }
         };
         group.size += size;
@@ -1170,11 +1189,13 @@ pub(crate) fn merge_small_chunks(
     // A member that can be evaluating when an entry of the class loads stays
     // out (rule 1 in the doc comment above).
     let mut folded_same = 0usize;
+    // The parent runs before a pinned entry point's chunk, so the files beside the entry point's file go to the parent too.
+    let mut leave_entry_chunk: Vec<(usize, usize)> = Vec::new();
     for (class_key, (class, members)) in classes.keys().iter().zip(classes.values()) {
         let unpinned = || {
             members.iter().copied().filter(|&i| {
                 let group = &groups.values()[i];
-                !group.pinned && !group.loads_entry_of(class)
+                !group.pinned && !group.beside_pinned_entry && !group.loads_entry_of(class)
             })
         };
         let Some(target_index) = unpinned().max_by(|&a, &b| {
@@ -1200,8 +1221,41 @@ pub(crate) fn merge_small_chunks(
                 );
                 continue;
             }
+            if group.beside_pinned_entry {
+                leave_entry_chunk.push((member, target_index));
+                continue;
+            }
             fold(groups.values_mut(), member, target_index);
             folded_same += 1;
+        }
+    }
+    // No chunk may import a pinned chunk: files that import the entry point's file stay with it.
+    if !leave_entry_chunk.is_empty() {
+        for (source_index, &group_index) in group_of_file.iter().enumerate() {
+            if group_index == usize::MAX || !groups.values()[group_index].beside_pinned_entry {
+                continue;
+            }
+            let mut imports_pinned = false;
+            this.for_each_file_loaded_by(source_index as u32, |other| {
+                let other = group_of_file[other as usize];
+                imports_pinned |= other != usize::MAX && groups.values()[other].pinned;
+            });
+            if imports_pinned {
+                leave_entry_chunk.retain(|&(member, _)| member != group_index);
+            }
+        }
+    }
+    for (member, target_index) in leave_entry_chunk {
+        fold(groups.values_mut(), member, target_index);
+        folded_same += 1;
+    }
+    for group_index in 0..groups.count() {
+        let group = &groups.values()[group_index];
+        if group.beside_pinned_entry && group.merged_into.is_none() {
+            let entry_chunk = groups
+                .get_index(&group.bits.bytes(entry_points_len))
+                .expect("an entry point's class has its chunk");
+            fold(groups.values_mut(), group_index, entry_chunk);
         }
     }
     if !fold_pure {

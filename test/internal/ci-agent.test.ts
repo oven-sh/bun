@@ -8,19 +8,32 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { waitForSocket } from "../../scripts/agent.ts";
 
-/** A process that listens on `socket` and never takes a connection, like a daemon that does not serve yet. */
+/**
+ * A process that listens on `socket` and never takes a connection, like a
+ * daemon that does not serve yet. Its read of stdin keeps the thread, and ends
+ * when the pipe closes, so the process does not outlive the test runner.
+ */
 async function listener(socket: string) {
   const daemon = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `require("node:net").createServer().listen(process.argv[1], () => {
-        require("node:fs").writeSync(1, "listening");
-        Bun.sleepSync(600_000);
+        const fs = require("node:fs");
+        fs.writeSync(1, "listening");
+        for (;;) {
+          try {
+            if (fs.readSync(0, Buffer.alloc(1)) === 0) process.exit(0);
+          } catch (error) {
+            if (error.code !== "EAGAIN") throw error;
+            Bun.sleepSync(10);
+          }
+        }
       });`,
       socket,
     ],
     env: bunEnv,
+    stdin: "pipe",
     stdout: "pipe",
     stderr: "inherit",
   });
@@ -57,10 +70,14 @@ describe.concurrent.skipIf(isWindows)("the wait of the agent for dockerd", () =>
     expect(daemon.exitCode).toBeNull();
   });
 
-  test("the wait ends without a daemon when its time is used up", async () => {
+  test("the wait without a daemon ends when its time is used up, and not before", async () => {
     using dir = tempDir("ci-agent", {});
+    const [wait, interval] = [500, 1];
 
-    expect(await waitForSocket(join(String(dir), "docker.sock"), 200, 10)).toBe(false);
+    const started = Date.now();
+    expect(await waitForSocket(join(String(dir), "docker.sock"), wait, interval)).toBe(false);
+    // The last attempt is the last one whose successor would come after the time.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(wait - interval);
   });
 
   test("the socket of a daemon that is gone is not a daemon", async () => {

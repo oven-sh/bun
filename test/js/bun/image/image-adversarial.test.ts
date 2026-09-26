@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, isWindows, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -77,6 +77,9 @@ function makePng(
 }
 
 const tinyPng = makePng(2, 2, (x, y) => [x * 255, y * 255, 128, 255]);
+/// Past JSC's fastSizeLimit (1000 elements), so a `new Uint8Array(kilobytePng)`
+/// is an OversizeTypedArray: its bytes sit in fastMalloc with no ArrayBuffer.
+const kilobytePng = makePng(32, 32, (x, y) => [(x * 7 + y * 13) & 255, (x * 31) & 255, (y * 17) & 255, 255]);
 
 /// Decode any image to RGBA via Bun.Image→PNG, then walk the PNG ourselves
 /// (filter de-prediction included) so assertions are against ground truth,
@@ -1165,6 +1168,94 @@ describe("hostile option objects", () => {
     // After resolve the pin is released; now transfer() actually detaches.
     a.buffer.transfer();
     expect(a.byteLength).toBe(0);
+  });
+
+  test("a view that never had a `.buffer` is pinned too, so the same transfer copies", async () => {
+    // Same as above without the subarray(): subarray() materializes the
+    // ArrayBuffer, so that test only ever reached the already-has-a-buffer
+    // path. A view handed straight to the constructor is still
+    // OversizeTypedArray when the borrow happens, and the helper has to adopt
+    // an ArrayBuffer for it before a pin has anywhere to live.
+    const a = new Uint8Array(kilobytePng); // > fastSizeLimit elements, no .buffer touched
+    const p = new Bun.Image(a).png().bytes();
+    const moved = a.buffer.transfer();
+    expect(moved.byteLength).toBe(kilobytePng.length);
+    expect(a.byteLength).toBe(kilobytePng.length); // pinned: `a` keeps its bytes
+    expect((await p)[0]).toBe(0x89);
+    a.buffer.transfer();
+    expect(a.byteLength).toBe(0); // pin released with the task
+  });
+
+  test("a transfer after the borrow does not free the bytes the pool thread reads", async () => {
+    // Without the pin a transfer of `.buffer` frees the storage while the pool
+    // job may still read it: `transfer(0)` frees it inside the call, and a
+    // same-length transfer hands it to an owner that the next collection
+    // sweeps. The assertion does not depend on catching the read in the act:
+    // the transfer either copies (pinned, `byteLength` stays) or detaches
+    // (`byteLength` 0). `Malloc=1` routes the Gigacage through system malloc,
+    // so ASAN reports the read too when the job is still running at the free.
+    // Windows is left alone: bmalloc's SystemHeap is unimplemented there and
+    // `Malloc=1` would RELEASE_BASSERT.
+    const script = `
+      import zlib from "node:zlib";
+      const be32 = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
+      const chunk = (t, d) =>
+        Buffer.concat([be32(d.length), Buffer.from(t), d,
+          be32(zlib.crc32(Buffer.concat([Buffer.from(t), d])) >>> 0)]);
+      const w = 32, h = 32, stride = w * 4 + 1;
+      // Noise, so the IDAT does not compress below fastSizeLimit: the input
+      // has to stay an OversizeTypedArray to reach the pin at all.
+      const rows = Buffer.alloc(stride * h);
+      crypto.getRandomValues(rows);
+      for (let y = 0; y < h; y++) rows[y * stride] = 0; // filter byte: none
+      const png = Buffer.concat([
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        chunk("IHDR", Buffer.concat([be32(w), be32(h), Buffer.from([8, 6, 0, 0, 0])])),
+        chunk("IDAT", zlib.deflateSync(rows)),
+        chunk("IEND", Buffer.alloc(0)),
+      ]);
+      const want = Bun.hash(await new Bun.Image(new Uint8Array(png)).bytes());
+      const steal = {
+        "transfer(0)": ab => ab.transfer(0),
+        "structuredClone + gc": ab => {
+          structuredClone(ab, { transfer: [ab] });
+          Bun.gc(true);
+        },
+      };
+      const out = { pngBytes: png.length };
+      for (const [name, take] of Object.entries(steal)) {
+        const input = new Uint8Array(png);           // OversizeTypedArray: no ArrayBuffer yet
+        const decode = new Bun.Image(input).bytes(); // borrows input's storage for the pool
+        take(input.buffer);
+        for (let k = 0; k < 8; k++) new Uint8Array(png.length).fill(0xee); // reuse the block
+        const decoded = await decode.then(
+          r => (Bun.hash(r) === want ? "same" : "different"),
+          e => "rejected:" + (e.code ?? e.message),
+        );
+        out[name] = { byteLength: input.byteLength, decoded };
+      }
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        ...(isWindows ? {} : { Malloc: "1" }),
+        // symbolize=0: symbolizing a failure report outlasts the test timeout.
+        // detect_leaks=0: Malloc=1 exposes JSC's never-freed startup allocations to LSAN,
+        // and without symbols test/leaksan.supp cannot match them.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { pngBytes, ...vehicles } = JSON.parse(stdout.trim());
+    expect(pngBytes).toBeGreaterThan(1000); // else the input is a FastTypedArray and gets duped
+    // Pinned: each transfer copied and left `input` attached.
+    const pinned = { byteLength: pngBytes, decoded: "same" };
+    expect(vehicles).toEqual({ "transfer(0)": pinned, "structuredClone + gc": pinned });
+    expect(exitCode).toBe(0);
   });
 
   test("SharedArrayBuffer input is refused (cross-thread mutation surface)", () => {

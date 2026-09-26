@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use bun_collections::{ArrayHashMap, DynamicBitSet};
+use bun_collections::{DynamicBitSet, StringArrayHashMap};
 use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
@@ -17,8 +17,8 @@ use bun_threading::{ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::{
-    BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
-    TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
+    BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution, bun_fs,
+    bun_json, buntaghashbuf_make, initialize_store, resolution,
 };
 
 bun_output::declare_scope!(install, hidden);
@@ -56,10 +56,10 @@ pub struct Summary {
     pub(crate) skipped: u32,
     pub(crate) successfully_installed: Option<DynamicBitSet>,
 
-    /// Package name hash -> number of scripts skipped.
+    /// Package name -> number of scripts skipped.
     /// Multiple versions of the same package might add to the count, and each version
     /// might have a different number of scripts
-    pub(crate) packages_with_blocked_scripts: ArrayHashMap<TruncatedPackageNameHash, usize>,
+    pub(crate) packages_with_blocked_scripts: StringArrayHashMap<usize>,
 }
 
 #[repr(u8)]

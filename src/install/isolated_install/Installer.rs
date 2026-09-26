@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
-use bun_core::{Environment, Global, Output};
+use bun_core::{Environment, Global, Output, UnwrapOrOom};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
@@ -22,7 +22,7 @@ use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::resolution;
 use crate::{
     self as install, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
-    Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
+    Resolution, TaskCallbackContext, bin, invalid_dependency_id,
 };
 // Bring `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.
@@ -1592,8 +1592,6 @@ impl Task {
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
 
                     let dep = &lockfile.buffers.dependencies[dep_id as usize];
-                    let truncated_dep_name_hash: TruncatedPackageNameHash =
-                        dep.name_hash as TruncatedPackageNameHash;
 
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if installer
@@ -1677,15 +1675,11 @@ impl Task {
                             entry_scripts[self.entry_id.get() as usize].set(Some(clone));
 
                             if is_trusted_through_update_request {
-                                let (trusted_name, trusted_name_hash) =
-                                    if pkg_res.tag == ResolutionTag::Npm {
-                                        (
-                                            pkg_name.slice(string_buf),
-                                            pkg_name_hash as TruncatedPackageNameHash,
-                                        )
-                                    } else {
-                                        (dep.name.slice(string_buf), truncated_dep_name_hash)
-                                    };
+                                let trusted_name = if pkg_res.tag == ResolutionTag::Npm {
+                                    pkg_name.slice(string_buf)
+                                } else {
+                                    dep.name.slice(string_buf)
+                                };
                                 let trusted_dep_to_add: Box<[u8]> = Box::from(trusted_name);
 
                                 let _unlock = installer.trusted_dependencies_mutex.lock_guard();
@@ -1718,7 +1712,8 @@ impl Task {
                                 trusted
                                     .as_mut()
                                     .unwrap()
-                                    .insert(trusted_name_hash, Box::from(trusted_name));
+                                    .insert(trusted_name)
+                                    .unwrap_or_oom();
                             }
 
                             if first_index != 0 {

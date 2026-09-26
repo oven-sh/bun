@@ -396,6 +396,8 @@ await renderFirstScreen();
 Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
 ```
 
+The scale does not apply to a function in which one property read or write misses the interpreter's inline cache 12 times. Such a function costs more in the interpreter than its compilation costs, so the Baseline JIT compiles it soon, whatever the scale is.
+
 ---
 
 ## Embedding runtime arguments

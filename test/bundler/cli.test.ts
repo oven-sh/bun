@@ -973,21 +973,12 @@ describe.concurrent("bun build --server-components", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("keeps an explicit --target=node", async () => {
-    using dir = tempDir("sc-node-target", { "server.ts": `console.log("server");` });
-    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "--target=node", "server.ts");
-    expect(stderr).toBe("");
-    expect(stdout).toMatchInlineSnapshot(`
-      "// server.ts
-      console.log("server");"
-    `);
-    expect(exitCode).toBe(0);
-  });
-
-  test("rejects a client-side --target", async () => {
-    using dir = tempDir("sc-browser-target", { "server.ts": `console.log("server");` });
-    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "--target=browser", "server.ts");
-    expect(stderr).toMatchInlineSnapshot(`"error: Cannot use client-side --target=Browser with --server-components"`);
+  // Server files in this mode import `Response` from `bun:app`, which only bun
+  // provides, so the bundle cannot run anywhere else.
+  test.each(["node", "browser"])("rejects --target=%s", async target => {
+    using dir = tempDir(`sc-${target}-target`, { "server.ts": `console.log("server");` });
+    const { stdout, stderr, exitCode } = await build(dir, "--server-components", `--target=${target}`, "server.ts");
+    expect(stderr).toBe(`error: --server-components requires --target=bun, got --target=${target}`);
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
@@ -1059,20 +1050,22 @@ describe.concurrent("bun build --server-components", () => {
     expect(fs.existsSync(join(String(dir), "out"))).toBe(false);
   });
 
+  // The flag seeds `import.meta.env.SSR` for the server graph; the browser graph
+  // an HTML import creates must see it as false, as Bake's client graph does.
   test("the same HTML import bundles when no script carries a directive", async () => {
     using dir = tempDir("sc-html", {
-      "server.ts": `import page from "./index.html"; console.log(page);`,
+      "server.ts": `import page from "./index.html"; console.log(page, import.meta.env.SSR);`,
       "index.html": `<!DOCTYPE html><html><head><script type="module" src="./client.ts"></script></head><body></body></html>`,
-      "client.ts": `document.body.textContent = "button";`,
+      "client.ts": `console.log("ssr", import.meta.env.SSR);`,
     });
     const { stderr, exitCode } = await build(dir, "--server-components", "--outdir=out", "server.ts");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    expect(fs.readdirSync(join(String(dir), "out")).sort()).toEqual([
-      expect.stringMatching(/^index-\w+\.js$/),
-      "index.html",
-      "server.js",
-    ]);
+    const out = fs.readdirSync(join(String(dir), "out")).sort();
+    expect(out).toEqual([expect.stringMatching(/^index-\w+\.js$/), "index.html", "server.js"]);
+    // `minify_syntax` is on in this mode: `!1` is false, `!0` is true.
+    expect(fs.readFileSync(join(String(dir), "out", out[0]), "utf8")).toContain(`console.log("ssr", !1)`);
+    expect(fs.readFileSync(join(String(dir), "out", "server.js"), "utf8")).toContain(`, !0)`);
   });
 
   test("a non-JS file that starts with a directive is plain data", async () => {

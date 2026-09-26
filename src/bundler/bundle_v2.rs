@@ -1976,6 +1976,13 @@ pub mod bv2_impl {
                 unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
 
             ct.options.target = Target::Browser;
+            // The CLI seeds `import.meta.env` for the server graph; this graph is the browser.
+            if ct.options.server_components {
+                ct.options.define.insert(
+                    b"import.meta.env.SSR",
+                    crate::defines::DefineData::init_boolean(false),
+                )?;
+            }
             // Don't inherit SSR mode from the server target: the SSR pass
             // drops hook setter bindings, which is invalid for browser code.
             if ct.options.react_compiler.is_ssr() {

@@ -3,6 +3,7 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import vm from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -298,6 +299,202 @@ test("capture stack trace edge cases", () => {
   expect(Error.captureStackTrace({}, true)).toBe(undefined);
 });
 
+// As V8: the first line is Error.prototype.toString() of the target, whatever kind of object it is,
+// read when the stack is first read and not when it is captured.
+test("Error.captureStackTrace: the first line of a target's stack is its name and message when the stack is read", () => {
+  function AxiosLikeError(message) {
+    Error.call(this);
+    Error.captureStackTrace(this, this.constructor);
+    this.message = message;
+    this.name = "AxiosLikeError";
+  }
+  AxiosLikeError.prototype = Object.create(Error.prototype, { constructor: { value: AxiosLikeError } });
+
+  // Its message getter reads what the constructor only sets after capturing.
+  function LateState(parts) {
+    Error.captureStackTrace(this, LateState);
+    this.parts = parts;
+  }
+  LateState.prototype = Object.create(Error.prototype, {
+    name: { value: "LateState" },
+    message: {
+      get() {
+        return this.parts.join(" ");
+      },
+    },
+  });
+
+  class ProtoNamed {
+    message = "from the instance";
+  }
+  ProtoNamed.prototype.name = "ProtoName";
+
+  const captured = target => {
+    Error.captureStackTrace(target);
+    return target;
+  };
+  const assignedAfter = captured({});
+  assignedAfter.name = "Late";
+  assignedAfter.message = "assigned after";
+
+  const rows = [
+    [captured({}), "Error"],
+    [captured({ name: "Custom", message: "boom" }), "Custom: boom"],
+    [captured({ message: "boom" }), "Error: boom"],
+    [captured({ name: "Custom" }), "Custom"],
+    [captured({ name: "", message: "boom" }), "boom"],
+    [captured({ message: null }), "Error: null"],
+    [captured({ name: 42, message: 7 }), "42: 7"],
+    [captured(function named() {}), "named"],
+    [captured(new ProtoNamed()), "ProtoName: from the instance"],
+    // prettier-ignore
+    [captured({ get name() { return "FromGetter"; }, get message() { return "too"; } }), "FromGetter: too"],
+    // prettier-ignore
+    [captured({ get name() { Bun.gc(true); return "Collects"; } }), "Collects"],
+    [assignedAfter, "Late: assigned after"],
+    [new AxiosLikeError("Request failed"), "AxiosLikeError: Request failed"],
+    [new LateState(["a", "b"]), "LateState: a b"],
+    [captured(new TypeError("boom")), "TypeError: boom"],
+  ];
+  const headers = rows.map(([target]) => {
+    const lines = target.stack.split("\n");
+    expect(lines[1]).toStartWith("    at ");
+    return lines[0];
+  });
+  expect(headers).toEqual(rows.map(([, header]) => header));
+
+  // A name that cannot be read throws from the read of the stack, not from the capture.
+  // prettier-ignore
+  const throwing = captured({ get name() { throw new RangeError("from name"); } });
+  expect(() => throwing.stack).toThrow("from name");
+  const symbol = captured({ name: Symbol("n") });
+  expect(() => symbol.stack).toThrow(TypeError);
+
+  // The stack is read once: later changes do not show, and it can be assigned.
+  const once = captured({ name: "First" });
+  expect(once.stack.split("\n")[0]).toBe("First");
+  once.name = "Second";
+  expect(once.stack.split("\n")[0]).toBe("First");
+  const assigned = captured({ name: "Unread" });
+  assigned.stack = "replaced";
+  expect(assigned.stack).toBe("replaced");
+});
+
+test("Error.captureStackTrace on a target that is not an Error: capturing again, an existing stack, delete, own keys", () => {
+  const firstLine = target => target.stack.split("\n")[0];
+
+  // A target from another realm.
+  const fromVm = vm.runInNewContext("({ name: 'FromVm', message: 'm' })");
+  Error.captureStackTrace(fromVm);
+  expect(firstLine(fromVm)).toBe("FromVm: m");
+
+  // Capturing again replaces the frames, read or unread.
+  function outer() {
+    const twice = { name: "Twice" };
+    Error.captureStackTrace(twice);
+    const unread = { name: "Unread" };
+    Error.captureStackTrace(unread);
+    const before = twice.stack;
+    Error.captureStackTrace(twice, outer);
+    Error.captureStackTrace(unread, outer);
+    return { before, after: twice.stack, unread: unread.stack };
+  }
+  const { before, after, unread } = outer();
+  expect({ before: /at outer/.test(before), after: /at outer/.test(after), unread: /at outer/.test(unread) }).toEqual({
+    before: true,
+    after: false,
+    unread: false,
+  });
+  expect([after.split("\n")[0], unread.split("\n")[0]]).toEqual(["Twice", "Unread"]);
+
+  // A stack the target already had is replaced.
+  const had = { name: "Had", stack: "old" };
+  Error.captureStackTrace(had);
+  expect(firstLine(had)).toBe("Had");
+
+  // Deleted before it is read, it is gone.
+  const deleted = { name: "Deleted" };
+  Error.captureStackTrace(deleted);
+  expect(delete deleted.stack).toBe(true);
+  expect(deleted.stack).toBeUndefined();
+
+  // What is kept for the first read is not a property anyone can see, before or after it.
+  const target = { name: "Target" };
+  Error.captureStackTrace(target);
+  const visible = () => ({
+    keys: Object.keys(target),
+    symbols: Object.getOwnPropertySymbols(target),
+    names: Object.getOwnPropertyNames(target).filter(name => !name.startsWith("original")),
+    json: JSON.stringify(target),
+  });
+  const unreadKeys = visible();
+  expect(firstLine(target)).toBe("Target");
+  expect([unreadKeys, visible()]).toEqual(
+    Array(2).fill({ keys: ["name"], symbols: [], names: ["name", "stack"], json: '{"name":"Target"}' }),
+  );
+});
+
+test("Error.captureStackTrace: a target's stack is found through an object that inherits from it", () => {
+  const proto = { name: "Proto" };
+  Error.captureStackTrace(proto);
+  const derived = Object.create(proto);
+  derived.name = "Derived";
+  // The first line comes from the object that was captured on, as in V8.
+  expect(derived.stack.split("\n")[0]).toBe("Proto");
+  expect(proto.stack.split("\n")[0]).toBe("Proto");
+
+  function Widget() {}
+  Widget.prototype.name = "WidgetProto";
+  Error.captureStackTrace(Widget.prototype);
+  expect(new Widget().stack.split("\n")[0]).toBe("WidgetProto");
+
+  const unrelated = { name: "Unrelated" };
+  Error.captureStackTrace(unrelated);
+  expect(Reflect.get(unrelated, "stack", { name: "Receiver" })).toBeUndefined();
+});
+
+test("Error.captureStackTrace: reading the stack leaves a frozen or sealed target as it was", () => {
+  const targets = { frozen: { name: "Frozen" }, sealed: { name: "Sealed" }, error: new TypeError("boom") };
+  for (const target of Object.values(targets)) Error.captureStackTrace(target);
+  Object.freeze(targets.frozen);
+  Object.seal(targets.sealed);
+  Object.freeze(targets.error);
+  expect({
+    frozen: targets.frozen.stack.split("\n")[0],
+    sealed: targets.sealed.stack.split("\n")[0],
+    error: targets.error.stack.split("\n")[0],
+  }).toEqual({ frozen: "Frozen", sealed: "Sealed", error: "TypeError: boom" });
+  expect({
+    frozen: Object.isFrozen(targets.frozen),
+    sealed: Object.isSealed(targets.sealed),
+    error: Object.isFrozen(targets.error),
+  }).toEqual({ frozen: true, sealed: true, error: true });
+
+  // What was made of the property before the first read is kept.
+  const enumerable = { name: "Enumerable" };
+  Error.captureStackTrace(enumerable);
+  Object.defineProperty(enumerable, "stack", { enumerable: true });
+  const fixed = { name: "Fixed" };
+  Error.captureStackTrace(fixed);
+  Object.defineProperty(fixed, "stack", { configurable: false });
+  expect([enumerable.stack.split("\n")[0], fixed.stack.split("\n")[0]]).toEqual(["Enumerable", "Fixed"]);
+  expect(Object.keys(enumerable)).toEqual(["name", "stack"]);
+  expect(Object.getOwnPropertyDescriptor(fixed, "stack").configurable).toBe(false);
+});
+
+test("console.trace() from a Console instance starts with Trace and its message", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `new console.Console(process.stdout, process.stdout).trace("hello %s", "world");`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.split("\n")[0]).toBe("Trace: hello world");
+  expect(exitCode).toBe(0);
+});
+
 test("Error.captureStackTrace installs .stack as non-enumerable", () => {
   // V8 installs .stack with enumerable: false regardless of target type.
   const expectNonEnumerableStack = target => {
@@ -306,8 +503,9 @@ test("Error.captureStackTrace installs .stack as non-enumerable", () => {
       enumerable: false,
       configurable: true,
     });
-    // V8 installs an accessor (no `writable`), Bun installs a data property; both
-    // must allow assignment. Only `writable: false` would be a regression.
+    // Until the stack is first read this is an accessor (no `writable`), in V8 and in Bun; after
+    // that Bun has a data property. Either way it must allow assignment: only `writable: false`
+    // would be a regression.
     expect(d.writable).not.toBe(false);
     expect(Object.prototype.propertyIsEnumerable.call(target, "stack")).toBe(false);
   };
@@ -1577,6 +1775,11 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
       "AggregateError": () => new AggregateError([new Error("inner")], "boom"),
       "with a cause": () => new RangeError("boom", { cause: new Error("why") }),
       "from a node:vm context": () => vm.runInNewContext("new TypeError('boom')"),
+      "captured again before the collection": () => {
+        const error = new TypeError("boom");
+        Error.captureStackTrace(error);
+        return error;
+      },
       // Frames whose text says more than a function name and a position.
       "created in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
       "created by eval code": () => (0, eval)("new Error('boom')"),
@@ -1674,6 +1877,7 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
     "AggregateError": row("AggregateError: boom"),
     "with a cause": row("RangeError: boom"),
     "from a node:vm context": row("TypeError: boom"),
+    "captured again before the collection": row("TypeError: boom"),
     "created in a constructor": row("Error: boom", ["at new Widget"]),
     "created by eval code": row("Error: boom", ["at <anonymous>"]),
     "created under a builtin": row("Error: boom", ["at <anonymous>", "at map"]),

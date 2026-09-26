@@ -161,6 +161,30 @@ describe("css tests", () => {
         opera: 67 << 16,
       },
     );
+
+    // https://github.com/oven-sh/bun/issues/42480
+    // :target-current, :target-before and :target-after are the css-overflow-5
+    // scroll marker pseudo-classes. They must be in the pseudo-class table so
+    // that the name is printed in one canonical spelling and two rules that
+    // differ only in the case of the name merge. :target-within is the
+    // in-file control for what a known name does.
+    minify_test(
+      indoc`.a:TARGET-CURRENT { color: red }
+      .b:TARGET-WITHIN { color: red }
+      .c:Target-Before { color: red }
+      .d:target-AFTER { color: red }
+      .e:target-current { color: red }`,
+      ".a:target-current{color:red}.b:target-within{color:red}.c:target-before{color:red}.d:target-after{color:red}.e:target-current{color:red}",
+    );
+    minify_test(
+      indoc`.x:target-current { color: red }
+      .x:TARGET-CURRENT { color: red }
+      .y:target-before { color: red }
+      .y:TARGET-BEFORE { color: red }
+      .z:target-after { color: red }
+      .z:TARGET-AFTER { color: red }`,
+      ".x:target-current{color:red}.y:target-before{color:red}.z:target-after{color:red}",
+    );
   });
 
   describe("calc edge case", () => {

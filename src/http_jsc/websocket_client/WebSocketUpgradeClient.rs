@@ -125,6 +125,8 @@ pub struct HTTPClient<const SSL: bool> {
     hostname: JsCell<ZBox>,
     poll_ref: JsCell<KeepAlive>,
     state: Cell<State>,
+    /// The `handshake` event went to C++. It goes once: a client reads one upgrade response.
+    handshake_dispatched: Cell<bool>,
     subprotocols: JsCell<StringSet>,
 
     /// Proxy state (None when not using proxy)
@@ -380,6 +382,7 @@ where
             hostname: JsCell::new(ZBox::default()),
             poll_ref: JsCell::new(poll_ref),
             state: Cell::new(State::Initializing),
+            handshake_dispatched: Cell::new(false),
             proxy: JsCell::new(proxy_state),
             ssl_config: JsCell::new(ssl_config),
             secure: JsCell::new(secure),
@@ -712,35 +715,28 @@ where
         socket.get_native_handle() == self.tcp.get().get_native_handle()
     }
 
+    /// `body` keeps a complete head: a `handshake` listener can let the next read in behind it.
     fn buffer_and_parse_head(&self, data: &[u8]) -> HeadParse {
-        let buffered = !self.body.get().is_empty();
-        if buffered {
-            self.body.with_mut(|b| b.extend_from_slice(data));
-        }
+        self.body.with_mut(|b| b.extend_from_slice(data));
 
-        let parsed = {
-            let body: &[u8] = if buffered { self.body.get() } else { data };
-            self.headers_buf.with_mut(|headers_buf| {
-                picohttp::Response::parse(body, headers_buf).map(|response| HeadParse::Done {
-                    status_code: response.status_code,
-                    head_len: response.bytes_read,
-                    full: body.to_vec(),
-                })
+        let body: &[u8] = self.body.get();
+        let parsed = self.headers_buf.with_mut(|headers_buf| {
+            picohttp::Response::parse(body, headers_buf).map(|response| HeadParse::Done {
+                status_code: response.status_code,
+                head_len: response.bytes_read,
+                full: body.to_vec(),
             })
-        };
+        });
 
         match parsed {
             Ok(done) => done,
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => HeadParse::Invalid,
             Err(picohttp::ParseResponseError::ShortRead) => {
-                if !buffered {
-                    self.body.with_mut(|b| b.extend_from_slice(data));
-                }
                 // ShortRead means no \r\n\r\n was found, so every byte in
                 // `body` is part of an incomplete header — cap that, not
                 // total bytes received (which may include pipelined
                 // WebSocket frames once the header does complete).
-                if self.body.get().len() > bun_http::max_http_header_size() {
+                if body.len() > bun_http::max_http_header_size() {
                     HeadParse::Invalid
                 } else {
                     HeadParse::NeedMore
@@ -839,7 +835,10 @@ where
         let _scope = is_101
             .then(|| bun_jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope());
 
-        if let Some(ws) = this.cpp_websocket() {
+        // A read let in by a listener that spins the event loop parses the same head again.
+        if !this.handshake_dispatched.replace(true)
+            && let Some(ws) = this.cpp_websocket()
+        {
             Self::dispatch_handshake(ws, &response, if is_101 { &[] } else { &full[head_len..] });
             if this.cpp_websocket().is_none() {
                 return;
@@ -1345,6 +1344,8 @@ where
                 // Same order as the non-tunnel arm below, which detaches the socket
                 // before did_connect.
                 this.state.set(State::Done);
+                // This struct lives as long as the connection, and `Done` never reads the head.
+                this.body.set(Vec::new());
 
                 // Create the WebSocket client with the tunnel
                 ws.did_connect_with_tunnel(

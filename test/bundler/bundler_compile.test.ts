@@ -1298,6 +1298,59 @@ describe("bundler", () => {
     },
     run: { stdout: JSON.stringify({ server: "client sees the text", clientHasLiteral: true, clientHasBunfs: false }) },
   });
+
+  // A compiled executable defaults Bun.serve to production. The dev error page
+  // (message, stack, source) must not be served unless the user opts in.
+  const serveDevelopmentEntry = (options: string) => /* js */ `
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      ${options}
+      routes: { "/boom": () => { throw new Error("secret-stack-detail"); } },
+      fetch() { return new Response("nf", { status: 404 }); },
+    });
+    const res = await fetch(server.url + "boom", { headers: { accept: "text/html" } });
+    const body = await res.text();
+    console.log(JSON.stringify({
+      development: server.development,
+      status: res.status,
+      contentType: res.headers.get("content-type"),
+      leaks: body.includes("secret-stack-detail"),
+    }));
+    server.stop(true);
+    process.exit(0);
+  `;
+  const serveProduction = JSON.stringify({
+    development: false,
+    status: 500,
+    contentType: "text/plain",
+    leaks: false,
+  });
+  const serveDevelopment = JSON.stringify({
+    development: true,
+    status: 500,
+    contentType: "text/html;charset=utf-8",
+    leaks: true,
+  });
+  // bunEnv clears NODE_ENV but not BUN_ENV. Clear both so the shell cannot leak in.
+  const nodeEnv = (env: Record<string, string> = {}) => ({ NODE_ENV: undefined, BUN_ENV: undefined, ...env });
+  itBundled("compile/ServeDefaultsToProduction", {
+    compile: true,
+    files: { "/entry.ts": serveDevelopmentEntry("") },
+    run: [
+      { env: nodeEnv(), stdout: serveProduction },
+      { env: nodeEnv({ NODE_ENV: "production" }), stdout: serveProduction },
+      { env: nodeEnv({ NODE_ENV: "development" }), stdout: serveDevelopment },
+      { env: nodeEnv({ BUN_ENV: "development" }), stdout: serveDevelopment },
+      { env: nodeEnv({ NODE_ENV: "test" }), stdout: serveDevelopment },
+      { env: nodeEnv({ NODE_ENV: "staging" }), stdout: serveProduction },
+    ],
+  });
+  itBundled("compile/ServeExplicitDevelopment", {
+    compile: true,
+    files: { "/entry.ts": serveDevelopmentEntry("development: true,") },
+    run: { env: nodeEnv(), stdout: serveDevelopment },
+  });
   itBundled("compile/Utf8", {
     compile: true,
     files: {

@@ -6,6 +6,7 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isDebug,
   isWindows,
   joinP,
   normalizeBunSnapshot,
@@ -3728,6 +3729,473 @@ describe.concurrent("bun-install", () => {
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
+
+  // Serves the versions in `registry` for each name, with one fixture tarball per name: the manifest
+  // decides the version. Every request is recorded in `urls`.
+  function aliasRegistry(ctx: TestContext, urls: string[], registry: Record<string, string[]>) {
+    return async (request: Request) => {
+      urls.push(request.url);
+      const path = new URL(request.url).pathname.replace(`/${ctx.id}/`, "");
+      if (path.endsWith(".tgz")) {
+        return new Response(file(join(import.meta.dir, path.startsWith("baz-") ? "baz-0.0.3.tgz" : "boba-0.0.2.tgz")));
+      }
+      if (!(path in registry)) return new Response(null, { status: 404 });
+      const versions: Record<string, object> = {};
+      for (const version of registry[path]) {
+        versions[version] = { name: path, version, dist: { tarball: `${ctx.registry_url}${path}-${version}.tgz` } };
+      }
+      return new Response(JSON.stringify({ name: path, versions, "dist-tags": { latest: registry[path].at(-1) } }));
+    };
+  }
+
+  const lockedPackages = (lockfile: string) =>
+    Object.fromEntries(
+      Object.entries(Bun.JSONC.parse(lockfile).packages as Record<string, [string, ...unknown[]]>).map(
+        ([key, [resolution]]) => [key, resolution],
+      ),
+    );
+
+  // "boba" is an `npm:` alias of baz, and another package depends on plain "boba". That dependency
+  // uses the alias's package only when the version the alias resolved to is in the range the
+  // dependency declares. Otherwise it gets the registry package named boba. `registry` lists the
+  // versions the registry has for each name, `requests` is what bun asked the registry for, and
+  // `packages` is the `packages` section of bun.lock, name -> resolution.
+  it.each<{
+    name: string;
+    files: Record<string, object>;
+    registry: Record<string, string[]>;
+    requests: string[];
+    packages: Record<string, string>;
+  }>([
+    {
+      name: "is not used by a range that starts at its exclusive upper bound",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@~0.0.3" } },
+        "moo/package.json": { name: "moo", dependencies: { boba: ">=0.1.0" } },
+      },
+      registry: { baz: ["0.0.3", "0.0.5"], boba: ["0.1.0"] },
+      requests: ["baz", "baz-0.0.5.tgz", "boba", "boba-0.1.0.tgz"],
+      packages: { "boba": "baz@0.0.5", "moo": "moo@workspace:moo", "moo/boba": "boba@0.1.0" },
+    },
+    {
+      name: "is not used by a caret range of the next major",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@^1.0.0" } },
+        "moo/package.json": { name: "moo", dependencies: { boba: "^2.0.0" } },
+      },
+      registry: { baz: ["1.0.0", "1.5.0"], boba: ["2.0.0"] },
+      requests: ["baz", "baz-1.5.0.tgz", "boba", "boba-2.0.0.tgz"],
+      packages: { "boba": "baz@1.5.0", "moo": "moo@workspace:moo", "moo/boba": "boba@2.0.0" },
+    },
+    {
+      name: "is not used by an x-range of the next major",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@1.x" } },
+        "moo/package.json": { name: "moo", dependencies: { boba: "2.x" } },
+      },
+      registry: { baz: ["1.0.0", "1.5.0"], boba: ["2.0.0"] },
+      requests: ["baz", "baz-1.5.0.tgz", "boba", "boba-2.0.0.tgz"],
+      packages: { "boba": "baz@1.5.0", "moo": "moo@workspace:moo", "moo/boba": "boba@2.0.0" },
+    },
+    {
+      // an exact version has no upper comparator, and the unset one reads as 0.0.0
+      name: "with an exact version is not used by a range below that version",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@0.0.5" } },
+        "moo/package.json": { name: "moo", dependencies: { boba: "<0.0.4" } },
+      },
+      registry: { baz: ["0.0.3", "0.0.5"], boba: ["0.0.2"] },
+      requests: ["baz", "baz-0.0.5.tgz", "boba", "boba-0.0.2.tgz"],
+      packages: { "boba": "baz@0.0.5", "moo": "moo@workspace:moo", "moo/boba": "boba@0.0.2" },
+    },
+    {
+      name: "is not used by an overlapping range that excludes the version it resolved to",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@^1.0.0" } },
+        "moo/package.json": { name: "moo", dependencies: { boba: "1.0.0" } },
+      },
+      registry: { baz: ["1.0.0", "1.5.0"], boba: ["1.0.0"] },
+      requests: ["baz", "baz-1.5.0.tgz", "boba", "boba-1.0.0.tgz"],
+      packages: { "boba": "baz@1.5.0", "moo": "moo@workspace:moo", "moo/boba": "boba@1.0.0" },
+    },
+    {
+      name: "is not used by an overlapping range that starts above the version it resolved to",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@^1.0.0" } },
+        "moo/package.json": { name: "moo", dependencies: { boba: "^1.2.0 || 1.0.0" } },
+      },
+      registry: { baz: ["1.0.0", "1.1.0"], boba: ["1.3.0"] },
+      requests: ["baz", "baz-1.1.0.tgz", "boba", "boba-1.3.0.tgz"],
+      packages: { "boba": "baz@1.1.0", "moo": "moo@workspace:moo", "moo/boba": "boba@1.3.0" },
+    },
+    {
+      // aaa's dependency is resolved before zzz's alias, so nothing has appended baz@1.5.0 yet
+      name: "in a later workspace is not used by an earlier workspace's range that excludes its version",
+      files: {
+        "package.json": { name: "foo", workspaces: ["aaa", "zzz"] },
+        "aaa/package.json": { name: "aaa", dependencies: { boba: "1.0.0" } },
+        "zzz/package.json": { name: "zzz", dependencies: { boba: "npm:baz@^1.0.0" } },
+      },
+      registry: { baz: ["1.0.0", "1.5.0"], boba: ["1.0.0"] },
+      requests: ["baz", "baz-1.5.0.tgz", "boba", "boba-1.0.0.tgz"],
+      packages: {
+        "aaa": "aaa@workspace:aaa",
+        "boba": "boba@1.0.0",
+        "zzz": "zzz@workspace:zzz",
+        "zzz/boba": "baz@1.5.0",
+      },
+    },
+    {
+      // the registry has no boba, and the optional dependency is skipped
+      name: "in a later workspace is not used by an optional dependency that excludes its version",
+      files: {
+        "package.json": { name: "foo", workspaces: ["aaa", "zzz"] },
+        "aaa/package.json": { name: "aaa", optionalDependencies: { boba: "1.0.0" } },
+        "zzz/package.json": { name: "zzz", dependencies: { boba: "npm:baz@^1.0.0" } },
+      },
+      registry: { baz: ["1.0.0", "1.5.0"] },
+      requests: ["baz", "baz-1.5.0.tgz", "boba"],
+      packages: { "aaa": "aaa@workspace:aaa", "boba": "baz@1.5.0", "zzz": "zzz@workspace:zzz" },
+    },
+    {
+      // a peer takes what the tree has under its name, so it keeps the alias as before. The hoister
+      // places it on a root dependency of the same name, whatever the version.
+      name: "is still used by a peer range of the next major",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@^1.0.0" } },
+        "moo/package.json": { name: "moo", peerDependencies: { boba: "^2.0.0" } },
+      },
+      registry: { baz: ["1.0.0", "1.5.0"], boba: ["2.0.0"] },
+      requests: ["baz", "baz-1.5.0.tgz"],
+      packages: { "boba": "baz@1.5.0", "moo": "moo@workspace:moo" },
+    },
+    {
+      name: "is still used by a peer range that excludes the version it resolved to",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@^1.0.0" } },
+        "moo/package.json": { name: "moo", peerDependencies: { boba: "1.0.0" } },
+      },
+      registry: { baz: ["1.0.0", "1.5.0"], boba: ["1.0.0"] },
+      requests: ["baz", "baz-1.5.0.tgz"],
+      packages: { "boba": "baz@1.5.0", "moo": "moo@workspace:moo" },
+    },
+    {
+      name: "is used by a range that starts above its lower bound",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@~0.0.3" } },
+        "moo/package.json": { name: "moo", dependencies: { boba: ">=0.0.4" } },
+      },
+      registry: { baz: ["0.0.3", "0.0.5"], boba: ["0.0.5"] },
+      requests: ["baz", "baz-0.0.5.tgz"],
+      packages: { "boba": "baz@0.0.5", "moo": "moo@workspace:moo" },
+    },
+    {
+      name: "is used by a peer range that admits the version it resolved to",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@^1.0.0" } },
+        "moo/package.json": { name: "moo", peerDependencies: { boba: "^1.0.0" } },
+      },
+      registry: { baz: ["1.0.0", "1.5.0"], boba: ["1.3.0"] },
+      requests: ["baz", "baz-1.5.0.tgz"],
+      packages: { "boba": "baz@1.5.0", "moo": "moo@workspace:moo" },
+    },
+    {
+      // `*` takes a prerelease here, as it does for npm
+      name: "that resolved to a prerelease is used by *",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@~1.0.0-0" } },
+        "moo/package.json": { name: "moo", dependencies: { boba: "*" } },
+      },
+      registry: { baz: ["1.0.0-0"], boba: ["1.3.0"] },
+      requests: ["baz", "baz-1.0.0-0.tgz"],
+      packages: { "boba": "baz@1.0.0-0", "moo": "moo@workspace:moo" },
+    },
+    {
+      // no comparator of `*` overlaps a prerelease of 0.0.0
+      name: "with an exact 0.0.0 prerelease is used by *",
+      files: {
+        "package.json": {
+          name: "foo",
+          workspaces: ["moo"],
+          dependencies: { boba: "npm:baz@0.0.0-experimental.1" },
+        },
+        "moo/package.json": { name: "moo", dependencies: { boba: "*" } },
+      },
+      registry: { baz: ["0.0.0-experimental.1"], boba: ["1.3.0"] },
+      requests: ["baz", "baz-0.0.0-experimental.1.tgz"],
+      packages: { "boba": "baz@0.0.0-experimental.1", "moo": "moo@workspace:moo" },
+    },
+    {
+      name: "of a workspace package is used by a range that admits the workspace's version",
+      files: {
+        "package.json": { name: "foo", workspaces: ["baz", "moo"], dependencies: { boba: "npm:baz@^1.0.0" } },
+        "baz/package.json": { name: "baz", version: "1.5.0" },
+        "moo/package.json": { name: "moo", dependencies: { boba: ">=1.0.0" } },
+      },
+      registry: { boba: ["1.3.0"] },
+      requests: [],
+      packages: { "baz": "baz@workspace:baz", "boba": "baz@workspace:baz", "moo": "moo@workspace:moo" },
+    },
+    {
+      name: "of a workspace package without a version is used by *",
+      files: {
+        "package.json": { name: "foo", workspaces: ["baz", "moo"], dependencies: { boba: "npm:baz@*" } },
+        "baz/package.json": { name: "baz" },
+        "moo/package.json": { name: "moo", dependencies: { boba: "*" } },
+      },
+      registry: { boba: ["1.3.0"] },
+      requests: [],
+      packages: { "baz": "baz@workspace:baz", "boba": "baz@workspace:baz", "moo": "moo@workspace:moo" },
+    },
+    {
+      // only `*` links a workspace that has no version
+      name: "of a workspace package without a version is not used by a range",
+      files: {
+        "package.json": { name: "foo", workspaces: ["baz", "moo"], dependencies: { boba: "npm:baz@*" } },
+        "baz/package.json": { name: "baz" },
+        "moo/package.json": { name: "moo", dependencies: { boba: "<2.0.0" } },
+      },
+      registry: { boba: ["1.3.0"] },
+      requests: ["boba", "boba-1.3.0.tgz"],
+      packages: {
+        "baz": "baz@workspace:baz",
+        "boba": "baz@workspace:baz",
+        "moo": "moo@workspace:moo",
+        "moo/boba": "boba@1.3.0",
+      },
+    },
+    {
+      name: "of a workspace package is not used by an overlapping range that excludes the workspace's version",
+      files: {
+        "package.json": { name: "foo", workspaces: ["baz", "moo"], dependencies: { boba: "npm:baz@^1.0.0" } },
+        "baz/package.json": { name: "baz", version: "1.5.0" },
+        "moo/package.json": { name: "moo", dependencies: { boba: "1.0.0" } },
+      },
+      registry: { boba: ["1.0.0"] },
+      requests: ["boba", "boba-1.0.0.tgz"],
+      packages: {
+        "baz": "baz@workspace:baz",
+        "boba": "baz@workspace:baz",
+        "moo": "moo@workspace:moo",
+        "moo/boba": "boba@1.0.0",
+      },
+    },
+    {
+      // the registry has no baz, and the optional alias is skipped
+      name: "that is not in the registry is not waited for by a range it does not overlap",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], optionalDependencies: { boba: "npm:baz@^1.0.0" } },
+        "moo/package.json": { name: "moo", dependencies: { boba: "^2.0.0" } },
+      },
+      registry: { boba: ["2.0.0"] },
+      requests: ["baz", "boba", "boba-2.0.0.tgz"],
+      packages: { "boba": "boba@2.0.0", "moo": "moo@workspace:moo" },
+    },
+    {
+      // the optional alias is skipped
+      name: "without a matching version leaves its range to the registry package",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], optionalDependencies: { boba: "npm:baz@^1.0.0" } },
+        "moo/package.json": { name: "moo", dependencies: { boba: "^1.0.0" } },
+      },
+      registry: { baz: ["0.0.3"], boba: ["1.3.0"] },
+      requests: ["baz", "boba", "boba-1.3.0.tgz"],
+      packages: { "boba": "boba@1.3.0", "moo": "moo@workspace:moo" },
+    },
+    {
+      // a peer is not changed: it stays with the alias, and bun reports it as unmet
+      name: "without a matching version still takes a peer of its name",
+      files: {
+        "package.json": { name: "foo", workspaces: ["moo"], optionalDependencies: { boba: "npm:baz@^1.0.0" } },
+        "moo/package.json": { name: "moo", peerDependencies: { boba: "^1.0.0" } },
+      },
+      registry: { baz: ["0.0.3"], boba: ["1.3.0"] },
+      requests: ["baz"],
+      packages: { "moo": "moo@workspace:moo" },
+    },
+  ])("npm alias $name", async ({ files, registry, requests, packages }) => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, aliasRegistry(ctx, urls, registry));
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: ctx.registry_url, linker: "hoisted" } }),
+        ),
+        ...Object.entries(files).map(([path, contents]) =>
+          write(join(ctx.package_dir, path), JSON.stringify(contents)),
+        ),
+      ]);
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(urls.sort()).toEqual(requests.map(path => `${ctx.registry_url}${path}`));
+      const lockfile = await file(join(ctx.package_dir, "bun.lock")).text();
+      expect(lockedPackages(lockfile)).toEqual(packages);
+      expect(exitCode).toBe(0);
+
+      await using frozen = spawn({
+        cmd: [bunExe(), "install", "--frozen-lockfile"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [frozenErr, , frozenExitCode] = await Promise.all([
+        frozen.stderr.text(),
+        frozen.stdout.text(),
+        frozen.exited,
+      ]);
+      expect(frozenErr).not.toContain("error:");
+      expect(await file(join(ctx.package_dir, "bun.lock")).text()).toBe(lockfile);
+      expect(frozenExitCode).toBe(0);
+    });
+  });
+
+  // `bun update` holds a patched package while a range still allows it. The range that counts for
+  // moo's "boba" is the one moo declares, not the alias's.
+  it("npm alias with a patched package is not used by a range that excludes it on bun update", async () => {
+    await withContext(defaultOpts, async ctx => {
+      setContextHandler(ctx, aliasRegistry(ctx, [], { baz: ["1.0.0", "1.5.0"], boba: ["1.0.0"] }));
+      await Promise.all([
+        write(
+          join(ctx.package_dir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: ctx.registry_url, linker: "hoisted" } }),
+        ),
+        write(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            workspaces: ["moo"],
+            dependencies: { boba: "npm:baz@^1.0.0" },
+            patchedDependencies: { "baz@1.5.0": "patches/baz.patch" },
+          }),
+        ),
+        write(
+          join(ctx.package_dir, "moo", "package.json"),
+          JSON.stringify({ name: "moo", dependencies: { boba: "1.0.0" } }),
+        ),
+        write(
+          join(ctx.package_dir, "patches", "baz.patch"),
+          [
+            "diff --git a/index.js b/index.js",
+            "--- a/index.js",
+            "+++ b/index.js",
+            "@@ -1,3 +1,3 @@",
+            " #! /usr/bin/env node",
+            " ",
+            '-console.log("run baz");',
+            '+console.log("run patched baz");',
+            "",
+          ].join("\n"),
+        ),
+      ]);
+      const packages = { "boba": "baz@1.5.0", "moo": "moo@workspace:moo", "moo/boba": "boba@1.0.0" };
+
+      await using install = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [installErr, , installExitCode] = await Promise.all([
+        install.stderr.text(),
+        install.stdout.text(),
+        install.exited,
+      ]);
+      expect(installErr).toContain("Saved lockfile");
+      expect(installErr).not.toContain("error:");
+      expect(await file(join(ctx.package_dir, "node_modules", "boba", "index.js")).text()).toContain("run patched baz");
+      expect(lockedPackages(await file(join(ctx.package_dir, "bun.lock")).text())).toEqual(packages);
+      expect(installExitCode).toBe(0);
+
+      await using update = spawn({
+        cmd: [bunExe(), "update"],
+        cwd: join(ctx.package_dir, "moo"),
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [updateErr, , updateExitCode] = await Promise.all([
+        update.stderr.text(),
+        update.stdout.text(),
+        update.exited,
+      ]);
+      expect(updateErr).not.toContain("error:");
+      expect(lockedPackages(await file(join(ctx.package_dir, "bun.lock")).text())).toEqual(packages);
+      expect(updateExitCode).toBe(0);
+    });
+  });
+
+  // An exact version resolves from an expired manifest in the disk cache, without a request. moo's
+  // "boba" meets the alias there, and its range does not admit the prerelease. Only a debug build
+  // reads BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP, which makes the cached manifests expired.
+  it.skipIf(!isDebug)(
+    "npm alias with an exact version in an expired manifest cache is not used by a range that excludes it",
+    async () => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, aliasRegistry(ctx, urls, { baz: ["1.5.0-0"], boba: ["1.3.0"] }));
+        const cache = join(ctx.package_dir, ".cache");
+        await Promise.all([
+          write(
+            join(ctx.package_dir, "bunfig.toml"),
+            Bun.TOML.stringify({ install: { cache, registry: ctx.registry_url, linker: "hoisted" } }),
+          ),
+          write(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({ name: "foo", workspaces: ["moo"], dependencies: { boba: "npm:baz@1.5.0-0" } }),
+          ),
+          write(
+            join(ctx.package_dir, "moo", "package.json"),
+            JSON.stringify({ name: "moo", dependencies: { boba: "<2.0.0" } }),
+          ),
+        ]);
+        const packages = { "boba": "baz@1.5.0-0", "moo": "moo@workspace:moo", "moo/boba": "boba@1.3.0" };
+
+        async function install(extraEnv: Record<string, string>) {
+          urls.length = 0;
+          await using proc = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: ctx.package_dir,
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "pipe",
+            // CI exports BUN_INSTALL_CACHE_DIR, which wins over the bunfig's `cache`
+            env: { ...env, BUN_INSTALL_CACHE_DIR: cache, ...extraEnv },
+          });
+          const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("error:");
+          expect(lockedPackages(await file(join(ctx.package_dir, "bun.lock")).text())).toEqual(packages);
+          expect(exitCode).toBe(0);
+          return urls.sort().map(url => url.slice(ctx.registry_url.length));
+        }
+
+        expect(await install({})).toEqual(["baz", "baz-1.5.0-0.tgz", "boba", "boba-1.3.0.tgz"]);
+
+        await Promise.all([
+          rm(join(ctx.package_dir, "bun.lock")),
+          rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true }),
+          rm(join(ctx.package_dir, "moo", "node_modules"), { recursive: true, force: true }),
+        ]);
+        // boba's range needs a fresh manifest. The alias and the tarballs come from the cache.
+        expect(await install({ BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP: "4000000000" })).toEqual(["boba"]);
+      });
+    },
+  );
 
   it("should not apply overrides to package name of aliased package", async () => {
     await withContext(defaultOpts, async ctx => {

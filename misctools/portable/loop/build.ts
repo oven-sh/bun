@@ -168,7 +168,7 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
       const object = (name: string) => join(directory, `${name}.o`);
       run([`${llvm}/clang++`, ...cxxFlags, "-c", join(repo, "src/jsc/bindings/bun-spawn.cpp"), "-o", object("bun-spawn")]);
       // Of c-bindings.cpp the image takes two functions. The rest of the file is what bun's C++ does
-      // for a process of one OS, where this image has N1's shim and bun_core.
+      // for a process of one OS, where this image has the shim of the file system slice and bun_core.
       run([`${llvm}/clang++`, ...cxxFlags, "-c", join(repo, "src/jsc/bindings/c-bindings.cpp"), "-o", object("c-bindings.whole")]);
       run([`${llvm}/llvm-objcopy`, "--keep-global-symbol=sys_preadv2", "--keep-global-symbol=sys_pwritev2", object("c-bindings.whole"), object("c-bindings")]);
       rmSync(object("c-bindings.whole"));

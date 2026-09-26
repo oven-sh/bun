@@ -1,0 +1,14 @@
+{
+  "name": "@bun-test/registry",
+  "version": "0.0.0",
+  "private": true,
+  "description": "An npm registry server on Bun.serve. It speaks the HTTP API of registry.npmjs.org.",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "bin": {
+    "bun-registry": "./cli.ts"
+  }
+}

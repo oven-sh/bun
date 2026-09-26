@@ -1,6 +1,7 @@
 // What the headers of macOS say about the definitions of bun_darwin_sys, on a machine that is no Mac.
 //
 //   bun darwin-headers.ts <x86_64|aarch64> [--sdk <directory>] [--out <facts.jsonl>] [--compare <image.jsonl>]
+//                                           [--header <facts.h>]
 //
 // darwin_layout.c is the program that a Mac compiles and runs (run-on-mac.sh): it prints the size of
 // every structure, the offset of every field and the value of every constant. It cannot run here. But
@@ -13,6 +14,10 @@
 // A part that does not compile is treated as run-on-mac.sh treats it: a field that the headers do not
 // have is left out (-DSKIP_<type>_<field>, from the message of the compiler) and the part is compiled
 // again. What was left out, and the parts that do not compile at all, are printed.
+//
+// --header <facts.h>: the same facts as macros of C, for a program that is no program of macOS and has
+// to know macOS (test/libsystem_on_linux.h): D_<constant>, D_SIZE_<type>, D_ALIGN_<type>,
+// D_OFFSET_<type>__<field>, D_FIELD_SIZE_<type>__<field>.
 //
 // --compare <image.jsonl>: what `bun_fs_slice.img --layout-darwin` printed. Every fact that differs is
 // printed with both values, as compare-darwin.ts does, and the exit code is 1 if there is one, if a
@@ -92,6 +97,21 @@ for (const { part, what } of parts) {
 }
 const out = option("--out");
 if (out) writeFileSync(resolve(out), facts.join("\n") + "\n");
+const header = option("--header");
+if (header) {
+  const lines = [
+    "/* Written by misctools/portable/bindings/darwin-headers.ts --header. Do not edit.",
+    `   What the headers of macOS say for ${target} (${readFileSync(join(sdk, "SDK.txt"), "utf8").trim().split("\n").join(", ")}),`,
+    "   about the definitions that misctools/portable/bindings/darwin_layout.c asks for. */",
+  ];
+  for (const line of facts) {
+    const { fact, of, value } = JSON.parse(line) as { fact: string; of: string; value: number | string };
+    if (typeof value !== "number") continue;
+    const name = fact === "constant" ? `D_${of}` : `D_${fact.toUpperCase().replace(" ", "_")}_${of.replace(".", "__")}`;
+    lines.push(`#define ${name} (${value})`);
+  }
+  writeFileSync(resolve(header), lines.join("\n") + "\n");
+}
 console.log(`${readFileSync(join(sdk, "SDK.txt"), "utf8").trim().split("\n").join(", ")}, ${target}: ${facts.length} facts from ${parts.length - doNotCompile.length} of ${parts.length} parts`);
 for (const line of leftOut) console.log(`fields that the headers do not have   ${line}`);
 for (const line of doNotCompile) console.log(`DOES NOT COMPILE   ${line}`);

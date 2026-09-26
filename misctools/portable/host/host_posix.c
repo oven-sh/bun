@@ -19,6 +19,9 @@
 //   BUN_HOST_TEST=overlay  linux: discard pages (MADV_DONTNEED) the way the macOS branch does
 //   BUN_HOST_TEST=macos-tp arm64 linux only, see "x18" below
 //   BUN_HOST_TEST=macfs    linux: the entries of a directory go through the form that macOS has for them
+//   BUN_HOST_TEST=libsystem, libsystem-noclone
+//                          linux, in the tree of bun: the library "libSystem" is a stand-in that
+//                          takes what macOS takes, see test/libsystem_on_linux.h
 //
 // Compiled with -DBUN_HOST_WITHOUT_FILES the host answers what a program needs to start and to
 // print, and none of the requests of the file system that come after "more of the file system"
@@ -1839,6 +1842,12 @@ static long host_kill(int tid, int sig) {
    argument on the stack, Linux passes it in a register. So the image never gets the address of
    such a function. For the ones that bun calls there is a function with fixed arguments here,
    bun_host_darwin_<name><number of arguments>, and the image binds that name. */
+#if defined(__linux__) && !defined(BUN_HOST_WITHOUT_FILES) && __has_include("../test/libsystem_on_linux.h")
+#include "../test/libsystem_on_linux.h"
+#define LIBSYSTEM_ON_LINUX(library, symbol) (test_libsystem && !strcmp(library, "libSystem") ? libsystem_on_linux(symbol) : 0)
+#else
+#define LIBSYSTEM_ON_LINUX(library, symbol) ((void *)0)
+#endif
 #if defined(__APPLE__)
 #include <dlfcn.h>
 int bun_host_open_nocancel(const char *, int, ...) __asm("_open$NOCANCEL");
@@ -1902,7 +1911,7 @@ __attribute__((used)) static void *host_lookup(const char *library, const char *
     {"test_sum6", (void *)test_sum6}, {"test_mixed", (void *)test_mixed},
     {"test_pair_by_value", (void *)test_pair_by_value}, {"test_callback", (void *)test_callback},
   };
-  void *address = 0;
+  void *address = LIBSYSTEM_ON_LINUX(library, symbol);
   for (size_t i = 0; i < sizeof symbols / sizeof *symbols && !strcmp(library, "bun_host_test"); i++)
     if (!strcmp(symbol, symbols[i].name)) address = symbols[i].address;
   if (trace && (!address || trace > 1)) host_log("[host] lookup %s!%s = %p\n", library, symbol, address);
@@ -1911,8 +1920,9 @@ __attribute__((used)) static void *host_lookup(const char *library, const char *
 #else
 __attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
   FORGET_X18();
-  if (trace) host_log("[host] lookup %s!%s = 0\n", library, symbol);
-  return 0;
+  void *address = LIBSYSTEM_ON_LINUX(library, symbol);
+  if (trace && (!address || trace > 1)) host_log("[host] lookup %s!%s = %p\n", library, symbol, address);
+  return address;
 }
 #endif
 
@@ -2259,6 +2269,10 @@ int main(int argc, char **argv) {
   test_winmem = !strcmp(test, "winmem");
   test_overlay = !strcmp(test, "overlay");
   test_macfs = !strcmp(test, "macfs");
+#ifdef D_FUNCTION
+  test_libsystem = !strcmp(test, "libsystem") || !strcmp(test, "libsystem-noclone");
+  test_libsystem_noclone = !strcmp(test, "libsystem-noclone");
+#endif
 #endif
 #if X18_HOST
   macos_tp = !strcmp(test, "macos-tp");

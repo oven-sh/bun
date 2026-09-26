@@ -16,6 +16,14 @@
 //                   bun's code for Windows, and its first call of Windows has to stop it with a message
 //   as darwin       the same for macOS, direct and hosted: the image takes bun's code for macOS, and
 //                   the first function of macOS has to stop it with a message
+//   as darwin, with a stand-in for libSystem
+//                   hosted, and the test host hands out functions that take what the functions of
+//                   macOS take (../test/libsystem_on_linux.h): the image runs bun's code for macOS to
+//                   its end, and prints what is expected of a Mac (expected/darwin.jsonl), but for
+//                   what the kernel of Linux answers in another way than the one of macOS. Once with
+//                   a file system that clones and once with one that refuses, where the copy has to
+//                   be made by copyfile. The stand-in stops the run if a number arrives that is no
+//                   number of macOS
 //   imports         the import tables have the functions that bun's file system code for Windows and
 //                   for macOS calls, and none of them resolves on Linux
 //   translation     what the image makes of the flags of open, of AT_FDCWD and of error numbers for
@@ -107,6 +115,39 @@ for (const [name, command] of [["direct", [image, directory]], ["hosted", [host,
   check(`as darwin, ${name}: stops at the first function of macOS`, () => {
     const r = run([...command], { BUN_PORTABLE_HOST_OS: "darwin" });
     return r.code !== 0 && r.out === "" && /libSystem!\S+ is a function of macOS, and this host is Linux/.test(r.err) ? undefined : `exit code ${r.code}: ${r.err}`;
+  });
+}
+// What the kernel of Linux answers in another way than the one of macOS, to a request that shared code
+// sends through the C library of the image: the line that is expected of a Mac, and the line of Linux.
+const kernelOfLinux: [string, string][] = [
+  [
+    '{"step":"unlink, directory","path":"a/side","ok":false,"error":"EPERM","errno":1}',
+    '{"step":"unlink, directory","path":"a/side","ok":false,"error":"EISDIR","errno":21}',
+  ],
+];
+const expectedOfMacos = readFileSync(join(here, "expected/darwin.jsonl"), "utf8");
+for (const [mode, way] of [["libsystem", "clonefile"], ["libsystem-noclone", "copyfile"]]) {
+  check(`as darwin, with a stand-in for libSystem (${mode}): what is expected of a Mac`, () => {
+    const r = run([host, image, directory], { BUN_PORTABLE_HOST_OS: "darwin", BUN_HOST_TEST: mode });
+    const lines = r.out.split("\n").filter(Boolean);
+    const steps = lines.filter(line => !line.startsWith('{"detail"')).map(line => line.replace(/,"syscall":"[^"]*"/, ""));
+    const details = lines.filter(line => line.startsWith('{"detail"')).map(line => JSON.parse(line));
+    let wanted = expectedOfMacos;
+    for (const [ofMacos, ofLinux] of kernelOfLinux) {
+      if (!wanted.includes(ofMacos + "\n")) return `expected/darwin.jsonl has no line ${ofMacos}`;
+      wanted = wanted.replace(ofMacos + "\n", ofLinux + "\n");
+    }
+    const got = steps.join("\n") + "\n";
+    if (r.code !== 0 || got !== wanted) {
+      const expectedLines = wanted.split("\n");
+      const at = steps.findIndex((line, index) => line !== expectedLines[index]);
+      return `exit code ${r.code}, line ${at + 1}: ${steps[at] ?? "(none)"}, expected ${expectedLines[at] ?? "(none)"}: ${r.err.slice(-300)}`;
+    }
+    const ways = details.filter(detail => /^clonefile(at)?(, from the working directory)?$/.test(detail.detail)).map(detail => detail.way);
+    if (ways.length !== 3 || ways.some(one => one !== way)) return `the copies were made by ${ways.join(", ")}, expected ${way}`;
+    const refused = details.find(detail => detail.detail === "clonefile")?.errno;
+    if (mode === "libsystem-noclone" && refused !== 45) return `clonefile was refused with the error number ${refused} of macOS, expected 45 (ENOTSUP)`;
+    return undefined;
   });
 }
 check("imports", () => {

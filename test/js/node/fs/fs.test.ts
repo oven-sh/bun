@@ -1450,6 +1450,35 @@ describe("promises.readFile", async () => {
 
     expect(JSON.parse(JSON.stringify(results, null, 2))).toEqual(nodeOutput);
   });
+
+  it("accepts the utf-16le alias like node and rejects utf16-le", async () => {
+    using dir = tempDir("fs-utf-16le-alias", {});
+    const file = join(String(dir), "a.txt");
+    const bytes = Buffer.from("hi 👍", "utf16le");
+    writeFileSync(file, bytes);
+
+    for (const encoding of ["utf-16le", "UTF-16LE"] as const) {
+      expect(fs.readFileSync(file, encoding)).toBe("hi 👍");
+      expect(await promises.readFile(file, encoding)).toBe("hi 👍");
+      // readdir decodes the raw name bytes with the encoding, like node does.
+      expect(fs.readdirSync(String(dir), encoding)).toEqual(
+        fs.readdirSync(String(dir)).map(name => Buffer.from(name).toString("utf16le")),
+      );
+
+      const out = join(String(dir), `out-${encoding}.txt`);
+      writeFileSync(out, "hi 👍", encoding);
+      expect(fs.readFileSync(out)).toEqual(bytes);
+      await promises.writeFile(out, "ok", encoding);
+      expect(fs.readFileSync(out)).toEqual(Buffer.from("ok", "utf16le"));
+    }
+
+    expect(() => fs.readFileSync(file, "utf16-le" as BufferEncoding)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+    expect(() => writeFileSync(file, "x", "utf16-le" as BufferEncoding)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
 });
 
 it("promises.readFile - UTF16 file path", async () => {

@@ -138,6 +138,7 @@ cfg_jsc! {
     #[path = "Collection.rs"]     pub(crate) mod collection;
     #[path = "debug.rs"]          pub(crate) mod debug;
     #[path = "diff_format.rs"]    pub(crate) mod diff_format;
+    #[path = "dom_node.rs"]       pub(crate) mod dom_node;
     #[path = "DoneCallback.rs"]   pub(crate) mod done_callback;
     #[path = "Execution.rs"]      pub(crate) mod execution;
     #[path = "jest.rs"]           pub(crate) mod jest;
@@ -276,13 +277,23 @@ pub(crate) mod expect {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub(crate) enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
-    /// `super::make_formatter(global_this)`
-    /// is the universal matcher pattern; `Formatter` has no `Default` (it
-    /// borrows `global_this`), so provide the constructor every matcher
-    /// expected.
+    /// The console formatter as `bun test` output uses it: DOM nodes
+    /// (jsdom, happy-dom) print as markup instead of their object graph.
+    /// Every test-runner message that formats a user value goes through
+    /// this or [`make_formatter`].
+    #[inline]
+    pub(crate) fn new_formatter(global: &JSGlobalObject) -> Formatter<'_> {
+        let mut f = Formatter::new(global);
+        f.print_dom_nodes_as_markup = true;
+        f
+    }
+
+    /// [`new_formatter`] with strings quoted: the matcher `Received:` /
+    /// `Expected:` form. `Formatter` has no `Default` (it borrows
+    /// `global_this`), so this is the constructor every matcher uses.
     #[inline]
     pub(crate) fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
-        let mut f = Formatter::new(global);
+        let mut f = new_formatter(global);
         f.quote_strings = true;
         f
     }
@@ -413,18 +424,6 @@ pub(crate) mod expect {
                 glyph, expected_fmt, value_fmt,
             )
         }
-    }
-
-    /// Builder-style `.with_quote_strings(bool)` shim — `bun_jsc::Formatter`
-    /// exposes `quote_strings` as a public field, not a chained setter. A
-    /// handful of matcher modules write
-    /// `Formatter::new(g).with_quote_strings(true)`.
-    pub(crate) trait FormatterTestExt: Sized {
-        fn with_quote_strings(self, b: bool) -> Self;
-    }
-    impl<'a> FormatterTestExt for Formatter<'a> {
-        #[inline]
-        fn with_quote_strings(mut self, b: bool) -> Self { self.quote_strings = b; self }
     }
 
     // ── matcher modules ───────────────────────────────────────────────

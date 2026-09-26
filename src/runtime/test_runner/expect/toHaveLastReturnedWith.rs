@@ -1,6 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use super::FormatterTestExt;
-use bun_jsc::console_object::Formatter;
+use super::make_formatter;
 
 use super::DiffFormatter;
 use super::Expect;
@@ -56,7 +55,7 @@ pub(crate) fn to_have_last_returned_with(
     }
 
     // Handle failure
-    let mut formatter = Formatter::new(global_this).with_quote_strings(true);
+    let mut formatter = make_formatter(global_this);
 
     let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
 

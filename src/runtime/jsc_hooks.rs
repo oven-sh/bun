@@ -1472,6 +1472,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     process_exit,
     console_on_before_print,
     console_print_runtime_object,
+    console_print_dom_node,
     load_standalone_sourcemap,
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_flags,
@@ -1872,6 +1873,30 @@ fn console_print_runtime_object<'a, 'f>(
     } else {
         console_print_runtime_object_inner::<false>(formatter, writer, value)
     }
+}
+
+/// `ConsoleObject.Formatter.print_object` DOM node arm for `bun test` matcher
+/// messages — see [`RuntimeHooks::console_print_dom_node`].
+fn console_print_dom_node<'a, 'f>(
+    formatter: &'a mut bun_jsc::Formatter<'f>,
+    writer: &'a mut dyn bun_io::Write,
+    value: JSValue,
+    class_name: &bun_core::String,
+    enable_ansi_colors: bool,
+) -> JsResult<bool> {
+    use crate::test_runner::dom_node;
+    let global = formatter.global_this;
+    let Some(kind) = dom_node::node_kind(global, value, class_name)? else {
+        return Ok(false);
+    };
+    if enable_ansi_colors {
+        dom_node::print_node::<_, dyn bun_io::Write, true>(formatter, global, writer, value, kind)?;
+    } else {
+        dom_node::print_node::<_, dyn bun_io::Write, false>(
+            formatter, global, writer, value, kind,
+        )?;
+    }
+    Ok(true)
 }
 
 fn console_print_runtime_object_inner<const C: bool>(

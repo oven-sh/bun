@@ -6787,6 +6787,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match replacement {
             crate::parser::Runtime::ReplaceableExport::Delete => false,
             crate::parser::Runtime::ReplaceableExport::Replace(value) => {
+                debug_assert!(name_ref.is_symbol());
                 let count = stmts.len();
                 let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
                     binding: self.b(B::Identifier { r#ref: name_ref }, loc),
@@ -6829,6 +6830,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 count != stmts.len()
             }
         }
+    }
+
+    /// Not visited: the visitor of `export default` would look `default` up and replace it again.
+    pub(crate) fn inject_replacement_export_default(
+        &mut self,
+        stmts: &mut crate::parser::StmtList<'a>,
+        value: Expr,
+    ) {
+        let default_name = self.create_default_name(bun_ast::Loc::EMPTY);
+        self.record_declared_symbol(default_name.ref_);
+        stmts.push(self.s(
+            S::ExportDefault {
+                default_name,
+                value: js_ast::StmtOrExpr::Expr(value),
+            },
+            bun_ast::Loc::EMPTY,
+        ));
     }
 
     pub(crate) fn replace_decl_and_possibly_remove(

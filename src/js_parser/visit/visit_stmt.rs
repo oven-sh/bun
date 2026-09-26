@@ -2,6 +2,7 @@
 use crate::Error;
 use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};
+use crate::parser::Runtime::ReplaceableExport;
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
     statement_cares_about_scope,
@@ -289,8 +290,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // alias is arena-owned (`ArenaStr`), valid for 'a.
                 let alias = items[i].alias.slice();
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
-                    let _ =
-                        p.inject_replacement_export(stmts, old_ref, bun_ast::Loc::EMPTY, &entry);
+                    match &entry {
+                        ReplaceableExport::Replace(value)
+                            if alias == js_ast::ClauseItem::DEFAULT_ALIAS =>
+                        {
+                            p.inject_replacement_export_default(stmts, *value);
+                        }
+                        ReplaceableExport::Replace(_) => {
+                            // `old_ref` is the parse-time name of the imported binding, not a symbol.
+                            let name_ref = p.new_symbol(js_ast::symbol::Kind::Other, alias);
+                            VecExt::append(&mut p.cur_scope().generated, name_ref);
+                            let _ = p.inject_replacement_export(
+                                stmts,
+                                name_ref,
+                                bun_ast::Loc::EMPTY,
+                                &entry,
+                            );
+                        }
+                        ReplaceableExport::Delete | ReplaceableExport::Inject { .. } => {
+                            let _ = p.inject_replacement_export(
+                                stmts,
+                                Ref::NONE,
+                                bun_ast::Loc::EMPTY,
+                                &entry,
+                            );
+                        }
+                    }
                     continue;
                 }
 

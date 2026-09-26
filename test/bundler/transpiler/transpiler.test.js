@@ -2374,6 +2374,159 @@ export default class {
       expect(output.includes("liveFS")).toBe(true);
     });
 
+    describe("a name that a re-export list exports", () => {
+      // [label, options, source, printed module, exports that scan() reports]
+      const cases = [
+        [
+          "long name",
+          { exports: { replace: { ReadStream: "replaced" } } },
+          `export { ReadStream, WriteStream } from "node:fs";`,
+          `export var ReadStream = "replaced";\nexport { WriteStream } from "node:fs";\n`,
+          ["ReadStream", "WriteStream"],
+        ],
+        [
+          "short name",
+          { exports: { replace: { a: 1 } } },
+          `export { a, b } from "x";`,
+          `export var a = 1;\nexport { b } from "x";\n`,
+          ["a", "b"],
+        ],
+        [
+          "only name in the list",
+          { exports: { replace: { a: 1 } } },
+          `export { a } from "x";`,
+          `export var a = 1;\nexport {  } from "x";\n`,
+          ["a"],
+        ],
+        [
+          "two names in one list",
+          { exports: { replace: { a: 1, c: 3 } } },
+          `export { a, b, c } from "x";`,
+          `export var a = 1;\nexport var c = 3;\nexport { b } from "x";\n`,
+          ["a", "b", "c"],
+        ],
+        [
+          "alias",
+          { exports: { replace: { bb: 1 } } },
+          `export { a as bb } from "x";`,
+          `export var bb = 1;\nexport {  } from "x";\n`,
+          ["bb"],
+        ],
+        [
+          "imported name of an alias is not a key",
+          { exports: { replace: { a: 1 } } },
+          `export { a as bb } from "x";`,
+          `export { a as bb } from "x";\n`,
+          ["bb"],
+        ],
+        [
+          "string literal as the imported name",
+          { exports: { replace: { b: 1 } } },
+          `export { "s t" as b } from "x";`,
+          `export var b = 1;\nexport {  } from "x";\n`,
+          ["b"],
+        ],
+        [
+          "escaped identifier",
+          { exports: { replace: { abc: 1 } } },
+          `export { \\u0061bc } from "x";`,
+          `export var abc = 1;\nexport {  } from "x";\n`,
+          ["abc"],
+        ],
+        [
+          "default",
+          { exports: { replace: { default: 1 } } },
+          `export { default, b } from "x";`,
+          `export default 1;\nexport { b } from "x";\n`,
+          ["b", "default"],
+        ],
+        [
+          "alias default",
+          { exports: { replace: { default: 1 } } },
+          `export { a as default } from "x";`,
+          `export default 1;\nexport {  } from "x";\n`,
+          ["default"],
+        ],
+        [
+          "imported name default",
+          { exports: { replace: { a: 1 } } },
+          `export { default as a } from "x";`,
+          `export var a = 1;\nexport {  } from "x";\n`,
+          ["a"],
+        ],
+        [
+          "minify.identifiers",
+          { minify: { identifiers: true }, exports: { replace: { ReadStream: 1 } } },
+          `export { ReadStream, WriteStream } from "node:fs";`,
+          `export var ReadStream = 1;\nexport { WriteStream } from "node:fs";\n`,
+          ["ReadStream", "WriteStream"],
+        ],
+        [
+          "treeShaking: false",
+          { treeShaking: false, exports: { replace: { a: 1 } } },
+          `export { a, b } from "x";`,
+          `export var a = 1;\nexport { b } from "x";\n`,
+          ["a", "b"],
+        ],
+        [
+          "replace and eliminate of one name",
+          { exports: { replace: { a: 1 }, eliminate: ["a"] } },
+          `export { a, b } from "x";`,
+          `export var a = 1;\nexport { b } from "x";\n`,
+          ["a", "b"],
+        ],
+        [
+          "replace that injects another name",
+          { exports: { replace: { a: ["N", true] } } },
+          `export { a, b } from "x";`,
+          `export var N = true;\nexport { b } from "x";\n`,
+          ["N", "b"],
+        ],
+        [
+          "eliminate",
+          { exports: { eliminate: ["bb", "default"] } },
+          `export { a as bb, c, default } from "x";`,
+          `export { c } from "x";\n`,
+          ["c"],
+        ],
+      ];
+
+      // In a child process: before the fix, the first case aborted the process.
+      it.concurrent.each(["ts", "js"])("loader %s", async loader => {
+        const script = `
+          for (const [label, options, source] of ${JSON.stringify(cases)}) {
+            const transpiler = new Bun.Transpiler({ loader: ${JSON.stringify(loader)}, ...options });
+            console.log(
+              JSON.stringify([
+                label,
+                transpiler.transformSync(source),
+                await transpiler.transform(source),
+                transpiler.scan(source).exports,
+              ]),
+            );
+          }
+        `;
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        if (exitCode !== 0) expect(stderr).toBe("");
+        expect(
+          stdout
+            .trim()
+            .split("\n")
+            .map(line => JSON.parse(line)),
+        ).toEqual(cases.map(([label, , , printed, exported]) => [label, printed, printed, exported]));
+        expect(exitCode).toBe(0);
+      });
+    });
+
     it.todo("supports replacing exports", () => {
       const output = transpiler.transformSync(`
         import deadFS from 'fs';

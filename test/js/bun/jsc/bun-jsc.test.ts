@@ -24,7 +24,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isLinux, isWindows } from "harness";
 
 describe("bun:jsc", () => {
   function count() {
@@ -64,6 +64,37 @@ describe("bun:jsc", () => {
     const usage = memoryUsage();
     expect(usage.current).toBeGreaterThan(0);
     expect(usage.peak).toBeGreaterThan(0);
+  });
+  // ru_maxrss survives exec on Linux, so a child of a large parent used to
+  // report the parent's peak as its own.
+  it.skipIf(!isLinux)("peak RSS readers do not include the parent's peak RSS", async () => {
+    const big = Buffer.alloc(512 * 1024 * 1024, 1);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { memoryUsage } = require("bun:jsc");
+         const peak = memoryUsage().peak;
+         const maxRSS = process.resourceUsage().maxRSS * 1024;
+         const reportMaxRss = process.report.getReport().resourceUsage.maxRss;
+         const status = require("fs").readFileSync("/proc/self/status", "utf8");
+         const vmHwm = Number(status.match(/VmHWM:\\s+(\\d+) kB/)[1]) * 1024;
+         console.log(JSON.stringify({ peak, maxRSS, reportMaxRss, vmHwm }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { peak, maxRSS, reportMaxRss, vmHwm } = JSON.parse(stdout);
+    // The child reads VmHWM last, so none of the peaks is above it.
+    for (const value of [peak, maxRSS, reportMaxRss]) {
+      expect(value).toBeGreaterThan(0);
+      expect(value).toBeLessThanOrEqual(vmHwm);
+      expect(value).toBeLessThan(big.length);
+    }
+    expect(exitCode).toBe(0);
   });
   it("getRandomSeed", () => {
     expect(getRandomSeed()).toBeDefined();

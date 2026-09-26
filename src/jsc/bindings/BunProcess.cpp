@@ -3902,6 +3902,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
     if (getPeakRSS(&maxRSS) != 0)
         maxRSS = static_cast<size_t>(rusage.ru_maxrss);
     result->putDirectOffset(vm, 2, jsNumber(maxRSS / 1024));
+#elif OS(LINUX)
+    // getPeakRSS is bytes. ru_maxrss (the fallback) is kilobytes on Linux.
+    size_t maxRSS = 0;
+    if (getPeakRSS(&maxRSS) != 0)
+        maxRSS = static_cast<size_t>(rusage.ru_maxrss) * 1024;
+    result->putDirectOffset(vm, 2, jsNumber(maxRSS / 1024));
 #else
     result->putDirectOffset(vm, 2, jsNumber(rusage.ru_maxrss));
 #endif
@@ -4180,6 +4186,60 @@ err:
 #endif
 }
 
+#if defined(__linux__)
+// Reads the "VmHWM:" line of /proc/self/status into *peak, in bytes.
+static bool readLinuxVmHWM(size_t* peak)
+{
+    char buf[4096];
+    int fd;
+    ssize_t n = 0;
+
+    do
+        fd = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
+    while (fd == -1 && errno == EINTR);
+
+    if (fd == -1)
+        return false;
+
+    size_t total = 0;
+    while (total < sizeof(buf) - 1) {
+        n = read(fd, buf + total, sizeof(buf) - 1 - total);
+        if (n == -1 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            break;
+        total += static_cast<size_t>(n);
+    }
+
+    int closeErrno = 0;
+    do {
+        closeErrno = close(fd);
+    } while (closeErrno == -1 && errno == EINTR);
+
+    if (n == -1)
+        return false;
+    buf[total] = '\0';
+
+    // Anchored at a line start: the "Name:" line comes first and is free text.
+    static constexpr const char key[] = "\nVmHWM:";
+    const char* s = strstr(buf, key);
+    if (s == nullptr)
+        return false;
+    // The line is "VmHWM:\t   12345 kB".
+    s += sizeof(key) - 1;
+
+    errno = 0;
+    char* end = nullptr;
+    unsigned long long val = strtoull(s, &end, 10);
+    // A digit run that ends at the buffer end was cut off by the buffer size.
+    if (errno != 0 || end == s || *end != ' ')
+        return false;
+
+    *peak = static_cast<size_t>(val) * 1024;
+    return true;
+}
+#endif
+
 // High-water mark of the number getRSS() reports, in bytes.
 extern "C" int getPeakRSS(size_t* peak)
 {
@@ -4199,6 +4259,11 @@ extern "C" int getPeakRSS(size_t* peak)
     *peak = static_cast<size_t>(rusage.ru_maxrss) * 1024;
     return 0;
 #else
+#if defined(__linux__)
+    // ru_maxrss survives exec (the kernel copies it in exec_mmap). VmHWM does not.
+    if (readLinuxVmHWM(peak))
+        return 0;
+#endif
     struct rusage rusage;
     if (getrusage(RUSAGE_SELF, &rusage) != 0)
         return errno;

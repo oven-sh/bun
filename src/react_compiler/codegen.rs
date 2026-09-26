@@ -388,7 +388,50 @@ pub(crate) fn codegen_function(
 // Context
 // =============================================================================
 
-type Temporaries = IdMap<DeclarationId, Option<Expr>>;
+/// The temporaries in scope. A block takes a mark on entry and restores to it
+/// on exit. Nothing removes an entry, so a restore is a truncate plus the
+/// replay of `replaced`.
+#[derive(Default)]
+struct Temporaries {
+    map: IdMap<DeclarationId, Option<Expr>>,
+    replaced: Vec<(DeclarationId, Option<Expr>)>,
+}
+
+#[derive(Clone, Copy)]
+struct TemporariesMark {
+    len: usize,
+    replaced: usize,
+}
+
+impl Temporaries {
+    fn insert(&mut self, id: DeclarationId, value: Option<Expr>) {
+        if let Some(previous) = self.map.insert(id, value) {
+            self.replaced.push((id, previous));
+        }
+    }
+
+    fn get(&self, id: DeclarationId) -> Option<&Option<Expr>> {
+        self.map.get(id)
+    }
+
+    fn contains_key(&self, id: DeclarationId) -> bool {
+        self.map.contains_key(id)
+    }
+
+    fn mark(&self) -> TemporariesMark {
+        TemporariesMark {
+            len: self.map.len(),
+            replaced: self.replaced.len(),
+        }
+    }
+
+    fn restore(&mut self, mark: TemporariesMark) {
+        for (id, previous) in self.replaced.drain(mark.replaced..).rev() {
+            self.map.insert(id, previous);
+        }
+        self.map.truncate(mark.len);
+    }
+}
 
 struct Context<'a, 'h> {
     env: &'a mut Environment,
@@ -412,7 +455,7 @@ impl<'a, 'h> Context<'a, 'h> {
             cg,
             next_cache_index: 0,
             declarations: HashSet::new(),
-            temp: IdMap::new(),
+            temp: Temporaries::default(),
             object_methods: IdMap::new(),
             unique_identifiers,
             synthesized_names: HashMap::new(),
@@ -537,6 +580,21 @@ fn codegen_reactive_function(
     })
 }
 
+/// The nested function sees the temporaries of `cx` and gets its own
+/// declarations and cache slots.
+fn codegen_nested_function(
+    cx: &mut Context,
+    func: &ReactiveFunction,
+) -> Result<CodegenFunction, CompilerError> {
+    let mark = cx.temp.mark();
+    let mut inner_cx = Context::new(cx.env, cx.cg, cx.unique_identifiers.clone());
+    inner_cx.temp = core::mem::take(&mut cx.temp);
+    let result = codegen_reactive_function(&mut inner_cx, func);
+    cx.temp = core::mem::take(&mut inner_cx.temp);
+    cx.temp.restore(mark);
+    result
+}
+
 fn convert_parameter(
     cx: &mut Context,
     param: &ParamPattern,
@@ -568,9 +626,9 @@ fn convert_parameter(
 // =============================================================================
 
 fn codegen_block(cx: &mut Context, block: &ReactiveBlock) -> Result<Vec<Stmt>, CompilerError> {
-    let temp_snapshot: Temporaries = cx.temp.clone();
+    let mark = cx.temp.mark();
     let result = codegen_block_no_reset(cx, block)?;
-    cx.temp = temp_snapshot;
+    cx.temp.restore(mark);
     Ok(result)
 }
 
@@ -594,9 +652,9 @@ fn codegen_block_no_reset(
                 scope,
                 instructions,
             }) => {
-                let temp_snapshot = cx.temp.clone();
+                let mark = cx.temp.mark();
                 codegen_reactive_scope(cx, &mut statements, *scope, instructions)?;
-                cx.temp = temp_snapshot;
+                cx.temp.restore(mark);
             }
             ReactiveStatement::Terminal(term_stmt) => {
                 let stmt = codegen_terminal(cx, &term_stmt.terminal)?;
@@ -2297,10 +2355,7 @@ fn codegen_function_expression(
     prune_unused_lvalues(&mut reactive_fn_mut, cx.env);
     prune_hoisted_contexts(&mut reactive_fn_mut, cx.env)?;
 
-    let mut inner_cx = Context::new(cx.env, cx.cg, cx.unique_identifiers.clone());
-    inner_cx.temp.clone_from(&cx.temp);
-
-    let fn_result = codegen_reactive_function(&mut inner_cx, &reactive_fn_mut)?;
+    let fn_result = codegen_nested_function(cx, &reactive_fn_mut)?;
     let arena = cx.cg.arena;
 
     let body = G::FnBody {
@@ -2443,11 +2498,7 @@ fn codegen_object_expression(
                         prune_unused_labels(&mut reactive_fn_mut, cx.env)?;
                         prune_unused_lvalues(&mut reactive_fn_mut, cx.env);
 
-                        let mut inner_cx =
-                            Context::new(cx.env, cx.cg, cx.unique_identifiers.clone());
-                        inner_cx.temp.clone_from(&cx.temp);
-
-                        let fn_result = codegen_reactive_function(&mut inner_cx, &reactive_fn_mut)?;
+                        let fn_result = codegen_nested_function(cx, &reactive_fn_mut)?;
 
                         let mut fn_flags = flags::FUNCTION_NONE;
                         if fn_result.is_async {

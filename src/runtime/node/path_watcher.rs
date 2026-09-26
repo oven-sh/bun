@@ -198,10 +198,7 @@ pub(crate) struct PathWatcher {
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     is_file: bool,
 
-    /// JS `FSWatcher` contexts sharing this OS watch. Guarded by `manager.mutex`
-    /// on all platforms — every emit path (inotify/kqueue reader threads and the
-    /// Darwin FSEvents callback) holds it while iterating, so attach/detach can
-    /// never race with dispatch.
+    /// JS `FSWatcher` contexts sharing this OS watch. Guarded by `manager.mutex`.
     handlers: ArrayHashMap<*mut c_void, HandlerState>,
 
     /// Per-platform per-watch state (inotify wds, kqueue fds, or the FSEventsWatcher).
@@ -214,8 +211,7 @@ type HandlerState = Tail;
 #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
 type HandlerState = ();
 
-/// What the kernel compares, with the path, to merge a record into an unread
-/// one: the mask and the cookie for inotify, the kind of event for kqueue.
+/// What the kernel compares, with the path, to merge a record into an unread one.
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Record {
@@ -223,8 +219,7 @@ struct Record {
     cookie: u32,
 }
 
-/// The last event posted to one handler. The reader reads each record at once,
-/// so the kernel has no unread record to merge the next one into.
+/// The last event posted to one handler, which `emit_record` merges into.
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 #[derive(Default)]
 pub(crate) struct Tail {
@@ -281,9 +276,7 @@ impl PathWatcher {
         }
     }
 
-    /// [`emit`](Self::emit) for a record of the kernel queue. One identical to
-    /// the last event of a handler is dropped while the listener has not got
-    /// that event: the listener then runs after the change of the dropped one.
+    /// Drops a record identical to the last event of a handler that has not got it yet.
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     fn emit_record(
         &self,
@@ -1134,8 +1127,7 @@ impl Linux {
                         .as_bytes()
                     };
 
-                    // SAFETY: owner_watcher live under manager.mutex; `emit_record`
-                    // takes `&self`.
+                    // SAFETY: owner_watcher live under manager.mutex; shared access only.
                     unsafe {
                         (*owner_watcher).emit_record(
                             Record {

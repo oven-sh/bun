@@ -76,8 +76,7 @@ pub(crate) struct FSWatcher {
     /// While it's not closed, the pending activity
     pending_activity_count: AtomicU32,
     current_task: JsCell<FSWatchTask>,
-    /// Sequence number of the newest event that reached the listener. The
-    /// watcher thread merges a record only into an event newer than this one.
+    /// Number of the newest event handed to the listener, for `path_watcher::Tail`.
     #[cfg(not(windows))]
     delivered: AtomicU64,
 
@@ -189,8 +188,7 @@ impl Taskable for FSWatchTaskPosix {
 pub(crate) struct Entry {
     event: Event,
     needs_free: bool,
-    /// Set by the watcher thread for an event that a later record can merge
-    /// into, else 0.
+    /// Not 0 for an event that a later record can merge into.
     seq: u64,
 }
 
@@ -235,8 +233,7 @@ impl FSWatchTaskPosix {
             .max()
             .unwrap_or(0);
         if newest != 0 {
-            // Before a listener runs: what it reads from here on includes every
-            // record that the watcher thread merged into an event of this batch.
+            // Before the listener runs, so it runs after each change merged so far.
             self.ctx().delivered.store(newest, Ordering::SeqCst);
         }
         for i in 0..self.count as usize {
@@ -594,8 +591,7 @@ impl FSWatcher {
         Self::on_record(ctx, event, is_file, 0);
     }
 
-    /// [`on_path_update_posix`](Self::on_path_update_posix) for an event that a
-    /// later record can merge into. `seq` is not 0.
+    /// `on_path_update_posix` for an event that a later record can merge into.
     #[cfg(not(windows))]
     pub(crate) fn on_record(ctx: Option<*mut c_void>, event: Event, is_file: bool, seq: u64) {
         let this = Self::from_ctx(ctx);

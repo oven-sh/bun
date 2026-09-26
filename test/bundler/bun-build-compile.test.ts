@@ -3190,7 +3190,9 @@ describe("portable target", () => {
     });
     using dir = tempDir("compile-portable-download", { "app.js": `console.log("never compiled");` });
     const proxyUrl = `http://127.0.0.1:${proxy.port}`;
-    const { stderr, exitCode } = await build(String(dir), ["--target=bun-portable-x64", "app.js", "--outfile", "app"], {
+    // A version that no bun has: the bun that runs this is not the executable of the target, whatever it is.
+    const target = "bun-portable-x64-v0.0.1";
+    const { stderr, exitCode } = await build(String(dir), [`--target=${target}`, "app.js", "--outfile", "app"], {
       BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
       BUN_COMPILE_TARGET_TARBALL_URL: undefined,
       HTTPS_PROXY: proxyUrl,
@@ -3198,9 +3200,8 @@ describe("portable target", () => {
       NO_PROXY: "",
       no_proxy: "",
     });
-    const version = Bun.version.split("-")[0];
-    expect(stderr).toContain(`No portable bun for 'bun-portable-x64-v${version}' to compile with`);
-    expect(stderr).toContain(`https://registry.npmjs.org/@oven/bun-portable-x64/-/bun-portable-x64-${version}.tgz`);
+    expect(stderr).toContain(`No portable bun for '${target}' to compile with`);
+    expect(stderr).toContain("https://registry.npmjs.org/@oven/bun-portable-x64/-/bun-portable-x64-0.0.1.tgz");
     expect(stderr).toContain("Pass the packed file of a portable bun with --compile-executable-path");
     expect(existsSync(join(String(dir), "app"))).toBe(false);
     expect(exitCode).toBe(1);
@@ -3456,6 +3457,21 @@ describe("portable target", () => {
         expect(JSON.parse(stdout)).toMatchObject({ worker: "the worker got ping", args: ["one"] });
         expect(exitCode).toBe(0);
       }
+    });
+
+    test("without --compile-executable-path the install cache is where the executable of the target is", async () => {
+      // A version that no bun has: the bun that runs this is not the executable of the target, whatever it is.
+      const cache = join(String(dir), "install-cache");
+      mkdirSync(cache, { recursive: true });
+      cpSync(template!, join(cache, `bun-portable-${arch === "arm64" ? "aarch64" : "x64"}-v0.0.2`));
+      const { stderr, exitCode } = await build(
+        String(dir),
+        [`--target=bun-portable-${arch}-v0.0.2`, "app.ts", "worker.ts", "--outfile", "cached/app"],
+        { BUN_INSTALL_CACHE_DIR: cache },
+      );
+      expect(stderr).not.toContain("error");
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(String(dir), "cached", "app")).equals(appBytes)).toBe(true);
     });
 
     test("a template for another processor is refused", async () => {

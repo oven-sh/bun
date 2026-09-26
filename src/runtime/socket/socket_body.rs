@@ -1638,7 +1638,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             // the do_socket_write backpressure arms the normal writable
             // subscription.
             let _ = this.internal_flush();
-            if this.buffered_data_for_node_net.get().len() == 0 {
+            if this.buffered_data_for_node_net.get().len() == 0
+                && !this.socket.get().is_detached()
+                && this.handlers_are(&handlers)
+            {
                 let drain_callback = handlers.on_writable();
                 if !drain_callback.is_empty() {
                     if let Err(err) = drain_callback.call(&global, this_value, &[this_value]) {

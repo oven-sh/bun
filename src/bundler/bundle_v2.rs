@@ -2701,6 +2701,7 @@ pub mod bv2_impl {
                                 dev.track_resolution_failure(
                                     &import_record.source_file,
                                     &import_record.specifier,
+                                    import_record.kind,
                                     target.bake_graph(),
                                     self.graph.input_files.items_loader()
                                         [import_record.importer_source_index as usize],
@@ -6800,6 +6801,7 @@ pub mod bv2_impl {
                                         dev.track_resolution_failure(
                                             source.path.text,
                                             import_record.path.text,
+                                            import_record.kind,
                                             ctx.target.bake_graph(), // use the source file target not the altered one
                                             loader,
                                         )

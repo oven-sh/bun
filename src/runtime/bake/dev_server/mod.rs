@@ -442,25 +442,40 @@ impl HotReloadEvent {
                     while let Some(index) = it {
                         // Note: reshaped for borrowck — re-index per iteration instead of
                         // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
-                        let (source_file_path, specifier, next) = {
+                        let (source_file_path, specifier, import_kind, next) = {
                             let dep = &dev.directory_watchers.dependencies[index as usize];
-                            (dep.source_file_path, &raw const *dep.specifier, dep.next)
+                            (
+                                dep.source_file_path,
+                                &raw const *dep.specifier,
+                                dep.import_kind,
+                                dep.next,
+                            )
                         };
                         it = next;
 
-                        // `specifier` points into the dep's owned `Box<[u8]>`, which is
-                        // not mutated until after `resolve` returns.
-                        // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
-                            .resolver
-                            .resolve(
-                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                    source_file_path.slice(),
-                                ),
-                                unsafe { &*specifier },
-                                bun_ast::ImportKind::Stmt,
-                            )
-                            .is_ok();
+                        let resolved = {
+                            // SAFETY: the dep owns this slice, and nothing frees it in this block.
+                            let specifier: &[u8] = unsafe { &*specifier };
+                            // SAFETY: server_transpiler is initialized before any event fires.
+                            let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
+                                .resolver
+                                .resolve(
+                                    bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                                        source_file_path.slice(),
+                                    ),
+                                    specifier,
+                                    import_kind,
+                                )
+                                .is_ok();
+                            bun_core::scoped_log!(
+                                DevServer,
+                                "DirectoryWatchStore retry({}, {}) = {}",
+                                bun_core::fmt::quote(specifier),
+                                bstr::BStr::new(import_kind.label()),
+                                resolved,
+                            );
+                            resolved
+                        };
 
                         if resolved {
                             // this resolution result is not preserved as passing it
@@ -1095,6 +1110,8 @@ pub(crate) mod directory_watch_store {
         pub(crate) source_file_path: bun_ptr::RawSlice<u8>,
         /// The specifier that failed. Allocated memory.
         pub(crate) specifier: Box<[u8]>,
+        /// The import kind the bundler resolved `specifier` with. The retry resolves with it too.
+        pub(crate) import_kind: bun_ast::ImportKind,
     }
     impl Default for Dep {
         fn default() -> Self {
@@ -1102,6 +1119,7 @@ pub(crate) mod directory_watch_store {
                 next: None,
                 source_file_path: bun_ptr::RawSlice::EMPTY,
                 specifier: Box::default(),
+                import_kind: bun_ast::ImportKind::Stmt,
             }
         }
     }
@@ -1140,10 +1158,10 @@ bun_bundler::link_impl_DevServerHandle! {
             let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
             (*this).put_or_overwrite_asset(path, blob, content_hash).map_err(Into::into)
         },
-        track_resolution_failure(import_source, specifier, renderer, loader) => {
+        track_resolution_failure(import_source, specifier, kind, renderer, loader) => {
             (*this)
                 .directory_watchers
-                .track_resolution_failure(import_source, specifier, renderer, loader)
+                .track_resolution_failure(import_source, specifier, kind, renderer, loader)
                 .map_err(Into::into)
         },
         is_file_cached(abs_path, side) => {
@@ -1219,6 +1237,7 @@ impl DirectoryWatchStore {
         &mut self,
         import_source: &[u8],
         specifier: &[u8],
+        kind: bun_ast::ImportKind,
         renderer: Graph,
         loader: bun_ast::Loader,
     ) -> Result<(), bun_alloc::AllocError> {
@@ -1228,6 +1247,10 @@ impl DirectoryWatchStore {
             return Ok(());
         }
         if !bun_paths::is_absolute(import_source) {
+            return Ok(());
+        }
+        // With the "./" prefix the resolver removes the query of "?v=2" and resolves the directory.
+        if kind.is_from_css() && specifier[0] == b'?' {
             return Ok(());
         }
 
@@ -1283,7 +1306,7 @@ impl DirectoryWatchStore {
             }
         };
 
-        match self.insert(dir, owned_file_path, specifier) {
+        match self.insert(dir, owned_file_path, specifier, kind) {
             Ok(()) => Ok(()),
             Err(DirectoryWatchInsertError::Ignore) => Ok(()), // ignoring watch errors.
             Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
@@ -1297,6 +1320,7 @@ impl DirectoryWatchStore {
         dir_name_to_watch: &[u8],
         file_path: bun_ptr::RawSlice<u8>,
         specifier: &[u8],
+        kind: bun_ast::ImportKind,
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
@@ -1341,6 +1365,7 @@ impl DirectoryWatchStore {
                 next: prev_first,
                 source_file_path: file_path,
                 specifier: specifier_cloned,
+                import_kind: kind,
             });
             self.watches.values_mut()[gop_index].first_dep = dep;
             return Ok(());
@@ -1434,6 +1459,7 @@ impl DirectoryWatchStore {
             next: None,
             source_file_path: file_path,
             specifier: specifier_cloned,
+            import_kind: kind,
         });
         self.watches.values_mut()[gop_index] = directory_watch_store::Entry {
             dir: fd,

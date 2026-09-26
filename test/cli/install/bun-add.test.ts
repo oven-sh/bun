@@ -95,6 +95,58 @@ it("should add existing package", async () => {
   );
 });
 
+it("should rewrite a package.json that is not valid UTF-8 as valid UTF-8", async () => {
+  await writeFile(
+    join(add_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  // "Jos\xE9 P\xE9rez" is Latin-1. Each stray byte must come back as U+FFFD with the bytes
+  // around it intact, the way npm rewrites such a file.
+  await writeFile(
+    join(package_dir, "package.json"),
+    Buffer.concat([
+      Buffer.from('{\n  "name": "bar",\n  "version": "0.0.2",\n  "author": "Jos'),
+      Buffer.from([0xe9]),
+      Buffer.from(" P"),
+      Buffer.from([0xe9]),
+      Buffer.from('rez <jp@example.com>"\n}'),
+    ]),
+  );
+  const add_path = relative(package_dir, add_dir);
+  const dep = `file:${add_path}`.replace(/\\/g, "\\\\");
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", dep],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(await stdout.text()).toContain("1 package installed");
+  expect(await exited).toBe(0);
+  const bytes = await file(join(package_dir, "package.json")).bytes();
+  expect(new TextDecoder("utf-8", { fatal: true }).decode(bytes)).toEqual(
+    JSON.stringify(
+      {
+        name: "bar",
+        version: "0.0.2",
+        author: "Jos\uFFFD P\uFFFDrez <jp@example.com>",
+        dependencies: {
+          foo: dep.replace(/\\\\/g, "/"),
+        },
+      },
+      null,
+      2,
+    ),
+  );
+});
+
 it("should reject missing package", async () => {
   await writeFile(
     join(package_dir, "package.json"),

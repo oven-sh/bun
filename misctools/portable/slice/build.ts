@@ -4,8 +4,8 @@
 //                              no step: all of them. A step whose result exists is skipped, except
 //                              when it is named; "image" always runs.
 //
-// Under WORK (default /tmp/portable/n1):
-//   musl/          what ../build.sh makes: musl 1.2.5 with the host table (libc/patch_musl.py), the
+// Under WORK (default /tmp/portable/n2):
+//   musl/          what ../build.ts makes: musl 1.2.5 with the host table (libc/patch_musl.ts), the
 //                  two test images, the Linux test host
 //   sysroot/       BASE_SYSROOT without ICU, with its musl replaced by the one of musl/ and
 //                  emutls.c.o taken out of the compiler-rt builtins (the libc has it)
@@ -24,7 +24,7 @@ import { createHash } from "node:crypto";
 const here = dirname(import.meta.path);
 const tree = resolve(here, "..");
 const repo = resolve(tree, "../..");
-const work = resolve(process.env.WORK ?? "/tmp/portable/n1");
+const work = resolve(process.env.WORK ?? "/tmp/portable/n2");
 const baseSysroot = process.env.BASE_SYSROOT ?? "/tmp/portable/sysroot";
 const baseCdeps = process.env.CDEPS ?? "/tmp/portable/rust/cdeps/out/portable-nolto/libcdeps.a";
 const baseCodegen = process.env.CODEGEN ?? "/tmp/portable/rust/codegen";
@@ -54,7 +54,7 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
     done: () => existsSync(join(work, "musl/sysroot/lib/libc.a")) && existsSync(join(work, "musl/host-linux")),
     make() {
       mkdirSync(join(work, "logs"), { recursive: true });
-      run(["sh", join(tree, "build.sh"), "x86_64", join(work, "musl")], { env: { JOBS: jobs }, log: join(work, "logs/musl-build.log") });
+      run(["bun", join(tree, "build.ts"), "x86_64", join(work, "musl")], { env: { JOBS: jobs }, log: join(work, "logs/musl-build.log") });
     },
   },
 
@@ -75,7 +75,7 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
       writeFileSync(
         join(sysroot, "README.txt"),
         `Sysroot of the file system slice, made by misctools/portable/slice/build.ts.
-  usr/include, usr/lib/{libc.a,crt1.o,rcrt1.o,Scrt1.o,crti.o,crtn.o}   musl 1.2.5 patched by libc/patch_musl.py (${join(work, "musl")})
+  usr/include, usr/lib/{libc.a,crt1.o,rcrt1.o,Scrt1.o,crti.o,crtn.o}   musl 1.2.5 patched by libc/patch_musl.ts (${join(work, "musl")})
   usr/include/c++, usr/lib/{libc++.a,libc++abi.a,libunwind.a}, clang-resource-dir, portable.cfg   copies from ${baseSysroot}
   libclang_rt.builtins.a (both copies)   emutls.c.o removed: __emutls_get_address is in libc.a
 `,

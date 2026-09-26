@@ -9,6 +9,8 @@ extern crate self as bun_windows_sys;
 pub mod externs;
 #[cfg(bun_portable)]
 pub mod host_imports;
+#[cfg(bun_portable)]
+pub mod host_thread;
 // Surface the tier-0 typedefs/consts/externs at the crate root so
 // `bun_sys::windows`'s `pub use bun_windows_sys::Foo;` re-exports resolve.
 pub use externs::*;

@@ -565,7 +565,10 @@ pub struct RUNTIME_FUNCTION {
     pub UnwindData: DWORD,
 }
 
-#[repr(C)]
+// `M128A` is `DECLSPEC_ALIGN(16)` in winnt.h. A build for Windows keeps the declaration it had, whose
+// only use is inside of `CONTEXT`, which is aligned to 16 itself.
+#[cfg_attr(not(bun_portable), repr(C))]
+#[cfg_attr(bun_portable, repr(C, align(16)))]
 #[derive(Clone, Copy)]
 pub struct M128A {
     pub Low: u64,
@@ -1441,6 +1444,8 @@ unsafe extern "system" {
 unsafe extern "system" {
     pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;
 
+    // ws2_32 exports it, not kernel32. The linker of a build for Windows finds it in either.
+    #[cfg_attr(bun_portable, library = "ws2_32")]
     pub fn GetHostNameW(lpBuffer: PWSTR, nSize: c_int) -> BOOL;
 
     pub fn SetEnvironmentVariableW(lpName: LPCWSTR, lpValue: LPCWSTR) -> BOOL;

@@ -5,7 +5,8 @@
 //   direct        the kernel runs the image
 //   hosted        the Linux test host (../host/host_posix.c) maps the image and serves its requests
 //   abi           hosted: the image calls functions of the host that have the calling convention of
-//                 Windows x64, through its import table, and the host calls a function of the image
+//                 Windows x64, through its import table, and the host calls a function of the image,
+//                 also on threads that the host made
 //   abi, direct   there is no host to resolve anything: the first call has to stop the image
 //   as win32      BUN_PORTABLE_HOST_OS=win32 makes bun decide as on Windows, on Linux: the image takes
 //                 bun's code for Windows, and its first call of Windows has to stop it with a message
@@ -16,7 +17,7 @@ import { dirname, join, resolve } from "node:path";
 
 const here = dirname(import.meta.path);
 const tree = resolve(here, "..");
-const work = resolve(process.env.WORK ?? "/tmp/portable/n1");
+const work = resolve(process.env.WORK ?? "/tmp/portable/n2");
 const runs = Number(process.argv.includes("--runs") ? process.argv[process.argv.indexOf("--runs") + 1] : 3);
 const image = join(work, "out/bun_fs_slice.img");
 const host = join(work, "out/host-linux");
@@ -55,7 +56,7 @@ check("abi, hosted", () => {
   const r = run([host, image, "--abi"]);
   const lines = r.out.split("\n").filter(Boolean).map(line => JSON.parse(line));
   const checks = lines.filter(line => "as_expected" in line);
-  return r.code === 0 && checks.length === 4 && checks.every(line => line.as_expected === true) ? undefined : `exit code ${r.code}: ${r.out}`;
+  return r.code === 0 && checks.length === 5 && checks.every(line => line.as_expected === true) ? undefined : `exit code ${r.code}: ${r.out}`;
 });
 check("abi, direct: stops", () => {
   const r = run([image, "--abi"]);

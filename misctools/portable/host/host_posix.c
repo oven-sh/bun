@@ -62,6 +62,10 @@ enum {
    thread pointer. aarch64 images send it (Linux has no syscall for that
    there), x86-64 images send arch_prctl. */
 #define N_set_tp 0x62756e01
+/* BUN_SYS_adopt_thread(tp, leave): the calling thread is not one that the
+   image created, and it has entered the image. tp becomes its thread
+   pointer, and when the thread ends leave(tp) is called on it. */
+#define N_adopt_thread 0x62756e02
 
 typedef int (*ImageThreadFn)(void *);
 typedef long HostSyscall(long, long, long, long, long, long, long);
@@ -165,7 +169,7 @@ struct host_thread {
   void *x18;
 };
 
-static pthread_key_t tp_key, thread_key;
+static pthread_key_t tp_key, thread_key, adopted_key;
 static int trace;
 
 /* ---- thread pointer slot ---- */
@@ -179,7 +183,10 @@ static void slot_set(void *tp) { pthread_setspecific(tp_key, tp); }
 static void *thread_x18(void) { return 0; }
 static void slot_release(void) {}
 #elif defined(__x86_64__)
-/* Linux test host: glibc owns fs, so the slot is the first word of a block that gs points at. */
+/* Linux test host: glibc owns fs, so the slot is the first word of a block that gs points at.
+   Windows and macOS give every thread the place of the slot, empty, whoever made the thread. Here
+   a thread has it once slot_set ran on it: the threads of the image, and the threads of this
+   host that enter the image (the library of the tests), which call slot_set(0) first. */
 #define HOST_OS 3
 static unsigned long slot_offset(void) { return 0; }
 static void slot_set(void *tp) {
@@ -192,7 +199,13 @@ static void slot_set(void *tp) {
   block[0] = tp;
 }
 static void *thread_x18(void) { return 0; }
-static void slot_release(void) {}
+static void slot_release(void) {
+  void *block = pthread_getspecific(tp_key);
+  if (!block) return;
+  syscall(SYS_arch_prctl, 0x1001, 0);
+  pthread_setspecific(tp_key, 0);
+  free(block);
+}
 #else
 /* Linux test host, arm64: the block stands for a Windows TEB, and the slot is
    where TlsSlots[5] is in a TEB. See "x18" above.
@@ -372,6 +385,34 @@ static void leave_thread(void *base, unsigned long size) {
 }
 __attribute__((used)) static void host_thread_exit(void *base, unsigned long size) { leave_thread(base, size); }
 
+/* ---- threads that the image did not create ----
+   A thread of this host, or of a library of the OS, that runs code of the image: the image gives
+   it a thread pointer when it enters (BUN_SYS_adopt_thread) and takes it back when the thread
+   ends, which the destructor of a key tells. The key of the slot has no destructor, so the slot
+   is there while this one runs, in whatever order the keys are taken. */
+struct adopted_thread {
+  void *tp;
+  ImageThreadFn leave;
+};
+static void adopted_thread_ends(void *p) {
+  struct adopted_thread *a = p;
+  if (trace) fprintf(stderr, "[host] an adopted thread ends, thread pointer %p\n", a->tp);
+  call_image(a->leave, a->tp, thread_x18());
+  slot_set(0);
+  slot_release();
+  free(a);
+}
+static long host_adopt_thread(void *tp, ImageThreadFn leave) {
+  struct adopted_thread *a = malloc(sizeof *a);
+  if (!a) return -L_ENOMEM;
+  a->tp = tp;
+  a->leave = leave;
+  if (pthread_setspecific(adopted_key, a)) { free(a); return -L_ENOMEM; }
+  slot_set(tp);
+  if (trace) fprintf(stderr, "[host] a thread of the host is adopted, thread pointer %p\n", tp);
+  return 0;
+}
+
 /* ---- file system requests, Linux test host ----
    The numbers and the structures are the ones of this kernel, so the request
    is passed on as it is. A host on another OS has to translate each of them;
@@ -424,10 +465,44 @@ WIN64 static long long test_sum6(int a, long long b, unsigned c, void *d, short 
 WIN64 static double test_mixed(double x, int y, double z, float w, long long v) { return x * 2 + y * 3 + z * 5 + w * 7 + (double)v * 11; }
 WIN64 static struct test_pair test_pair_by_value(struct test_pair p, long long add) { return (struct test_pair){p.second + add, p.first - add}; }
 WIN64 static long long test_callback(TestCallback *callback, void *context) { return callback(context, -1, 20000000000ll, 3000000000u, -4, 5, 6.5) + 1; }
+
+/* A thread that the image did not create calls into the image, as a thread of libuv's pool or of
+   the pool of Windows does on Windows. test_threads(callback, context, threads, calls): that many
+   threads of this host, at the same time, each calls callback(context, number of the thread,
+   number of the call) that many times. The result is the sum of what the calls returned, once
+   every thread has ended and the destructors of its keys have run. */
+typedef WIN64 long long TestThreadCallback(void *, long long, long long);
+struct test_thread {
+  pthread_t thread;
+  TestThreadCallback *callback;
+  void *context;
+  long long number, calls, result;
+};
+static void *test_thread_main(void *p) {
+  struct test_thread *t = p;
+  slot_set(0);
+  for (long long call = 0; call < t->calls; call++) t->result += t->callback(t->context, t->number, call);
+  return 0;
+}
+WIN64 static long long test_threads(TestThreadCallback *callback, void *context, long long threads, long long calls) {
+  if (threads < 1 || threads > 64) return -1;
+  struct test_thread t[64];
+  long long started = 0, result = 0;
+  for (; started < threads; started++) {
+    t[started] = (struct test_thread){.callback = callback, .context = context, .number = started, .calls = calls};
+    if (pthread_create(&t[started].thread, 0, test_thread_main, &t[started])) break;
+  }
+  for (long long i = 0; i < started; i++) {
+    pthread_join(t[i].thread, 0);
+    result += t[i].result;
+  }
+  return started == threads ? result : -1;
+}
 __attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
   static const struct { const char *name; void *address; } symbols[] = {
     {"test_sum6", (void *)test_sum6}, {"test_mixed", (void *)test_mixed},
     {"test_pair_by_value", (void *)test_pair_by_value}, {"test_callback", (void *)test_callback},
+    {"test_threads", (void *)test_threads},
   };
   if (strcmp(library, "bun_host_test")) return 0;
   for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++)
@@ -491,6 +566,7 @@ __attribute__((used)) static long host_syscall(long n, long a, long b, long c, l
       if (a == 0x1002) { slot_set((void *)b); r = 0; } else r = -L_EINVAL;
       break;
     case N_set_tp: slot_set((void *)a); r = 0; break;
+    case N_adopt_thread: r = host_adopt_thread((void *)a, (ImageThreadFn)b); break;
     case N_futex: r = host_futex((int *)a, b, (int)c, (void *)d); break;
     case N_clock_gettime: {
       struct timespec ts;
@@ -526,7 +602,7 @@ IMAGE_ENTRY(host_lookup)
 
 /* ---- code signature, macOS on arm64 ----
    Apple Silicon maps file pages executable only if a code signature covers
-   them. tools/apple_sign.py appended one for the whole image and a trailer
+   them. tools/apple_sign.ts appended one for the whole image and a trailer
    that says where it is: 5 x u64, code_off, code_len, sig_off, sig_len, magic.
    Registered as in probe/apple_signed_map.c, before anything is mapped. */
 #if defined(__APPLE__) && defined(__aarch64__)
@@ -600,6 +676,7 @@ int main(int argc, char **argv) {
 
   pthread_key_create(&tp_key, 0);
   pthread_key_create(&thread_key, 0);
+  pthread_key_create(&adopted_key, adopted_thread_ends);
   static struct bun_host host;
   host.os = HOST_OS;
   host.tcb_offset = slot_offset();

@@ -82,7 +82,13 @@ const localReference = {
 } as const;
 
 function parse(text: string, format: Format, arm: boolean): Parsed {
-  const parsed: Parsed = { named: new Map(), order: [], anonymous: new Map(), innerOwner: new Map(), addressSignificant: [] };
+  const parsed: Parsed = {
+    named: new Map(),
+    order: [],
+    anonymous: new Map(),
+    innerOwner: new Map(),
+    addressSignificant: [],
+  };
   let section = "";
   let pending: string[] = [];
   let current: Block | undefined;
@@ -101,7 +107,14 @@ function parse(text: string, format: Format, arm: boolean): Parsed {
         current.lines.push(line);
         continue;
       }
-      current = { label: label[1], name: withoutCrateHashes(label[1]), local, index: index++, lines: [`@section ${section}`, ...pending], inner: [] };
+      current = {
+        label: label[1],
+        name: withoutCrateHashes(label[1]),
+        local,
+        index: index++,
+        lines: [`@section ${section}`, ...pending],
+        inner: [],
+      };
       pending = [];
       if (local) parsed.anonymous.set(label[1], current);
       else {
@@ -116,7 +129,10 @@ function parse(text: string, format: Format, arm: boolean): Parsed {
       parsed.addressSignificant.push(line);
       continue;
     }
-    if (/^\.(section|text|data|bss|const|rdata|zerofill|tdata|tbss)\b/.test(line) || /^\.subsections_via_symbols/.test(line)) {
+    if (
+      /^\.(section|text|data|bss|const|rdata|zerofill|tdata|tbss)\b/.test(line) ||
+      /^\.subsections_via_symbols/.test(line)
+    ) {
       // The number of a section among the ones of the same name moves when a section is added.
       section = line.replace(/,unique,\d+$/, "");
       current = undefined;
@@ -124,7 +140,12 @@ function parse(text: string, format: Format, arm: boolean): Parsed {
       continue;
     }
     // In front of a label: what the assembler is told about the symbol before it is defined.
-    if (/^\.(globl|hidden|weak|local|protected|private_extern|weak_definition|weak_def_can_be_hidden|type|p2align|prefalign|balign|def|scl|endef|linkonce)\b/.test(line) && !insideBody(current, line)) {
+    if (
+      /^\.(globl|hidden|weak|local|protected|private_extern|weak_definition|weak_def_can_be_hidden|type|p2align|prefalign|balign|def|scl|endef|linkonce)\b/.test(
+        line,
+      ) &&
+      !insideBody(current, line)
+    ) {
       pending.push(line);
       continue;
     }
@@ -136,11 +157,18 @@ function parse(text: string, format: Format, arm: boolean): Parsed {
 
 /** `.p2align` between the instructions of a function belongs to the function, not to the next symbol. */
 function insideBody(current: Block | undefined, line: string) {
-  return current !== undefined && !current.local && /^\.(p2align|balign)\b/.test(line) && current.lines.length > 0 && !/^(retq?|jmpq?\s|ud2|ret\b|b\s|br\s)/.test(lastInstruction(current));
+  return (
+    current !== undefined &&
+    !current.local &&
+    /^\.(p2align|balign)\b/.test(line) &&
+    current.lines.length > 0 &&
+    !/^(retq?|jmpq?\s|ud2|ret\b|b\s|br\s)/.test(lastInstruction(current))
+  );
 }
 
 function lastInstruction(block: Block) {
-  for (let i = block.lines.length - 1; i >= 0; i--) if (!block.lines[i].startsWith(".") && !block.lines[i].startsWith("@")) return block.lines[i];
+  for (let i = block.lines.length - 1; i >= 0; i--)
+    if (!block.lines[i].startsWith(".") && !block.lines[i].startsWith("@")) return block.lines[i];
   return "";
 }
 
@@ -166,14 +194,21 @@ function normalized(parsed: Parsed, format: Format) {
     if (known) return known;
     if (stack.has(block.label)) return "cycle";
     stack.add(block.label);
-    const hash = createHash("sha256").update(block.lines.map(line => replace(line, block)).join("\n")).digest("hex").slice(0, 16);
+    const hash = createHash("sha256")
+      .update(block.lines.map(line => replace(line, block)).join("\n"))
+      .digest("hex")
+      .slice(0, 16);
     stack.delete(block.label);
     hashes.set(block.label, hash);
     return hash;
   }
 
   const symbols = new Map<string, string[]>();
-  for (const [name, block] of parsed.named) symbols.set(name, block.lines.map(line => replace(line, block)));
+  for (const [name, block] of parsed.named)
+    symbols.set(
+      name,
+      block.lines.map(line => replace(line, block)),
+    );
   const constants = [...parsed.anonymous.values()].map(hashOf).sort();
   const dummy: Block = { label: "", name: "", local: true, index: -1, lines: [], inner: [] };
   const addressSignificant = parsed.addressSignificant.map(line => replace(line, dummy)).sort();
@@ -193,7 +228,12 @@ interface Comparison {
   address_significant_is_the_same: boolean;
 }
 
-function compareFiles(beforePath: string, afterPath: string, target: string | undefined, show: string | undefined): Comparison {
+function compareFiles(
+  beforePath: string,
+  afterPath: string,
+  target: string | undefined,
+  show: string | undefined,
+): Comparison {
   const beforeText = readFileSync(beforePath, "utf8");
   const afterText = readFileSync(afterPath, "utf8");
   const format = formatOf(beforeText, target);
@@ -206,23 +246,40 @@ function compareFiles(beforePath: string, afterPath: string, target: string | un
     different: [],
     only_before: [...before.symbols.keys()].filter(name => !after.symbols.has(name)),
     only_after: [...after.symbols.keys()].filter(name => !before.symbols.has(name)),
-    order_is_the_same: before.order.filter(name => after.symbols.has(name)).join("\n") === after.order.filter(name => before.symbols.has(name)).join("\n"),
+    order_is_the_same:
+      before.order.filter(name => after.symbols.has(name)).join("\n") ===
+      after.order.filter(name => before.symbols.has(name)).join("\n"),
     constants_before: before.constants.length,
     constants_after: after.constants.length,
     constants_are_the_same: before.constants.join("\n") === after.constants.join("\n"),
     address_significant_is_the_same: before.addressSignificant.join("\n") === after.addressSignificant.join("\n"),
   };
-  const sorted = (lines: string[]) => lines.filter(line => !/^\.L\d+:$/.test(line)).map(line => line.replace(/\.L\d+/g, ".L")).sort().join("\n");
+  const sorted = (lines: string[]) =>
+    lines
+      .filter(line => !/^\.L\d+:$/.test(line))
+      .map(line => line.replace(/\.L\d+/g, ".L"))
+      .sort()
+      .join("\n");
   for (const [name, lines] of before.symbols) {
     const other = after.symbols.get(name);
     if (!other) continue;
     result.symbols_in_both++;
     const same = lines.join("\n") === other.join("\n");
     if (same) result.same++;
-    else result.different.push({ name, lines_before: lines.length, lines_after: other.length, same_lines_in_another_order: sorted(lines) === sorted(other) });
+    else
+      result.different.push({
+        name,
+        lines_before: lines.length,
+        lines_after: other.length,
+        same_lines_in_another_order: sorted(lines) === sorted(other),
+      });
     if (show && name.includes(show)) {
-      console.log(`== ${name}: ${lines.length} lines before, ${other.length} after, ${same ? "the same" : "DIFFERENT"}`);
-      if (!same) for (let i = 0; i < Math.max(lines.length, other.length); i++) if (lines[i] !== other[i]) console.log(`   ${i}: ${lines[i] ?? ""}   |   ${other[i] ?? ""}`);
+      console.log(
+        `== ${name}: ${lines.length} lines before, ${other.length} after, ${same ? "the same" : "DIFFERENT"}`,
+      );
+      if (!same)
+        for (let i = 0; i < Math.max(lines.length, other.length); i++)
+          if (lines[i] !== other[i]) console.log(`   ${i}: ${lines[i] ?? ""}   |   ${other[i] ?? ""}`);
     }
   }
   return result;
@@ -249,7 +306,13 @@ interface Package {
 }
 
 function run(cmd: string[], cwd: string, env: Record<string, string>, log: string) {
-  const result = Bun.spawnSync(cmd, { cwd, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe", maxBuffer: 1 << 30 });
+  const result = Bun.spawnSync(cmd, {
+    cwd,
+    env: { ...process.env, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+    maxBuffer: 1 << 30,
+  });
   writeFileSync(log, Buffer.concat([Buffer.from(`+ ${cmd.join(" ")}   (in ${cwd})\n`), result.stderr]));
   return { ok: result.exitCode === 0, stdout: result.stdout };
 }
@@ -268,7 +331,12 @@ function metadata(tree: string, target: string, withDependencies: boolean) {
 
 function packagesOf(tree: string, target: string): Package[] {
   const data = metadata(tree, target, false);
-  return data.packages.map(p => ({ name: p.name, id: p.id, directory: dirname(p.manifest_path), kinds: p.targets.flatMap(t => t.kind) }));
+  return data.packages.map(p => ({
+    name: p.name,
+    id: p.id,
+    directory: dirname(p.manifest_path),
+    kinds: p.targets.flatMap(t => t.kind),
+  }));
 }
 
 function git(tree: string, args: string[]) {
@@ -282,13 +350,33 @@ function releaseFlags(target: string) {
   const flags: string[] = [];
   const linux = target.includes("linux") && !target.includes("android");
   if (linux || target.includes("freebsd")) flags.push("-Crelocation-model=static");
-  flags.push("--check-cfg=cfg(bun_portable)", "-Cforce-frame-pointers=yes", "-Cllvm-args=-addrsig", "-Zshare-generics=y");
+  flags.push(
+    "--check-cfg=cfg(bun_portable)",
+    "-Cforce-frame-pointers=yes",
+    "-Cllvm-args=-addrsig",
+    "-Zshare-generics=y",
+  );
   if (target.startsWith("x86_64")) flags.push("-Ctarget-cpu=nehalem");
   else if (target.includes("apple")) flags.push("-Ctarget-cpu=apple-m1");
   else if (target.includes("windows")) flags.push("-Ctarget-cpu=generic", "-Ctarget-feature=+crc");
-  else flags.push("-Ctarget-cpu=generic", "-Ctarget-feature=+crc", target.includes("android") ? "-Ztune-cpu=cortex-a78" : "-Ztune-cpu=ampere1");
-  flags.push("--check-cfg=cfg(bun_asan)", "--check-cfg=cfg(bun_debug)", "--check-cfg=cfg(bun_codegen_embed)", "--cfg=bun_codegen_embed");
-  flags.push("--check-cfg=cfg(socket_fault_injection)", "-Zlocation-detail=none", "-Alinker_messages", "--cap-lints=warn");
+  else
+    flags.push(
+      "-Ctarget-cpu=generic",
+      "-Ctarget-feature=+crc",
+      target.includes("android") ? "-Ztune-cpu=cortex-a78" : "-Ztune-cpu=ampere1",
+    );
+  flags.push(
+    "--check-cfg=cfg(bun_asan)",
+    "--check-cfg=cfg(bun_debug)",
+    "--check-cfg=cfg(bun_codegen_embed)",
+    "--cfg=bun_codegen_embed",
+  );
+  flags.push(
+    "--check-cfg=cfg(socket_fault_injection)",
+    "-Zlocation-detail=none",
+    "-Alinker_messages",
+    "--cap-lints=warn",
+  );
   return flags;
 }
 
@@ -344,7 +432,10 @@ function expandedSource(text: string) {
       while (i < n && text[i] !== '"') i += text[i] === "\\" ? 2 : 1;
       i++;
       tokens.push(text.slice(from, i));
-    } else if ((c === "r" || ((c === "b" || c === "c") && text[i + 1] === "r")) && /^[bc]?r#*"/.test(text.slice(i, i + 40))) {
+    } else if (
+      (c === "r" || ((c === "b" || c === "c") && text[i + 1] === "r")) &&
+      /^[bc]?r#*"/.test(text.slice(i, i + 40))
+    ) {
       const from = i;
       const hashes = /^[bc]?r(#*)"/.exec(text.slice(i, i + 40))![1];
       const close = '"' + hashes;
@@ -440,7 +531,9 @@ async function compareTrees(options: Record<string, string>) {
     const touched = new Set<string>();
     for (const file of changed) {
       const path = join(branch, file);
-      const owner = branchPackages.filter(p => path.startsWith(p.directory + "/")).sort((a, b) => b.directory.length - a.directory.length)[0];
+      const owner = branchPackages
+        .filter(p => path.startsWith(p.directory + "/"))
+        .sort((a, b) => b.directory.length - a.directory.length)[0];
       if (owner) touched.add(owner.name);
     }
     crates = [...touched].sort();
@@ -488,31 +581,51 @@ async function compareTrees(options: Record<string, string>) {
     }
     compared.push(name);
   }
+  const hasLibrary = (name: string) =>
+    branchPackages.find(p => p.name === name)?.kinds.some(kind => /lib$/.test(kind)) ?? false;
   if (options.dependents !== undefined) {
     const touched = new Set(compared);
     for (const member of [...members].sort()) {
       if (touched.has(member) || skip.has(member) || !basePackages.has(member)) continue;
       if (branchPackages.find(p => p.name === member)?.kinds.includes("proc-macro")) continue;
-      if (reaches(member, touched)) compared.push(member);
+      if (!reaches(member, touched)) continue;
+      if (hasLibrary(member)) compared.push(member);
+      else notes.push(`${member}: a program that is built on request only, no library`);
     }
   }
 
   mkdirSync(join(work, "logs"), { recursive: true });
-  const report: Record<string, unknown> = { mode, target, base: baseCommit, branch: git(branch, ["rev-parse", "HEAD"]), crates: compared, notes, added_to_the_build: added };
+  const report: Record<string, unknown> = {
+    mode,
+    target,
+    base: baseCommit,
+    branch: git(branch, ["rev-parse", "HEAD"]),
+    crates: compared,
+    notes,
+    added_to_the_build: added,
+  };
   let failed = added.length > 0;
   let buildFailed = false;
 
   if (mode === "asm") {
     const rustflags = [...releaseFlags(target), "-Cdebuginfo=0", "--emit=asm"];
     const directories: Record<string, string> = {};
-    for (const [side, tree] of [["base", base], ["branch", branch]] as const) {
+    for (const [side, tree] of [
+      ["base", base],
+      ["branch", branch],
+    ] as const) {
       const targetDirectory = join(work, `target-asm-${side}`);
       directories[side] = join(targetDirectory, target);
       const log = join(work, "logs", `asm-${side}-${target}.log`);
       const built = run(
         ["cargo", "build", "--release", "--locked", "--target", target, ...compared.flatMap(name => ["-p", name])],
         tree,
-        { CARGO_TARGET_DIR: targetDirectory, CARGO_BUILD_JOBS: jobs, BUN_CODEGEN_DIR: codegen, CARGO_ENCODED_RUSTFLAGS: rustflags.join("\x1f") },
+        {
+          CARGO_TARGET_DIR: targetDirectory,
+          CARGO_BUILD_JOBS: jobs,
+          BUN_CODEGEN_DIR: codegen,
+          CARGO_ENCODED_RUSTFLAGS: rustflags.join("\x1f"),
+        },
         log,
       );
       if (!built.ok) {
@@ -528,7 +641,8 @@ async function compareTrees(options: Record<string, string>) {
       let symbols = 0;
       let different = 0;
       for (const name of compared) {
-        const a = before.get(name), b = after.get(name);
+        const a = before.get(name),
+          b = after.get(name);
         if (!a || !b) {
           results[name] = { error: `no assembly: ${a ? "" : "base "}${b ? "" : "branch"}` };
           failed = true;
@@ -550,10 +664,26 @@ async function compareTrees(options: Record<string, string>) {
     for (const assertions of ["false", "true"]) {
       for (const name of compared) {
         const texts: string[] = [];
-        for (const [side, tree] of [["base", base], ["branch", branch]] as const) {
+        for (const [side, tree] of [
+          ["base", base],
+          ["branch", branch],
+        ] as const) {
           const log = join(work, "logs", `expanded-${side}-${target}-${name}-${assertions}.log`);
           const expanded = run(
-            ["cargo", "rustc", "--profile", "check", "--locked", "--lib", "--target", target, "-p", name, "--", "-Zunpretty=expanded"],
+            [
+              "cargo",
+              "rustc",
+              "--profile",
+              "check",
+              "--locked",
+              "--lib",
+              "--target",
+              target,
+              "-p",
+              name,
+              "--",
+              "-Zunpretty=expanded",
+            ],
             tree,
             {
               CARGO_TARGET_DIR: join(work, `target-expanded-${side}`),
@@ -583,8 +713,7 @@ async function compareTrees(options: Record<string, string>) {
         if (same) {
           results[key] = "the same";
           if (existsSync(diffPath)) rmSync(diffPath);
-        }
-        else {
+        } else {
           different++;
           failed = true;
           const diff = Bun.spawnSync(["diff", "-U2", texts[0], texts[1]], { stdout: "pipe" }).stdout.toString();
@@ -599,7 +728,12 @@ async function compareTrees(options: Record<string, string>) {
 
   const path = join(work, `${mode}-${target}.json`);
   writeFileSync(path, JSON.stringify(report, null, 1) + "\n");
-  const summary = { ...report, results: undefined, report: path, result: buildFailed ? "a build failed" : failed ? "DIFFERENT" : "the same" };
+  const summary = {
+    ...report,
+    results: undefined,
+    report: path,
+    result: buildFailed ? "a build failed" : failed ? "DIFFERENT" : "the same",
+  };
   console.log(JSON.stringify(summary, null, 1));
   if (failed && report.results)
     for (const [name, result] of Object.entries(report.results as Record<string, any>))
@@ -638,7 +772,9 @@ else if (positional.length === 2) {
   console.log(JSON.stringify(comparison, null, 1));
   process.exit(differs(comparison) ? 1 : 0);
 } else {
-  console.error("usage: bun compare-asm.ts --base <tree> --target <triple> [--mode asm|expanded] [--crates a,b] [--dependents] [--skip a,b] [--work dir] [--show text]");
+  console.error(
+    "usage: bun compare-asm.ts --base <tree> --target <triple> [--mode asm|expanded] [--crates a,b] [--dependents] [--skip a,b] [--work dir] [--show text]",
+  );
   console.error("       bun compare-asm.ts <before.s> <after.s> [--show text]");
   process.exit(2);
 }

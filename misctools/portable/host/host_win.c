@@ -52,6 +52,10 @@ enum {
    thread pointer. aarch64 images send it (Linux has no syscall for that
    there), x86-64 images send arch_prctl. */
 #define N_set_tp 0x62756e01
+/* BUN_SYS_adopt_thread(tp, leave): the calling thread is not one that the
+   image created, and it has entered the image. tp becomes its thread
+   pointer, and when the thread ends leave(tp) is called on it. */
+#define N_adopt_thread 0x62756e02
 
 /* Offsets in the TEB, the same on x64 and on arm64. The image reads its thread
    pointer at TEB + TEB_TLS_SLOTS + 8 * slot: through gs on x64, through x18 on
@@ -83,7 +87,7 @@ struct host_thread {
   void *orig_base, *orig_limit, *orig_dealloc;
 };
 
-static DWORD tp_slot, thread_slot;
+static DWORD tp_slot, thread_slot, adopted_slot;
 static int trace;
 static LARGE_INTEGER qpc_freq;
 
@@ -313,6 +317,35 @@ static SYSV long long host_thread_create(ImageThreadFn fn, void *stack, long lon
 }
 static SYSV void host_thread_exit(void *base, unsigned long long size) { leave_thread(base, size); }
 
+/* ---- threads that the image did not create ----
+   A thread of libuv's pool, of the pool of Windows, the thread of a console control handler: it
+   runs a callback of the image. The image gives it a thread pointer when it enters
+   (BUN_SYS_adopt_thread) and takes it back when the thread ends. Windows tells the end of a
+   thread to the callback of a fiber local storage slot that has a value, on the thread that
+   ends, while its TEB and the slot of the thread pointer are still there. */
+struct adopted_thread {
+  void *tp;
+  SYSV void (*leave)(void *);
+};
+static VOID WINAPI adopted_thread_ends(PVOID p) {
+  struct adopted_thread *a = p;
+  if (!a) return;
+  if (trace) fprintf(stderr, "[host] an adopted thread ends, thread pointer %p\n", a->tp);
+  a->leave(a->tp);
+  TlsSetValue(tp_slot, 0);
+  HeapFree(GetProcessHeap(), 0, a);
+}
+static long long host_adopt_thread(void *tp, void *leave) {
+  struct adopted_thread *a = HeapAlloc(GetProcessHeap(), 0, sizeof *a);
+  if (!a) return -L_ENOMEM;
+  a->tp = tp;
+  a->leave = (SYSV void (*)(void *))leave;
+  if (!FlsSetValue(adopted_slot, a)) { HeapFree(GetProcessHeap(), 0, a); return -L_ENOMEM; }
+  TlsSetValue(tp_slot, tp);
+  if (trace) fprintf(stderr, "[host] thread %lu is adopted, thread pointer %p\n", GetCurrentThreadId(), tp);
+  return 0;
+}
+
 /* ---- syscalls ---- */
 static long long host_futex(int *addr, long long op, int val, const struct l_timespec *timeout) {
   switch (op & 127) {
@@ -389,6 +422,7 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
       if (a == 0x1002) { TlsSetValue(tp_slot, (void *)b); r = 0; } else r = -L_EINVAL;
       break;
     case N_set_tp: TlsSetValue(tp_slot, (void *)a); r = 0; break;
+    case N_adopt_thread: r = host_adopt_thread((void *)a, (void *)b); break;
     case N_futex: r = host_futex((int *)a, b, (int)c, (void *)d); break;
     case N_clock_gettime: r = host_clock_gettime(a, (void *)b); break;
     case N_getrandom: r = SystemFunction036((void *)a, (ULONG)b) ? b : -L_EIO; break;
@@ -517,7 +551,9 @@ int main(int argc, char **argv) {
 
   tp_slot = TlsAlloc();
   thread_slot = TlsAlloc();
+  adopted_slot = FlsAlloc(adopted_thread_ends);
   if (tp_slot >= 64) { fprintf(stderr, "host: no low TLS slot\n"); return 2; }
+  if (adopted_slot == FLS_OUT_OF_INDEXES) { fprintf(stderr, "host: no fiber local storage slot\n"); return 2; }
   static struct bun_host host;
   host.os = 2;
   host.tcb_offset = TEB_TLS_SLOTS + 8ull * tp_slot;

@@ -22,6 +22,8 @@ static void comma(void) {
 }
 #define TYPE_BEGIN(name) comma(); printf("\n\"" #name "\":{\"size\":%zu,\"align\":%zu,\"fields\":{", sizeof(name), _Alignof(name)); first = 1;
 #define FIELD(type, name) comma(); printf("\"" #name "\":{\"offset\":%zu,\"size\":%zu}", offsetof(type, name), sizeof(((type *)0)->name));
+/* A member of an anonymous union that the binding has as one field: the size is the union's. */
+#define FIELD_OF_UNION(type, name, after) comma(); printf("\"" #name "\":{\"offset\":%zu,\"size\":%zu}", offsetof(type, name), offsetof(type, after) - offsetof(type, name));
 #define TYPE_END printf("}}"); first = 0;
 #define CONSTANT_SIGNED(name) comma(); printf("\n\"" #name "\":\"%lld\"", (long long)(name));
 #define CONSTANT_UNSIGNED(name) comma(); printf("\n\"" #name "\":\"%llu\"", (unsigned long long)(name));
@@ -207,10 +209,10 @@ int main(void) {
 #endif
   TYPE_END
 #endif
-#ifndef SKIP_TYPE_WINDOW_BUFFER_SIZE_EVENT
-  TYPE_BEGIN(WINDOW_BUFFER_SIZE_EVENT)
-#ifndef SKIP_FIELD_WINDOW_BUFFER_SIZE_EVENT_dwSize
-  FIELD(WINDOW_BUFFER_SIZE_EVENT, dwSize)
+#ifndef SKIP_TYPE_WINDOW_BUFFER_SIZE_RECORD
+  TYPE_BEGIN(WINDOW_BUFFER_SIZE_RECORD)
+#ifndef SKIP_FIELD_WINDOW_BUFFER_SIZE_RECORD_dwSize
+  FIELD(WINDOW_BUFFER_SIZE_RECORD, dwSize)
 #endif
   TYPE_END
 #endif
@@ -364,7 +366,7 @@ int main(void) {
 #ifndef SKIP_TYPE_IO_STATUS_BLOCK
   TYPE_BEGIN(IO_STATUS_BLOCK)
 #ifndef SKIP_FIELD_IO_STATUS_BLOCK_Status
-  FIELD(IO_STATUS_BLOCK, Status)
+  FIELD_OF_UNION(IO_STATUS_BLOCK, Status, Information)
 #endif
 #ifndef SKIP_FIELD_IO_STATUS_BLOCK_Information
   FIELD(IO_STATUS_BLOCK, Information)
@@ -3492,6 +3494,12 @@ int main(void) {
 #endif
 #ifndef SKIP_CONSTANT_MS_VC_EXCEPTION
   CONSTANT_UNSIGNED(MS_VC_EXCEPTION)
+#endif
+#ifndef SKIP_CONSTANT_ExceptionContinueExecution
+  CONSTANT_SIGNED(ExceptionContinueExecution)
+#endif
+#ifndef SKIP_CONSTANT_ExceptionContinueSearch
+  CONSTANT_SIGNED(ExceptionContinueSearch)
 #endif
 #ifndef SKIP_CONSTANT_EXCEPTION_UNWIND
   CONSTANT_UNSIGNED(EXCEPTION_UNWIND)

@@ -13,21 +13,55 @@ use bun_core::{ZStr, strings};
 // SAFETY invariant: each buffer has at most one live mutable borrow per thread;
 // callers must not re-enter the accessor while a previous borrow is alive.
 thread_local! {
-    static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; PARSER_JOIN_INPUT_BUFFER_LEN]> =
-        const { UnsafeCell::new([0u8; PARSER_JOIN_INPUT_BUFFER_LEN]) };
+    static PARSER_JOIN_INPUT_BUFFER: LazyJoinBuf = const { LazyJoinBuf::NEW };
     static PARSER_BUFFER: UnsafeCell<[u8; PARSER_BUFFER_LEN]> =
         const { UnsafeCell::new([0u8; PARSER_BUFFER_LEN]) };
 }
 
-/// Output capacity of [`join_abs_string`] / [`join_abs_string_z`].
-const PARSER_JOIN_INPUT_BUFFER_LEN: usize = 4096;
-
 /// Output capacity of [`normalize_string`].
 const PARSER_BUFFER_LEN: usize = 1024;
 
+/// Output capacity of [`join_abs_string`] / [`join`]: at least `MAX_PATH_BYTES`
+/// (98 302 on Windows) so any valid host path fits; floored at 4096 on POSIX.
+pub(crate) const TL_JOIN_BUF_LEN: usize = if MAX_PATH_BYTES > 4096 {
+    MAX_PATH_BYTES
+} else {
+    4096
+};
+
+/// Lazily heap-backed `[u8; TL_JOIN_BUF_LEN]` thread-local. 8 bytes in `.tls`
+/// instead of `TL_JOIN_BUF_LEN` zeros (PE/COFF has no TLS-BSS; see
+/// [`LazyPathBuf`]).
+struct LazyJoinBuf(core::cell::Cell<*mut [u8; TL_JOIN_BUF_LEN]>);
+
+impl LazyJoinBuf {
+    const NEW: Self = Self(core::cell::Cell::new(core::ptr::null_mut()));
+
+    /// Same single-live-borrow-per-thread contract as [`tl_buf_mut`].
+    #[inline]
+    fn get(&self) -> &'static mut [u8; TL_JOIN_BUF_LEN] {
+        let mut p = self.0.get();
+        if p.is_null() {
+            p = bun_core::heap::into_raw(bun_core::boxed_zeroed::<[u8; TL_JOIN_BUF_LEN]>());
+            self.0.set(p);
+        }
+        // SAFETY: non-null after init; thread-local ⇒ sole accessor.
+        unsafe { &mut *p }
+    }
+}
+
+impl Drop for LazyJoinBuf {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: `p` came from `heap::into_raw` in `get()`; sole accessor.
+            unsafe { drop(bun_core::heap::take(p)) };
+        }
+    }
+}
+
 /// Project `&'static mut` into a thread-local `UnsafeCell<[u8; N]>` scratch
-/// buffer. One `unsafe` site for all `PARSER_BUFFER` / `PARSER_JOIN_INPUT_BUFFER`
-/// / `JOIN_BUF` accessors (nonnull-asref reduction: 6 sites → 1).
+/// buffer (`PARSER_BUFFER`).
 ///
 /// The `'static` output lifetime is the honest contract: the buffer is
 /// thread-local storage that lives for the thread's lifetime, and the returned
@@ -1381,7 +1415,7 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
 // result borrows the thread-local buffer ('static) OR returns `cwd`
 // directly when `parts.is_empty()`. Return tied to `cwd`'s lifetime ('static: 'a).
 pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a [u8] {
-    PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf::<P>(cwd, tl_buf_mut(b), parts))
+    PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf::<P>(cwd, b.get(), parts))
 }
 
 /// [`join_abs_string`] (thread-local buffer) when the result fits, otherwise
@@ -1393,7 +1427,7 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
 ) -> &'a [u8] {
     debug_assert!(!matches!(P::P, Platform::Nt));
     let needed = join_abs_needed(cwd.len(), parts);
-    if needed <= PARSER_JOIN_INPUT_BUFFER_LEN {
+    if needed <= TL_JOIN_BUF_LEN {
         return join_abs_string::<P>(cwd, parts);
     }
     if spill.len() < needed {
@@ -1408,22 +1442,19 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a ZStr {
-    PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf_z::<P>(cwd, tl_buf_mut(b), parts))
+    PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf_z::<P>(cwd, b.get(), parts))
 }
 
-const JOIN_BUF_LEN: usize = 4096;
-
 thread_local! {
-    pub(crate) static JOIN_BUF: UnsafeCell<[u8; JOIN_BUF_LEN]> =
-        const { UnsafeCell::new([0u8; JOIN_BUF_LEN]) };
+    static JOIN_BUF: LazyJoinBuf = const { LazyJoinBuf::NEW };
 }
 
 pub fn join<P: PlatformT>(parts: &[&[u8]]) -> &'static [u8] {
-    JOIN_BUF.with(|b| join_string_buf::<P>(tl_buf_mut(b), parts))
+    JOIN_BUF.with(|b| join_string_buf::<P>(b.get(), parts))
 }
 
 pub fn join_z<P: PlatformT>(parts: &[&[u8]]) -> &'static ZStr {
-    JOIN_BUF.with(|b| join_z_buf::<P>(tl_buf_mut(b), parts))
+    JOIN_BUF.with(|b| join_z_buf::<P>(b.get(), parts))
 }
 
 #[inline]
@@ -1454,7 +1485,7 @@ pub fn join_z_buf_spill<'a, P: PlatformT>(
 /// `spill` (grown as needed). `spill` is untouched in the common case.
 pub fn join_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8] {
     let needed = join_needed(parts);
-    if needed <= JOIN_BUF_LEN {
+    if needed <= TL_JOIN_BUF_LEN {
         return join::<P>(parts);
     }
     if spill.len() < needed {
@@ -1467,7 +1498,7 @@ pub fn join_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> 
 /// `spill` (grown as needed). `spill` is untouched in the common case.
 pub fn join_z_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a ZStr {
     let needed = join_needed(parts);
-    if needed <= JOIN_BUF_LEN {
+    if needed <= TL_JOIN_BUF_LEN {
         return join_z::<P>(parts);
     }
     if spill.len() < needed {
@@ -2583,7 +2614,7 @@ mod tests {
 
     #[test]
     fn join_abs_string_spill_spills_a_part_longer_than_the_thread_local_buffer() {
-        let name = vec![b'a'; PARSER_JOIN_INPUT_BUFFER_LEN + 1];
+        let name = vec![b'a'; TL_JOIN_BUF_LEN + 1];
         let mut expected = b"/work/".to_vec();
         expected.extend_from_slice(&name);
 
@@ -2596,7 +2627,7 @@ mod tests {
     #[test]
     fn join_abs_string_spill_spills_an_absolute_part_and_a_long_cwd_alike() {
         let mut abs = b"/".to_vec();
-        abs.resize(PARSER_JOIN_INPUT_BUFFER_LEN * 2, b'a');
+        abs.resize(TL_JOIN_BUF_LEN * 2, b'a');
         let mut spill = Vec::new();
         assert_eq!(
             join_abs_string_spill::<platform::Posix>(b"/", &mut spill, &[&abs]),
@@ -2604,7 +2635,7 @@ mod tests {
         );
 
         let mut cwd = b"/".to_vec();
-        cwd.resize(PARSER_JOIN_INPUT_BUFFER_LEN, b'c');
+        cwd.resize(TL_JOIN_BUF_LEN, b'c');
         let mut expected = cwd.clone();
         expected.extend_from_slice(b"/x");
         let mut spill = Vec::new();
@@ -2618,7 +2649,7 @@ mod tests {
     fn join_abs_string_spill_normalizes_a_long_part_that_collapses() {
         // `sub/../` repeated past the buffer size resolves back to the cwd.
         let mut part = Vec::new();
-        while part.len() <= PARSER_JOIN_INPUT_BUFFER_LEN {
+        while part.len() <= TL_JOIN_BUF_LEN {
             part.extend_from_slice(b"sub/../");
         }
         part.extend_from_slice(b"sub");
@@ -2703,5 +2734,26 @@ mod tests {
             join_string_buf_w_same::<platform::Windows>(&mut out, &[&long, &rest]),
             &expected[..]
         );
+    }
+
+    #[test]
+    fn tl_join_buf_len_holds_max_path_bytes() {
+        assert!(TL_JOIN_BUF_LEN >= MAX_PATH_BYTES);
+        assert!(TL_JOIN_BUF_LEN >= 4096);
+    }
+
+    #[test]
+    fn join_abs_string_accepts_path_buffer_length() {
+        // A valid host path just under MAX_PATH_BYTES round-trips through the TL buffer.
+        let long = vec![b'a'; MAX_PATH_BYTES - 8];
+        let cwd: &[u8] = if cfg!(windows) { b"C:\\d" } else { b"/d" };
+        let abs: &[u8] = if cfg!(windows) { b"C:\\" } else { b"/" };
+        let r = join_abs_string::<platform::Auto>(cwd, &[abs, &long]);
+        assert_eq!(r.len(), abs.len() + long.len());
+        let r = join_abs_string_z::<platform::Auto>(cwd, &[abs, &long]);
+        assert_eq!(r.as_bytes().len(), abs.len() + long.len());
+        // And the non-absolute `join` sibling backed by `JOIN_BUF`.
+        let r = join::<platform::Auto>(&[abs, &long]);
+        assert_eq!(r.len(), abs.len() + long.len());
     }
 }

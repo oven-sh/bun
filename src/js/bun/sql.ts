@@ -258,6 +258,30 @@ const SQL = function SQL(
     }
   }
 
+  function rejectConnectionClosed(query: Query<any, any>) {
+    query.reject(pool.connectionClosedError());
+  }
+
+  // Still a lazy Query, so .values() and use as a fragment work. It rejects when it runs.
+  function queryFromClosedHandle(
+    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
+    values: any[],
+  ) {
+    try {
+      return new Query(
+        strings,
+        values,
+        connectionInfo.bigint
+          ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
+          : SQLQueryFlags.allowUnsafeTransaction,
+        rejectConnectionClosed,
+        pool,
+      );
+    } catch (err) {
+      return Promise.$reject(err);
+    }
+  }
+
   function onTransactionDisconnected(this: TransactionState, err: Error) {
     const reject = this.reject;
     this.connectionState |= ReservedConnectionState.closed;
@@ -369,12 +393,6 @@ const SQL = function SQL(
     }
 
     function reserved_sql(strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, any>, ...values: any[]) {
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray(strings.raw)) {
@@ -382,6 +400,12 @@ const SQL = function SQL(
         }
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
         return new SQLHelper([strings], values);
+      }
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
+        return queryFromClosedHandle(strings, values);
       }
       // we use the same code path as the transaction sql
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
@@ -676,12 +700,6 @@ const SQL = function SQL(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
       ...values: any[]
     ) {
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
@@ -689,6 +707,12 @@ const SQL = function SQL(
         }
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
         return new SQLHelper([strings], values);
+      }
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
+        return queryFromClosedHandle(strings, values);
       }
 
       return queryFromTransaction(strings, values, pooledConnection, state.queries);

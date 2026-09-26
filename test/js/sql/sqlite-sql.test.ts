@@ -1254,6 +1254,69 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
   });
+
+  const rejectionCode = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      err => err.code ?? err.message,
+    );
+
+  // A statement from a settled handle runs outside the transaction: its row stays even after a rollback.
+  test.each([
+    { settles: "commits", fails: false, ids: [1, 2, 10] },
+    { settles: "rolls back", fails: true, ids: [1, 2] },
+  ])("a transaction handle rejects unsafe() and file() after begin() $settles", async ({ fails, ids }) => {
+    using dir = tempDir("sqlite-sql-stale-tx", { "insert.sql": "INSERT INTO accounts VALUES (98, 0)" });
+    let stale!: Bun.TransactionSQL;
+    const settled = await sql
+      .begin(async tx => {
+        stale = tx;
+        await tx`INSERT INTO accounts VALUES (10, 0)`;
+        if (fails) throw new Error("roll back");
+        return "committed";
+      })
+      .catch(err => err.message);
+    expect(settled).toBe(fails ? "roll back" : "committed");
+
+    expect({
+      tagged: await rejectionCode(stale`INSERT INTO accounts VALUES (97, 0)`),
+      unsafe: await rejectionCode(stale.unsafe("INSERT INTO accounts VALUES (99, 0)")),
+      file: await rejectionCode(stale.file(join(String(dir), "insert.sql"))),
+    }).toEqual({
+      tagged: "ERR_SQLITE_CONNECTION_CLOSED",
+      unsafe: "ERR_SQLITE_CONNECTION_CLOSED",
+      file: "ERR_SQLITE_CONNECTION_CLOSED",
+    });
+    expect((await sql`SELECT id FROM accounts ORDER BY id`).map(row => row.id)).toEqual(ids);
+  });
+
+  // bun:test also fails this test if the query that nothing awaits reports an unhandled rejection.
+  test("unsafe() on a settled transaction handle returns a lazy Query that rejects when it runs", async () => {
+    let stale!: Bun.TransactionSQL;
+    await sql.begin(async tx => {
+      stale = tx;
+    });
+
+    stale.unsafe("INSERT INTO accounts VALUES (99, 0)");
+    expect(await sql`SELECT ${stale.unsafe("balance")} FROM accounts WHERE id = 1`).toEqual([{ balance: 1000 }]);
+    expect(await rejectionCode(stale.unsafe("INSERT INTO accounts VALUES (98, 0)").values())).toBe(
+      "ERR_SQLITE_CONNECTION_CLOSED",
+    );
+    expect((await sql`SELECT id FROM accounts ORDER BY id`).map(row => row.id)).toEqual([1, 2]);
+  });
+
+  test("tx.file() does not run when the transaction settles while the file is read", async () => {
+    using dir = tempDir("sqlite-sql-late-file", { "insert.sql": "INSERT INTO accounts VALUES (99, 0)" });
+    let late!: Promise<string>;
+    await sql.begin(async tx => {
+      await tx`INSERT INTO accounts VALUES (10, 0)`;
+      // Not awaited. SQLite answers COMMIT in microtasks and the read needs an
+      // event loop turn, so the transaction settles first.
+      late = rejectionCode(tx.file(join(String(dir), "insert.sql")));
+    });
+    expect(await late).toBe("ERR_SQLITE_CONNECTION_CLOSED");
+    expect((await sql`SELECT id FROM accounts ORDER BY id`).map(row => row.id)).toEqual([1, 2, 10]);
+  });
 });
 
 describe("SQLite-specific features", () => {

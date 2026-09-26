@@ -234,6 +234,22 @@ void JSDOMFormData::finishCreation(VM& vm)
     // static_assert(!std::is_base_of<ActiveDOMObject, DOMFormData>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
 
+void JSDOMFormData::computeMemoryCost()
+{
+    size_t previousCost = m_memoryCost;
+    m_memoryCost = wrapped().reportableMemoryCost();
+    int64_t diff = static_cast<int64_t>(m_memoryCost) - static_cast<int64_t>(previousCost);
+    if (diff > 0) {
+        globalObject()->vm().heap.reportExtraMemoryAllocated(this, static_cast<uint64_t>(diff));
+    }
+}
+
+extern "C" void WebCore__DOMFormData__reportMemoryCost(JSC::EncodedJSValue value)
+{
+    if (auto* wrapper = dynamicDowncast<JSDOMFormData>(JSC::JSValue::decode(value)))
+        wrapper->computeMemoryCost();
+}
+
 JSObject* JSDOMFormData::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     auto* structure = JSDOMFormDataPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
@@ -724,5 +740,16 @@ size_t JSDOMFormData::estimatedSize(JSCell* cell, JSC::VM& vm)
     auto& wrapped = uncheckedDowncast<JSDOMFormData>(cell)->wrapped();
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }
+
+template<typename Visitor>
+void JSDOMFormData::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSDOMFormData>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.reportExtraMemoryVisited(thisObject->m_memoryCost);
+}
+
+DEFINE_VISIT_CHILDREN(JSDOMFormData);
 
 }

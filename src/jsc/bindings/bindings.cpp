@@ -6344,7 +6344,10 @@ CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlo
         return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
     }
     auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), WTF::move(str));
-    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTF::move(formData)));
+    auto jsValue = toJSNewlyCreated(arg0, globalObject, WTF::move(formData));
+    if (auto* wrapper = dynamicDowncast<WebCore::JSDOMFormData>(jsValue))
+        wrapper->computeMemoryCost();
+    return JSValue::encode(jsValue);
 }
 
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__create(JSC::JSGlobalObject* arg0)

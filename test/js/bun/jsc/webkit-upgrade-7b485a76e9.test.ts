@@ -222,6 +222,7 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     let state = 7919;
     const random = (n: number) => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) % n;
     const lengths = [0, 1, 2, 126, 127, 128, 129, 16382, 16383, 16384, 16385];
+    const fill = (count: number, character: string) => Buffer.alloc(count, character).toString();
     let text = "var probes = [];";
     const marks: string[] = [];
     for (let i = 0; i < 64 * 5 + 3; i++) {
@@ -230,9 +231,9 @@ describe("WebKit 7b485a76e9 upgrade", () => {
       const probe = `probes.push(function(){return new Error("p${i}").stack});`;
       if (length >= probe.length && (i % 3 === 1 || i % 64 <= 1 || i % 64 === 63 || i % 5 === 1)) {
         const before = random(length - probe.length + 1);
-        text += " ".repeat(before) + probe + " ".repeat(length - probe.length - before) + end;
+        text += fill(before, " ") + probe + fill(length - probe.length - before, " ") + end;
         marks.push(`("p${i}")`);
-      } else text += (length >= 4 ? "/*" + "c".repeat(length - 4) + "*/" : " ".repeat(length)) + end;
+      } else text += (length >= 4 ? "/*" + fill(length - 4, "c") + "*/" : fill(length, " ")) + end;
     }
     text += "probes";
     const counted = marks.map(mark => {

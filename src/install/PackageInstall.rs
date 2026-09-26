@@ -2257,6 +2257,7 @@ impl<'a> PackageInstall<'a> {
         package_id: PackageID,
         resolution_tag: resolution::Tag,
         force_refresh_tarball: bool,
+        tarball_fetched_this_run: bool,
     ) -> bool {
         let state = manager.get_preinstall_state(package_id);
         // A URL/local tarball's cache key is its URL/path, not its content, so a
@@ -2266,6 +2267,10 @@ impl<'a> PackageInstall<'a> {
         }
         match state {
             crate::PreinstallState::Done => false,
+            _ if tarball_fetched_this_run => {
+                manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
+                false
+            }
             _ => {
                 let pinned_integrity = &manager.cache_pin(package_id);
                 let exists = if self.patch.is_none() {

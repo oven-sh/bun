@@ -2393,23 +2393,32 @@ pub(crate) fn install_isolated_packages(
                     let _ = &cache_dir_path; // dropped at scope exit
 
                     let preinstall_state = installer.manager().get_preinstall_state(pkg_id);
-                    // A fetch that already completed this run (`Done`, or a drained
-                    // task) leaves a fresh cache to install from instead of
-                    // re-enqueueing. Mirrors `PackageInstall::package_missing_from_cache`.
-                    let force_refresh_tarball =
-                        refresh_tarball && preinstall_state != install::PreinstallState::Done && {
-                            let url = if pkg_res_tag == ResolutionTag::RemoteTarball {
-                                pkg_res.remote_tarball().slice(string_buf)
-                            } else {
-                                pkg_res.local_tarball().slice(string_buf)
-                            };
-                            !installer.manager().tarball_fetch_drained_this_run(url)
+                    // A fetch that already finished this run is installed from
+                    // that extraction: never enqueued again, tag not checked.
+                    // Mirrors `PackageInstall::package_missing_from_cache`.
+                    let tarball_fetched_this_run = pkg_res_tag.is_tarball_cache_keyed_by_url() && {
+                        let url = if pkg_res_tag == ResolutionTag::RemoteTarball {
+                            pkg_res.remote_tarball().slice(string_buf)
+                        } else {
+                            pkg_res.local_tarball().slice(string_buf)
                         };
+                        installer.manager().tarball_fetch_drained_this_run(url)
+                    };
+                    let force_refresh_tarball = refresh_tarball
+                        && preinstall_state != install::PreinstallState::Done
+                        && !tarball_fetched_this_run;
                     let missing_from_cache = if force_refresh_tarball {
                         true
                     } else {
                         match preinstall_state {
                             install::PreinstallState::Done => false,
+                            _ if tarball_fetched_this_run => {
+                                installer.manager_mut().set_preinstall_state(
+                                    pkg_id,
+                                    install::PreinstallState::Done,
+                                );
+                                false
+                            }
                             _ => {
                                 let exists = package_manager::directories::is_package_in_cache_at(
                                     cache_dir,

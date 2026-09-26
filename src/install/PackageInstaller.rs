@@ -1559,22 +1559,26 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
+        // A URL/local tarball whose fetch already finished this run is installed
+        // from that extraction: it is never enqueued again (the drained task
+        // would not call back) and its cache tag is not checked against the
+        // pin (the fetch was the verification).
+        let tarball_fetched_this_run = resolution.tag.is_tarball_cache_keyed_by_url() && {
+            let url = match resolution.tag {
+                resolution::Tag::RemoteTarball => resolution.remote_tarball().slice(string_buf!()),
+                _ => resolution.local_tarball().slice(string_buf!()),
+            };
+            self.manager_mut().tarball_fetch_drained_this_run(url)
+        };
         // A refreshed tarball always reinstalls, also when a deferred context is
-        // replayed. Only the initial pass enqueues the fetch; once it completed
-        // this run the fresh cache is installed from below.
+        // replayed. Only the initial pass enqueues the fetch.
         let refresh_tarball =
             self.manager_mut()
                 .should_refresh_tarball(dependency_id, package_id, resolution.tag);
-        let force_refresh_tarball =
-            refresh_tarball && needs_verify && !is_pending_package_install && {
-                let url = match resolution.tag {
-                    resolution::Tag::RemoteTarball => {
-                        resolution.remote_tarball().slice(string_buf!())
-                    }
-                    _ => resolution.local_tarball().slice(string_buf!()),
-                };
-                !self.manager_mut().tarball_fetch_drained_this_run(url)
-            };
+        let force_refresh_tarball = refresh_tarball
+            && needs_verify
+            && !is_pending_package_install
+            && !tarball_fetched_this_run;
 
         let needs_install = refresh_tarball
             || self.force_install
@@ -1590,6 +1594,7 @@ impl<'a> PackageInstaller<'a> {
                     package_id,
                     resolution.tag,
                     force_refresh_tarball,
+                    tarball_fetched_this_run,
                 )
             {
                 debug_assert!(resolution.can_enqueue_install_task());

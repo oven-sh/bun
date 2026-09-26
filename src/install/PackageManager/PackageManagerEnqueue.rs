@@ -1793,6 +1793,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     // `enqueue_local_tarball` copies `dep_name` into the
                     // filename store.
                     let dep_name = this.lockfile.str_detached(&dependency.name);
+                    let integrity = this.pinned_integrity_for_tarball(&res);
                     let task = enqueue_local_tarball(
                         this,
                         task_id,
@@ -1800,7 +1801,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         dep_name,
                         url,
                         &res,
-                        &Integrity::default(),
+                        &integrity,
                     );
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
@@ -1820,6 +1821,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 name: dependency.name,
                                 name_hash: dependency.name_hash,
                                 resolution: res,
+                                meta: crate::lockfile::package::Meta {
+                                    integrity: this.pinned_integrity_for_tarball(&res),
+                                    ..crate::lockfile::package::Meta::init()
+                                },
                                 ..Package::default()
                             },
                             None,

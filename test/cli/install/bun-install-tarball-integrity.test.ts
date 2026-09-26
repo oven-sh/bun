@@ -916,9 +916,10 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
 
     const installedIndex = join(String(dir), "node_modules", "my-url-pkg", "index.js");
     const cacheDir = join(String(dir), ".cache");
+    const tmpDir = join(String(dir), ".tmp");
     const spawnOpts = {
       cwd: String(dir),
-      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir, BUN_TMPDIR: tmpDir },
       stdout: "pipe" as const,
       stderr: "pipe" as const,
     };
@@ -933,6 +934,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
     }
     expect(await file(installedIndex).text()).toBe('module.exports = "VERSION_ONE";\n');
     expect(tarballRequests).toEqual(["v1"]);
+    const tmpEntriesAfterFirstInstall = await readdirSorted(tmpDir);
 
     // Swap the bytes served at the same URL, then force a reinstall. Before the
     // fix, `--force` copied the stale extraction and never re-requested the
@@ -954,6 +956,9 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
 
     expect(tarballRequests).toEqual(["v2"]);
     expect(await file(installedIndex).text()).toBe('module.exports = "VERSION_TWO";\n');
+    // The refresh swapped the new extraction over the old cache folder. The
+    // old tree must not be left behind in the temp dir.
+    expect(await readdirSorted(tmpDir)).toEqual(tmpEntriesAfterFirstInstall);
 
     // The lockfile integrity should now match v2, so a later cache-cleared
     // install of the current bytes does not fail the integrity check.
@@ -1642,6 +1647,79 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
       expect(output).toContain("Integrity check failed");
       expect(exitCode).not.toBe(0);
     }
+  });
+
+  it("a new alias of an already pinned tarball is verified against that pin", async () => {
+    // A plain install resolves a new dependency row on a URL another row
+    // already pins. The fetch must verify against that pin: on changed bytes
+    // it fails instead of writing the new bytes into the cache under a tag the
+    // existing row does not match.
+    const v1 = buildTarball("VERSION_ONE");
+    const v2 = buildTarball("VERSION_TWO");
+    let served = v1;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        if (new URL(req.url).pathname.endsWith("/my-url-pkg.tgz")) {
+          const { tgz } = served;
+          return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    const tarballUrl = `http://127.0.0.1:${server.port}/my-url-pkg.tgz`;
+    using dir = tempDir("issue-31864-alias-" + linker, {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "my-url-pkg": tarballUrl } }),
+      "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+    });
+    const spawnOpts = {
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe" as const,
+      stderr: "pipe" as const,
+    };
+    const install = async (...args: string[]) => {
+      await using proc = spawn({ cmd: [bunExe(), "install", ...args], ...spawnOpts });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { output: stdout + stderr, exitCode };
+    };
+    const installedIndex = join(String(dir), "node_modules", "my-url-pkg", "index.js");
+
+    {
+      const { output, exitCode } = await install();
+      expect(output).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    const lockBefore = await file(join(String(dir), "bun.lock")).text();
+    expect(lockBefore).toContain(v1.integrity);
+
+    // Add a second row on the same URL while the server serves other bytes.
+    served = v2;
+    await writeFile(
+      join(String(dir), "package.json"),
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "my-url-pkg": tarballUrl, "my-url-pkg-alias": tarballUrl },
+      }),
+    );
+    {
+      const { output, exitCode } = await install();
+      expect(output).toContain("Integrity check failed");
+      expect(exitCode).not.toBe(0);
+    }
+    expect(await file(installedIndex).text()).toBe('module.exports = "VERSION_ONE";\n');
+    expect(await file(join(String(dir), "bun.lock")).text()).toBe(lockBefore);
+
+    // With the pinned bytes served again the new row resolves and installs.
+    served = v1;
+    {
+      const { output, exitCode } = await install();
+      expect(output).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    expect(await file(installedIndex).text()).toBe('module.exports = "VERSION_ONE";\n');
   });
 
   it.skipIf(linker !== "isolated")(

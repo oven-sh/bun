@@ -25,6 +25,7 @@ use crate::package_manager_real::options::OfflineMode;
 use crate::package_manager_task as PmTask;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
+use bun_install::Resolution;
 use bun_install::{
     DependencyID, Integrity, PackageID, PackageManager, PreinstallState, invalid_package_id,
 };
@@ -518,6 +519,25 @@ impl PackageManager {
             && !self.integrity_pinned_packages.contains(&package_id)
             && (self.options.enable.force_install()
                 || self.dependency_is_update_request(dependency_id))
+    }
+
+    /// The integrity another lockfile row already pins for the same URL/local
+    /// tarball, so a new row on that tarball (an alias, a renamed key) is
+    /// verified against it instead of fetched unchecked. Only unresolved rows
+    /// reach this scan.
+    pub(crate) fn pinned_integrity_for_tarball(&self, resolution: &Resolution) -> Integrity {
+        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        let pkgs = self.lockfile.packages.slice();
+        let metas = pkgs.items_meta();
+        for (i, res) in pkgs.items_resolution().iter().enumerate() {
+            if res.tag == resolution.tag
+                && metas[i].integrity.tag.is_supported()
+                && res.eql(resolution, string_buf, string_buf)
+            {
+                return metas[i].integrity;
+            }
+        }
+        Integrity::default()
     }
 
     /// The integrity a URL/local tarball cache folder must carry to count as a

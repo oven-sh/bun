@@ -427,7 +427,7 @@ test("util/types functions are rejected as a species constructor", async () => {
 });
 
 // This one runs in process, so it must come after the spawned test above: on an
-// unfixed build it aborts the whole test runner instead of failing.
+// unfixed build a construct here can abort the whole test runner.
 test("util/types functions are not constructors", () => {
   for (const name of Object.keys(types)) {
     const fn = types[name];

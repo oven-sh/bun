@@ -704,6 +704,14 @@ impl MySQLConnection {
     ) -> Result<(), AnyMySQLError> {
         let mut response = Auth::caching_sha2_password::PublicKeyResponse::default();
         response.decode(reader)?;
+        self.send_encrypted_password(&response)
+    }
+
+    /// Answers the server's public key with the password encrypted under it.
+    fn send_encrypted_password(
+        &mut self,
+        response: &Auth::caching_sha2_password::PublicKeyResponse,
+    ) -> Result<(), AnyMySQLError> {
         // revert back to authenticating since we received the public key
         self.set_status(ConnectionState::Authenticating);
 

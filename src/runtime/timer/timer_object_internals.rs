@@ -90,6 +90,146 @@ unsafe extern "C" {
     ) -> bool;
 }
 
+/// The parts of [`TimerObject`] that are not generic over the owning type, so they compile once.
+impl TimerObjectInternals {
+    fn set_keeping_event_loop_alive(&self, enable: bool) {
+        if self.flags.get().is_keeping_event_loop_alive() == enable {
+            return;
+        }
+        self.update_flags(|f| f.set_is_keeping_event_loop_alive(enable));
+
+        let delta = if enable { 1 } else { -1 };
+        match self.flags.get().kind() {
+            Kind::SetTimeout | Kind::SetInterval => timer_all().increment_timer_ref(delta),
+            // setImmediate has slightly different event loop logic
+            Kind::SetImmediate => timer_all().increment_immediate_ref(delta),
+        }
+    }
+
+    /// See [`TimerObject::run`].
+    fn invoke_callback(
+        &self,
+        global: &JSGlobalObject,
+        timer: JSValue,
+        callback: JSValue,
+        arguments: JSValue,
+        async_id: u64,
+        vm: &VirtualMachine,
+    ) -> bool {
+        if vm.is_inspector_enabled() {
+            Debugger::will_dispatch_async_call(global, Debugger::AsyncCallType::DOMTimer, async_id);
+        }
+
+        // Bun__JSTimeout__call handles exceptions.
+        // `Cell<Flags>` RMW so the `in_callback` write reaches memory before JS
+        // runs (re-entrant `_destroyed` getter reads it through the wrapper).
+        self.update_flags(|f| f.set_in_callback(true));
+        let result = Bun__JSTimeout__call(global, timer, callback, arguments);
+        // No early returns between the `in_callback` set and this clear.
+        // Fresh `Cell` read: re-entrant `cancel()` may have set
+        // `has_cleared_timer` / cleared `is_keeping_event_loop_alive`.
+        self.update_flags(|f| f.set_in_callback(false));
+
+        if vm.is_inspector_enabled() {
+            Debugger::did_dispatch_async_call(global, Debugger::AsyncCallType::DOMTimer, async_id);
+        }
+
+        result
+    }
+
+    fn set_timeout_cached_slots(
+        &self,
+        timer: JSValue,
+        cx: &bun_jsc::JsThread<'_>,
+        callback: JSValue,
+        arguments: JSValue,
+    ) {
+        JSTimeout::arguments_set_cached(timer, cx.global(), arguments);
+        JSTimeout::callback_set_cached(timer, cx.global(), callback);
+        JSTimeout::idle_timeout_set_cached(
+            timer,
+            cx.global(),
+            JSValue::js_number(f64::from(self.interval.get())),
+        );
+        JSTimeout::repeat_set_cached(
+            timer,
+            cx.global(),
+            if self.flags.get().kind() == Kind::SetInterval {
+                JSValue::js_number(f64::from(self.interval.get()))
+            } else {
+                JSValue::NULL
+            },
+        );
+    }
+
+    /// A one-shot timer lets go of its wrapper. An interval gets the time of its next run.
+    fn downgrade_wrapper_or_next_run(&self, kind: KindBig) -> Timespec {
+        // The caller reads it only on the .setInterval path, where it is written below.
+        let mut time_before_call = Timespec::EPOCH;
+
+        if kind != KindBig::SetInterval {
+            self.this_value.with_mut(|r| r.downgrade());
+        } else {
+            time_before_call = Timespec::ms_from_now(
+                TimespecMockMode::AllowMockedTime,
+                i64::from(self.interval.get()),
+            );
+        }
+        time_before_call
+    }
+
+    fn promote_to_interval(&self, global: &JSGlobalObject, timer: JSValue, repeat: JSValue) {
+        debug_assert!(self.flags.get().kind() == Kind::SetTimeout);
+
+        let new_interval: u32 = if let Some(num) = repeat.get_number() {
+            if num < 1.0 || num > f64::from(u32::MAX >> 1) {
+                1
+            } else {
+                num as u32
+            }
+        } else {
+            1
+        };
+
+        // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L613
+        JSTimeout::idle_timeout_set_cached(timer, global, repeat);
+        self.this_value.with_mut(|r| r.set_strong(timer, global));
+        self.update_flags(|f| f.set_kind(Kind::SetInterval));
+        self.interval.set(new_interval);
+    }
+
+    fn should_reschedule(&self, repeat: JSValue, idle_timeout: JSValue) -> bool {
+        if self.flags.get().kind() == Kind::SetInterval && repeat.is_null() {
+            return false;
+        }
+        if let Some(num) = idle_timeout.get_number() {
+            if num == -1.0 {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// `(callback, arguments, _idleTimeout, _repeat)` from the cached slots of the JS wrapper.
+fn cached_slots(kind: KindBig, this_object: JSValue) -> (JSValue, JSValue, JSValue, JSValue) {
+    match kind {
+        KindBig::SetImmediate => (
+            JSImmediate::callback_get_cached(this_object).expect("ImmediateObject callback slot"),
+            JSImmediate::arguments_get_cached(this_object).expect("ImmediateObject arguments slot"),
+            JSValue::UNDEFINED,
+            JSValue::UNDEFINED,
+        ),
+        KindBig::SetTimeout | KindBig::SetInterval => (
+            JSTimeout::callback_get_cached(this_object).expect("TimeoutObject callback slot"),
+            JSTimeout::arguments_get_cached(this_object).expect("TimeoutObject arguments slot"),
+            JSTimeout::idle_timeout_get_cached(this_object)
+                .expect("TimeoutObject idleTimeout slot"),
+            JSTimeout::repeat_get_cached(this_object).expect("TimeoutObject repeat slot"),
+        ),
+    }
+}
+
 /// The behaviour shared by [`TimeoutObject`](super::TimeoutObject) and
 /// [`ImmediateObject`](super::ImmediateObject).
 ///
@@ -139,18 +279,7 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
     }
 
     fn set_enable_keeping_event_loop_alive(&self, enable: bool) {
-        let internals = self.internals();
-        if internals.flags.get().is_keeping_event_loop_alive() == enable {
-            return;
-        }
-        internals.update_flags(|f| f.set_is_keeping_event_loop_alive(enable));
-
-        let delta = if enable { 1 } else { -1 };
-        match internals.flags.get().kind() {
-            Kind::SetTimeout | Kind::SetInterval => timer_all().increment_timer_ref(delta),
-            // setImmediate has slightly different event loop logic
-            Kind::SetImmediate => timer_all().increment_immediate_ref(delta),
-        }
+        self.internals().set_keeping_event_loop_alive(enable);
     }
 
     /// Invoke the JS callback via the C++ `Bun__JSTimeout__call` thunk (which
@@ -165,26 +294,8 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
         async_id: u64,
         vm: &VirtualMachine,
     ) -> bool {
-        let internals = self.internals();
-        if vm.is_inspector_enabled() {
-            Debugger::will_dispatch_async_call(global, Debugger::AsyncCallType::DOMTimer, async_id);
-        }
-
-        // Bun__JSTimeout__call handles exceptions.
-        // `Cell<Flags>` RMW so the `in_callback` write reaches memory before JS
-        // runs (re-entrant `_destroyed` getter reads it through the wrapper).
-        internals.update_flags(|f| f.set_in_callback(true));
-        let result = Bun__JSTimeout__call(global, timer, callback, arguments);
-        // No early returns between the `in_callback` set and this clear.
-        // Fresh `Cell` read: re-entrant `cancel()` may have set
-        // `has_cleared_timer` / cleared `is_keeping_event_loop_alive`.
-        internals.update_flags(|f| f.set_in_callback(false));
-
-        if vm.is_inspector_enabled() {
-            Debugger::did_dispatch_async_call(global, Debugger::AsyncCallType::DOMTimer, async_id);
-        }
-
-        result
+        self.internals()
+            .invoke_callback(global, timer, callback, arguments, async_id, vm)
     }
 
     /// Constructor tail: wire the JS wrapper's cached slots and hand the timer
@@ -219,22 +330,7 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
             // ref'd by event loop
             Self::hold_heap_ref(this);
         } else {
-            JSTimeout::arguments_set_cached(timer, cx.global(), arguments);
-            JSTimeout::callback_set_cached(timer, cx.global(), callback);
-            JSTimeout::idle_timeout_set_cached(
-                timer,
-                cx.global(),
-                JSValue::js_number(f64::from(internals.interval.get())),
-            );
-            JSTimeout::repeat_set_cached(
-                timer,
-                cx.global(),
-                if internals.flags.get().kind() == Kind::SetInterval {
-                    JSValue::js_number(f64::from(internals.interval.get()))
-                } else {
-                    JSValue::NULL
-                },
-            );
+            internals.set_timeout_cached_slots(timer, cx, callback, arguments);
 
             // this takes the heap's ref and sets _idleStart
             Self::reschedule(this, timer, cx.global());
@@ -343,28 +439,7 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
             return;
         };
 
-        let (callback, arguments, mut idle_timeout, mut repeat): (
-            JSValue,
-            JSValue,
-            JSValue,
-            JSValue,
-        ) = match kind {
-            KindBig::SetImmediate => (
-                JSImmediate::callback_get_cached(this_object)
-                    .expect("ImmediateObject callback slot"),
-                JSImmediate::arguments_get_cached(this_object)
-                    .expect("ImmediateObject arguments slot"),
-                JSValue::UNDEFINED,
-                JSValue::UNDEFINED,
-            ),
-            KindBig::SetTimeout | KindBig::SetInterval => (
-                JSTimeout::callback_get_cached(this_object).expect("TimeoutObject callback slot"),
-                JSTimeout::arguments_get_cached(this_object).expect("TimeoutObject arguments slot"),
-                JSTimeout::idle_timeout_get_cached(this_object)
-                    .expect("TimeoutObject idleTimeout slot"),
-                JSTimeout::repeat_get_cached(this_object).expect("TimeoutObject repeat slot"),
-            ),
-        };
+        let (callback, arguments, mut idle_timeout, mut repeat) = cached_slots(kind, this_object);
 
         if has_been_cleared || !callback.to_boolean() {
             if vm.is_inspector_enabled() {
@@ -381,17 +456,7 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
             return;
         }
 
-        // Only read on the .setInterval path where it is written below.
-        let mut time_before_call = Timespec::EPOCH;
-
-        if kind != KindBig::SetInterval {
-            s.this_value.with_mut(|r| r.downgrade());
-        } else {
-            time_before_call = Timespec::ms_from_now(
-                TimespecMockMode::AllowMockedTime,
-                i64::from(s.interval.get()),
-            );
-        }
+        let time_before_call = s.downgrade_wrapper_or_next_run(kind);
         this_object.ensure_still_alive();
 
         vm.event_loop_mut().enter();
@@ -503,39 +568,12 @@ pub(crate) trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static
         timer: JSValue,
         repeat: JSValue,
     ) {
-        let internals = this.internals();
-        debug_assert!(internals.flags.get().kind() == Kind::SetTimeout);
-
-        let new_interval: u32 = if let Some(num) = repeat.get_number() {
-            if num < 1.0 || num > f64::from(u32::MAX >> 1) {
-                1
-            } else {
-                num as u32
-            }
-        } else {
-            1
-        };
-
-        // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L613
-        JSTimeout::idle_timeout_set_cached(timer, global, repeat);
-        internals
-            .this_value
-            .with_mut(|r| r.set_strong(timer, global));
-        internals.update_flags(|f| f.set_kind(Kind::SetInterval));
-        internals.interval.set(new_interval);
+        this.internals().promote_to_interval(global, timer, repeat);
         Self::reschedule(this, timer, global);
     }
 
     fn should_reschedule_timer(&self, repeat: JSValue, idle_timeout: JSValue) -> bool {
-        if self.internals().flags.get().kind() == Kind::SetInterval && repeat.is_null() {
-            return false;
-        }
-        if let Some(num) = idle_timeout.get_number() {
-            if num == -1.0 {
-                return false;
-            }
-        }
-        true
+        self.internals().should_reschedule(repeat, idle_timeout)
     }
 
     /// (Re-)insert the timer's slot into the heap at `now + interval`, taking

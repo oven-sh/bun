@@ -2101,15 +2101,95 @@ it("ReadableStream for File", async () => {
   expect(output).toBe(input);
 });
 
-it("ReadableStream for File errors", async () => {
-  try {
-    var blob = file(import.meta.dir + "/fetch.js.txt.notfound");
-    blob.stream().getReader();
-    throw new Error("should not reach here");
-  } catch (e) {
-    expect(e.code).toBe("ENOENT");
-    expect(e.syscall).toBe("open");
-  }
+describe("ReadableStream for a File that fails to open", () => {
+  // The native file source opens the file when the stream is first consumed. A failure
+  // there errors the stream: consumers do not throw synchronously, and every read settles.
+  const missing = join(import.meta.dir, "fetch.js.txt.notfound");
+  const enoent = expect.objectContaining({ code: "ENOENT", syscall: "open" });
+  // label => [makeStream, expected error]
+  const doors = {
+    "Bun.file(missing).stream()": [() => file(missing).stream(), enoent],
+    "Bun.file(missing).slice().stream()": [() => file(missing).slice(0, 10).stream(), enoent],
+    "new Response(Bun.file(missing)).body": [() => new Response(file(missing)).body, enoent],
+    // The text-mode native source takes the same start path.
+    "new Response(Bun.file(missing)).textStream()": [() => new Response(file(missing)).textStream(), enoent],
+    "new Request({ body: Bun.file(missing) }).body": [
+      () => new Request("http://example.com/", { method: "POST", body: file(missing) }).body,
+      enoent,
+    ],
+    "file removed after .stream()": [
+      () => {
+        const dir = tempDir("file-stream-open-fail", { "gone.txt": "gone before the first read" });
+        const stream = file(join(String(dir), "gone.txt")).stream();
+        dir[Symbol.dispose]();
+        return stream;
+      },
+      enoent,
+    ],
+    // open() succeeds, the fstat() after it reports a directory.
+    ...(isWindows
+      ? {}
+      : { directory: [() => file(import.meta.dir).stream(), expect.objectContaining({ code: "EISDIR" })] }),
+  };
+
+  describe.each(Object.entries(doors))("%s", (label, [makeStream, expected]) => {
+    it("getReader() returns a reader whose read() rejects", async () => {
+      const stream = makeStream();
+      const reader = stream.getReader();
+      expect(stream.locked).toBe(true);
+      await expect(reader.read()).rejects.toEqual(expected);
+      await expect(reader.closed).rejects.toEqual(expected);
+      // Later consumers see the same error instead of a read that never settles.
+      reader.releaseLock();
+      const second = stream.getReader();
+      await expect(second.read()).rejects.toEqual(expected);
+      second.releaseLock();
+      await expect(Array.fromAsync(stream)).rejects.toEqual(expected);
+    });
+
+    it("tee() returns two errored branches", async () => {
+      const [a, b] = makeStream().tee();
+      await expect(a.getReader().read()).rejects.toEqual(expected);
+      await expect(b.getReader().read()).rejects.toEqual(expected);
+    });
+
+    it("promise-returning consumers reject instead of throwing", async () => {
+      let result;
+      expect(() => {
+        result = makeStream().text();
+      }).not.toThrow();
+      await expect(result).rejects.toEqual(expected);
+      expect(() => {
+        result = makeStream().pipeTo(new WritableStream());
+      }).not.toThrow();
+      await expect(result).rejects.toEqual(expected);
+      expect(() => {
+        result = makeStream().pipeThrough(new TransformStream()).getReader().read();
+      }).not.toThrow();
+      await expect(result).rejects.toEqual(expected);
+      expect(() => {
+        result = new Response(makeStream()).bytes();
+      }).not.toThrow();
+      await expect(result).rejects.toEqual(expected);
+      expect(() => {
+        result = readableStreamToArrayBuffer(makeStream());
+      }).not.toThrow();
+      await expect(result).rejects.toEqual(expected);
+    });
+
+    it("Readable.fromWeb() after the failed start emits the error", async () => {
+      const stream = makeStream();
+      stream.getReader().releaseLock();
+      const readable = Readable.fromWeb(stream);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      readable
+        .on("error", resolve)
+        .on("end", () => reject(new Error("ended without an error")))
+        .on("close", () => reject(new Error("closed without an error")));
+      readable.resume();
+      expect(await promise).toEqual(expected);
+    });
+  });
 });
 
 it("ReadableStream for empty blob closes immediately", async () => {

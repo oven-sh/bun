@@ -58,6 +58,11 @@ unsafe extern "C" {
     ) -> usize;
     pub fn simdutf__utf16_length_from_utf8(input: *const u8, length: usize) -> usize;
     pub fn simdutf__utf8_length_from_latin1(input: *const u8, length: usize) -> usize;
+    pub(crate) fn simdutf__convert_latin1_to_utf8(
+        input: *const u8,
+        length: usize,
+        utf8_output: *mut u8,
+    ) -> usize;
 }
 
 pub mod validate {
@@ -141,6 +146,29 @@ pub mod convert {
                             output.as_mut_ptr(),
                         )
                     }
+                }
+            }
+        }
+    }
+
+    pub mod latin1 {
+        use super::*;
+        pub mod to {
+            use super::*;
+            /// Returns the number of UTF-8 bytes written.
+            ///
+            /// # Safety
+            /// `output` must hold `length::utf8::from::latin1(input)` bytes
+            /// (at most `2 * input.len()`); simdutf does not bound-check.
+            pub unsafe fn utf8(input: &[u8], output: &mut [u8]) -> usize {
+                debug_assert!(output.len() >= length::utf8::from::latin1(input));
+                // SAFETY: the caller upholds the capacity contract above.
+                unsafe {
+                    simdutf__convert_latin1_to_utf8(
+                        input.as_ptr(),
+                        input.len(),
+                        output.as_mut_ptr(),
+                    )
                 }
             }
         }

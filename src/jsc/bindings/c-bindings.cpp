@@ -22,6 +22,9 @@
 #if OS(DARWIN)
 #include <mach-o/loader.h>
 #endif
+#if defined(BUN_PORTABLE)
+#include <alloca.h>
+#endif
 #else
 #include <uv.h>
 #include <windows.h>
@@ -369,13 +372,72 @@ static pid_t execve_counting_pid = 0;
 extern "C" int __real_execve(const char*, char* const[], char* const[]);
 extern "C" int __real_pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*);
 
+#if defined(BUN_PORTABLE)
+extern "C" const unsigned char __ehdr_start[] __attribute__((visibility("hidden")));
+
+static bool readAt(const char* path, void* bytes, size_t size, bool fromEnd)
+{
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return false;
+    off_t end = fromEnd ? lseek(fd, 0, SEEK_END) : static_cast<off_t>(size);
+    bool ok = end >= static_cast<off_t>(size) && pread(fd, bytes, size, end - static_cast<off_t>(size)) == static_cast<ssize_t>(size);
+    close(fd);
+    return ok;
+}
+
+// Async-signal-safe: the vfork child of posix_spawn_bun calls it.
+static int loadPackedImage(const char* path, char* const argv[], char* const envp[])
+{
+    static constexpr char loader[] = "/proc/self/exe";
+    static constexpr char magic[] = "BUNPACK1";
+#if CPU(X86_64)
+    static constexpr uint64_t machine = 62;
+#else
+    static constexpr uint64_t machine = 183;
+#endif
+    // The table of contents of a packed file, and the ELF header of the executable of this process.
+    uint64_t contents[16];
+    unsigned char header[64];
+    bool isPackedImage = readAt(path, contents, sizeof(contents), true)
+        && !memcmp(&contents[0], magic, 8) && !memcmp(&contents[15], magic, 8) && contents[3] == machine;
+    // The image itself as the executable means the kernel started it: there is no loader stub to start another one.
+    if (!isPackedImage || !readAt(loader, header, sizeof(header), false) || !memcmp(header, __ehdr_start, sizeof(header))) {
+        errno = ENOEXEC;
+        return -1;
+    }
+    size_t count = 0;
+    while (argv[count])
+        count++;
+    char** loaderArgv = static_cast<char**>(alloca((count + 3) * sizeof(char*)));
+    loaderArgv[0] = const_cast<char*>(count ? argv[0] : path);
+    loaderArgv[1] = const_cast<char*>(path);
+    for (size_t i = 1; i <= count; i++)
+        loaderArgv[i + 1] = argv[i];
+    if (!count)
+        loaderArgv[2] = nullptr;
+    return __real_execve(loader, loaderArgv, envp);
+}
+
+// The kernel answers ENOEXEC for a packed portable image; the loader stub that started this process starts it.
+static int execveOrLoad(const char* path, char* const argv[], char* const envp[])
+{
+    int rc = __real_execve(path, argv, envp);
+    if (rc == -1 && errno == ENOEXEC)
+        return loadPackedImage(path, argv, envp);
+    return rc;
+}
+#else
+#define execveOrLoad __real_execve
+#endif
+
 extern "C" int __wrap_execve(const char* path, char* const argv[], char* const envp[])
 {
     if (getpid() != execve_counting_pid)
-        return __real_execve(path, argv, envp);
+        return execveOrLoad(path, argv, envp);
     threads_in_execve.fetch_add(1, std::memory_order_seq_cst);
     execve_generation.fetch_add(1, std::memory_order_seq_cst);
-    int rc = __real_execve(path, argv, envp);
+    int rc = execveOrLoad(path, argv, envp);
     // Only reached when execve failed and the old image keeps running.
     threads_in_execve.fetch_sub(1, std::memory_order_seq_cst);
     return rc;

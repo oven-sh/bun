@@ -2699,12 +2699,68 @@ fn os_entropy(bytes: &mut [u8]) {
     }
 }
 
+/// The file the code of the image is mapped from: a packed file when a loader stub is the executable of the process.
+#[cfg(bun_portable)]
+fn file_of_portable_image() -> Option<Vec<u8>> {
+    let maps = read_whole_file(c"/proc/self/maps")?;
+    let address = file_of_portable_image as fn() -> Option<Vec<u8>> as usize;
+    for line in crate::strings::split(&maps, b"\n") {
+        let dash = crate::strings::index_of_char_usize(line, b'-')?;
+        let space = crate::strings::index_of_char_usize(line, b' ')?;
+        let start = crate::fmt::parse_int::<usize>(line.get(..dash)?, 16).ok()?;
+        let end = crate::fmt::parse_int::<usize>(line.get(dash + 1..space)?, 16).ok()?;
+        if address < start || address >= end {
+            continue;
+        }
+        let mut path = &line[space..];
+        for _permissions_offset_device_inode in 0..4 {
+            path = &path[1..];
+            path = &path[crate::strings::index_of_char_usize(path, b' ')?..];
+        }
+        let path = crate::strings::trim_left(path, b" ");
+        if !path.starts_with(b"/") {
+            return None;
+        }
+        // The kernel writes a newline in a name as \012.
+        return Some(crate::strings::replace_owned(path, b"\\012", b"\n"));
+    }
+    None
+}
+
+#[cfg(bun_portable)]
+fn read_whole_file(path: &core::ffi::CStr) -> Option<Vec<u8>> {
+    // SAFETY: `path` is NUL-terminated.
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return None;
+    }
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        // SAFETY: `chunk` is writable for its length, `fd` is open.
+        let count = unsafe { libc::read(fd, chunk.as_mut_ptr().cast(), chunk.len()) };
+        match count {
+            0 => break,
+            1.. => bytes.extend_from_slice(&chunk[..count as usize]),
+            _ if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted => {}
+            _ => break,
+        }
+    }
+    // SAFETY: `fd` was opened above and is not used after this.
+    unsafe { libc::close(fd) };
+    Some(bytes)
+}
+
 // ── self_exe_path ─────────────────────────────────────────────────────────
 // Memoized into a process-lifetime
 // static buffer; thread-safe via `Once`. Returns a `&'static ZStr`.
 pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
     static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
     let r = CELL.get_or_init(|| {
+        #[cfg(bun_portable)]
+        if let Some(path) = file_of_portable_image() {
+            return Ok(ZBox::from_vec_with_nul(path));
+        }
         let path = std::env::current_exe().map_err(|_| crate::CrateError::Unexpected)?;
         // Symlink resolution: Rust's
         // `current_exe()` already resolves on Linux (`readlink /proc/self/exe`),

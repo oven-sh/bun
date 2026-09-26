@@ -793,7 +793,7 @@ pub fn write_tarball_integrity_tag(
 
 /// Deletes the cache trees that extractions swapped out this run.
 pub fn delete_displaced_cache_trees(this: &mut PackageManager) {
-    let trees = core::mem::take(this.displaced_cache_trees.get_mut());
+    let trees = core::mem::take(&mut *this.displaced_cache_trees.lock());
     if trees.is_empty() {
         return;
     }

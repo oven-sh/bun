@@ -2,6 +2,7 @@ use core::ptr::NonNull;
 
 use bstr::BStr;
 use bun_ast::{self, ExprData, Log};
+use bun_collections::StringHashMap;
 use bun_core::Global;
 use bun_core::Output;
 use bun_core::{ZStr, strings};
@@ -177,7 +178,12 @@ pub(crate) fn select_packages(
 
     let mut iter = PackageFilterIterator::init(&glob_patterns, &root_dir)?;
     let mut discovered: Vec<WorkspacePackage> = Vec::new();
+    // Each "workspaces" entry is walked on its own, so two entries can yield the same path.
+    let mut seen_paths: StringHashMap<()> = StringHashMap::default();
     while let Some(package_json_path) = iter.next()? {
+        if seen_paths.get_or_put(&package_json_path)?.found_existing {
+            continue;
+        }
         let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
             &package_json_path,
         ));

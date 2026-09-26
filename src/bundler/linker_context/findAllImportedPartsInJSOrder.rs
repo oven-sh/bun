@@ -320,7 +320,7 @@ impl WalkPlan {
 }
 
 #[derive(Clone, Copy)]
-enum Edge {
+pub(crate) enum Edge {
     /// `file` runs here, under the same load.
     Import(IndexInt),
     /// A split `require()` in a part that runs at load: the chunk of `file` runs here.
@@ -330,7 +330,7 @@ enum Edge {
 }
 
 /// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
-fn for_each_edge(
+pub(crate) fn for_each_edge(
     c: &LinkerContext,
     source_index: IndexInt,
     runs: bool,
@@ -847,10 +847,14 @@ fn reached_chunks_in_order(
                 Frame::Leave(source_index) => {
                     // Post-order: when the unbundled program would have run this file.
                     let other = chunk_of_file[source_index as usize];
-                    if other != u32::MAX
-                        && other != chunk_index
-                        && !reached_set.is_set(other as usize)
-                    {
+                    if other == u32::MAX || other == chunk_index {
+                        continue;
+                    }
+                    let ranks_again = c
+                        .ranks_chunk_again
+                        .as_ref()
+                        .is_some_and(|files| files.is_set(source_index as usize));
+                    if ranks_again || !reached_set.is_set(other as usize) {
                         reached_set.set(other as usize);
                         reached.push(other);
                     }
@@ -894,5 +898,13 @@ fn reached_chunks_in_order(
             stack[mark..].reverse();
         }
     }
+    // `ranks_chunk_again`: the last mention counts.
+    reached.reverse();
+    reached.retain(|&other| {
+        let first = reached_set.is_set(other as usize);
+        reached_set.unset(other as usize);
+        first
+    });
+    reached.reverse();
     Ok(reached)
 }

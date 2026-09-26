@@ -190,6 +190,29 @@ describe("bundler", () => {
       },
     });
 
+    itBundled("compile/splitting/EntrySetupImportRunsBeforeSharedCode", {
+      compile: true,
+      splitting: true,
+      format: "esm",
+      files: {
+        "/entry.ts": /* js */ `
+          import "./setup";
+          import { Store } from "./store";
+          console.log("entry", new Store().name);
+          import("./settings");
+        `,
+        "/setup.ts": `globalThis.APP = { name: "app" };`,
+        "/store.ts": /* js */ `
+          const NAME = globalThis.APP.name;
+          export class Store { name = NAME; }
+        `,
+        "/settings.ts": /* js */ `
+          import { Store } from "./store";
+          console.log("settings", new Store().name);
+        `,
+      },
+      run: { stdout: "entry app\nsettings app" },
+    });
     // The embedded module graph is laid out in load order: the entry point's
     // static imports (dependencies first), then each dynamic import's closure,
     // breadth-first. Chunk index order would be entry, lazy1, lazy2, shared,

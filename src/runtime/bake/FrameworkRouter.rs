@@ -1798,14 +1798,12 @@ impl JSFrameworkRouter {
         // `Style` owns a `Strong` (Drop type), so `?` on any error path below
         // drops it automatically.
 
-        let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
-            paths::platform::Auto,
-        >(
-            // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
-            bun_resolver::fs::FileSystem::get().top_level_dir,
-            root.slice(),
-        ))
-        .into();
+        let Some(abs_root) = crate::bake::bake_body::resolve_dir_option(root.slice()) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "options.root must resolve to a path shorter than {} bytes",
+                paths::MAX_PATH_BYTES
+            )));
+        };
 
         let types: Box<[Type]> = Box::new([Type {
             abs_root: abs_root.clone(),

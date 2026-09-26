@@ -116,15 +116,7 @@ impl UserOptions {
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
-                    let root = match bun_sys::getcwd_alloc() {
-                        Ok(z) => arena_dupe_z(&arena, z.as_bytes()),
-                        Err(e) => {
-                            return Err(global.throw_error(
-                                e.to_zig_err(),
-                                "while querying current working directory",
-                            ));
-                        }
-                    };
+                    let root = resolve_root(None, global, &arena)?;
 
                     let framework = Framework::react(&arena)
                         .map_err(|e| throw_core_error(global, e, "Framework::react"))?;
@@ -172,32 +164,40 @@ impl UserOptions {
             &arena,
         )?;
 
-        let root: &[u8] = if let Some(slice) = config.get_optional_slice(global, "root")? {
-            allocations.track(slice)
-        } else {
-            match bun_sys::getcwd_alloc() {
-                Ok(z) => arena_dupe_z(&arena, z.as_bytes()).as_bytes(),
-                Err(e) => {
-                    return Err(global
-                        .throw_error(e.to_zig_err(), "while querying current working directory"));
-                }
-            }
-        };
+        let root = resolve_root(
+            config.get_optional_slice(global, "root")?.as_deref(),
+            global,
+            &arena,
+        )?;
 
         if let Some(plugin_array) = config.get(global, "plugins")? {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
-        let root_z = arena_dupe_z(&arena, root);
-
         Ok(UserOptions {
-            root: root_z,
+            root,
             framework,
             bundler_options,
             _allocations: allocations,
             arena,
         })
     }
+}
+
+/// `resolve_dir_option` for `app.root`. `None` is the working directory.
+fn resolve_root(
+    user_root: Option<&[u8]>,
+    global: &JSGlobalObject,
+    arena: &Arena,
+) -> JsResult<&'static ZStr> {
+    let Some(resolved) = resolve_dir_option(user_root.unwrap_or(b".")) else {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "'{}.root' must resolve to a path shorter than {} bytes",
+            API_NAME,
+            paths::MAX_PATH_BYTES
+        )));
+    };
+    Ok(arena_dupe_z(arena, &resolved))
 }
 
 /// Each string stores its allocator since some may hold reference counts to JSC
@@ -443,6 +443,33 @@ impl Default for Framework {
     }
 }
 
+/// `None` from `MAX_PATH_BYTES` bytes up, the length `Resolver::read_dir_info` rejects too.
+pub(crate) fn resolve_dir_option(dir: &[u8]) -> Option<Box<[u8]>> {
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let mut buf = paths::path_buffer_pool::get();
+    let resolved = paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
+        top_level_dir,
+        &mut buf[..paths::MAX_PATH_BYTES - 1],
+        &[dir],
+    )?;
+    Some(Box::from(
+        paths::string_paths::without_trailing_slash_windows_path(resolved),
+    ))
+}
+
+/// Reports a root that is too long the way `resolve_helper` reports an entry point.
+pub(crate) fn resolve_router_root(index: usize, root: &[u8]) -> Option<Box<[u8]>> {
+    let resolved = resolve_dir_option(root);
+    if resolved.is_none() {
+        Output::err(
+            "ENAMETOOLONG",
+            "Failed to resolve 'fileSystemRouterTypes[{}].root' for framework: the resolved path must be shorter than {} bytes",
+            (index, paths::MAX_PATH_BYTES),
+        );
+    }
+    resolved
+}
+
 impl Framework {
     /// Bun provides built-in support for using React as a framework.
     /// Depends on externally provided React
@@ -622,11 +649,11 @@ impl Framework {
             // self.resolve_helper(client, &mut sc.client_runtime_import, &mut had_errors);
         }
 
-        for fsr in clone.file_system_router_types.iter_mut() {
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-            fsr.root = arena_erase(arena.alloc_slice_copy(paths::resolve_path::join_abs::<
-                paths::platform::Auto,
-            >(top_level_dir, fsr.root)));
+        for (i, fsr) in clone.file_system_router_types.iter_mut().enumerate() {
+            match resolve_router_root(i, fsr.root) {
+                Some(root) => fsr.root = arena_erase(arena.alloc_slice_copy(&root)),
+                None => had_errors = true,
+            }
             if let Some(entry_client) = &mut fsr.entry_client {
                 self.resolve_helper(
                     client,

@@ -277,7 +277,9 @@ void setUpReadableStreamDefaultReader(JSC::JSGlobalObject*, JSReadableStreamDefa
 void setUpReadableStreamBYOBReader(JSC::JSGlobalObject*, JSReadableStreamBYOBReader*, JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
 JSC::JSPromise* readableStreamReaderGenericCancel(JSC::JSGlobalObject*, JSReadableStreamReaderBase*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp
 void readableStreamReaderGenericInitialize(JSC::JSGlobalObject*, JSReadableStreamReaderBase*, JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
-void readableStreamReaderGenericRelease(JSC::JSGlobalObject*, JSReadableStreamReaderBase*); // userJS: no (also runs Bun's native-handle updateRef(false) gate) — ReadableStreamOperations.cpp
+void readableStreamReaderGenericRelease(JSC::JSGlobalObject*, JSReadableStreamReaderBase*); // userJS: no — ReadableStreamOperations.cpp
+// Both of the above tell a FileReader source whether a reader holds its stream; the source drops its event-loop ref while none does.
+extern "C" void FileReader__setReaderLocked(void* source, bool locked); // userJS: no — FileReader.rs
 
 // Stream-level state ops.
 JSC::JSPromise* readableStreamCancel(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue reason); // userJS: yes — ReadableStreamOperations.cpp

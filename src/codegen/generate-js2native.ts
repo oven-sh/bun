@@ -98,7 +98,6 @@ const rustIdentifierPaths: Record<string, string> = {
   "string/immutable/unicode.rs": "bun_core/string/immutable/unicode.rs",
   "subprocess.rs": "runtime/api/bun/subprocess.rs",
   "sys.rs": "sys/sys.rs",
-  "sys/Error.rs": "sys/Error.rs",
   "udp_socket.rs": "runtime/socket/udp_socket.rs",
   "upgrade_command.rs": "runtime/cli/upgrade_command.rs",
   "virtual_machine_exports.rs": "jsc/virtual_machine_exports.rs",

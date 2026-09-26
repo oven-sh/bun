@@ -112,6 +112,13 @@ export const rejects = {
   "new Promise resolved with a promise that rejects": tag => void new Promise(resolve => resolve(rejecting(tag))),
   "an async function that returns a promise that rejects": tag => void (async () => rejectedLater(tag))(),
   "then() with no handler for the rejection, of a pending promise": tag => void rejectedLater(tag).then(() => {}),
+  "then() with no handler for the rejection, of a rejected promise": tag =>
+    void Promise.reject(new Error(tag)).then(() => {}),
+  "then() with no handler for the rejection, of a promise that rejected earlier": tag => {
+    const rejected = Promise.reject(new Error(tag));
+    rejected.catch(() => {});
+    setTimeout(() => void rejected.then(() => {}), 0);
+  },
   "a chain of then() with no handler for the rejection": tag =>
     void rejectedLater(tag)
       .then(() => {})

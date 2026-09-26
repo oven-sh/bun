@@ -1752,11 +1752,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         self.notify_inspector_server_stopped();
 
-        if let server_config::Address::Unix(path) = &self.config.address {
-            let bytes = path.as_bytes();
-            if !bytes.is_empty() && bytes[0] != 0 {
-                let _ = bun_sys::unlink(path.as_zstr());
+        match &self.config.address {
+            server_config::Address::Unix(path) => {
+                let bytes = path.as_bytes();
+                if !bytes.is_empty() && bytes[0] != 0 {
+                    let _ = bun_sys::unlink(path.as_zstr());
+                }
             }
+            server_config::Address::Tcp { .. } => {}
         }
 
         if !abrupt {
@@ -2831,20 +2834,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // not `*this`.
         let global = this_ref.global_this();
 
-        if let server_config::Address::Tcp {
-            hostname: Some(hostname),
-            ..
-        } = &this_ref.config.address
-        {
-            let hostname = hostname.as_bytes();
-            if !bun_dns::is_valid_hostname(bun_core::ip_address::strip_ipv6_brackets(hostname)) {
-                let _ = global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
-                    global, hostname,
-                ));
-                // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                Self::deinit(this);
-                return JSValue::ZERO;
+        match &this_ref.config.address {
+            server_config::Address::Tcp {
+                hostname: Some(hostname),
+                ..
+            } => {
+                let hostname = hostname.as_bytes();
+                if !bun_dns::is_valid_hostname(bun_core::ip_address::strip_ipv6_brackets(hostname))
+                {
+                    let _ = global.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                        global, hostname,
+                    ));
+                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                    Self::deinit(this);
+                    return JSValue::ZERO;
+                }
             }
+            server_config::Address::Tcp { hostname: None, .. }
+            | server_config::Address::Unix(_) => {}
         }
 
         let app: *mut uws_sys::NewApp<SSL>;

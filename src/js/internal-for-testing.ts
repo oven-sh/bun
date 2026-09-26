@@ -859,6 +859,14 @@ export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   0,
 );
 
+// Whether the source of `fn` knows where its lines start. Before anything asked for a position in it, that means they
+// came with its code: from the parse, or out of the bytecode.
+export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
+  "ZigSourceProvider.cpp",
+  "jsSourceHasLineStarts",
+  1,
+);
+
 // The bytecode `bun build --compile --bytecode` embeds for a builtin module, plus the external string table it embeds
 // beside it: internal module number `index` (null past the last), or `source` written in builtin syntax (@-intrinsics,
 // a function expression) compiled under `name`.

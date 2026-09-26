@@ -370,34 +370,6 @@ impl Chunk {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Order {
-    pub source_index: IndexInt,
-    pub distance: u32,
-    pub tie_breaker: u32,
-}
-
-impl Order {
-    fn less_than(_ctx: Order, a: Order, b: Order) -> bool {
-        (a.distance < b.distance) || (a.distance == b.distance && a.tie_breaker < b.tie_breaker)
-    }
-
-    /// Sort so files closest to an entry point come first. If two files are
-    /// equidistant to an entry point, then break the tie by sorting on the
-    /// stable source index derived from the DFS over all entry points.
-    pub(crate) fn sort(a: &mut [Order]) {
-        index_sort::sort_slice_unstable_by(a, |a, b| {
-            if Order::less_than(Order::default(), *a, *b) {
-                core::cmp::Ordering::Less
-            } else if Order::less_than(Order::default(), *b, *a) {
-                core::cmp::Ordering::Greater
-            } else {
-                core::cmp::Ordering::Equal
-            }
-        });
-    }
-}
-
 /// TODO: rewrite this
 /// This implementation is just slow.
 /// Can we make the JSPrinter itself track this without increasing

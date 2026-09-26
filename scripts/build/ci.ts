@@ -295,9 +295,6 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   if (!isBuildkite) return;
 
   const exe = output.exe;
-  if (exe === undefined) {
-    throw new BuildError(`${cfg.mode} packaging: output.exe unset`);
-  }
 
   const buildDir = cfg.buildDir;
   const exeName = bunExeName(cfg); // bun-profile, bun-asan, etc.

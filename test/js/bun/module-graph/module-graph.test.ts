@@ -1296,6 +1296,27 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+  test("a failed import() nobody handles is the graph's whose code called it", async () => {
+    const dir = fixture({
+      "throws.mjs": `await 1; throw new Error("thrown by the module");`,
+      "caller.mjs": `export const importInto = (graph, path) => void graph.import(path);`,
+    });
+    const heard: string[] = [];
+    const hear = (who: string) => (reason: any) =>
+      void heard.push(who + ": " + reason.message.split(" imported from")[0]);
+    using caller = new ModuleGraphClass({ unhandledRejection: hear("the graph that called import()") });
+    using imported = new ModuleGraphClass({ unhandledRejection: hear("the graph that was imported into") });
+    const { importInto } = await caller.import(join(dir, "caller.mjs"));
+    caller.run(() => {
+      importInto(imported, join(dir, "throws.mjs"));
+      importInto(imported, join(dir, "missing.mjs"));
+    });
+    await until(() => heard.length === 2);
+    expect(heard.map(line => line.replace(dir, "")).sort()).toEqual([
+      "the graph that called import(): Cannot find module '/missing.mjs'",
+      "the graph that called import(): thrown by the module",
+    ]);
+  });
   test("a first import() that fails, however it fails, is still the graph's main: a later import is not. One that names no module imported nothing", async () => {
     using d = tempDir("module-graph-main-after-failure", {
       "throws.mjs": `throw new Error("not today");`,

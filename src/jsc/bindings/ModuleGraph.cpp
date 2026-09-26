@@ -578,7 +578,7 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     zigGlobal->setAsyncContextTrackingEnabled(true);
     // moduleGraphRejecting() reads the async context a rejection is reported in: have the engine report in the
     // right one the rejections its own promise jobs make.
-    vm.reportUnhandledRejectionsInAsyncContext();
+    vm.setReportsUnhandledRejectionsInAsyncContext();
     m_loader->setAsyncContext(vm, createModuleGraphFrame(zigGlobal, this, jsUndefined()));
 }
 

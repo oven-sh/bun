@@ -451,7 +451,7 @@ void *us_socket_session_sink(struct us_socket_t *s) {
 /* socket.c — raw TCP FIN that does NOT re-enter the SSL layer. */
 extern void us_internal_socket_raw_shutdown(struct us_socket_t *s);
 
-static void ssl_update_handshake(struct us_socket_t *s);
+static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake);
 static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s);
 static int us_ssl_inline_reject_tripped(struct us_socket_t *s);
 static inline int ssl_gone(struct us_socket_t *s);
@@ -1101,9 +1101,11 @@ static int us_cert_verify_cb(X509_STORE_CTX *ctx, void *arg) {
   (void)arg;
   int ok = X509_verify_cert(ctx);
   SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
-  if (!ssl || SSL_is_server(ssl) || X509_STORE_CTX_get_error(ctx) != X509_V_OK) return ok;
+  if (!ssl) return ok;
   void *wrapper = us_ssl_wrapper(ssl);
   struct us_socket_t *s = wrapper ? NULL : us_ssl_socket(ssl);
+  if (s) s->ssl_peer_chain_checked = 1;
+  if (SSL_is_server(ssl) || X509_STORE_CTX_get_error(ctx) != X509_V_OK) return ok;
   int verdict = wrapper ? us_ssl_wrapper_server_identity(wrapper, ssl)
                 : s     ? us_dispatch_server_identity(s, ssl)
                         : US_IDENTITY_UNCHECKED;
@@ -1655,6 +1657,11 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     SSL_set_renegotiate_mode(ssl, ssl_renegotiate_explicit);
     SSL_set_connect_state(ssl);
     if (sni) SSL_set_tlsext_host_name(ssl, sni);
+    /* The CTX's session id context partitions a server's sessions by context
+     * configuration (create_ssl_context_with_digest). A client fails its
+     * handshake when a resumed session's id differs from its own, so clients
+     * keep none: a `session` stays usable under any client options. */
+    SSL_set_session_id_context(ssl, NULL, 0);
     /* The CTX is mode-neutral and may have verify_mode == NONE (no
      * ca/requestCert in options). Clients must always run verification so
      * verify_error is populated for the JS rejectUnauthorized check — but
@@ -1700,6 +1707,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_inline_reject = 0;
   s->ssl_verify_failed = 0;
   s->ssl_identity_checked = 0;
+  s->ssl_peer_chain_checked = 0;
   s->ssl_sni_pending = US_SNI_NONE;
   s->ssl_sni_resolver = 0;
   s->ssl_has_pending_events = 0;
@@ -1805,11 +1813,25 @@ struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
   return (struct us_bun_verify_error_t){.error = x509_verify_error, .code = code, .reason = reason};
 }
 
+/* A sent FIN, a sent close_notify or a fatal error says nothing about the
+ * peer's certificate: on an open socket the SSL alone answers, like node's
+ * TLSWrap::VerifyError
+ * (https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1840-L1853). */
 struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s) {
-  if (!s->ssl || !s_ssl(s) || us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s)) {
+  if (!s->ssl || !s_ssl(s) || us_socket_is_closed(s)) {
     return (struct us_bun_verify_error_t){.error = 0, .code = NULL, .reason = NULL};
   }
   return us_ssl_socket_verify_error_from_ssl(s_ssl(s));
+}
+
+/* After our own FIN a failed handshake reports the SSL's verdict only for a
+ * chain that it checked: node:tls reads a failure with an X509 code as an
+ * established session. */
+static struct us_bun_verify_error_t ssl_failed_handshake_verify_error(struct us_socket_t *s) {
+  if (us_internal_ssl_is_shut_down(s) && !s->ssl_peer_chain_checked) {
+    return (struct us_bun_verify_error_t){.error = 0, .code = NULL, .reason = NULL};
+  }
+  return us_internal_ssl_verify_error(s);
 }
 
 /* ── Handshake state machine ─────────────────────────────────────────────── */
@@ -1900,7 +1922,10 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
   if (!success && ssl_dispatch_parked_reason(s)) {
     return;
   }
-  struct us_bun_verify_error_t verify_error = us_internal_ssl_verify_error(s);
+  /* A finished handshake reports the SSL's X509 verdict in every socket state. */
+  struct us_bun_verify_error_t verify_error =
+      success && s->ssl ? us_ssl_socket_verify_error_from_ssl(s_ssl(s))
+                        : ssl_failed_handshake_verify_error(s);
   us_dispatch_handshake(s, success, verify_error);
 }
 
@@ -2054,7 +2079,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     return us_internal_socket_close_raw(s, code, reason);
   }
   ssl_set_loop_data(s);
-  ssl_update_handshake(s);
+  ssl_update_handshake(s, 1);
   if (ssl_gone(s)) return s;
 
   if (s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
@@ -2091,7 +2116,11 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
 }
 #define ssl_close us_internal_ssl_close
 
-static void ssl_update_handshake(struct us_socket_t *s) {
+/* `fin_ends_handshake` is 0 only from the writable event, which the read path
+ * re-enters while a handshake is in progress: the socket keeps reading after
+ * our FIN or close_notify, and the peer's next flight can still complete that
+ * handshake. For every other caller a half-closed socket's handshake is over. */
+static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake) {
   /* The OpenSSL error queue is per-thread and another socket's failure (a
    * server and a client commonly share this thread) may have left entries on
    * it; clear it before this socket's handshake step so any reason captured
@@ -2110,8 +2139,9 @@ static void ssl_update_handshake(struct us_socket_t *s) {
     return;
   }
 
-  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) ||
-      (s_ssl(s) && SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN)) {
+  if (us_socket_is_closed(s) || s->ssl_fatal_error ||
+      (SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN) ||
+      (fin_ends_handshake && us_internal_ssl_is_shut_down(s))) {
     ssl_trigger_handshake(s, 0);
     return;
   }
@@ -2185,7 +2215,7 @@ struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client
   if (!result || ssl_gone(result)) return result;
   /* Kick the handshake immediately — some peers stall waiting for ClientHello. */
   ssl_set_loop_data(result);
-  ssl_update_handshake(result);
+  ssl_update_handshake(result, 1);
   return result;
 }
 
@@ -2328,7 +2358,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
       return us_internal_ssl_close(s, s->ssl_pending_close_code, NULL);
     }
   }
-  ssl_update_handshake(s);
+  ssl_update_handshake(s, 0);
   if (ssl_gone(s)) return s;
 
   if (s->ssl_read_wants_write) {
@@ -2856,7 +2886,7 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
     loop_ssl_data->ssl_sni_resolved_ctx = ctx; /* may be NULL = default ctx */
   }
   /* Re-drive the handshake; select_cert_cb re-fires and consumes the state. */
-  ssl_update_handshake(s);
+  ssl_update_handshake(s, 1);
   if (loop_ssl_data->ssl_sni_resolved_ctx) SSL_CTX_free(loop_ssl_data->ssl_sni_resolved_ctx);
   loop_ssl_data->ssl_sni_resolved_ctx = outer_ctx;
 }
@@ -2909,7 +2939,7 @@ struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
 void us_socket_start_tls_handshake(struct us_socket_t *s) {
   if (!s->ssl || us_socket_is_closed(s)) return;
   ssl_set_loop_data(s);
-  ssl_update_handshake(s);
+  ssl_update_handshake(s, 1);
 }
 
 /* ── SNI on listen sockets ───────────────────────────────────────────────── */
@@ -2952,7 +2982,15 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
  * per-serverName entry's requestCert/rejectUnauthorized are added on top of
  * it (the connection's inherited requirement is kept). A context without a
  * recorded policy (node:tls SecureContext, whose policy is server-level)
- * leaves the connection's verify mode untouched. */
+ * leaves the connection's verify mode untouched.
+ *
+ * SSL_set_SSL_CTX also copies the context's session id context, which for
+ * contexts built in Rust is the digest of their options
+ * (create_ssl_context_with_digest). BoringSSL checks it after this switch, so
+ * a session issued under other options is not resumed and the client is
+ * authenticated again, against this context's CA. That refusal is deliberate
+ * (RFC 6066 section 3; openssl/ssl.h: "partition session caches between SNI
+ * hosts") and must not be relaxed for parity with another runtime. */
 static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
   SSL_set_SSL_CTX(ssl, ctx);
   if (us_ctx_sni_policy_ex_idx < 0) return;
@@ -3077,12 +3115,11 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
 
   /* The dynamic resolver (the user's SNICallback) runs FIRST, matching Node
    * where a user-provided SNICallback replaces the default SNI handling
-   * entirely - including for the bind hostname, which Listener.rs always
-   * registers in the static tree (so tree-first would shadow the callback
-   * for the most-requested name and break per-connection cert rotation).
-   * The static tree (bind hostname + addContext entries) is the fallback
-   * when the resolver selects nothing, which is also the no-user-callback
-   * path: the JS dispatch returns undefined immediately in that case. */
+   * entirely (tree-first would shadow the callback for every name that also
+   * has an addContext entry). The static tree (addContext entries) is the
+   * fallback when the resolver selects nothing, which is also the
+   * no-user-callback path: the JS dispatch returns undefined immediately in
+   * that case. */
 
   void *saved_loop_state[US_SSL_LOOP_STATE_SLOTS];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
@@ -3110,8 +3147,8 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     return ssl_select_cert_success;
   }
 
-  /* No dynamic selection: fall back to the static SNI tree (the bind
-   * hostname and addContext() entries). An adopted socket has no tree. */
+  /* No dynamic selection: fall back to the static SNI tree (the
+   * addContext() entries). An adopted socket has no tree. */
   if (ls) {
     struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
     if (node) {
@@ -3133,9 +3170,8 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
     /* A dynamic resolver (user SNICallback) exists: us_select_cert_cb already
      * ran it - and the static-tree fallback - at the earlier
      * select-certificate stage. Consulting the tree again here would
-     * OVERWRITE the resolver's per-connection selection with the tree entry
-     * (the bind hostname is always registered there), undoing the
-     * SNICallback-takes-precedence contract. */
+     * OVERWRITE the resolver's per-connection selection with the tree entry,
+     * undoing the SNICallback-takes-precedence contract. */
     return SSL_TLSEXT_ERR_OK;
   }
   const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
@@ -3207,6 +3243,23 @@ struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket
   if (!node || !node->ctx) return NULL;
   SSL_CTX_up_ref(node->ctx);
   return node->ctx;
+}
+
+void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
+                                          SSL_CTX *ctx) {
+  if (ls->ssl_ctx == ctx) return;
+  SSL_CTX_up_ref(ctx);
+  /* Carry over the listener-level callbacks registered on the old default. */
+  if (ls->sni) {
+    SSL_CTX_set_tlsext_servername_callback(ctx, sni_cb);
+  }
+  if (ls->on_server_name) {
+    SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+  }
+  if (ls->ssl_ctx) {
+    us_internal_ssl_ctx_unref(ls->ssl_ctx);
+  }
+  ls->ssl_ctx = ctx;
 }
 
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,

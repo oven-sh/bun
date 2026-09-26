@@ -160,6 +160,7 @@ CPP_DECL VirtualMachine* JSC__JSGlobalObject__bunVM(JSC::JSGlobalObject* arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObject* arg0, const JSC::JSValue* arg1, size_t arg2, const BunString* arg3);
 CPP_DECL void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObject* arg0);
+CPP_DECL bool JSC__JSGlobalObject__hasRejectedPromises(JSC::JSGlobalObject* arg0);
 CPP_DECL bool JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0);
 CPP_DECL void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject);
 CPP_DECL double JSC__JSGlobalObject__jsDateNow(JSC::JSGlobalObject* globalObject);

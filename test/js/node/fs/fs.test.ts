@@ -6724,6 +6724,55 @@ it("a by-length path argument keeps its bytes while an async call is pending", a
   expect(exitCode).toBe(0);
 });
 
+it("a by-length path argument keeps its bytes while a later argument's getter runs in a sync call", async () => {
+  using dir = tempDir("fs-path-transfer-oversize-sync", {
+    "a.txt": "AAAA",
+    "b.txt": "BBBBBB",
+  });
+
+  // No second thread here: the path is borrowed first and the options object
+  // is read after it, so a getter runs user code during the borrow. Without
+  // the pin the transfer frees the name and the call opens whatever name
+  // landed in the freed block. See the test above for the length.
+  const N = 1020;
+  const script = `
+    import fs from "node:fs";
+    const cwd = process.cwd();
+    const N = ${N};
+    const name = n => {
+      const pad = N - cwd.length - 1 - n.length;
+      const u = new Uint8Array(N);
+      const dots = Buffer.alloc((pad >> 1) * 2, "/.").toString();
+      u.set(new TextEncoder().encode(cwd + (pad & 1 ? "/" : "") + dots + "/" + n));
+      return u;
+    };
+    const p = name("a.txt");
+    let byteLength = -1;
+    const contents = fs.readFileSync(p, {
+      get encoding() {
+        p.buffer.transfer(0);
+        byteLength = p.byteLength;
+        globalThis.keep = Array.from({ length: 64 }, () => name("b.txt"));
+        return "latin1";
+      },
+    });
+    console.log(JSON.stringify({ byteLength, contents }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ byteLength: N, contents: "AAAA" });
+  expect(exitCode).toBe(0);
+});
+
 it("fs.read keeps filling a by-length view when its storage is transferred while the read is pending", async () => {
   using dir = tempDir("fs-read-transfer-oversize", {
     "data.bin": Buffer.alloc(65536, 0x61).toString(),

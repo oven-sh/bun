@@ -112,7 +112,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   // write adopts one so its pin has somewhere to live, so transfer() mid-write
   // copies and leaves the Buffer attached, as in the case above. Holding the
   // view without a pin instead let transfer() move the storage to an object
-  // nothing references, and the next full collection freed it mid-write.
+  // nothing references, and a collection freed it mid-write.
   test.skipIf(isWindows)("a plain Buffer is pinned while its write is pending, then released on drain", async () => {
     const payload = makePayload(CHUNK_SIZE);
     const expectedHash = sha1(payload);

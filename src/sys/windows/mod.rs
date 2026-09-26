@@ -1856,7 +1856,7 @@ pub fn move_opened_file_at(
         );
     }
     // SAFETY: src_fd valid; rename_info has struct_len initialized bytes
-    let rc = unsafe {
+    let mut rc = unsafe {
         ntdll::NtSetInformationFile(
             src_fd.native(),
             &mut io_status_block,
@@ -1877,6 +1877,35 @@ pub fn move_opened_file_at(
         },
         format_args!("{:?}", rc)
     );
+
+    // Non-NTFS filesystems (exFAT, FAT32) only implement the legacy class;
+    // same fallback as `DeleteFileBun` above.
+    if rc == win32::ntstatus::INVALID_PARAMETER {
+        let legacy_info: *mut win32::FILE_RENAME_INFORMATION = rename_info.cast();
+        // SAFETY: the buffer behind rename_info is aligned and fully initialized
+        // above, and the two structs share every field offset except this one
+        // (asserted at their definitions), so only the leading field changes.
+        unsafe {
+            ptr::addr_of_mut!((*legacy_info).ReplaceIfExists)
+                .write(win32::BOOLEAN::from(replace_if_exists));
+        }
+        // SAFETY: src_fd valid; legacy_info has struct_len initialized bytes
+        // (the two structs have the same size, asserted at their definitions).
+        rc = unsafe {
+            ntdll::NtSetInformationFile(
+                src_fd.native(),
+                &mut io_status_block,
+                legacy_info.cast::<c_void>(),
+                u32::try_from(struct_len).expect("int cast"), // already checked for error.NameTooLong
+                win32::FileInformationClass::FileRenameInformation,
+            )
+        };
+        bun_sys::syslog!(
+            "moveOpenedFileAt({}) FileRenameInformation fallback = {}",
+            src_fd,
+            format_args!("{:?}", rc)
+        );
+    }
 
     #[cfg(debug_assertions)]
     if rc == win32::ntstatus::ACCESS_DENIED {

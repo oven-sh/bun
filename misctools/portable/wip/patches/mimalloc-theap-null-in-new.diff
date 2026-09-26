@@ -1,0 +1,19 @@
+diff --git a/src/alloc.c b/src/alloc.c
+index a3ecab1..4f2343d 100644
+--- a/src/alloc.c
++++ b/src/alloc.c
+@@ -270,8 +270,14 @@ extern mi_decl_forceinline void* _mi_theap_malloc_zero(mi_theap_t* theap, size_t
+ // Main allocation functions
+ 
+ mi_decl_nodiscard extern inline mi_decl_restrict void* mi_theap_malloc(mi_theap_t* theap, size_t size) mi_attr_noexcept {
++  #if MI_THEAP_INITASNULL
++  // portable-ABI spike: `mi_new`, `mi_new_n`, `mi_mallocn` pass `_mi_theap_default()` here, which is NULL on a
++  // thread that has not allocated yet in the pthreads/win32/fixed TLS models.
++  return _mi_theap_malloc_zero(theap, size, false, 0, NULL);
++  #else
+   mi_assert(theap!=NULL);
+   return mi_theap_malloc_zero_nonnull(theap, size, false, 0, NULL);
++  #endif
+ }
+ 
+ mi_decl_nodiscard mi_decl_restrict void* mi_malloc(size_t size) mi_attr_noexcept {

@@ -1,0 +1,18 @@
+diff --git a/Source/JavaScriptCore/shell/CMakeLists.txt b/Source/JavaScriptCore/shell/CMakeLists.txt
+index b1a05d59..5d187b9c 100644
+--- a/Source/JavaScriptCore/shell/CMakeLists.txt
++++ b/Source/JavaScriptCore/shell/CMakeLists.txt
+@@ -22,7 +22,12 @@ if (USE_EXTERNAL_MIMALLOC)
+     # The shipped static archives intentionally leave mi_* unresolved so the
+     # consumer links its own mimalloc. The jsc shell still needs a working
+     # allocator, so link the vendored mimalloc object library here only.
+-    list(APPEND jsc_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
++    if (PORTABLE_SPIKE_MIMALLOC_OBJECT)
++        # portable-ABI spike: link the mimalloc that bun links (built outside of this tree).
++        list(APPEND jsc_LIBRARIES ${PORTABLE_SPIKE_MIMALLOC_OBJECT})
++    else ()
++        list(APPEND jsc_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
++    endif ()
+ endif ()
+ 
+ if (ENABLE_FUZZILLI)

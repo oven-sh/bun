@@ -1,0 +1,16 @@
+diff --git a/compiler-rt/lib/builtins/x86_64/floatundixf.S b/compiler-rt/lib/builtins/x86_64/floatundixf.S
+index cf7286f0..5d442c4c 100644
+--- a/compiler-rt/lib/builtins/x86_64/floatundixf.S
++++ b/compiler-rt/lib/builtins/x86_64/floatundixf.S
+@@ -20,8 +20,9 @@ twop64:
+ 
+ 	.balign 4
+ DEFINE_COMPILERRT_FUNCTION(__floatundixf)
+-	movq	%rdi,	 -8(%rsp)
+-	fildq	-8(%rsp)
++	pushq	%rdi
++	fildq	(%rsp)
++	popq	%rdi
+ 	test	%rdi,		%rdi
+ 	js		1f
+ 	ret

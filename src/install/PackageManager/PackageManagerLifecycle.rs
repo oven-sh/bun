@@ -478,13 +478,12 @@ impl PackageManager {
         set
     }
 
-    /// Whether `dependency_id` was named on the command line
-    /// (`bun add` / `bun install <pkg-or-url>` / `bun update <pkg>`) and is in
-    /// the command's update scope, the same test the resolve phase applies.
+    /// Whether the command asks to update `dependency_id`: named on the
+    /// command line (`bun add` / `bun install <pkg-or-url>` / `bun update
+    /// <pkg>`) and in the command's update scope, or a direct dependency of
+    /// the workspaces a bare `bun update` (or `-r` / `--filter`) targets. The
+    /// same test the resolve phase applies to npm versions.
     pub fn dependency_is_update_request(&self, dependency_id: DependencyID) -> bool {
-        if self.update_requests.is_empty() {
-            return false;
-        }
         // `dependency_id` may be `invalid_dependency_id` (a root entry).
         let Some(dep) = self
             .lockfile
@@ -494,12 +493,27 @@ impl PackageManager {
         else {
             return false;
         };
-        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
-        self.update_requests
-            .iter()
-            .any(|request| request.matches(dep, string_buf))
-            && crate::update_scope::UpdateScope::of(self)
-                .contains_dependency(&self.lockfile, dependency_id)
+        if !self.update_requests.is_empty() {
+            let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+            return self
+                .update_requests
+                .iter()
+                .any(|request| request.matches(dep, string_buf))
+                && crate::update_scope::UpdateScope::of(self)
+                    .contains_dependency(&self.lockfile, dependency_id);
+        }
+        if !self.to_update {
+            return false;
+        }
+        if let Some(targets) = self.update_target_workspaces.as_deref() {
+            return self
+                .lockfile
+                .is_dependency_of_workspace_in(targets, dependency_id);
+        }
+        let root_id = self
+            .lockfile
+            .get_workspace_package_id(self.workspace_name_hash);
+        self.lockfile.packages.items_dependencies()[root_id as usize].contains(dependency_id)
     }
 
     /// Whether a URL/local tarball dependency should be re-fetched this run.

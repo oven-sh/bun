@@ -1211,6 +1211,77 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
     expect(await file(installedIndex).text()).toBe('module.exports = "VERSION_TWO";\n');
   });
 
+  it("bare bun update refreshes a direct tarball dependency", async () => {
+    // Without a name, `bun update` updates the direct dependencies of the
+    // current workspace. For a URL tarball that means re-fetching the URL.
+    const v1 = buildTarball("VERSION_ONE");
+    const v2 = buildTarball("VERSION_TWO");
+    let served = v1;
+    const tarballRequests: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        if (new URL(req.url).pathname.endsWith("/my-url-pkg.tgz")) {
+          tarballRequests.push(served === v1 ? "v1" : "v2");
+          const { tgz } = served;
+          return new Response(tgz, { headers: { "content-length": String(tgz.length) } });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("issue-31864-bare-update-" + linker, {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "my-url-pkg": `http://127.0.0.1:${server.port}/my-url-pkg.tgz` },
+      }),
+      "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+    });
+    const installedIndex = join(String(dir), "node_modules", "my-url-pkg", "index.js");
+    const spawnOpts = {
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe" as const,
+      stderr: "pipe" as const,
+    };
+
+    {
+      await using proc = spawn({ cmd: [bunExe(), "install"], ...spawnOpts });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    expect(await file(installedIndex).text()).toBe('module.exports = "VERSION_ONE";\n');
+
+    served = v2;
+    tarballRequests.length = 0;
+    {
+      await using proc = spawn({ cmd: [bunExe(), "update"], ...spawnOpts });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout + stderr).not.toContain("Integrity check failed");
+      expect(exitCode).toBe(0);
+    }
+    expect(tarballRequests).toEqual(["v2"]);
+    expect(await file(installedIndex).text()).toBe('module.exports = "VERSION_TWO";\n');
+    const lockContent = await file(join(String(dir), "bun.lock")).text();
+    expect(lockContent).toContain(v2.integrity);
+    expect(lockContent).not.toContain(v1.integrity);
+
+    // A plain install afterwards is a no-op against the refreshed pin.
+    tarballRequests.length = 0;
+    {
+      await using proc = spawn({ cmd: [bunExe(), "install", "--frozen-lockfile"], ...spawnOpts });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stdout + stderr).not.toContain("Integrity check failed");
+      expect(exitCode).toBe(0);
+    }
+    expect(tarballRequests).toEqual([]);
+  });
+
   it.each(["--frozen-lockfile", "--no-save"])("does not refresh under %s", async flag => {
     // A run that does not save the lockfile cannot record a new hash, so a
     // refresh would leave node_modules holding bytes the lockfile does not

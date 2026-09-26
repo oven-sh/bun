@@ -574,15 +574,8 @@ pub(crate) fn register_moved(
                 continue;
             }
         }
-        let mut tag_buf =
-            vec![0u8; current.tag.pre.len() + current.tag.build.len()].into_boxed_slice();
-        let original = current.clone_into(buf, &mut tag_buf, &mut 0);
-        *entry.value_ptr = PackageUpdateInfo {
-            original_version_literal: Box::default(),
-            written_back: false,
-            original_version_string_buf: tag_buf,
-            original_version: Some(original),
-        };
+        *entry.value_ptr = PackageUpdateInfo::default();
+        entry.value_ptr.set_original_version(current, buf);
     }
     Ok(())
 }

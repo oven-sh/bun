@@ -432,6 +432,41 @@ it("Database.open", () => {
   new Database().close();
 });
 
+it("Database.open rejects contradictory open modes", () => {
+  using dir = tempDir("sqlite-open-modes", {});
+  const file = path.join(String(dir), "db.sqlite");
+  {
+    using db = new Database(file);
+    db.run("CREATE TABLE t (a)");
+  }
+
+  for (const options of [
+    { readonly: true, create: true },
+    { create: true, readonly: true },
+  ]) {
+    expect(() => new Database(file, options)).toThrow(
+      'The "readonly" and "create" options cannot be used together. SQLite cannot create a database in read-only mode.',
+    );
+  }
+  expect(() => new Database(file, { readonly: true, readwrite: true })).toThrow(
+    'The "readonly" and "readwrite" options cannot be used together.',
+  );
+  expect(() => new Database(file, { readwrite: false, create: true })).toThrow(
+    'The "create" option requires "readwrite". SQLite cannot create a database in read-only mode.',
+  );
+
+  // The non-contradictory forms keep their meaning.
+  {
+    using db = new Database(file, { readonly: true, create: false });
+    expect(() => db.run("INSERT INTO t VALUES (1)")).toThrow("attempt to write a readonly database");
+  }
+  {
+    using db = new Database(file, { readwrite: true, create: true });
+    db.run("INSERT INTO t VALUES (1)");
+    expect(db.query("SELECT COUNT(*) AS n FROM t").get()).toEqual({ n: 1 });
+  }
+});
+
 it("upsert cross-process, see #1366", () => {
   const dir = realpathSync(tmpdir()) + "/";
   const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/sqlite-cross-process.js"], {

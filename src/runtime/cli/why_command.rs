@@ -278,16 +278,16 @@ impl WhyCommand {
             "Explain why a package is installed\n\
 \n\
 <b>Arguments:<r>\n\
-  <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>\n\
+\x20 <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>\n\
 \n\
 <b>Options:<r>\n\
-  <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>\n\
-  <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>\n\
+\x20 <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>\n\
+\x20 <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>\n\
 \n\
 <b>Examples:<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>react<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>\n\
-  <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>\n\
+\x20 <d>$<r> <b><green>bun why<r> <blue>react<r>\n\
+\x20 <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>\n\
+\x20 <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>\n\
 "
         );
         Output::flush();

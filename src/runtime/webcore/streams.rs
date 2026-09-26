@@ -2587,6 +2587,45 @@ impl NetworkSink {
         });
     }
 
+    /// `writer().end(error)`: the caller's source failed, so the upload is
+    /// aborted as in `fail_from_js_pump`. The returned promise and a pending
+    /// `flush()` reject with `error`. The caller already has that error, so
+    /// both rejections are marked handled: an `end(error)` or a `flush()`
+    /// that nobody awaits must not end the process.
+    ///
+    /// `error` is not stored on the sink. It can reference the writer, and a
+    /// `Strong` to it that nothing clears would keep both alive.
+    ///
+    /// Raw `*mut Self` for the same reason as `fail_from_js_pump`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn end_with_error_from_js(
+        this: *mut Self,
+        cx: &bun_jsc::JsThread<'_>,
+        err: JSValue,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        // SAFETY: `this` is the live sink the JS wrapper holds; `end_from_js`
+        // does not re-enter it.
+        if unsafe { (*this).ended } {
+            // The outcome was decided by the earlier `end()` or failure.
+            return match unsafe { (*this).end_from_js(cx) } {
+                bun_sys::Result::Ok(value) => Ok(value),
+                bun_sys::Result::Err(e) => Err(e.throw(global)),
+            };
+        }
+        // Taken first, so that the failure callback of the upload does not
+        // reject it with the generic error that `fail()` is given.
+        // SAFETY: as above; the borrow ends before `fail_from_js_pump` re-enters.
+        let mut flush_promise = unsafe { (*this).flush_promise.take() };
+        Self::fail_from_js_pump(this, global, JSValue::ZERO);
+        if flush_promise.has_value() {
+            flush_promise.swap().reject_as_handled(global, err)?;
+        }
+        let promise = JSPromise::create(global);
+        promise.reject_as_handled(global, err)?;
+        Ok(promise.to_js())
+    }
+
     /// Native-path terminator called from `SinkHandle::end`. Unlike `end()`
     /// (clean EOF / commit), an upstream error on the ByteStream fast-path must
     /// abort the upload and surface the original JS error to the caller.
@@ -2689,6 +2728,7 @@ crate::impl_js_sink_abi!(NetworkSink, "NetworkSink");
 impl crate::webcore::sink::JsSinkType for NetworkSink {
     const NAME: &'static str = Self::NAME;
     const HAS_FLUSH_FROM_JS: bool = true;
+    const HAS_END_WITH_ERROR_FROM_JS: bool = true;
     const START_TAG: Option<StartTag> = Some(StartTag::NetworkSink);
 
     crate::impl_js_sink_forwarders!();
@@ -2711,6 +2751,13 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, cx)
+    }
+    unsafe fn end_with_error_from_js(
+        this: *mut Self,
+        cx: &bun_jsc::JsThread<'_>,
+        err: JSValue,
+    ) -> JsResult<JSValue> {
+        Self::end_with_error_from_js(this, cx, err)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)

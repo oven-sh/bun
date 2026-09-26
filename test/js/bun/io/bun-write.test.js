@@ -300,6 +300,82 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(fs.statSync(existing).size).toBe(100);
   });
 
+  // https://github.com/oven-sh/bun/issues/20462
+  describe("Bun.write(dest, Bun.file(src)) where dest is the same file as src", () => {
+    const content = Buffer.alloc(100_000, "0123456789").toString();
+
+    // Outside of tests, the Windows read/write loop only runs for pipes and devices.
+    it.skipIf(IS_UV_FS_COPYFILE_DISABLED).each([
+      ["the same path", ({ file }) => Bun.write(file, Bun.file(file))],
+      [
+        "one BunFile as both arguments",
+        ({ file }) => {
+          const bunFile = Bun.file(file);
+          return Bun.write(bunFile, bunFile);
+        },
+      ],
+      ["two BunFile objects", ({ file }) => Bun.write(Bun.file(file), Bun.file(file))],
+      ["BunFile.write()", ({ file }) => Bun.file(file).write(Bun.file(file))],
+      ["a symlink as the destination", ({ file, symlink }) => Bun.write(symlink, Bun.file(file))],
+      ["a symlink as the source", ({ file, symlink }) => Bun.write(file, Bun.file(symlink))],
+      ["a hard link as the destination", ({ file, hardlink }) => Bun.write(hardlink, Bun.file(file))],
+      ["a relative and an absolute path", ({ file }) => Bun.write(path.relative(process.cwd(), file), Bun.file(file))],
+      [
+        "an open fd as the source",
+        async ({ file }) => {
+          const fd = fs.openSync(file, "r");
+          try {
+            return await Bun.write(file, Bun.file(fd));
+          } finally {
+            fs.closeSync(fd);
+          }
+        },
+      ],
+      ["a slice of the file as the source", ({ file }) => Bun.write(file, Bun.file(file).slice(10, 20))],
+      ["a Response around the file as the source", ({ file }) => Bun.write(file, new Response(Bun.file(file)))],
+    ])("%s leaves the file intact", async (_, write) => {
+      using dir = tempDir("bun-write-same-file", { "file.txt": content });
+      const file = join(String(dir), "file.txt");
+      const symlink = join(String(dir), "symlink.txt");
+      const hardlink = join(String(dir), "hardlink.txt");
+      fs.symlinkSync(file, symlink);
+      fs.linkSync(file, hardlink);
+
+      const written = await write({ file, symlink, hardlink });
+      expect({ written, intact: fs.readFileSync(file, "utf8") === content }).toEqual({
+        written: content.length,
+        intact: true,
+      });
+    });
+
+    // Windows still cuts the file to the size the destination BunFile cached.
+    it.todoIf(isWindows)("a destination that cached its size before the file grew does not cut the file", async () => {
+      using dir = tempDir("bun-write-same-file-stale-size", { "file.txt": "0123456789" });
+      const file = join(String(dir), "file.txt");
+      const destination = Bun.file(file);
+      expect(destination.size).toBe(10);
+      fs.appendFileSync(file, "ABCDEFGHIJ");
+
+      const written = await Bun.write(destination, Bun.file(file));
+      expect({ written, content: fs.readFileSync(file, "utf8") }).toEqual({
+        written: 20,
+        content: "0123456789ABCDEFGHIJ",
+      });
+    });
+
+    it("a longer existing destination is still replaced", async () => {
+      using dir = tempDir("bun-write-shorter-source", { "src.txt": "short", "dest.txt": content });
+      const dest = join(String(dir), "dest.txt");
+      const written = await Bun.write(dest, Bun.file(join(String(dir), "src.txt")));
+      expect({ written, content: fs.readFileSync(dest, "utf8") }).toEqual({ written: 5, content: "short" });
+    });
+
+    it.skipIf(isWindows)("a destination path that is not a regular file is still written", async () => {
+      using dir = tempDir("bun-write-dev-null", { "src.txt": "short" });
+      expect(await Bun.write("/dev/null", Bun.file(join(String(dir), "src.txt")))).toBe(5);
+    });
+  });
+
   it("Bun.file", async () => {
     const file = path.join(import.meta.dir, "fetch.js.txt");
     await gcTick();

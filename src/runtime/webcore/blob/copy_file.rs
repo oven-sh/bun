@@ -740,6 +740,8 @@ impl CopyFile {
                                     // or if the output is not a directory
                                     // or if it's a network volume
                                     self.system_error = None;
+                                    // The path can name another file by the time it is opened.
+                                    stat_ = None;
                                 }
                             }
                         }
@@ -795,6 +797,37 @@ impl CopyFile {
                 self.system_error = Some(unsupported_directory_error());
                 self.do_close();
                 return;
+            }
+
+            // No O_TRUNC at open: it would empty a destination that is also the source.
+            if matches!(
+                self.destination_file_store.pathlike,
+                PathOrFileDescriptor::Path(_)
+            ) {
+                let dest_stat = match bun_sys::fstat(self.destination_fd) {
+                    bun_sys::Result::Ok(result) => result,
+                    bun_sys::Result::Err(err) => {
+                        self.system_error = Some(err.to_system_error());
+                        self.do_close();
+                        return;
+                    }
+                };
+                if bun_sys::S::ISREG(dest_stat.st_mode as _) {
+                    if dest_stat.st_dev == stat.st_dev && dest_stat.st_ino == stat.st_ino {
+                        // `max_length` may be a stale cached size: never cut the file here.
+                        self.read_len = SizeType::try_from(dest_stat.st_size).expect("int cast");
+                        self.do_close();
+                        return;
+                    }
+                    if dest_stat.st_size != 0
+                        && let bun_sys::Result::Err(err) =
+                            bun_sys::ftruncate(self.destination_fd, 0)
+                    {
+                        self.system_error = Some(err.to_system_error());
+                        self.do_close();
+                        return;
+                    }
+                }
             }
 
             // BSD fstat on a pipe reports bytes currently buffered in st_size;
@@ -879,7 +912,7 @@ impl CopyFile {
             #[cfg(target_os = "macos")]
             {
                 // fcopyfile rewrites dest from offset 0 and the slice trim is
-                // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
+                // ftruncate; both are only safe for a dest Bun opened and emptied.
                 if matches!(
                     self.destination_file_store.pathlike,
                     PathOrFileDescriptor::Path(_)
@@ -1041,8 +1074,7 @@ const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "a
 const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
 
 #[cfg(not(windows))]
-const OPEN_DESTINATION_FLAGS: i32 =
-    bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC;
+const OPEN_DESTINATION_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
 #[cfg(not(windows))]
 const OPEN_SOURCE_FLAGS: i32 = bun_sys::O::CLOEXEC | bun_sys::O::RDONLY;
 

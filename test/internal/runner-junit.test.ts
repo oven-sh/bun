@@ -4,10 +4,13 @@
  * failed (to re-run them alone), what to print per file and what to put in the flaky
  * annotation. parseJunitFileSuites() in scripts/buildkite.ts is that parsing step.
  */
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import * as os from "node:os";
 import { join } from "node:path";
-import { parseJunitFileSuites } from "../../scripts/buildkite.ts";
+import { pathToFileURL } from "node:url";
+import { getUser, parseJunitFileSuites } from "../../scripts/buildkite.ts";
 
 const parse = (xml: string) => Object.fromEntries(parseJunitFileSuites(xml));
 
@@ -156,3 +159,118 @@ test("parseJunitFileSuites reads the report bun test --parallel --reporter=junit
   });
   expect(exitCode).toBe(1);
 });
+
+// The runner sets USER and HOME of every `bun test` it spawns from getUser(). It used to call
+// os.userInfo() per test file, and on a macOS agent whose host had begun to shut down that call threw
+// `uv_os_get_passwd returned ENOENT`, which ended the shard with exit 1 under the name of the next test.
+const userInfoFailure = "A system error occurred: uv_os_get_passwd returned ENOENT (no such file or directory)";
+
+test("getUser() looks the user up once", () => {
+  const real = { ...os };
+  const userInfo = mock(() => {
+    if (userInfo.mock.calls.length > 1) throw new Error(userInfoFailure);
+    return real.userInfo();
+  });
+  mock.module("node:os", () => ({ ...real, userInfo }));
+  try {
+    const user = getUser();
+    expect(user).toEqual(real.userInfo());
+    expect(getUser()).toBe(user);
+    expect(userInfo).toHaveBeenCalledTimes(1);
+  } finally {
+    mock.module("node:os", () => real);
+  }
+});
+
+// The runner only loads in a Node that has import.meta.main (scripts/agent.ts checks for it at import),
+// which is 24.2 or newer and so strips types as well. CI has one. Elsewhere `node` can be older or absent.
+const node = nodeExe();
+const nodeLoadsTheRunner = await (async () => {
+  if (!node) return false;
+  await using probe = Bun.spawn({
+    cmd: [node, "--input-type=module", "-e", "console.log(typeof import.meta.main)"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [stdout] = await Promise.all([probe.stdout.text(), probe.exited]);
+  return stdout.trim() === "boolean";
+})();
+
+// What the nightly cleanup of a bare macOS agent does to a shard that is in flight: files the runner
+// has listed are gone when their turn comes, and the user lookup fails. Neither may end the run. This
+// drives the runner itself, under node as CI does, on a copy in a scratch repository.
+test.skipIf(!nodeLoadsTheRunner)(
+  "the runner outlives a failing os.userInfo() and a listed node test file that vanished",
+  async () => {
+    const repo = join(import.meta.dir, "..", "..");
+    const copied = (path: string) => readFileSync(join(repo, path), "utf8");
+    using dir = tempDir("runner-host-shutdown", {
+      "package.json": JSON.stringify({ type: "module" }),
+      "bunfig.node-test.toml": "",
+      "scripts/runner.node.ts": copied("scripts/runner.node.ts"),
+      "scripts/buildkite.ts": copied("scripts/buildkite.ts"),
+      "scripts/agent.ts": copied("scripts/agent.ts"),
+      "test/docker/prestart-map.mjs": copied("test/docker/prestart-map.mjs"),
+      "test/leaksan.supp": copied("test/leaksan.supp"),
+      "test/vendor.json": "[]",
+      // Serial tests run before the files under parallel/, so the file is gone before the runner reads it.
+      "test/js/first.test.ts": `
+      import { expect, test } from "bun:test";
+      import { rmSync } from "node:fs";
+      import { join } from "node:path";
+      test("removes a test file the runner has listed", () => {
+        rmSync(join(import.meta.dir, "node", "test", "parallel", "test-gone.js"));
+        expect(process.env.USER || process.env.USERNAME).toBeString();
+      });
+    `,
+      "test/js/node/test/parallel/test-gone.js": `console.log("still here");`,
+      "test/js/node/test/parallel/test-kept.js": `console.log("kept");`,
+      "user-info-fails.mjs": `
+      import { syncBuiltinESMExports } from "node:module";
+      import os from "node:os";
+      const { userInfo } = os;
+      let calls = 0;
+      os.userInfo = (...args) => {
+        if (++calls > 1) throw new Error(${JSON.stringify(userInfoFailure)});
+        return userInfo(...args);
+      };
+      syncBuiltinESMExports();
+    `,
+    });
+
+    await using runner = Bun.spawn({
+      cmd: [
+        node!,
+        `--import=${pathToFileURL(join(String(dir), "user-info-fails.mjs"))}`,
+        join("scripts", "runner.node.ts"),
+        `--exec-path=${bunExe()}`,
+        "--retries=0",
+        "--results-json=results.json",
+        "--quiet",
+      ],
+      // Not as a CI job: the copy must not annotate the build this test runs in.
+      env: { ...bunEnv, CI: undefined, BUILDKITE: undefined, GITHUB_ACTIONS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([runner.stdout.text(), runner.stderr.text(), runner.exited]);
+
+    // The runner writes results.json at the end of a run. Without it, show what the runner printed.
+    const results = Bun.file(join(String(dir), "results.json"));
+    const summary = (await results.exists())
+      ? ((await results.json()) as { testPath: string; ok: boolean }[]).map(({ testPath, ok }) => ({
+          testPath: testPath.replaceAll("\\", "/"),
+          ok,
+        }))
+      : { stdout, stderr };
+    expect(summary).toEqual([
+      { testPath: "test/js/first.test.ts", ok: true },
+      { testPath: "test/js/node/test/parallel/test-kept.js", ok: true },
+      { testPath: "test/js/node/test/parallel/test-gone.js", ok: false },
+    ]);
+    // A failed test, not a crashed runner.
+    expect(exitCode).toBe(1);
+  },
+);

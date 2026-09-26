@@ -238,7 +238,10 @@ pub(crate) fn faccessat(dir: Fd, path: &ZStr, mode: i32) -> Result<(), i32> {
 /// as `write_bytes<stat>` — the 144-byte memset behind `zeroed()` — plus the
 /// move chain, on a path that runs once per installed file.)
 #[inline(always)]
-#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(bun_portable)))]
+#[cfg(all(
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+    not(bun_portable)
+))]
 fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
     const _: () = assert!(
         core::mem::size_of::<rustix::fs::Stat>() == core::mem::size_of::<libc::stat>()
@@ -261,7 +264,8 @@ fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
 #[inline]
 #[cfg(bun_portable)]
 fn stat_to_libc(s: rustix::fs::Stat) -> Stat {
-    const _: () = assert!(core::mem::size_of::<rustix::fs::Stat>() == core::mem::size_of::<libc::stat>());
+    const _: () =
+        assert!(core::mem::size_of::<rustix::fs::Stat>() == core::mem::size_of::<libc::stat>());
     // SAFETY: the same structure under two names; every bit pattern is a value of it.
     Stat::from(unsafe { core::mem::transmute::<rustix::fs::Stat, libc::stat>(s) })
 }

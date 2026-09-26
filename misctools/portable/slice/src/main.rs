@@ -596,8 +596,9 @@ unsafe extern "C" {
 }
 
 fn usage() -> c_int {
-    let _ = File::borrow(&Fd::stderr())
-        .write_all(b"usage: bun_fs_slice <directory> | --imports | --layout | --layout-darwin | --abi\n");
+    let _ = File::borrow(&Fd::stderr()).write_all(
+        b"usage: bun_fs_slice <directory> | --imports | --layout | --layout-darwin | --abi\n",
+    );
     2
 }
 

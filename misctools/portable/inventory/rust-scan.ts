@@ -294,7 +294,25 @@ export type Site = {
   item: string;
   /** The other attributes of the item, as text: `cfg_attr(bun_portable, bun_portable_macros::host_os(..))`. */
   attributes: string[];
-  kind: "attribute" | "inner" | "cfg!" | "host_select" | "host_const" | "host_os";
+  kind: "attribute" | "inner" | "cfg!" | "host_select" | "host_libc";
+  /** An arm of `host_select!` or `host_only!`: whether the portable image has it, and for which hosts. */
+  inImage?: "macos" | "windows" | "others" | "no";
+};
+
+/** The arms of bun_core::host_select! and host_only!: the `cfg` each stands for in a build for one OS,
+    and the hosts that the portable image runs it on. */
+const arms: Record<string, { cfg: string; inImage: NonNullable<Site["inImage"]> }> = {
+  windows: { cfg: "windows", inImage: "windows" },
+  posix: { cfg: "not(windows)", inImage: "others" },
+  unix: { cfg: "unix", inImage: "others" },
+  linux: { cfg: 'any(target_os = "linux", target_os = "android")', inImage: "others" },
+  not_linux: { cfg: 'not(any(target_os = "linux", target_os = "android"))', inImage: "macos" },
+  macos: { cfg: 'target_os = "macos"', inImage: "macos" },
+  not_macos: { cfg: 'not(target_os = "macos")', inImage: "others" },
+  freebsd: { cfg: 'target_os = "freebsd"', inImage: "no" },
+  not_macos_not_linux: { cfg: 'not(any(target_os = "macos", target_os = "linux", target_os = "android"))', inImage: "no" },
+  macos_freebsd: { cfg: 'any(target_os = "macos", target_os = "freebsd")', inImage: "macos" },
+  not_macos_not_freebsd: { cfg: 'not(any(target_os = "macos", target_os = "freebsd"))', inImage: "others" },
 };
 
 const text = (list: Token[], from: number, to: number) => {
@@ -462,6 +480,33 @@ export function sites(list: Token[]): Site[] {
         out.push({ attributeStart: i, start: i, end: close, line: t.line, endLine: list[close].line, predicate, written: show(predicate), item: "cfg!", attributes: [], kind: "cfg!" });
       } catch {}
       i = close;
+      continue;
+    }
+    // `host_select! { arm => { .. } .. }`, `host_only! { arm => { .. } }`, `host_libc!(..)`
+    if (t.kind === "ident" && (t.text === "host_select" || t.text === "host_only" || t.text === "host_libc") && list[i + 1]?.text === "!" && list[i + 2]?.kind === "open" && list[i - 1]?.text !== "macro_rules") {
+      const close = list[i + 2].partner!;
+      if (t.text === "host_libc") {
+        out.push({ attributeStart: i, start: i + 3, end: close - 1, line: t.line, endLine: list[close].line, predicate: { op: "true" }, written: "host_libc!", item: "expression", attributes: [], kind: "host_libc" });
+        continue;
+      }
+      for (let k = i + 3; k < close; k++) {
+        const name = list[k];
+        if (name.kind !== "ident") continue;
+        let at = k + 1;
+        let written = arms[name.text]?.cfg;
+        let inImage: Site["inImage"] = arms[name.text]?.inImage;
+        if (name.text === "cfg" && list[at]?.text === "(") {
+          written = show(parsePredicate(list.slice(at + 1, list[at].partner!)));
+          inImage = "no";
+          at = list[at].partner! + 1;
+        }
+        if (list[at]?.text !== "=>" || list[at + 1]?.text !== "{" || written === undefined) continue;
+        const end = list[at + 1].partner!;
+        const predicate = parsePredicate(tokens(written));
+        out.push({ attributeStart: k, start: at + 1, end, line: name.line, endLine: list[end].line, predicate, written, item: "block", attributes: [`${t.text}!`], kind: "host_select", inImage });
+        // The arms inside of the block are found when the loop gets there.
+        k = at + 1;
+      }
       continue;
     }
     if (t.text !== "#") continue;

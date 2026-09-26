@@ -15,7 +15,10 @@
 //! After a call the error number is the one of the image, in the numbers of the image
 //! (`host_imports::keep_errno`).
 
-pub use core::ffi::{c_char, c_double, c_float, c_int, c_long, c_longlong, c_short, c_uchar, c_uint, c_ulong, c_ulonglong, c_ushort, c_void};
+pub use core::ffi::{
+    c_char, c_double, c_float, c_int, c_long, c_longlong, c_short, c_uchar, c_uint, c_ulong,
+    c_ulonglong, c_ushort, c_void,
+};
 
 pub use crate::generated::constants_for_bun::*;
 pub use crate::generated::functions_for_bun::*;
@@ -39,7 +42,14 @@ pub unsafe fn open(path: *const c_char, oflag: c_int, mode: c_uint) -> c_int {
 #[inline]
 pub unsafe fn openat(dirfd: c_int, path: *const c_char, oflag: c_int, mode: c_uint) -> c_int {
     // SAFETY: the caller's contract.
-    unsafe { bound::openat(translate::directory(dirfd), path, translate::open_flags(oflag), mode as c_int) }
+    unsafe {
+        bound::openat(
+            translate::directory(dirfd),
+            path,
+            translate::open_flags(oflag),
+            mode as c_int,
+        )
+    }
 }
 
 /// The argument of a call of `fcntl`: an integer, or the address of what the command reads or fills.
@@ -99,7 +109,9 @@ impl<T> FcntlArgument for *const T {
 pub unsafe fn fcntl(fd: c_int, cmd: c_int, argument: impl FcntlArgument) -> c_int {
     let argument = argument.into_argument();
     let cmd = match cmd {
-        ::libc::F_DUPFD | ::libc::F_GETFD | ::libc::F_SETFD | ::libc::F_GETFL | ::libc::F_SETFL => cmd,
+        ::libc::F_DUPFD | ::libc::F_GETFD | ::libc::F_SETFD | ::libc::F_GETFL | ::libc::F_SETFL => {
+            cmd
+        }
         ::libc::F_DUPFD_CLOEXEC => macos::F_DUPFD_CLOEXEC,
         40..1024 => cmd,
         _ => {
@@ -124,9 +136,21 @@ pub unsafe fn fcntl(fd: c_int, cmd: c_int, argument: impl FcntlArgument) -> c_in
 ///
 /// As `fstatat` of macOS.
 #[inline]
-pub unsafe fn fstatat(dirfd: c_int, pathname: *const c_char, buf: *mut stat, flags: c_int) -> c_int {
+pub unsafe fn fstatat(
+    dirfd: c_int,
+    pathname: *const c_char,
+    buf: *mut stat,
+    flags: c_int,
+) -> c_int {
     // SAFETY: the caller's contract.
-    unsafe { bound::fstatat(translate::directory(dirfd), pathname, buf, translate::at_flags(flags)) }
+    unsafe {
+        bound::fstatat(
+            translate::directory(dirfd),
+            pathname,
+            buf,
+            translate::at_flags(flags),
+        )
+    }
 }
 
 /// # Safety
@@ -135,7 +159,14 @@ pub unsafe fn fstatat(dirfd: c_int, pathname: *const c_char, buf: *mut stat, fla
 #[inline]
 pub unsafe fn faccessat(dirfd: c_int, pathname: *const c_char, mode: c_int, flags: c_int) -> c_int {
     // SAFETY: the caller's contract.
-    unsafe { bound::faccessat(translate::directory(dirfd), pathname, mode, translate::access_flags(flags)) }
+    unsafe {
+        bound::faccessat(
+            translate::directory(dirfd),
+            pathname,
+            mode,
+            translate::access_flags(flags),
+        )
+    }
 }
 
 /// # Safety
@@ -144,7 +175,13 @@ pub unsafe fn faccessat(dirfd: c_int, pathname: *const c_char, mode: c_int, flag
 #[inline]
 pub unsafe fn unlinkat(dirfd: c_int, pathname: *const c_char, flags: c_int) -> c_int {
     // SAFETY: the caller's contract.
-    unsafe { bound::unlinkat(translate::directory(dirfd), pathname, translate::at_flags(flags)) }
+    unsafe {
+        bound::unlinkat(
+            translate::directory(dirfd),
+            pathname,
+            translate::at_flags(flags),
+        )
+    }
 }
 
 /// # Safety
@@ -160,25 +197,58 @@ pub unsafe fn mkdirat(dirfd: c_int, pathname: *const c_char, mode: mode_t) -> c_
 ///
 /// As `renameatx_np` of macOS.
 #[inline]
-pub unsafe fn renameatx_np(fromfd: c_int, from: *const c_char, tofd: c_int, to: *const c_char, flags: c_uint) -> c_int {
+pub unsafe fn renameatx_np(
+    fromfd: c_int,
+    from: *const c_char,
+    tofd: c_int,
+    to: *const c_char,
+    flags: c_uint,
+) -> c_int {
     // SAFETY: the caller's contract.
-    unsafe { bound::renameatx_np(translate::directory(fromfd), from, translate::directory(tofd), to, flags) }
+    unsafe {
+        bound::renameatx_np(
+            translate::directory(fromfd),
+            from,
+            translate::directory(tofd),
+            to,
+            flags,
+        )
+    }
 }
 
 /// # Safety
 ///
 /// As `clonefileat` of macOS.
 #[inline]
-pub unsafe fn clonefileat(src_dirfd: c_int, src: *const c_char, dst_dirfd: c_int, dst: *const c_char, flags: u32) -> c_int {
+pub unsafe fn clonefileat(
+    src_dirfd: c_int,
+    src: *const c_char,
+    dst_dirfd: c_int,
+    dst: *const c_char,
+    flags: u32,
+) -> c_int {
     // SAFETY: the caller's contract.
-    unsafe { bound::clonefileat(translate::directory(src_dirfd), src, translate::directory(dst_dirfd), dst, flags) }
+    unsafe {
+        bound::clonefileat(
+            translate::directory(src_dirfd),
+            src,
+            translate::directory(dst_dirfd),
+            dst,
+            flags,
+        )
+    }
 }
 
 /// # Safety
 ///
 /// As `fclonefileat` of macOS.
 #[inline]
-pub unsafe fn fclonefileat(srcfd: c_int, dst_dirfd: c_int, dst: *const c_char, flags: u32) -> c_int {
+pub unsafe fn fclonefileat(
+    srcfd: c_int,
+    dst_dirfd: c_int,
+    dst: *const c_char,
+    flags: u32,
+) -> c_int {
     // SAFETY: the caller's contract.
     unsafe { bound::fclonefileat(srcfd, translate::directory(dst_dirfd), dst, flags) }
 }
@@ -189,9 +259,23 @@ pub unsafe fn fclonefileat(srcfd: c_int, dst_dirfd: c_int, dst: *const c_char, f
 ///
 /// As `posix_spawn_file_actions_addopen` of macOS.
 #[inline]
-pub unsafe fn posix_spawn_file_actions_addopen(actions: *mut posix_spawn_file_actions_t, fd: c_int, path: *const c_char, oflag: c_int, mode: mode_t) -> c_int {
+pub unsafe fn posix_spawn_file_actions_addopen(
+    actions: *mut posix_spawn_file_actions_t,
+    fd: c_int,
+    path: *const c_char,
+    oflag: c_int,
+    mode: mode_t,
+) -> c_int {
     // SAFETY: the caller's contract.
-    crate::errno::to_image(unsafe { bound::posix_spawn_file_actions_addopen(actions, fd, path, translate::open_flags(oflag), mode) })
+    crate::errno::to_image(unsafe {
+        bound::posix_spawn_file_actions_addopen(
+            actions,
+            fd,
+            path,
+            translate::open_flags(oflag),
+            mode,
+        )
+    })
 }
 
 /// Where the error number is. In the image there is one, the one of the image's C library.

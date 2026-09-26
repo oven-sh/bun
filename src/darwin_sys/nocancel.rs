@@ -32,9 +32,23 @@ mod bound {
         #[link_name = "writev$NOCANCEL"]
         pub fn writev(fd: c_int, iov: *const iovec, iovcnt: c_int) -> isize;
         #[link_name = "recvfrom$NOCANCEL"]
-        pub fn recvfrom(fd: c_int, buf: *mut c_void, len: usize, flags: c_int, addr: *mut sockaddr, alen: *mut u32) -> isize;
+        pub fn recvfrom(
+            fd: c_int,
+            buf: *mut c_void,
+            len: usize,
+            flags: c_int,
+            addr: *mut sockaddr,
+            alen: *mut u32,
+        ) -> isize;
         #[link_name = "sendto$NOCANCEL"]
-        pub fn sendto(fd: c_int, buf: *const c_void, len: usize, flags: c_int, addr: *const sockaddr, alen: u32) -> isize;
+        pub fn sendto(
+            fd: c_int,
+            buf: *const c_void,
+            len: usize,
+            flags: c_int,
+            addr: *const sockaddr,
+            alen: u32,
+        ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub fn poll(fds: *mut pollfd, nfds: c_uint, timeout: c_int) -> c_int;
         #[link_name = "close$NOCANCEL"]
@@ -50,14 +64,28 @@ pub use bound::{close, pread, preadv, pwrite, pwritev, read, readv, write, write
 #[inline]
 pub unsafe fn openat(dirfd: c_int, path: *const c_char, flags: c_int, mode: c_uint) -> c_int {
     // SAFETY: the caller's contract.
-    unsafe { bound::openat(translate::directory(dirfd), path, translate::open_flags(flags), mode as c_int) }
+    unsafe {
+        bound::openat(
+            translate::directory(dirfd),
+            path,
+            translate::open_flags(flags),
+            mode as c_int,
+        )
+    }
 }
 
 /// # Safety
 ///
 /// `buf` is writable for `len` bytes, `addr` and `alen` are null or as `recvfrom` of macOS asks.
 #[inline]
-pub unsafe fn recvfrom(fd: c_int, buf: *mut c_void, len: usize, flags: c_int, addr: *mut sockaddr, alen: *mut u32) -> isize {
+pub unsafe fn recvfrom(
+    fd: c_int,
+    buf: *mut c_void,
+    len: usize,
+    flags: c_int,
+    addr: *mut sockaddr,
+    alen: *mut u32,
+) -> isize {
     // SAFETY: the caller's contract.
     unsafe { bound::recvfrom(fd, buf, len, translate::message_flags(flags), addr, alen) }
 }
@@ -66,7 +94,14 @@ pub unsafe fn recvfrom(fd: c_int, buf: *mut c_void, len: usize, flags: c_int, ad
 ///
 /// `buf` is readable for `len` bytes, `addr` is null or an address as macOS lays it out.
 #[inline]
-pub unsafe fn sendto(fd: c_int, buf: *const c_void, len: usize, flags: c_int, addr: *const sockaddr, alen: u32) -> isize {
+pub unsafe fn sendto(
+    fd: c_int,
+    buf: *const c_void,
+    len: usize,
+    flags: c_int,
+    addr: *const sockaddr,
+    alen: u32,
+) -> isize {
     // SAFETY: the caller's contract.
     unsafe { bound::sendto(fd, buf, len, translate::message_flags(flags), addr, alen) }
 }
@@ -79,7 +114,14 @@ pub unsafe fn sendto(fd: c_int, buf: *const c_void, len: usize, flags: c_int, ad
 /// `fds` points at `nfds` entries.
 pub unsafe fn poll(fds: *mut pollfd, nfds: c_uint, timeout: c_int) -> c_int {
     use crate::constants as macos;
-    const SAME: i16 = ::libc::POLLIN | ::libc::POLLPRI | ::libc::POLLOUT | ::libc::POLLERR | ::libc::POLLHUP | ::libc::POLLNVAL | ::libc::POLLRDNORM | ::libc::POLLRDBAND;
+    const SAME: i16 = ::libc::POLLIN
+        | ::libc::POLLPRI
+        | ::libc::POLLOUT
+        | ::libc::POLLERR
+        | ::libc::POLLHUP
+        | ::libc::POLLNVAL
+        | ::libc::POLLRDNORM
+        | ::libc::POLLRDBAND;
     const DIFFERENT: i16 = ::libc::POLLWRNORM | ::libc::POLLWRBAND;
     // SAFETY: the caller's contract.
     let entries = unsafe { core::slice::from_raw_parts_mut(fds, nfds as usize) };
@@ -106,8 +148,16 @@ pub unsafe fn poll(fds: *mut pollfd, nfds: c_uint, timeout: c_int) -> c_int {
     for (entry, asked) in entries.iter_mut().zip(asked.iter_mut()) {
         *asked = entry.events;
         entry.events = (*asked & SAME)
-            | if *asked & ::libc::POLLWRNORM != 0 { macos::POLLWRNORM } else { 0 }
-            | if *asked & ::libc::POLLWRBAND != 0 { macos::POLLWRBAND } else { 0 };
+            | if *asked & ::libc::POLLWRNORM != 0 {
+                macos::POLLWRNORM
+            } else {
+                0
+            }
+            | if *asked & ::libc::POLLWRBAND != 0 {
+                macos::POLLWRBAND
+            } else {
+                0
+            };
     }
     // SAFETY: the caller's contract.
     let ready = unsafe { bound::poll(entries.as_mut_ptr(), nfds, timeout) };
@@ -115,8 +165,16 @@ pub unsafe fn poll(fds: *mut pollfd, nfds: c_uint, timeout: c_int) -> c_int {
         let got = entry.revents;
         entry.events = *asked;
         entry.revents = (got & SAME)
-            | if got & macos::POLLWRNORM != 0 { *asked & (::libc::POLLWRNORM | ::libc::POLLOUT) } else { 0 }
-            | if got & macos::POLLWRBAND != 0 { ::libc::POLLWRBAND } else { 0 };
+            | if got & macos::POLLWRNORM != 0 {
+                *asked & (::libc::POLLWRNORM | ::libc::POLLOUT)
+            } else {
+                0
+            }
+            | if got & macos::POLLWRBAND != 0 {
+                ::libc::POLLWRBAND
+            } else {
+                0
+            };
     }
     if from_the_heap {
         // SAFETY: the memory of `calloc` above.

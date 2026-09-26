@@ -1,6 +1,6 @@
 {
  "about": "Inventory of bun's code for macOS for the portable image. Written by misctools/portable/inventory/macos.ts; see the head of that file for what the kinds mean.",
- "tree": "5f92f9441aec439a97232e4bbc1058489290917c",
+ "tree": "c1be38b82ac57ee125c9496ebea1474e3303a97c",
  "libc_crate": "0.2.186",
  "libc_of_the_image": "musl 1.2.5 with misctools/portable/libc/patch_musl.py",
  "host": "misctools/portable/host/host_posix.c",
@@ -57,13 +57,13 @@
   }
  ],
  "counts": {
-  "places_for_macos_only": 226,
-  "of_them_with_a_function_of_the_system": 50,
-  "of_them_compiled_into_the_image": 1,
-  "places_for_linux_only": 237,
-  "functions_of_shared_source": 142,
-  "of_them_not_answered_by_the_host": 8,
-  "k3": 82
+  "places_for_macos_only": 232,
+  "of_them_with_a_function_of_the_system": 52,
+  "of_them_compiled_into_the_image": 45,
+  "places_for_linux_only": 241,
+  "functions_of_shared_source": 140,
+  "of_them_not_answered_by_the_host": 6,
+  "k3": 104
  },
  "k1": {
   "functions": [
@@ -76,6 +76,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -89,6 +90,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -102,6 +104,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -115,6 +118,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -128,6 +132,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -141,6 +146,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -154,6 +160,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -167,6 +174,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -180,6 +188,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -193,6 +202,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -206,6 +216,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -219,6 +230,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -232,6 +244,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -245,6 +258,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -258,6 +272,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -271,6 +286,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -303,6 +319,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -311,9 +328,9 @@
     "name": "access",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:3051",
-     "src/sys/lib.rs:3103",
-     "src/sys/lib.rs:7427"
+     "src/sys/lib.rs:3080",
+     "src/sys/lib.rs:3132",
+     "src/sys/lib.rs:7488"
     ],
     "uses": 3,
     "requests": {
@@ -333,6 +350,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -346,6 +364,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -359,6 +378,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -372,6 +392,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -385,6 +406,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -398,6 +420,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -411,6 +434,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -419,11 +443,12 @@
     "name": "Bun__ramSize",
     "declared_by": "bun",
     "used_in": [
-     "src/bun_core/lib.rs:2932"
+     "src/bun_core/lib.rs:2936"
     ],
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -437,6 +462,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -450,6 +476,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -458,11 +485,12 @@
     "name": "Bun__StackCheck__getMaxStack",
     "declared_by": "bun",
     "used_in": [
-     "src/bun_core/util.rs:2214"
+     "src/bun_core/util.rs:2212"
     ],
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -471,11 +499,12 @@
     "name": "Bun__StackCheck__initialize",
     "declared_by": "bun",
     "used_in": [
-     "src/bun_core/util.rs:2212"
+     "src/bun_core/util.rs:2210"
     ],
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -489,6 +518,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -502,6 +532,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -515,6 +546,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -528,6 +560,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -541,6 +574,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -554,6 +588,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -567,6 +602,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -580,6 +616,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -593,6 +630,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -606,6 +644,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -619,6 +658,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -632,6 +672,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -645,6 +686,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -658,6 +700,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -671,6 +714,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -684,6 +728,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -697,6 +742,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -710,6 +756,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -723,6 +770,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -736,6 +784,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -749,6 +798,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -762,6 +812,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -775,6 +826,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -788,6 +840,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -796,7 +849,7 @@
     "name": "chdir",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:3198"
+     "src/sys/lib.rs:3233"
     ],
     "uses": 1,
     "requests": {
@@ -816,6 +869,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -824,7 +878,7 @@
     "name": "chmod",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2941"
+     "src/sys/lib.rs:2966"
     ],
     "uses": 1,
     "requests": {
@@ -844,6 +898,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -852,7 +907,7 @@
     "name": "chown",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:3007"
+     "src/sys/lib.rs:3036"
     ],
     "uses": 1,
     "requests": {
@@ -872,6 +927,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -880,7 +936,7 @@
     "name": "clock_gettime",
     "declared_by": "bun",
     "used_in": [
-     "src/bun_core/util.rs:2221",
+     "src/bun_core/util.rs:2219",
      "src/threading/ThreadPool.rs:1106"
     ],
     "uses": 2,
@@ -903,6 +959,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -911,7 +968,7 @@
     "name": "dlclose",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:6360"
+     "src/sys/lib.rs:6421"
     ],
     "uses": 1,
     "requests": {
@@ -927,6 +984,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "no request: the libc of the image does it",
     "not_answered": [],
     "notes": []
@@ -935,7 +993,7 @@
     "name": "dlopen",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:6386"
+     "src/sys/lib.rs:6447"
     ],
     "uses": 1,
     "requests": {
@@ -951,6 +1009,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "no request: the libc of the image does it",
     "not_answered": [],
     "notes": []
@@ -959,8 +1018,8 @@
     "name": "dlsym",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:5322",
-     "src/sys/lib.rs:6424"
+     "src/sys/lib.rs:5368",
+     "src/sys/lib.rs:6485"
     ],
     "uses": 2,
     "requests": {
@@ -976,6 +1035,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "no request: the libc of the image does it",
     "not_answered": [],
     "notes": []
@@ -984,7 +1044,7 @@
     "name": "dup2",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1703"
+     "src/sys/lib.rs:1727"
     ],
     "uses": 1,
     "requests": {
@@ -1007,6 +1067,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1015,11 +1076,12 @@
     "name": "errno_location",
     "declared_by": "bun",
     "used_in": [
-     "src/bun_core/lib.rs:2815"
+     "src/bun_core/lib.rs:2819"
     ],
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -1028,7 +1090,7 @@
     "name": "execve",
     "declared_by": "libc crate",
     "used_in": [
-     "src/bun_core/util.rs:4434"
+     "src/bun_core/util.rs:4432"
     ],
     "uses": 1,
     "requests": {
@@ -1048,6 +1110,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "does not answer",
     "not_answered": [
      "execve"
@@ -1098,6 +1161,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1106,7 +1170,7 @@
     "name": "fchdir",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1706"
+     "src/sys/lib.rs:1730"
     ],
     "uses": 1,
     "requests": {
@@ -1134,6 +1198,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1142,8 +1207,8 @@
     "name": "fchmod",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:5295",
-     "src/sys/lib.rs:1708"
+     "src/sys/lib.rs:5341",
+     "src/sys/lib.rs:1732"
     ],
     "uses": 2,
     "requests": {
@@ -1171,6 +1236,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1179,7 +1245,7 @@
     "name": "fchmodat",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2952"
+     "src/sys/lib.rs:2977"
     ],
     "uses": 1,
     "requests": {
@@ -1225,6 +1291,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1233,7 +1300,7 @@
     "name": "fchown",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1709"
+     "src/sys/lib.rs:1733"
     ],
     "uses": 1,
     "requests": {
@@ -1261,6 +1328,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1269,7 +1337,7 @@
     "name": "fcntl",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:3163"
+     "src/sys/lib.rs:3198"
     ],
     "uses": 1,
     "requests": {
@@ -1315,6 +1383,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 1,
     "host": "answers in part",
     "not_answered": [],
     "notes": [
@@ -1325,7 +1394,7 @@
     "name": "fsync",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1705"
+     "src/sys/lib.rs:1729"
     ],
     "uses": 1,
     "requests": {
@@ -1345,6 +1414,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1353,7 +1423,7 @@
     "name": "ftruncate",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1710"
+     "src/sys/lib.rs:1734"
     ],
     "uses": 1,
     "requests": {
@@ -1373,6 +1443,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1381,7 +1452,7 @@
     "name": "futimens",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:3066"
+     "src/sys/lib.rs:3095"
     ],
     "uses": 1,
     "requests": {
@@ -1407,19 +1478,20 @@
      }
     },
     "commands_of_bun": [],
-    "host": "does not answer",
-    "not_answered": [
-     "futimesat",
-     "utimes"
-    ],
-    "notes": []
+    "through_host_libc": 0,
+    "host": "answers in part",
+    "not_answered": [],
+    "notes": [
+     "futimesat: asked only after the host refused the request that it answers",
+     "utimes: asked only after the host refused the request that it answers"
+    ]
    },
    {
     "name": "getcwd",
     "declared_by": "libc crate",
     "used_in": [
-     "src/bun_core/util.rs:4120",
-     "src/sys/lib.rs:2811"
+     "src/bun_core/util.rs:4118",
+     "src/sys/lib.rs:2836"
     ],
     "uses": 2,
     "requests": {
@@ -1439,6 +1511,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1463,20 +1536,8 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "no request: the libc of the image does it",
-    "not_answered": [],
-    "notes": []
-   },
-   {
-    "name": "GetFinalPathNameByHandleW",
-    "declared_by": "bun",
-    "used_in": [
-     "src/bun_core/util.rs:1371"
-    ],
-    "uses": 1,
-    "requests": {},
-    "commands_of_bun": [],
-    "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
    },
@@ -1484,7 +1545,7 @@
     "name": "getgid",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:5303"
+     "src/sys/lib.rs:5349"
     ],
     "uses": 1,
     "requests": {
@@ -1504,6 +1565,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1512,7 +1574,7 @@
     "name": "gethostname",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:8238"
+     "src/sys/lib.rs:8300"
     ],
     "uses": 1,
     "requests": {
@@ -1536,6 +1598,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1544,11 +1607,12 @@
     "name": "getPeakRSS",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:5180"
+     "src/sys/lib.rs:5226"
     ],
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -1577,6 +1641,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "does not answer",
     "not_answered": [
      "getpgid"
@@ -1608,6 +1673,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1637,6 +1703,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1645,7 +1712,7 @@
     "name": "getrlimit",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1756"
+     "src/sys/lib.rs:1780"
     ],
     "uses": 1,
     "requests": {
@@ -1667,6 +1734,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1675,11 +1743,12 @@
     "name": "getRSS",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:5179"
+     "src/sys/lib.rs:5225"
     ],
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -1688,7 +1757,7 @@
     "name": "getuid",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:5302"
+     "src/sys/lib.rs:5348"
     ],
     "uses": 1,
     "requests": {
@@ -1708,6 +1777,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1732,6 +1802,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "no request: the libc of the image does it",
     "not_answered": [],
     "notes": []
@@ -1740,7 +1811,7 @@
     "name": "ioctl",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:9720"
+     "src/sys/lib.rs:9782"
     ],
     "uses": 1,
     "requests": {
@@ -1762,6 +1833,7 @@
     "commands_of_bun": [
      "TIOCGWINSZ"
     ],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1770,11 +1842,12 @@
     "name": "is_executable_file",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:3125"
+     "src/sys/lib.rs:3154"
     ],
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -1783,7 +1856,7 @@
     "name": "isatty",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1704",
+     "src/sys/lib.rs:1728",
      "src/spawn/process.rs:2965"
     ],
     "uses": 2,
@@ -1808,6 +1881,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1838,6 +1912,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1846,7 +1921,7 @@
     "name": "lchown",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:3016"
+     "src/sys/lib.rs:3045"
     ],
     "uses": 1,
     "requests": {
@@ -1866,6 +1941,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1874,7 +1950,7 @@
     "name": "linkat",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2828"
+     "src/sys/lib.rs:2853"
     ],
     "uses": 1,
     "requests": {
@@ -1894,6 +1970,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1902,7 +1979,7 @@
     "name": "lseek",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1711"
+     "src/sys/lib.rs:1735"
     ],
     "uses": 1,
     "requests": {
@@ -1922,6 +1999,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1935,6 +2013,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -1943,7 +2022,7 @@
     "name": "mkdir",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2569"
+     "src/sys/lib.rs:2592"
     ],
     "uses": 1,
     "requests": {
@@ -1963,6 +2042,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1971,7 +2051,7 @@
     "name": "mkdirat",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2581"
+     "src/sys/lib.rs:2604"
     ],
     "uses": 1,
     "requests": {
@@ -1991,6 +2071,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -1999,7 +2080,7 @@
     "name": "mmap",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:3490"
+     "src/sys/lib.rs:3533"
     ],
     "uses": 1,
     "requests": {
@@ -2019,6 +2100,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2047,6 +2129,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "does not answer",
     "not_answered": [
      "msync"
@@ -2057,7 +2140,7 @@
     "name": "munmap",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:3499"
+     "src/sys/lib.rs:3542"
     ],
     "uses": 1,
     "requests": {
@@ -2077,6 +2160,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2085,7 +2169,7 @@
     "name": "nanosleep",
     "declared_by": "bun",
     "used_in": [
-     "src/bun_core/util.rs:4324"
+     "src/bun_core/util.rs:4322"
     ],
     "uses": 1,
     "requests": {
@@ -2111,20 +2195,8 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
-    "not_answered": [],
-    "notes": []
-   },
-   {
-    "name": "NtClose",
-    "declared_by": "bun",
-    "used_in": [
-     "src/sys/fd.rs:177"
-    ],
-    "uses": 1,
-    "requests": {},
-    "commands_of_bun": [],
-    "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
    },
@@ -2132,11 +2204,12 @@
     "name": "on_before_reload_process_posix",
     "declared_by": "bun",
     "used_in": [
-     "src/bun_core/util.rs:4404"
+     "src/bun_core/util.rs:4402"
     ],
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -2145,7 +2218,7 @@
     "name": "pipe",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1735"
+     "src/sys/lib.rs:1759"
     ],
     "uses": 1,
     "requests": {
@@ -2165,6 +2238,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2173,8 +2247,8 @@
     "name": "poll",
     "declared_by": "libc crate",
     "used_in": [
-     "src/bun_core/util.rs:2600",
-     "src/bun_core/util.rs:2639",
+     "src/bun_core/util.rs:2598",
+     "src/bun_core/util.rs:2637",
      "src/spawn/process.rs:3336"
     ],
     "uses": 3,
@@ -2195,6 +2269,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2203,11 +2278,12 @@
     "name": "posix_spawn_bun",
     "declared_by": "bun",
     "used_in": [
-     "src/bun_core/util.rs:4586"
+     "src/bun_core/util.rs:4584"
     ],
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -2216,7 +2292,7 @@
     "name": "powf",
     "declared_by": "bun",
     "used_in": [
-     "src/bun_core/lib.rs:335"
+     "src/bun_core/lib.rs:339"
     ],
     "uses": 1,
     "requests": {
@@ -2232,6 +2308,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "no request: the libc of the image does it",
     "not_answered": [],
     "notes": []
@@ -2240,7 +2317,7 @@
     "name": "pthread_exit",
     "declared_by": "bun",
     "used_in": [
-     "src/bun_core/util.rs:4290"
+     "src/bun_core/util.rs:4288"
     ],
     "uses": 1,
     "requests": {
@@ -2332,6 +2409,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "does not answer",
     "not_answered": [
      "membarrier",
@@ -2365,6 +2443,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2373,7 +2452,7 @@
     "name": "readlink",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2748"
+     "src/sys/lib.rs:2773"
     ],
     "uses": 1,
     "requests": {
@@ -2393,6 +2472,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2401,7 +2481,7 @@
     "name": "readlinkat",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2919"
+     "src/sys/lib.rs:2944"
     ],
     "uses": 1,
     "requests": {
@@ -2421,6 +2501,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2429,7 +2510,7 @@
     "name": "rename",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2625"
+     "src/sys/lib.rs:2648"
     ],
     "uses": 1,
     "requests": {
@@ -2450,6 +2531,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2458,7 +2540,7 @@
     "name": "renameat",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2638"
+     "src/sys/lib.rs:2661"
     ],
     "uses": 1,
     "requests": {
@@ -2478,6 +2560,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2502,6 +2585,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "no request: the libc of the image does it",
     "not_answered": [],
     "notes": []
@@ -2510,7 +2594,7 @@
     "name": "setrlimit",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1757"
+     "src/sys/lib.rs:1781"
     ],
     "uses": 1,
     "requests": {
@@ -2532,6 +2616,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2542,7 +2627,7 @@
     "used_in": [
      "src/bun_core/Global.rs:759",
      "src/bun_core/Global.rs:791",
-     "src/sys/lib.rs:8342",
+     "src/sys/lib.rs:8404",
      "src/spawn/ctrl_c.rs:32",
      "src/spawn/ctrl_c.rs:52"
     ],
@@ -2566,6 +2651,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2590,6 +2676,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "no request: the libc of the image does it",
     "not_answered": [],
     "notes": []
@@ -2618,6 +2705,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "no request: the libc of the image does it",
     "not_answered": [],
     "notes": []
@@ -2647,6 +2735,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2655,7 +2744,7 @@
     "name": "socketpair",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1736"
+     "src/sys/lib.rs:1760"
     ],
     "uses": 1,
     "requests": {
@@ -2683,6 +2772,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "does not answer",
     "not_answered": [
      "socketpair"
@@ -2696,9 +2786,9 @@
      "src/bun_core/util.rs:210",
      "src/bun_core/util.rs:335",
      "src/bun_core/util.rs:375",
-     "src/bun_core/util.rs:4127",
-     "src/sys/lib.rs:2816",
-     "src/sys/lib.rs:3152"
+     "src/bun_core/util.rs:4125",
+     "src/sys/lib.rs:2841",
+     "src/sys/lib.rs:3187"
     ],
     "uses": 6,
     "requests": {
@@ -2714,6 +2804,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "no request: the libc of the image does it",
     "not_answered": [],
     "notes": []
@@ -2722,7 +2813,7 @@
     "name": "strncasecmp",
     "declared_by": "libc crate",
     "used_in": [
-     "src/bun_core/lib.rs:1349"
+     "src/bun_core/lib.rs:1353"
     ],
     "uses": 1,
     "requests": {
@@ -2738,6 +2829,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "no request: the libc of the image does it",
     "not_answered": [],
     "notes": []
@@ -2746,7 +2838,7 @@
     "name": "symlink",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2738"
+     "src/sys/lib.rs:2763"
     ],
     "uses": 1,
     "requests": {
@@ -2766,6 +2858,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2774,7 +2867,7 @@
     "name": "symlinkat",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2906"
+     "src/sys/lib.rs:2931"
     ],
     "uses": 1,
     "requests": {
@@ -2794,6 +2887,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -2802,7 +2896,7 @@
     "name": "tcgetattr",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1752"
+     "src/sys/lib.rs:1776"
     ],
     "uses": 1,
     "requests": {
@@ -2836,6 +2930,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers in part",
     "not_answered": [],
     "notes": [
@@ -2880,6 +2975,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers in part",
     "not_answered": [],
     "notes": [
@@ -2890,7 +2986,7 @@
     "name": "tcsetattr",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1746"
+     "src/sys/lib.rs:1770"
     ],
     "uses": 1,
     "requests": {
@@ -2924,6 +3020,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers in part",
     "not_answered": [],
     "notes": [
@@ -2968,6 +3065,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers in part",
     "not_answered": [],
     "notes": [
@@ -2978,7 +3076,7 @@
     "name": "umask",
     "declared_by": "bun",
     "used_in": [
-     "src/sys/lib.rs:1707"
+     "src/sys/lib.rs:1731"
     ],
     "uses": 1,
     "requests": {
@@ -2998,6 +3096,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -3006,7 +3105,7 @@
     "name": "uname",
     "declared_by": "libc crate",
     "used_in": [
-     "src/bun_core/lib.rs:2501"
+     "src/bun_core/lib.rs:2505"
     ],
     "uses": 1,
     "requests": {
@@ -3026,6 +3125,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -3034,7 +3134,7 @@
     "name": "unlink",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2619"
+     "src/sys/lib.rs:2642"
     ],
     "uses": 1,
     "requests": {
@@ -3054,6 +3154,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -3062,9 +3163,9 @@
     "name": "unlinkat",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:2722",
-     "src/sys/lib.rs:8043",
-     "src/sys/lib.rs:9279"
+     "src/sys/lib.rs:2747",
+     "src/sys/lib.rs:8105",
+     "src/sys/lib.rs:9341"
     ],
     "uses": 3,
     "requests": {
@@ -3084,6 +3185,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "answers",
     "not_answered": [],
     "notes": []
@@ -3092,8 +3194,8 @@
     "name": "utimensat",
     "declared_by": "libc crate",
     "used_in": [
-     "src/sys/lib.rs:3076",
-     "src/sys/lib.rs:3088"
+     "src/sys/lib.rs:3105",
+     "src/sys/lib.rs:3117"
     ],
     "uses": 2,
     "requests": {
@@ -3115,18 +3217,19 @@
      }
     },
     "commands_of_bun": [],
-    "host": "does not answer",
-    "not_answered": [
-     "futimesat",
-     "utimes"
-    ],
-    "notes": []
+    "through_host_libc": 0,
+    "host": "answers in part",
+    "not_answered": [],
+    "notes": [
+     "futimesat: asked only after the host refused the request that it answers",
+     "utimes: asked only after the host refused the request that it answers"
+    ]
    },
    {
     "name": "waitpid",
     "declared_by": "libc crate",
     "used_in": [
-     "src/bun_core/util.rs:4791"
+     "src/bun_core/util.rs:4789"
     ],
     "uses": 1,
     "requests": {
@@ -3146,6 +3249,7 @@
      }
     },
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "does not answer",
     "not_answered": [
      "wait4"
@@ -3156,12 +3260,13 @@
     "name": "WEXITSTATUS",
     "declared_by": "libc crate",
     "used_in": [
-     "src/bun_core/util.rs:4802",
+     "src/bun_core/util.rs:4800",
      "src/spawn/process.rs:782"
     ],
     "uses": 2,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -3170,12 +3275,13 @@
     "name": "WIFEXITED",
     "declared_by": "libc crate",
     "used_in": [
-     "src/bun_core/util.rs:4801",
+     "src/bun_core/util.rs:4799",
      "src/spawn/process.rs:781"
     ],
     "uses": 2,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -3189,6 +3295,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -3202,6 +3309,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -3215,6 +3323,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -3228,6 +3337,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -3241,6 +3351,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -3249,11 +3360,12 @@
     "name": "WTF__numberOfProcessorCores",
     "declared_by": "bun",
     "used_in": [
-     "src/bun_core/util.rs:2847"
+     "src/bun_core/util.rs:2845"
     ],
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -3267,6 +3379,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -3280,6 +3393,7 @@
     "uses": 1,
     "requests": {},
     "commands_of_bun": [],
+    "through_host_libc": 0,
     "host": "not a function of the system: bun or a library of the image",
     "not_answered": [],
     "notes": []
@@ -3290,14 +3404,6 @@
     "name": "execve",
     "requests": [
      "execve"
-    ],
-    "uses": 1
-   },
-   {
-    "name": "futimens",
-    "requests": [
-     "futimesat",
-     "utimes"
     ],
     "uses": 1
    },
@@ -3331,14 +3437,6 @@
     "uses": 1
    },
    {
-    "name": "utimensat",
-    "requests": [
-     "futimesat",
-     "utimes"
-    ],
-    "uses": 2
-   },
-   {
     "name": "waitpid",
     "requests": [
      "wait4"
@@ -3351,6 +3449,13 @@
     "name": "fcntl",
     "notes": [
      "fcntl: only F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD, F_DUPFD_CLOEXEC, F_GETLK, F_SETLK, F_SETLKW; the commands of bun are not constants at the call"
+    ]
+   },
+   {
+    "name": "futimens",
+    "notes": [
+     "futimesat: asked only after the host refused the request that it answers",
+     "utimes: asked only after the host refused the request that it answers"
     ]
    },
    {
@@ -3376,6 +3481,13 @@
     "notes": [
      "ioctl: not TIOCSPGRP"
     ]
+   },
+   {
+    "name": "utimensat",
+    "notes": [
+     "futimesat: asked only after the host refused the request that it answers",
+     "utimes: asked only after the host refused the request that it answers"
+    ]
    }
   ],
   "answered_by_the_libc_of_the_image_in_the_way_of_linux": [
@@ -3383,7 +3495,7 @@
     "name": "dlclose",
     "uses": 1,
     "used_in": [
-     "src/sys/lib.rs:6360"
+     "src/sys/lib.rs:6421"
     ],
     "why": "the image is linked statically and its libc has no loader: the call fails. bun for macOS loads libraries with the dynamic linker of the system"
    },
@@ -3391,7 +3503,7 @@
     "name": "dlopen",
     "uses": 1,
     "used_in": [
-     "src/sys/lib.rs:6386"
+     "src/sys/lib.rs:6447"
     ],
     "why": "the image is linked statically and its libc has no loader: the call fails. bun for macOS loads libraries with the dynamic linker of the system"
    },
@@ -3399,8 +3511,8 @@
     "name": "dlsym",
     "uses": 2,
     "used_in": [
-     "src/sys/lib.rs:5322",
-     "src/sys/lib.rs:6424"
+     "src/sys/lib.rs:5368",
+     "src/sys/lib.rs:6485"
     ],
     "why": "the image is linked statically and its libc has no loader: the call fails. bun for macOS loads libraries with the dynamic linker of the system"
    }
@@ -3432,11 +3544,11 @@
    "ioctl (only TIOCGWINSZ, FIONREAD, FIONBIO, FIOCLEX)",
    "dup",
    "dup2",
-   "dup3",
    "ftruncate",
    "fsync",
    "fdatasync",
    "umask",
+   "dup3",
    "mkdir",
    "mkdirat",
    "rmdir",
@@ -3472,6 +3584,8 @@
    "poll",
    "ppoll",
    "fallocate",
+   "sendfile",
+   "copy_file_range",
    "fadvise64",
    "sync",
    "mmap",
@@ -3734,8 +3848,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/lib.rs",
-    "line": 2375,
-    "end_line": 2383,
+    "line": 2379,
+    "end_line": 2387,
     "item": "fn linux_kernel_version",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
     "effective": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -3757,8 +3871,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/lib.rs",
-    "line": 2680,
-    "end_line": 2688,
+    "line": 2684,
+    "end_line": 2692,
     "item": "impl Zeroable for libc::kevent",
     "cfg": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"openbsd\", target_os = \"netbsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"openbsd\", target_os = \"netbsd\")",
@@ -3785,8 +3899,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/lib.rs",
-    "line": 2689,
-    "end_line": 2691,
+    "line": 2693,
+    "end_line": 2695,
     "item": "impl Zeroable for libc::kevent64_s",
     "cfg": "any(target_os = \"macos\", target_os = \"ios\")",
     "effective": "any(target_os = \"macos\", target_os = \"ios\")",
@@ -3968,7 +4082,7 @@
     "crate": "bun_core",
     "file": "src/bun_core/util.rs",
     "line": 1303,
-    "end_line": 1319,
+    "end_line": 1318,
     "item": "block",
     "in_function": "fd_path_raw",
     "cfg": "target_os = \"macos\"",
@@ -3977,26 +4091,26 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "fcntl",
       "from": "libc crate",
       "variadic": true,
       "macos_only": false,
-      "line": 1308
+      "line": 1307
      },
      {
       "name": "strlen",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 1318
+      "line": 1317
      }
     ],
     "types": [],
@@ -4023,8 +4137,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/util.rs",
-    "line": 2723,
-    "end_line": 2733,
+    "line": 2721,
+    "end_line": 2731,
     "item": "block",
     "in_function": "os_entropy",
     "cfg": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\")",
@@ -4045,7 +4159,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 2728
+      "line": 2726
      }
     ],
     "types": [],
@@ -4054,8 +4168,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/util.rs",
-    "line": 2769,
-    "end_line": 2770,
+    "line": 2767,
+    "end_line": 2768,
     "item": "let path",
     "in_function": "self_exe_path",
     "cfg": "any(target_vendor = \"apple\", windows)",
@@ -4078,8 +4192,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/util.rs",
-    "line": 3465,
-    "end_line": 3466,
+    "line": 3463,
+    "end_line": 3464,
     "item": "type mach_port",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -4106,8 +4220,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/util.rs",
-    "line": 4703,
-    "end_line": 4745,
+    "line": 4701,
+    "end_line": 4743,
     "item": "let pid",
     "in_function": "spawn_sync_inherit_impl",
     "cfg": "target_os = \"macos\"",
@@ -4128,28 +4242,28 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 4710
+      "line": 4708
      },
      {
       "name": "posix_spawn_file_actions_addopen",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 4714
+      "line": 4712
      },
      {
       "name": "posix_spawn_file_actions_destroy",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 4722
+      "line": 4720
      },
      {
       "name": "posix_spawnp",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 4730
+      "line": 4728
      }
     ],
     "types": [
@@ -4175,8 +4289,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/util.rs",
-    "line": 5242,
-    "end_line": 5243,
+    "line": 5240,
+    "end_line": 5241,
     "item": "let on",
     "in_function": "is_enabled_init",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -4199,8 +4313,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/util.rs",
-    "line": 5289,
-    "end_line": 5293,
+    "line": 5287,
+    "end_line": 5291,
     "item": "block",
     "in_function": "trace",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -4269,8 +4383,31 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/host_dispatch.rs",
-    "line": 72,
-    "end_line": 73,
+    "line": 94,
+    "end_line": 95,
+    "item": "expression",
+    "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
+    "effective": "all(not(bun_portable), not(any(target_os = \"linux\", target_os = \"android\")))",
+    "active": {
+     "linux": false,
+     "macos": true,
+     "windows": true,
+     "image": false
+    },
+    "same_source_serves_linux": false,
+    "side": "macos",
+    "kind": "K2",
+    "in_image": "not in the image",
+    "functions": [],
+    "types": [],
+    "constants": [],
+    "note": "no function of the system: data or logic"
+   },
+   {
+    "crate": "bun_core",
+    "file": "src/bun_core/host_dispatch.rs",
+    "line": 98,
+    "end_line": 99,
     "item": "expression",
     "cfg": "target_os = \"macos\"",
     "effective": "all(not(bun_portable), target_os = \"macos\")",
@@ -4292,8 +4429,31 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/host_dispatch.rs",
-    "line": 171,
-    "end_line": 172,
+    "line": 114,
+    "end_line": 115,
+    "item": "expression",
+    "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
+    "effective": "all(not(bun_portable), any(target_os = \"macos\", target_os = \"freebsd\"))",
+    "active": {
+     "linux": false,
+     "macos": true,
+     "windows": false,
+     "image": false
+    },
+    "same_source_serves_linux": false,
+    "side": "macos",
+    "kind": "K2",
+    "in_image": "not in the image",
+    "functions": [],
+    "types": [],
+    "constants": [],
+    "note": "no function of the system: data or logic"
+   },
+   {
+    "crate": "bun_core",
+    "file": "src/bun_core/host_dispatch.rs",
+    "line": 335,
+    "end_line": 336,
     "item": "statement",
     "cfg": "target_os = \"macos\"",
     "effective": "all(not(bun_portable), target_os = \"macos\")",
@@ -4316,25 +4476,25 @@
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
     "line": 122,
-    "end_line": 148,
+    "end_line": 152,
     "item": "fn getdirentries64",
-    "cfg": "target_os = \"macos\"",
-    "effective": "target_os = \"macos\"",
+    "cfg": "any(target_os = \"macos\", bun_portable)",
+    "effective": "any(target_os = \"macos\", bun_portable)",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "__getdirentries64",
       "from": "declared by bun",
-      "line": 125
+      "line": 129
      }
     ],
     "types": [
@@ -4355,22 +4515,22 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 368,
-    "end_line": 369,
+    "line": 372,
+    "end_line": 373,
     "item": "arm",
     "in_function": "kind_from_dt",
-    "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
-    "effective": "all(unix, any(target_os = \"macos\", target_os = \"freebsd\"))",
+    "cfg": "any(target_os = \"macos\", target_os = \"freebsd\", bun_portable)",
+    "effective": "all(unix, any(target_os = \"macos\", target_os = \"freebsd\", bun_portable))",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -4379,21 +4539,21 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 450,
-    "end_line": 457,
+    "line": 454,
+    "end_line": 462,
     "item": "struct State",
-    "cfg": "target_os = \"macos\"",
-    "effective": "target_os = \"macos\"",
+    "cfg": "any(target_os = \"macos\", bun_portable)",
+    "effective": "any(target_os = \"macos\", bun_portable)",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image (bun_portable_macros::flavor(macos, State))",
     "functions": [],
     "types": [],
     "constants": [],
@@ -4402,21 +4562,21 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 458,
-    "end_line": 545,
+    "line": 463,
+    "end_line": 551,
     "item": "impl State",
-    "cfg": "target_os = \"macos\"",
-    "effective": "target_os = \"macos\"",
+    "cfg": "any(target_os = \"macos\", bun_portable)",
+    "effective": "any(target_os = \"macos\", bun_portable)",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image (bun_portable_macros::flavor(macos, State))",
     "functions": [],
     "types": [],
     "constants": [],
@@ -4425,8 +4585,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 941,
-    "end_line": 964,
+    "line": 951,
+    "end_line": 973,
     "item": "block",
     "in_function": "lstatat",
     "cfg": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
@@ -4447,7 +4607,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 951
+      "line": 960
      }
     ],
     "types": [
@@ -4477,8 +4637,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1193,
-    "end_line": 1204,
+    "line": 1203,
+    "end_line": 1213,
     "item": "block",
     "in_function": "int",
     "cfg": "target_os = \"macos\"",
@@ -4487,12 +4647,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -4501,8 +4661,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1295,
-    "end_line": 1296,
+    "line": 1303,
+    "end_line": 1304,
     "item": "const PATH",
     "cfg": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
     "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
@@ -4524,8 +4684,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1297,
-    "end_line": 1298,
+    "line": 1305,
+    "end_line": 1306,
     "item": "const NOATIME",
     "cfg": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
     "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
@@ -4547,8 +4707,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1321,
-    "end_line": 1322,
+    "line": 1329,
+    "end_line": 1330,
     "item": "const SYMLINK",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -4568,7 +4728,7 @@
      {
       "name": "O_SYMLINK",
       "from": "libc crate",
-      "macos": "2"
+      "macos": "2097152"
      }
     ],
     "note": "no function of the system: data or logic"
@@ -4576,8 +4736,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1325,
-    "end_line": 1326,
+    "line": 1333,
+    "end_line": 1334,
     "item": "const EVTONLY",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -4597,7 +4757,7 @@
      {
       "name": "O_EVTONLY",
       "from": "libc crate",
-      "macos": "32"
+      "macos": "32768"
      }
     ],
     "note": "no function of the system: data or logic"
@@ -4605,8 +4765,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1331,
-    "end_line": 1332,
+    "line": 1339,
+    "end_line": 1340,
     "item": "const NOFOLLOW_ANY",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -4626,7 +4786,7 @@
      {
       "name": "O_NOFOLLOW_ANY",
       "from": "libc crate",
-      "macos": "536"
+      "macos": "536870912"
      }
     ],
     "note": "no function of the system: data or logic"
@@ -4634,21 +4794,21 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1486,
-    "end_line": 1487,
+    "line": 1510,
+    "end_line": 1511,
     "item": "const fcopyfile",
-    "cfg": "target_os = \"macos\"",
-    "effective": "target_os = \"macos\"",
+    "cfg": "any(target_os = \"macos\", bun_portable)",
+    "effective": "any(target_os = \"macos\", bun_portable)",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -4657,8 +4817,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1683,
-    "end_line": 1684,
+    "line": 1707,
+    "end_line": 1708,
     "item": "const MAX_COUNT",
     "cfg": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
     "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
@@ -4680,26 +4840,26 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1701,
-    "end_line": 1702,
+    "line": 1725,
+    "end_line": 1726,
     "item": "fn close",
-    "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
-    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
+    "cfg": "any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable)",
+    "effective": "all(unix, any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable))",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "close",
       "from": "declared by bun",
-      "line": 1702
+      "line": 1726
      }
     ],
     "types": [],
@@ -4708,8 +4868,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1721,
-    "end_line": 1722,
+    "line": 1745,
+    "end_line": 1746,
     "item": "fn kqueue",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "all(unix, any(target_os = \"macos\", target_os = \"freebsd\"))",
@@ -4727,7 +4887,7 @@
      {
       "name": "kqueue",
       "from": "declared by bun",
-      "line": 1722
+      "line": 1746
      }
     ],
     "types": [],
@@ -4736,8 +4896,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1765,
-    "end_line": 1841,
+    "line": 1791,
+    "end_line": 1867,
     "item": "mod nocancel",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -4757,79 +4917,79 @@
       "symbol": "openat$NOCANCEL",
       "from": "declared by bun",
       "variadic": true,
-      "line": 1779
+      "line": 1805
      },
      {
       "name": "read",
       "symbol": "read$NOCANCEL",
       "from": "declared by bun",
-      "line": 1781
+      "line": 1807
      },
      {
       "name": "write",
       "symbol": "write$NOCANCEL",
       "from": "declared by bun",
-      "line": 1783
+      "line": 1809
      },
      {
       "name": "pread",
       "symbol": "pread$NOCANCEL",
       "from": "declared by bun",
-      "line": 1785
+      "line": 1811
      },
      {
       "name": "pwrite",
       "symbol": "pwrite$NOCANCEL",
       "from": "declared by bun",
-      "line": 1792
+      "line": 1818
      },
      {
       "name": "pwritev",
       "symbol": "pwritev$NOCANCEL",
       "from": "declared by bun",
-      "line": 1799
+      "line": 1825
      },
      {
       "name": "preadv",
       "symbol": "preadv$NOCANCEL",
       "from": "declared by bun",
-      "line": 1806
+      "line": 1832
      },
      {
       "name": "readv",
       "symbol": "readv$NOCANCEL",
       "from": "declared by bun",
-      "line": 1813
+      "line": 1839
      },
      {
       "name": "writev",
       "symbol": "writev$NOCANCEL",
       "from": "declared by bun",
-      "line": 1815
+      "line": 1841
      },
      {
       "name": "recvfrom",
       "symbol": "recvfrom$NOCANCEL",
       "from": "declared by bun",
-      "line": 1817
+      "line": 1843
      },
      {
       "name": "sendto",
       "symbol": "sendto$NOCANCEL",
       "from": "declared by bun",
-      "line": 1826
+      "line": 1852
      },
      {
       "name": "poll",
       "symbol": "poll$NOCANCEL",
       "from": "declared by bun",
-      "line": 1835
+      "line": 1861
      },
      {
       "name": "close",
       "symbol": "close$NOCANCEL",
       "from": "declared by bun",
-      "line": 1839
+      "line": 1865
      }
     ],
     "types": [
@@ -4873,21 +5033,21 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1858,
-    "end_line": 1873,
+    "line": 1884,
+    "end_line": 1899,
     "item": "fn sys_openat",
-    "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
-    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
+    "cfg": "any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable)",
+    "effective": "all(unix, any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable))",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [
      {
@@ -4905,22 +5065,22 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1861,
-    "end_line": 1866,
+    "line": 1888,
+    "end_line": 1892,
     "item": "block",
     "in_function": "sys_openat",
     "cfg": "target_os = \"macos\"",
-    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")), target_os = \"macos\")",
+    "effective": "all(unix, any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable), target_os = \"macos\")",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -4929,21 +5089,21 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1874,
-    "end_line": 1889,
+    "line": 1900,
+    "end_line": 1915,
     "item": "fn sys_read",
-    "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
-    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
+    "cfg": "any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable)",
+    "effective": "all(unix, any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable))",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [
      {
@@ -4957,22 +5117,22 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1877,
-    "end_line": 1882,
+    "line": 1904,
+    "end_line": 1908,
     "item": "block",
     "in_function": "sys_read",
     "cfg": "target_os = \"macos\"",
-    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")), target_os = \"macos\")",
+    "effective": "all(unix, any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable), target_os = \"macos\")",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -4981,21 +5141,21 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1890,
-    "end_line": 1905,
+    "line": 1916,
+    "end_line": 1931,
     "item": "fn sys_write",
-    "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
-    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
+    "cfg": "any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable)",
+    "effective": "all(unix, any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable))",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [
      {
@@ -5009,22 +5169,22 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1893,
-    "end_line": 1898,
+    "line": 1920,
+    "end_line": 1924,
     "item": "block",
     "in_function": "sys_write",
     "cfg": "target_os = \"macos\"",
-    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")), target_os = \"macos\")",
+    "effective": "all(unix, any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable), target_os = \"macos\")",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -5033,21 +5193,21 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1906,
-    "end_line": 1921,
+    "line": 1932,
+    "end_line": 1947,
     "item": "fn sys_pread",
-    "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
-    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
+    "cfg": "any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable)",
+    "effective": "all(unix, any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable))",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [
      {
@@ -5061,22 +5221,22 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1909,
-    "end_line": 1914,
+    "line": 1936,
+    "end_line": 1940,
     "item": "block",
     "in_function": "sys_pread",
     "cfg": "target_os = \"macos\"",
-    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")), target_os = \"macos\")",
+    "effective": "all(unix, any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable), target_os = \"macos\")",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -5085,21 +5245,21 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1922,
-    "end_line": 1937,
+    "line": 1948,
+    "end_line": 1963,
     "item": "fn sys_pwrite",
-    "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
-    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
+    "cfg": "any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable)",
+    "effective": "all(unix, any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable))",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [
      {
@@ -5113,22 +5273,22 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1925,
-    "end_line": 1930,
+    "line": 1952,
+    "end_line": 1956,
     "item": "block",
     "in_function": "sys_pwrite",
     "cfg": "target_os = \"macos\"",
-    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")), target_os = \"macos\")",
+    "effective": "all(unix, any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable), target_os = \"macos\")",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -5137,8 +5297,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1940,
-    "end_line": 1954,
+    "line": 1967,
+    "end_line": 1980,
     "item": "block",
     "in_function": "sys_recv",
     "cfg": "target_os = \"macos\"",
@@ -5147,12 +5307,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -5161,8 +5321,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 1964,
-    "end_line": 1969,
+    "line": 1991,
+    "end_line": 1995,
     "item": "block",
     "in_function": "sys_send",
     "cfg": "target_os = \"macos\"",
@@ -5171,12 +5331,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -5185,8 +5345,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 2041,
-    "end_line": 2051,
+    "line": 2068,
+    "end_line": 2077,
     "item": "block",
     "in_function": "openat",
     "cfg": "target_os = \"macos\"",
@@ -5195,12 +5355,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [
      {
@@ -5214,8 +5374,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 2128,
-    "end_line": 2138,
+    "line": 2153,
+    "end_line": 2162,
     "item": "block",
     "in_function": "close",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -5224,12 +5384,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [
@@ -5245,9 +5405,9 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 2130,
-    "end_line": 2131,
-    "item": "let rc",
+    "line": 2155,
+    "end_line": 2155,
+    "item": "block",
     "in_function": "close",
     "cfg": "target_os = \"macos\"",
     "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")), target_os = \"macos\")",
@@ -5255,12 +5415,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -5269,22 +5429,22 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 2143,
-    "end_line": 2151,
+    "line": 2155,
+    "end_line": 2155,
     "item": "block",
-    "in_function": "read",
+    "in_function": "close",
     "cfg": "target_os = \"macos\"",
-    "effective": "all(unix, target_os = \"macos\")",
+    "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")), target_os = \"macos\", target_os = \"macos\")",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -5294,7 +5454,31 @@
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
     "line": 2169,
-    "end_line": 2177,
+    "end_line": 2176,
+    "item": "block",
+    "in_function": "read",
+    "cfg": "target_os = \"macos\"",
+    "effective": "all(unix, target_os = \"macos\")",
+    "active": {
+     "linux": false,
+     "macos": true,
+     "windows": false,
+     "image": true
+    },
+    "same_source_serves_linux": false,
+    "side": "macos",
+    "kind": "K2",
+    "in_image": "compiled into the image",
+    "functions": [],
+    "types": [],
+    "constants": [],
+    "note": "no function of the system: data or logic"
+   },
+   {
+    "crate": "bun_sys",
+    "file": "src/sys/lib.rs",
+    "line": 2194,
+    "end_line": 2201,
     "item": "block",
     "in_function": "write",
     "cfg": "target_os = \"macos\"",
@@ -5303,12 +5487,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -5317,8 +5501,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 2199,
-    "end_line": 2207,
+    "line": 2222,
+    "end_line": 2229,
     "item": "block",
     "in_function": "pread",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -5327,12 +5511,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -5341,8 +5525,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 2216,
-    "end_line": 2224,
+    "line": 2239,
+    "end_line": 2246,
     "item": "block",
     "in_function": "pwrite",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -5351,12 +5535,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -5365,8 +5549,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 2232,
-    "end_line": 2243,
+    "line": 2255,
+    "end_line": 2265,
     "item": "block",
     "in_function": "stat",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -5375,29 +5559,35 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "stat",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 2237
+      "line": 2259
      }
     ],
-    "types": [],
+    "types": [
+     {
+      "name": "stat",
+      "from": "libc crate",
+      "differs": true
+     }
+    ],
     "constants": []
    },
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 2251,
-    "end_line": 2261,
+    "line": 2274,
+    "end_line": 2283,
     "item": "block",
     "in_function": "fstat",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -5406,29 +5596,35 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "fstat",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 2256
+      "line": 2278
      }
     ],
-    "types": [],
+    "types": [
+     {
+      "name": "stat",
+      "from": "libc crate",
+      "differs": true
+     }
+    ],
     "constants": []
    },
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 2269,
-    "end_line": 2280,
+    "line": 2292,
+    "end_line": 2302,
     "item": "block",
     "in_function": "lstat",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -5437,29 +5633,35 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "lstat",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 2274
+      "line": 2296
      }
     ],
-    "types": [],
+    "types": [
+     {
+      "name": "stat",
+      "from": "libc crate",
+      "differs": true
+     }
+    ],
     "constants": []
    },
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 2679,
-    "end_line": 2705,
+    "line": 2702,
+    "end_line": 2730,
     "item": "block",
     "in_function": "renameat2",
     "cfg": "target_os = \"macos\"",
@@ -5468,17 +5670,17 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "renameatx_np",
       "from": "declared by bun",
-      "line": 2682
+      "line": 2705
      }
     ],
     "types": [
@@ -5500,8 +5702,50 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 2960,
-    "end_line": 2975,
+    "line": 2703,
+    "end_line": 2712,
+    "item": "block",
+    "in_function": "renameat2",
+    "cfg": "not(bun_portable)",
+    "effective": "all(unix, target_os = \"macos\", not(bun_portable))",
+    "active": {
+     "linux": false,
+     "macos": true,
+     "windows": false,
+     "image": true
+    },
+    "same_source_serves_linux": false,
+    "side": "macos",
+    "kind": "K2",
+    "in_image": "compiled into the image",
+    "functions": [
+     {
+      "name": "renameatx_np",
+      "from": "declared by bun",
+      "line": 2705
+     }
+    ],
+    "types": [
+     {
+      "name": "c_int",
+      "from": "libc crate"
+     },
+     {
+      "name": "c_char",
+      "from": "libc crate"
+     },
+     {
+      "name": "c_uint",
+      "from": "libc crate"
+     }
+    ],
+    "constants": []
+   },
+   {
+    "crate": "bun_sys",
+    "file": "src/sys/lib.rs",
+    "line": 2986,
+    "end_line": 3004,
     "item": "block",
     "in_function": "lchmod",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -5510,17 +5754,17 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "lchmod",
       "from": "declared by bun",
-      "line": 2966
+      "line": 2995
      }
     ],
     "types": [
@@ -5543,8 +5787,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 3034,
-    "end_line": 3046,
+    "line": 3063,
+    "end_line": 3074,
     "item": "block",
     "in_function": "fstatat",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -5553,29 +5797,35 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "fstatat",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 3040
+      "line": 3068
      }
     ],
-    "types": [],
+    "types": [
+     {
+      "name": "stat",
+      "from": "libc crate",
+      "differs": true
+     }
+    ],
     "constants": []
    },
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 3111,
-    "end_line": 3116,
+    "line": 3140,
+    "end_line": 3144,
     "item": "block",
     "in_function": "exists_at",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -5584,19 +5834,19 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "faccessat",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 3115
+      "line": 3143
      }
     ],
     "types": [],
@@ -5612,8 +5862,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 3137,
-    "end_line": 3141,
+    "line": 3166,
+    "end_line": 3170,
     "item": "block",
     "in_function": "realpath",
     "cfg": "target_os = \"macos\"",
@@ -5633,7 +5883,7 @@
       "name": "_realpath",
       "symbol": "realpath$DARWIN_EXTSN",
       "from": "declared by bun",
-      "line": 3140
+      "line": 3169
      }
     ],
     "types": [],
@@ -5642,8 +5892,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 3217,
-    "end_line": 3222,
+    "line": 3252,
+    "end_line": 3257,
     "item": "let n",
     "in_function": "recv",
     "cfg": "target_os = \"macos\"",
@@ -5666,8 +5916,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 3236,
-    "end_line": 3241,
+    "line": 3271,
+    "end_line": 3276,
     "item": "let n",
     "in_function": "send",
     "cfg": "target_os = \"macos\"",
@@ -5690,8 +5940,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 3311,
-    "end_line": 3384,
+    "line": 3346,
+    "end_line": 3419,
     "item": "block",
     "in_function": "socketpair_impl",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -5712,14 +5962,14 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 3337
+      "line": 3372
      },
      {
       "name": "fcntl",
       "from": "libc crate",
       "variadic": true,
       "macos_only": false,
-      "line": 3375
+      "line": 3410
      }
     ],
     "types": [
@@ -5732,28 +5982,28 @@
      {
       "name": "SOL_SOCKET",
       "from": "libc crate",
-      "macos": "65",
+      "macos": "65535",
       "image": "1",
       "differs": true
      },
      {
       "name": "SO_RCVBUF",
       "from": "libc crate",
-      "macos": "4",
+      "macos": "4098",
       "image": "8",
       "differs": true
      },
      {
       "name": "SO_SNDBUF",
       "from": "libc crate",
-      "macos": "4",
+      "macos": "4097",
       "image": "7",
       "differs": true
      },
      {
       "name": "SO_NOSIGPIPE",
       "from": "libc crate",
-      "macos": "4"
+      "macos": "4130"
      },
      {
       "name": "F_GETFL",
@@ -5771,7 +6021,7 @@
       "name": "O_NONBLOCK",
       "from": "libc crate",
       "macos": "4",
-      "image": "2",
+      "image": "2048",
       "differs": true
      }
     ]
@@ -5779,8 +6029,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 3330,
-    "end_line": 3370,
+    "line": 3365,
+    "end_line": 3405,
     "item": "block",
     "in_function": "socketpair_impl",
     "cfg": "target_os = \"macos\"",
@@ -5801,7 +6051,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 3337
+      "line": 3372
      }
     ],
     "types": [
@@ -5814,39 +6064,82 @@
      {
       "name": "SOL_SOCKET",
       "from": "libc crate",
-      "macos": "65",
+      "macos": "65535",
       "image": "1",
       "differs": true
      },
      {
       "name": "SO_RCVBUF",
       "from": "libc crate",
-      "macos": "4",
+      "macos": "4098",
       "image": "8",
       "differs": true
      },
      {
       "name": "SO_SNDBUF",
       "from": "libc crate",
-      "macos": "4",
+      "macos": "4097",
       "image": "7",
       "differs": true
      },
      {
       "name": "SO_NOSIGPIPE",
       "from": "libc crate",
-      "macos": "4"
+      "macos": "4130"
      }
     ]
    },
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 3398,
-    "end_line": 3472,
+    "line": 3433,
+    "end_line": 3515,
     "item": "mod darwin_copy",
-    "cfg": "target_os = \"macos\"",
-    "effective": "all(unix, target_os = \"macos\")",
+    "cfg": "any(target_os = \"macos\", bun_portable)",
+    "effective": "all(unix, any(target_os = \"macos\", bun_portable))",
+    "active": {
+     "linux": false,
+     "macos": true,
+     "windows": false,
+     "image": true
+    },
+    "same_source_serves_linux": false,
+    "side": "macos",
+    "kind": "K2",
+    "in_image": "compiled into the image",
+    "functions": [
+     {
+      "name": "clonefile",
+      "from": "declared by bun",
+      "line": 3444
+     },
+     {
+      "name": "clonefileat",
+      "from": "declared by bun",
+      "line": 3446
+     },
+     {
+      "name": "copyfile",
+      "from": "declared by bun",
+      "line": 3453
+     },
+     {
+      "name": "fcopyfile",
+      "from": "declared by bun",
+      "line": 3464
+     }
+    ],
+    "types": [],
+    "constants": []
+   },
+   {
+    "crate": "bun_sys",
+    "file": "src/sys/lib.rs",
+    "line": 3445,
+    "end_line": 3452,
+    "item": "fn clonefileat",
+    "cfg": "not(bun_portable)",
+    "effective": "all(unix, any(target_os = \"macos\", bun_portable), not(bun_portable))",
     "active": {
      "linux": false,
      "macos": true,
@@ -5859,24 +6152,9 @@
     "in_image": "not in the image",
     "functions": [
      {
-      "name": "clonefile",
-      "from": "declared by bun",
-      "line": 3402
-     },
-     {
       "name": "clonefileat",
       "from": "declared by bun",
-      "line": 3403
-     },
-     {
-      "name": "copyfile",
-      "from": "declared by bun",
-      "line": 3410
-     },
-     {
-      "name": "fcopyfile",
-      "from": "declared by bun",
-      "line": 3421
+      "line": 3446
      }
     ],
     "types": [],
@@ -5885,21 +6163,21 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 3473,
-    "end_line": 3477,
+    "line": 3516,
+    "end_line": 3520,
     "item": "use darwin_copy::{clonefile_ as clonefile",
-    "cfg": "target_os = \"macos\"",
-    "effective": "all(unix, target_os = \"macos\")",
+    "cfg": "any(target_os = \"macos\", bun_portable)",
+    "effective": "all(unix, any(target_os = \"macos\", bun_portable))",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -5908,8 +6186,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 3601,
-    "end_line": 3605,
+    "line": 3644,
+    "end_line": 3648,
     "item": "fn can_use_memfd",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
     "effective": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
@@ -5931,8 +6209,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 4804,
-    "end_line": 4825,
+    "line": 4850,
+    "end_line": 4871,
     "item": "loop statement",
     "in_function": "pwritev",
     "cfg": "target_os = \"macos\"",
@@ -5967,8 +6245,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 4955,
-    "end_line": 4970,
+    "line": 5001,
+    "end_line": 5016,
     "item": "loop statement",
     "in_function": "writev",
     "cfg": "target_os = \"macos\"",
@@ -5998,8 +6276,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5009,
-    "end_line": 5025,
+    "line": 5055,
+    "end_line": 5071,
     "item": "loop statement",
     "in_function": "readv",
     "cfg": "target_os = \"macos\"",
@@ -6029,8 +6307,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5063,
-    "end_line": 5082,
+    "line": 5109,
+    "end_line": 5128,
     "item": "loop statement",
     "in_function": "preadv",
     "cfg": "target_os = \"macos\"",
@@ -6060,8 +6338,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5139,
-    "end_line": 5143,
+    "line": 5185,
+    "end_line": 5189,
     "item": "block",
     "in_function": "statfs",
     "cfg": "all(target_os = \"macos\", target_arch = \"x86_64\")",
@@ -6082,7 +6360,7 @@
       "name": "_statfs",
       "symbol": "statfs64",
       "from": "declared by bun",
-      "line": 5142
+      "line": 5188
      }
     ],
     "types": [
@@ -6097,8 +6375,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5290,
-    "end_line": 5291,
+    "line": 5336,
+    "end_line": 5337,
     "item": "use core::ffi::c_int",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -6120,8 +6398,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5307,
-    "end_line": 5315,
+    "line": 5353,
+    "end_line": 5361,
     "item": "use libc::{getloadavg, sockaddr_dl",
     "cfg": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
@@ -6141,14 +6419,14 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 5315
+      "line": 5361
      },
      {
       "name": "sysctlbyname",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5315
+      "line": 5361
      }
     ],
     "types": [
@@ -6162,8 +6440,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5340,
-    "end_line": 5400,
+    "line": 5401,
+    "end_line": 5461,
     "item": "use libc::{_NSGetEnviron, COPYFILE_ACL",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6183,105 +6461,105 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5342
+      "line": 5403
      },
      {
       "name": "clonefile",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5368
+      "line": 5429
      },
      {
       "name": "clonefileat",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5369
+      "line": 5430
      },
      {
       "name": "copyfile",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5370
+      "line": 5431
      },
      {
       "name": "fclonefileat",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5373
+      "line": 5434
      },
      {
       "name": "fcopyfile",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5374
+      "line": 5435
      },
      {
       "name": "host_processor_info",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5375
+      "line": 5436
      },
      {
       "name": "host_statistics64",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5376
+      "line": 5437
      },
      {
       "name": "memset_pattern4",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5381
+      "line": 5442
      },
      {
       "name": "memset_pattern8",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5382
+      "line": 5443
      },
      {
       "name": "memset_pattern16",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5383
+      "line": 5444
      },
      {
       "name": "sysctl",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 5391
+      "line": 5452
      },
      {
       "name": "sysctlnametomib",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5392
+      "line": 5453
      },
      {
       "name": "truncate",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 5395
+      "line": 5456
      },
      {
       "name": "vm_deallocate",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5396
+      "line": 5457
      }
     ],
     "types": [
@@ -6347,17 +6625,17 @@
      {
       "name": "COPYFILE_CHECK",
       "from": "libc crate",
-      "macos": "65"
+      "macos": "65536"
      },
      {
       "name": "COPYFILE_CLONE",
       "from": "libc crate",
-      "macos": "16"
+      "macos": "16777216"
      },
      {
       "name": "COPYFILE_CLONE_FORCE",
       "from": "libc crate",
-      "macos": "33"
+      "macos": "33554432"
      },
      {
       "name": "COPYFILE_DATA",
@@ -6367,7 +6645,7 @@
      {
       "name": "COPYFILE_EXCL",
       "from": "libc crate",
-      "macos": "131"
+      "macos": "131072"
      },
      {
       "name": "COPYFILE_METADATA",
@@ -6377,27 +6655,27 @@
      {
       "name": "COPYFILE_MOVE",
       "from": "libc crate",
-      "macos": "1"
+      "macos": "1048576"
      },
      {
       "name": "COPYFILE_NOFOLLOW",
       "from": "libc crate",
-      "macos": "786"
+      "macos": "786432"
      },
      {
       "name": "COPYFILE_NOFOLLOW_DST",
       "from": "libc crate",
-      "macos": "524"
+      "macos": "524288"
      },
      {
       "name": "COPYFILE_NOFOLLOW_SRC",
       "from": "libc crate",
-      "macos": "262"
+      "macos": "262144"
      },
      {
       "name": "COPYFILE_RECURSIVE",
       "from": "libc crate",
-      "macos": "32"
+      "macos": "32768"
      },
      {
       "name": "COPYFILE_SECURITY",
@@ -6412,7 +6690,7 @@
      {
       "name": "COPYFILE_UNLINK",
       "from": "libc crate",
-      "macos": "2"
+      "macos": "2097152"
      },
      {
       "name": "COPYFILE_XATTR",
@@ -6464,8 +6742,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5405,
-    "end_line": 5410,
+    "line": 5466,
+    "end_line": 5471,
     "item": "fn clonefile_rc",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6485,7 +6763,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5409
+      "line": 5470
      }
     ],
     "types": [],
@@ -6494,8 +6772,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5412,
-    "end_line": 5422,
+    "line": 5473,
+    "end_line": 5483,
     "item": "fn copyfile_rc",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6515,7 +6793,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 5421
+      "line": 5482
      }
     ],
     "types": [
@@ -6529,8 +6807,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5425,
-    "end_line": 5428,
+    "line": 5486,
+    "end_line": 5489,
     "item": "const PROCESSOR_CPU_LOAD_INFO_COUNT",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6561,8 +6839,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5431,
-    "end_line": 5438,
+    "line": 5492,
+    "end_line": 5499,
     "item": "struct struct_loadavg",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6584,8 +6862,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5440,
-    "end_line": 5441,
+    "line": 5501,
+    "end_line": 5502,
     "item": "impl bun_core::ffi::Zeroable for struct_loadavg",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6607,8 +6885,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5447,
-    "end_line": 5464,
+    "line": 5508,
+    "end_line": 5525,
     "item": "block",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6626,23 +6904,23 @@
      {
       "name": "mach_host_self",
       "from": "declared by bun",
-      "line": 5455
+      "line": 5516
      },
      {
       "name": "_dyld_image_count",
       "from": "declared by bun",
-      "line": 5457
+      "line": 5518
      },
      {
       "name": "_dyld_get_image_vmaddr_slide",
       "from": "declared by bun",
-      "line": 5459
+      "line": 5520
      },
      {
       "name": "dyld_get_image_header_raw",
       "symbol": "_dyld_get_image_header",
       "from": "declared by bun",
-      "line": 5463
+      "line": 5524
      }
     ],
     "types": [
@@ -6656,8 +6934,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5466,
-    "end_line": 5470,
+    "line": 5527,
+    "end_line": 5531,
     "item": "fn mach_task_self",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6684,8 +6962,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5473,
-    "end_line": 5477,
+    "line": 5534,
+    "end_line": 5538,
     "item": "fn _dyld_get_image_header",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6707,8 +6985,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5484,
-    "end_line": 5495,
+    "line": 5545,
+    "end_line": 5556,
     "item": "fn sendfile",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6728,7 +7006,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 5494
+      "line": 5555
      }
     ],
     "types": [],
@@ -6737,8 +7015,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5513,
-    "end_line": 5538,
+    "line": 5574,
+    "end_line": 5599,
     "item": "struct struct_proc_bsdinfo",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6760,8 +7038,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5540,
-    "end_line": 5541,
+    "line": 5601,
+    "end_line": 5602,
     "item": "impl bun_core::ffi::Zeroable for struct_proc_bsdinfo",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6783,8 +7061,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5542,
-    "end_line": 5543,
+    "line": 5603,
+    "end_line": 5604,
     "item": "const PROC_PIDTBSDINFO",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6806,8 +7084,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5544,
-    "end_line": 5556,
+    "line": 5605,
+    "end_line": 5617,
     "item": "block",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6825,12 +7103,12 @@
      {
       "name": "proc_pidinfo",
       "from": "declared by bun",
-      "line": 5547
+      "line": 5608
      },
      {
       "name": "proc_listchildpids",
       "from": "declared by bun",
-      "line": 5555
+      "line": 5616
      }
     ],
     "types": [],
@@ -6839,8 +7117,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5872,
-    "end_line": 5876,
+    "line": 5933,
+    "end_line": 5937,
     "item": "mod linux",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
     "effective": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -6862,8 +7140,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 5879,
-    "end_line": 6128,
+    "line": 5940,
+    "end_line": 6189,
     "item": "mod darwin",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
@@ -6883,44 +7161,44 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 5955
+      "line": 6016
      },
      {
       "name": "truncate",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 5955
+      "line": 6016
      },
      {
       "name": "kevent64",
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 6101
+      "line": 6162
      },
      {
       "name": "os_log_create",
       "from": "declared by bun",
-      "line": 5891
+      "line": 5952
      },
      {
       "name": "__ulock_wait_raw",
       "symbol": "__ulock_wait",
       "from": "declared by bun",
-      "line": 6037
+      "line": 6098
      },
      {
       "name": "__ulock_wait2_raw",
       "symbol": "__ulock_wait2",
       "from": "declared by bun",
-      "line": 6044
+      "line": 6105
      },
      {
       "name": "__ulock_wake_raw",
       "symbol": "__ulock_wake",
       "from": "declared by bun",
-      "line": 6052
+      "line": 6113
      }
     ],
     "types": [
@@ -7017,42 +7295,42 @@
      {
       "name": "EV_EOF",
       "from": "libc crate",
-      "macos": "32"
+      "macos": "32768"
      },
      {
       "name": "EV_ERROR",
       "from": "libc crate",
-      "macos": "16"
+      "macos": "16384"
      },
      {
       "name": "NOTE_EXIT",
       "from": "libc crate",
-      "macos": "2"
+      "macos": "2147483648"
      },
      {
       "name": "NOTE_EXITSTATUS",
       "from": "libc crate",
-      "macos": "67"
+      "macos": "67108864"
      },
      {
       "name": "NOTE_SIGNAL",
       "from": "libc crate",
-      "macos": "134"
+      "macos": "134217728"
      },
      {
       "name": "NOTE_FORK",
       "from": "libc crate",
-      "macos": "1"
+      "macos": "1073741824"
      },
      {
       "name": "NOTE_EXEC",
       "from": "libc crate",
-      "macos": "536"
+      "macos": "536870912"
      },
      {
       "name": "NOTE_TRIGGER",
       "from": "libc crate",
-      "macos": "16"
+      "macos": "16777216"
      },
      {
       "name": "NOTE_DELETE",
@@ -7094,8 +7372,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 7742,
-    "end_line": 7749,
+    "line": 7803,
+    "end_line": 7810,
     "item": "fn kqueue",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -7117,8 +7395,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 7753,
-    "end_line": 7779,
+    "line": 7814,
+    "end_line": 7840,
     "item": "fn kevent",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -7138,7 +7416,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 7764
+      "line": 7825
      }
     ],
     "types": [
@@ -7156,8 +7434,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 7888,
-    "end_line": 7895,
+    "line": 7959,
+    "end_line": 7965,
     "item": "block",
     "in_function": "get_fd_path",
     "cfg": "target_os = \"macos\"",
@@ -7166,19 +7444,19 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "strlen",
       "from": "libc crate",
       "variadic": false,
       "macos_only": false,
-      "line": 7893
+      "line": 7963
      }
     ],
     "types": [],
@@ -7193,8 +7471,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8147,
-    "end_line": 8155,
+    "line": 8209,
+    "end_line": 8217,
     "item": "use core::ffi::c_void",
     "cfg": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
@@ -7216,8 +7494,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8164,
-    "end_line": 8194,
+    "line": 8226,
+    "end_line": 8256,
     "item": "fn sysctl_read",
     "cfg": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
@@ -7237,7 +7515,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 8182
+      "line": 8244
      }
     ],
     "types": [],
@@ -7246,8 +7524,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8200,
-    "end_line": 8229,
+    "line": 8262,
+    "end_line": 8291,
     "item": "fn sysctl_read_slice",
     "cfg": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"ios\", target_os = \"freebsd\", target_os = \"dragonfly\", target_os = \"netbsd\", target_os = \"openbsd\")",
@@ -7267,7 +7545,7 @@
       "from": "libc crate",
       "variadic": false,
       "macos_only": true,
-      "line": 8217
+      "line": 8279
      }
     ],
     "types": [],
@@ -7276,8 +7554,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8382,
-    "end_line": 8385,
+    "line": 8444,
+    "end_line": 8447,
     "item": "let rc",
     "in_function": "poll",
     "cfg": "target_os = \"macos\"",
@@ -7300,8 +7578,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8540,
-    "end_line": 8541,
+    "line": 8602,
+    "end_line": 8603,
     "item": "field len",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -7323,8 +7601,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8549,
-    "end_line": 8550,
+    "line": 8611,
+    "end_line": 8612,
     "item": "field len",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -7346,8 +7624,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8561,
-    "end_line": 8562,
+    "line": 8623,
+    "end_line": 8624,
     "item": "field len",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -7369,8 +7647,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/lib.rs",
-    "line": 8571,
-    "end_line": 8572,
+    "line": 8633,
+    "end_line": 8634,
     "item": "field len",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "any(target_os = \"macos\", target_os = \"freebsd\")",
@@ -7415,27 +7693,51 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/fd.rs",
-    "line": 300,
-    "end_line": 306,
+    "line": 132,
+    "end_line": 143,
     "item": "block",
+    "in_function": "close_allowing_standard_io",
     "cfg": "target_os = \"macos\"",
     "effective": "target_os = \"macos\"",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
+    "functions": [],
+    "types": [],
+    "constants": [],
+    "note": "no function of the system: data or logic"
+   },
+   {
+    "crate": "bun_sys",
+    "file": "src/sys/fd.rs",
+    "line": 300,
+    "end_line": 310,
+    "item": "block",
+    "cfg": "any(target_os = \"macos\", bun_portable)",
+    "effective": "any(target_os = \"macos\", bun_portable)",
+    "active": {
+     "linux": false,
+     "macos": true,
+     "windows": false,
+     "image": true
+    },
+    "same_source_serves_linux": false,
+    "side": "macos",
+    "kind": "K2",
+    "in_image": "compiled into the image (bun_portable_macros::imports(library = \"libSystem\", host = \"macos\"))",
     "functions": [
      {
       "name": "close_nocancel",
       "symbol": "close$NOCANCEL",
       "from": "declared by bun",
-      "line": 305
+      "line": 309
      }
     ],
     "types": [],
@@ -7447,18 +7749,18 @@
     "line": 11,
     "end_line": 12,
     "item": "use crate::Tag",
-    "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
-    "effective": "not(any(target_os = \"linux\", target_os = \"android\"))",
+    "cfg": "any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable)",
+    "effective": "any(not(any(target_os = \"linux\", target_os = \"android\")), bun_portable)",
     "active": {
      "linux": false,
      "macos": true,
      "windows": true,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -7515,7 +7817,7 @@
     "crate": "bun_sys",
     "file": "src/sys/copy_file.rs",
     "line": 92,
-    "end_line": 115,
+    "end_line": 118,
     "item": "block",
     "in_function": "copy_file_with_state",
     "cfg": "target_os = \"macos\"",
@@ -7524,17 +7826,17 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "fcopyfile",
       "from": "declared by bun",
-      "line": 99
+      "line": 102
      }
     ],
     "types": [
@@ -7554,22 +7856,22 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/copy_file.rs",
-    "line": 226,
-    "end_line": 244,
+    "line": 228,
+    "end_line": 249,
     "item": "block",
     "in_function": "copy_file_with_state",
-    "cfg": "not(any(target_os = \"linux\", target_os = \"android\", windows))",
-    "effective": "not(any(target_os = \"linux\", target_os = \"android\", windows))",
+    "cfg": "any(not(any(target_os = \"linux\", target_os = \"android\", windows)), bun_portable)",
+    "effective": "any(not(any(target_os = \"linux\", target_os = \"android\", windows)), bun_portable)",
     "active": {
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [],
     "types": [],
     "constants": [],
@@ -7578,8 +7880,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/copy_file.rs",
-    "line": 256,
-    "end_line": 259,
+    "line": 261,
+    "end_line": 264,
     "item": "block",
     "in_function": "disable_copy_file_range_syscall",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -7602,8 +7904,8 @@
    {
     "crate": "bun_sys",
     "file": "src/sys/copy_file.rs",
-    "line": 298,
-    "end_line": 301,
+    "line": 303,
+    "end_line": 306,
     "item": "block",
     "in_function": "disable_ioctl_ficlone",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
@@ -8060,7 +8362,7 @@
      {
       "name": "EV_ERROR",
       "from": "libc crate",
-      "macos": "16"
+      "macos": "16384"
      }
     ],
     "note": "no function of the system: data or logic"
@@ -9311,12 +9613,12 @@
      {
       "name": "NOTE_EXIT",
       "from": "libc crate",
-      "macos": "2"
+      "macos": "2147483648"
      },
      {
       "name": "NOTE_FORK",
       "from": "libc crate",
-      "macos": "1"
+      "macos": "1073741824"
      },
      {
       "name": "SIGCHLD",
@@ -9338,7 +9640,7 @@
      {
       "name": "EV_ERROR",
       "from": "libc crate",
-      "macos": "16"
+      "macos": "16384"
      },
      {
       "name": "ESRCH",
@@ -9977,21 +10279,21 @@
      {
       "name": "SOL_SOCKET",
       "from": "libc crate",
-      "macos": "65",
+      "macos": "65535",
       "image": "1",
       "differs": true
      },
      {
       "name": "SO_RCVBUF",
       "from": "libc crate",
-      "macos": "4",
+      "macos": "4098",
       "image": "8",
       "differs": true
      },
      {
       "name": "SO_SNDBUF",
       "from": "libc crate",
-      "macos": "4",
+      "macos": "4097",
       "image": "7",
       "differs": true
      }
@@ -10330,7 +10632,7 @@
      {
       "name": "O_EVTONLY",
       "from": "libc crate",
-      "macos": "32"
+      "macos": "32768"
      }
     ],
     "note": "no function of the system: data or logic"
@@ -10621,7 +10923,7 @@
  "k3": [
   {
    "file": "src/bun_core/lib.rs",
-   "line": 2607,
+   "line": 2611,
    "what": "struct with another layout",
    "name": "sigaction",
    "macos": "sa_sigaction: usize; sa_mask: u32; sa_flags: i32",
@@ -10630,7 +10932,7 @@
   },
   {
    "file": "src/bun_core/lib.rs",
-   "line": 2626,
+   "line": 2630,
    "what": "struct with another layout",
    "name": "passwd",
    "macos": "pw_name: *mut i8; pw_passwd: *mut i8; pw_uid: u32; pw_gid: u32; pw_change: i64; pw_class: *mut i8; pw_gecos: *mut i8; pw_dir: *mut i8; pw_shell: *mut i8; pw_expire: i64",
@@ -10639,7 +10941,7 @@
   },
   {
    "file": "src/bun_core/lib.rs",
-   "line": 2644,
+   "line": 2648,
    "what": "struct with another layout",
    "name": "tm",
    "macos": "tm_sec: i32; tm_min: i32; tm_hour: i32; tm_mday: i32; tm_mon: i32; tm_year: i32; tm_wday: i32; tm_yday: i32; tm_isdst: i32; tm_gmtoff: i64; tm_zone: *mut i8",
@@ -10648,7 +10950,7 @@
   },
   {
    "file": "src/bun_core/lib.rs",
-   "line": 2650,
+   "line": 2654,
    "what": "struct with another layout",
    "name": "sockaddr",
    "macos": "sa_len: u8; sa_family: u8; sa_data: [i8; 14]",
@@ -10657,7 +10959,7 @@
   },
   {
    "file": "src/bun_core/lib.rs",
-   "line": 2653,
+   "line": 2657,
    "what": "struct with another layout",
    "name": "sockaddr_in",
    "macos": "sin_len: u8; sin_family: u8; sin_port: u16; sin_addr: in_addr; sin_zero: [i8; 8]",
@@ -10666,7 +10968,7 @@
   },
   {
    "file": "src/bun_core/lib.rs",
-   "line": 2656,
+   "line": 2660,
    "what": "struct with another layout",
    "name": "sockaddr_in6",
    "macos": "sin6_len: u8; sin6_family: u8; sin6_port: u16; sin6_flowinfo: u32; sin6_addr: in6_addr; sin6_scope_id: u32",
@@ -10675,7 +10977,7 @@
   },
   {
    "file": "src/bun_core/lib.rs",
-   "line": 2659,
+   "line": 2663,
    "what": "struct with another layout",
    "name": "sockaddr_storage",
    "macos": "ss_len: u8; ss_family: u8; __ss_pad1: Padding; __ss_align: i64; __ss_pad2: Padding",
@@ -10684,12 +10986,111 @@
   },
   {
    "file": "src/bun_core/lib.rs",
-   "line": 2662,
+   "line": 2666,
    "what": "struct with another layout",
    "name": "addrinfo",
    "macos": "ai_flags: i32; ai_family: i32; ai_socktype: i32; ai_protocol: i32; ai_addrlen: u32; ai_canonname: *mut i8; ai_addr: *mut sockaddr; ai_next: *mut addrinfo",
    "image": "ai_flags: i32; ai_family: i32; ai_socktype: i32; ai_protocol: i32; ai_addrlen: u32; ai_addr: *mut sockaddr; ai_canonname: *mut i8; ai_next: *mut addrinfo",
    "why": "the host does not convert it"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "line": 56,
+   "what": "a signal number kept in data",
+   "name": "SIGBUS",
+   "macos": "10",
+   "image": "7",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "line": 253,
+   "what": "a signal number kept in data",
+   "name": "SIGBUS",
+   "macos": "10",
+   "image": "7",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "line": 256,
+   "what": "a signal number kept in data",
+   "name": "SIGUSR1",
+   "macos": "30",
+   "image": "10",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "line": 258,
+   "what": "a signal number kept in data",
+   "name": "SIGUSR2",
+   "macos": "31",
+   "image": "12",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "line": 264,
+   "what": "a signal number kept in data",
+   "name": "SIGCHLD",
+   "macos": "20",
+   "image": "17",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "line": 265,
+   "what": "a signal number kept in data",
+   "name": "SIGCONT",
+   "macos": "19",
+   "image": "18",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "line": 266,
+   "what": "a signal number kept in data",
+   "name": "SIGSTOP",
+   "macos": "17",
+   "image": "19",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "line": 267,
+   "what": "a signal number kept in data",
+   "name": "SIGTSTP",
+   "macos": "18",
+   "image": "20",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "line": 270,
+   "what": "a signal number kept in data",
+   "name": "SIGURG",
+   "macos": "16",
+   "image": "23",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "line": 276,
+   "what": "a signal number kept in data",
+   "name": "SIGIO",
+   "macos": "23",
+   "image": "29",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "line": 279,
+   "what": "a signal number kept in data",
+   "name": "SIGSYS",
+   "macos": "12",
+   "image": "31",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
   },
   {
    "file": "src/bun_core/Global.rs",
@@ -10722,7 +11123,7 @@
   },
   {
    "file": "src/bun_core/util.rs",
-   "line": 2221,
+   "line": 2219,
    "what": "type of another size or sign",
    "name": "clockid_t",
    "macos": "u32",
@@ -10740,7 +11141,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 1707,
+   "line": 1731,
    "what": "type of another size or sign",
    "name": "mode_t",
    "macos": "u16",
@@ -10749,7 +11150,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 1707,
+   "line": 1731,
    "what": "type of another size or sign",
    "name": "mode_t",
    "macos": "u16",
@@ -10758,7 +11159,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 1708,
+   "line": 1732,
    "what": "type of another size or sign",
    "name": "mode_t",
    "macos": "u16",
@@ -10767,7 +11168,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 1746,
+   "line": 1770,
    "what": "struct with another layout",
    "name": "termios",
    "macos": "c_iflag: u64; c_oflag: u64; c_cflag: u64; c_lflag: u64; c_cc: [u8; 20]; c_ispeed: u64; c_ospeed: u64",
@@ -10776,7 +11177,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 1754,
+   "line": 1778,
    "what": "struct with another layout",
    "name": "termios",
    "macos": "c_iflag: u64; c_oflag: u64; c_cflag: u64; c_lflag: u64; c_cc: [u8; 20]; c_ispeed: u64; c_ospeed: u64",
@@ -10785,7 +11186,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 2569,
+   "line": 2592,
    "in_function": "mkdir",
    "what": "type of another size or sign",
    "name": "mode_t",
@@ -10795,7 +11196,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 2581,
+   "line": 2604,
    "in_function": "mkdirat",
    "what": "type of another size or sign",
    "name": "mode_t",
@@ -10805,7 +11206,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 2795,
+   "line": 2820,
    "in_function": "fchmod",
    "what": "type of another size or sign",
    "name": "mode_t",
@@ -10815,7 +11216,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 2941,
+   "line": 2966,
    "in_function": "chmod",
    "what": "type of another size or sign",
    "name": "mode_t",
@@ -10825,7 +11226,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 2952,
+   "line": 2977,
    "in_function": "fchmodat",
    "what": "type of another size or sign",
    "name": "mode_t",
@@ -10835,7 +11236,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 3208,
+   "line": 3243,
    "in_function": "umask",
    "what": "type of another size or sign",
    "name": "mode_t",
@@ -10845,7 +11246,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 3260,
+   "line": 3295,
    "what": "constant with another value",
    "name": "MSG_DONTWAIT",
    "macos": "128",
@@ -10854,7 +11255,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 3264,
+   "line": 3299,
    "what": "constant with another value",
    "name": "MSG_DONTWAIT",
    "macos": "128",
@@ -10863,16 +11264,16 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 3264,
+   "line": 3299,
    "what": "constant with another value",
    "name": "MSG_NOSIGNAL",
-   "macos": "524",
-   "image": "16",
+   "macos": "524288",
+   "image": "16384",
    "why": "the host translates no request that carries it"
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 6371,
+   "line": 6432,
    "what": "constant with another value",
    "name": "RTLD_LOCAL",
    "macos": "4",
@@ -10881,7 +11282,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8073,
+   "line": 8135,
    "in_function": "move_file_z_with_handle",
    "what": "type of another size or sign",
    "name": "mode_t",
@@ -10891,7 +11292,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8287,
+   "line": 8349,
    "what": "constant with another value",
    "name": "AF_INET6",
    "macos": "30",
@@ -10900,7 +11301,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8299,
+   "line": 8361,
    "what": "struct with another layout",
    "name": "sockaddr",
    "macos": "sa_len: u8; sa_family: u8; sa_data: [i8; 14]",
@@ -10909,7 +11310,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8299,
+   "line": 8361,
    "what": "struct with another layout",
    "name": "sockaddr_in",
    "macos": "sin_len: u8; sin_family: u8; sin_port: u16; sin_addr: in_addr; sin_zero: [i8; 8]",
@@ -10918,7 +11319,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8299,
+   "line": 8361,
    "what": "struct with another layout",
    "name": "sockaddr_in6",
    "macos": "sin6_len: u8; sin6_family: u8; sin6_port: u16; sin6_flowinfo: u32; sin6_addr: in6_addr; sin6_scope_id: u32",
@@ -10927,7 +11328,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8299,
+   "line": 8361,
    "what": "struct with another layout",
    "name": "sockaddr_storage",
    "macos": "ss_len: u8; ss_family: u8; __ss_pad1: Padding; __ss_align: i64; __ss_pad2: Padding",
@@ -10936,7 +11337,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8331,
+   "line": 8393,
    "what": "struct with another layout",
    "name": "sigaction",
    "macos": "sa_sigaction: usize; sa_mask: u32; sa_flags: i32",
@@ -10945,7 +11346,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8333,
+   "line": 8395,
    "what": "struct with another layout",
    "name": "siginfo_t",
    "macos": "si_signo: i32; si_errno: i32; si_code: i32; si_pid: i32; si_uid: u32; si_status: i32; si_addr: *mut core::ffi::c_void; _pad: Padding",
@@ -10954,7 +11355,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8403,
+   "line": 8465,
    "what": "struct with another layout",
    "name": "termios",
    "macos": "c_iflag: u64; c_oflag: u64; c_cflag: u64; c_lflag: u64; c_cc: [u8; 20]; c_ispeed: u64; c_ospeed: u64",
@@ -10963,7 +11364,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8496,
+   "line": 8558,
    "what": "constant with another value",
    "name": "AF_INET6",
    "macos": "30",
@@ -10972,7 +11373,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8496,
+   "line": 8558,
    "what": "struct with another layout",
    "name": "sockaddr",
    "macos": "sa_len: u8; sa_family: u8; sa_data: [i8; 14]",
@@ -10981,7 +11382,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8496,
+   "line": 8558,
    "what": "struct with another layout",
    "name": "sockaddr_in",
    "macos": "sin_len: u8; sin_family: u8; sin_port: u16; sin_addr: in_addr; sin_zero: [i8; 8]",
@@ -10990,7 +11391,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8496,
+   "line": 8558,
    "what": "struct with another layout",
    "name": "sockaddr_in6",
    "macos": "sin6_len: u8; sin6_family: u8; sin6_port: u16; sin6_flowinfo: u32; sin6_addr: in6_addr; sin6_scope_id: u32",
@@ -10999,7 +11400,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8496,
+   "line": 8558,
    "what": "struct with another layout",
    "name": "sockaddr_storage",
    "macos": "ss_len: u8; ss_family: u8; __ss_pad1: Padding; __ss_align: i64; __ss_pad2: Padding",
@@ -11008,7 +11409,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 8526,
+   "line": 8588,
    "what": "type of another size or sign",
    "name": "sa_family_t",
    "macos": "u8",
@@ -11017,13 +11418,33 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 9336,
+   "line": 9398,
    "in_function": "copy_file_z_slow_with_handle",
    "what": "type of another size or sign",
    "name": "mode_t",
    "macos": "u16",
    "image": "u32",
    "why": "a value of this type in a structure or in data has the width of Linux in the image"
+  },
+  {
+   "file": "src/io/ParentDeathWatchdog.rs",
+   "line": 408,
+   "in_function": "kill_descendants",
+   "what": "a signal number kept in data",
+   "name": "SIGSTOP",
+   "macos": "17",
+   "image": "19",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/io/ParentDeathWatchdog.rs",
+   "line": 413,
+   "in_function": "kill_descendants",
+   "what": "a signal number kept in data",
+   "name": "SIGCONT",
+   "macos": "19",
+   "image": "18",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
   },
   {
    "file": "src/spawn/ctrl_c.rs",
@@ -11044,6 +11465,26 @@
    "macos": "sa_sigaction: usize; sa_mask: u32; sa_flags: i32",
    "image": "sa_sigaction: usize; sa_mask: sigset_t; sa_flags: i32; sa_restorer: Option<unsafe extern \"C\" fn()>",
    "why": "the host does not convert it"
+  },
+  {
+   "file": "src/spawn/process.rs",
+   "line": 3022,
+   "in_function": "on_child_stopped",
+   "what": "a signal number kept in data",
+   "name": "SIGTSTP",
+   "macos": "18",
+   "image": "20",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
+  },
+  {
+   "file": "src/spawn/process.rs",
+   "line": 3027,
+   "in_function": "on_child_stopped",
+   "what": "a signal number kept in data",
+   "name": "SIGCONT",
+   "macos": "19",
+   "image": "18",
+   "why": "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on"
   },
   {
    "file": "src/threading/ThreadPool.rs",
@@ -11214,7 +11655,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 1295,
+   "line": 1303,
    "what": "a table of bun's own with one definition for each OS",
    "name": "const PATH",
    "macos": "pub const PATH : i32 = 0;",
@@ -11223,7 +11664,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 1297,
+   "line": 1305,
    "what": "a table of bun's own with one definition for each OS",
    "name": "const NOATIME",
    "macos": "pub const NOATIME : i32 = 0;",
@@ -11232,7 +11673,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 1321,
+   "line": 1329,
    "what": "a table of bun's own with one definition for each OS",
    "name": "const SYMLINK",
    "macos": "pub const SYMLINK : i32 = libc::O_SYMLINK;",
@@ -11241,7 +11682,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 1325,
+   "line": 1333,
    "what": "a table of bun's own with one definition for each OS",
    "name": "const EVTONLY",
    "macos": "pub const EVTONLY : i32 = libc::O_EVTONLY;",
@@ -11250,7 +11691,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 1331,
+   "line": 1339,
    "what": "a table of bun's own with one definition for each OS",
    "name": "const NOFOLLOW_ANY",
    "macos": "pub const NOFOLLOW_ANY : i32 = libc::O_NOFOLLOW_ANY;",
@@ -11259,7 +11700,7 @@
   },
   {
    "file": "src/sys/lib.rs",
-   "line": 1683,
+   "line": 1707,
    "what": "a table of bun's own with one definition for each OS",
    "name": "const MAX_COUNT",
    "macos": "pub(crate) const MAX_COUNT : usize = i32::MAX as usize;",
@@ -11337,14 +11778,70 @@
    "macos": "pub type mode_t = u16;",
    "image": "pub type mode_t = u32;",
    "why": "the image has the definition for Linux; shared source that uses the name passes the value of Linux on every host"
+  },
+  {
+   "file": "src/sys/Error.rs",
+   "in_function": "Error::errno, Error::to_system_error, bun_sys::SystemError::errno",
+   "what": "the number of an error that leaves bun",
+   "name": "Error::errno, Error::to_system_error, bun_sys::SystemError::errno",
+   "why": "The image has one set of error numbers, the one of Linux (src/errno/portable_errno.rs). bun for macOS reports the numbers of macOS: error.errno is -35 for EAGAIN there, os.constants.errno.EAGAIN is 35. What leaves bun (JavaScript, exit codes, messages) has to be translated with bun_darwin_sys::errno::to_macos on a macOS host; the slice does it for what it prints.",
+   "found_by": "reading"
+  },
+  {
+   "file": "src/errno/portable_errno.rs",
+   "in_function": "SystemErrno of the image",
+   "what": "errors that only macOS has",
+   "name": "SystemErrno of the image",
+   "why": "ENOATTR, EAUTH, ENEEDAUTH, EPROCLIM, EBADRPC, ERPCMISMATCH, EPROGUNAVAIL, EPROGMISMATCH, EPROCUNAVAIL, EPWROFF, EDEVERR, EBADEXEC, EBADARCH, ESHLIBVERS, EBADMACHO, ENOPOLICY and EQFULL are no names of the enum of the image. Each becomes the error of the image that misctools/portable/bindings/darwin-errno.json names (ENOATTR is ENODATA), so error.code is another name than in bun for macOS. EFTYPE has a number of its own in the image.",
+   "found_by": "reading"
+  },
+  {
+   "file": "src/darwin_sys/errno.rs",
+   "in_function": "to_macos",
+   "what": "ENOTSUP and EOPNOTSUPP",
+   "name": "to_macos",
+   "why": "macOS has two numbers (45 and 102), Linux and the image have one (95). An error of macOS that was one of the two is reported back as ENOTSUP (45).",
+   "found_by": "reading"
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "in_function": "SignalCode",
+   "what": "a signal number kept in data",
+   "name": "SignalCode",
+   "why": "The names of the signals get their numbers from the libc crate, which is the one of Linux in the image: SIGUSR1 is 10 there and 30 on macOS, SIGBUS 7 and 10. The host translates the number where the image sends a signal or sets a handler. It does not see the number that bun hands to JavaScript (os.constants.signals, the signal of a child that ended), which has to be the one of macOS on a macOS host.",
+   "found_by": "reading"
+  },
+  {
+   "file": "src/sys/lib.rs",
+   "in_function": "mod O, open, openat",
+   "what": "flags of open that only macOS has",
+   "name": "mod O, open, openat",
+   "why": "O::SYMLINK, O::EVTONLY and O::NOFOLLOW_ANY are 0 in the image, as they are in a build for Linux: shared code that passes them (the watcher opens with O::EVTONLY) opens without them on a macOS host. bun_darwin_sys has bits for them that no flag of Linux uses (generated.rs, constants_for_bun) and translates them; bun's O does not use those bits yet.",
+   "found_by": "reading"
+  },
+  {
+   "file": "src/sys/lib.rs",
+   "in_function": "StatFS, statfs, fstatfs",
+   "what": "struct statfs",
+   "name": "StatFS, statfs, fstatfs",
+   "why": "StatFS is the structure of Linux in the image. On a macOS host the request goes to the host, which fills that structure from the one of macOS: the name of the kind of file system (f_fstypename) and what else only macOS has is lost, and bun's own declaration of statfs64 for x86-64 macOS is not called.",
+   "found_by": "reading"
+  },
+  {
+   "file": "src/sys/lib.rs",
+   "in_function": "posix_impl::fcntl with F_GETLK, F_SETLK, F_SETLKW",
+   "what": "struct flock",
+   "name": "posix_impl::fcntl with F_GETLK, F_SETLK, F_SETLKW",
+   "why": "On a macOS host fcntl is the function of macOS (host_libc!), and struct flock of macOS has its fields in another order. bun_darwin_sys::libc::fcntl answers EINVAL for the three commands until it converts the structure.",
+   "found_by": "reading"
   }
  ],
  "linux_only": [
   {
    "crate": "bun_core",
    "file": "src/bun_core/lib.rs",
-   "line": 2351,
-   "end_line": 2374,
+   "line": 2355,
+   "end_line": 2378,
    "item": "fn linux_kernel_version",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -11365,8 +11862,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/lib.rs",
-   "line": 2613,
-   "end_line": 2614,
+   "line": 2617,
+   "end_line": 2618,
    "item": "impl Zeroable for libc::sigset_t",
    "cfg": "all(unix, not(target_vendor = \"apple\"))",
    "effective": "all(unix, not(target_vendor = \"apple\"))",
@@ -11393,8 +11890,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/lib.rs",
-   "line": 2664,
-   "end_line": 2665,
+   "line": 2668,
+   "end_line": 2669,
    "item": "impl Zeroable for libc::sysinfo",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -11420,8 +11917,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/lib.rs",
-   "line": 2667,
-   "end_line": 2668,
+   "line": 2671,
+   "end_line": 2672,
    "item": "impl Zeroable for libc::epoll_event",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -11447,8 +11944,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/lib.rs",
-   "line": 2670,
-   "end_line": 2671,
+   "line": 2674,
+   "end_line": 2675,
    "item": "impl Zeroable for libc::signalfd_siginfo",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -11474,8 +11971,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/lib.rs",
-   "line": 2917,
-   "end_line": 2922,
+   "line": 2921,
+   "end_line": 2926,
    "item": "fn __wrap_gettid",
    "cfg": "target_os = \"linux\"",
    "effective": "target_os = \"linux\"",
@@ -11494,7 +11991,7 @@
      "name": "syscall",
      "from": "libc crate",
      "variadic": true,
-     "line": 2921
+     "line": 2925
     }
    ],
    "types": [
@@ -11707,7 +12204,7 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 1285,
+   "line": 1286,
    "end_line": 1302,
    "item": "block",
    "in_function": "fd_path_raw",
@@ -11750,8 +12247,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 1945,
-   "end_line": 1973,
+   "line": 1943,
+   "end_line": 1971,
    "item": "fn parse_dotted",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -11772,8 +12269,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 2701,
-   "end_line": 2722,
+   "line": 2699,
+   "end_line": 2720,
    "item": "block",
    "in_function": "os_entropy",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -11792,7 +12289,7 @@
     {
      "name": "getrandom",
      "from": "libc crate",
-     "line": 2707
+     "line": 2705
     }
    ],
    "types": [],
@@ -11808,8 +12305,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 4185,
-   "end_line": 4252,
+   "line": 4183,
+   "end_line": 4250,
    "item": "fn which",
    "cfg": "any(target_os = \"linux\", target_os = \"freebsd\")",
    "effective": "any(target_os = \"linux\", target_os = \"freebsd\")",
@@ -11828,7 +12325,7 @@
      "name": "access",
      "from": "libc crate",
      "variadic": false,
-     "line": 4219
+     "line": 4217
     }
    ],
    "types": [],
@@ -11844,8 +12341,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 4643,
-   "end_line": 4700,
+   "line": 4641,
+   "end_line": 4698,
    "item": "let pid",
    "in_function": "spawn_sync_inherit_impl",
    "cfg": "any(target_os = \"linux\", target_os = \"freebsd\")",
@@ -11879,8 +12376,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 5188,
-   "end_line": 5189,
+   "line": 5186,
+   "end_line": 5187,
    "item": "use core::sync::atomic::",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -11901,8 +12398,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 5191,
-   "end_line": 5192,
+   "line": 5189,
+   "end_line": 5190,
    "item": "use std::sync::Once",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -11923,8 +12420,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 5198,
-   "end_line": 5199,
+   "line": 5196,
+   "end_line": 5197,
    "item": "field linux",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -11945,8 +12442,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 5203,
-   "end_line": 5204,
+   "line": 5201,
+   "end_line": 5202,
    "item": "field linux",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -11967,8 +12464,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 5208,
-   "end_line": 5211,
+   "line": 5206,
+   "end_line": 5209,
    "item": "if statement",
    "in_function": "end",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -11990,8 +12487,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 5232,
-   "end_line": 5236,
+   "line": 5230,
+   "end_line": 5234,
    "item": "let on",
    "in_function": "is_enabled_init",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12013,8 +12510,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 5261,
-   "end_line": 5273,
+   "line": 5259,
+   "end_line": 5271,
    "item": "mod sys",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12032,17 +12529,17 @@
     {
      "name": "Bun__linux_trace_init",
      "from": "declared by bun",
-     "line": 5265
+     "line": 5263
     },
     {
      "name": "Bun__linux_trace_close",
      "from": "declared by bun",
-     "line": 5267
+     "line": 5265
     },
     {
      "name": "Bun__linux_trace_emit",
      "from": "declared by bun",
-     "line": 5268
+     "line": 5266
     }
    ],
    "types": [],
@@ -12051,8 +12548,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 5283,
-   "end_line": 5288,
+   "line": 5281,
+   "end_line": 5286,
    "item": "block",
    "in_function": "trace",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12074,8 +12571,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 5297,
-   "end_line": 5301,
+   "line": 5295,
+   "end_line": 5299,
    "item": "struct Linux",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12096,8 +12593,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/util.rs",
-   "line": 5303,
-   "end_line": 5341,
+   "line": 5301,
+   "end_line": 5339,
    "item": "impl Linux",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12229,8 +12726,8 @@
     {
      "name": "O_CLOEXEC",
      "from": "libc crate",
-     "macos": "16",
-     "image": "524",
+     "macos": "16777216",
+     "image": "524288",
      "differs": true
     }
    ]
@@ -12268,8 +12765,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/host_dispatch.rs",
-   "line": 68,
-   "end_line": 69,
+   "line": 90,
+   "end_line": 91,
    "item": "expression",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(not(bun_portable), any(target_os = \"linux\", target_os = \"android\"))",
@@ -12290,8 +12787,52 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/host_dispatch.rs",
-   "line": 169,
-   "end_line": 170,
+   "line": 102,
+   "end_line": 103,
+   "item": "expression",
+   "cfg": "not(target_os = \"macos\")",
+   "effective": "all(not(bun_portable), not(target_os = \"macos\"))",
+   "active": {
+    "linux": true,
+    "macos": false,
+    "windows": true,
+    "image": false
+   },
+   "same_source_serves_linux": false,
+   "side": "linux",
+   "kind": "linux-only",
+   "in_image": "not in the image",
+   "functions": [],
+   "types": [],
+   "constants": []
+  },
+  {
+   "crate": "bun_core",
+   "file": "src/bun_core/host_dispatch.rs",
+   "line": 118,
+   "end_line": 119,
+   "item": "expression",
+   "cfg": "not(any(target_os = \"macos\", target_os = \"freebsd\"))",
+   "effective": "all(not(bun_portable), not(any(target_os = \"macos\", target_os = \"freebsd\")))",
+   "active": {
+    "linux": true,
+    "macos": false,
+    "windows": true,
+    "image": false
+   },
+   "same_source_serves_linux": false,
+   "side": "linux",
+   "kind": "linux-only",
+   "in_image": "not in the image",
+   "functions": [],
+   "types": [],
+   "constants": []
+  },
+  {
+   "crate": "bun_core",
+   "file": "src/bun_core/host_dispatch.rs",
+   "line": 333,
+   "end_line": 334,
    "item": "statement",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(not(bun_portable), any(target_os = \"linux\", target_os = \"android\"))",
@@ -12312,8 +12853,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 152,
-   "end_line": 153,
+   "line": 156,
+   "end_line": 157,
    "item": "use super::{Error, Tag",
    "cfg": "not(target_os = \"macos\")",
    "effective": "not(target_os = \"macos\")",
@@ -12334,8 +12875,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 379,
-   "end_line": 385,
+   "line": 383,
+   "end_line": 389,
    "item": "struct State",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12356,8 +12897,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 386,
-   "end_line": 447,
+   "line": 390,
+   "end_line": 451,
    "item": "impl State",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12378,8 +12919,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 928,
-   "end_line": 940,
+   "line": 939,
+   "end_line": 950,
    "item": "block",
    "in_function": "lstatat",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12416,8 +12957,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1056,
-   "end_line": 1057,
+   "line": 1065,
+   "end_line": 1066,
    "item": "mod linux_syscall",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12438,8 +12979,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1205,
-   "end_line": 1213,
+   "line": 1214,
+   "end_line": 1221,
    "item": "block",
    "in_function": "int",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12472,8 +13013,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1283,
-   "end_line": 1284,
+   "line": 1291,
+   "end_line": 1292,
    "item": "const PATH",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12493,15 +13034,15 @@
     {
      "name": "O_PATH",
      "from": "libc crate",
-     "image": "2"
+     "image": "2097152"
     }
    ]
   },
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1285,
-   "end_line": 1286,
+   "line": 1293,
+   "end_line": 1294,
    "item": "const NOATIME",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12521,15 +13062,15 @@
     {
      "name": "O_NOATIME",
      "from": "libc crate",
-     "image": "262"
+     "image": "262144"
     }
    ]
   },
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1287,
-   "end_line": 1288,
+   "line": 1295,
+   "end_line": 1296,
    "item": "const TMPFILE",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12549,15 +13090,15 @@
     {
      "name": "O_TMPFILE",
      "from": "libc crate",
-     "image": "4"
+     "image": "4259840"
     }
    ]
   },
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1323,
-   "end_line": 1324,
+   "line": 1331,
+   "end_line": 1332,
    "item": "const SYMLINK",
    "cfg": "not(target_os = \"macos\")",
    "effective": "not(target_os = \"macos\")",
@@ -12578,8 +13119,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1327,
-   "end_line": 1328,
+   "line": 1335,
+   "end_line": 1336,
    "item": "const EVTONLY",
    "cfg": "not(target_os = \"macos\")",
    "effective": "not(target_os = \"macos\")",
@@ -12600,8 +13141,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1333,
-   "end_line": 1334,
+   "line": 1341,
+   "end_line": 1342,
    "item": "const NOFOLLOW_ANY",
    "cfg": "not(target_os = \"macos\")",
    "effective": "not(target_os = \"macos\")",
@@ -12622,8 +13163,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1438,
-   "end_line": 1439,
+   "line": 1462,
+   "end_line": 1463,
    "item": "const clonefileat",
    "cfg": "not(target_os = \"macos\")",
    "effective": "not(target_os = \"macos\")",
@@ -12644,8 +13185,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1464,
-   "end_line": 1465,
+   "line": 1488,
+   "end_line": 1489,
    "item": "const memfd_create",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12666,8 +13207,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1681,
-   "end_line": 1682,
+   "line": 1705,
+   "end_line": 1706,
    "item": "const MAX_COUNT",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12688,8 +13229,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1712,
-   "end_line": 1718,
+   "line": 1736,
+   "end_line": 1742,
    "item": "fn fallocate",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -12707,7 +13248,7 @@
     {
      "name": "fallocate",
      "from": "declared by bun",
-     "line": 1713
+     "line": 1737
     }
    ],
    "types": [
@@ -12721,8 +13262,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1723,
-   "end_line": 1724,
+   "line": 1747,
+   "end_line": 1748,
    "item": "fn eventfd",
    "cfg": "any(target_os = \"linux\", target_os = \"android\", target_os = \"freebsd\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\", target_os = \"freebsd\"))",
@@ -12740,7 +13281,7 @@
     {
      "name": "eventfd",
      "from": "declared by bun",
-     "line": 1724
+     "line": 1748
     }
    ],
    "types": [
@@ -12754,8 +13295,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1725,
-   "end_line": 1726,
+   "line": 1749,
+   "end_line": 1750,
    "item": "fn inotify_init1",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -12773,7 +13314,7 @@
     {
      "name": "inotify_init1",
      "from": "declared by bun",
-     "line": 1726
+     "line": 1750
     }
    ],
    "types": [],
@@ -12782,8 +13323,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1730,
-   "end_line": 1731,
+   "line": 1754,
+   "end_line": 1755,
    "item": "fn inotify_rm_watch",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -12801,7 +13342,7 @@
     {
      "name": "inotify_rm_watch",
      "from": "declared by bun",
-     "line": 1731
+     "line": 1755
     }
    ],
    "types": [],
@@ -12810,8 +13351,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1955,
-   "end_line": 1960,
+   "line": 1981,
+   "end_line": 1985,
    "item": "block",
    "in_function": "sys_recv",
    "cfg": "not(target_os = \"macos\")",
@@ -12831,7 +13372,7 @@
      "name": "recv",
      "from": "libc crate",
      "variadic": false,
-     "line": 1959
+     "line": 1984
     }
    ],
    "types": [],
@@ -12840,8 +13381,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 1970,
-   "end_line": 1975,
+   "line": 1996,
+   "end_line": 2000,
    "item": "block",
    "in_function": "sys_send",
    "cfg": "not(target_os = \"macos\")",
@@ -12861,7 +13402,7 @@
      "name": "send",
      "from": "libc crate",
      "variadic": false,
-     "line": 1974
+     "line": 1999
     }
    ],
    "types": [],
@@ -12870,8 +13411,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2052,
-   "end_line": 2056,
+   "line": 2078,
+   "end_line": 2081,
    "item": "block",
    "in_function": "openat",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12893,8 +13434,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2067,
-   "end_line": 2073,
+   "line": 2092,
+   "end_line": 2098,
    "item": "fn openat2_beneath",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -12915,8 +13456,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2077,
-   "end_line": 2114,
+   "line": 2102,
+   "end_line": 2139,
    "item": "fn openat2_in_root",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -12963,8 +13504,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2119,
-   "end_line": 2127,
+   "line": 2145,
+   "end_line": 2152,
    "item": "block",
    "in_function": "close",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -12993,8 +13534,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2152,
-   "end_line": 2156,
+   "line": 2177,
+   "end_line": 2180,
    "item": "block",
    "in_function": "read",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -13016,8 +13557,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2178,
-   "end_line": 2182,
+   "line": 2202,
+   "end_line": 2205,
    "item": "block",
    "in_function": "write",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -13039,8 +13580,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2194,
-   "end_line": 2198,
+   "line": 2218,
+   "end_line": 2221,
    "item": "block",
    "in_function": "pread",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -13062,8 +13603,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2211,
-   "end_line": 2215,
+   "line": 2235,
+   "end_line": 2238,
    "item": "block",
    "in_function": "pwrite",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -13085,8 +13626,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2227,
-   "end_line": 2231,
+   "line": 2251,
+   "end_line": 2254,
    "item": "block",
    "in_function": "stat",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -13108,8 +13649,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2246,
-   "end_line": 2250,
+   "line": 2270,
+   "end_line": 2273,
    "item": "block",
    "in_function": "fstat",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -13131,8 +13672,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2264,
-   "end_line": 2268,
+   "line": 2288,
+   "end_line": 2291,
    "item": "block",
    "in_function": "lstat",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -13154,8 +13695,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2295,
-   "end_line": 2387,
+   "line": 2318,
+   "end_line": 2410,
    "item": "mod linux_statx",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -13230,8 +13771,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2298,
-   "end_line": 2302,
+   "line": 2321,
+   "end_line": 2325,
    "item": "use libc::{STATX_ATIME, STATX_BLOCKS",
    "cfg": "all(target_os = \"linux\", not(target_env = \"musl\"))",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"), all(target_os = \"linux\", not(target_env = \"musl\")))",
@@ -13306,8 +13847,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2388,
-   "end_line": 2389,
+   "line": 2411,
+   "end_line": 2412,
    "item": "use linux_statx as lx",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -13328,53 +13869,9 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2391,
-   "end_line": 2393,
+   "line": 2414,
+   "end_line": 2416,
    "item": "static SUPPORTS_STATX_ON_LINUX",
-   "cfg": "any(target_os = \"linux\", target_os = \"android\")",
-   "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
-   "active": {
-    "linux": true,
-    "macos": false,
-    "windows": false,
-    "image": true
-   },
-   "same_source_serves_linux": false,
-   "side": "linux",
-   "kind": "linux-only",
-   "in_image": "compiled into the image",
-   "functions": [],
-   "types": [],
-   "constants": []
-  },
-  {
-   "crate": "bun_sys",
-   "file": "src/sys/lib.rs",
-   "line": 2397,
-   "end_line": 2409,
-   "item": "const STATX_MASK_FOR_STATS",
-   "cfg": "any(target_os = \"linux\", target_os = \"android\")",
-   "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
-   "active": {
-    "linux": true,
-    "macos": false,
-    "windows": false,
-    "image": true
-   },
-   "same_source_serves_linux": false,
-   "side": "linux",
-   "kind": "linux-only",
-   "in_image": "compiled into the image",
-   "functions": [],
-   "types": [],
-   "constants": []
-  },
-  {
-   "crate": "bun_sys",
-   "file": "src/sys/lib.rs",
-   "line": 2412,
-   "end_line": 2418,
-   "item": "fn statx_makedev",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
    "active": {
@@ -13396,6 +13893,50 @@
    "file": "src/sys/lib.rs",
    "line": 2420,
    "end_line": 2432,
+   "item": "const STATX_MASK_FOR_STATS",
+   "cfg": "any(target_os = \"linux\", target_os = \"android\")",
+   "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
+   "active": {
+    "linux": true,
+    "macos": false,
+    "windows": false,
+    "image": true
+   },
+   "same_source_serves_linux": false,
+   "side": "linux",
+   "kind": "linux-only",
+   "in_image": "compiled into the image",
+   "functions": [],
+   "types": [],
+   "constants": []
+  },
+  {
+   "crate": "bun_sys",
+   "file": "src/sys/lib.rs",
+   "line": 2435,
+   "end_line": 2441,
+   "item": "fn statx_makedev",
+   "cfg": "any(target_os = \"linux\", target_os = \"android\")",
+   "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
+   "active": {
+    "linux": true,
+    "macos": false,
+    "windows": false,
+    "image": true
+   },
+   "same_source_serves_linux": false,
+   "side": "linux",
+   "kind": "linux-only",
+   "in_image": "compiled into the image",
+   "functions": [],
+   "types": [],
+   "constants": []
+  },
+  {
+   "crate": "bun_sys",
+   "file": "src/sys/lib.rs",
+   "line": 2443,
+   "end_line": 2455,
    "item": "fn statx_fallback",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -13424,8 +13965,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2435,
-   "end_line": 2446,
+   "line": 2458,
+   "end_line": 2469,
    "item": "fn posix_stat",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -13446,8 +13987,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2438,
-   "end_line": 2441,
+   "line": 2461,
+   "end_line": 2464,
    "item": "block",
    "in_function": "posix_stat",
    "cfg": "not(bun_portable)",
@@ -13469,8 +14010,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2451,
-   "end_line": 2539,
+   "line": 2474,
+   "end_line": 2562,
    "item": "fn statx_impl",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -13491,8 +14032,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2541,
-   "end_line": 2544,
+   "line": 2564,
+   "end_line": 2567,
    "item": "fn fstatx",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -13512,15 +14053,15 @@
     {
      "name": "AT_EMPTY_PATH",
      "from": "libc crate",
-     "image": "4"
+     "image": "4096"
     }
    ]
   },
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2545,
-   "end_line": 2554,
+   "line": 2568,
+   "end_line": 2577,
    "item": "fn statx",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -13549,8 +14090,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2555,
-   "end_line": 2564,
+   "line": 2578,
+   "end_line": 2587,
    "item": "fn lstatx",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -13586,8 +14127,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2659,
-   "end_line": 2678,
+   "line": 2683,
+   "end_line": 2701,
    "item": "block",
    "in_function": "renameat2",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -13607,7 +14148,7 @@
      "name": "syscall",
      "from": "libc crate",
      "variadic": true,
-     "line": 2665
+     "line": 2688
     }
    ],
    "types": [
@@ -13627,8 +14168,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2844,
-   "end_line": 2900,
+   "line": 2869,
+   "end_line": 2925,
    "item": "fn linkat_tmpfile",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -13647,7 +14188,7 @@
      "name": "linkat",
      "from": "libc crate",
      "variadic": false,
-     "line": 2853
+     "line": 2878
     }
    ],
    "types": [],
@@ -13655,7 +14196,7 @@
     {
      "name": "AT_EMPTY_PATH",
      "from": "libc crate",
-     "image": "4"
+     "image": "4096"
     },
     {
      "name": "AT_FDCWD",
@@ -13668,7 +14209,7 @@
      "name": "AT_SYMLINK_FOLLOW",
      "from": "libc crate",
      "macos": "64",
-     "image": "1",
+     "image": "1024",
      "differs": true
     },
     {
@@ -13713,8 +14254,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 2976,
-   "end_line": 3002,
+   "line": 3005,
+   "end_line": 3030,
    "item": "block",
    "in_function": "lchmod",
    "cfg": "not(any(target_os = \"macos\", target_os = \"freebsd\"))",
@@ -13734,7 +14275,7 @@
      "name": "syscall",
      "from": "libc crate",
      "variadic": true,
-     "line": 2982
+     "line": 3010
     }
    ],
    "types": [
@@ -13769,8 +14310,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3029,
-   "end_line": 3033,
+   "line": 3059,
+   "end_line": 3062,
    "item": "block",
    "in_function": "fstatat",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -13792,8 +14333,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3107,
-   "end_line": 3110,
+   "line": 3137,
+   "end_line": 3139,
    "item": "block",
    "in_function": "exists_at",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -13822,27 +14363,27 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3142,
-   "end_line": 3143,
+   "line": 3171,
+   "end_line": 3172,
    "item": "use libc::realpath as _realpath",
-   "cfg": "not(target_os = \"macos\")",
-   "effective": "all(unix, not(target_os = \"macos\"))",
+   "cfg": "not(any(target_os = \"macos\", bun_portable))",
+   "effective": "all(unix, not(any(target_os = \"macos\", bun_portable)))",
    "active": {
     "linux": true,
     "macos": false,
     "windows": false,
-    "image": true
+    "image": false
    },
    "same_source_serves_linux": false,
    "side": "linux",
    "kind": "linux-only",
-   "in_image": "compiled into the image",
+   "in_image": "not in the image",
    "functions": [
     {
      "name": "realpath",
      "from": "libc crate",
      "variadic": false,
-     "line": 3143
+     "line": 3172
     }
    ],
    "types": [],
@@ -13851,8 +14392,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3223,
-   "end_line": 3229,
+   "line": 3258,
+   "end_line": 3264,
    "item": "let n",
    "in_function": "recv",
    "cfg": "not(target_os = \"macos\")",
@@ -13874,8 +14415,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3242,
-   "end_line": 3248,
+   "line": 3277,
+   "end_line": 3283,
    "item": "let n",
    "in_function": "send",
    "cfg": "not(target_os = \"macos\")",
@@ -13897,8 +14438,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3303,
-   "end_line": 3310,
+   "line": 3338,
+   "end_line": 3345,
    "item": "block",
    "in_function": "socketpair_impl",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -13919,20 +14460,20 @@
     {
      "name": "SOCK_CLOEXEC",
      "from": "libc crate",
-     "image": "524"
+     "image": "524288"
     },
     {
      "name": "SOCK_NONBLOCK",
      "from": "libc crate",
-     "image": "2"
+     "image": "2048"
     }
    ]
   },
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3390,
-   "end_line": 3395,
+   "line": 3425,
+   "end_line": 3430,
    "item": "fn pidfd_open",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -13958,8 +14499,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3558,
-   "end_line": 3568,
+   "line": 3601,
+   "end_line": 3611,
    "item": "enum MemfdFlags",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -13991,8 +14532,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3569,
-   "end_line": 3578,
+   "line": 3612,
+   "end_line": 3621,
    "item": "impl MemfdFlags",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -14019,8 +14560,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3583,
-   "end_line": 3585,
+   "line": 3626,
+   "end_line": 3628,
    "item": "static MEMFD_ENOSYS",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -14041,8 +14582,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3590,
-   "end_line": 3600,
+   "line": 3633,
+   "end_line": 3643,
    "item": "fn can_use_memfd",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -14063,8 +14604,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3611,
-   "end_line": 3642,
+   "line": 3654,
+   "end_line": 3685,
    "item": "fn memfd_create",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -14082,7 +14623,7 @@
     {
      "name": "memfd_create",
      "from": "libc crate",
-     "line": 3624
+     "line": 3667
     }
    ],
    "types": [],
@@ -14123,8 +14664,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3623,
-   "end_line": 3624,
+   "line": 3666,
+   "end_line": 3667,
    "item": "let rc",
    "in_function": "memfd_create",
    "cfg": "target_os = \"linux\"",
@@ -14143,7 +14684,7 @@
     {
      "name": "memfd_create",
      "from": "libc crate",
-     "line": 3624
+     "line": 3667
     }
    ],
    "types": [],
@@ -14152,8 +14693,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 3646,
-   "end_line": 3663,
+   "line": 3689,
+   "end_line": 3706,
    "item": "fn sendfile",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(unix, any(target_os = \"linux\", target_os = \"android\"))",
@@ -14172,7 +14713,7 @@
      "name": "sendfile",
      "from": "libc crate",
      "variadic": false,
-     "line": 3653
+     "line": 3696
     }
    ],
    "types": [],
@@ -14188,8 +14729,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 4826,
-   "end_line": 4833,
+   "line": 4872,
+   "end_line": 4879,
    "item": "block",
    "in_function": "pwritev",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14216,8 +14757,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 4971,
-   "end_line": 4976,
+   "line": 5017,
+   "end_line": 5022,
    "item": "block",
    "in_function": "writev",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14239,8 +14780,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 5026,
-   "end_line": 5031,
+   "line": 5072,
+   "end_line": 5077,
    "item": "block",
    "in_function": "readv",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14262,8 +14803,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 5083,
-   "end_line": 5088,
+   "line": 5129,
+   "end_line": 5134,
    "item": "block",
    "in_function": "preadv",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14285,8 +14826,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 5563,
-   "end_line": 5871,
+   "line": 5624,
+   "end_line": 5932,
    "item": "mod linux",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14305,17 +14846,17 @@
      "name": "syscall",
      "from": "libc crate",
      "variadic": true,
-     "line": 5691
+     "line": 5752
     },
     {
      "name": "inotify_add_watch",
      "from": "libc crate",
-     "line": 5754
+     "line": 5815
     },
     {
      "name": "ppoll",
      "from": "libc crate",
-     "line": 5788
+     "line": 5849
     }
    ],
    "types": [
@@ -14435,17 +14976,17 @@
     {
      "name": "EPOLLRDHUP",
      "from": "libc crate",
-     "image": "8"
+     "image": "8192"
     },
     {
      "name": "EPOLLET",
      "from": "libc crate",
-     "image": "-2"
+     "image": "-2147483648"
     },
     {
      "name": "EPOLLONESHOT",
      "from": "libc crate",
-     "image": "1"
+     "image": "1073741824"
     },
     {
      "name": "EPOLL_CTL_ADD",
@@ -14550,62 +15091,62 @@
     {
      "name": "IN_DELETE_SELF",
      "from": "libc crate",
-     "image": "1"
+     "image": "1024"
     },
     {
      "name": "IN_MOVE_SELF",
      "from": "libc crate",
-     "image": "2"
+     "image": "2048"
     },
     {
      "name": "IN_ONLYDIR",
      "from": "libc crate",
-     "image": "16"
+     "image": "16777216"
     },
     {
      "name": "IN_DONT_FOLLOW",
      "from": "libc crate",
-     "image": "33"
+     "image": "33554432"
     },
     {
      "name": "IN_EXCL_UNLINK",
      "from": "libc crate",
-     "image": "67"
+     "image": "67108864"
     },
     {
      "name": "IN_MASK_ADD",
      "from": "libc crate",
-     "image": "536"
+     "image": "536870912"
     },
     {
      "name": "IN_ISDIR",
      "from": "libc crate",
-     "image": "1"
+     "image": "1073741824"
     },
     {
      "name": "IN_ONESHOT",
      "from": "libc crate",
-     "image": "2"
+     "image": "2147483648"
     },
     {
      "name": "IN_IGNORED",
      "from": "libc crate",
-     "image": "32"
+     "image": "32768"
     },
     {
      "name": "IN_Q_OVERFLOW",
      "from": "libc crate",
-     "image": "16"
+     "image": "16384"
     },
     {
      "name": "IN_CLOEXEC",
      "from": "libc crate",
-     "image": "524"
+     "image": "524288"
     },
     {
      "name": "IN_NONBLOCK",
      "from": "libc crate",
-     "image": "2"
+     "image": "2048"
     },
     {
      "name": "SYS_ioctl",
@@ -14617,8 +15158,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 5578,
-   "end_line": 5579,
+   "line": 5639,
+   "end_line": 5640,
    "item": "type time_t",
    "cfg": "not(target_env = \"musl\")",
    "effective": "all(any(target_os = \"linux\", target_os = \"android\"), not(target_env = \"musl\"))",
@@ -14644,8 +15185,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 6129,
-   "end_line": 6130,
+   "line": 6190,
+   "end_line": 6191,
    "item": "mod darwin",
    "cfg": "not(target_os = \"macos\")",
    "effective": "not(target_os = \"macos\")",
@@ -14666,8 +15207,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7641,
-   "end_line": 7657,
+   "line": 7702,
+   "end_line": 7718,
    "item": "block",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14685,12 +15226,12 @@
     {
      "name": "sys_preadv2",
      "from": "declared by bun",
-     "line": 7643
+     "line": 7704
     },
     {
      "name": "sys_pwritev2",
      "from": "declared by bun",
-     "line": 7650
+     "line": 7711
     }
    ],
    "types": [
@@ -14704,8 +15245,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7658,
-   "end_line": 7659,
+   "line": 7719,
+   "end_line": 7720,
    "item": "const RWF_NOWAIT",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14726,8 +15267,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7663,
-   "end_line": 7688,
+   "line": 7724,
+   "end_line": 7749,
    "item": "while statement",
    "in_function": "read_nonblocking",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14787,8 +15328,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7693,
-   "end_line": 7721,
+   "line": 7754,
+   "end_line": 7782,
    "item": "while statement",
    "in_function": "write_nonblocking",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14848,8 +15389,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7731,
-   "end_line": 7736,
+   "line": 7792,
+   "end_line": 7797,
    "item": "block",
    "in_function": "preallocate_file",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14871,8 +15412,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7783,
-   "end_line": 7789,
+   "line": 7844,
+   "end_line": 7851,
    "item": "fn clonefileat",
    "cfg": "not(target_os = \"macos\")",
    "effective": "not(target_os = \"macos\")",
@@ -14885,7 +15426,7 @@
    "same_source_serves_linux": false,
    "side": "linux",
    "kind": "linux-only",
-   "in_image": "compiled into the image",
+   "in_image": "compiled into the image (bun_portable_macros::host_os(posix))",
    "functions": [],
    "types": [],
    "constants": [
@@ -14901,8 +15442,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7797,
-   "end_line": 7798,
+   "line": 7868,
+   "end_line": 7869,
    "item": "static LINUX_KERNEL_CACHED",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14923,8 +15464,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7803,
-   "end_line": 7807,
+   "line": 7874,
+   "end_line": 7878,
    "item": "fn linux_kernel_cached_is_freebsd",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14945,8 +15486,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7811,
-   "end_line": 7835,
+   "line": 7882,
+   "end_line": 7906,
    "item": "fn linux_kernel_is_freebsd",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14967,8 +15508,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7838,
-   "end_line": 7854,
+   "line": 7909,
+   "end_line": 7925,
    "item": "fn get_fd_path_freebsd_linuxulator",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -14989,8 +15530,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 7859,
-   "end_line": 7887,
+   "line": 7931,
+   "end_line": 7958,
    "item": "block",
    "in_function": "get_fd_path",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15012,8 +15553,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 8059,
-   "end_line": 8064,
+   "line": 8121,
+   "end_line": 8126,
    "item": "block",
    "in_function": "move_file_z_with_handle",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15035,8 +15576,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 8251,
-   "end_line": 8266,
+   "line": 8313,
+   "end_line": 8328,
    "item": "fn sysinfo",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15054,7 +15595,7 @@
     {
      "name": "sysinfo",
      "from": "declared by bun",
-     "line": 8258
+     "line": 8320
     }
    ],
    "types": [
@@ -15068,8 +15609,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 8388,
-   "end_line": 8389,
+   "line": 8450,
+   "end_line": 8451,
    "item": "let rc",
    "in_function": "poll",
    "cfg": "not(target_os = \"macos\")",
@@ -15089,7 +15630,7 @@
      "name": "poll",
      "from": "libc crate",
      "variadic": false,
-     "line": 8389
+     "line": 8451
     }
    ],
    "types": [],
@@ -15098,8 +15639,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 8781,
-   "end_line": 8789,
+   "line": 8843,
+   "end_line": 8851,
    "item": "struct LoadedModule",
    "cfg": "not(any(windows, target_os = \"macos\"))",
    "effective": "not(any(windows, target_os = \"macos\"))",
@@ -15120,8 +15661,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 8794,
-   "end_line": 8859,
+   "line": 8856,
+   "end_line": 8921,
    "item": "fn find_loaded_module",
    "cfg": "not(any(windows, target_os = \"macos\"))",
    "effective": "not(any(windows, target_os = \"macos\"))",
@@ -15139,7 +15680,7 @@
     {
      "name": "dl_iterate_phdr",
      "from": "libc crate",
-     "line": 8857
+     "line": 8919
     }
    ],
    "types": [
@@ -15157,8 +15698,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 9323,
-   "end_line": 9328,
+   "line": 9385,
+   "end_line": 9390,
    "item": "block",
    "in_function": "copy_file_z_slow_with_handle",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15180,8 +15721,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/lib.rs",
-   "line": 9476,
-   "end_line": 9483,
+   "line": 9538,
+   "end_line": 9545,
    "item": "fn eventfd",
    "cfg": "any(target_os = \"linux\", target_os = \"android\", target_os = \"freebsd\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\", target_os = \"freebsd\")",
@@ -15198,6 +15739,36 @@
    "functions": [],
    "types": [],
    "constants": []
+  },
+  {
+   "crate": "bun_sys",
+   "file": "src/sys/fd.rs",
+   "line": 106,
+   "end_line": 119,
+   "item": "block",
+   "in_function": "close_allowing_standard_io",
+   "cfg": "any(target_os = \"linux\", target_os = \"android\")",
+   "effective": "any(target_os = \"linux\", target_os = \"android\")",
+   "active": {
+    "linux": true,
+    "macos": false,
+    "windows": false,
+    "image": true
+   },
+   "same_source_serves_linux": false,
+   "side": "linux",
+   "kind": "linux-only",
+   "in_image": "compiled into the image",
+   "functions": [],
+   "types": [],
+   "constants": [
+    {
+     "name": "EBADF",
+     "from": "libc crate",
+     "macos": "9",
+     "image": "9"
+    }
+   ]
   },
   {
    "crate": "bun_sys",
@@ -15224,8 +15795,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/copy_file.rs",
-   "line": 117,
-   "end_line": 175,
+   "line": 120,
+   "end_line": 177,
    "item": "block",
    "in_function": "copy_file_with_state",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15247,8 +15818,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/copy_file.rs",
-   "line": 260,
-   "end_line": 261,
+   "line": 265,
+   "end_line": 266,
    "item": "statement",
    "in_function": "disable_copy_file_range_syscall",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15270,8 +15841,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/copy_file.rs",
-   "line": 302,
-   "end_line": 303,
+   "line": 307,
+   "end_line": 308,
    "item": "statement",
    "in_function": "disable_ioctl_ficlone",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15293,8 +15864,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/copy_file.rs",
-   "line": 342,
-   "end_line": 434,
+   "line": 347,
+   "end_line": 439,
    "item": "fn copy_file_range",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "any(target_os = \"linux\", target_os = \"android\")",
@@ -15312,7 +15883,7 @@
     {
      "name": "posix_fadvise",
      "from": "libc crate",
-     "line": 430
+     "line": 435
     }
    ],
    "types": [],
@@ -15418,21 +15989,21 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/linux_syscall.rs",
-   "line": 233,
-   "end_line": 246,
-   "item": "fn stat_to_libc",
-   "cfg": "any(target_arch = \"x86_64\", target_arch = \"aarch64\")",
-   "effective": "all(all(any(target_os = \"linux\", target_os = \"android\"), any(target_os = \"linux\", target_os = \"android\")), any(target_arch = \"x86_64\", target_arch = \"aarch64\"))",
+   "line": 182,
+   "end_line": 183,
+   "item": "type Stat",
+   "cfg": "not(bun_portable)",
+   "effective": "all(all(any(target_os = \"linux\", target_os = \"android\"), any(target_os = \"linux\", target_os = \"android\")), not(bun_portable))",
    "active": {
     "linux": true,
     "macos": false,
     "windows": false,
-    "image": true
+    "image": false
    },
    "same_source_serves_linux": false,
    "side": "linux",
    "kind": "linux-only",
-   "in_image": "compiled into the image",
+   "in_image": "not in the image",
    "functions": [],
    "types": [
     {
@@ -15446,8 +16017,36 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/linux_syscall.rs",
-   "line": 451,
-   "end_line": 452,
+   "line": 240,
+   "end_line": 256,
+   "item": "fn stat_to_libc",
+   "cfg": "all(any(target_arch = \"x86_64\", target_arch = \"aarch64\"), not(bun_portable))",
+   "effective": "all(all(any(target_os = \"linux\", target_os = \"android\"), any(target_os = \"linux\", target_os = \"android\")), all(any(target_arch = \"x86_64\", target_arch = \"aarch64\"), not(bun_portable)))",
+   "active": {
+    "linux": true,
+    "macos": false,
+    "windows": false,
+    "image": false
+   },
+   "same_source_serves_linux": false,
+   "side": "linux",
+   "kind": "linux-only",
+   "in_image": "not in the image",
+   "functions": [],
+   "types": [
+    {
+     "name": "stat",
+     "from": "libc crate",
+     "differs": true
+    }
+   ],
+   "constants": []
+  },
+  {
+   "crate": "bun_sys",
+   "file": "src/sys/linux_syscall.rs",
+   "line": 472,
+   "end_line": 473,
    "item": "const SYS_SENDFILE",
    "cfg": "target_arch = \"aarch64\"",
    "effective": "all(all(any(target_os = \"linux\", target_os = \"android\"), any(target_os = \"linux\", target_os = \"android\")), target_arch = \"aarch64\")",
@@ -15473,8 +16072,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/linux_syscall.rs",
-   "line": 453,
-   "end_line": 454,
+   "line": 474,
+   "end_line": 475,
    "item": "const SYS_SENDFILE",
    "cfg": "not(target_arch = \"aarch64\")",
    "effective": "all(all(any(target_os = \"linux\", target_os = \"android\"), any(target_os = \"linux\", target_os = \"android\")), not(target_arch = \"aarch64\"))",
@@ -15506,8 +16105,8 @@
   {
    "crate": "bun_sys",
    "file": "src/sys/linux_syscall.rs",
-   "line": 492,
-   "end_line": 498,
+   "line": 513,
+   "end_line": 519,
    "item": "fn pidfd_open",
    "cfg": "target_os = \"linux\"",
    "effective": "all(all(any(target_os = \"linux\", target_os = \"android\"), any(target_os = \"linux\", target_os = \"android\")), target_os = \"linux\")",
@@ -15655,12 +16254,12 @@
     {
      "name": "EPOLLET",
      "from": "libc crate",
-     "image": "-2"
+     "image": "-2147483648"
     },
     {
      "name": "EPOLLONESHOT",
      "from": "libc crate",
-     "image": "1"
+     "image": "1073741824"
     },
     {
      "name": "EPOLL_CTL_ADD",
@@ -15776,7 +16375,7 @@
     {
      "name": "EPOLL_CLOEXEC",
      "from": "libc crate",
-     "image": "524"
+     "image": "524288"
     }
    ]
   },
@@ -16903,12 +17502,12 @@
     {
      "name": "EFD_NONBLOCK",
      "from": "libc crate",
-     "image": "2"
+     "image": "2048"
     },
     {
      "name": "EFD_CLOEXEC",
      "from": "libc crate",
-     "image": "524"
+     "image": "524288"
     }
    ]
   },
@@ -17309,12 +17908,12 @@
     {
      "name": "SFD_CLOEXEC",
      "from": "libc crate",
-     "image": "524"
+     "image": "524288"
     },
     {
      "name": "SFD_NONBLOCK",
      "from": "libc crate",
-     "image": "2"
+     "image": "2048"
     },
     {
      "name": "PR_SET_PDEATHSIG",

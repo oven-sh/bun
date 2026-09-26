@@ -160,7 +160,7 @@ const steps: Record<string, { done: () => boolean; make: () => void | Promise<vo
       // rlibs hold machine code, and the link is the linker's alone.
       const rustflags = [
         "-Cforce-frame-pointers=yes", "-Cllvm-args=-addrsig", "-Zshare-generics=y",
-        ...(arch === "x86_64" ? ["-Ctarget-cpu=nehalem", "-Cno-redzone=yes"] : ["-Ctarget-cpu=generic", "-Ctarget-feature=+crc,+outline-atomics", "-Zfixed-x18"]),
+        ...(arch === "x86_64" ? ["-Ctarget-cpu=nehalem", "-Cno-redzone=yes"] : ["-Ctarget-cpu=generic", "-Ctarget-feature=+crc", "-Zfixed-x18"]),
         "--check-cfg=cfg(bun_asan)", "--check-cfg=cfg(bun_debug)", "--check-cfg=cfg(bun_codegen_embed)", "--cfg=bun_codegen_embed",
         "--check-cfg=cfg(socket_fault_injection)", "--check-cfg=cfg(bun_portable)", "--check-cfg=cfg(rustix_use_libc)",
         "--cfg=rustix_use_libc", "--cfg=bun_portable",

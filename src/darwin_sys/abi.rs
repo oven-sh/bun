@@ -116,7 +116,15 @@ macro_rules! functions {
         );
     )*};
 }
-functions!((), (A), (A, B), (A, B, C), (A, B, C, D), (A, B, C, D, E), (A, B, C, D, E, F));
+functions!(
+    (),
+    (A),
+    (A, B),
+    (A, B, C),
+    (A, B, C, D),
+    (A, B, C, D, E),
+    (A, B, C, D, E, F)
+);
 
 /// Fails, when the image is compiled, for a function whose arguments do not all fit into registers.
 pub const fn check_registers(integer: usize, float: usize) {

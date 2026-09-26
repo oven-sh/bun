@@ -83,7 +83,7 @@ function loadCrate(crate: (typeof crates)[number]): SourceFile[] {
     const filePredicate = and([predicate, ...inner].filter(p => p.op !== "true"));
     file.predicate = filePredicate;
     // The sites in the order of their start: a stack gives the ones around each.
-    const ordered = all.filter(site => site.kind !== "inner").sort((a, b) => a.start - b.start || b.end - a.end);
+    const ordered = all.filter(site => site.kind !== "inner" && site.kind !== "host_libc").sort((a, b) => a.start - b.start || b.end - a.end);
     const stack: Site[] = [];
     for (const site of ordered) {
       while (stack.length && stack[stack.length - 1].end < site.start) stack.pop();
@@ -304,7 +304,7 @@ type Place = {
 
 const places: Place[] = [];
 /** Every use of the libc in source that Linux and macOS share. */
-const sharedUses: { file: string; line: number; name: string; called: boolean; in_function?: string; commands?: string[] }[] = [];
+const sharedUses: { file: string; line: number; name: string; called: boolean; in_function?: string; commands?: string[]; hostLibc?: boolean }[] = [];
 const sharedDeclared: { file: string; declared: Declared }[] = [];
 const decisions: { file: string; line: number; what: string; in_function?: string; in_image: boolean }[] = [];
 /** Items that have one definition for macOS and one for Linux: `const`, `static`, `type`. */
@@ -325,8 +325,21 @@ for (const file of files) {
   const { list, all } = file;
   // The innermost site of every token.
   const innermost: (Site | undefined)[] = new Array(list.length).fill(undefined);
-  const ordered = all.filter(site => site.kind === "attribute").sort((a, b) => a.start - b.start || b.end - a.end);
+  const ordered = all.filter(site => site.kind === "attribute" || site.kind === "host_select").sort((a, b) => a.start - b.start || b.end - a.end);
   for (const site of ordered) for (let i = site.attributeStart; i <= site.end; i++) innermost[i] = site;
+  // What is inside of host_libc!: on a macOS host the image calls the function of macOS for it.
+  const throughHostLibc: boolean[] = new Array(list.length).fill(false);
+  for (const site of all.filter(site => site.kind === "host_libc")) for (let i = site.start; i <= site.end; i++) throughHostLibc[i] = true;
+  // An arm of host_select! that the image has, whatever its `cfg` says for the target of the image.
+  const imageHas = (site: Site, active: Active): boolean => {
+    let has = active.image;
+    for (const around of ordered) {
+      if (around.kind !== "host_select" || around.start > site.start || around.end < site.end) continue;
+      if (around.inImage === "no") return false;
+      has = true;
+    }
+    return has;
+  };
   const predicateAt = (index: number) => (innermost[index] ? file.effective.get(innermost[index]!)! : file.predicate);
   const cache = new Map<Predicate, Active>();
   const activeAt = (index: number) => {
@@ -370,6 +383,7 @@ for (const file of files) {
     }
     for (const d of declared) functions.push({ name: d.name, symbol: d.symbol !== d.name ? d.symbol : undefined, from: "declared by bun", variadic: d.variadic || undefined, line: d.line });
     const macros = portableMacros(site);
+    active.image = imageHas(site, active);
     places.push({
       crate: file.crate,
       file: file.path,
@@ -421,7 +435,8 @@ for (const file of files) {
     return a.macos && a.linux;
   };
   for (const use of libcUses(list, 0, list.length - 1, index => !shared(index))) {
-    sharedUses.push({ file: file.path, line: use.line, name: use.name, called: use.called, commands: use.commands });
+    const index = list.findIndex(t => t.line === use.line && t.text === use.name);
+    sharedUses.push({ file: file.path, line: use.line, name: use.name, called: use.called, commands: use.commands, hostLibc: index >= 0 && throughHostLibc[index] });
   }
   for (const declared of declaredFunctions(list, 0, list.length - 1, index => !shared(index))) sharedDeclared.push({ file: file.path, declared });
 }
@@ -445,14 +460,17 @@ type K1Function = {
   requests: Record<string, { own: string[]; through: Record<string, string[]>; commands: string[] }>;
   /** fcntl and ioctl: the commands that bun passes where it calls the function. */
   commands_of_bun: string[];
+  /** Places where the call is inside of bun_core::host_libc!: on a macOS host the image calls the function of macOS. */
+  through_host_libc: number;
   host: "answers" | "answers in part" | "does not answer" | "no request: the libc of the image does it" | "not a function of the libc of the image" | "not a function of the system: bun or a library of the image";
   not_answered: string[];
   notes: string[];
 };
 const k1 = new Map<string, K1Function>();
-const addK1 = (name: string, declaredBy: K1Function["declared_by"], file: string, line: number, commands: string[] = []) => {
-  const entry = k1.get(name) ?? { name, declared_by: declaredBy, used_in: [], uses: 0, requests: {}, commands_of_bun: [], host: "no request: the libc of the image does it", not_answered: [], notes: [] };
+const addK1 = (name: string, declaredBy: K1Function["declared_by"], file: string, line: number, commands: string[] = [], hostLibc = false) => {
+  const entry = k1.get(name) ?? { name, declared_by: declaredBy, used_in: [], uses: 0, requests: {}, commands_of_bun: [], through_host_libc: 0, host: "no request: the libc of the image does it", not_answered: [], notes: [] };
   entry.uses++;
+  if (hostLibc) entry.through_host_libc++;
   for (const command of commands) if (!entry.commands_of_bun.includes(command)) entry.commands_of_bun.push(command);
   const where = `${file}:${line}`;
   if (entry.used_in.length < 6) entry.used_in.push(where);
@@ -461,7 +479,7 @@ const addK1 = (name: string, declaredBy: K1Function["declared_by"], file: string
 for (const use of sharedUses) {
   const r = resolve_(use.name, use.called);
   const isFunction = (r.image?.kind ?? r.macos?.kind) === "function" || (use.called && !r.image && !r.macos);
-  if (isFunction && use.called) addK1(use.name, "libc crate", use.file, use.line, use.commands);
+  if (isFunction && use.called) addK1(use.name, "libc crate", use.file, use.line, use.commands, use.hostLibc);
   else if (isFunction && !use.called && libcImage.x86_64.byName.get(use.name)?.every(item => item.kind === "function")) addK1(use.name, "libc crate", use.file, use.line);
 }
 for (const { file, declared } of sharedDeclared) addK1(declared.symbol, "bun", file, declared.line);
@@ -490,6 +508,21 @@ for (const entry of k1.values()) {
         else if (same && !used.length) partial.add(`${request}: ${answer.note}; the commands of bun are not constants at the call`);
       }
     }
+  }
+  // A function of the libc asks for the request of its own name, and for older ones only after the host
+  // said that it does not know that one (utimensat: futimesat, utimes).
+  if (answers.get(entry.name.replace(/^_+/, ""))?.macos || Object.keys(entry.requests).some(arch => Object.keys(entry.requests[arch].through).some(callee => answers.get(callee.replace(/^_+/, ""))?.macos && entry.requests[arch].through[callee].every(request => missing.has(request) || answers.get(request)?.macos))))
+    for (const request of [...missing]) {
+      const own = Object.values(entry.requests).some(found => found.own.includes(request) && found.own.includes(entry.name.replace(/^_+/, "")));
+      const ofCallee = Object.values(entry.requests).some(found => Object.entries(found.through).some(([callee, list]) => list.includes(request) && answers.get(callee.replace(/^_+/, ""))?.macos));
+      if (own || ofCallee) {
+        missing.delete(request);
+        partial.add(`${request}: asked only after the host refused the request that it answers`);
+      }
+    }
+  if (entry.through_host_libc === entry.uses) {
+    for (const request of missing) partial.add(`${request}: not asked on a macOS host, where the image calls the function of macOS (host_libc!)`);
+    missing.clear();
   }
   entry.not_answered = [...missing].sort();
   entry.notes = [...partial].sort();
@@ -521,8 +554,20 @@ const translated: { family: RegExp; where: string }[] = [
 /** Structures that the host fills or reads field by field. */
 const translatedTypes = new Set(["stat", "timespec", "timeval", "iovec", "rlimit", "rusage", "winsize", "statfs", "pollfd", "flock", "utsname", "sysinfo", "sigset_t", "stack_t", "dirent", "dirent64"]);
 
-type K3 = { file: string; line: number; in_function?: string; what: string; name: string; macos?: string; image?: string; why: string };
+type K3 = { file: string; line?: number; in_function?: string; what: string; name: string; macos?: string; image?: string; why: string; found_by?: "reading" };
 const k3: K3[] = [];
+/** Whether the token is an argument of a call of a function of the libc: `libc::kill(pid, libc::SIGTERM)`. */
+function isArgumentOfLibc(list: Token[], index: number): boolean {
+  for (let i = index - 1, depth = 0; i >= 0 && index - i < 200; i--) {
+    const t = list[i];
+    if (t.kind === "close") depth++;
+    else if (t.kind === "open") {
+      if (depth > 0) depth--;
+      else return t.text === "(" && list[i - 1]?.kind === "ident" && list[i - 2]?.text === "::" && (list[i - 3]?.text === "libc" || list[i - 3]?.text === "safe_libc");
+    } else if (t.text === ";" && depth === 0) return false;
+  }
+  return false;
+}
 const fileOf = new Map(files.map(file => [file.path, file]));
 for (const use of sharedUses) {
   const r = resolve_(use.name, use.called);
@@ -538,6 +583,11 @@ for (const use of sharedUses) {
       continue;
     }
     if (!r.differs) continue;
+    // A signal number that is not handed to the libc is kept: the host never sees it.
+    if (rule && /^SIG[A-Z0-9]+$/.test(use.name) && index >= 0 && !isArgumentOfLibc(list, index)) {
+      k3.push({ file: use.file, line: use.line, in_function: inFunction, what: "a signal number kept in data", name: use.name, macos: r.macos.value, image: r.image?.value, why: "the host translates a signal number in a request (kill, rt_sigaction), not where bun keeps it or hands it on" });
+      continue;
+    }
     if (rule) continue;
     k3.push({ file: use.file, line: use.line, in_function: inFunction, what: "constant with another value", name: use.name, macos: r.macos.value, image: r.image?.value, why: "the host translates no request that carries it" });
   } else if (kind === "struct" || kind === "union") {
@@ -562,6 +612,10 @@ for (const entry of perOs.values()) {
     image: entry.linux[0].text.slice(0, 200),
     why: "the image has the definition for Linux; shared source that uses the name passes the value of Linux on every host",
   });
+}
+
+for (const known of JSON.parse(readFileSync(join(here, "macos-known.json"), "utf8")).k3 as { file: string; where: string; what: string; why: string }[]) {
+  k3.push({ file: known.file, in_function: known.where, what: known.what, name: known.where, why: known.why, found_by: "reading" });
 }
 
 // ── the result ──

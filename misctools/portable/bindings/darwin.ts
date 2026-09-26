@@ -528,11 +528,6 @@ for (const fact of typeFacts) {
 }
 for (const entry of constants) imageLines.push(`    let _ = writeln!(out, "{{\\"fact\\":\\"constant\\",\\"of\\":\\"${entry.name}\\",\\"value\\":{}}}", constants::${entry.name} as i64);`);
 imageLines.push(`}
-
-/// The parts of darwin_layout.c, for a report that names a part that did not compile.
-pub const PARTS: &[(usize, &str)] = &[`);
-for (const one of partOf) imageLines.push(`    (${one.part}, "${one.what}"),`);
-imageLines.push(`];
 `);
 const imageText = imageLines.join("\n");
 

@@ -19,7 +19,13 @@ fn read(work: &Work, relative: &[u8]) -> Maybe<Vec<u8>> {
 /// A copy by path the way bun's `fs.copyFile` makes one of a large file on macOS: `clonefile`, and
 /// `copyfile` if that is refused. The file system decides (APFS clones; others do not, and nothing
 /// clones from one volume to another), so which one it was is a detail.
-fn clone_or_copy(report: &mut Report, what: &str, cloned: Maybe<()>, from: &[u8], to: &[u8]) -> Maybe<()> {
+fn clone_or_copy(
+    report: &mut Report,
+    what: &str,
+    cloned: Maybe<()>,
+    from: &[u8],
+    to: &[u8],
+) -> Maybe<()> {
     match cloned {
         Ok(()) => {
             report.detail(what);
@@ -57,7 +63,11 @@ pub(crate) fn steps(report: &mut Report, work: &Work, root_fd: Fd) {
     for (step, relative, by_descriptor) in [
         ("clonefile", &b"a/clone.txt"[..], 0),
         ("clonefileat", b"a/clone-at.txt", 1),
-        ("clonefileat, from the working directory", b"a/clone-cwd.txt", 2),
+        (
+            "clonefileat, from the working directory",
+            b"a/clone-cwd.txt",
+            2,
+        ),
     ] {
         let to = work.path(relative);
         let relative_z = [relative, b"\0"].concat();

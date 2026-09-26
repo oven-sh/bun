@@ -1,0 +1,47 @@
+{
+ "about": "Places of kind K3 that macos.ts does not find by itself: the source has no constant of the libc crate and no cfg there, and still what it does depends on numbers that macOS and the image do not share. Found by reading. macos.ts adds them to its result.",
+ "k3": [
+  {
+   "file": "src/sys/Error.rs",
+   "where": "Error::errno, Error::to_system_error, bun_sys::SystemError::errno",
+   "what": "the number of an error that leaves bun",
+   "why": "The image has one set of error numbers, the one of Linux (src/errno/portable_errno.rs). bun for macOS reports the numbers of macOS: error.errno is -35 for EAGAIN there, os.constants.errno.EAGAIN is 35. What leaves bun (JavaScript, exit codes, messages) has to be translated with bun_darwin_sys::errno::to_macos on a macOS host; the slice does it for what it prints."
+  },
+  {
+   "file": "src/errno/portable_errno.rs",
+   "where": "SystemErrno of the image",
+   "what": "errors that only macOS has",
+   "why": "ENOATTR, EAUTH, ENEEDAUTH, EPROCLIM, EBADRPC, ERPCMISMATCH, EPROGUNAVAIL, EPROGMISMATCH, EPROCUNAVAIL, EPWROFF, EDEVERR, EBADEXEC, EBADARCH, ESHLIBVERS, EBADMACHO, ENOPOLICY and EQFULL are no names of the enum of the image. Each becomes the error of the image that misctools/portable/bindings/darwin-errno.json names (ENOATTR is ENODATA), so error.code is another name than in bun for macOS. EFTYPE has a number of its own in the image."
+  },
+  {
+   "file": "src/darwin_sys/errno.rs",
+   "where": "to_macos",
+   "what": "ENOTSUP and EOPNOTSUPP",
+   "why": "macOS has two numbers (45 and 102), Linux and the image have one (95). An error of macOS that was one of the two is reported back as ENOTSUP (45)."
+  },
+  {
+   "file": "src/bun_core/Global.rs",
+   "where": "SignalCode",
+   "what": "a signal number kept in data",
+   "why": "The names of the signals get their numbers from the libc crate, which is the one of Linux in the image: SIGUSR1 is 10 there and 30 on macOS, SIGBUS 7 and 10. The host translates the number where the image sends a signal or sets a handler. It does not see the number that bun hands to JavaScript (os.constants.signals, the signal of a child that ended), which has to be the one of macOS on a macOS host."
+  },
+  {
+   "file": "src/sys/lib.rs",
+   "where": "mod O, open, openat",
+   "what": "flags of open that only macOS has",
+   "why": "O::SYMLINK, O::EVTONLY and O::NOFOLLOW_ANY are 0 in the image, as they are in a build for Linux: shared code that passes them (the watcher opens with O::EVTONLY) opens without them on a macOS host. bun_darwin_sys has bits for them that no flag of Linux uses (generated.rs, constants_for_bun) and translates them; bun's O does not use those bits yet."
+  },
+  {
+   "file": "src/sys/lib.rs",
+   "where": "StatFS, statfs, fstatfs",
+   "what": "struct statfs",
+   "why": "StatFS is the structure of Linux in the image. On a macOS host the request goes to the host, which fills that structure from the one of macOS: the name of the kind of file system (f_fstypename) and what else only macOS has is lost, and bun's own declaration of statfs64 for x86-64 macOS is not called."
+  },
+  {
+   "file": "src/sys/lib.rs",
+   "where": "posix_impl::fcntl with F_GETLK, F_SETLK, F_SETLKW",
+   "what": "struct flock",
+   "why": "On a macOS host fcntl is the function of macOS (host_libc!), and struct flock of macOS has its fields in another order. bun_darwin_sys::libc::fcntl answers EINVAL for the three commands until it converts the structure."
+  }
+ ]
+}

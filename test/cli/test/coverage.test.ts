@@ -982,8 +982,14 @@ test("covered", () => {
   });
 
   test("a test file, by two runs under --rerun-each", () => {
-    expect(rerun.rows["rerun.test.ts"]).toEqual(fullyCovered);
-    expect(rerun.lcov["rerun.test.ts"]).toMatch(/\nLF:(\d+)\nLH:\1\n/);
+    // An empty report also prints 100.00 in both columns, so the lcov counts are exact.
+    expect({
+      row: rerun.rows["rerun.test.ts"],
+      lcov: rerun.lcov["rerun.test.ts"]?.match(/^(FN|L)[FH]:\d+$/gm),
+    }).toEqual({
+      row: fullyCovered,
+      lcov: ["FNF:2", "FNH:2", "LF:10", "LH:10"],
+    });
   });
 
   test("lcov has the functions and the lines of both loads (#35345)", () => {

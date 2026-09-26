@@ -300,14 +300,12 @@ const scenarios: Record<string, () => Promise<unknown>> = {
 
   // The timeout of node:vm stops the conversion with a termination, after it dispatched a query.
   async "prepared statement, node:vm timeout stops the conversion after it dispatched"() {
-    await sql`select ${text("0")}::text as x`;
-    return stoppedByTimeout(sql);
+    return stoppedByTimeout({});
   },
 
   // advance() encodes the request, not run().
   async "prepare: false, node:vm timeout stops the conversion after it dispatched"() {
-    await using unprepared = new SQL({ url, max: 1, prepare: false });
-    return await stoppedByTimeout(unprepared);
+    return stoppedByTimeout({ prepare: false });
   },
 
   // advance() rejects the request through the reject callback.
@@ -332,37 +330,55 @@ const scenarios: Record<string, () => Promise<unknown>> = {
   },
 };
 
-/** close() waits for every query, so it resolves only if the stopped query settles too. */
-async function stoppedByTimeout(db: SQL) {
-  const pid = await backendPid(db);
-  let reached = false;
-  const param = {
-    toString() {
-      conversions++;
-      reached = true;
-      // Its parameter needs JS, which cannot run while the termination is pending.
-      dispatched.push(db`select ${text("2")}::text as y`.execute());
-      for (;;) {}
-    },
-  };
-  let outer!: Promise<unknown>;
-  (globalThis as any).run = () => (outer = db`select ${param}::text as x`).execute();
-  let thrown: unknown;
-  // On a slow machine the timeout can come before the conversion starts. That query stops nothing.
-  while (!reached) {
+/** Handles a rejection of `query`. Its own then() and catch() start a query that did not start. */
+const ignoreRejection = (query: Promise<unknown>) => void Promise.prototype.then.call(query, undefined, () => {});
+
+// On a loaded machine the timeout can come before the conversion dispatched, at any point of the
+// start of the query. That attempt does not count, and nothing of it is used again.
+async function stoppedByTimeout(options: { prepare?: boolean }) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const db = new SQL({ url, max: 1, ...options });
+    const pid = await backendPid(db);
+    await db`select ${text("0")}::text as x`;
+    conversions = 0;
+    dispatched = [];
+    let counts = false;
+    const param = {
+      toString() {
+        conversions++;
+        // Its parameter needs JS, which cannot run while the termination is pending.
+        const nested = db`select ${text("2")}::text as y`;
+        ignoreRejection(nested);
+        dispatched.push(nested.execute());
+        counts = true;
+        for (;;) {}
+      },
+    };
+    const outer = db`select ${param}::text as x`;
+    ignoreRejection(outer);
+    (globalThis as any).run = () => outer.execute();
+    let thrown: unknown;
     try {
       vm.runInThisContext("run()", { timeout: 250 });
     } catch (e: any) {
       thrown = e?.code;
     }
+    if (counts) {
+      const result = {
+        thrown,
+        outer: await settle(outer),
+        dispatched: await Promise.all(dispatched.map(settle)),
+        conversions,
+        sameBackend: (await backendPid(db)) === pid,
+      };
+      // close() waits for every query, so it resolves only if the stopped query settled too.
+      await db.close();
+      return result;
+    }
+    // Its queries can be stuck, so this close() does not wait for them.
+    db.close({ timeout: 0.001 }).catch(() => {});
   }
-  return {
-    thrown,
-    outer: await settle(outer),
-    dispatched: await Promise.all(dispatched.map(settle)),
-    conversions,
-    sameBackend: (await backendPid(db)) === pid,
-  };
+  return { error: "the timeout came before the conversion dispatched, in every attempt" };
 }
 
 async function replyDuringConversion(inFlight: number) {

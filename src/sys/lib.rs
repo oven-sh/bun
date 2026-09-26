@@ -119,8 +119,12 @@ pub use bun_core::FileKind as EntryKind;
 ///
 /// SAFETY precondition: `buf` must be writable for `len` bytes and `basep`
 /// must point to a valid `i64`.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", bun_portable))]
 pub unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64) -> Maybe<usize> {
+    #[cfg_attr(
+        bun_portable,
+        bun_portable_macros::imports(library = "libSystem", host = "macos")
+    )]
     unsafe extern "C" {
         fn __getdirentries64(
             fd: libc::c_int,
@@ -365,7 +369,7 @@ pub mod dir_iterator {
             // DT_WHT (14) — Darwin/FreeBSD union-mount whiteout. The `libc`
             // crate omits this constant on both Apple and FreeBSD targets;
             // literal matches <sys/dirent.h>.
-            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            #[cfg(any(target_os = "macos", target_os = "freebsd", bun_portable))]
             14 /* DT_WHT */ => EntryKind::Whiteout,
             // DT_UNKNOWN: some filesystems (bind mounts, FUSE, NFS) don't
             // provide d_type. Callers should lstatat() to resolve when needed.
@@ -447,7 +451,8 @@ pub mod dir_iterator {
     }
 
     // ── macOS ────────────────────────────────────────────────────────────
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(macos, State))]
     struct State {
         buf: AlignedBuf,
         seek: i64,
@@ -455,7 +460,8 @@ pub mod dir_iterator {
         end_index: usize,
         received_eof: bool,
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(macos, State))]
     impl State {
         #[inline]
         fn new() -> State {
@@ -805,6 +811,7 @@ pub mod dir_iterator {
     #[cfg(bun_portable)]
     enum State {
         Posix(State__posix),
+        Macos(State__macos),
         Windows(State__windows),
     }
     #[cfg(bun_portable)]
@@ -813,6 +820,8 @@ pub mod dir_iterator {
         fn new() -> State {
             if bun_core::host::is_windows() {
                 State::Windows(State__windows::new())
+            } else if bun_core::host::is_mac() {
+                State::Macos(State__macos::new())
             } else {
                 State::Posix(State__posix::new())
             }
@@ -821,6 +830,7 @@ pub mod dir_iterator {
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
             match self {
                 State::Posix(state) => state.next(dir),
+                State::Macos(state) => state.next(dir),
                 State::Windows(state) => state.next(dir),
             }
         }
@@ -925,54 +935,53 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
 
 pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
     let fd = fd.as_fd();
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        let dirfd = if fd.is_valid() {
-            fd.native()
-        } else {
-            libc::AT_FDCWD
-        };
-        let stat = linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
-            .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
-        #[cfg(bun_portable)]
-        let stat = stat.map(Stat::from);
-        stat
-    }
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-    {
-        let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
-        let dirfd = if fd.is_valid() {
-            fd.native()
-        } else {
-            libc::AT_FDCWD
-        };
-        // SAFETY: path is NUL-terminated; st is written on success.
-        let rc = unsafe {
-            libc::fstatat(
-                dirfd,
-                path.as_ptr().cast(),
-                st.as_mut_ptr(),
-                libc::AT_SYMLINK_NOFOLLOW,
-            )
-        };
-        if rc == 0 {
-            // SAFETY: rc == 0 ⇒ kernel populated `st`.
-            Ok(unsafe { st.assume_init() })
-        } else {
-            Err(Error::from_code_int(last_errno(), Tag::fstatat).with_path(path.as_bytes()))
+    bun_core::host_select! {
+        linux => {
+            let dirfd = if fd.is_valid() {
+                fd.native()
+            } else {
+                libc::AT_FDCWD
+            };
+            let stat = linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
+                .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
+            #[cfg(bun_portable)]
+            let stat = stat.map(Stat::from);
+            stat
         }
-    }
-    #[cfg(windows)]
-    {
-        // Open with `O.NOFOLLOW` (→ `FILE_OPEN_REPARSE_POINT`),
-        // `fstat` the handle, then close.
-        match openat_windows_a(fd, path.as_bytes(), O::NOFOLLOW, 0) {
-            Ok(file) => {
-                let r = fstat(file);
-                let _ = close(file);
-                r
+        cfg(all(unix, not(any(target_os = "linux", target_os = "android")))) => {
+            let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
+            let dirfd = if fd.is_valid() {
+                fd.native()
+            } else {
+                libc::AT_FDCWD
+            };
+            // SAFETY: path is NUL-terminated; st is written on success.
+            let rc = unsafe {
+                libc::fstatat(
+                    dirfd,
+                    path.as_ptr().cast(),
+                    st.as_mut_ptr(),
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            };
+            if rc == 0 {
+                // SAFETY: rc == 0 ⇒ kernel populated `st`.
+                Ok(unsafe { st.assume_init() }.into())
+            } else {
+                Err(Error::from_code_int(last_errno(), Tag::fstatat).with_path(path.as_bytes()))
             }
-            Err(err) => Err(err),
+        }
+        windows => {
+            // Open with `O.NOFOLLOW` (→ `FILE_OPEN_REPARSE_POINT`),
+            // `fstat` the handle, then close.
+            match openat_windows_a(fd, path.as_bytes(), O::NOFOLLOW, 0) {
+                Ok(file) => {
+                    let r = fstat(file);
+                    let _ = close(file);
+                    r
+                }
+                Err(err) => Err(err),
+            }
         }
     }
 }
@@ -1357,7 +1366,9 @@ pub use portable_stat::Stat;
 #[cfg(bun_portable)]
 pub(crate) mod flavor {
     pub(crate) mod posix {
-        pub(crate) use libc::stat as Stat;
+        /// The code for POSIX is the code for Linux and for macOS, whose `struct stat` differ: each
+        /// converts what it got.
+        pub(crate) use crate::Stat;
     }
     pub(crate) mod windows {
         pub(crate) use crate::PlatformIoVecConst__windows as PlatformIOVecConst;
@@ -1698,7 +1709,7 @@ mod safe_libc {
     // competing definition) with the canonical signature.
     #[allow(suspicious_runtime_symbol_definitions)]
     unsafe extern "C" {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        #[cfg(any(not(any(target_os = "linux", target_os = "android")), bun_portable))]
         pub(crate) safe fn close(fd: c_int) -> c_int;
         pub(crate) safe fn dup2(old: c_int, new: c_int) -> c_int;
         pub(crate) safe fn isatty(fd: c_int) -> c_int;
@@ -1762,6 +1773,8 @@ mod safe_libc {
 // — the plain libc symbols are pthread cancellation points; a cancelled thread
 // torn down mid-syscall leaks fds / corrupts state. Bun always uses the
 // non-cancellable variants on macOS (`bun.darwin.nocancel`).
+#[cfg(bun_portable)]
+use bun_darwin_sys::nocancel;
 #[cfg(target_os = "macos")]
 mod nocancel {
     use core::ffi::c_int;
@@ -1855,123 +1868,123 @@ mod posix_impl {
     // dispatchers entirely — see the `#[cfg(target_os = "linux")]` arms on
     // each public fn below — because rustix returns the errno in-band and we
     // don't want to round-trip through thread-local `errno`.
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(any(not(any(target_os = "linux", target_os = "android")), bun_portable))]
     #[inline]
     unsafe fn sys_openat(d: i32, p: *const libc::c_char, f: i32, m: libc::c_uint) -> i32 {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `p` is a valid
-            // NUL-terminated path and `d` is a live dir fd (or AT_FDCWD).
-            unsafe { super::nocancel::openat(d, p, f, m) }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `p` is a valid
-            // NUL-terminated path and `d` is a live dir fd (or AT_FDCWD).
-            unsafe { libc::openat(d, p, f, m) }
+        bun_core::host_select! {
+            macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `p` is a valid
+                // NUL-terminated path and `d` is a live dir fd (or AT_FDCWD).
+                unsafe { super::nocancel::openat(d, p, f, m) }
+            }
+            not_macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `p` is a valid
+                // NUL-terminated path and `d` is a live dir fd (or AT_FDCWD).
+                unsafe { libc::openat(d, p, f, m) }
+            }
         }
     }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(any(not(any(target_os = "linux", target_os = "android")), bun_portable))]
     #[inline]
     unsafe fn sys_read(fd: i32, buf: *mut libc::c_void, n: usize) -> isize {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live descriptor.
-            unsafe { super::nocancel::read(fd, buf, n) }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live descriptor.
-            unsafe { libc::read(fd, buf, n) }
+        bun_core::host_select! {
+            macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // writable bytes and `fd` is a live descriptor.
+                unsafe { super::nocancel::read(fd, buf, n) }
+            }
+            not_macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // writable bytes and `fd` is a live descriptor.
+                unsafe { libc::read(fd, buf, n) }
+            }
         }
     }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(any(not(any(target_os = "linux", target_os = "android")), bun_portable))]
     #[inline]
     unsafe fn sys_write(fd: i32, buf: *const libc::c_void, n: usize) -> isize {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live descriptor.
-            unsafe { super::nocancel::write(fd, buf, n) }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live descriptor.
-            unsafe { libc::write(fd, buf, n) }
+        bun_core::host_select! {
+            macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // readable bytes and `fd` is a live descriptor.
+                unsafe { super::nocancel::write(fd, buf, n) }
+            }
+            not_macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // readable bytes and `fd` is a live descriptor.
+                unsafe { libc::write(fd, buf, n) }
+            }
         }
     }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(any(not(any(target_os = "linux", target_os = "android")), bun_portable))]
     #[inline]
     unsafe fn sys_pread(fd: i32, buf: *mut libc::c_void, n: usize, off: i64) -> isize {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live descriptor.
-            unsafe { super::nocancel::pread(fd, buf, n, off) }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live descriptor.
-            unsafe { libc::pread(fd, buf, n, off) }
+        bun_core::host_select! {
+            macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // writable bytes and `fd` is a live descriptor.
+                unsafe { super::nocancel::pread(fd, buf, n, off) }
+            }
+            not_macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // writable bytes and `fd` is a live descriptor.
+                unsafe { libc::pread(fd, buf, n, off) }
+            }
         }
     }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(any(not(any(target_os = "linux", target_os = "android")), bun_portable))]
     #[inline]
     unsafe fn sys_pwrite(fd: i32, buf: *const libc::c_void, n: usize, off: i64) -> isize {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live descriptor.
-            unsafe { super::nocancel::pwrite(fd, buf, n, off) }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live descriptor.
-            unsafe { libc::pwrite(fd, buf, n, off) }
+        bun_core::host_select! {
+            macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // readable bytes and `fd` is a live descriptor.
+                unsafe { super::nocancel::pwrite(fd, buf, n, off) }
+            }
+            not_macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // readable bytes and `fd` is a live descriptor.
+                unsafe { libc::pwrite(fd, buf, n, off) }
+            }
         }
     }
     #[inline]
     unsafe fn sys_recv(fd: i32, buf: *mut libc::c_void, n: usize, flags: i32) -> isize {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live socket.
-            unsafe {
-                super::nocancel::recvfrom(
-                    fd,
-                    buf,
-                    n,
-                    flags,
-                    core::ptr::null_mut(),
-                    core::ptr::null_mut(),
-                )
+        bun_core::host_select! {
+            macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // writable bytes and `fd` is a live socket.
+                unsafe {
+                    super::nocancel::recvfrom(
+                        fd,
+                        buf,
+                        n,
+                        flags,
+                        core::ptr::null_mut(),
+                        core::ptr::null_mut(),
+                    )
+                }
             }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // writable bytes and `fd` is a live socket.
-            unsafe { libc::recv(fd, buf, n, flags) }
+            not_macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // writable bytes and `fd` is a live socket.
+                unsafe { libc::recv(fd, buf, n, flags) }
+            }
         }
     }
     #[inline]
     unsafe fn sys_send(fd: i32, buf: *const libc::c_void, n: usize, flags: i32) -> isize {
-        #[cfg(target_os = "macos")]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live socket.
-            unsafe { super::nocancel::sendto(fd, buf, n, flags, core::ptr::null(), 0) }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
-            // readable bytes and `fd` is a live socket.
-            unsafe { libc::send(fd, buf, n, flags) }
+        bun_core::host_select! {
+            macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // readable bytes and `fd` is a live socket.
+                unsafe { super::nocancel::sendto(fd, buf, n, flags, core::ptr::null(), 0) }
+            }
+            not_macos => {
+                // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+                // readable bytes and `fd` is a live socket.
+                unsafe { libc::send(fd, buf, n, flags) }
+            }
         }
     }
     // EINTR-retry: every wrapper loops on EINTR (matching libuv) except
@@ -2038,30 +2051,29 @@ mod posix_impl {
         let dir = dir.as_fd();
         let flags = flags | O::CLOEXEC;
         // macOS: `openat$NOCANCEL`, retried on EINTR.
-        #[cfg(target_os = "macos")]
-        {
-            let rc = check_p!(
-                // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is
-                // a valid NUL-terminated C string.
-                unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) },
-                Tag::open,
-                path
-            );
-            Ok(Fd::from_native(rc))
-        }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            super::linux_syscall::openat(dir, path, flags, mode)
-                .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        {
-            let rc = check_p!(
-                unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) },
-                Tag::open,
-                path
-            );
-            Ok(Fd::from_native(rc))
+        bun_core::host_select! {
+            macos => {
+                let rc = check_p!(
+                    // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is
+                    // a valid NUL-terminated C string.
+                    unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) },
+                    Tag::open,
+                    path
+                );
+                Ok(Fd::from_native(rc))
+            }
+            linux => {
+                super::linux_syscall::openat(dir, path, flags, mode)
+                    .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
+            }
+            not_macos_not_linux => {
+                let rc = check_p!(
+                    unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) },
+                    Tag::open,
+                    path
+                );
+                Ok(Fd::from_native(rc))
+            }
         }
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -2116,167 +2128,165 @@ mod posix_impl {
         // Call close ONCE; never retry on EINTR (Linux may have already
         // released the fd, retrying would close someone else's). Only EBADF surfaces.
         // Darwin uses `close$NOCANCEL` (avoid pthread cancellation point).
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            return match super::linux_syscall::close(fd.native()) {
-                Err(e) if e == libc::EBADF => {
-                    Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd))
-                }
-                _ => Ok(()),
-            };
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            #[cfg(target_os = "macos")]
-            let rc = super::nocancel::close(fd.native());
-            #[cfg(not(target_os = "macos"))]
-            let rc = safe_libc::close(fd.native());
-            if rc < 0 && last_errno() == libc::EBADF {
-                return Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd));
+        bun_core::host_select! {
+            linux => {
+                return match super::linux_syscall::close(fd.native()) {
+                    Err(e) if e == libc::EBADF => {
+                        Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd))
+                    }
+                    _ => Ok(()),
+                };
             }
-            Ok(())
+            not_linux => {
+                let rc = bun_core::host_select! {
+                    macos => { super::nocancel::close(fd.native()) }
+                    not_macos => { safe_libc::close(fd.native()) }
+                };
+                if rc < 0 && last_errno() == libc::EBADF {
+                    return Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd));
+                }
+                Ok(())
+            }
         }
     }
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
         // macOS: `read$NOCANCEL`, retried on EINTR.
-        #[cfg(target_os = "macos")]
-        {
-            let n = check!(
-                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
-                unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
-                Tag::read
-            );
-            Ok(n as usize)
-        }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            super::linux_syscall::read(fd, &mut buf[..len])
-                .map_err(|e| Error::from_code_int(e, Tag::read))
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        {
-            let n = check!(
-                unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
-                Tag::read
-            );
-            Ok(n as usize)
+        bun_core::host_select! {
+            macos => {
+                let n = check!(
+                    // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
+                    unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
+                    Tag::read
+                );
+                Ok(n as usize)
+            }
+            linux => {
+                super::linux_syscall::read(fd, &mut buf[..len])
+                    .map_err(|e| Error::from_code_int(e, Tag::read))
+            }
+            not_macos_not_linux => {
+                let n = check!(
+                    unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
+                    Tag::read
+                );
+                Ok(n as usize)
+            }
         }
     }
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
         // macOS: `write$NOCANCEL`, retried on EINTR.
-        #[cfg(target_os = "macos")]
-        {
-            let n = check!(
-                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
-                unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
-                Tag::write
-            );
-            Ok(n as usize)
-        }
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            super::linux_syscall::write(fd, &buf[..len])
-                .map_err(|e| Error::from_code_int(e, Tag::write))
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-        {
-            let n = check!(
-                unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
-                Tag::write
-            );
-            Ok(n as usize)
+        bun_core::host_select! {
+            macos => {
+                let n = check!(
+                    // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
+                    unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
+                    Tag::write
+                );
+                Ok(n as usize)
+            }
+            linux => {
+                super::linux_syscall::write(fd, &buf[..len])
+                    .map_err(|e| Error::from_code_int(e, Tag::write))
+            }
+            not_macos_not_linux => {
+                let n = check!(
+                    unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
+                    Tag::write
+                );
+                Ok(n as usize)
+            }
         }
     }
     pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            return super::linux_syscall::pread(fd, &mut buf[..len], off)
-                .map_err(|e| Error::from_code_int(e, Tag::pread));
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            let n = check!(
-                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
-                unsafe { sys_pread(fd.native(), buf.as_mut_ptr().cast(), len, off) },
-                Tag::pread
-            );
-            Ok(n as usize)
+        bun_core::host_select! {
+            linux => {
+                return super::linux_syscall::pread(fd, &mut buf[..len], off)
+                    .map_err(|e| Error::from_code_int(e, Tag::pread));
+            }
+            not_linux => {
+                let n = check!(
+                    // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
+                    unsafe { sys_pread(fd.native(), buf.as_mut_ptr().cast(), len, off) },
+                    Tag::pread
+                );
+                Ok(n as usize)
+            }
         }
     }
     pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            return super::linux_syscall::pwrite(fd, &buf[..len], off)
-                .map_err(|e| Error::from_code_int(e, Tag::pwrite));
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            let n = check!(
-                // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
-                unsafe { sys_pwrite(fd.native(), buf.as_ptr().cast(), len, off) },
-                Tag::pwrite
-            );
-            Ok(n as usize)
+        bun_core::host_select! {
+            linux => {
+                return super::linux_syscall::pwrite(fd, &buf[..len], off)
+                    .map_err(|e| Error::from_code_int(e, Tag::pwrite));
+            }
+            not_linux => {
+                let n = check!(
+                    // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
+                    unsafe { sys_pwrite(fd.native(), buf.as_ptr().cast(), len, off) },
+                    Tag::pwrite
+                );
+                Ok(n as usize)
+            }
         }
     }
     pub fn stat(path: &ZStr) -> Maybe<Stat> {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            return super::linux_syscall::stat(path)
-                .map_err(|e| Error::from_code_int(e, Tag::stat).with_path(path.as_bytes()));
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-            check_p!(
-                // SAFETY: `path` is NUL-terminated; `st` is a valid out-param.
-                unsafe { libc::stat(path.as_ptr(), st.as_mut_ptr()) },
-                Tag::stat,
-                path
-            );
-            // SAFETY: rc == 0 ⇒ kernel populated `st`.
-            Ok(unsafe { st.assume_init() })
+        bun_core::host_select! {
+            linux => {
+                return super::linux_syscall::stat(path)
+                    .map_err(|e| Error::from_code_int(e, Tag::stat).with_path(path.as_bytes()));
+            }
+            not_linux => {
+                let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
+                check_p!(
+                    // SAFETY: `path` is NUL-terminated; `st` is a valid out-param.
+                    unsafe { libc::stat(path.as_ptr(), st.as_mut_ptr()) },
+                    Tag::stat,
+                    path
+                );
+                // SAFETY: rc == 0 ⇒ kernel populated `st`.
+                Ok(unsafe { st.assume_init() }.into())
+            }
         }
     }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            return super::linux_syscall::fstat(fd)
-                .map_err(|e| Error::from_code_int(e, Tag::fstat));
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-            check!(
-                // SAFETY: `fd` is a live descriptor; `st` is a valid out-param.
-                unsafe { libc::fstat(fd.native(), st.as_mut_ptr()) },
-                Tag::fstat
-            );
-            // SAFETY: rc == 0 ⇒ kernel populated `st`.
-            Ok(unsafe { st.assume_init() })
+        bun_core::host_select! {
+            linux => {
+                return super::linux_syscall::fstat(fd)
+                    .map_err(|e| Error::from_code_int(e, Tag::fstat));
+            }
+            not_linux => {
+                let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
+                check!(
+                    // SAFETY: `fd` is a live descriptor; `st` is a valid out-param.
+                    unsafe { libc::fstat(fd.native(), st.as_mut_ptr()) },
+                    Tag::fstat
+                );
+                // SAFETY: rc == 0 ⇒ kernel populated `st`.
+                Ok(unsafe { st.assume_init() }.into())
+            }
         }
     }
     pub fn lstat(path: &ZStr) -> Maybe<Stat> {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            return super::linux_syscall::lstat(path)
-                .map_err(|e| Error::from_code_int(e, Tag::lstat).with_path(path.as_bytes()));
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-            check_p!(
-                // SAFETY: `path` is NUL-terminated; `st` is a valid out-param.
-                unsafe { libc::lstat(path.as_ptr(), st.as_mut_ptr()) },
-                Tag::lstat,
-                path
-            );
-            // SAFETY: rc == 0 ⇒ kernel populated `st`.
-            Ok(unsafe { st.assume_init() })
+        bun_core::host_select! {
+            linux => {
+                return super::linux_syscall::lstat(path)
+                    .map_err(|e| Error::from_code_int(e, Tag::lstat).with_path(path.as_bytes()));
+            }
+            not_linux => {
+                let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
+                check_p!(
+                    // SAFETY: `path` is NUL-terminated; `st` is a valid out-param.
+                    unsafe { libc::lstat(path.as_ptr(), st.as_mut_ptr()) },
+                    Tag::lstat,
+                    path
+                );
+                // SAFETY: rc == 0 ⇒ kernel populated `st`.
+                Ok(unsafe { st.assume_init() }.into())
+            }
         }
     }
 
@@ -3026,23 +3036,23 @@ mod posix_impl {
         } else {
             libc::AT_FDCWD
         };
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            return super::linux_syscall::fstatat(dirfd, path, 0)
-                .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-            check_p!(
-                // SAFETY: `dirfd` is a live fd (or AT_FDCWD); `path` is
-                // NUL-terminated; `st` is a valid out-param.
-                unsafe { libc::fstatat(dirfd, path.as_ptr(), st.as_mut_ptr(), 0) },
-                Tag::fstatat,
-                path
-            );
-            // SAFETY: rc == 0 ⇒ kernel populated `st`.
-            Ok(unsafe { st.assume_init() })
+        bun_core::host_select! {
+            linux => {
+                return super::linux_syscall::fstatat(dirfd, path, 0)
+                    .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
+            }
+            not_linux => {
+                let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
+                check_p!(
+                    // SAFETY: `dirfd` is a live fd (or AT_FDCWD); `path` is
+                    // NUL-terminated; `st` is a valid out-param.
+                    unsafe { libc::fstatat(dirfd, path.as_ptr(), st.as_mut_ptr(), 0) },
+                    Tag::fstatat,
+                    path
+                );
+                // SAFETY: rc == 0 ⇒ kernel populated `st`.
+                Ok(unsafe { st.assume_init() }.into())
+            }
         }
     }
     pub fn access(path: &ZStr, mode: i32) -> Maybe<()> {
@@ -3160,7 +3170,7 @@ mod posix_impl {
         loop {
             // SAFETY: `fd` is a live descriptor; `arg` is passed by value and
             // interpreted per `cmd` (no pointer commands flow through here).
-            let rc = unsafe { libc::fcntl(fd.native(), cmd, arg) };
+            let rc = bun_core::host_libc!(unsafe { libc::fcntl(fd.native(), cmd, arg) });
             if rc < 0 {
                 let e = last_errno();
                 if e == libc::EINTR {

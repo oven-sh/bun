@@ -1282,8 +1282,8 @@ impl Stdio {
 ///
 /// SAFETY: `buf` must be valid for `cap` writable bytes.
 pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
+    crate::host_select! {
+    linux => {
         let mut proc = [0u8; 32];
         use std::io::Write as _;
         let mut c = std::io::Cursor::new(&mut proc[..]);
@@ -1300,12 +1300,11 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         }
         return n;
     }
-    #[cfg(target_os = "macos")]
-    {
+    macos => {
         let _ = cap;
         // SAFETY: F_GETPATH expects buf with at least MAXPATHLEN bytes; callers
         // pass ≥1024 which is the platform MAXPATHLEN on Darwin.
-        let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf) };
+        let rc = unsafe { libc::fcntl(fd.posix(), libc::F_GETPATH, buf) };
         if rc < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return if e == libc::ENOENT || e == libc::EBADF {
@@ -1317,8 +1316,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         // SAFETY: kernel wrote a NUL-terminated path.
         return unsafe { libc::strlen(buf.cast()) as isize };
     }
-    #[cfg(target_os = "freebsd")]
-    {
+    freebsd => {
         use core::ptr::{addr_of, addr_of_mut};
         let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
         // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
@@ -1344,15 +1342,15 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         unsafe { core::ptr::copy_nonoverlapping(path, buf, n) };
         return n as isize;
     }
-    #[cfg(not(any(
+    cfg(not(any(
         target_os = "linux",
         target_os = "android",
         target_os = "macos",
         target_os = "freebsd"
-    )))]
-    {
+    ))) => {
         let _ = (fd, buf, cap);
         0
+    }
     }
 }
 

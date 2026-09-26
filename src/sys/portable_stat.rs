@@ -67,6 +67,42 @@ impl From<libc::stat> for Stat {
     }
 }
 
+/// The `struct stat` of macOS, as libuv fills its `uv_stat_t` from one there.
+impl From<bun_darwin_sys::types::stat> for Stat {
+    fn from(stat: bun_darwin_sys::types::stat) -> Stat {
+        Stat {
+            st_dev: stat.st_dev as i64 as u64,
+            st_mode: u64::from(stat.st_mode),
+            st_nlink: u64::from(stat.st_nlink),
+            st_uid: u64::from(stat.st_uid),
+            st_gid: u64::from(stat.st_gid),
+            st_rdev: stat.st_rdev as i64 as u64,
+            st_ino: stat.st_ino,
+            st_size: stat.st_size as u64,
+            st_blksize: stat.st_blksize as i64 as u64,
+            st_blocks: stat.st_blocks as u64,
+            st_flags: u64::from(stat.st_flags),
+            st_gen: u64::from(stat.st_gen),
+            atim: Timespec {
+                sec: stat.st_atime,
+                nsec: stat.st_atime_nsec,
+            },
+            mtim: Timespec {
+                sec: stat.st_mtime,
+                nsec: stat.st_mtime_nsec,
+            },
+            ctim: Timespec {
+                sec: stat.st_ctime,
+                nsec: stat.st_ctime_nsec,
+            },
+            birthtim: Timespec {
+                sec: stat.st_birthtime,
+                nsec: stat.st_birthtime_nsec,
+            },
+        }
+    }
+}
+
 impl From<bun_libuv_sys::uv_stat_t> for Stat {
     fn from(stat: bun_libuv_sys::uv_stat_t) -> Stat {
         let time = |time: bun_libuv_sys::uv_timespec_t| Timespec {

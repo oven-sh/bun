@@ -44,6 +44,10 @@ pub mod host;
 pub mod host_dispatch;
 #[cfg(bun_portable)]
 extern crate self as bun_core;
+/// macOS for the image. An arm for macOS of [`host_select!`] finds it here, so a crate that has such an arm
+/// needs no dependency of its own.
+#[cfg(bun_portable)]
+pub extern crate bun_darwin_sys;
 #[cfg(bun_portable)]
 mod fd_portable;
 #[cfg(bun_portable)]

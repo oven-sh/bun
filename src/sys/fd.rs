@@ -297,7 +297,11 @@ impl FdExt for Fd {
 // ──────────────────────────────────────────────────────────────────────────
 // Platform helpers (Windows libuv / macOS close_nocancel).
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", bun_portable))]
+#[cfg_attr(
+    bun_portable,
+    bun_portable_macros::imports(library = "libSystem", host = "macos")
+)]
 unsafe extern "C" {
     // Darwin libc: close that doesn't get interrupted by pthread cancellation.
     // By-value `c_int` only; bad fd → `EBADF`, no UB.

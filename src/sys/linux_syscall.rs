@@ -177,24 +177,31 @@ pub(crate) fn close(fd: i32) -> Result<(), i32> {
 // stays unchanged for downstream callers.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// The status of a file as the functions below return it: the `struct stat` of the C library, and in the
+/// portable image the structure that `bun_sys` has for every host.
+#[cfg(not(bun_portable))]
+type Stat = libc::stat;
+#[cfg(bun_portable)]
+type Stat = crate::Stat;
+
 #[inline]
-pub(crate) fn fstat(fd: Fd) -> Result<libc::stat, i32> {
+pub(crate) fn fstat(fd: Fd) -> Result<Stat, i32> {
     let fd = fd.as_borrowed_fd();
     retry(|| rustix::fs::fstat(fd)).map(stat_to_libc)
 }
 
 #[inline]
-pub(crate) fn stat(path: &ZStr) -> Result<libc::stat, i32> {
+pub(crate) fn stat(path: &ZStr) -> Result<Stat, i32> {
     retry(|| rustix::fs::stat(path.as_cstr())).map(stat_to_libc)
 }
 
 #[inline]
-pub(crate) fn lstat(path: &ZStr) -> Result<libc::stat, i32> {
+pub(crate) fn lstat(path: &ZStr) -> Result<Stat, i32> {
     retry(|| rustix::fs::lstat(path.as_cstr())).map(stat_to_libc)
 }
 
 #[inline]
-pub(crate) fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
+pub(crate) fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<Stat, i32> {
     // SAFETY: `dir` is caller-owned (or AT_FDCWD) for the call.
     let dir = unsafe { bfd(dir) };
     let at = rustix::fs::AtFlags::from_bits_retain(flags as u32);
@@ -231,7 +238,7 @@ pub(crate) fn faccessat(dir: Fd, path: &ZStr, mode: i32) -> Result<(), i32> {
 /// as `write_bytes<stat>` — the 144-byte memset behind `zeroed()` — plus the
 /// move chain, on a path that runs once per installed file.)
 #[inline(always)]
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(bun_portable)))]
 fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
     const _: () = assert!(
         core::mem::size_of::<rustix::fs::Stat>() == core::mem::size_of::<libc::stat>()
@@ -249,6 +256,16 @@ fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
 /// layout-identical to the kernel struct (e.g. mips64 glibc reorders fields).
 /// Field-by-field copy by name — both expose every public `st_*` field, only
 /// padding/reserved names differ. Compiles to straight moves.
+/// The portable image: rustix calls the C library there, and its `Stat` is the `struct stat` of that
+/// library. The result is the structure that `bun_sys` has for every host.
+#[inline]
+#[cfg(bun_portable)]
+fn stat_to_libc(s: rustix::fs::Stat) -> Stat {
+    const _: () = assert!(core::mem::size_of::<rustix::fs::Stat>() == core::mem::size_of::<libc::stat>());
+    // SAFETY: the same structure under two names; every bit pattern is a value of it.
+    Stat::from(unsafe { core::mem::transmute::<rustix::fs::Stat, libc::stat>(s) })
+}
+
 #[inline]
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {

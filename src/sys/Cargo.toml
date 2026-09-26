@@ -38,3 +38,4 @@ bun_libuv_sys.workspace = true
 
 [target.'cfg(bun_portable)'.dependencies]
 bun_portable_macros.workspace = true
+bun_darwin_sys.workspace = true

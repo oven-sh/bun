@@ -36,15 +36,34 @@ pub fn no_definition_for_this_host(function: &'static str) -> ! {
 /// }
 /// ```
 ///
-/// An arm is named as the `cfg` it stands for: `windows`, `posix` (`not(windows)`), `unix`, `linux`
-/// (Linux and Android), `macos`, `freebsd`. The portable image is compiled for Linux: it runs the arm
-/// `windows` on a Windows host and the arm `linux`, `posix` or `unix` on every other one, and has no
-/// use for the other arms.
+/// An arm is named as the `cfg` it stands for:
+///
+/// | arm                   | `cfg`                                                          |
+/// | --------------------- | -------------------------------------------------------------- |
+/// | `windows`             | `windows`                                                      |
+/// | `posix`               | `not(windows)`                                                 |
+/// | `unix`                | `unix`                                                         |
+/// | `linux`               | `any(target_os = "linux", target_os = "android")`              |
+/// | `not_linux`           | `not(any(target_os = "linux", target_os = "android"))`         |
+/// | `macos`               | `target_os = "macos"`                                          |
+/// | `not_macos`           | `not(target_os = "macos")`                                     |
+/// | `freebsd`             | `target_os = "freebsd"`                                        |
+/// | `not_macos_not_linux` | `not(any(target_os = "macos", target_os = "linux", target_os = "android"))` |
+///
+/// The portable image is compiled for Linux and has three hosts. On a Windows host it runs the arm
+/// `windows`. On a macOS host it runs the arm `macos`, or `not_linux` where bun has one piece of code
+/// for every system that is not Linux; in such an arm the name `libc` is `bun_darwin_sys::libc`, which
+/// has macOS as the `libc` crate has it in a build for macOS. On a Linux host, and on a macOS host if
+/// there is no arm for macOS, it runs the arm `linux`, `posix`, `unix` or `not_macos`. It has no use
+/// for `freebsd` and `not_macos_not_linux`.
+///
+/// An arm for targets that the image has nothing to do with is written with its `cfg`,
+/// `cfg(target_os = "netbsd") => { .. }`: a build for one OS has it under that `cfg`, the image has not.
 #[cfg(not(bun_portable))]
 #[macro_export]
 macro_rules! host_select {
-    ($($os:ident => $block:block)+) => {{
-        $( $crate::__host_select_arm! { $os $block } )+
+    ($($os:ident $(($($predicate:tt)*))? => $block:block)+) => {{
+        $( $crate::__host_select_arm! { $os [$($($predicate)*)?] $block } )+
     }};
 }
 
@@ -52,28 +71,44 @@ macro_rules! host_select {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __host_select_arm {
-    (windows $block:block) => {
+    (windows [] $block:block) => {
         #[cfg(windows)]
         $block
     };
-    (posix $block:block) => {
+    (posix [] $block:block) => {
         #[cfg(not(windows))]
         $block
     };
-    (unix $block:block) => {
+    (unix [] $block:block) => {
         #[cfg(unix)]
         $block
     };
-    (linux $block:block) => {
+    (linux [] $block:block) => {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         $block
     };
-    (macos $block:block) => {
+    (not_linux [] $block:block) => {
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        $block
+    };
+    (macos [] $block:block) => {
         #[cfg(target_os = "macos")]
         $block
     };
-    (freebsd $block:block) => {
+    (not_macos [] $block:block) => {
+        #[cfg(not(target_os = "macos"))]
+        $block
+    };
+    (not_macos_not_linux [] $block:block) => {
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+        $block
+    };
+    (freebsd [] $block:block) => {
         #[cfg(target_os = "freebsd")]
+        $block
+    };
+    (cfg [$($predicate:tt)+] $block:block) => {
+        #[cfg($($predicate)+)]
         $block
     };
 }
@@ -81,45 +116,157 @@ macro_rules! __host_select_arm {
 #[cfg(bun_portable)]
 #[macro_export]
 macro_rules! host_select {
-    ($($os:ident => $block:block)+) => {
-        $crate::__host_select_portable!([] [] $($os => $block)+)
+    ($($arms:tt)+) => {
+        $crate::__host_select_portable!([] [] [] $($arms)+)
+    };
+}
+
+/// Sorts the arms into the one for a Windows host, the one for a macOS host and the one for the rest,
+/// and picks.
+#[cfg(bun_portable)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __host_select_portable {
+    ([$($windows:block)?] [$($macos:block)?] [$($other:block)?]) => {
+        $crate::__host_select_pick!([$($windows)?] [$($macos)?] [$($other)?])
+    };
+    ([] [$($macos:block)?] [$($other:block)?] windows => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$block] [$($macos)?] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [] [$($other:block)?] macos => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$block] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [] [$($other:block)?] not_linux => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$block] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [$($macos:block)?] [] linux => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($macos)?] [$block] $($rest)*)
+    };
+    ([$($windows:block)?] [$($macos:block)?] [] posix => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($macos)?] [$block] $($rest)*)
+    };
+    ([$($windows:block)?] [$($macos:block)?] [] unix => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($macos)?] [$block] $($rest)*)
+    };
+    ([$($windows:block)?] [$($macos:block)?] [] not_macos => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($macos)?] [$block] $($rest)*)
+    };
+    ([$($windows:block)?] [$($macos:block)?] [$($other:block)?] freebsd => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($macos)?] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [$($macos:block)?] [$($other:block)?] not_macos_not_linux => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($macos)?] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [$($macos:block)?] [$($other:block)?] cfg($($predicate:tt)+) => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$($macos)?] [$($other)?] $($rest)*)
     };
 }
 
 #[cfg(bun_portable)]
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __host_select_portable {
-    ([$windows:block] [$other:block]) => {
+macro_rules! __host_select_pick {
+    ([$windows:block] [] [$other:block]) => {
         if $crate::host::is_windows() $windows else $other
     };
-    ([$windows:block] []) => {
+    ([$windows:block] [] []) => {
         if $crate::host::is_windows() $windows else {
             $crate::host_dispatch::no_definition_for_this_host(concat!(file!(), ":", line!()))
         }
     };
-    ([] [$other:block]) => {
+    ([] [] [$other:block]) => {
         if $crate::host::is_windows() {
             $crate::host_dispatch::no_definition_for_this_host(concat!(file!(), ":", line!()))
         } else $other
     };
-    ([] [$($other:block)?] windows => $block:block $($rest:tt)*) => {
-        $crate::__host_select_portable!([$block] [$($other)?] $($rest)*)
+    ([$($windows:block)?] [$macos:block] [$($other:block)?]) => {
+        if $crate::host::is_mac() {
+            #[allow(unused_imports)]
+            use $crate::bun_darwin_sys::libc;
+            $macos
+        } else {
+            $crate::__host_select_pick!([$($windows)?] [] [$($other)?])
+        }
     };
-    ([$($windows:block)?] [] linux => $block:block $($rest:tt)*) => {
-        $crate::__host_select_portable!([$($windows)?] [$block] $($rest)*)
+    ([] [] []) => {
+        $crate::host_dispatch::no_definition_for_this_host(concat!(file!(), ":", line!()))
     };
-    ([$($windows:block)?] [] posix => $block:block $($rest:tt)*) => {
-        $crate::__host_select_portable!([$($windows)?] [$block] $($rest)*)
+}
+
+/// An expression of code that POSIX systems share, where the C library it calls has to be the one of
+/// the host.
+///
+/// ```ignore
+/// let rc = bun_core::host_libc!(unsafe { libc::fcntl(fd.native(), cmd, arg) });
+/// ```
+///
+/// A build for one OS has the expression as it is written. The portable image has its own C library,
+/// which hands a request to the host in the form of Linux, and that is how the code that POSIX systems
+/// share reaches macOS. It does not do for a call whose arguments only macOS knows (`F_GETPATH`), or
+/// that the C library of the image answers without asking (`dlopen`). On a macOS host the image
+/// evaluates the expression with `bun_darwin_sys::libc` under the name `libc`: the function of macOS.
+#[cfg(not(bun_portable))]
+#[macro_export]
+macro_rules! host_libc {
+    ($expression:expr) => {
+        $expression
     };
-    ([$($windows:block)?] [] unix => $block:block $($rest:tt)*) => {
-        $crate::__host_select_portable!([$($windows)?] [$block] $($rest)*)
+}
+
+#[cfg(bun_portable)]
+#[macro_export]
+macro_rules! host_libc {
+    ($expression:expr) => {
+        if $crate::host::is_mac() {
+            #[allow(unused_imports)]
+            use $crate::bun_darwin_sys::libc;
+            $expression
+        } else {
+            $expression
+        }
     };
-    ([$($windows:block)?] [$($other:block)?] macos => $block:block $($rest:tt)*) => {
-        $crate::__host_select_portable!([$($windows)?] [$($other)?] $($rest)*)
+}
+
+/// The block, on the hosts of one OS only. A build for another OS has nothing in its place, and the
+/// portable image runs it on a host of that OS. The OS is named as an arm of [`host_select!`] is.
+///
+/// ```ignore
+/// bun_core::host_only! { macos => {
+///     if fcopyfile(from, to, None, libc::COPYFILE_DATA) == 0 {
+///         return Ok(());
+///     }
+/// }}
+/// ```
+#[cfg(not(bun_portable))]
+#[macro_export]
+macro_rules! host_only {
+    ($os:ident => $block:block) => {
+        $crate::__host_select_arm! { $os [] $block }
     };
-    ([$($windows:block)?] [$($other:block)?] freebsd => $block:block $($rest:tt)*) => {
-        $crate::__host_select_portable!([$($windows)?] [$($other)?] $($rest)*)
+}
+
+#[cfg(bun_portable)]
+#[macro_export]
+macro_rules! host_only {
+    (macos => $block:block) => {
+        if $crate::host::is_mac() {
+            #[allow(unused_imports)]
+            use $crate::bun_darwin_sys::libc;
+            $block
+        }
+    };
+    (linux => $block:block) => {
+        if $crate::host::is_linux() $block
+    };
+    (windows => $block:block) => {
+        if $crate::host::is_windows() $block
+    };
+    (not_linux => $block:block) => {
+        if $crate::host::is_mac() {
+            #[allow(unused_imports)]
+            use $crate::bun_darwin_sys::libc;
+            $block
+        }
     };
 }
 

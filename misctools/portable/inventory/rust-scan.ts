@@ -9,6 +9,9 @@ export type Token = {
   kind: "ident" | "punct" | "literal" | "lifetime" | "open" | "close";
   text: string;
   line: number;
+  /** Where the token starts in the source, and where it ends. */
+  offset: number;
+  end: number;
   /** The index of the token that closes this one, or opens it. */
   partner?: number;
 };
@@ -60,7 +63,7 @@ export function tokens(source: string): Token[] {
     if (raw && (i === 0 || !isIdent(source[i - 1]))) {
       const end = source.indexOf('"' + raw[1], i + raw[0].length);
       const stop = end < 0 ? n : end + 1 + raw[1].length;
-      out.push({ kind: "literal", text: source.slice(i, stop), line });
+      out.push({ kind: "literal", text: source.slice(i, stop), line, offset: i, end: stop });
       count(i, stop);
       i = stop;
       continue;
@@ -70,7 +73,7 @@ export function tokens(source: string): Token[] {
       i += c === '"' ? 1 : 2;
       while (i < n && source[i] !== '"') i += source[i] === "\\" ? 2 : 1;
       i++;
-      out.push({ kind: "literal", text: source.slice(start, i), line });
+      out.push({ kind: "literal", text: source.slice(start, i), line, offset: start, end: i });
       count(start, i);
       continue;
     }
@@ -81,12 +84,12 @@ export function tokens(source: string): Token[] {
       const character = /^(?:\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|.)|[^\\'])'/.exec(source.slice(at, at + 16));
       if (character) {
         i = at + character[0].length;
-        out.push({ kind: "literal", text: source.slice(start, i), line });
+        out.push({ kind: "literal", text: source.slice(start, i), line, offset: start, end: i });
         continue;
       }
       i = at;
       while (i < n && isIdent(source[i])) i++;
-      out.push({ kind: "lifetime", text: source.slice(start, i), line });
+      out.push({ kind: "lifetime", text: source.slice(start, i), line, offset: start, end: i });
       continue;
     }
     if (isIdentStart(c)) {
@@ -97,7 +100,7 @@ export function tokens(source: string): Token[] {
         i++;
         while (i < n && isIdent(source[i])) i++;
       }
-      out.push({ kind: "ident", text: source.slice(start, i), line });
+      out.push({ kind: "ident", text: source.slice(start, i), line, offset: start, end: i });
       continue;
     }
     if (/[0-9]/.test(c)) {
@@ -107,18 +110,18 @@ export function tokens(source: string): Token[] {
         if (source[i] === "." && !/[0-9]/.test(source[i + 1] ?? "")) break;
         i++;
       }
-      out.push({ kind: "literal", text: source.slice(start, i), line });
+      out.push({ kind: "literal", text: source.slice(start, i), line, offset: start, end: i });
       continue;
     }
     if (c === "(" || c === "[" || c === "{") {
       stack.push(out.length);
-      out.push({ kind: "open", text: c, line });
+      out.push({ kind: "open", text: c, line, offset: i, end: i + 1 });
       i++;
       continue;
     }
     if (c === ")" || c === "]" || c === "}") {
       const open = stack.pop();
-      const token: Token = { kind: "close", text: c, line, partner: open };
+      const token: Token = { kind: "close", text: c, line, offset: i, end: i + 1, partner: open };
       if (open !== undefined) out[open].partner = out.length;
       out.push(token);
       i++;
@@ -126,11 +129,11 @@ export function tokens(source: string): Token[] {
     }
     const two = source.slice(i, i + 2);
     if (two === "::" || two === "->" || two === "=>" || two === "==" || two === "!=" || two === "<=" || two === ">=" || two === "&&" || two === "||" || two === "..") {
-      out.push({ kind: "punct", text: two, line });
+      out.push({ kind: "punct", text: two, line, offset: i, end: i + 2 });
       i += 2;
       continue;
     }
-    out.push({ kind: "punct", text: c, line });
+    out.push({ kind: "punct", text: c, line, offset: i, end: i + 1 });
     i++;
   }
   return out;

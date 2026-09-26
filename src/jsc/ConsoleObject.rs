@@ -572,6 +572,10 @@ pub struct TablePrinter<'a> {
     tabular_data: JSValue,
     properties: JSValue,
 
+    /// Rows come from the iterator protocol (Map, Set, generators and other
+    /// iterables). Otherwise they are the own enumerable properties, like
+    /// Node's `Object.keys`: that includes arrays, so a hole or a `length`
+    /// an object merely reports never becomes a row.
     is_iterable: bool,
     jstype: jsc::JSType,
 
@@ -658,7 +662,7 @@ impl<'a> TablePrinter<'a> {
             global_object,
             tabular_data,
             properties,
-            is_iterable: tabular_data.is_iterable(global_object)?,
+            is_iterable: tabular_data.is_non_array_iterable(global_object)?,
             jstype: tabular_data.js_type(),
             value_formatter: {
                 // `Formatter` has a `Drop` impl, so struct-update

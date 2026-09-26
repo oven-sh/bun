@@ -2055,8 +2055,7 @@ impl<'a> LinkerContext<'a> {
         hasher.digest()
     }
 
-    /// Reports each reachable file that has a top-level `await`, at the `await`.
-    /// Returns whether it reported one.
+    /// Returns whether a reachable file has a top-level `await`, and reports each one.
     fn reject_top_level_await(&self, format_name: &str, from_js_api: bool) -> bool {
         let parse_graph = self.parse_graph();
         let tla_keywords = parse_graph.ast.items_top_level_await_keyword();

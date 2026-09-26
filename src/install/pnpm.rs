@@ -502,7 +502,13 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         Ok(r) => r,
         Err(_) => return Err(MigratePnpmLockfileError::YamlParseError),
     };
-    let mut root: Expr = bun_core::handle_oom(_root.deep_clone(&yaml_arena));
+    let mut root: Expr = match _root.deep_clone(&yaml_arena) {
+        Ok(root) => root,
+        Err(bun_ast::DeepCloneError::StackOverflow) => {
+            return Err(MigratePnpmLockfileError::YamlParseError);
+        }
+        Err(bun_ast::DeepCloneError::Alloc(_)) => bun_core::out_of_memory(),
+    };
 
     // pnpm 11 writes `---<env lockfile>---<lockfile>`; the last document is the lockfile.
     if let Some(mut documents) = root.as_array() {

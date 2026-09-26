@@ -26,3 +26,13 @@ impl bun_core::output::ErrName for Error {
 }
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
+
+/// Why `Expr::deep_clone` could not copy a tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum DeepCloneError {
+    /// The tree is nested deeper than the native stack allows.
+    #[error("StackOverflow")]
+    StackOverflow,
+    #[error(transparent)]
+    Alloc(#[from] bun_alloc::AllocError),
+}

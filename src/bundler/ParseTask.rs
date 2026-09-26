@@ -1540,6 +1540,7 @@ pub mod parse_worker {
                     false,
                     contents_file.unwrap_valid(),
                     read_arena,
+                    bun_resolver::cache::NonRegularFile::Read,
                 ) {
                     Ok(e) => {
                         // `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`

@@ -336,6 +336,33 @@ impl File {
     }
 
     // ── one-shot path helpers (open + io + close) ───────────────────────
+    /// Open `path` for reading and return it with its size; `EISDIR` for a directory, `ENODEV` for any other non-regular file.
+    pub fn open_regular_at(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, u64)> {
+        let dir = dir.as_fd();
+        // On Windows `O_NONBLOCK` would make the handle overlapped; the fstat still rejects there.
+        #[cfg(unix)]
+        let flags = O::RDONLY | O::CLOEXEC | O::NONBLOCK;
+        #[cfg(not(unix))]
+        let flags = O::RDONLY | O::CLOEXEC;
+        let file = Self::openat(dir, path, flags, 0)?;
+        let size = file.ensure_regular(path)?;
+        Ok((file, size))
+    }
+    /// The check of [`File::open_regular_at`] for a file opened with other flags: the size of a regular file, else its error.
+    pub fn ensure_regular(&self, path: &[u8]) -> Maybe<u64> {
+        let st = self.stat().map_err(|e| e.with_path(path))?;
+        let mode = st.st_mode as Mode;
+        if !S::ISREG(mode) {
+            let errno = if S::ISDIR(mode) { E::EISDIR } else { E::ENODEV };
+            return Err(Error::new(errno, Tag::open).with_path(path));
+        }
+        Ok(st.st_size.max(0) as u64)
+    }
+    /// [`File::read_from`] of a regular file only ([`File::open_regular_at`]).
+    pub fn read_regular_from(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
+        let (file, _size) = Self::open_regular_at(dir, path)?;
+        file.read_to_end()
+    }
     /// Open + read + close. Accepts `&[u8]`; `&ZStr` callers deref-coerce.
     pub fn read_from(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();

@@ -399,6 +399,7 @@ impl PackageJSON {
             false,
             None,
             None,
+            crate::cache::NonRegularFile::Read,
         ) {
             Ok(e) => e,
             Err(err) => {

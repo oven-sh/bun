@@ -55,6 +55,8 @@ pub mod Command {
 pub mod add_catalog;
 #[path = "PackageManager/add_remove_with_filter.rs"]
 pub mod add_remove_with_filter;
+#[path = "PackageManager/block_exotic_subdeps.rs"]
+pub mod block_exotic_subdeps;
 #[path = "PackageManager/CommandLineArguments.rs"]
 pub mod command_line_arguments;
 #[path = "PackageManager/install_with_manager.rs"]
@@ -1411,6 +1413,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         hoist_pattern,
         hoist,
         offline,
+        block_exotic_subdeps,
     } = bunfig;
 
     if let Some(registry) = default_registry {
@@ -1466,6 +1469,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         hoist_pattern,
         hoist,
         offline,
+        block_exotic_subdeps,
     );
 }
 

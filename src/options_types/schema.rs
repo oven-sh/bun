@@ -262,6 +262,7 @@ pub mod api {
         pub hoist: Option<bool>,
         /// `offline = true`: `bun install` never touches the network.
         pub offline: Option<bool>,
+        pub block_exotic_subdeps: Option<bool>,
     }
 
     #[repr(u8)]

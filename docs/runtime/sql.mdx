@@ -943,6 +943,21 @@ const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=prefer");
 const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=verify-full");
 ```
 
+### Custom CA Certificates
+
+To verify the server against a CA that is not in the default trust store (for example an Amazon RDS or Google Cloud SQL bundle), pass the CA certificate as `tls.ca`, or pass the `BunFile` directly as `tls`. Both forms verify the certificate chain and the hostname (`verify-full`).
+
+```ts
+const sql = new SQL("postgres://user:password@db.example.com/mydb", {
+  tls: { ca: Bun.file("./rds-ca-bundle.pem") },
+});
+
+// Shorthand for the same configuration
+const sql = new SQL("postgres://user:password@db.example.com/mydb", {
+  tls: Bun.file("./rds-ca-bundle.pem"),
+});
+```
+
 ---
 
 ## Connection Pooling

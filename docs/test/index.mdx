@@ -237,6 +237,8 @@ Use the `--rerun-each` flag to run each test multiple times. This surfaces flaky
 bun test --rerun-each 100
 ```
 
+Without [`--isolate`](/test/parallel#--isolate), the reruns of a file share one global and one module registry, so a property on `globalThis` or a `mock.module()` from one run is still there in the next. With `--isolate`, which `--parallel` turns on by default, every rerun starts in a fresh global, the same as every file does. Each rerun then evaluates the file's imports and the preloads again.
+
 ## Randomize test execution order
 
 Use the `--randomize` flag to run tests in a random order. This helps detect tests that depend on shared state or execution order.

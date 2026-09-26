@@ -9,26 +9,30 @@
 //! `-lntdll`/`-lkernel32`/... into the rlib and break linking any standalone
 //! test/bench binary on a non-Windows host.
 
-use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_short, c_uint, c_ushort, c_void};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Basic Win32 typedefs (owned here; mirror winnt.h)
+//
+// `long` is 32 bits on Windows. `core::ffi::c_long` is the `long` of the
+// compilation target, which is 64 bits where this crate is compiled for the
+// portable image, so the typedefs name their width.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type BOOL = c_int;
 pub type BOOLEAN = u8;
 pub type WORD = c_ushort;
-pub type DWORD = c_ulong;
+pub type DWORD = u32;
 type DWORD_PTR = usize;
 pub type UINT = c_uint;
-pub type ULONG = c_ulong;
-pub type LONG = c_long;
+pub type ULONG = u32;
+pub type LONG = i32;
 pub type LARGE_INTEGER = i64;
 pub type WCHAR = u16;
 pub type CHAR = c_char;
 pub type HANDLE = *mut c_void;
 pub type HMODULE = *mut c_void;
-pub type HRESULT = c_long;
+pub type HRESULT = i32;
 pub type LPVOID = *mut c_void;
 pub type LPCVOID = *const c_void;
 pub type LPSTR = *mut CHAR;
@@ -183,10 +187,9 @@ pub struct INPUT_RECORD {
 }
 
 // Layout pins: a typo in any of the above is a silent ABI break across the
-// libuv embed boundary; assert the authoritative Windows-x64 sizes. Gated on
-// `windows` (not just pointer width) because `DWORD = c_ulong` is 4 bytes
-// under LLP64 but 8 under LP64, so the sizes differ on a Linux cross-check.
-#[cfg(all(windows, target_pointer_width = "64"))]
+// libuv embed boundary; assert the authoritative Windows-x64 sizes. They hold
+// on every 64-bit target: no field has a width that depends on the target.
+#[cfg(target_pointer_width = "64")]
 const _: () = {
     assert!(core::mem::size_of::<OVERLAPPED>() == 32);
     assert!(core::mem::size_of::<CRITICAL_SECTION>() == 40);
@@ -449,10 +452,8 @@ pub struct FILE_FS_VOLUME_INFORMATION {
     pub VolumeLabel: [WCHAR; 1],
 }
 
-// Layout asserts against the C headers (checked via clang on Windows). Gated on
-// `windows` because this crate is also compiled on LP64 targets where
-// `c_ulong` is 64-bit, which perturbs these offsets.
-#[cfg(windows)]
+// Layout asserts against the C headers (checked via clang on Windows).
+#[cfg(target_pointer_width = "64")]
 const _: () = {
     assert!(core::mem::size_of::<FILE_ALL_INFORMATION>() == 104);
     assert!(core::mem::offset_of!(FILE_ALL_INFORMATION, StandardInformation) == 40);
@@ -675,6 +676,7 @@ pub mod ntdll {
         ) -> *mut c_void;
     }
 
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "ntdll"))]
     #[cfg_attr(windows, link(name = "ntdll"))]
     unsafe extern "system" {
         pub fn RtlCaptureStackBackTrace(
@@ -832,6 +834,7 @@ pub mod kernel32 {
     pub const PAGE_EXECUTE_WRITECOPY: u32 = 0x80;
     pub const PAGE_GUARD: u32 = 0x100;
 
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
     #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
@@ -903,6 +906,7 @@ pub mod kernel32 {
             Add: BOOL,
         ) -> BOOL;
     }
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
     #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// `GetConsoleScreenBufferInfo` (`wincon.h`).
@@ -1033,6 +1037,7 @@ pub const fn NT_ERROR(status: NTSTATUS) -> bool {
     (status.0 >> 30) == 3
 }
 
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "ntdll"))]
 #[cfg_attr(windows, link(name = "ntdll"))]
 unsafe extern "system" {
     /// Total over `NTSTATUS`; no preconditions.
@@ -1067,6 +1072,7 @@ pub mod ws2_32 {
         pub ai_next: *mut addrinfo,
     }
 
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "ws2_32"))]
     #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
         pub fn getaddrinfo(
@@ -1128,6 +1134,7 @@ pub mod ws2_32 {
         pub s6_addr: [u8; 16],
     }
 
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "ws2_32"))]
     #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
         pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
@@ -1321,6 +1328,7 @@ impl Win32Error {
 pub type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
 
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetFileInformationByHandle(
@@ -1373,6 +1381,7 @@ pub struct SYSTEM_INFO {
     pub wProcessorLevel: WORD,
     pub wProcessorRevision: WORD,
 }
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO);
@@ -1382,6 +1391,7 @@ pub const TOKEN_QUERY: DWORD = 0x0008;
 /// `TOKEN_INFORMATION_CLASS::TokenIsAppContainer`
 pub const TOKEN_IS_APP_CONTAINER: c_int = 29;
 
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "advapi32"))]
 #[cfg_attr(windows, link(name = "advapi32"))]
 unsafe extern "system" {
     pub fn SaferiIsExecutableFileType(szFullPathname: LPCWSTR, bFromShellExecute: BOOLEAN) -> BOOL;
@@ -1404,6 +1414,7 @@ unsafe extern "system" {
 // `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the
 // callconv is correct on all targets (winapi == C only on x64). `GetProcAddress`
 // takes `LPCSTR` (narrow), not wide.
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetProcAddress(ptr: *mut c_void, name: *const c_char) -> *mut c_void;
@@ -1413,6 +1424,7 @@ unsafe extern "system" {
 
 // Declared as `extern "system"` so the callconv is correct on all targets
 // (winapi == C only on x64).
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;
@@ -1446,6 +1458,7 @@ unsafe extern "system" {
     pub fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwProcessId: DWORD) -> HANDLE;
 }
 
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "advapi32"))]
 unsafe extern "C" {
     pub fn GetUserNameW(lpBuffer: LPWSTR, pcbBuffer: LPDWORD) -> BOOL;
 }
@@ -1716,6 +1729,7 @@ pub const CTRL_C_EVENT: DWORD = 0;
 pub const CTRL_BREAK_EVENT: DWORD = 1;
 pub const CTRL_CLOSE_EVENT: DWORD = 2;
 
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn CreateDirectoryExW(
@@ -1742,6 +1756,7 @@ unsafe extern "system" {
     ) -> HRESULT;
 }
 
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
 unsafe extern "C" {
     pub fn SetStdHandle(nStdHandle: u32, hHandle: *mut c_void) -> u32;
 
@@ -1752,6 +1767,7 @@ unsafe extern "C" {
     pub safe fn GetConsoleCP() -> u32;
 }
 
+#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     /// No preconditions; returns 0 on failure.

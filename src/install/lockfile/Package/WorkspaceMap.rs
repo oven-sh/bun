@@ -6,7 +6,7 @@ use bun_core::strings;
 use bun_glob as glob;
 use bun_paths as path;
 use bun_paths::resolve_path;
-use bun_paths::{MAX_PATH_BYTES, SEP_STR};
+use bun_paths::{MAX_PATH_BYTES, sep_str};
 
 use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
 use crate::package_manager::workspace_package_json_cache::{
@@ -227,7 +227,7 @@ fn process_workspace_name(
 fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
     strings::without_suffix_comptime(
         abs_package_json_path,
-        const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
+        bun_paths::path_literal!("/package.json").as_bytes(),
     )
 }
 
@@ -553,7 +553,7 @@ impl WorkspaceMap {
                                     format_args!(
                                         "Missing \"name\" from package.json in {}{}{}",
                                         BStr::new(entry_dir),
-                                        SEP_STR,
+                                        sep_str(),
                                         BStr::new(entry_base),
                                     ),
                                 );

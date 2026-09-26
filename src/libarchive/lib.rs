@@ -12,7 +12,7 @@ use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
 #[cfg(unix)]
 use bun_paths::PathBuffer;
-use bun_paths::{OSPathChar, SEP, SEP_STR};
+use bun_paths::{OSPathChar, sep, sep_str};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
@@ -1310,7 +1310,7 @@ impl Archiver {
                     while depth_i < DEPTH_TO_SKIP {
                         // skip leading separators
                         while let [first, rest @ ..] = remaining {
-                            if *first == SEP {
+                            if *first == sep() {
                                 remaining = rest;
                             } else {
                                 break;
@@ -1319,7 +1319,7 @@ impl Archiver {
                         if remaining.is_empty() {
                             continue 'loop_;
                         }
-                        match strings::index_of_char_usize(remaining, SEP) {
+                        match strings::index_of_char_usize(remaining, sep()) {
                             Some(i) => remaining = &remaining[i..],
                             None => remaining = &remaining[remaining.len()..],
                         }
@@ -1327,7 +1327,7 @@ impl Archiver {
                     }
                     // skip leading separators (tokenizer.rest() does this)
                     while let [first, rest @ ..] = remaining {
-                        if *first == SEP {
+                        if *first == sep() {
                             remaining = rest;
                         } else {
                             break;
@@ -1353,7 +1353,7 @@ impl Archiver {
                         continue 'loop_;
                     }
                     let dirname =
-                        strings::trim(bun_paths::dirname_simple(pathname), SEP_STR.as_bytes());
+                        strings::trim(bun_paths::dirname_simple(pathname), sep_str().as_bytes());
 
                     // SAFETY: entry valid
                     let size: usize =
@@ -1375,13 +1375,14 @@ impl Archiver {
                                     break 'brk __pathname;
                                 }
 
-                                let index = strings::index_of_char_usize(__pathname, SEP).unwrap();
+                                let index =
+                                    strings::index_of_char_usize(__pathname, sep()).unwrap();
                                 break 'brk &__pathname[..index];
                             };
                             let mut temp_buf = [0u8; 1024];
                             temp_buf[..path_to_use_.len()].copy_from_slice(path_to_use_);
                             let path_to_use: &[u8] = if !is_already_top_level {
-                                temp_buf[path_to_use_.len()] = SEP;
+                                temp_buf[path_to_use_.len()] = sep();
                                 &temp_buf[..path_to_use_.len() + 1]
                             } else {
                                 &temp_buf[..path_to_use_.len()]

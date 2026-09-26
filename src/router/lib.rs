@@ -14,7 +14,7 @@ use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
-use bun_paths::{self, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self, PathBuffer, sep, sep_str};
 
 use bun_http_types::URLPath::URLPath;
 
@@ -467,8 +467,9 @@ impl<'a> RouteLoader<'a> {
         // Call bun_paths directly to avoid the higher-tier bun_resolver dep.
         let relative_dir = bun_paths::resolve_path::relative(base_dir, &config.dir);
         if !relative_dir.starts_with(b"..") {
-            route_dirname_len =
-                (relative_dir.len() + usize::from(config.dir[config.dir.len() - 1] != SEP)) as u16;
+            route_dirname_len = (relative_dir.len()
+                + usize::from(config.dir[config.dir.len() - 1] != sep()))
+                as u16;
         }
 
         let mut this = RouteLoader {
@@ -743,7 +744,7 @@ impl Route {
 
         let base = &base_[0..base_.len() - extname.len()];
 
-        let public_dir = strings::trim(public_dir_, SEP_STR.as_bytes());
+        let public_dir = strings::trim(public_dir_, sep_str().as_bytes());
 
         // this is a path like
         // "/pages/index.js"

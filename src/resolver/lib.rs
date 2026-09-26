@@ -426,7 +426,7 @@ pub mod fs {
         /// left intact).
         pub fn top_level_dir_without_trailing_slash(&self) -> &'static [u8] {
             let d = self.top_level_dir;
-            if d.len() > 1 && d.last() == Some(&bun_paths::SEP) {
+            if d.len() > 1 && d.last() == Some(&bun_paths::sep()) {
                 &d[..d.len() - 1]
             } else {
                 d
@@ -1657,7 +1657,7 @@ pub mod fs {
                 .or_else(|| env_var::TMP.get_not_empty())
                 .or_else(|| env_var::TEMP.get_not_empty())
             {
-                if dir.len() > 1 && dir[dir.len() - 1] == bun_paths::SEP {
+                if dir.len() > 1 && dir[dir.len() - 1] == bun_paths::sep() {
                     return &dir[0..dir.len() - 1];
                 }
                 return dir;
@@ -1965,7 +1965,7 @@ pub mod dir_entry_accessor {
 
         fn statat(handle: DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
             let mut buf = bun_paths::path_buffer_pool::get();
-            let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {
+            let path: &ZStr = if !Platform::auto().is_absolute(path_.as_bytes()) {
                 if let Some(entry) = handle.value {
                     let slice = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
                         &mut buf,
@@ -1991,7 +1991,7 @@ pub mod dir_entry_accessor {
                 return Syscall::lstatat(entry.fd, path_);
             }
 
-            let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {
+            let path: &ZStr = if !Platform::auto().is_absolute(path_.as_bytes()) {
                 if let Some(entry) = handle.value {
                     let slice = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
                         &mut buf,
@@ -2021,7 +2021,7 @@ pub mod dir_entry_accessor {
             let mut buf = bun_paths::path_buffer_pool::get();
             let mut path: &[u8] = path_.as_bytes();
 
-            if !Platform::AUTO.is_absolute(path) {
+            if !Platform::auto().is_absolute(path) {
                 if let Some(entry) = handle.value {
                     path = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
                         &mut buf,

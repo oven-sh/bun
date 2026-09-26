@@ -6,7 +6,7 @@ use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{Resolution, ResolutionTag, initialize_store};
-use bun_paths::{self, SEP_STR};
+use bun_paths::{self, sep_str};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
 
@@ -426,11 +426,11 @@ impl List {
         resolution_buf: &[u8],
         format_type: PrintFormat,
     ) {
-        let needle = bun_paths::NODE_MODULES_NEEDLE;
+        let needle = bun_paths::node_modules_needle();
         if let Some(i) = strings::index_of(self.cwd.as_bytes(), needle) {
             bun_core::pretty!(
                 "<d>.{s}{s} @{f}<r>\n",
-                BStr::new(SEP_STR.as_bytes()),
+                BStr::new(sep_str().as_bytes()),
                 BStr::new(strings::without_trailing_slash(
                     &self.cwd.as_bytes()[i + 1..]
                 )),

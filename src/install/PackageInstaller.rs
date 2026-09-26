@@ -5,7 +5,7 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
-use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
+use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, platform, sep};
 use bun_semver::String;
 use bun_sys::{self as Syscall, Dir, Fd};
 
@@ -1534,8 +1534,8 @@ impl<'a> PackageInstaller<'a> {
                     let mut len = 0usize;
                     buf[len..len + global_link_dir.len()].copy_from_slice(global_link_dir);
                     len += global_link_dir.len();
-                    if global_link_dir[global_link_dir.len() - 1] != SEP {
-                        buf[len] = SEP;
+                    if global_link_dir[global_link_dir.len() - 1] != sep() {
+                        buf[len] = sep();
                         len += 1;
                     }
                     buf[len..len + folder.len()].copy_from_slice(folder);

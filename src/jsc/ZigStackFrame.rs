@@ -162,7 +162,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
                     );
                     f.write_str(Output::pretty_fmt!("<d>", true))?;
                     write!(f, "{}", BStr::new(root_path))?;
-                    f.write_str(bun_paths::SEP_STR)?;
+                    f.write_str(bun_paths::sep_str())?;
                     f.write_str(Output::pretty_fmt!("<r><cyan>", true))?;
                     write!(f, "{}", BStr::new(relative_path))?;
                 } else {

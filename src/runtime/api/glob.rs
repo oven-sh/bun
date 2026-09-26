@@ -54,7 +54,7 @@ impl ScanOpts {
             }
 
             // If its absolute return as is
-            if resolve_path::Platform::AUTO.is_absolute(cwd_utf8.slice()) {
+            if resolve_path::Platform::auto().is_absolute(cwd_utf8.slice()) {
                 break 'cwd_str Box::<[u8]>::from(cwd_utf8.slice());
             }
 
@@ -229,7 +229,7 @@ pub(crate) mod standalone_accessor {
 
     /// `path` resolved against the handle's directory when relative.
     fn resolve<'a>(handle: StandaloneHandle, path: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
-        if Platform::AUTO.is_absolute(path) {
+        if Platform::auto().is_absolute(path) {
             return path;
         }
         let Some(dir) = handle.dir else { return path };

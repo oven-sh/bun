@@ -530,12 +530,12 @@ impl CreateCommand {
                             bstr::BStr::new(bun_paths::basename(destination)),
                         );
                         for path in archive_context.overwrite_list.keys() {
-                            if strings::ends_with(path, bun_paths::SEP_STR.as_bytes()) {
+                            if strings::ends_with(path, bun_paths::sep_str().as_bytes()) {
                                 pretty_error!(
                                     "<r>  <blue>{}<r>",
                                     bstr::BStr::new(&path[0..path.len().max(1) - 1]),
                                 );
-                                pretty_errorln!("{}", bun_paths::SEP_STR);
+                                pretty_errorln!("{}", bun_paths::sep_str());
                             } else {
                                 pretty_errorln!("<r>  {}", bstr::BStr::new(path));
                             }
@@ -621,7 +621,7 @@ impl CreateCommand {
                 #[cfg(windows)]
                 {
                     strings::copy_u8_into_u16(&mut destination_buf, dst_without_trailing_slash);
-                    destination_buf[dst_without_trailing_slash.len()] = bun_paths::SEP as u16;
+                    destination_buf[dst_without_trailing_slash.len()] = bun_paths::sep() as u16;
                 }
 
                 #[cfg(windows)]
@@ -632,7 +632,7 @@ impl CreateCommand {
                 #[cfg(windows)]
                 {
                     strings::copy_u8_into_u16(&mut template_path_buf, src_without_trailing_slash);
-                    template_path_buf[src_without_trailing_slash.len()] = bun_paths::SEP as u16;
+                    template_path_buf[src_without_trailing_slash.len()] = bun_paths::sep() as u16;
                 }
 
                 let destination_dir = destination_dir__;
@@ -1818,7 +1818,7 @@ impl Example {
                                 }
 
                                 home_dir_buf[..entry_name.len()].copy_from_slice(entry_name);
-                                home_dir_buf[entry_name.len()] = bun_paths::SEP;
+                                home_dir_buf[entry_name.len()] = bun_paths::sep();
                                 home_dir_buf[entry_name.len() + 1..][..b"package.json".len()]
                                     .copy_from_slice(b"package.json");
                                 home_dir_buf[entry_name.len() + 1 + b"package.json".len()] = 0;

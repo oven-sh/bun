@@ -350,7 +350,7 @@ pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [
     };
     let is_path = path.starts_with(b".")
         || (prefix != b"link:" && !path.is_empty() && !strings::contains(path, b"://"));
-    (is_path && !path.starts_with(b"//") && !Platform::AUTO.is_absolute(path))
+    (is_path && !path.starts_with(b"//") && !Platform::auto().is_absolute(path))
         .then_some((prefix, path))
 }
 
@@ -372,7 +372,7 @@ fn spell_relative_to(
     positional.extend_from_slice(prefix);
     let path_start = positional.len();
     let escapes =
-        rel.starts_with(b"..") && rel.get(2).is_none_or(|&c| Platform::AUTO.is_separator(c));
+        rel.starts_with(b"..") && rel.get(2).is_none_or(|&c| Platform::auto().is_separator(c));
     if !escapes {
         positional.extend_from_slice(b"./");
     }

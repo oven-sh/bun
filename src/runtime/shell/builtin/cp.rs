@@ -576,7 +576,7 @@ impl ShellCpTask {
 
     fn has_trailing_sep(path: &[u8]) -> bool {
         path.last()
-            .is_some_and(|&c| resolve_path::Platform::AUTO.is_separator(c))
+            .is_some_and(|&c| resolve_path::Platform::auto().is_separator(c))
     }
 
     fn is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
@@ -611,14 +611,14 @@ impl ShellCpTask {
         let mut buf3 = bun_paths::path_buffer_pool::get();
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
-        let src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {
+        let src: &bun_core::ZStr = if Platform::auto().is_absolute(&self.src) {
             // `self.src` is the bare argv bytes (no NUL); re-terminate via
             // the thread-local join buffer.
             resolve_path::join_z::<platform::Auto>(&[&self.src])
         } else {
             resolve_path::join_z::<platform::Auto>(&[&self.cwd_path, &self.src])
         };
-        let mut tgt: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.tgt) {
+        let mut tgt: &bun_core::ZStr = if Platform::auto().is_absolute(&self.tgt) {
             resolve_path::join_z_buf::<platform::Auto>(buf2.as_mut_slice(), &[&self.tgt])
         } else {
             resolve_path::join_z_buf::<platform::Auto>(

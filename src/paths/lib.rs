@@ -56,11 +56,24 @@ pub mod strings {
 // Native separator re-exports (PORTING.md §Crate map: never std::path).
 pub use bun_alloc::SEP;
 pub use bun_alloc::SEP_STR;
+// The same for the OS that runs this process: the constants themselves, except in the portable image.
+pub use bun_alloc::{sep, sep_str};
 
 /// `<SEP>node_modules<SEP>` — platform-dependent infix needle for detecting whether
 /// a path passes through a `node_modules` directory.
 pub const NODE_MODULES_NEEDLE: &[u8] =
     const_format::concatcp!(SEP_STR, "node_modules", SEP_STR).as_bytes();
+
+bun_core::host_fn!(
+    /// [`NODE_MODULES_NEEDLE`] of the OS that runs this process.
+    pub fn node_modules_needle() -> &'static [u8] {
+        if bun_core::host::is_windows() {
+            b"\\node_modules\\"
+        } else {
+            b"/node_modules/"
+        }
+    }
+);
 
 pub(crate) const SEP_POSIX: u8 = b'/';
 pub const SEP_WINDOWS: u8 = b'\\';
@@ -117,10 +130,32 @@ mod path_char;
 pub use path_char::PathChar;
 pub const DELIMITER: u8 = if cfg!(windows) { b';' } else { b':' };
 
+bun_core::host_fn!(
+    /// [`DELIMITER`] of the OS that runs this process: what separates the directories of `PATH`.
+    pub fn delimiter() -> u8 {
+        if bun_core::host::is_windows() {
+            b';'
+        } else {
+            b':'
+        }
+    }
+);
+bun_core::host_fn!(
+    /// [`delimiter`] as a string.
+    pub fn delimiter_str() -> &'static str {
+        if bun_core::host::is_windows() {
+            ";"
+        } else {
+            ":"
+        }
+    }
+);
+
 /// `bun.pathLiteral("a/b")` → NUL-terminated path with platform separators.
 /// On POSIX returns the literal as-is; on
 /// Windows rewrites `/` → `\` at compile time. Yields `&'static ZStr` so it
 /// drops into `[:0]const u8` slots (`stringZ`).
+#[cfg(not(bun_portable))]
 #[macro_export]
 macro_rules! path_literal {
     ($lit:expr) => {{
@@ -148,6 +183,38 @@ macro_rules! path_literal {
         const __REF: &[u8; __N + 1] = &__OUT;
         // SAFETY: __REF[__N] == 0 (NUL terminator); len excludes it.
         unsafe { ::bun_core::ZStr::from_raw(__REF.as_ptr(), __N) }
+    }};
+}
+
+/// The portable image has both forms of the literal, and the host says which one it is.
+#[cfg(bun_portable)]
+#[macro_export]
+macro_rules! path_literal {
+    ($lit:expr) => {{
+        const __B: &[u8] = $lit.as_bytes();
+        const __N: usize = __B.len();
+        const fn __with_nul(windows: bool) -> [u8; __N + 1] {
+            let mut o = [0u8; __N + 1];
+            let mut i = 0;
+            while i < __N {
+                o[i] = if windows && __B[i] == b'/' {
+                    b'\\'
+                } else {
+                    __B[i]
+                };
+                i += 1;
+            }
+            o // o[__N] == 0 (NUL terminator)
+        }
+        const __POSIX: &[u8; __N + 1] = &__with_nul(false);
+        const __WINDOWS: &[u8; __N + 1] = &__with_nul(true);
+        let __ref = if ::bun_core::host::is_windows() {
+            __WINDOWS
+        } else {
+            __POSIX
+        };
+        // SAFETY: __ref[__N] == 0 (NUL terminator); len excludes it.
+        unsafe { ::bun_core::ZStr::from_raw(__ref.as_ptr(), __N) }
     }};
 }
 
@@ -241,7 +308,7 @@ fn join_sep_vec(parts: &[&[u8]]) -> Vec<u8> {
                 let prev_sep = is_sep_native(prev);
                 let this_sep = is_sep_native(p[0]);
                 if !prev_sep && !this_sep {
-                    out.push(SEP);
+                    out.push(sep());
                 }
                 if prev_sep && this_sep { &p[1..] } else { *p }
             }
@@ -417,12 +484,22 @@ pub mod Dirname {
 /// machine). Windows: keeps `path::dirname_generic`, whose
 /// `disk_designator_len_windows` covers UNC `\\server\share` roots that
 /// `bun_core::dirname`'s inline drive-prefix check does not.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(bun_portable)))]
 pub use bun_core::dirname;
 #[cfg(windows)]
 #[inline]
 pub fn dirname(p: &[u8]) -> Option<&[u8]> {
     path::dirname_generic(p)
+}
+/// The portable image: the function of the host.
+#[cfg(bun_portable)]
+#[inline]
+pub fn dirname(p: &[u8]) -> Option<&[u8]> {
+    if bun_core::host::is_windows() {
+        path::dirname_generic(p)
+    } else {
+        bun_core::dirname(p)
+    }
 }
 #[path = "EnvPath.rs"]
 pub mod env_path;
@@ -493,8 +570,8 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 
     let p = non_absolute_path;
     let dot_relative = p.starts_with(b"./") || p.starts_with(b"../") || p == b"." || p == b"..";
-    #[cfg(windows)]
-    let dot_relative = dot_relative || p.starts_with(b".\\") || p.starts_with(b"..\\");
+    let dot_relative = dot_relative
+        || (bun_core::host::is_windows() && (p.starts_with(b".\\") || p.starts_with(b"..\\")));
     !dot_relative
 }
 
@@ -962,7 +1039,7 @@ pub mod fs {
         /// Checks for `<sep>node_modules<sep>` in the
         /// parsed dir component (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
-            crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
+            crate::strings::contains(self.name().dir, crate::node_modules_needle())
         }
 
         /// Key used to identify this path in the incremental graph: the real

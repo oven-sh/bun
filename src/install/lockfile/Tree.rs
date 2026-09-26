@@ -5,7 +5,7 @@ use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList, index_sort};
 use bun_core::Output;
 use bun_core::ZStr;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, sep};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
@@ -351,7 +351,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                 if path_written + 1 >= MAX_PATH_BYTES {
                     path_too_long();
                 }
-                path_buf[path_written] = SEP;
+                path_buf[path_written] = sep();
                 path_written += 1;
             }
 
@@ -377,7 +377,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                 if path_written + b"/node_modules".len() >= MAX_PATH_BYTES {
                     path_too_long();
                 }
-                path_buf[path_written] = SEP;
+                path_buf[path_written] = sep();
                 path_buf[path_written + 1..path_written + 1 + b"node_modules".len()]
                     .copy_from_slice(b"node_modules");
                 path_written += b"/node_modules".len();

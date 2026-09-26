@@ -181,7 +181,7 @@ impl Rm {
 
                                 for i in args_start..argc {
                                     let path = Builtin::of(interp, cmd).arg_bytes(i);
-                                    let resolved: &[u8] = if Platform::AUTO.is_absolute(path) {
+                                    let resolved: &[u8] = if Platform::auto().is_absolute(path) {
                                         path
                                     } else {
                                         resolve_path::join_spill::<platform::Auto>(
@@ -901,7 +901,7 @@ impl ShellRmTask {
                     out.extend_from_slice(p);
                 } else {
                     if !matches!(out.last(), Some(&c) if is_sep(c)) {
-                        out.push(bun_paths::SEP);
+                        out.push(bun_paths::sep());
                     }
                     let p = if matches!(p.first(), Some(&c) if is_sep(c)) {
                         &p[1..]
@@ -1343,7 +1343,7 @@ impl DirTask {
         // `pending_main_callbacks` hits 0.
         let (tm_ptr, is_absolute): (*mut ShellRmTask, bool) = unsafe {
             let tm_ptr = (*this).task_manager;
-            let abs = Platform::AUTO.is_absolute((*this).path.as_bytes());
+            let abs = Platform::auto().is_absolute((*this).path.as_bytes());
             (*this).is_absolute = abs;
             (tm_ptr, abs)
         };

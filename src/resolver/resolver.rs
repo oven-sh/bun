@@ -131,6 +131,7 @@ mod bun_paths {
     /// const fn can't transform a borrowed `&'static [u8]`, so this is a
     /// macro that emits a fresh const array with the swap applied. Result is
     /// `&'static [u8; N]` (coerces to `&[u8]`).
+    #[cfg(not(bun_portable))]
     #[macro_export]
     #[doc(hidden)]
     macro_rules! __resolver_path_literal {
@@ -152,6 +153,36 @@ mod bun_paths {
             }
             const __OUT: [u8; __N] = __swap(__IN);
             &__OUT
+        }};
+    }
+    /// The portable image has both forms of the literal, and the host says which one it is.
+    #[cfg(bun_portable)]
+    #[macro_export]
+    #[doc(hidden)]
+    macro_rules! __resolver_path_literal {
+        ($p:expr) => {{
+            const __IN: &[u8] = $p;
+            const __N: usize = __IN.len();
+            const fn __swap(input: &[u8], windows: bool) -> [u8; __N] {
+                let mut out = [0u8; __N];
+                let mut i = 0;
+                while i < __N {
+                    out[i] = if windows && input[i] == b'/' {
+                        b'\\'
+                    } else {
+                        input[i]
+                    };
+                    i += 1;
+                }
+                out
+            }
+            const __POSIX: [u8; __N] = __swap(__IN, false);
+            const __WINDOWS: [u8; __N] = __swap(__IN, true);
+            if ::bun_core::host::is_windows() {
+                &__WINDOWS
+            } else {
+                &__POSIX
+            }
         }};
     }
     pub(super) use __resolver_path_literal as path_literal;
@@ -248,7 +279,7 @@ use ::bun_core::{FeatureFlags, Generation};
 use bun_ast::Msg;
 use bun_collections::BoundedArray;
 use bun_dotenv::env_loader as DotEnv;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, sep, sep_str};
 use bun_perf::system_timer::Timer;
 use bun_ptr::Interned;
 use bun_sys::Fd as FD;
@@ -1750,7 +1781,7 @@ impl<'a> Resolver<'a> {
                     if len >= buf.len() {
                         return ResultUnion::NotFound;
                     }
-                    buf[len] = bun_paths::Platform::AUTO.separator();
+                    buf[len] = bun_paths::Platform::auto().separator();
                     len += 1;
                 }
                 // `bufs!` hands out an unconstrained-lifetime `&mut PathBuffer`
@@ -2150,7 +2181,7 @@ impl<'a> Resolver<'a> {
 
         // Re-append the separator the join stripped so "." resolves like "./".
         let abs_path: &[u8] = if Self::import_path_names_directory(import_path)
-            && !strings::ends_with_char(abs_path, SEP)
+            && !strings::ends_with_char(abs_path, sep())
         {
             let len = abs_path.len();
             let buf = bufs!(relative_abs_path);
@@ -2158,7 +2189,7 @@ impl<'a> Resolver<'a> {
                 self.extension_order = prev_extension_order;
                 return ResultUnion::NotFound;
             }
-            buf[len] = SEP;
+            buf[len] = sep();
             &buf[..=len]
         } else {
             abs_path
@@ -2457,7 +2488,7 @@ impl<'a> Resolver<'a> {
         specifier: &[u8],
     ) -> bool {
         if bun_paths::is_absolute(specifier) {
-            let dir = bun_paths::dirname_platform(specifier, bun_paths::Platform::AUTO);
+            let dir = bun_paths::dirname_platform(specifier, bun_paths::Platform::auto());
             let a = self.bust_dir_cache(dir);
             let b = self.bust_dir_cache(specifier);
             return a || b;
@@ -2471,11 +2502,11 @@ impl<'a> Resolver<'a> {
         }
 
         let joined = bun_paths::join_abs(
-            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
-            bun_paths::Platform::AUTO,
+            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::auto()),
+            bun_paths::Platform::auto(),
             specifier,
         );
-        let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
+        let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::auto());
 
         let a = self.bust_dir_cache(dir);
         let b = self.bust_dir_cache(joined);
@@ -3619,7 +3650,7 @@ impl<'a> Resolver<'a> {
             esm_resolution.status,
             Status::Inexact | Status::Exact | Status::ExactEndsWithStar
         )) && !esm_resolution.path.is_empty()
-            && esm_resolution.path[0] == SEP)
+            && esm_resolution.path[0] == sep())
         {
             return MatchStatus::NotFound;
         }
@@ -3747,7 +3778,7 @@ impl<'a> Resolver<'a> {
                                                 "The import {} is missing the suffix {}",
                                                 bstr::BStr::new(ResolvePath::join(
                                                     &parts,
-                                                    bun_paths::Platform::AUTO
+                                                    bun_paths::Platform::auto()
                                                 )),
                                                 bstr::BStr::new(&ms)
                                             ));
@@ -4561,8 +4592,8 @@ impl<'a> Resolver<'a> {
                     // `path` spans `input_path_len + 1` for the NUL-splice above; the
                     // logical input is `path[..input_path_len]`.
                     let input = &path[..input_path_len];
-                    if input[input.len() - 1] != SEP {
-                        let parts: [&[u8]; 2] = [input, SEP_STR.as_bytes()];
+                    if input[input.len() - 1] != sep() {
+                        let parts: [&[u8]; 2] = [input, sep_str().as_bytes()];
                         _safe_path = Some(self.fs_ref().dirname_store.append_parts(&parts)?);
                     } else {
                         _safe_path = Some(self.fs_ref().dirname_store.append_slice(input)?);
@@ -4589,8 +4620,8 @@ impl<'a> Resolver<'a> {
                 end += usize::from(
                     safe_path.len() > end
                         && end > 0
-                        && safe_path[end - 1] != SEP
-                        && safe_path[end] == SEP,
+                        && safe_path[end - 1] != sep()
+                        && safe_path[end] == sep(),
                 );
                 &safe_path[dir_path_i..end]
             };
@@ -5088,7 +5119,7 @@ impl<'a> Resolver<'a> {
         }
 
         if input_path.is_empty()
-            || (input_path.len() == 1 && (input_path[0] == b'.' || input_path[0] == SEP))
+            || (input_path.len() == 1 && (input_path[0] == b'.' || input_path[0] == sep()))
         {
             // No bundler supports remapping ".", so we don't either
             return None;
@@ -5433,9 +5464,9 @@ impl<'a> Resolver<'a> {
         // the `if` block without lifetime erasure; the field is not touched again in
         // this fn (only `remap_path` is, via a separate `bufs!` raw-ptr projection).
         let path_buf = bufs!(remap_path_trailing_slash);
-        if !strings::ends_with_char(path_, SEP) {
+        if !strings::ends_with_char(path_, sep()) {
             path_buf[..path.len()].copy_from_slice(path);
-            path_buf[path.len()] = SEP;
+            path_buf[path.len()] = sep();
             path_buf[path.len() + 1] = 0;
             path = &path_buf[..path.len() + 1];
         }
@@ -5518,12 +5549,12 @@ impl<'a> Resolver<'a> {
         // Is this a file?
         if let Some(file) = self.load_as_file(path, extension_order) {
             // Determine the package folder by looking at the last node_modules/ folder in the path
-            let nm_seg = const_format::concatcp!("node_modules", SEP_STR).as_bytes();
+            let nm_seg: &[u8] = bun_paths::path_literal!(b"node_modules/");
             if let Some(last_node_modules_folder) = strings::last_index_of(file.path, nm_seg) {
                 let node_modules_folder_offset = last_node_modules_folder + nm_seg.len();
                 // Determine the package name by looking at the next separator
                 if let Some(package_name_length) =
-                    strings::index_of_char(&file.path[node_modules_folder_offset..], SEP)
+                    strings::index_of_char(&file.path[node_modules_folder_offset..], sep())
                 {
                     if let Ok(Some(package_dir_info)) = self.dir_info_cached(
                         &file.path[0..node_modules_folder_offset + package_name_length as usize],
@@ -5939,7 +5970,7 @@ impl<'a> Resolver<'a> {
                                         // `&mut Entry` write below.
                                         let entry_dir = query.entry().dir;
                                         let new_abs = if !entry_dir.is_empty()
-                                            && entry_dir[entry_dir.len() - 1] == SEP
+                                            && entry_dir[entry_dir.len() - 1] == sep()
                                         {
                                             let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
                                             Interned::from_static(
@@ -5951,7 +5982,7 @@ impl<'a> Resolver<'a> {
                                             // the trailing path CAN be missing here
                                         } else {
                                             let parts: [&[u8]; 3] =
-                                                [entry_dir, SEP_STR.as_bytes(), &buffer[..]];
+                                                [entry_dir, sep_str().as_bytes(), &buffer[..]];
                                             Interned::from_static(
                                                 self.fs_ref()
                                                     .filename_store
@@ -6117,7 +6148,7 @@ impl<'a> Resolver<'a> {
         let mut base = bun_paths::basename(path);
 
         // base must
-        if base.len() > 1 && base[base.len() - 1] == SEP {
+        if base.len() > 1 && base[base.len() - 1] == sep() {
             base = &base[0..base.len() - 1];
         }
 
@@ -6517,7 +6548,7 @@ impl<'a> Resolver<'a> {
                             ts_dir_name,
                             bufs!(tsconfig_path_abs),
                             &[ts_dir_name, &current.extends],
-                            bun_paths::Platform::AUTO,
+                            bun_paths::Platform::auto(),
                         );
                         let parent_config_maybe: Option<*mut TSConfigJSON> =
                             match self.parse_tsconfig(abs_path, FD::INVALID) {
@@ -6678,15 +6709,12 @@ impl<'b> BrowserMapPath<'b> {
         // If that failed, try assuming this is a directory and looking for an "index" file
 
         let index_path: &[u8] = {
-            let trimmed = strings::trim_right(path_to_check, &[SEP]);
-            let parts = [
-                trimmed,
-                const_format::concatcp!(SEP_STR, "index").as_bytes(),
-            ];
+            let trimmed = strings::trim_right(path_to_check, sep_str().as_bytes());
+            let parts = [trimmed, bun_paths::path_literal!(b"/index") as &[u8]];
             ResolvePath::join_string_buf(
                 bufs!(tsconfig_base_url),
                 &parts,
-                bun_paths::Platform::AUTO,
+                bun_paths::Platform::auto(),
             )
         };
 
@@ -6791,7 +6819,7 @@ impl Dirname {
     /// `is_sep_any` on all platforms. Do NOT replace with `bun_core::dirname`.
     pub fn dirname(path: &[u8]) -> &[u8] {
         if path.is_empty() {
-            return SEP_STR.as_bytes();
+            return sep_str().as_bytes();
         }
 
         let root: &[u8] = {

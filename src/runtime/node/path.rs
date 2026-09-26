@@ -243,8 +243,7 @@ fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     if len == 0 {
         return Ok(cwd);
     }
-    #[cfg(windows)]
-    {
+    if bun_core::host::is_windows() {
         // Converts Windows' backslash path separators to POSIX forward slashes
         // and truncates any drive indicator
 
@@ -269,19 +268,16 @@ fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     }
 
     // We're already on POSIX, no need for any transformations
-    #[cfg(not(windows))]
     Ok(cwd)
 }
 
-#[cfg(windows)]
 #[inline]
 fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    bun_paths::string_paths::without_trailing_slash_windows_path(s)
-}
-#[cfg(not(windows))]
-#[inline]
-fn without_trailing_slash(s: &[u8]) -> &[u8] {
-    strings::without_trailing_slash(s)
+    if bun_core::host::is_windows() {
+        bun_paths::string_paths::without_trailing_slash_windows_path(s)
+    } else {
+        strings::without_trailing_slash(s)
+    }
 }
 
 pub(crate) fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
@@ -1361,10 +1357,11 @@ unsafe extern "C" fn Bun__Node__Path_joinWTF(
     let mut buf = [0u8; path_size::<u8>()];
     let mut buf2 = [0u8; path_size::<u8>()];
     let lhs = lhs.to_utf8();
-    #[cfg(windows)]
-    let joined = join_windows_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
-    #[cfg(not(windows))]
-    let joined = join_posix_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2);
+    let joined = if bun_core::host::is_windows() {
+        join_windows_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2)
+    } else {
+        join_posix_t::<u8>(&[lhs.slice(), rhs], &mut buf, &mut buf2)
+    };
     bun_core::String::clone_utf8(joined)
 }
 
@@ -3407,7 +3404,8 @@ fn resolve(
 
     #[cfg(unix)]
     {
-        if !is_windows {
+        // Not where the host is Windows: there the cwd of `path.posix` is not `process.cwd()`.
+        if !is_windows && !bun_core::host::is_windows() {
             // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
             // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
             if paths.is_empty() || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./")) {

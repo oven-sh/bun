@@ -9,7 +9,7 @@ use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
-use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, sep};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self as sys, Fd, FdExt as _};
 // Wyhash (final4 variant). Must stay stable so on-disk
@@ -602,7 +602,7 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
     ) -> crate::CrateResult<&ZStr> {
         let cache_dir_len = Self::get_cache_dir(buf)?;
-        buf[cache_dir_len] = SEP;
+        buf[cache_dir_len] = sep();
         let cache_filename_len =
             Self::write_cache_filename(&mut buf[cache_dir_len + 1..], input_hash)?;
         let total = cache_dir_len + 1 + cache_filename_len;

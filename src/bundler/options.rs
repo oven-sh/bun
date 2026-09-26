@@ -493,21 +493,13 @@ pub fn get_loader_and_virtual_source<'a>(
         let eval_source: &'a bun_ast::Source = unsafe { &*eval_source };
         // The eval/stdin entry path uses the platform path separator
         // (`/` becomes `\` on Windows), so the suffix is per-platform.
-        const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[eval]"
-        } else {
-            b"/[eval]"
-        };
-        const STDIN_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[stdin]"
-        } else {
-            b"/[stdin]"
-        };
-        if strings::ends_with(specifier, EVAL_SUFFIX) {
+        let eval_suffix: &[u8] = bun_paths::path_literal!("/[eval]").as_bytes();
+        let stdin_suffix: &[u8] = bun_paths::path_literal!("/[stdin]").as_bytes();
+        if strings::ends_with(specifier, eval_suffix) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
-        if strings::ends_with(specifier, STDIN_SUFFIX) {
+        if strings::ends_with(specifier, stdin_suffix) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }

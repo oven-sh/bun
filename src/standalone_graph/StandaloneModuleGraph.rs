@@ -14,9 +14,9 @@ use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
-#[cfg(not(windows))]
-use bun_paths::SEP_STR;
 use bun_paths::fs as bun_fs;
+#[cfg(not(windows))]
+use bun_paths::sep_str;
 use bun_paths::{self as path, PathBuffer, strings};
 use bun_resolver::LINKED_BYTECODE_REGION_COUNT;
 use bun_sourcemap as SourceMap;
@@ -2213,7 +2213,7 @@ pub(crate) fn inject<'a>(
                                 {
                                     let zname_z = bun_core::strings::concat(&[
                                         bun_bundler::bun_fs::RealFS::tmpdir_path(),
-                                        SEP_STR.as_bytes(),
+                                        sep_str().as_bytes(),
                                         zname.as_bytes(),
                                         &[0],
                                     ]);

@@ -225,10 +225,11 @@ describe.concurrent("compile include", () => {
       async () => {
         using dir = tempDir(`compile-include-bytecode-${via}`, {
           "index.ts": /* ts */ `
-            import { join } from "path";
-            // bytecode emits CJS, which has no top-level await.
+            // bytecode emits CJS: no top-level await, and import.meta.dirname is the
+            // build directory, so resolve relative to the module instead.
             async function main() {
-              const mod = await import(join(import.meta.dirname, "plugins", "target.js"));
+              const name = "target";
+              const mod = await import("./plugins/" + name + ".js");
               console.log(JSON.stringify({ value: mod.default }));
             }
             main();

@@ -670,8 +670,7 @@ impl PostgresSQLQuery {
                                         js::target_set_cached(this_value, global_object, query);
                                         connection.reject_later(this);
                                     } else if connection.pending_requests.get() > 0 {
-                                        // Nothing else dispatches what the conversion queued.
-                                        // Not now: a conversion runs JS, and `thrown` is not thrown yet.
+                                        // Not advance(): it runs JS, and `thrown` is not thrown yet.
                                         connection.dispatch_later();
                                     }
                                     // Nothing was sent for this request, so no reply releases the ref.

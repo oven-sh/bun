@@ -1,5 +1,4 @@
 use crate::api::bun::process as bun_process;
-use crate::api::bun::process::SignalCodeExt as _;
 use crate::api::bun::process::sync as spawn_sync;
 use crate::cli::Command;
 use crate::cli::create_command::ExampleTag;
@@ -213,10 +212,8 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
         }
         bun_sys::Result::Ok(spawn_result) => {
             if !spawn_result.status.is_ok() {
-                if let Some(signal) = spawn_result.status.signal_code() {
-                    if let Some(exit_code) = signal.to_exit_code() {
-                        Global::exit(exit_code as u32);
-                    }
+                if let Some(exit_code) = spawn_result.status.signal().map(|s| s.to_exit_code()) {
+                    Global::exit(exit_code as u32);
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {
@@ -389,10 +386,10 @@ pub(crate) fn generate_files(
                     }
                     bun_sys::Result::Ok(spawn_result) => {
                         if !spawn_result.status.is_ok() {
-                            if let Some(signal) = spawn_result.status.signal_code() {
-                                if let Some(exit_code) = signal.to_exit_code() {
-                                    Global::exit(exit_code as u32);
-                                }
+                            if let Some(exit_code) =
+                                spawn_result.status.signal().map(|s| s.to_exit_code())
+                            {
+                                Global::exit(exit_code as u32);
                             }
 
                             if let bun_process::Status::Exited(exited) = spawn_result.status {
@@ -451,10 +448,8 @@ pub(crate) fn generate_files(
         }
         bun_sys::Result::Ok(spawn_result) => {
             if !spawn_result.status.is_ok() {
-                if let Some(signal) = spawn_result.status.signal_code() {
-                    if let Some(exit_code) = signal.to_exit_code() {
-                        Global::exit(exit_code as u32);
-                    }
+                if let Some(exit_code) = spawn_result.status.signal().map(|s| s.to_exit_code()) {
+                    Global::exit(exit_code as u32);
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {
@@ -763,7 +758,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
 // Disabled until Tailwind v4 is supported.
 const ENABLE_SHADCN_UI: bool = true;
 
-pub struct TemplateFile {
+pub(crate) struct TemplateFile {
     pub name: &'static [u8],
     pub(crate) content: &'static [u8],
     pub reason: Reason,
@@ -931,14 +926,14 @@ pub(crate) mod react_shadcn_spa {
 // Template type to handle different project types
 #[derive(bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
-pub enum Template {
+pub(crate) enum Template {
     ReactTailwindSpa,
     ReactSpa,
     ReactShadcnSpa { components: StringSet },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tag {
+pub(crate) enum Tag {
     ReactTailwindSpa,
     ReactSpa,
     ReactShadcnSpa,
@@ -971,7 +966,7 @@ impl Template {
     }
 }
 
-pub struct Logger {
+pub(crate) struct Logger {
     pub(crate) has_written_initial_message: bool,
     pub(crate) template: Tag,
 }

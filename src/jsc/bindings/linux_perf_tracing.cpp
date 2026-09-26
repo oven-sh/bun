@@ -35,7 +35,7 @@ int Bun__linux_trace_init()
         return 1; // Already initialized
     }
 
-    trace_fd = open(TRACE_MARKER_PATH, O_WRONLY);
+    trace_fd = open(TRACE_MARKER_PATH, O_WRONLY | O_CLOEXEC);
     return (trace_fd != -1) ? 1 : 0;
 }
 

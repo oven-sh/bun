@@ -552,6 +552,30 @@ describe("HTMLRewriter", () => {
       expect(settled).toEqual(expected);
     });
 
+    // The input is over when the controller closes. The rewrite used to wait
+    // for pull() to return as well, so a pull() that keeps running after its
+    // own end()/close(error) left the body pending.
+    it.each([
+      ["end()", c => c.end(), { resolved: "<p>hello</p>" }],
+      ["close(error)", c => c.close(new Error("source boom")), { rejected: "source boom" }],
+    ])("a direct ReadableStream input whose pull() never returns after %s", async (_, close, expected) => {
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          controller.write("<p>hello</p>");
+          await new Promise(resolve => setImmediate(resolve));
+          close(controller);
+          await new Promise(() => {});
+        },
+      });
+      const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err instanceof Error ? err.message : err }),
+      );
+      expect(settled).toEqual(expected);
+    });
+
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
     // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an
     // exception; `end_from_stream` must null it (via `JSSink::detach`) before

@@ -26,10 +26,11 @@ function octal(n: number, width: number): string {
   return n.toString(8).padStart(width - 1, "0") + "\0";
 }
 
-function tarHeader(name: string, size: number, type: "0" | "5" | "x" | "g"): Buffer {
+function tarHeader(name: string, size: number, type: "0" | "5" | "x" | "g", mode?: Uint8Array): Buffer {
   const buf = Buffer.alloc(512, 0);
   buf.write(name, 0, 100, "utf8");
   buf.write(octal(0o644, 8), 100); // mode
+  if (mode) buf.set(mode.subarray(0, 8), 100); // raw 8-byte field, e.g. GNU base-256
   buf.write(octal(0, 8), 108); // uid
   buf.write(octal(0, 8), 116); // gid
   buf.write(octal(size, 12), 124); // size
@@ -950,4 +951,88 @@ test("streaming extract skips a damaged header block and extracts the entries af
     expect([path, got.length, got.equals(body)]).toEqual([path, body.length, true]);
   }
   expect(exitCode).toBe(0);
+});
+
+// Unlike registry tarballs, a `github:` tarball has its directory entries
+// created, with the mode libarchive reports for them. A GNU base-256 mode
+// field can set bits far above the twelve mode bits; both extractors must
+// drop those instead of aborting on them.
+test.concurrent.each([
+  ["streaming", {}],
+  ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
+] as const)("installs a github tarball whose directory mode field exceeds the mode bits (%s)", async (label, env) => {
+  // base-256: marker bit in the first byte, then 2^31 | 0o755 big-endian.
+  const wideMode = Buffer.from([0x80, 0, 0, 0, 0x80, 0, 0x01, 0xed]);
+  const root = "owner-repo-abc1234";
+  const index = Buffer.from("module.exports = 'ok';\n");
+  // Incompressible bulk so the body spans many reads and streaming commits.
+  const bulk = Buffer.alloc(256 * 1024);
+  let seed = createHash("sha256").update("wide-mode").digest();
+  for (let off = 0; off < bulk.length; off += 32) {
+    seed.copy(bulk, off);
+    seed = createHash("sha256").update(seed).digest();
+  }
+  const tgz = gzipSync(
+    Buffer.concat([
+      tarHeader(`${root}/`, 0, "5"),
+      ...tarFile(`${root}/package.json`, Buffer.from(JSON.stringify({ name: "wide-mode-pkg", version: "1.0.0" }))),
+      tarHeader(`${root}/lib/`, 0, "5", wideMode),
+      ...tarFile(`${root}/lib/index.js`, index),
+      ...tarFile(`${root}/bulk.bin`, bulk),
+      Buffer.alloc(1024, 0),
+    ]),
+  );
+
+  // node:http so the body carries a Content-Length and is still drip-fed.
+  const server = createServer((req, res) => {
+    if (new URL(req.url!, "http://x").pathname !== "/repos/owner/repo/tarball/abc1234") {
+      res.statusCode = 404;
+      res.end("not found");
+      return;
+    }
+    res.setHeader("content-type", "application/gzip");
+    res.setHeader("content-length", String(tgz.length));
+    req.socket.setNoDelay(true);
+    let i = 0;
+    const step = () => {
+      if (i >= tgz.length) {
+        res.end();
+        return;
+      }
+      res.write(tgz.subarray(i, Math.min(i + 4096, tgz.length)));
+      i += 4096;
+      setImmediate(step);
+    };
+    step();
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    using dir = tempDir("streaming-extract-wide-dir-mode", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "wide-mode-pkg": "github:owner/repo#abc1234" },
+      }),
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir), {
+      ...env,
+      GITHUB_API_URL: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
+      BUN_INSTALL_STREAMING_MIN_SIZE: "1024",
+    });
+    expect(stderr).not.toContain("error:");
+    if (label === "streaming") {
+      expect(stderr).toContain("Streamed ");
+    } else {
+      expect(stderr).not.toContain("Streamed ");
+    }
+    const pkgRoot = join(String(dir), "node_modules", "wide-mode-pkg");
+    expect(statSync(join(pkgRoot, "lib")).isDirectory()).toBe(true);
+    expect(readFileSync(join(pkgRoot, "lib", "index.js")).equals(index)).toBe(true);
+    expect(readFileSync(join(pkgRoot, "bulk.bin")).equals(bulk)).toBe(true);
+    expect(exitCode).toBe(0);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });

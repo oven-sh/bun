@@ -330,23 +330,6 @@ impl From<Error> for bun_jsc::JsError {
     }
 }
 
-impl From<Error> for bun_jsc::CrateError {
-    #[inline]
-    fn from(e: Error) -> Self {
-        match e {
-            Error::Sys(s) => Self::Sys(s),
-            Error::Alloc(a) => Self::Alloc(a),
-            Error::Core(c) => Self::Core(c),
-            Error::Resolver(r) => Self::Resolver(r),
-            Error::Bundler(b) => Self::Bundler(b),
-            Error::Install(i) => Self::Install(i),
-            Error::Jsc(j) => j,
-            Error::JSError | Error::Js(_) => Self::JSError,
-            _ => Self::Core(bun_core::Error::Unexpected),
-        }
-    }
-}
-
 impl From<Error> for bun_uws_sys::Error {
     #[inline]
     fn from(e: Error) -> Self {
@@ -509,4 +492,4 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
-pub type Result<T, E = Error> = core::result::Result<T, E>;
+pub(crate) type Result<T, E = Error> = core::result::Result<T, E>;

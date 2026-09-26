@@ -1,7 +1,7 @@
 use bun_core::Output;
 
 // here so existing `crate::cli::shell_completions::Shell` paths keep working.
-pub use bun_install::ShellCompletions::Shell;
+pub(crate) use bun_install::ShellCompletions::Shell;
 
 // The actual files live at `<repo>/completions/bun.{bash,zsh,fish}`.
 // The embedded script bodies must stay above the install tier (asset dependency),
@@ -35,7 +35,7 @@ impl ShellCompletionsExt for Shell {
 // `Cow` lets `RunCommand::completions`
 // hand back arena-backed `'static` borrows while `bun_getcompletes` supplies an
 // owned `Vec` for the `a` (add-completions) branch — no leaking.
-pub struct ShellCompletions {
+pub(crate) struct ShellCompletions {
     pub(crate) commands: std::borrow::Cow<'static, [&'static [u8]]>,
     pub(crate) descriptions: std::borrow::Cow<'static, [&'static [u8]]>,
     pub shell: Shell,

@@ -99,6 +99,13 @@ impl Drop for JSMySQLConnection {
 }
 
 impl JSMySQLConnection {
+    pub fn server_identity(
+        &self,
+        ssl: &mut bun_boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        self.connection.get().server_identity(ssl)
+    }
+
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
     fn ref_guard(&self) -> RefPtr<Self> {
@@ -423,6 +430,8 @@ impl JSMySQLConnection {
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
         // no other live borrow in this scope.
         let vm = global_object.bun_vm().as_mut();
+        // The connection is the calling script's.
+        let context = global_object.bun_vm().context_of_caller(callframe);
         let arguments = callframe.arguments();
         let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
         else {
@@ -499,7 +508,7 @@ impl JSMySQLConnection {
 
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
-            let group = vm.mysql_socket_group::<false>();
+            let group = vm.mysql_socket_group::<false>(context);
             let result = if !path.is_empty() {
                 SocketTCP::connect_unix_group(
                     group,
@@ -551,15 +560,10 @@ impl JSMySQLConnection {
     bun_jsc::cached_prop_hostfns! {
         crate::jsc::codegen::js_mysql_connection;
         lazy_array(get_queries => queries_get_cached, queries_set_cached),
-        (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
         (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
     }
 
     bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx);
-
-    pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.connection.get().status == my_sql_connection::Status::Connected)
-    }
 
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
@@ -638,6 +642,11 @@ impl JSMySQLConnection {
     pub(crate) fn can_execute_query(&self) -> bool {
         self.connection_mut().can_execute_query()
     }
+    /// Connecting or connected: not failed, and not closed.
+    #[inline]
+    pub(crate) fn is_active(&self) -> bool {
+        self.connection.get().is_active()
+    }
     #[inline]
     pub(crate) fn get_writer(&self) -> NewWriter<my_sql_connection::Writer> {
         self.connection_mut().writer()
@@ -694,6 +703,7 @@ impl JSMySQLConnection {
         queries_array.ensure_still_alive();
         // self.global_object.queue_microtask(on_close, &[js_error, queries_array]);
         loop_.run_callback(
+            bun_event_loop::ContextId::NONE,
             on_close,
             &self.global_object,
             JSValue::UNDEFINED,

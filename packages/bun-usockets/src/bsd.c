@@ -23,6 +23,7 @@
 #include "internal/internal.h"
 #include "internal/fault_inject.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -941,20 +942,46 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
 }
 #endif
 
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+/* Every write to a stream socket uses these, vectored or not. */
+#define BSD_SEND_FLAGS (MSG_NOSIGNAL | MSG_DONTWAIT)
+
 #if !defined(_WIN32)
 #include <sys/uio.h>
 
+/* sendmsg, not writev: writev takes no flags, so a reset peer would raise SIGPIPE on Linux. */
 ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
-    ssize_t injected = 0; int unused = 0;
-    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, unused)) return injected;
-    (void)unused;
-    /* POSIX writev fails with EINVAL above IOV_MAX (1024 on Linux/macOS); cap and
+    /* sendmsg fails with EMSGSIZE above IOV_MAX (1024 on Linux/macOS); cap and
      * let the caller's partial-write handling carry the remainder. */
     if (count > 1024) {
         count = 1024;
     }
+    struct msghdr msg = {0};
+    msg.msg_iov = (struct iovec *)iov;
+    msg.msg_iovlen = count;
+
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    /* A "short" rule keeps the first `clamp` bytes of the list. */
+    struct iovec clamped[1024];
+    ssize_t injected = 0; int clamp = INT_MAX;
+    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, clamp)) return injected;
+    if (clamp != INT_MAX) {
+        size_t left = (size_t)clamp;
+        int kept = 0;
+        for (; kept < count && left; kept++) {
+            clamped[kept].iov_base = iov[kept].iov_base;
+            clamped[kept].iov_len = iov[kept].iov_len < left ? iov[kept].iov_len : left;
+            left -= clamped[kept].iov_len;
+        }
+        msg.msg_iov = clamped;
+        msg.msg_iovlen = kept;
+    }
+#endif
+
     while (1) {
-        ssize_t written = writev(fd, (const struct iovec *)iov, count);
+        ssize_t written = sendmsg(fd, &msg, BSD_SEND_FLAGS);
         if (UNLIKELY(IS_EINTR(written))) {
             continue;
         }
@@ -963,25 +990,8 @@ ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int
 }
 
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
-    ssize_t injected = 0; int unused = 0;
-    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, unused)) return injected;
-    (void)unused;
-    struct iovec chunks[2];
-
-    chunks[0].iov_base = (char *)header;
-    chunks[0].iov_len = header_length;
-    chunks[1].iov_base = (char *)payload;
-    chunks[1].iov_len = payload_length;
-
-    while (1) {
-        ssize_t written = writev(fd, chunks, 2);
-
-        if (UNLIKELY(IS_EINTR(written))) {
-            continue;
-        }
-
-        return written;
-    }
+    struct us_iovec_t chunks[2] = {{(void *)header, (size_t)header_length}, {(void *)payload, (size_t)payload_length}};
+    return bsd_writev(fd, chunks, 2);
 }
 #else
 ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
@@ -1010,14 +1020,7 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
     ssize_t injected = 0;
     if (US_FAULT_CHECK(US_FAULT_SEND, fd, injected, length)) return injected;
     while (1) {
-    // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)
-
-#ifndef MSG_NOSIGNAL
-#define MSG_NOSIGNAL 0
-#endif
-
-        // use TCP_NOPUSH
-        ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
+        ssize_t rc = send(fd, buf, length, BSD_SEND_FLAGS);
 
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;
@@ -1881,37 +1884,6 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
         return -1;
     }
 }
-
-// int bsd_udp_packet_buffer_ecn(void *msgvec, int index) {
-
-// #if defined(_WIN32) || defined(__APPLE__)
-//     errno = ENOSYS;
-//     return -1;
-// #else
-//     // we should iterate all control messages once, after recvmmsg and then only fetch them with these functions
-//     struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
-//     for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(mh); cmsg != NULL; cmsg = CMSG_NXTHDR(mh, cmsg)) {
-//         // do we need to get TOS from ipv6 also?
-//         if (cmsg->cmsg_level == IPPROTO_IP) {
-//             if (cmsg->cmsg_type == IP_TOS) {
-//                 uint8_t tos = *(uint8_t *)CMSG_DATA(cmsg);
-//                 return tos & 3;
-//             }
-//         }
-
-//         if (cmsg->cmsg_level == IPPROTO_IPV6) {
-//             if (cmsg->cmsg_type == IPV6_TCLASS) {
-//                 // is this correct?
-//                 uint8_t tos = *(uint8_t *)CMSG_DATA(cmsg);
-//                 return tos & 3;
-//             }
-//         }
-//     }
-// #endif
-
-//     //printf("We got no ECN!\n");
-//     return 0; // no ecn defaults to 0
-// }
 
 static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr, size_t namelen)
 {

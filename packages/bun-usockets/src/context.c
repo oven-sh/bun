@@ -50,9 +50,13 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
      * low-prio count must be zero or some socket/listener/DNS request still
      * holds s->group / c->group / ls->accept_group into us — that's a UAF the
      * caller must close_all() away first. iterator != NULL means we're inside
-     * a dispatch on this very group; the on_close that triggers deinit is fine
-     * (unlink_socket already advanced iterator), but a re-entrant deinit from
-     * inside on_timeout/on_data would tear the floor out from under the sweep. */
+     * a dispatch on this very group. Never deinit from inside a dispatch of one
+     * of the group's own sockets, on_close included: the lists survive that
+     * one (unlink_socket already advanced iterator), but close_raw and
+     * us_internal_ssl_on_close read s->group->loop again when the handler
+     * returns (us_internal_ssl_detach), and a deinit from inside
+     * on_timeout/on_data would tear the floor out from under the sweep. Defer
+     * it until the dispatch has unwound. */
     US_ASSERT(group->head_sockets == NULL);
     US_ASSERT(group->head_connecting_sockets == NULL);
     US_ASSERT(group->head_listen_sockets == NULL);
@@ -319,6 +323,9 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             us_internal_socket_group_link_connecting_socket(group, c);
         }
     }
+    if (old_group != group && new_s->ssl) {
+        us_internal_ssl_socket_left_group(new_s);
+    }
     new_s->group = group;
     new_s->kind = kind;
     new_s->timeout = 255;
@@ -326,6 +333,7 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
 
     if (new_s->flags.low_prio_state == 1) {
         /* update pointers in low-priority queue */
+        if (s == loop->data.low_prio_iterator) loop->data.low_prio_iterator = new_s;
         if (!new_s->prev) loop->data.low_prio_head = new_s;
         else new_s->prev->next = new_s;
 
@@ -356,6 +364,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
+    s->hangup_closes_unsent = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -536,6 +545,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
+    s->hangup_closes_unsent = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }
@@ -783,6 +793,12 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     break;
                 }
                 default: {
+                    /* The probe only says the socket is not connected
+                     * (WSAENOTCONN); SO_ERROR has why the connect failed. */
+                    int so_error = us_socket_get_error(s);
+                    if (so_error > 0) {
+                        error = so_error;
+                    }
                     break;
                 }
             }

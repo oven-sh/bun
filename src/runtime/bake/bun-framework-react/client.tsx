@@ -72,10 +72,11 @@ const Root = () => {
   return rscPayload.then ? React.use(rscPayload) : rscPayload;
 };
 const root = hydrateRoot(document, <Root />, {
-  onUncaughtError(e) {
+  // A React 19 option; React 18, whose types are installed, ignores it.
+  onUncaughtError(e: unknown) {
     console.error(e);
   },
-});
+} as Parameters<typeof hydrateRoot>[2]);
 
 // Keep a cache of page objects to avoid re-fetching a page when pressing the
 // back button. The cache is indexed by the date it was created.

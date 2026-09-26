@@ -9,11 +9,12 @@
 //! This file is a thin re-export façade so existing
 //! `crate::api::bun_process::*` paths keep working.
 
-pub use bun_spawn::process::sync;
-pub use bun_spawn::process::*;
+pub(crate) use bun_spawn::process::sync;
+pub(crate) use bun_spawn::process::*;
 
 // `event_loop_handle_to_ctx` was `pub(crate)` in the original; re-export under
 // `pub(crate)` here so other `bun_runtime` modules (e.g. `subprocess.rs`) can
 // keep calling it via `crate::api::bun_process::event_loop_handle_to_ctx`.
-pub use bun_spawn::process::event_loop_handle_to_ctx;
-pub use bun_spawn::process::spawn_sys;
+pub(crate) use bun_spawn::process::event_loop_handle_to_ctx;
+#[cfg(not(windows))]
+pub(crate) use bun_spawn::process::spawn_sys;

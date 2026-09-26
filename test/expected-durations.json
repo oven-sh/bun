@@ -2829,11 +2829,11 @@
     "windows-aarch64": 30
   },
   "js/bun/gc/gc-controller-cadence.test.ts": {
-    "default": 2060,
-    "asan": 2500,
-    "musl": 2050,
-    "windows": 2110,
-    "windows-aarch64": 2190
+    "default": 6000,
+    "asan": 12000,
+    "musl": 6000,
+    "windows": 6500,
+    "windows-aarch64": 7000
   },
   "js/bun/glob/leak.test.ts": {
     "default": 2727,
@@ -5355,7 +5355,7 @@
     "windows": 6,
     "windows-aarch64": 10
   },
-  "js/bun/test/parallel/test-http-13373-should-emit-close-and-complete-should-be-true-only-after-close.ts": {
+  "js/bun/test/parallel/test-http-13373-should-emit-close-and-complete-should-be-true-after-the-request-listener.ts": {
     "default": 2,
     "asan": 2,
     "musl": 3,

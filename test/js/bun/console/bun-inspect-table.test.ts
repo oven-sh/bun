@@ -46,6 +46,25 @@ describe("inspect.table", () => {
   it("works on functions", () => {
     expect(inspect.table(function () {})).not.toBeEmpty();
   });
+
+  it("a depth option above the cell depth cap prints cells like the default", () => {
+    const rows = [{ a: [1, 2], m: new Map([[1, 2]]), s: new Set([1]), o: { x: 1 } }];
+    const byDefault = inspect.table(rows);
+    expect(byDefault).toContain("[ 1, 2 ]");
+    expect(byDefault).toContain("Map(1) { 1: 2 }");
+    expect(byDefault).toContain("Set(1) { 1 }");
+    expect(byDefault).toContain("{ x: 1 }");
+    expect(inspect.table(rows, { depth: 10 })).toBe(byDefault);
+    expect(inspect.table(rows, { depth: Infinity })).toBe(byDefault);
+  });
+
+  it("a container nested in a cell prints as a marker", () => {
+    const rows = [{ o: { x: { y: 1 } }, n: [[1]], m: new Map([[1, new Map([[2, 3]])]]) }];
+    const out = inspect.table(rows);
+    expect(out).toContain("[Object ...]");
+    expect(out).toContain("[ [Array ...] ]");
+    expect(out).toContain("Map(1) { 1: [Map ...] }");
+  });
 });
 
 describe("inspect.table (ansi)", () => {

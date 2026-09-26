@@ -2542,11 +2542,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidPackageInfo);
             };
 
-            let pkg_info = pkg_info.items();
-            if pkg_info.len() < 3 {
-                continue;
-            }
-            let Some(maybe_info_obj) = pkg_info[2].as_object() else {
+            // Index 2 for an npm resolution (after the registry string), index 1 otherwise.
+            let Some(maybe_info_obj) = pkg_info.items().iter().find_map(|item| item.as_object())
+            else {
                 continue;
             };
             let Some(&JSON::E::JsonValue::Boolean(bundled)) = maybe_info_obj.get(b"bundled") else {

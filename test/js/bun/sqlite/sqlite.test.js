@@ -714,6 +714,17 @@ it("serialize(name) rejects a db closed during name toString()", async () => {
   });
 });
 
+it("Database.deserialize accepts an ArrayBuffer", () => {
+  const db = Database.open(":memory:");
+  db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+  db.exec('INSERT INTO test (name) VALUES ("Hello")');
+  const serialized = db.serialize();
+  const arrayBuffer = serialized.buffer.slice(serialized.byteOffset, serialized.byteOffset + serialized.byteLength);
+
+  const db2 = Database.deserialize(arrayBuffer);
+  expect(db2.prepare("SELECT * FROM test").all()).toEqual([{ id: 1, name: "Hello" }]);
+});
+
 it("Database.deserialize should support strict mode", () => {
   const db1 = new Database(":memory:");
   db1.run("CREATE TABLE test (name TEXT)");
@@ -2837,3 +2848,44 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     exitCode: 0,
   });
 });
+
+// Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.
+const sqliteAllowsMoreThan65535Parameters = (() => {
+  using db = new Database(":memory:");
+  try {
+    db.prepare("SELECT ?65537").finalize();
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+it.skipIf(!sqliteAllowsMoreThan65535Parameters)(
+  "binds statements with more than 65535 parameters without truncating the count",
+  () => {
+    using db = new Database(":memory:");
+    db.exec("CREATE TABLE t(a)");
+
+    // ?65537 gives a statement 65537 parameters with a short SQL text. A uint16_t
+    // count wraps that to 1: one value was accepted, which left ?65537 NULL, and
+    // 65537 values were rejected.
+    const N = 65537;
+    const values = Array(N).fill(null);
+    values[N - 1] = 7;
+
+    const select = db.prepare(`SELECT ?${N} AS v`);
+    expect(select.paramsCount).toBe(N);
+    expect(() => select.get([7])).toThrow(`SQLite query expected ${N} values, received 1`);
+    expect(select.get(values)).toEqual({ v: 7 });
+
+    // Object bindings walk the same count, so names past the wrapped count stayed NULL.
+    const named = db.prepare(`SELECT ?${N} AS v, $name AS n`);
+    expect(named.get({ [`?${N}`]: 7, $name: "x" })).toEqual({ v: 7, n: "x" });
+
+    // Database#run(sql, values) builds its own bindings map from the same count.
+    const insert = `INSERT INTO t(a) VALUES (?${N})`;
+    expect(() => db.run(insert, [7])).toThrow(`SQLite query expected ${N} values, received 1`);
+    expect(db.run(insert, values).changes).toBe(1);
+    expect(db.query("SELECT a FROM t").all()).toEqual([{ a: 7 }]);
+  },
+);

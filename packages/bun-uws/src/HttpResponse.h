@@ -64,13 +64,13 @@ public:
 
         Super::timeout(data->idleTimeout);
     }
-    /* Write an unsigned 32-bit integer in hex */
-    void writeUnsignedHex(unsigned int value) {
-        char buf[10];
-        int length = utils::u32toaHex(value, buf);
-
-        /* For now we do this copy */
-        Super::write(buf, length);
+    /* The chunk-size line of a chunk. Returns its length. */
+    static constexpr size_t CHUNK_HEAD_MAX = 10;
+    static size_t chunkHead(char (&buf)[CHUNK_HEAD_MAX], unsigned int chunkLength) {
+        int length = utils::u32toaHex(chunkLength, buf);
+        buf[length++] = '\r';
+        buf[length++] = '\n';
+        return (size_t) length;
     }
 
     /* Write an unsigned 64-bit integer */
@@ -108,6 +108,98 @@ public:
             }
         }
         return false;
+    }
+
+    /* Called when a response completes. Returns true when the
+     * caller has to run the close gate now, false when onData runs it.
+     *
+     * The socket onData is parsing gets onData's uncork and close gate once the
+     * read is consumed: false. A Bun.serve response that needed no JavaScript
+     * (a static route) leaves the cork to onData, so such responses to requests
+     * pipelined in one read share one send(). Bun sends them earlier, with
+     * sendCorked(), when the handler of a later request is about to run
+     * JavaScript. A response that JavaScript produced (sendWhenComplete()) is
+     * sent now, and so is a node:http response: its 'finish' event and end()
+     * callback run before onData gets control back and expect the bytes to be
+     * out.
+     *
+     * Any other socket (an async handler completing, possibly inside another
+     * socket's parse window via a drained microtask) is uncorked here and gets
+     * no later uncork or gate: true. */
+    bool uncorkCompletedResponse() {
+        HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
+        const bool parsingThis = httpContext->getSocketContextData()->parsingSocket == (us_socket_t *) this;
+        if (!Super::isCorked()) {
+            /* A write larger than the cork buffer released the cork. The rest of this read can hold the body of a node:http request. */
+            return !(parsingThis && httpContext->isNodeHttp());
+        }
+        if (!parsingThis) {
+            this->uncork();
+            return true;
+        }
+        if (httpContext->isNodeHttp() || (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE)) {
+            this->uncork();
+        }
+        return false;
+    }
+
+    /* node:http socket.destroy() during this socket's parse: onData closes it after the current message. False when the caller must close it now. */
+    bool closeAfterMessageIfParsing() {
+        if (!HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->isParsing((us_socket_t *) this)) {
+            return false;
+        }
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (httpResponseData->isConnectRequest) {
+            return false;
+        }
+        httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE;
+        return true;
+    }
+
+    /* Closes this connection if it is idle: no request is being received, and no response is in flight or queued. Returns whether it closed it. */
+    bool closeIfIdle() {
+        HttpResponseData<SSL> *data = getHttpResponseData();
+        bool idle = data->isIdle;
+        if (idle && HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp()) {
+            /* node:http: a connection that still receives a request (a body, or the head of the next one) is not idle, also after its
+             * response ended (Node.js: last_message_start_). In the request handler the parser has not entered a chunked body yet, so the armed body handler tells. */
+            const bool messageOpen = ((HttpResponseData<SSL, true> *) data)->lastMessageStartMs != 0;
+            idle = !(messageOpen && data->inStream != nullptr) && !data->hasIncompleteRequestBody() && !data->hasBufferedPartialRequestHeaders();
+            if (idle && messageOpen && !Super::hasFullyDrained()) {
+                /* The handler of this request still runs and its response has unsent bytes: close when they are out. */
+                data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+                idle = false;
+            }
+        }
+        if (!idle) {
+            return false;
+        }
+        /* A socket is idle from the moment its response completes. When
+         * that happens inside onData's parse loop the response can still
+         * sit in the cork buffer, and JS that runs before the loop ends
+         * (a graceful stop() from a microtask) gets here. close() sends
+         * it first. */
+        Super::close();
+        return true;
+    }
+
+    /* node:http: an idle tunnel is at read EOF and has nothing left to send. Like a libuv handle in that state, it does not hold
+     * the event loop. The filter hears -3 when a tunnel becomes idle and +3 when it has bytes to send again. */
+    void setNodeHttpTunnelIdle(bool idle) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (!httpResponseData->filteredAccept || httpResponseData->filteredIdleTunnel == idle) {
+            return;
+        }
+        httpResponseData->filteredIdleTunnel = idle;
+        for (auto &f : HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->filterHandlers) {
+            f(this, idle ? -3 : 3);
+        }
+    }
+
+    /* Marks the response in flight as one that user JavaScript produces. See
+     * HTTP_SEND_WHEN_COMPLETE. */
+    void sendWhenComplete() {
+        getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE;
     }
 
     /* Ends the 101 of upgrade(): terminates the header section and marks the
@@ -184,7 +276,8 @@ public:
             }
 
             /* Write the chunked data if there is any (this will not send zero chunks) */
-            this->write(data, nullptr);
+            const bool terminated = !data.empty() && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS);
+            this->write(data, nullptr, terminated);
 
 
             /* Terminating 0 chunk; node:http response trailers (RFC 9112 7.1.2) sit
@@ -207,27 +300,14 @@ public:
                 Super::write(trailers.data(), (int) trailers.length());
                 trailers.clear();
                 httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS;
-            } else {
+            } else if (!terminated) {
                 Super::write("0\r\n\r\n", 5);
             }
             httpResponseData->markDone(this);
 
             /* We need to check if we should close this socket here now */
-            if (!Super::isCorked()) {
+            if (uncorkCompletedResponse()) {
                 if (closeIfDoneAndMarked(httpResponseData)) {
-                    return true;
-                }
-            } else {
-                this->uncork();
-                /* That uncork released our cork slot, so the cork() wrapper's
-                 * post-uncork close gate will not run. When THIS socket is the
-                 * one being parsed, onData's post-parse gate closes it once
-                 * the buffer is fully consumed; any other socket (an async
-                 * handler completing, possibly inside another socket's parse
-                 * window via a drained microtask) gets no later gate, so close
-                 * here. */
-                if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this
-                    && closeIfDoneAndMarked(httpResponseData)) {
                     return true;
                 }
             }
@@ -289,16 +369,8 @@ public:
                 httpResponseData->markDone(this);
 
                 /* We need to check if we should close this socket here now */
-                if (!Super::isCorked()) {
+                if (uncorkCompletedResponse()) {
                     closeIfDoneAndMarked(httpResponseData);
-                } else {
-                    this->uncork();
-                    /* Same as the chunked arm above: the cork slot is gone, so
-                     * run the close gate here unless THIS socket is the one
-                     * being parsed (then onData's post-parse gate handles it). */
-                    if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
-                        closeIfDoneAndMarked(httpResponseData);
-                    }
                 }
             }
 
@@ -401,7 +473,7 @@ public:
         }
         if (((AsyncSocketData<SSL> *) responseData)->filteredAccept) {
             for (auto &f : httpContextData->filterHandlers) {
-                f((HttpResponse<SSL> *) this, -2);
+                f((HttpResponse<SSL> *) this, ((AsyncSocketData<SSL> *) responseData)->filteredIdleTunnel ? -4 : -2);
             }
         }
 
@@ -418,6 +490,9 @@ public:
          * we occupy so we can transfer it to the new WebSocket. */
         LoopData *loopData = Super::getLoopData();
         int corkedSlot = loopData->findCorkSlot(this);
+
+        /* Read before the adoption below, which can move this socket. An upgrade of another connection must leave the parsed socket alone. */
+        const bool upgradingParsedSocket = httpContextData->isParsing((us_socket_t *) this);
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         /* The old ext size is only used as an upper bound to keep the block in
@@ -443,7 +518,7 @@ public:
         }
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (httpContextData->flags.isParsingHttp) {
+        if (upgradingParsedSocket) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
         }
@@ -630,6 +705,11 @@ public:
         /* This will be sent always when state is HTTP_WRITE_CALLED inside internalEnd, so no need to write the terminating 0 chunk here */
         /* Super::write("\r\n0\r\n\r\n", 7); */
 
+        /* As in end(): the close is what terminates a close-delimited body. */
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED) {
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+        }
+
         return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
     }
 
@@ -664,7 +744,8 @@ public:
         }
     }
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
-    bool write(std::string_view data, size_t *writtenPtr = nullptr) {
+    /* isLast: the terminating chunk of a chunked body goes out with this one. */
+    bool write(std::string_view data, size_t *writtenPtr = nullptr, bool isLast = false) {
         writeStatus(HTTP_200_OK);
 
         /* Do not allow sending 0 chunks, they mark end of response */
@@ -698,7 +779,7 @@ public:
             // Handle the final chunk (less than UINT_MAX bytes)
             if (length > 0) {
                 size_t written = 0;
-                if(!this->write(data, &written)) {
+                if(!this->write(data, &written, isLast)) {
                     has_failed = true;
                 }
                 total_written += written;
@@ -711,6 +792,9 @@ public:
 
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        char chunkHeadBuffer[CHUNK_HEAD_MAX];
+        size_t chunkHeadLength = 0;
+        std::string_view chunkTail;
 
         /* Close-delimited responses (the user removed the framing headers)
          * write raw bytes with no chunk framing, like the else path. */
@@ -726,8 +810,8 @@ public:
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
 
-            writeUnsignedHex((unsigned int) data.length());
-            Super::write("\r\n", 2);
+            chunkHeadLength = chunkHead(chunkHeadBuffer, (unsigned int) data.length());
+            chunkTail = isLast ? "\r\n0\r\n\r\n" : "\r\n";
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
             writeMark();
             Super::write("\r\n", 2);
@@ -735,6 +819,16 @@ public:
         }
         size_t total_written = 0;
         bool has_failed = false;
+
+        if (length <= INT_MAX) {
+            auto [written, failed] = Super::writeFramed({chunkHeadBuffer, chunkHeadLength}, data.data(), (int) length, chunkTail);
+            this->resetTimeout();
+            if (writtenPtr) {
+                *writtenPtr = (size_t) written;
+            }
+            return !failed;
+        }
+        Super::write(chunkHeadBuffer, (int) chunkHeadLength);
 
         // Handle data larger than INT_MAX by writing it in chunks of INT_MAX bytes
         while (length > INT_MAX) {
@@ -754,12 +848,8 @@ public:
             total_written += written;
         }
 
-        /* Close-delimited bodies are raw; the chunk-terminating CRLF would be
-         * injected into the body bytes. */
-        if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED))) {
-            // Write End of Chunked Encoding after data has been written
-            Super::write("\r\n", 2);
-        }
+        /* Empty for a close-delimited body, which is raw. */
+        Super::write(chunkTail.data(), (int) chunkTail.length());
 
         /* Reset timeout on each sended chunk */
         this->resetTimeout();
@@ -780,6 +870,8 @@ public:
     size_t tryWriteBody(std::string_view data, bool isFirst) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         bool chunked = !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED));
+        char chunkHeadBuffer[CHUNK_HEAD_MAX];
+        size_t chunkHeadLength = 0;
 
         if (isFirst) {
             writeStatus(HTTP_200_OK);
@@ -792,8 +884,7 @@ public:
                     Super::write("\r\n", 2);
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
                 }
-                writeUnsignedHex((unsigned int) data.length());
-                Super::write("\r\n", 2);
+                chunkHeadLength = chunkHead(chunkHeadBuffer, (unsigned int) data.length());
             } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
                 writeMark();
                 Super::write("\r\n", 2);
@@ -803,6 +894,12 @@ public:
 
         size_t consumed = 0;
         size_t length = data.length();
+        if (length <= INT_MAX) {
+            consumed = (size_t) Super::writeFramed({chunkHeadBuffer, chunkHeadLength}, data.data(), (int) length, chunked ? "\r\n" : "", true).first;
+            this->resetTimeout();
+            return consumed;
+        }
+        Super::write(chunkHeadBuffer, (int) chunkHeadLength);
         while (consumed < length) {
             int chunk = (int) std::min(length - consumed, (size_t) INT_MAX);
             auto [written, failed] = Super::write(data.data() + consumed, chunk, true);
@@ -849,6 +946,16 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         return !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
+    }
+
+    /* node:http: the response is complete and its request body is still being parsed out of this read. A shutdown now would drop that body; the after-parse gate closes instead. */
+    bool isDeliveringBodyAfterResponse() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        return hasResponded()
+            && !httpResponseData->isConnectRequest
+            && httpResponseData->inStream != nullptr
+            && HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->isParsing((us_socket_t *) this);
     }
 
      /* Corks the response if possible. Leaves already corked socket be. */

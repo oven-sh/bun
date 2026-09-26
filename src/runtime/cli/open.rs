@@ -432,7 +432,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct EditorContext {
+pub(crate) struct EditorContext {
     pub(crate) editor: Option<Editor>,
     // Note: `name`/`path` are never freed; `path` is backed by
     // `Fs.FileSystem.instance.dirname_store` (process-lifetime arena) or aliases `name`.

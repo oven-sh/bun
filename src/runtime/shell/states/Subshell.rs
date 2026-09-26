@@ -6,7 +6,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 
-pub struct Subshell {
+pub(crate) struct Subshell {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Subshell>,
     pub(crate) io: IO,

@@ -184,6 +184,21 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_uncork(Self::ssl_flag(), self.as_raw())
     }
 
+    /// Sends what the cork buffer holds for this socket. The socket stays corked.
+    pub fn send_corked(&mut self) {
+        c::uws_res_send_corked(Self::ssl_flag(), self.as_raw())
+    }
+
+    /// Marks the response in flight as one that user JavaScript produces. It is sent when it completes.
+    pub fn send_when_complete(&mut self) {
+        c::uws_res_send_when_complete(Self::ssl_flag(), self.as_raw())
+    }
+
+    /// Defers the close to the end of the read uws is parsing. False: not parsing, the caller closes now.
+    pub fn close_after_message_if_parsing(&mut self) -> bool {
+        c::uws_res_close_after_message_if_parsing(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn pause(&mut self) {
         c::uws_res_pause(Self::ssl_flag(), self.as_raw())
     }
@@ -277,6 +292,11 @@ impl<const SSL: bool> Response<SSL> {
 
     pub(crate) fn get_buffered_amount(&mut self) -> u64 {
         c::uws_res_get_buffered_amount(Self::ssl_flag(), self.as_raw())
+    }
+
+    /// `get_buffered_amount() == 0` and, for TLS, no ciphertext batch tail left in userspace.
+    pub(crate) fn has_fully_drained(&mut self) -> bool {
+        c::uws_res_has_fully_drained(Self::ssl_flag(), self.as_raw())
     }
 
     pub(crate) fn write(&mut self, data: &[u8]) -> WriteResult {
@@ -805,6 +825,16 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_buffered_amount())
     }
 
+    /// H2 and H3 have no batch tail.
+    pub fn has_fully_drained(self) -> bool {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).has_fully_drained(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).has_fully_drained(),
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).get_buffered_amount() == 0,
+            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).get_buffered_amount() == 0,
+        }
+    }
+
     pub fn write_continue(self) {
         any_dispatch!(self, |r| r.write_continue())
     }
@@ -889,6 +919,15 @@ impl AnyResponse {
 
     pub fn end_without_body(self, close_connection: bool) {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
+    }
+
+    /// HTTP/1 only: an HTTP/2 or HTTP/3 stream has no socket read to finish.
+    pub fn close_after_message_if_parsing(self) -> bool {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).close_after_message_if_parsing(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).close_after_message_if_parsing(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
+        }
     }
 
     pub fn force_close(self) {
@@ -1099,6 +1138,7 @@ bitflags::bitflags! {
         const HTTP_CONNECTION_CLOSE            = 16;
         const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
         const HTTP_NODE_RECEIVED_FIN           = 1 << 15;
+        const HTTP_NODE_CLOSE_AFTER_MESSAGE    = 1 << 20;
     }
 }
 
@@ -1136,6 +1176,12 @@ impl State {
     #[inline]
     pub fn is_node_received_fin(self) -> bool {
         self.bits() & State::HTTP_NODE_RECEIVED_FIN.bits() != 0
+    }
+
+    /// uws closes this socket once the read it is parsing is delivered (see HttpResponseData.h).
+    #[inline]
+    pub fn is_node_close_after_message(self) -> bool {
+        self.bits() & State::HTTP_NODE_CLOSE_AFTER_MESSAGE.bits() != 0
     }
 }
 
@@ -1175,6 +1221,12 @@ pub mod c {
             is_ipv6: &mut bool,
         ) -> usize;
         pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_send_corked(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_send_when_complete(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_close_after_message_if_parsing(
+            ssl: i32,
+            res: &mut uws_res,
+        ) -> bool;
         pub(crate) fn uws_res_end(
             ssl: i32,
             res: *mut uws_res,
@@ -1233,6 +1285,7 @@ pub mod c {
         pub(crate) safe fn uws_res_reset_timeout(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_close_if_done_and_marked(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_get_buffered_amount(ssl: i32, res: &mut uws_res) -> u64;
+        pub(crate) safe fn uws_res_has_fully_drained(ssl: i32, res: &mut uws_res) -> bool;
         pub(crate) fn uws_res_write(
             ssl: i32,
             res: *mut uws_res,

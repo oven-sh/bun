@@ -95,6 +95,9 @@ pub struct BundleV2<'a> {
     /// When this bundle's owning loop is a JS event loop (bake / dev server):
     /// how parse worker threads deliver work back to it.
     pub js_poster: Option<bun_event_loop::JsPoster>,
+    /// Whose script the plugins' `onResolve` / `onLoad` callbacks continue: the context that called
+    /// `Bun.build`. Once it has stopped a request is answered as cancelled instead of reaching them.
+    pub plugin_context: bun_event_loop::ContextId,
     /// CYCLEBREAK GENUINE: erased `bake::DevServer` (see `dispatch::DevServerHandle`).
     /// Populated from `transpiler.options.dev_server` + the runtime-registered vtable at
     /// construction. All ~15 DevServer call sites go through this.
@@ -894,38 +897,36 @@ pub mod bv2_impl {
                 pub map: bun_collections::StringHashMap<Box<[u8]>>,
             }
             impl FileMap {
-                pub(crate) fn get(&self, specifier: &[u8]) -> Option<&[u8]> {
+                /// Keys are stored with forward slashes (`file_map_from_js`).
+                fn get_key_value(&self, specifier: &[u8]) -> Option<(&[u8], &[u8])> {
                     if self.map.is_empty() {
                         return None;
                     }
                     #[cfg(not(windows))]
                     {
-                        self.map.get(specifier).map(|b| b.as_ref())
+                        self.map
+                            .get_key_value(specifier)
+                            .map(|(key, value)| (key.as_ref(), value.as_ref()))
                     }
                     #[cfg(windows)]
                     {
                         let mut buf = bun_paths::path_buffer_pool::get();
+                        if specifier.len() > buf.len() {
+                            return None;
+                        }
                         let normalized =
                             bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        self.map.get(normalized).map(|b| b.as_ref())
+                        self.map
+                            .get_key_value(normalized)
+                            .map(|(key, value)| (key.as_ref(), value.as_ref()))
                     }
+                }
+                pub(crate) fn get(&self, specifier: &[u8]) -> Option<&[u8]> {
+                    self.get_key_value(specifier).map(|(_, value)| value)
                 }
                 #[inline]
                 pub fn contains(&self, specifier: &[u8]) -> bool {
-                    if self.map.is_empty() {
-                        return false;
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        self.map.contains_key(specifier)
-                    }
-                    #[cfg(windows)]
-                    {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let normalized =
-                            bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        self.map.contains_key(normalized)
-                    }
+                    self.get_key_value(specifier).is_some()
                 }
                 /// Returns a `resolver::Result` for a file in the map, or `None` if
                 /// not found. Handles direct key matches and relative specifiers
@@ -957,20 +958,9 @@ pub mod bv2_impl {
                         unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
                     };
 
-                    // Direct key match (must use `getKey` to return the map-owned
-                    // key, not the parameter).
-                    #[cfg(not(windows))]
-                    if let Some((key, _)) = self.map.get_key_value(specifier) {
-                        return Some(Self::result_for_key(dupe(key.as_ref())));
-                    }
-                    #[cfg(windows)]
-                    {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let normalized =
-                            bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        if let Some((key, _)) = self.map.get_key_value(normalized) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
-                        }
+                    // Direct key match. Return the map-owned key, not the parameter.
+                    if let Some((key, _)) = self.get_key_value(specifier) {
+                        return Some(Self::result_for_key(dupe(key)));
                     }
 
                     // Also try joining a relative specifier against the importer's
@@ -984,12 +974,15 @@ pub mod bv2_impl {
                             source_file
                         } else {
                             bun_resolver::fs::FileSystem::instance()
-                                .abs_buf(&[source_file], &mut *abs_source_buf)
+                                .abs_buf_checked(&[source_file], &mut *abs_source_buf)?
                         };
 
                         // Normalize `source_file` to forward slashes (Windows paths
                         // from the real filesystem may use backslashes).
                         let mut source_file_buf = bun_paths::path_buffer_pool::get();
+                        if abs_source_file.len() > source_file_buf.len() {
+                            return None;
+                        }
                         let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
                             abs_source_file,
                             &mut **source_file_buf,
@@ -1019,11 +1012,11 @@ pub mod bv2_impl {
                         };
                         // `.loose` preserves Windows drive letters; normalize
                         // separators in-place on Windows afterwards.
-                        let joined_len = bun_paths::resolve_path::join_abs_string_buf::<
+                        let joined_len = bun_paths::resolve_path::join_abs_string_buf_checked::<
                             bun_paths::platform::Loose,
                         >(
                             effective_source_dir, &mut **buf, &[specifier]
-                        )
+                        )?
                         .len();
                         if cfg!(windows) {
                             bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
@@ -1142,6 +1135,33 @@ pub mod bv2_impl {
                 unsafe fn release_unrun(this: *mut Self) {
                     // SAFETY: released ⇒ the hop never ran; the request is ours alone on this thread.
                     unsafe { (*this).answer_cancelled() };
+                }
+                /// The plugins' callbacks continue the script that started the build.
+                unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+                    // SAFETY: fn contract; `bv2` is the live bundle waiting for this request, and the
+                    // field is set before any request is dispatched.
+                    unsafe { (*(*this).bv2).plugin_context }
+                }
+            }
+            /// The plugins answered a [`Resolve`]: the hop back to the loop that runs the bundle, when
+            /// that is a JS loop. Same pointer as the request, its own tag.
+            #[repr(transparent)]
+            pub struct ResolveAnswered(Resolve);
+            impl bun_event_loop::Taskable for ResolveAnswered {
+                const TAG: bun_event_loop::TaskTag =
+                    bun_event_loop::task_tag::BundleV2PluginResolveAnswered;
+                /// The VM that runs the bundle is going: the answer goes to nobody.
+                unsafe fn release_unrun(_: *mut Self) {}
+                /// A step of the bundle.
+                unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                    bun_event_loop::ContextId::NONE
+                }
+            }
+            impl ResolveAnswered {
+                pub fn run(&mut self) {
+                    // SAFETY: `bv2` is a live backref set in `Resolve::init`.
+                    let bv2 = unsafe { &mut *self.0.bv2 };
+                    BundleV2::on_resolve(&mut self.0, bv2);
                 }
             }
             impl Resolve {
@@ -1347,6 +1367,52 @@ pub mod bv2_impl {
                     // SAFETY: as `Resolve::release_unrun`.
                     unsafe { (*this).answer_cancelled() };
                 }
+                /// As `Resolve::context`.
+                unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+                    // SAFETY: as `Resolve::context`.
+                    unsafe { (*(*this).bv2).plugin_context }
+                }
+            }
+            /// The plugins answered a [`Load`]: as [`ResolveAnswered`].
+            #[repr(transparent)]
+            pub struct LoadAnswered(Load);
+            impl bun_event_loop::Taskable for LoadAnswered {
+                const TAG: bun_event_loop::TaskTag =
+                    bun_event_loop::task_tag::BundleV2PluginLoadAnswered;
+                /// As `ResolveAnswered::release_unrun`.
+                unsafe fn release_unrun(_: *mut Self) {}
+                /// A step of the bundle.
+                unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                    bun_event_loop::ContextId::NONE
+                }
+            }
+            impl LoadAnswered {
+                pub fn run(&mut self) {
+                    // SAFETY: `bv2` is a live backref set in `Load::init`.
+                    let bv2 = unsafe { &mut *self.0.bv2 };
+                    BundleV2::on_load(&mut self.0, bv2);
+                }
+            }
+            /// A plugin `.defer()`red a [`Load`]: the notice to the loop that runs the bundle, when
+            /// that is a JS loop. Same pointer as the request, its own tag.
+            #[repr(transparent)]
+            pub struct LoadDeferred(Load);
+            impl bun_event_loop::Taskable for LoadDeferred {
+                const TAG: bun_event_loop::TaskTag =
+                    bun_event_loop::task_tag::BundleV2PluginLoadDeferred;
+                /// As `ResolveAnswered::release_unrun`.
+                unsafe fn release_unrun(_: *mut Self) {}
+                /// A step of the bundle.
+                unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                    bun_event_loop::ContextId::NONE
+                }
+            }
+            impl LoadDeferred {
+                pub fn run(&mut self) {
+                    // SAFETY: `bv2` is a live backref set in `Load::init`.
+                    let bv2 = unsafe { &mut *self.0.bv2 };
+                    BundleV2::on_notify_defer(&mut self.0, bv2);
+                }
             }
         }
     }
@@ -1400,6 +1466,8 @@ pub mod bv2_impl {
 
         /// Opaque `JSC::EncoderStringTable` — one instance shared by every chunk's `encodeCodeBlock` in a `--compile --bytecode` build.
         pub(crate) enum EncoderStringTable {}
+        /// Opaque `JSC::BytecodeLinkEncoder` — every chunk of a `--compile --bytecode` link encoded into one payload (`bytecode_order`).
+        pub(crate) enum BytecodeLinkEncoder {}
 
         unsafe extern "Rust" {
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Generic
@@ -1440,7 +1508,46 @@ pub mod bv2_impl {
             pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
             safe fn __bun_jsc_encoder_string_table_take(
                 table: core::ptr::NonNull<EncoderStringTable>,
+                hot_strings: &[u64],
             ) -> Box<[u8]>;
+            safe fn __bun_jsc_bytecode_link_encoder_new(
+                external_strings: core::ptr::NonNull<EncoderStringTable>,
+                hot_functions: &[u64],
+                known_functions: &[u64],
+                evaluated_modules: &[u64],
+                not_evaluated_modules: &[u64],
+            ) -> core::ptr::NonNull<BytecodeLinkEncoder>;
+            safe fn __bun_jsc_bytecode_link_encoder_destroy(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+            );
+            safe fn __bun_jsc_bytecode_link_encoder_add_module(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                format: crate::options_impl::Format,
+                source: &[u8],
+                source_provider_url: &bun_core::String,
+                depth: u32,
+                optimize: bool,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_add_internal_module(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                id: u32,
+                depth: u32,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                source: &[u8],
+                name: &[u8],
+                url: &[u8],
+                source_stamp: u32,
+                depth: u32,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_finish(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                module_count: usize,
+            ) -> Option<crate::bytecode_order::LinkedPayload>;
             /// The runtime-resolvable slot for one module-info string (`EncoderStringTable::slot_for_wtf8`).
             safe fn __bun_jsc_encoder_string_table_slot(
                 table: core::ptr::NonNull<EncoderStringTable>,
@@ -1522,9 +1629,10 @@ pub mod bv2_impl {
             pub(crate) fn get(&self) -> Option<core::ptr::NonNull<EncoderStringTable>> {
                 self.0
             }
+            /// `hot_strings`: a payload order file's strings (`bytecode_order`), whose records go first.
             #[inline]
-            pub(crate) fn take(mut self) -> Box<[u8]> {
-                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"))
+            pub(crate) fn take(mut self, hot_strings: &[u64]) -> Box<[u8]> {
+                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"), hot_strings)
             }
             #[inline]
             pub(crate) fn slot(&self, wtf8: &[u8]) -> u32 {
@@ -1535,8 +1643,101 @@ pub mod bv2_impl {
         impl Drop for EncoderStringTableHandle {
             fn drop(&mut self) {
                 if let Some(table) = self.0.take() {
-                    drop(__bun_jsc_encoder_string_table_take(table));
+                    drop(__bun_jsc_encoder_string_table_take(table, &[]));
                 }
+            }
+        }
+
+        /// Owns a `JSC::BytecodeLinkEncoder`. Lives and dies on the thread that created it (it uses that thread's bytecode VM).
+        pub(crate) struct BytecodeLinkEncoderHandle {
+            encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+            module_count: usize,
+        }
+
+        impl BytecodeLinkEncoderHandle {
+            pub(crate) fn new(
+                external_strings: core::ptr::NonNull<EncoderStringTable>,
+                order: &crate::bytecode_order::BytecodeOrder,
+            ) -> Self {
+                Self {
+                    encoder: __bun_jsc_bytecode_link_encoder_new(
+                        external_strings,
+                        &order.hot_functions,
+                        &order.known_functions,
+                        &order.evaluated_modules,
+                        &order.not_evaluated_modules,
+                    ),
+                    module_count: 0,
+                }
+            }
+            /// Same arguments as `generate_cached_bytecode`, and what an order file calls the chunk's code; false on a
+            /// parse error. A module's position among the successful calls is its index into `finish()`'s lists.
+            pub(crate) fn add_module(
+                &mut self,
+                format: crate::options_impl::Format,
+                source: &[u8],
+                source_provider_url: &bun_core::String,
+                depth: u32,
+                optimize: bool,
+                names: Option<&crate::bytecode_order::CodeNames>,
+            ) -> bool {
+                let depth = match format {
+                    crate::options_impl::Format::Cjs => depth.saturating_add(1),
+                    _ => depth,
+                };
+                let ok = __bun_jsc_bytecode_link_encoder_add_module(
+                    self.encoder,
+                    format,
+                    source,
+                    source_provider_url,
+                    depth,
+                    optimize,
+                    &names.into(),
+                );
+                self.module_count += ok as usize;
+                ok
+            }
+            /// An internal module (this executable's, or with `target_source_stamp` another executable's) as its
+            /// builtins section has it, as one more module of the link.
+            pub(crate) fn add_internal_module(
+                &mut self,
+                id: u32,
+                module: &bun_exe_format::builtins::Module<'_>,
+                target_source_stamp: Option<u32>,
+                depth: u32,
+                names: Option<&crate::bytecode_order::CodeNames>,
+            ) -> bool {
+                let names = names.into();
+                let ok = match target_source_stamp {
+                    Some(source_stamp) => {
+                        __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
+                            self.encoder,
+                            module.source,
+                            module.name,
+                            module.url,
+                            source_stamp,
+                            depth,
+                            &names,
+                        )
+                    }
+                    None => __bun_jsc_bytecode_link_encoder_add_internal_module(
+                        self.encoder,
+                        id,
+                        depth,
+                        &names,
+                    ),
+                };
+                self.module_count += ok as usize;
+                ok
+            }
+            pub(crate) fn finish(&mut self) -> Option<crate::bytecode_order::LinkedPayload> {
+                __bun_jsc_bytecode_link_encoder_finish(self.encoder, self.module_count)
+            }
+        }
+
+        impl Drop for BytecodeLinkEncoderHandle {
+            fn drop(&mut self) {
+                __bun_jsc_bytecode_link_encoder_destroy(self.encoder);
             }
         }
 
@@ -1659,6 +1860,39 @@ pub mod bv2_impl {
     fn path_as_static(p: &Fs::Path<'_>) -> Fs::Path<'static> {
         // SAFETY: caller contract above.
         unsafe { (*p).into_static() }
+    }
+
+    /// Logs resolver errors that `resolve()` returns without writing to any
+    /// log so `has_errors()` actually fires. Returns `true` when `err` is one
+    /// of those; shared by `run_resolver` and `resolve_import_records`.
+    #[cold]
+    pub(crate) fn log_unhandled_resolve_error(
+        log: &mut bun_ast::Log,
+        source: Option<&bun_ast::Source>,
+        range: bun_ast::Range,
+        err: _resolver::Error,
+        specifier: &[u8],
+        kind: ImportKind,
+        report: bool,
+    ) -> bool {
+        if err == _resolver::Error::InvalidDataURL {
+            if report {
+                bun_ast::Log::add_resolve_error_with_text_dupe(
+                    log,
+                    source,
+                    range,
+                    format_args!(
+                        "Could not resolve data URL: \"{}\"",
+                        bstr::BStr::new(specifier)
+                    ),
+                    specifier,
+                    kind,
+                );
+            }
+            return true;
+        }
+        // Other errors are logged by the resolver before it returns Failure.
+        false
     }
 
     // Unified with the canonical definitions at the parent module level (this
@@ -2570,8 +2804,18 @@ pub mod bv2_impl {
                                     );
                                 }
                             }
+                        } else {
+                            log_unhandled_resolve_error(
+                                log,
+                                source,
+                                import_record.range,
+                                err,
+                                &import_record.specifier,
+                                import_record.kind,
+                                !handles_import_errors
+                                    && !self.transpiler.options.ignore_module_resolution_errors,
+                            );
                         }
-                        // assume other errors are already in the log
                         return;
                     }
                 }
@@ -2960,6 +3204,7 @@ pub mod bv2_impl {
                 // SAFETY: `event_loop`, when set, points at the caller's live loop
                 // (owning thread == this thread).
                 js_poster: event_loop.and_then(|l| unsafe { l.as_ref() }.js_poster()),
+                plugin_context: bun_event_loop::ContextId::NONE,
                 dev_server: None,
                 file_map: None,
                 source_code_length: 0,
@@ -3056,6 +3301,11 @@ pub mod bv2_impl {
                 this.transpiler.options.min_chunk_size.unwrap_or_else(|| {
                     crate::options::default_min_chunk_size(this.transpiler.options.target)
                 });
+            this.linker.options.fold_chunks = this.transpiler.options.fold_chunks;
+            this.linker.options.entry_naming_has_hash = crate::options::path_template_needs(
+                &this.transpiler.options.entry_naming,
+                crate::options::PlaceholderField::Hash,
+            );
             this.linker.options.module_preload = this.transpiler.options.module_preload;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
@@ -3080,6 +3330,45 @@ pub mod bv2_impl {
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
+            // Read now, once and in full (a pipe will do): a path that is wrong fails the build here, before anything
+            // is parsed, not after the link.
+            if this.transpiler.options.bytecode
+                && this.transpiler.options.compile_mode.is_executable()
+            {
+                let paths = this
+                    .transpiler
+                    .options
+                    .bytecode_order
+                    .iter()
+                    .map(|path| &path[..]);
+                match crate::bytecode_order::BytecodeOrder::load(paths) {
+                    Ok((order, without_hints)) => {
+                        for (path, unusable) in without_hints {
+                            this.transpiler.log_mut().add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "the bytecode order file {} {}",
+                                    bstr::BStr::new(path),
+                                    unusable.why()
+                                ),
+                            );
+                        }
+                        this.linker.options.bytecode_order = order;
+                    }
+                    Err((path, err)) => {
+                        this.transpiler.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "cannot read the bytecode order file {}: {}",
+                                bstr::BStr::new(path),
+                                err
+                            ),
+                        );
+                    }
+                }
+            }
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
@@ -4503,9 +4792,8 @@ pub mod bv2_impl {
             // mutate `graph` / allocate from `graph.heap` off-thread.
             match self.any_loop_mut() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(load),
-                        on_load_from_js_loop_raw,
+                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
+                        std::ptr::from_mut(load).cast::<jsc_api::JSBundler::LoadAnswered>(),
                     );
                     let poster = self
                         .js_poster
@@ -4537,9 +4825,8 @@ pub mod bv2_impl {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(resolve),
-                        on_resolve_from_js_loop_raw,
+                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
+                        std::ptr::from_mut(resolve).cast::<jsc_api::JSBundler::ResolveAnswered>(),
                     );
                     let poster = self
                         .js_poster
@@ -4578,20 +4865,6 @@ pub mod bv2_impl {
     fn on_resolve_mini(resolve: *mut jsc_api::JSBundler::Resolve, this: *mut BundleV2<'static>) {
         // SAFETY: see `on_load_mini`.
         BundleV2::on_resolve(unsafe { &mut *resolve }, unsafe { &mut *this });
-    }
-
-    fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
-        // SAFETY: `bv2` is a live backref set in `Load::init`.
-        let bv2 = unsafe { &mut *load.bv2 };
-        BundleV2::on_load(load, bv2);
-    }
-
-    fn on_load_from_js_loop_raw(
-        load: *mut jsc_api::JSBundler::Load,
-    ) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `load` is a valid pointer set up by `from_callback`.
-        on_load_from_js_loop(unsafe { &mut *load });
-        Ok(())
     }
 
     impl<'a> BundleV2<'a> {
@@ -4779,20 +5052,6 @@ pub mod bv2_impl {
                 | jsc_api::JSBundler::LoadValue::Consumed => unreachable!(),
             }
         }
-    }
-
-    fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
-        // SAFETY: `bv2` is a live backref set in `Resolve::init`.
-        let bv2 = unsafe { &mut *resolve.bv2 };
-        BundleV2::on_resolve(resolve, bv2);
-    }
-
-    fn on_resolve_from_js_loop_raw(
-        resolve: *mut jsc_api::JSBundler::Resolve,
-    ) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `resolve` is a valid pointer set up by `from_callback`.
-        on_resolve_from_js_loop(unsafe { &mut *resolve });
-        Ok(())
     }
 
     impl<'a> BundleV2<'a> {
@@ -5259,7 +5518,7 @@ pub mod bv2_impl {
                         // SAFETY: worker ptrs are live until `deinit_soon`.
                         unsafe { (**worker).deinit_soon() };
                     }
-                    pool.worker_pool().wake_for_idle_events();
+                    pool.wake_for_idle_events();
                 }
                 // `ThreadPool` is arena-allocated; the arena bulk-free won't
                 // run its `Drop`, so release the map's backing storage here.
@@ -6125,6 +6384,16 @@ pub mod bv2_impl {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
 
+                // A failed file's imports are not followed: the queue is cleared
+                // above. That includes the records barrel optimization deferred, so
+                // a later request must not un-defer them. (The graph row keeps only
+                // the records: it has no `target` to resolve them against.)
+                for record in result.ast.import_records.iter_mut() {
+                    record
+                        .flags
+                        .remove(bun_ast::ImportRecordFlags::IS_BARREL_DEFERRED);
+                }
+
                 // Preserve the parsed import_records on the graph so any plugin
                 // onResolve tasks already dispatched for *other* records in this
                 // same file can still dereference
@@ -6653,8 +6922,22 @@ pub mod bv2_impl {
                                     }
                                 }
                             } else {
-                                // assume other errors are already in the log
-                                last_error = Some(err.into());
+                                let report = !import_record
+                                    .flags
+                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                                    && !self.transpiler.options.ignore_module_resolution_errors;
+                                let ours = log_unhandled_resolve_error(
+                                    log,
+                                    Some(source),
+                                    import_record.range,
+                                    err,
+                                    import_record.path.text,
+                                    import_record.kind,
+                                    report,
+                                );
+                                if !ours || report {
+                                    last_error = Some(err.into());
+                                }
                             }
                             continue 'outer;
                         }
@@ -7684,20 +7967,6 @@ pub mod bv2_impl {
         }
     }
     impl Eq for StableRef {}
-    impl Ord for StableRef {
-        #[inline]
-        fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-            let (a_idx, a_ref) = (self.stable_source_index, self.r#ref);
-            let (b_idx, b_ref) = (other.stable_source_index, other.r#ref);
-            (a_idx, a_ref.inner_index()).cmp(&(b_idx, b_ref.inner_index()))
-        }
-    }
-    impl PartialOrd for StableRef {
-        #[inline]
-        fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-            Some(self.cmp(other))
-        }
-    }
 
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct ImportTracker {

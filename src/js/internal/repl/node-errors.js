@@ -18,8 +18,8 @@ function ERR_USE_AFTER_CLOSE(...args) {
 function ERR_INVALID_CURSOR_POS(...args) {
   return $ERR_INVALID_CURSOR_POS(...args);
 }
-function ERR_SCRIPT_EXECUTION_INTERRUPTED(...args) {
-  return $ERR_SCRIPT_EXECUTION_INTERRUPTED(...args);
+function ERR_SCRIPT_EXECUTION_INTERRUPTED() {
+  return $ERR_SCRIPT_EXECUTION_INTERRUPTED();
 }
 function ERR_INVALID_STATE(...args) {
   return $ERR_INVALID_STATE(...args);

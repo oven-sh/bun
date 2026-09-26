@@ -16,3 +16,8 @@ workspace = true
 # transitive dep would defeat its `#![no_std]` build and bloat the embedded
 # binary that gets copied into every `node_modules/.bin/`.
 [dependencies]
+
+# The portable image only (`--cfg=bun_portable`): the attribute that turns an `extern` block into calls
+# through the image's import table. A build for Windows has no dependency, as the note above asks.
+[target.'cfg(bun_portable)'.dependencies]
+bun_portable_macros.workspace = true

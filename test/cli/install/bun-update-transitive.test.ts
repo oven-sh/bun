@@ -2096,6 +2096,87 @@ test.concurrent("`bun update <name>` for a name only other workspaces depend on 
   expect(exitCode).toBe(1);
 });
 
+// An optional or peer dependency that no version satisfies stays unresolved without an error, so the request reaches the package.json write-back with nothing resolved.
+const OPTIONAL = "optionalDependencies";
+test.concurrent.each<[string, string, Json, string, Json]>([
+  ["an optional entry", OPTIONAL, { leaf: "^9.0.0" }, "leaf", { leaf: "^9.0.0" }],
+  ["an optional npm: alias", OPTIONAL, { aliased: "npm:leaf@^9.0.0" }, "aliased", { aliased: "npm:leaf@^9.0.0" }],
+  [
+    "an optional npm: alias given a range",
+    OPTIONAL,
+    { aliased: "npm:leaf@^9.0.0" },
+    "aliased@^8.0.0",
+    { aliased: "npm:leaf@^8.0.0" },
+  ],
+  ["a peer entry", "peerDependencies", { leaf: "^9.0.0" }, "leaf", { leaf: "^9.0.0" }],
+])("`bun update <name>` keeps %s that no version satisfies", async (_, group, entries, request, expected) => {
+  using server = await serveRegistry(TAGGED_FREE);
+  const dir = await installServed(server, "update-unsatisfied-", { name: "foo", [group]: entries });
+
+  const { stderr, exitCode } = await run(dir, "update", request);
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(await packageJsonOf(dir)).toStrictEqual({ name: "foo", [group]: expected });
+  expect((await lock(dir)).workspaces[""][group]).toStrictEqual(expected);
+  expect(exitCode).toBe(0);
+});
+
+// -r binds the request once per workspace; pkg2's entry must not be written from what pkg1's entry resolved to.
+test.concurrent("`bun update <name> -r` keeps a member's optional entry that no version satisfies", async () => {
+  using server = await serveRegistry(TAGGED_FREE);
+  const unsatisfied = { name: "pkg2", version: "1.0.0", optionalDependencies: { leaf: "^9.0.0" } };
+  const dir = String(
+    tempDir("update-recursive-unsatisfied-optional-", {
+      "package.json": stringify(ROOT),
+      "packages/pkg1/package.json": stringify(member("pkg1", { leaf: "^1.0.0" })),
+      "packages/pkg2/package.json": stringify(unsatisfied),
+    }),
+  );
+  await servedBunfig(server, dir);
+  await install(dir);
+
+  const { stderr, exitCode } = await run(dir, "update", "leaf", "-r");
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(member("pkg1", { leaf: "^1.1.0" }));
+  expect(await packageJsonOf(dir, "packages/pkg2")).toStrictEqual(unsatisfied);
+  expect((await lock(dir)).workspaces["packages/pkg2"].optionalDependencies).toStrictEqual({ leaf: "^9.0.0" });
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+// --latest swaps the declared range for `latest` before the install. Every release here is younger than the minimum release age, so nothing resolves and the range comes back.
+test.concurrent.each([
+  ["a plain entry", { leaf: "^1.0.0" }, "leaf"],
+  ["an npm: alias", { aliased: "npm:leaf@^1.0.0" }, "aliased"],
+])("`bun update <name> --latest` restores the range of %s that it could not resolve", async (_, entries, name) => {
+  const today = { leaf: { "1.0.0": daysAgo(0), "1.1.0": daysAgo(0) } };
+  using server = await serveRegistry(TAGGED_FREE, {}, { times: today });
+  const packageJson = { name: "foo", optionalDependencies: entries };
+  const dir = await installServed(server, "update-latest-unresolved-", packageJson);
+
+  const { stderr, exitCode } = await run(dir, "update", name, "--latest", "--minimum-release-age", THREE_DAYS_SECONDS);
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect((await lock(dir)).workspaces[""].optionalDependencies).toStrictEqual(entries);
+  expect(exitCode).toBe(0);
+});
+
+// `bun add npm:<name>` has no key to find its row by after the write-back renames the row, so the request keeps the package the first binding gave it.
+test.concurrent("`bun add npm:<name>` hands the added package to the security scanner", async () => {
+  using server = await serveRegistry(TAGGED_FREE);
+  const dir = String(
+    tempDir("add-nameless-scan-", {
+      "package.json": stringify({ name: "foo" }),
+      "scanner.ts": LEAF_1_1_0_FATAL_SCANNER,
+    }),
+  );
+  await servedBunfig(server, dir, { security: { scanner: "./scanner.ts" } });
+
+  const { stdout, exitCode } = await run(dir, "add", "npm:leaf");
+  expect(stdout).toContain("scanned: leaf@1.1.0");
+  expect(stdout).toContain("FATAL: leaf");
+  expect(exitCode).toBe(1);
+});
+
 async function staleScoped() {
   const dir = await setup({ "package.json": pkgJson({ "no-deps": "1.0.0", "@types/no-deps": "^1.0.0" }) });
   await reinstall(dir, pkgJson({ "no-deps": "^1.0.0", "@types/no-deps": "^1.0.0" }));

@@ -1371,9 +1371,22 @@ pub(crate) fn edit(
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {
+                // Still unresolved after the install (an optional or peer dependency nothing satisfies): the request's literal is empty for a bare name, and another workspace's under -r, so the entry stays as it is.
+                if manager.subcommand == Subcommand::Update && !options.before_install {
+                    // --latest put `latest` over the declared literal before the install.
+                    if update_to_latest {
+                        if let Some(entry) = manager.updating_packages.get(request.name) {
+                            let declared: &[u8] = &entry.original_version_literal;
+                            if e_string.data.slice() != declared {
+                                changed = true;
+                                e_string.data = arena_dup(arena, declared).into();
+                            }
+                        }
+                    }
+                    continue;
+                }
                 // The entry `bun update` is updating keeps its alias target whatever gets resolved.
                 let existing: Option<&[u8]> = (manager.subcommand == Subcommand::Update
-                    && options.before_install
                     && !e_string.is_blank())
                 .then(|| e_string.data.slice());
                 let requested: &[u8] = request.version.literal.slice(request.version_buf());

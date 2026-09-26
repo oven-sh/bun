@@ -1272,7 +1272,7 @@ pub(crate) fn merge_small_chunks(
         // A parent that only declares can run before the entry point's other files.
         let parent_runs = unpinned().any(|i| {
             let group = &groups.values()[i];
-            !group.pure || !group.needs_init.is_empty()
+            group.target == Some(target_platform) && (!group.pure || !group.needs_init.is_empty())
         });
         for &member in members {
             let group = &groups.values()[member];

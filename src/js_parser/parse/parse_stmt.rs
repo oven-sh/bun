@@ -1463,7 +1463,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 let import_clause = p.parse_import_clause()?;
                 if Self::IS_TYPESCRIPT_ENABLED {
-                    if import_clause.had_type_only_imports && import_clause.items.is_empty() {
+                    // tsc drops a clause that binds nothing. Only a bare `import "x"` runs for effect.
+                    if import_clause.items.is_empty() {
                         p.lexer.expect_contextual_keyword(b"from")?;
                         let _ = p.parse_path()?;
                         p.lexer.expect_or_insert_semicolon()?;

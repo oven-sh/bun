@@ -7628,21 +7628,27 @@ impl NodeFS {
             );
 
             let path_slice = args.path.slice();
-            // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
-            let fs = FileSystem::get();
-            let parts = [fs.top_level_dir, path_slice];
-            let inbuf_len = inbuf.len();
-            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
-                return Err(sys::Error {
-                    errno: E::ENAMETOOLONG as _,
-                    syscall: sys::Tag::realpath,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                });
+            let path = if bun_paths::is_absolute(path_slice)
+                && bun_core::strings::contains_char(path_slice, b'\\')
+            {
+                args.path.slice_z(inbuf)
+            } else {
+                // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
+                let fs = FileSystem::get();
+                let parts = [fs.top_level_dir, path_slice];
+                let inbuf_len = inbuf.len();
+                let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
+                    return Err(sys::Error {
+                        errno: E::ENAMETOOLONG as _,
+                        syscall: sys::Tag::realpath,
+                        path: args.path.slice().into(),
+                        ..Default::default()
+                    });
+                };
+                let path_len = joined.len();
+                inbuf[path_len] = 0;
+                ZStr::from_buf(&inbuf[..], path_len)
             };
-            let path_len = joined.len();
-            inbuf[path_len] = 0;
-            let path = ZStr::from_buf(&inbuf[..], path_len);
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let flags = sys::O::PATH; // O_PATH is faster

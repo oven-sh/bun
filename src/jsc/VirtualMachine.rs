@@ -5279,6 +5279,26 @@ impl VirtualMachine {
             }
         }
 
+        #[cfg(not(windows))]
+        {
+            let path = specifier_utf8.slice();
+            if bun_core::strings::contains_char(path, b'\\') && bun_paths::is_absolute(path) {
+                let path_z = bun_core::ZBox::from_bytes(path);
+                if matches!(
+                    bun_sys::exists_at_type(bun_sys::Fd::cwd(), &path_z),
+                    Ok(bun_sys::ExistsAtType::File)
+                ) {
+                    if jsc_vm.transpiler.resolver.opts.preserve_symlinks {
+                        return Ok(Ok(specifier.clone()));
+                    }
+                    let mut realpath_buf = bun_paths::path_buffer_pool::get();
+                    if let Ok(realpath) = bun_sys::realpath(&path_z, &mut realpath_buf) {
+                        return Ok(Ok(bun_core::String::from_bytes(realpath)));
+                    }
+                }
+            }
+        }
+
         if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
             specifier_utf8.slice(),
             bun_ast::Target::Bun,

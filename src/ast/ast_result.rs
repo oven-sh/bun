@@ -23,6 +23,8 @@ pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, Ast
 pub struct Ast<'a> {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
+    /// Bundling: the top level has no `import` and only declares functions, classes and literals (`needs_wrapper_ref`).
+    pub only_declares: bool,
     pub runtime_imports: runtime::Imports,
 
     pub nested_scope_slot_counts: SlotCounts,
@@ -111,6 +113,7 @@ impl<'a> Ast<'a> {
         Self {
             approximate_newline_count: 0,
             has_lazy_export: false,
+            only_declares: false,
             runtime_imports: Default::default(),
             nested_scope_slot_counts: SlotCounts::default(),
             uses_exports_ref: false,

@@ -30,64 +30,16 @@ pub(crate) fn part_has_no_side_effects(part: &bun_ast::Part) -> bool {
         })
 }
 
-/// The part only declares functions, classes and literals, so nothing can tell when it runs. Syntax alone decides.
-fn part_only_declares(part: &bun_ast::Part) -> bool {
-    use bun_ast::{StmtData, binding};
-    part.stmts.slice().iter().all(|stmt| match &stmt.data {
-        StmtData::SImport(_)
-        | StmtData::SExportStar(_)
-        | StmtData::SExportFrom(_)
-        | StmtData::SExportClause(_)
-        | StmtData::SFunction(_)
-        | StmtData::SEmpty(_) => true,
-        StmtData::SClass(class) => class.class.can_be_moved(),
-        StmtData::SExportDefault(default) => default.can_be_moved(),
-        StmtData::SLocal(local) => local.decls.iter().all(|decl| {
-            matches!(decl.binding.data, binding::Data::BIdentifier(_))
-                && decl.value.is_none_or(|value| value.can_be_moved())
-        }),
-        StmtData::SLazyExport(expr) => bun_ast::expr::Tag::is_primitive_literal(expr.tag()),
-        _ => false,
-    })
-}
-
 impl LinkerContext<'_> {
     /// `loading_file_has_no_side_effects` says what tree shaking may drop. This says that the load order cannot matter.
     fn loading_file_only_declares(&self, source_index: u32) -> bool {
-        if source_index == Index::RUNTIME.value() {
-            return true;
-        }
-        let flags = self.graph.meta.items_flags();
-        if self.graph.files.items_entry_point_kind()[source_index as usize].is_entry_point()
-            || flags[source_index as usize].is_async_or_has_async_dependency
-        {
-            return false;
-        }
-        let wrapped = flags[source_index as usize].wrap != WrapKind::None;
-        let records = &self.graph.ast.items_import_records()[source_index as usize];
-        let parts_live = &self.graph.parts_live[source_index as usize];
-        self.graph.ast.items_parts()[source_index as usize]
-            .as_slice()
-            .iter()
-            .enumerate()
-            .all(|(part_index, part)| {
-                !parts_live.is_set(part_index)
-                    || ((wrapped || part_only_declares(part))
-                        && part.import_record_indices.iter().all(|&i| {
-                            let record = &records[i as usize];
-                            record.flags.contains(ImportRecordFlags::IS_UNUSED)
-                                || match record.kind {
-                                    ImportKind::Stmt => {
-                                        record.source_index.is_valid()
-                                            && (wrapped
-                                                || flags[record.source_index.get() as usize].wrap
-                                                    == WrapKind::None)
-                                    }
-                                    ImportKind::Require => wrapped,
-                                    _ => true,
-                                }
-                        }))
-            })
+        let flags = &self.graph.meta.items_flags()[source_index as usize];
+        source_index == Index::RUNTIME.value()
+            || (!self.graph.files.items_entry_point_kind()[source_index as usize].is_entry_point()
+                && !flags.is_async_or_has_async_dependency
+                && (flags.wrap != WrapKind::None
+                    || self.graph.ast.items_flags()[source_index as usize]
+                        .contains(crate::bundled_ast::Flags::ONLY_DECLARES)))
     }
 
     /// None of the file's live parts run anything at the top level:
@@ -1861,16 +1813,18 @@ fn rekey_files(
     group_of_file: &[usize],
     groups: &[Group],
 ) -> crate::Result<()> {
-    let mut ranks_chunk_again = AutoBitSet::init_empty(group_of_file.len())?;
-    for (source_index, &group_index) in group_of_file.iter().enumerate() {
-        if group_index != usize::MAX
-            && groups[resolve(groups, group_index)].parent_of_pinned_entry
-            && !this.loading_file_only_declares(source_index as u32)
-        {
-            ranks_chunk_again.set(source_index);
+    if groups.iter().any(|group| group.parent_of_pinned_entry) {
+        let mut ranks_chunk_again = AutoBitSet::init_empty(group_of_file.len())?;
+        for (source_index, &group_index) in group_of_file.iter().enumerate() {
+            if group_index != usize::MAX
+                && groups[resolve(groups, group_index)].parent_of_pinned_entry
+                && !this.loading_file_only_declares(source_index as u32)
+            {
+                ranks_chunk_again.set(source_index);
+            }
         }
+        this.ranks_chunk_again = Some(ranks_chunk_again);
     }
-    this.ranks_chunk_again = Some(ranks_chunk_again);
     let file_entry_bits = this.graph.files.items_entry_bits_mut();
     for (source_index, &group_index) in group_of_file.iter().enumerate() {
         if group_index == usize::MAX {

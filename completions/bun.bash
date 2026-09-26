@@ -1,247 +1,600 @@
 #/usr/bin/env bash
 
+BUNX_OPTIONS="--bun -p --package --no-install --verbose --silent --help --cwd -h"
+
+_compgen_reply() {
+    local comp_out item
+    comp_out=$(compgen "$@")
+    while IFS= read -r item || [[ -n "${item}" ]]; do
+        [[ -n "${item}" ]] && COMPREPLY+=( "${item}" )
+    done <<< "${comp_out}"
+}
+
+_filter_literal_reply() {
+    local item
+    for item in "$@"; do
+        if [[ -n "${item}" && "${item}" == "${cur_word}"* ]]; then
+            COMPREPLY+=( "${item}" )
+        fi
+    done
+}
+
+_filter_words_reply() {
+    local raw_words="${1}"
+    local item
+    local noglob_was_set=0
+    [[ "$-" == *f* ]] && noglob_was_set=1
+    set -f
+    for item in ${raw_words}; do
+        if [[ -n "${item}" && "${item}" == "${cur_word}"* ]]; then
+            COMPREPLY+=( "${item}" )
+        fi
+    done
+    (( noglob_was_set )) || set +f
+}
+
+_compgen_file_reply() {
+    local comp_out item
+    comp_out=$(compgen -f "$@")
+    while IFS= read -r item || [[ -n "${item}" ]]; do
+        if [[ -n "${item}" && ! -d "${item}" ]]; then
+            COMPREPLY+=( "${item}" )
+        fi
+    done <<< "${comp_out}"
+}
+
 _file_arguments() {
     local extensions="${1}"
-    local reset=$(shopt -p globstar)
-    shopt -s globstar
-
-    if [[ -z "${cur_word}" ]]; then
-        COMPREPLY=( $(compgen -fG -X "${extensions}" -- "${cur_word}") );
+    local reset
+    reset=$(shopt -p extglob)
+    shopt -s extglob
+    if [[ -n "${extensions}" ]]; then
+        _compgen_file_reply -X "${extensions}" -- "${cur_word}"
     else
-        COMPREPLY=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
+        _compgen_file_reply -- "${cur_word}"
     fi
-
-    $reset
+    eval "${reset}"
+    _compgen_reply -d -S / -- "${cur_word}"
 }
 
 _long_short_completion() {
-    local wordlist="${1}";
-    local short_options="${2}"
+    local wordlist="${1}"
 
-    [[ -z "${cur_word}" || "${cur_word}" =~ ^- ]] && {
-        COMPREPLY=( $(compgen -W "${wordlist}" -- "${cur_word}"));
-        return;
-    }
-    [[ "${cur_word}" =~ ^-[A-Za_z]+ ]] && {
-        COMPREPLY=( $(compgen -W "${short_options}" -- "${cur_word}"));
-        return;
-    }
+    if [[ -z "${cur_word}" || "${cur_word}" == -* ]]; then
+        _compgen_reply -W "${wordlist}" -- "${cur_word}"
+    fi
 }
 
-# loads the scripts block in package.json
 _read_scripts_in_package_json() {
-    local package_json;
-    local return_package_json
-    local line=0;
-    local working_dir="${PWD}";
+    local scripts
+    scripts=$(bun getcompletes s 2>/dev/null)
+    if [[ -n "${scripts}" ]]; then
+        local item
+        while IFS= read -r item || [[ -n "${item}" ]]; do
+            if [[ -n "${item}" && "${item}" == "${cur_word}"* ]]; then
+                COMPREPLY+=( "${item}" )
+            fi
+        done <<< "${scripts}"
+        return 0
+    fi
 
-    for ((; line < ${#COMP_WORDS[@]}; line+=1)); do
-        [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[$((line + 1))]}";
-    done
+    local pkg_file="package.json"
+    [[ -f "${pkg_file}" && -r "${pkg_file}" ]] || return 0
 
-    [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
+    local in_scripts=0 line_content script_names=() rest
+    while IFS= read -r line_content || [[ -n "${line_content}" ]]; do
+        if (( ! in_scripts )); then
+            if [[ "${line_content}" =~ \"scripts\"[[:space:]]*:[[:space:]]*\{(.*) ]]; then
+                in_scripts=1
+                rest="${BASH_REMATCH[1]}"
+            fi
+        else
+            rest="${line_content}"
+        fi
 
-    [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{(.*)\} ]] && {
-        local package_json_compreply;
-        local matched="${BASH_REMATCH[@]:1}";
-        local scripts="${matched%%\}*}";
-        scripts="${scripts//@(\"|\')/}";
-        readarray -td, scripts <<<"${scripts}";
-        for completion in "${scripts[@]}"; do
-            [[ "${completion}" =~ ^[[:space:]]*([[:alnum:]@/:._-]+)[[:space:]]*: ]] && package_json_compreply+=( "${BASH_REMATCH[1]}" );
-        done
-        COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
-    }
-
-    # when a script is passed as an option, do not show other scripts as part of the completion anymore
-    local re_prev_script="(^| )${prev}($| )";
-    [[
-        ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) || \
-            ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
-    ]] && {
-        local filtered_reply=();
-        local reply_word script_name keep;
-        for reply_word in "${COMPREPLY[@]}"; do
-            keep=1;
-            for script_name in "${package_json_compreply[@]}"; do
-                [[ "${reply_word}" == "${script_name}" ]] && { keep=""; break; };
+        if (( in_scripts )); then
+            while true; do
+                if [[ "${rest}" =~ ^[[:space:]]*\}[[:space:]]*,? ]]; then
+                    in_scripts=0
+                    break
+                elif [[ "${rest}" =~ ^[[:space:]]*,?[[:space:]]*\"([^\"\\]+)\"[[:space:]]*:[[:space:]]*\"([^\"\\]|\\.)*\"(.*) ]]; then
+                    script_names+=( "${BASH_REMATCH[1]}" )
+                    rest="${BASH_REMATCH[3]}"
+                else
+                    break
+                fi
             done
-            [[ -n "${keep}" ]] && filtered_reply+=( "${reply_word}" );
-        done
-        COMPREPLY=( "${filtered_reply[@]}" );
-        replaced_script="${prev}";
-    }
+        fi
+    done < "${pkg_file}"
+
+    if (( ${#script_names[@]} > 0 )); then
+        _filter_literal_reply "${script_names[@]}"
+    fi
 }
 
+_extract_cwd() {
+    local line skip=0
+    working_dir="${PWD}"
+    cwd_specified=0
 
-_subcommand_comp_reply() {
-    local cur_word="${1}"
-    local sub_commands="${2}"
-    local regexp_subcommand="^[dbcriauh]";
-    [[ "${prev}" =~ ${regexp_subcommand} ]] && {
-        COMPREPLY+=( $(compgen -W "${sub_commands}" -- "${cur_word}") );
-    }
-}
+    local is_bunx=0
+    [[ "${COMP_WORDS[0]}" == "bunx" ]] && is_bunx=1
 
-
-_bun_completions() {
-    declare -A GLOBAL_OPTIONS;
-    declare -A PACKAGE_OPTIONS;
-    declare -A PM_OPTIONS;
-
-    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated link unlink build";
-
-    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
-    GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
-
-    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --catalog --filter";
-    PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d -F";
-    PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="--filter";
-    PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="-F";
-    PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]="--latest --interactive --recursive --filter --dev --development --prod --no-optional --exact";
-    PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]="-L -i -r -F -d -D -P -E";
-
-    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
-    PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
-
-    PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]="--check";
-    PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]="--production --prod --omit --filter --dry-run --os --cpu --linker --silent --cwd --help";
-    PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]="-p -P -F -h";
-    PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]="--json --audit-level --ignore --prod --production --omit --dry-run --latest --cwd --help";
-    PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]="-L";
-
-    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --json --help"
-    PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
-
-    local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
-    local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
-
-    case "${prev}" in
-        help|--help|-h|-v|--version) return;;
-        -c|--config)      _file_arguments "!*.toml" && return;;
-        --bunfile)        _file_arguments "!*.bun" && return;;
-        --server-bunfile) _file_arguments "!*.server.bun" && return;;
-        --backend)
-            case "${COMP_WORDS[1]}" in
-                a|add|remove|rm|install|i|dedupe|update|up)
-                    COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}") );
+    local subcmd="" subcmd_idx=0
+    if (( ! is_bunx )); then
+        for (( line=1; line < COMP_CWORD; line++ )); do
+            if (( skip > 0 )); then
+                (( skip-- ))
+                continue
+            fi
+            local w="${COMP_WORDS[line]}"
+            case "${w}" in
+                --cwd|--bunfile|--server-bunfile|-c|--config|--env-file|--port|-p|\
+                --loader|-l|--target|--origin|--public-dir|--backend|--filter|-F|\
+                --jsx-runtime|--jsx-factory|--jsx-fragment|--jsx-import-source|\
+                --omit|--linker|--define|-d|--external|--inject|-i|--tsconfig-override|\
+                --main-fields|--extension-order|--conditions|-e|--eval|-u|--use|\
+                --outdir|--outfile|--format|--timeout|--rerun-each|--package)
+                    if [[ "${COMP_WORDS[line+1]}" == "=" ]]; then
+                        skip=2
+                    else
+                        skip=1
+                    fi
+                    continue
+                    ;;
+                -*)
+                    continue
+                    ;;
+                *)
+                    subcmd="${w}"
+                    subcmd_idx=${line}
+                    break
                     ;;
             esac
+        done
+    fi
+
+    skip=0
+    for (( line=0; line < COMP_CWORD; line++ )); do
+        if (( skip > 0 )); then
+            (( skip-- ))
+            continue
+        fi
+
+        if (( is_bunx )); then
+            if (( line >= 1 )); then
+                local w="${COMP_WORDS[line]}"
+                case "${w}" in
+                    --cwd|-p|--package)
+                        if [[ "${COMP_WORDS[line+1]}" == "=" ]]; then
+                            skip=2
+                        else
+                            skip=1
+                        fi
+                        ;;
+                    --cwd=*|--package=*|-p=*)
+                        ;;
+                    -*)
+                        ;;
+                    *)
+                        break
+                        ;;
+                esac
+            fi
+        elif [[ "${subcmd}" == "run" || "${subcmd}" == "x" ]]; then
+            if (( line > subcmd_idx )); then
+                local w="${COMP_WORDS[line]}"
+                case "${w}" in
+                    --cwd|-c|--config|--env-file|--filter|-F|-p|--package)
+                        if [[ "${COMP_WORDS[line+1]}" == "=" ]]; then
+                            skip=2
+                        else
+                            skip=1
+                        fi
+                        ;;
+                    --cwd=*|-c=*|--config=*|--env-file=*|--filter=*|-F=*|-p=*|--package=*)
+                        ;;
+                    -*)
+                        ;;
+                    *)
+                        break
+                        ;;
+                esac
+            fi
+        fi
+
+        if [[ "${COMP_WORDS[line]}" == "--cwd" ]]; then
+            if (( line + 2 < COMP_CWORD )) &&
+                [[ "${COMP_WORDS[line+1]}" == "=" && -n "${COMP_WORDS[line+2]}" ]]; then
+                working_dir="${COMP_WORDS[line+2]}"
+                cwd_specified=1
+            elif (( line + 1 < COMP_CWORD )) &&
+                [[ -n "${COMP_WORDS[line+1]}" ]]; then
+                working_dir="${COMP_WORDS[line+1]}"
+                cwd_specified=1
+            fi
+        elif [[ "${COMP_WORDS[line]}" == --cwd=* ]]; then
+            working_dir="${COMP_WORDS[line]#--cwd=}"
+            cwd_specified=1
+        fi
+    done
+
+    if (( cwd_specified )); then
+        working_dir="${working_dir%\"}"
+        working_dir="${working_dir#\"}"
+        working_dir="${working_dir%\'}"
+        working_dir="${working_dir#\'}"
+        working_dir="${working_dir/#\~/$HOME}"
+    fi
+}
+
+_bun_completions_inner() {
+    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated link unlink build"
+
+    local GLOBAL_OPTIONS="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --target --public-dir --tsconfig-override --define --external --help --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js -c -v -d -e -h -i -l -u -p"
+
+    local ADD_OPTIONS="--development --optional --peer --catalog --filter -d -F --config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"
+    local REMOVE_OPTIONS="--filter -F --config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"
+    local UPDATE_OPTIONS="--latest --interactive --recursive --filter --dev --development --prod --no-optional --exact -L -i -r -F -d -D -P -E --config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"
+
+    local SHARED_OPTIONS="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"
+
+    local DEDUPE_OPTIONS="--check --config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help -c -y -p -f -g"
+    local PRUNE_OPTIONS="--production --prod --omit --filter --dry-run --os --cpu --linker --silent --cwd --help -p -P -F -h"
+    local AUDIT_OPTIONS="--json --audit-level --ignore --prod --production --omit --dry-run --latest --cwd --help -L"
+
+    local PM_OPTIONS="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --json --help -c -y -p -f -g"
+
+    if [[ "${prev}" == "=" ]] && (( COMP_CWORD >= 2 )) && [[ "${COMP_WORDS[$(( COMP_CWORD - 2 ))]}" == "--cwd" ]]; then
+        _compgen_reply -d -S / -- "${cur_word}"
+        return
+    fi
+
+    case "${prev}" in
+        help|--help|-h|-v|--version) return ;;
+        -c|--config)          _file_arguments "!*.toml"; return ;;
+        --bunfile)            _file_arguments "!*.bun"; return ;;
+        --server-bunfile)     _file_arguments "!*.server.bun"; return ;;
+        --env-file)           _file_arguments; return ;;
+        --tsconfig-override)  _file_arguments "!*.json"; return ;;
+        --backend)
+            _compgen_reply -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}"
             return ;;
         --omit)
-            COMPREPLY=( $(compgen -W "dev optional peer" -- "${cur_word}") );
-            return;;
-        -F|--filter)
-            case "${COMP_WORDS[1]}" in
-                a|add|remove|rm|i|install|prune|update|up) return;;
-            esac
-            ;;
+            _compgen_reply -W "dev optional peer" -- "${cur_word}"
+            return ;;
         --linker)
-            COMPREPLY=( $(compgen -W "isolated hoisted" -- "${cur_word}") );
-            return;;
+            _compgen_reply -W "isolated hoisted" -- "${cur_word}"
+            return ;;
         --cwd|--public-dir)
-            COMPREPLY=( $(compgen -d -- "${cur_word}" ));
-            return;;
+            _compgen_reply -d -S / -- "${cur_word}"
+            return ;;
         --jsx-runtime)
-            COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") );
-            return;;
+            _compgen_reply -W "automatic classic" -- "${cur_word}"
+            return ;;
         --target)
-            COMPREPLY=( $(compgen -W "browser node bun" -- "${cur_word}") );
-            return;;
+            _compgen_reply -W "browser node bun" -- "${cur_word}"
+            return ;;
         -l|--loader)
-            [[ "${cur_word}" =~ (:) ]] && {
-                local cut_colon_forward="${cur_word%%:*}"
-                COMPREPLY=( $(compgen -W "${cut_colon_forward}:jsx ${cut_colon_forward}:js ${cut_colon_forward}:json ${cut_colon_forward}:tsx ${cut_colon_forward}:ts ${cut_colon_forward}:css" -- "${cut_colon_forward}:${cur_word##*:}") );
-            }
-            return;;
+            if [[ "${cur_word}" == *:* ]]; then
+                local prefix="${cur_word%%:*}"
+                _filter_literal_reply \
+                    "${prefix}:jsx" "${prefix}:js" "${prefix}:json" \
+                    "${prefix}:tsx" "${prefix}:ts" "${prefix}:css"
+            fi
+            return ;;
     esac
 
-    case "${COMP_WORDS[1]}" in
-        help|completions|--help|-h|-v|--version) return;;
+    local subcommand=""
+    local subcommand_idx=0
+    local skip=0
+    local i
+    for (( i=1; i < COMP_CWORD; i++ )); do
+        if (( skip > 0 )); then
+            (( skip-- ))
+            continue
+        fi
+
+        local w="${COMP_WORDS[i]}"
+        case "${w}" in
+            --cwd|--bunfile|--server-bunfile|-c|--config|--env-file|--port|-p|\
+            --loader|-l|--target|--origin|--public-dir|--backend|--filter|-F|\
+            --jsx-runtime|--jsx-factory|--jsx-fragment|--jsx-import-source|\
+            --omit|--linker|--define|-d|--external|--inject|-i|--tsconfig-override|\
+            --main-fields|--extension-order|--conditions|-e|--eval|-u|--use|\
+            --outdir|--outfile|--format|--timeout|--rerun-each|--package)
+                if [[ "${COMP_WORDS[i+1]}" == "=" ]]; then
+                    skip=2
+                else
+                    skip=1
+                fi
+                continue
+                ;;
+            -*)
+                continue
+                ;;
+            *)
+                subcommand="${w}"
+                subcommand_idx=${i}
+                break
+                ;;
+        esac
+    done
+
+    case "${subcommand}" in
+        help|completions) return ;;
         add|a)
-            _long_short_completion \
-                "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
-                "${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}"
-            return;;
+            _long_short_completion "${ADD_OPTIONS}"
+            return ;;
         remove|rm|i|install)
-            _long_short_completion \
-                "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
-                "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
-            return;;
+            _long_short_completion "${REMOVE_OPTIONS}"
+            return ;;
         update|up)
-            _long_short_completion \
-                "${PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
-                "${PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
-            return;;
+            _long_short_completion "${UPDATE_OPTIONS}"
+            return ;;
         link|unlink)
-            _long_short_completion \
-                "${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
-                "${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
-            return;;
+            _long_short_completion "${SHARED_OPTIONS}"
+            return ;;
         dedupe)
-            _long_short_completion \
-                "${PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
-                "${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
-            return;;
+            _long_short_completion "${DEDUPE_OPTIONS}"
+            return ;;
         prune)
-            _long_short_completion \
-                "${PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]}" \
-                "${PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]}";
-            return;;
+            _long_short_completion "${PRUNE_OPTIONS}"
+            return ;;
         audit)
-            COMPREPLY=( $(compgen -W "fix ${PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]} ${PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]}" -- "${cur_word}") );
-            return;;
+            _compgen_reply -W "fix ${AUDIT_OPTIONS}" -- "${cur_word}"
+            return ;;
         create|c)
-            COMPREPLY=( $(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );
-            return;;
+            _compgen_reply -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}"
+            return ;;
         upgrade)
-            COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
-            return;;
+            _compgen_reply -W "--version --cwd --help -v -h" -- "${cur_word}"
+            return ;;
         repl)
-            COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
-            return;;
+            _compgen_reply -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}"
+            return ;;
         run)
-            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
-            COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
-            _read_scripts_in_package_json;
-            return;;
+            local target_seen=0
+            local skip_run=0
+            local j
+            for (( j=subcommand_idx+1; j < COMP_CWORD; j++ )); do
+                if (( skip_run > 0 )); then
+                    (( skip_run-- ))
+                    continue
+                fi
+                local w="${COMP_WORDS[j]}"
+                case "${w}" in
+                    --cwd|-c|--config|--env-file|--filter|-F)
+                        if [[ "${COMP_WORDS[j+1]}" == "=" ]]; then
+                            skip_run=2
+                        else
+                            skip_run=1
+                        fi
+                        continue
+                        ;;
+                    --cwd=*|-c=*|--config=*|--env-file=*|--filter=*|-F=*)
+                        continue
+                        ;;
+                    -*)
+                        continue
+                        ;;
+                    *)
+                        target_seen=1
+                        break
+                        ;;
+                esac
+            done
+            if (( target_seen )); then
+                return 0
+            fi
+
+            _read_scripts_in_package_json
+            local bins
+            bins=$(bun getcompletes b 2>/dev/null)
+            if [[ -n "${bins}" ]]; then
+                _filter_words_reply "${bins}"
+            fi
+            _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs)"
+            _long_short_completion "--version --cwd --filter --help --silent -v -F -h"
+            return ;;
+        test)
+            case "${prev}" in
+                --timeout|--rerun-each|--filter) return ;;
+            esac
+            _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs)"
+            _long_short_completion "--bail --coverage --watch --timeout --todo --only --rerun-each --filter --help -b -t -h"
+            return ;;
+        build|b)
+            case "${prev}" in
+                --outdir) _compgen_reply -d -S / -- "${cur_word}"; return ;;
+                --outfile) _file_arguments; return ;;
+                --target) _compgen_reply -W "browser node bun" -- "${cur_word}"; return ;;
+                --format) _compgen_reply -W "esm cjs iife" -- "${cur_word}"; return ;;
+                --entry-naming|--public-path|--sourcemap) return ;;
+            esac
+            _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs|html)"
+            _long_short_completion "--outdir --outfile --target --format --minify --sourcemap --entry-naming --public-path --compile --bytecode --help -h"
+            return ;;
         pm)
-            _long_short_completion \
-                "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}";
-            COMPREPLY+=( $(compgen -W "bin ls licenses cache hash hash-print hash-string" -- "${cur_word}") );
-            return;;
+            _long_short_completion "${PM_OPTIONS}"
+            _compgen_reply -W "bin ls licenses cache hash hash-print hash-string" -- "${cur_word}"
+            return ;;
+        x)
+            local target_seen=0
+            local skip_x=0
+            local j
+            for (( j=subcommand_idx+1; j < COMP_CWORD; j++ )); do
+                if (( skip_x > 0 )); then
+                    (( skip_x-- ))
+                    continue
+                fi
+                local w="${COMP_WORDS[j]}"
+                case "${w}" in
+                    --cwd|-p|--package)
+                        if [[ "${COMP_WORDS[j+1]}" == "=" ]]; then
+                            skip_x=2
+                        else
+                            skip_x=1
+                        fi
+                        continue
+                        ;;
+                    --cwd=*|--package=*|-p=*)
+                        continue
+                        ;;
+                    -*)
+                        continue
+                        ;;
+                    *)
+                        target_seen=1
+                        break
+                        ;;
+                esac
+            done
+            if (( target_seen )); then
+                return 0
+            fi
+
+            local bins
+            bins=$(bun getcompletes b 2>/dev/null)
+            if [[ -n "${bins}" ]]; then
+                _filter_words_reply "${bins}"
+            fi
+            _file_arguments
+            _long_short_completion "${BUNX_OPTIONS}"
+            return ;;
+        "")
+            _compgen_reply -W "${SUBCOMMANDS}" -- "${cur_word}"
+            _long_short_completion "${GLOBAL_OPTIONS}"
+            _read_scripts_in_package_json
+            if [[ "${cur_word}" == */* || "${cur_word}" == .* ]]; then
+                _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs)"
+            fi
+            return ;;
         *)
-            local replaced_script;
-            _long_short_completion \
-                "${GLOBAL_OPTIONS[*]}" \
-                "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"
-
-            _read_scripts_in_package_json;
-            _subcommand_comp_reply "${cur_word}" "${SUBCOMMANDS}";
-
-            # determine if completion should be continued
-            # when the current word is an empty string
-            # the previous word is not part of the allowed completion
-            # the previous word is not an argument to the last two option
-            [[ -z "${cur_word}" ]] && {
-                local prev_in_reply="";
-                local reply_word;
-                for reply_word in "${COMPREPLY[@]}"; do
-                    [[ "${reply_word}" == "${prev}" ]] && { prev_in_reply=1; break; };
-                done
-                [[ -z "${prev_in_reply}" ]] && {
-                    local re_prev_prev="(^| )${COMP_WORDS[(( COMP_CWORD - 2 ))]}($| )";
-                    local global_option_with_extra_args="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";
-                    [[
-                        ( -n "${replaced_script}" && "${replaced_script}" == "${prev}" ) || \
-                            ( "${global_option_with_extra_args}" =~ ${re_prev_prev} )
-                    ]] && return;
-                    unset COMPREPLY;
-                }
-            }
-            return;;
+            return 0 ;;
     esac
+}
 
+_bunx_completions_inner() {
+    if [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${prev}" == "--cwd" ]]; then
+        _compgen_reply -d -S / -- "${cur_word}"
+        return
+    fi
+
+    local target_seen=0
+    local skip=0
+    local j
+    for (( j=1; j < COMP_CWORD; j++ )); do
+        if (( skip > 0 )); then
+            (( skip-- ))
+            continue
+        fi
+        local w="${COMP_WORDS[j]}"
+        case "${w}" in
+            --cwd|-p|--package)
+                if [[ "${COMP_WORDS[j+1]}" == "=" ]]; then
+                    skip=2
+                else
+                    skip=1
+                fi
+                continue
+                ;;
+            --cwd=*|--package=*|-p=*)
+                continue
+                ;;
+            -*)
+                continue
+                ;;
+            *)
+                target_seen=1
+                break
+                ;;
+        esac
+    done
+
+    if (( target_seen )); then
+        return 0
+    fi
+
+    _long_short_completion "${BUNX_OPTIONS}"
+
+    if [[ -z "${cur_word}" || "${cur_word}" != -* ]]; then
+        local bins
+        bins=$(bun getcompletes b 2>/dev/null)
+        if [[ -n "${bins}" ]]; then
+            _filter_words_reply "${bins}"
+        fi
+        _file_arguments
+    fi
+}
+
+_wrapper_preamble() {
+    COMPREPLY=()
+    working_dir="${PWD}"
+    cwd_specified=0
+    _extract_cwd
+
+    cur_word="${COMP_WORDS[${COMP_CWORD}]}"
+    prev="" prev_prev=""
+    if (( COMP_CWORD > 0 )); then
+        prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}"
+    fi
+    if (( COMP_CWORD >= 2 )); then
+        prev_prev="${COMP_WORDS[$(( COMP_CWORD - 2 ))]}"
+    fi
+
+    completing_cwd=0
+    if [[ "${prev}" == "--cwd" ]] || [[ "${prev}" == "=" && "${prev_prev}" == "--cwd" ]] || [[ "${cur_word}" == --cwd=* ]]; then
+        completing_cwd=1
+    fi
+
+    orig_pwd="${PWD}"
+    orig_oldpwd="${OLDPWD}"
+    switched=0
+    if (( cwd_specified && ! completing_cwd )); then
+        if [[ ! -d "${working_dir}" ]] || ! CDPATH= builtin cd "${working_dir}" >/dev/null 2>&1; then
+            return 1
+        fi
+        switched=1
+    fi
+    return 0
+}
+
+_wrapper_finalizer() {
+    local cmd="${1}" func="${2}"
+    if (( switched )); then
+        CDPATH= builtin cd "${orig_pwd}" >/dev/null 2>&1
+        OLDPWD="${orig_oldpwd}"
+    fi
+
+    if [[ ${#COMPREPLY[@]} -eq 1 && "${COMPREPLY[0]}" == */ ]]; then
+        if type compopt &>/dev/null; then
+            compopt -o nospace 2>/dev/null
+        else
+            complete -o nospace -F "${func}" "${cmd}"
+        fi
+    else
+        if type compopt &>/dev/null; then
+            compopt +o nospace 2>/dev/null
+        else
+            complete -F "${func}" "${cmd}"
+        fi
+    fi
+}
+
+_bun_completions() {
+    local cur_word prev prev_prev completing_cwd orig_pwd orig_oldpwd switched working_dir cwd_specified
+    _wrapper_preamble || return 0
+    _bun_completions_inner
+    _wrapper_finalizer bun _bun_completions
+}
+
+_bunx_completions() {
+    local cur_word prev prev_prev completing_cwd orig_pwd orig_oldpwd switched working_dir cwd_specified
+    _wrapper_preamble || return 0
+    _bunx_completions_inner
+    _wrapper_finalizer bunx _bunx_completions
 }
 
 complete -F _bun_completions bun
+complete -F _bunx_completions bunx

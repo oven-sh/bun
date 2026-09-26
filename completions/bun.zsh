@@ -1098,18 +1098,57 @@ _bun_list_bunfig_toml() {
     _files
 }
 
+_bun_extract_cwd() {
+    target_cwd="${PWD}"
+    cwd_specified=0
+    local i val
+    for (( i=1; i < CURRENT; i++ )); do
+        val=""
+        if [[ "${words[i]}" == "--cwd" ]] && (( i + 1 < CURRENT )) && [[ -n "${words[i+1]}" ]]; then
+            val="${words[i+1]}"
+            cwd_specified=1
+        elif [[ "${words[i]}" == --cwd=* ]]; then
+            val="${words[i]#--cwd=}"
+            cwd_specified=1
+        fi
+        if [[ -n "${val}" ]]; then
+            val="${val%\"}"
+            val="${val#\"}"
+            val="${val%\'}"
+            val="${val#\'}"
+            val="${val/#\\~/$HOME}"
+            target_cwd="${val}"
+        fi
+    done
+}
+
 _bun_run_param_script_completion() {
     local -a scripts_list bins
-    IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
-    IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
+    local target_cwd="${PWD}" cwd_specified=0
+    _bun_extract_cwd
+
+    local orig_pwd="${PWD}"
+    local switched=0
+    if (( cwd_specified )); then
+        if [[ ! -d "${target_cwd}" ]] || ! builtin cd -q "${target_cwd}" 2>/dev/null; then
+            return
+        fi
+        switched=1
+    fi
+
+    scripts_list=(${(f)"$(SHELL=zsh bun getcompletes s 2>/dev/null)"})
+    bins=(${(f)"$(SHELL=zsh bun getcompletes b 2>/dev/null)"})
+
+    if (( switched )); then
+        builtin cd -q "${orig_pwd}" 2>/dev/null
+    fi
 
     _alternative "scripts:scripts:compadd -a scripts_list"
     _alternative "bin:bin:compadd -a bins"
-    _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"
+    _alternative "files:file:_files -W ${(q)target_cwd} -g '*.(js|mjs|cjs|ts|jsx|tsx|wasm)'"
 }
 
 _bun_link_param_package_completion() {
-    # Read packages from ~/.bun/install/global/node_modules
     install_env=$BUN_INSTALL
     install_dir=${(P)install_env:-$HOME/.bun}
     global_node_modules=$install_dir/install/global/node_modules
@@ -1120,17 +1159,76 @@ _bun_link_param_package_completion() {
 }
 
 _bun_remove_param_package_completion() {
-    if ! command -v jq &>/dev/null; then
+    local target_cwd="${PWD}" cwd_specified=0
+    _bun_extract_cwd
+
+    if (( cwd_specified )) && [[ ! -d "${target_cwd}" ]]; then
         return
     fi
 
-    # TODO: move to "bun getcompletes"
-    if [ -f "package.json" ]; then
-        local -a dependencies dev_dependencies
-        IFS=$'\n' dependencies=($(jq -r '.dependencies | keys[]' package.json))
-        IFS=$'\n' dev_dependencies=($(jq -r '.devDependencies | keys[]' package.json))
-        _alternative "deps:dependency:compadd -a dependencies"
-        _alternative "deps:dependency:compadd -a dev_dependencies"
+    local pkg_file="${target_cwd}/package.json"
+    if [[ -f "${pkg_file}" && -r "${pkg_file}" ]]; then
+        local -a deps
+        if command -v jq &>/dev/null; then
+            deps=( "${(@f)$(jq -r '
+                .dependencies, .devDependencies, .peerDependencies, .optionalDependencies
+                | objects | keys[]
+            ' "${pkg_file}" 2>/dev/null)}" )
+        else
+            deps=( "${(@f)$(awk '
+                in_deps {
+                    while (in_deps) {
+                        sub(/^[[:space:]]+/, "", $0)
+                        if (sub(/^,/, "", $0)) {
+                            sub(/^[[:space:]]+/, "", $0)
+                        }
+                        if (sub(/^\}/, "", $0)) {
+                            in_deps = 0
+                            break
+                        }
+                        if (match($0, /^"([^"\\]+)"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"/)) {
+                            key = substr($0, RSTART, RLENGTH)
+                            sub(/^"/, "", key)
+                            sub(/"[[:space:]]*:.*$/, "", key)
+                            print key
+                            $0 = substr($0, RSTART + RLENGTH)
+                        } else {
+                            break
+                        }
+                    }
+                }
+                {
+                    while (match($0, /"(dependencies|devDependencies|peerDependencies|optionalDependencies)"[[:space:]]*:[[:space:]]*\{/)) {
+                        $0 = substr($0, RSTART + RLENGTH)
+                        in_deps = 1
+                        while (in_deps) {
+                            sub(/^[[:space:]]+/, "", $0)
+                            if (sub(/^,/, "", $0)) {
+                                sub(/^[[:space:]]+/, "", $0)
+                            }
+                            if (sub(/^\}/, "", $0)) {
+                                in_deps = 0
+                                break
+                            }
+                            if (match($0, /^"([^"\\]+)"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"/)) {
+                                key = substr($0, RSTART, RLENGTH)
+                                sub(/^"/, "", key)
+                                sub(/"[[:space:]]*:.*$/, "", key)
+                                print key
+                                $0 = substr($0, RSTART + RLENGTH)
+                            } else {
+                                break
+                            }
+                        }
+                    }
+                }
+            ' "${pkg_file}" 2>/dev/null)}" )
+        fi
+        deps=(${deps:#})
+
+        if (( ${#deps} > 0 )); then
+            _alternative "deps:dependency:compadd -a deps"
+        fi
     fi
 }
 
@@ -1145,7 +1243,6 @@ _set_remove() {
 }
 
 _bun_add_param_package_completion() {
-
     IFS=$'\n' inexact=($(history -n bun | grep -E "^bun add " | cut -c 9- | uniq))
     IFS=$'\n' exact=($($inexact | grep -E "^$words[$CURRENT]"))
     IFS=$'\n' packages=($(SHELL=zsh bun getcompletes a $words[$CURRENT]))
@@ -1170,7 +1267,6 @@ _bun_add_param_package_completion() {
         _describe -1 -t packages "Popular" packages
         return
     fi
-
 }
 
 __bun_dynamic_comp() {
@@ -1190,8 +1286,54 @@ __bun_dynamic_comp() {
     return $comp
 }
 
+_bunx() {
+    local curcontext="${curcontext}" context state state_descr line
+    typeset -A opt_args
+    local target_cwd="${PWD}" cwd_specified=0
+    _bun_extract_cwd
+
+    local orig_pwd="${PWD}"
+    local switched=0
+    if (( cwd_specified )); then
+        if [[ ! -d "${target_cwd}" ]] || ! builtin cd -q "${target_cwd}" 2>/dev/null; then
+            return
+        fi
+        switched=1
+    fi
+
+    local -a bins
+    bins=(${(f)"$(SHELL=zsh bun getcompletes b 2>/dev/null)"})
+
+    if (( switched )); then
+        builtin cd -q "${orig_pwd}" 2>/dev/null
+    fi
+
+    _arguments -C \
+        '(-b --bun)'{-b,--bun}'[Run with Bun runtime]' \
+        '(-p --package)'{-p,--package}'[Explicit package name]:package:' \
+        '--no-install[Do not install package]' \
+        '--verbose[Show verbose output]' \
+        '--silent[Silence output]' \
+        '(-h --help)'{-h,--help}'[Print help]' \
+        '--cwd=[Change working directory]:directory:_files -W ${(q)target_cwd} -/' \
+        '1:package:->pkg' \
+        '*::arguments:->rest' && return 0
+
+    case "$state" in
+        pkg)
+            _alternative \
+                "bin:bin:compadd -a bins" \
+                "files:file:_files -W ${(q)target_cwd}"
+            ;;
+        rest)
+            _files -W "${target_cwd}"
+            ;;
+    esac
+}
+
 if ! command -v compinit >/dev/null; then
     autoload -U compinit && compinit
 fi
 
 compdef _bun bun
+compdef _bunx bunx

@@ -10,6 +10,8 @@
 #include "bun_dependency_versions.h"
 #include <node_version.h>
 #include <wtf/Scope.h>
+#include <wtf/StackTrace.h>
+#include <wtf/HexNumber.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -164,6 +166,44 @@ NEVER_INLINE void putDirectNamed(JSC::VM& vm, JSC::JSObject* object, ASCIILitera
 }
 
 using namespace JSC;
+
+extern "C" size_t Bun__Process__captureNativeStack(uintptr_t*, size_t);
+
+JSArray* constructProcessReportNativeStack(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Release builds omit unwind tables; use Bun's frame-pointer unwinder.
+    std::array<uintptr_t, 64> addresses;
+    size_t count = Bun__Process__captureNativeStack(addresses.data(), addresses.size());
+    std::array<void*, 64> frames;
+    for (size_t i = 0; i < count; ++i) {
+        if (!addresses[i]) {
+            count = i;
+            break;
+        }
+        frames[i] = reinterpret_cast<void*>(addresses[i]);
+    }
+    Vector<String, 64> symbols(count);
+    StackTraceSymbolResolver { std::span<void* const> { frames.data(), count } }.forEach([&](int index, void*, const char* name) {
+        symbols[index - 1] = name ? String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(std::span { name, strlen(name) })) : emptyString();
+    });
+
+    JSArray* nativeStack = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (size_t i = 0; i < count; ++i) {
+        JSObject* frame = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        putDirectNamed(vm, frame, "pc"_s, jsString(vm, makeString("0x"_s, hex(addresses[i], 16, Lowercase))));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        putDirectNamed(vm, frame, "symbol"_s, jsString(vm, symbols[i]));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        nativeStack->putDirectIndex(globalObject, i, frame);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return nativeStack;
+}
 
 #if !defined(BUN_WEBKIT_VERSION)
 #define BUN_WEBKIT_VERSION "unknown"
@@ -2704,15 +2744,6 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
         return networkInterfaces;
     };
 
-    auto constructNativeStack = [&]() -> JSC::JSValue {
-        JSC::JSObject* nativeStack = JSC::constructEmptyArray(globalObject, nullptr);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        // TODO:
-
-        return nativeStack;
-    };
-
     {
         JSC::JSObject* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 19);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2726,7 +2757,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
         JSValue javascriptHeap = constructJavaScriptHeap();
         RETURN_IF_EXCEPTION(scope, {});
         putDirectNamed(vm, report, "javascriptHeap"_s, javascriptHeap);
-        JSValue nativeStack = constructNativeStack();
+        JSValue nativeStack = constructProcessReportNativeStack(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         putDirectNamed(vm, report, "nativeStack"_s, nativeStack);
         JSValue resourceUsage = constructResourceUsage();

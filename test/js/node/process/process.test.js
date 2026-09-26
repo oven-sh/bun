@@ -1686,6 +1686,47 @@ describe.concurrent(() => {
     JSON.stringify(process.report.getReport(), null, 2);
   });
 
+  function expectNativeStack(nativeStack) {
+    expect(nativeStack.length).toBeGreaterThan(0);
+    expect(nativeStack.length).toBeLessThanOrEqual(64);
+    for (const frame of nativeStack) {
+      expect(Object.keys(frame).sort()).toEqual(["pc", "symbol"]);
+      expect(frame.pc).toMatch(/^0x[0-9a-f]{16}$/);
+      expect(BigInt(frame.pc)).toBeGreaterThan(0n);
+      expect(typeof frame.symbol).toBe("string");
+    }
+  }
+
+  it("process.report.getReport() includes a live native stack", () => {
+    expectNativeStack(process.report.getReport().nativeStack);
+    expectNativeStack(process.report.getReport(new Error("report input")).nativeStack);
+  });
+
+  it("process.report native stack survives JSON serialization", () => {
+    const report = process.report.getReport();
+    const serialized = JSON.parse(JSON.stringify(report));
+    expectNativeStack(serialized.nativeStack);
+    expect(serialized.nativeStack).toEqual(report.nativeStack);
+  });
+
+  it.concurrent("process.report.getReport() captures the worker's native stack", async () => {
+    const { Worker } = await import("node:worker_threads");
+    const worker = new Worker(
+      'require("node:worker_threads").parentPort.postMessage(process.report.getReport().nativeStack)',
+      { eval: true },
+    );
+    try {
+      const nativeStack = await new Promise((resolve, reject) => {
+        worker.once("message", resolve);
+        worker.once("error", reject);
+        worker.once("exit", code => reject(new Error(`Worker exited before reporting: ${code}`)));
+      });
+      expectNativeStack(nativeStack);
+    } finally {
+      await worker.terminate();
+    }
+  });
+
   // A pending worker.terminate() is delivered at the exception checks inside the
   // report builders, so a worker looping on getReport() is always interrupted in
   // the middle of one. The host must see every worker exit, with no crash.

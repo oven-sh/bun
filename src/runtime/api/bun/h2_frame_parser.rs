@@ -108,8 +108,18 @@ enum BunSocket {
 /// The ref a `BunSocket::*Writeonly` attachment holds on its socket; held
 /// only to be dropped on detach.
 enum WriteonlySocketRef {
-    Tls(#[allow(dead_code)] RefPtr<TLSSocket>),
-    Tcp(#[allow(dead_code)] RefPtr<TCPSocket>),
+    Tls { _socket: RefPtr<TLSSocket> },
+    Tcp { _socket: RefPtr<TCPSocket> },
+}
+
+impl WriteonlySocketRef {
+    fn tls(socket: RefPtr<TLSSocket>) -> Self {
+        Self::Tls { _socket: socket }
+    }
+
+    fn tcp(socket: RefPtr<TCPSocket>) -> Self {
+        Self::Tcp { _socket: socket }
+    }
 }
 
 /// The parser's attachment to a native socket, and its owner: attaching either
@@ -7385,7 +7395,7 @@ impl H2FrameParser {
                 this.ref_guard(),
                 BunSocket::Tls,
                 BunSocket::TlsWriteonly,
-                WriteonlySocketRef::Tls,
+                WriteonlySocketRef::tls,
             );
             // if we started with non native and go to native we now control the backpressure internally
             this.has_nonnative_backpressure.set(false);
@@ -7397,7 +7407,7 @@ impl H2FrameParser {
                 this.ref_guard(),
                 BunSocket::Tcp,
                 BunSocket::TcpWriteonly,
-                WriteonlySocketRef::Tcp,
+                WriteonlySocketRef::tcp,
             );
             // if we started with non native and go to native we now control the backpressure internally
             this.has_nonnative_backpressure.set(false);
@@ -7545,7 +7555,7 @@ impl H2FrameParser {
                     this_ref.ref_guard(),
                     BunSocket::Tls,
                     BunSocket::TlsWriteonly,
-                    WriteonlySocketRef::Tls,
+                    WriteonlySocketRef::tls,
                 );
                 let _ = this_ref.flush();
             } else if let Some(socket) = socket_js.as_class_this_ptr::<TCPSocket>() {
@@ -7555,7 +7565,7 @@ impl H2FrameParser {
                     this_ref.ref_guard(),
                     BunSocket::Tcp,
                     BunSocket::TcpWriteonly,
-                    WriteonlySocketRef::Tcp,
+                    WriteonlySocketRef::tcp,
                 );
                 let _ = this_ref.flush();
             }

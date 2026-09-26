@@ -115,6 +115,8 @@ pub struct WebSocketProxyTunnel {
     socket: SocketUnion,
     /// Write buffer for encrypted data (maintains TLS record ordering)
     write_buffer: JsCell<StreamBuffer>,
+    /// Seconds of the connected client's close timeout once its close is dispatched, else 0.
+    close_timeout: Cell<core::ffi::c_uint>,
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
     /// Whether to reject unauthorized certificates
@@ -148,6 +150,7 @@ impl WebSocketProxyTunnel {
             wrapper: OnceCell::new(),
             socket,
             write_buffer: JsCell::new(StreamBuffer::default()),
+            close_timeout: Cell::new(0),
             sni_hostname: Some(Box::<[u8]>::from(bun_http::strip_ipv6_brackets(
                 sni_hostname,
             ))),
@@ -421,6 +424,7 @@ impl WebSocketProxyTunnel {
     /// can reach a close path that drops a ref on the tunnel.
     pub(crate) fn on_writable(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
+        let buffered = this.buffered_amount();
 
         // Flush the SSL state machine; no borrow of `*this` other than
         // `wrapper` spans the synchronous `write_encrypted` re-entry.
@@ -449,6 +453,10 @@ impl WebSocketProxyTunnel {
                 true
             }
         });
+        // The proxy took bytes: a pending close timeout counts from this progress.
+        if this.close_timeout.get() != 0 && this.buffered_amount() < buffered {
+            this.set_timeout(this.close_timeout.get());
+        }
         if still_backpressured {
             return;
         }
@@ -523,6 +531,30 @@ impl WebSocketProxyTunnel {
             SocketUnion::Tcp(s) => s.resume_stream(),
             SocketUnion::Ssl(s) => s.resume_stream(),
             SocketUnion::None => false,
+        }
+    }
+
+    /// The connected client dispatched its close: bounds how long the proxy connection stays idle.
+    pub(crate) fn start_close_timeout(&self, seconds: core::ffi::c_uint) {
+        self.close_timeout.set(seconds);
+        self.set_timeout(seconds);
+    }
+
+    /// The close timeout fired. True when the proxy still took buffered bytes, which re-arms it.
+    pub(crate) fn flush_at_close_timeout(this: ThisPtr<Self>) -> bool {
+        // A close of the proxy socket inside `on_writable` drops the upgrade client's ref.
+        let _guard = RefPtr::from_this(this);
+        let buffered = this.buffered_amount();
+        Self::on_writable(this);
+        this.buffered_amount() < buffered
+    }
+
+    /// Arms the proxy connection's timeout. The upgrade client owns it and closes it on timeout.
+    fn set_timeout(&self, seconds: core::ffi::c_uint) {
+        match &self.socket {
+            SocketUnion::Tcp(s) => s.set_timeout(seconds),
+            SocketUnion::Ssl(s) => s.set_timeout(seconds),
+            SocketUnion::None => {}
         }
     }
 }

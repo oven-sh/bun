@@ -62,6 +62,27 @@ const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
 /// Outgoing control frame prefix: 2-byte header + 4-byte masking key.
 const CONTROL_HEADER_SIZE: usize = 6;
 
+/// Seconds a socket may outlive its close event, normalised like the opening-handshake timeout.
+#[inline]
+fn close_timeout_seconds() -> core::ffi::c_uint {
+    // `get()` is always `Some`: the declaration in env_var.rs holds the default.
+    bun_http::normalize_idle_timeout_seconds(
+        bun_core::env_var::BUN_CONFIG_WS_CLOSE_TIMEOUT
+            .get()
+            .unwrap_or_default(),
+    )
+}
+
+/// The close timeout fired: close with a FIN. A reset drops what the kernel still has to send.
+fn close_at_close_timeout<const SSL: bool>(socket: Socket<SSL>) {
+    socket.shutdown();
+    socket.close(uws::CloseKind::FastShutdown);
+    // uSockets defers this close once behind unsent TLS ciphertext. The next expiry closes.
+    if !socket.is_closed() {
+        socket.set_timeout(close_timeout_seconds());
+    }
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub struct WebSocket<const SSL: bool> {
     pub(crate) ref_count: Cell<u32>,
@@ -566,6 +587,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
 
         let terminated = loop {
+            // The close is dispatched (a handler can do it mid-buffer): a later Close gets no echo.
+            if self.cpp_websocket().is_none() {
+                break true;
+            }
             log!("onData ({})", <&'static str>::from(cursor.state));
 
             let step = match cursor.state {
@@ -1175,6 +1200,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.tcp.get().shutdown_read();
             self.tcp.get().shutdown();
         }
+        // TLS and tunnels wait for the server's TCP close (RFC 6455 §7.1.1); this bounds the wait.
+        match self.tunnel() {
+            Some(tunnel) => tunnel.start_close_timeout(close_timeout_seconds()),
+            None => self.tcp.get().set_timeout(close_timeout_seconds()),
+        }
     }
 
     fn finish_pending_close(&self) {
@@ -1224,7 +1254,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.drain_send_buffer_and_finish_close();
     }
 
-    pub fn handle_timeout(&self, _socket: Socket<SSL>) {
+    pub fn handle_timeout(&self, socket: Socket<SSL>) {
+        // Only the close timeout is armed here, and the close is dispatched before it fires.
+        if self.cpp_websocket().is_none() {
+            close_at_close_timeout(socket);
+            return;
+        }
         self.terminate(ErrorCode::Timeout);
     }
 

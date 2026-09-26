@@ -1461,7 +1461,18 @@ where
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    pub fn handle_timeout(this: ThisPtr<Self>, _: Socket<SSL>) {
+    pub fn handle_timeout(this: ThisPtr<Self>, socket: Socket<SSL>) {
+        if this.state.get() == State::Done {
+            let _guard = RefPtr::from_this(this);
+            // The tunnel's close timeout. The kernel reports writable late, so try a write here.
+            let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
+            if tunnel.is_some_and(WebSocketProxyTunnel::flush_at_close_timeout) {
+                return;
+            }
+            // `fail` closes gracefully, which a TLS proxy can stall.
+            super::close_at_close_timeout(socket);
+            return;
+        }
         Self::terminate(this, ErrorCode::Timeout);
     }
 

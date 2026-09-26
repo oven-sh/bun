@@ -60,7 +60,7 @@ pub mod lib {
     impl Result {
         /// `Ok` or `Warn`: the call completed. libarchive returns `Warn` for
         /// recoverable per-call issues while still producing a result, e.g. a
-        /// `read_next_header` that fell back to the raw pathname bytes.
+        /// `write_header` that fell back to a binary hdrcharset for the name.
         #[inline]
         pub fn succeeded(self) -> bool {
             matches!(self, Result::Ok | Result::Warn)
@@ -201,6 +201,20 @@ pub mod lib {
             // SAFETY: self valid; entry is a valid out-ptr.
             unsafe {
                 archive_read_next_header(self.as_mut_ptr(), std::ptr::from_mut::<*mut Entry>(entry))
+            }
+        }
+        /// Next entry of a `read_open_memory` archive; `None` at its end.
+        pub fn read_next_memory_entry(&self) -> crate::Result<Option<&Entry>> {
+            let mut entry: *mut Entry = core::ptr::null_mut();
+            loop {
+                return match self.read_next_header(&mut entry) {
+                    // `Warn` still yields a fully populated entry.
+                    Result::Ok | Result::Warn => Ok(Some(Entry::opaque_ref(entry))),
+                    Result::Eof => Ok(None),
+                    // A dropped bad-checksum block. A non-blocking source also means "no bytes yet": never loop there.
+                    Result::Retry => continue,
+                    Result::Failed | Result::Fatal => Err(crate::Error::Fail),
+                };
             }
         }
         pub fn read_data(&self, buf: &mut [u8]) -> isize {
@@ -725,23 +739,22 @@ pub mod lib {
         }
 
         pub fn next(&mut self) -> IteratorResult<Option<NextEntry>> {
-            let a = self.archive();
-            let mut entry: *mut Entry = core::ptr::null_mut();
             loop {
-                return match a.read_next_header(&mut entry) {
-                    Result::Retry => continue,
-                    Result::Eof => IteratorResult::init_res(None),
-                    // `Warn` still yields a fully populated entry; see `Result::succeeded`.
-                    Result::Ok | Result::Warn => {
-                        let kind = bun_sys::kind_from_mode(
-                            Entry::opaque_ref(entry).filetype() as bun_sys::Mode
-                        );
+                return match self.archive().read_next_memory_entry() {
+                    Ok(None) => IteratorResult::init_res(None),
+                    Ok(Some(entry)) => {
+                        let kind = bun_sys::kind_from_mode(entry.filetype() as bun_sys::Mode);
                         if (self.filter & (1u16 << (kind as u8))) != 0 {
                             continue;
                         }
-                        IteratorResult::init_res(Some(NextEntry { entry, kind }))
+                        IteratorResult::init_res(Some(NextEntry {
+                            entry: entry.as_mut_ptr(),
+                            kind,
+                        }))
                     }
-                    _ => IteratorResult::init_err(self.archive, b"failed to read archive header"),
+                    Err(_) => {
+                        IteratorResult::init_err(self.archive, b"failed to read archive header")
+                    }
                 };
             }
         }

@@ -1,21 +1,26 @@
 import type { S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
-import { describe, expect, it } from "bun:test";
-import child_process from "child_process";
+import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
-import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
+import { spawnServer } from "s3-server";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
-// Import docker-compose helper
-import * as dockerCompose from "../../../docker/index.ts";
-
-const dockerCLI = dockerExe() as string;
 type S3Credentials = S3Options & {
   service: string;
 };
-let minioCredentials: S3Credentials | undefined;
+
+// The S3 server of test/packages/s3-server, in a process of its own. It needs
+// no container, so these tests run on each platform.
+const localServer = await spawnServer({ bunExe: bunExe(), env: bunEnv, buckets: ["buntest"] });
+afterAll(() => localServer.stop());
+const localCredentials: S3Credentials = {
+  ...localServer.clientOptions("buntest"),
+  service: "s3-server" as string,
+};
+
 const allCredentials: S3Credentials[] = [
   {
     accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
@@ -24,36 +29,8 @@ const allCredentials: S3Credentials[] = [
     bucket: getSecret("S3_R2_BUCKET"),
     service: "R2" as string,
   },
+  localCredentials,
 ];
-
-if (isDockerEnabled()) {
-  // Use docker-compose to start MinIO
-  const minioInfo = await dockerCompose.ensure("minio");
-
-  // Get container name for docker exec
-  const containerName = child_process
-    .execSync(
-      `docker ps --filter "ancestor=quay.io/minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
-      { encoding: "utf-8" },
-    )
-    .trim();
-
-  if (containerName) {
-    // Create a bucket using mc inside the container
-    child_process.spawnSync(dockerCLI, [`exec`, containerName, `mc`, `mb`, `data/buntest`], {
-      stdio: "ignore",
-    });
-  }
-
-  minioCredentials = {
-    endpoint: `http://${minioInfo.host}:${minioInfo.ports[9000]}`, // MinIO endpoint from docker-compose
-    accessKeyId: "minioadmin",
-    secretAccessKey: "minioadmin",
-    bucket: "buntest",
-    service: "MinIO" as string,
-  };
-  allCredentials.push(minioCredentials);
-}
 const r2Credentials = allCredentials[0];
 describe.concurrent.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Style", () => {
   if (!r2Credentials.endpoint) {
@@ -533,7 +510,7 @@ for (let credentials of allCredentials) {
                   // the larger payload causes OOM in CI.
                   for (let payload of [bigishPayload]) {
                     // lets skip tests with more than 10 parts on cloud providers
-                    it.skipIf(credentials.service !== "MinIO")(
+                    it.skipIf(credentials.service !== "s3-server")(
                       `should be able to upload large files using writer() in multiple parts with partSize=${partSize} queueSize=${queueSize} payloadQuantity=${payloadQuantity} payloadSize=${payload.length * payloadQuantity}`,
                       async () => {
                         {
@@ -1456,8 +1433,8 @@ for (let credentials of allCredentials) {
     });
   });
 }
-describe.skipIf(!minioCredentials)("minio", () => {
-  const testDir = tempDirWithFiles("minio-credential-test", {
+describe("s3-server", () => {
+  const testDir = tempDirWithFiles("s3-credential-test", {
     "index.mjs": `
       import { s3, randomUUIDv7 } from "bun";
       import { expect } from "bun:test";
@@ -1481,10 +1458,10 @@ describe.skipIf(!minioCredentials)("minio", () => {
           env: {
             ...bunEnv,
             // @ts-ignore
-            [endpoint]: minioCredentials!.endpoint as string,
-            "S3_BUCKET": minioCredentials!.bucket as string,
-            "S3_ACCESS_KEY_ID": minioCredentials!.accessKeyId as string,
-            "S3_SECRET_ACCESS_KEY": minioCredentials!.secretAccessKey as string,
+            [endpoint]: localCredentials.endpoint as string,
+            "S3_BUCKET": localCredentials.bucket as string,
+            "S3_ACCESS_KEY_ID": localCredentials.accessKeyId as string,
+            "S3_SECRET_ACCESS_KEY": localCredentials.secretAccessKey as string,
           },
           stdout: "pipe",
           stderr: "pipe",
@@ -1509,7 +1486,7 @@ describe.skipIf(!minioCredentials)("minio", () => {
         }
         it(`should work with ${start}${bucket}${end}`, async () => {
           const s3 = S3({
-            ...minioCredentials,
+            ...localCredentials,
             bucket,
           });
           const file = s3.file(`${bucketPrefixI++} test.txt`);
@@ -1590,8 +1567,8 @@ describe.concurrent("s3 missing credentials", () => {
 });
 
 // Archive + S3 integration tests
-describe.skipIf(!minioCredentials)("Archive with S3", () => {
-  const credentials = minioCredentials!;
+describe("Archive with S3", () => {
+  const credentials = localCredentials;
 
   it("writes archive to S3 via S3Client.write()", async () => {
     const client = new Bun.S3Client(credentials);

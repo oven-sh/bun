@@ -1207,7 +1207,6 @@ export async function describeWithContainer(
     "mysql:9": 3306, // Map mysql:9 to mysql_native_password
     "redis_plain": 6379,
     "redis_unified": 6379,
-    "minio": 9000,
     "autobahn": 9002,
   };
 

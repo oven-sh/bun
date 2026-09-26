@@ -1170,8 +1170,6 @@ describe.concurrent("bun run", () => {
       .filter(p => p && !existsSync(join(p, "node.exe")) && !existsSync(join(p, "node.cmd")))
       .join(";");
 
-    // Sequential on purpose: debug builds recreate the shared shim dir on
-    // every start, so two of them side by side can race each other.
     for (const flag of [[], ["--bun"]]) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...flag, "run", "v"],

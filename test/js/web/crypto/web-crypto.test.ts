@@ -1289,6 +1289,57 @@ it("RSA importKey with an unsupported usage names the algorithm", async () => {
   });
 });
 
+// https://w3c.github.io/webcrypto/#concept-parse-a-spki and #concept-parse-a-privateKeyInfo
+// parse with exactData set: bytes left after the DER structure are a DataError.
+// The EC, OKP and ML-DSA/ML-KEM importers already reject them; the RSA importer
+// took whatever prefix d2i_PUBKEY / d2i_PKCS8_PRIV_KEY_INFO consumed.
+it("RSA spki/pkcs8 import rejects trailing bytes after the DER structure", async () => {
+  const { publicKey, privateKey } = await crypto.subtle.generateKey(
+    { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["encrypt", "decrypt"],
+  );
+  const spki = new Uint8Array(await crypto.subtle.exportKey("spki", publicKey));
+  const pkcs8 = new Uint8Array(await crypto.subtle.exportKey("pkcs8", privateKey));
+
+  const withTail = (der: Uint8Array, tail: ArrayLike<number>) => {
+    const out = new Uint8Array(der.length + tail.length);
+    out.set(der);
+    out.set(tail, der.length);
+    return out;
+  };
+  const tails = (der: Uint8Array) => [withTail(der, [0]), withTail(der, [0x30, 0]), withTail(der, der)];
+  const outcome = (p: Promise<unknown>) =>
+    p.then(
+      () => "imported",
+      e => `${e.name}: ${e.message}`,
+    );
+  const importAs = (name: string, format: "spki" | "pkcs8", data: Uint8Array) =>
+    outcome(
+      crypto.subtle.importKey(format, data, { name, hash: "SHA-256" }, true, [
+        name === "RSA-OAEP" ? (format === "spki" ? "encrypt" : "decrypt") : format === "spki" ? "verify" : "sign",
+      ]),
+    );
+
+  const results: Record<string, unknown> = {};
+  for (const name of ["RSA-OAEP", "RSA-PSS", "RSASSA-PKCS1-v1_5"]) {
+    results[name] = {
+      spki: await importAs(name, "spki", spki),
+      pkcs8: await importAs(name, "pkcs8", pkcs8),
+      spkiWithTail: await Promise.all(tails(spki).map(data => importAs(name, "spki", data))),
+      pkcs8WithTail: await Promise.all(tails(pkcs8).map(data => importAs(name, "pkcs8", data))),
+    };
+  }
+  const rejected = "DataError: Invalid keyData";
+  const expected = {
+    spki: "imported",
+    pkcs8: "imported",
+    spkiWithTail: [rejected, rejected, rejected],
+    pkcs8WithTail: [rejected, rejected, rejected],
+  };
+  expect(results).toEqual({ "RSA-OAEP": expected, "RSA-PSS": expected, "RSASSA-PKCS1-v1_5": expected });
+});
+
 // CryptoKey.usages and the JWK key_ops it is built from are ordered by the
 // KeyUsage enum in https://w3c.github.io/webcrypto/#dfn-KeyUsage, not
 // alphabetically, and not by the order the caller passed them in.

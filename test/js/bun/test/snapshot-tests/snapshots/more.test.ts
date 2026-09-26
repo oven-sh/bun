@@ -20,6 +20,10 @@ describe("d0", () => {
     apshot`).toMatchSnapshot();
     expect(new String()).toMatchSnapshot();
     expect(new String("")).toMatchSnapshot();
+    expect(new String("日本")).toMatchSnapshot("String with 16-bit storage");
+    expect(new String(new TextDecoder("utf-16le").decode(new Uint16Array([0x61, 0x62])))).toMatchSnapshot(
+      "String with ASCII text in 16-bit storage",
+    );
 
     expect({ a: { b: 1 } }).toEqual({ a: { b: 1 } });
     expect("\\\nexport with test name\n\n").toMatchSnapshot();

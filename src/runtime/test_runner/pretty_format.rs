@@ -1117,8 +1117,13 @@ impl<'a> Formatter<'a> {
                         self.reset_line();
                         self.write_indent(writer.ctx).expect("unreachable");
                         let length = str.len;
-                        for (i, c) in str.slice().iter().enumerate() {
-                            writer.print(format_args!("\"{}\": \"{}\",\n", i, *c as char));
+                        for i in 0..length {
+                            let unit = [str.char_at(i)];
+                            writer.print(format_args!(
+                                "\"{}\": \"{}\",\n",
+                                i,
+                                bun_fmt::utf16(&unit)
+                            ));
                             if i != length - 1 {
                                 self.write_indent(writer.ctx).expect("unreachable");
                             }

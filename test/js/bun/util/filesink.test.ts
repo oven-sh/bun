@@ -85,16 +85,13 @@ describe("FileSink", () => {
         it(`${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
           {
-            using _ = fileDescriptorLeakChecker();
+            await using _ = fileDescriptorLeakChecker();
 
             const sink = Bun.file(path).writer();
             for (let i = 0; i < input.length; i++) {
               sink.write(input[i]);
             }
             await sink.end();
-
-            // For the file descriptor leak checker.
-            await Bun.sleep(10);
           }
 
           if (!isPipe) {
@@ -114,16 +111,13 @@ describe("FileSink", () => {
           const path = getPathOrFd();
 
           {
-            using _ = fileDescriptorLeakChecker();
+            await using _ = fileDescriptorLeakChecker();
             const sink = Bun.file(path).writer();
             for (let i = 0; i < input.length; i++) {
               sink.write(input[i]);
               await sink.flush();
             }
             await sink.end();
-
-            // For the file descriptor leak checker.
-            await Bun.sleep(10);
           }
 
           if (!isPipe) {
@@ -141,14 +135,13 @@ describe("FileSink", () => {
         it(`highWaterMark -> ${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
           {
-            using _ = fileDescriptorLeakChecker();
+            await using _ = fileDescriptorLeakChecker();
             const sink = Bun.file(path).writer({ highWaterMark: 1 });
             for (let i = 0; i < input.length; i++) {
               sink.write(input[i]);
               await sink.flush();
             }
             await sink.end();
-            await Bun.sleep(10); // For the file descriptor leak checker.
           }
 
           if (!isPipe) {
@@ -172,7 +165,7 @@ import path from "node:path";
 import util from "node:util";
 
 it("end doesn't close when backed by a file descriptor", async () => {
-  using _ = fileDescriptorLeakChecker();
+  await using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();
   const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
   const chunk = Buffer.from("1 Hello, world!");
@@ -185,17 +178,16 @@ it("end doesn't close when backed by a file descriptor", async () => {
 });
 
 it("end does close when not backed by a file descriptor", async () => {
-  using _ = fileDescriptorLeakChecker();
+  await using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();
   const file = Bun.file(path.join(x, "test.txt"));
   const writer = file.writer();
   await writer.write(Buffer.from("1 Hello, world!"));
   await writer.end();
-  await Bun.sleep(10); // For the file descriptor leak checker.
 });
 
 it("write result is not cumulative", async () => {
-  using _ = fileDescriptorLeakChecker();
+  await using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();
   const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
   const file = Bun.file(fd);
@@ -1151,21 +1143,27 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
 // spot, because the reader has hung up, used to return a second, already rejected promise: a script awaiting the
 // first one caught the error and still died of an unhandled rejection.
 //
-// The child blocks in a synchronous read of stdin between its two writes, so no event-loop turn can tell the sink
-// about the hang-up first: the second write() is the one that finds out, with the first still pending.
+// The child owns both ends of the socket. Nothing reads it, so the first write() always backs up, and the child
+// closes the read end itself between its two writes: no event-loop turn can tell the sink about the hang-up first,
+// and the second write() is the one that finds out, with the first still pending. A reader in another process
+// cannot give that order: it can hang up while the first write() is still sending, and that write() then fails on
+// the spot with nothing left pending.
 it.skipIf(isWindows)("a write() that fails while another is pending rejects the pending promise once", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-const fs = require("node:fs");
+import { createSocketPair } from "bun:internal-for-testing";
+import fs from "node:fs";
 process.on("unhandledRejection", e => {
   console.error("unhandledRejection " + e?.code);
 });
-const sink = Bun.stdout.writer();
+const [readFd, writeFd] = createSocketPair();
+const sink = Bun.file(writeFd).writer();
 const first = sink.write(Buffer.alloc(8 * 1024 * 1024, "x").toString());
-fs.readSync(0, Buffer.alloc(1));
+console.error("first write: " + (first instanceof Promise ? Bun.peek.status(first) : first));
+fs.closeSync(readFd);
 const second = sink.write("tail");
 try {
   await first;
@@ -1176,20 +1174,11 @@ try {
 `,
     ],
     env: bunEnv,
-    stdin: "pipe",
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
 
-  // Take one chunk, close the read end while most of the first write is still pending, and only then let the
-  // child make its second write.
-  const reader = proc.stdout.getReader();
-  await reader.read();
-  await reader.cancel();
-  proc.stdin.write("x");
-  await proc.stdin.end();
-
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("caught EPIPE, same promise: true\n");
+  expect(stderr).toBe("first write: pending\ncaught EPIPE, same promise: true\n");
   expect(exitCode).toBe(0);
 });

@@ -1774,11 +1774,23 @@ export function forceGuardMalloc(env) {
   }
 }
 
+/**
+ * Throws at the end of the scope if a file descriptor opened inside it is still open.
+ *
+ * `await using` only. Bun's sinks and stream readers close their file descriptor on another thread, after `end()`
+ * or the last read has settled, so the check waits up to two seconds for that close. A check at once would race
+ * with it: there is no `Symbol.dispose`, and a plain `using` throws.
+ */
 export function fileDescriptorLeakChecker() {
   const initial = getMaxFD();
   return {
-    [Symbol.dispose]() {
-      const current = getMaxFD();
+    async [Symbol.asyncDispose]() {
+      const deadline = Date.now() + 2000;
+      let current = getMaxFD();
+      while (current > initial && Date.now() < deadline) {
+        await Bun.sleep(1);
+        current = getMaxFD();
+      }
       if (current > initial) {
         throw new Error(`File descriptor leak detected: ${current} (current) > ${initial} (initial)`);
       }

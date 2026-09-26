@@ -466,6 +466,61 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
+// A relative output path that starts with `..` gets its missing directories
+// created next to the cwd. On Windows, the recursive mkdir used to hand
+// NtCreateFile the leading `..` as a literal name and fail with ENOENT.
+describe.concurrent("output directory that starts with ..", () => {
+  function fixture() {
+    return tempDir("build-dotdot-outdir", {
+      "src/dep.ts": `export const dep: number = 42;\n`,
+      "src/entry.ts": `import { dep } from "./dep";\nconsole.log("dep is", dep);\n`,
+      "work/.gitkeep": "",
+    });
+  }
+
+  test.each([
+    { args: ["--outdir", "../out"], output: "out/entry.js" },
+    { args: ["--outdir", path.join("..", "out", "deep", "er")], output: "out/deep/er/entry.js" },
+    { args: ["--outfile", "../out/nested/app.js"], output: "out/nested/app.js" },
+    { args: ["--no-bundle", "--outdir", "../out"], output: "out/entry.js" },
+  ])("bun build $args", async ({ args, output }) => {
+    using dir = fixture();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", path.join("..", "src", "entry.ts"), ...args],
+      env: bunEnv,
+      cwd: path.join(String(dir), "work"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(await Bun.file(path.join(String(dir), output)).text()).toContain("dep is");
+    expect(fs.readdirSync(path.join(String(dir), "work"))).toEqual([".gitkeep"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.build({ outdir })", async () => {
+    using dir = fixture();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const result = await Bun.build({ entrypoints: ["../src/entry.ts"], outdir: "../out/api" });
+         console.log(JSON.stringify({ success: result.success, outputs: result.outputs.length }));`,
+      ],
+      env: bunEnv,
+      cwd: path.join(String(dir), "work"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ success: true, outputs: 1 });
+    expect(await Bun.file(path.join(String(dir), "out", "api", "entry.js")).text()).toContain("dep is");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/9859
 describe.concurrent("--no-bundle with --outdir", () => {
   test("writes a single entry point", async () => {

@@ -327,18 +327,11 @@ impl<'a> ImportScanner<'a> {
                             // member, while generated symbols (e.g. JSX runtime imports)
                             // link the other way.
                             let symbol = &p.symbols[name_ref.inner_index() as usize];
-                            let mut link = symbol.link.get();
-                            if !link.is_valid() {
+                            if !symbol.has_link() {
                                 continue;
                             }
                             // Follow the chain of replacements to the live symbol.
-                            loop {
-                                let next = p.symbols[link.inner_index() as usize].link.get();
-                                if !next.is_valid() {
-                                    break;
-                                }
-                                link = next;
-                            }
+                            let link = js_ast::symbol::follow_symbols(&p.symbols, name_ref);
                             // SAFETY: arena-owned slice valid for 'p.
                             let name = symbol.original_name.slice();
                             let member = p

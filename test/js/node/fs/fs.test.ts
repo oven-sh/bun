@@ -5996,6 +5996,52 @@ it("open mode verification", async () => {
   );
 });
 
+// The received value of an ERR_OUT_OF_RANGE message is rendered the way JS
+// renders a number (1e+21, -0), not the way Rust renders an f64
+// (1000000000000000000000, 0). The range keeps Node's validator wording (&&).
+it("integer validators render the received value like JS", () => {
+  using dir = tempDir("fs-validators-out-of-range", { "file.txt": "x" });
+  const file = join(String(dir), "file.txt");
+  const fd = fs.openSync(file, "r+");
+  try {
+    // validateInteger with caller bounds
+    expect(() => fs.ftruncateSync(fd, 1e21)).toThrow(
+      RangeError(
+        `The value of "len" is out of range. It must be >= -2251799813685248 && <= 4503599627370495. Received 1e+21`,
+      ),
+    );
+    expect(() => fs.fchownSync(fd, 1e21, 0)).toThrow(
+      RangeError(`The value of "uid" is out of range. It must be >= -1 && <= 4294967295. Received 1e+21`),
+    );
+    // validateInteger with the default safe-integer bounds
+    expect(() => fs.truncateSync(file, -1e21)).toThrow(
+      RangeError(
+        `The value of "len" is out of range. It must be >= -9007199254740991 && <= 9007199254740991. Received -1e+21`,
+      ),
+    );
+    expect(() => fs.truncateSync(file, 2 ** 53)).toThrow(
+      RangeError(
+        `The value of "len" is out of range. It must be >= -9007199254740991 && <= 9007199254740991. Received 9007199254740992`,
+      ),
+    );
+    // validateUint32 (mode) and validateInt32 (flags)
+    expect(() => fs.fchmodSync(fd, 1e21)).toThrow(
+      RangeError(`The value of "mode" is out of range. It must be >= 0 && <= 4294967295. Received 1e+21`),
+    );
+    expect(() => fs.fchmodSync(fd, -1)).toThrow(
+      RangeError(`The value of "mode" is out of range. It must be >= 0 && <= 4294967295. Received -1`),
+    );
+    expect(() => fs.openSync(file, 1e21)).toThrow(
+      RangeError(`The value of "flags" is out of range. It must be >= -2147483648 && <= 2147483647. Received 1e+21`),
+    );
+    expect(() => fs.openSync(file, -Infinity)).toThrow(
+      RangeError(`The value of "flags" is out of range. It must be an integer. Received -Infinity`),
+    );
+  } finally {
+    fs.closeSync(fd);
+  }
+});
+
 it("fs.mkdirSync recursive should not error when the directory already exists, but should error when its a file", () => {
   expect(() => mkdirSync(import.meta.dir, { recursive: true })).not.toThrowError();
   expect(() => mkdirSync(import.meta.path, { recursive: true })).toThrowError();

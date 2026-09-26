@@ -1009,3 +1009,22 @@ When composing classes from separate files, make sure they do not contain the sa
 The CSS module spec says that composing classes from separate files with conflicting properties is undefined behavior: the output may differ and be unreliable.
 
 </Warning>
+
+### View transitions
+
+In a CSS module, Bun also scopes the names and classes of [view transitions](https://developer.mozilla.org/en-US/docs/Web/API/View_Transition_API): the values of `view-transition-name` and `view-transition-class`, and the argument of `::view-transition-group()`, `::view-transition-group-children()`, `::view-transition-image-pair()`, `::view-transition-old()`, and `::view-transition-new()`.
+
+A class in one of these pseudo-elements is part of the imported object, like a class in a regular selector:
+
+```css title="styles.module.css" icon="file-code"
+::view-transition-group(.slide) {
+  animation-duration: 300ms;
+}
+```
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import styles from "./styles.module.css";
+
+// the scoped name, for example "slide_123"
+element.style.viewTransitionClass = styles.slide;
+```

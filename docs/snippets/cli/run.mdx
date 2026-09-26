@@ -85,6 +85,30 @@ bun run <file or script>
   Throw deprecation warnings as errors
 </ParamField>
 
+<ParamField path="--trace-deprecation" type="boolean">
+  Show stack traces on deprecations
+</ParamField>
+
+<ParamField path="--pending-deprecation" type="boolean">
+  Emit pending deprecation warnings
+</ParamField>
+
+<ParamField path="--no-warnings" type="boolean">
+  Silence all process warnings
+</ParamField>
+
+<ParamField path="--disable-warning" type="string">
+  Silence specific process warnings by code or type
+</ParamField>
+
+<ParamField path="--trace-warnings" type="boolean">
+  Show stack traces on process warnings
+</ParamField>
+
+<ParamField path="--redirect-warnings" type="string">
+  Write process warnings to the given file instead of printing to stderr
+</ParamField>
+
 <ParamField path="--title" type="string">
   Set the process title
 </ParamField>
@@ -109,6 +133,24 @@ bun run <file or script>
 
 <ParamField path="--console-depth" type="number" default="2">
   Set the default depth for <code>console.log</code> object inspection (default: 2)
+</ParamField>
+
+<ParamField path="--no-orphans" type="boolean">
+  Exit when the parent process dies, and on exit kill every descendant process
+</ParamField>
+
+<ParamField path="--experimental-stream-iter" type="boolean">
+  Enable the experimental stream/iter API (<code>node:stream/iter</code>, <code>node:zlib/iter</code>)
+</ParamField>
+
+<ParamField path="--cron-title" type="string">
+  Title for cron execution mode. Requires <code>--cron-period</code>. With both flags, Bun imports the script and calls
+  the <code>scheduled()</code> handler of its default export. The jobs that <code>Bun.cron()</code> registers with the
+  operating system use these flags
+</ParamField>
+
+<ParamField path="--cron-period" type="string">
+  Cron period for cron execution mode. Requires <code>--cron-title</code>
 </ParamField>
 
 ### Development Workflow
@@ -141,6 +183,50 @@ bun run <file or script>
 
 <ParamField path="--inspect-brk" type="string">
   Activate Bun's debugger, set breakpoint on first line of code and wait
+</ParamField>
+
+### Profiling
+
+<ParamField path="--cpu-prof" type="boolean">
+  Start the CPU profiler and write a <code>.cpuprofile</code> file to disk on exit
+</ParamField>
+
+<ParamField path="--cpu-prof-md" type="boolean">
+  Write the CPU profile in markdown format (grep-friendly, designed for LLM analysis). Combine it with{" "}
+  <code>--cpu-prof</code> to write both formats
+</ParamField>
+
+<ParamField path="--cpu-prof-name" type="string">
+  Specify the name of the CPU profile file
+</ParamField>
+
+<ParamField path="--cpu-prof-dir" type="string">
+  Specify the directory where the CPU profile will be saved
+</ParamField>
+
+<ParamField path="--cpu-prof-interval" type="number" default="1000">
+  Specify the sampling interval in microseconds for CPU profiling
+</ParamField>
+
+<ParamField path="--heap-prof" type="boolean">
+  Write a heap profile to disk on exit (<code>.heapprofile</code>)
+</ParamField>
+
+<ParamField path="--heap-prof-md" type="boolean">
+  Write a markdown heap profile on exit (for CLI analysis). If you also pass <code>--heap-prof</code>, Bun uses the
+  markdown format
+</ParamField>
+
+<ParamField path="--heap-prof-name" type="string">
+  Specify the name of the heap profile file
+</ParamField>
+
+<ParamField path="--heap-prof-dir" type="string">
+  Specify the directory where the heap profile will be saved
+</ParamField>
+
+<ParamField path="--heap-prof-interval" type="number" default="524288">
+  Accepted for Node.js compatibility. Bun takes the heap snapshot once at exit, so the interval has no effect
 </ParamField>
 
 ### Dependency &amp; Module Resolution
@@ -213,6 +299,10 @@ bun run <file or script>
   Remove function calls, e.g. <code>--drop=console</code> removes all <code>console.*</code> calls
 </ParamField>
 
+<ParamField path="--feature" type="string">
+  Enable a feature flag for dead-code elimination, e.g. <code>--feature=SUPER_SECRET</code>
+</ParamField>
+
 <ParamField path="--loader" type="string">
   Parse files with <code>.ext:loader</code>, e.g. <code>--loader .js:jsx</code>. Valid loaders: <code>js</code>,{" "}
   <code>jsx</code>, <code>ts</code>, <code>tsx</code>, <code>json</code>, <code>toml</code>, <code>text</code>,{" "}
@@ -278,6 +368,44 @@ bun run <file or script>
   Use bundled CA store
 </ParamField>
 
+<ParamField path="--tls-min-v1.0" type="boolean">
+  Set the default TLS minimum to TLSv1.0
+</ParamField>
+
+<ParamField path="--tls-min-v1.1" type="boolean">
+  Set the default TLS minimum to TLSv1.1
+</ParamField>
+
+<ParamField path="--tls-min-v1.2" type="boolean">
+  Set the default TLS minimum to TLSv1.2
+</ParamField>
+
+<ParamField path="--tls-min-v1.3" type="boolean">
+  Set the default TLS minimum to TLSv1.3
+</ParamField>
+
+<ParamField path="--tls-max-v1.2" type="boolean">
+  Set the default TLS maximum to TLSv1.2
+</ParamField>
+
+<ParamField path="--tls-max-v1.3" type="boolean">
+  Set the default TLS maximum to TLSv1.3
+</ParamField>
+
+<ParamField path="--insecure-http-parser" type="boolean">
+  Use an insecure HTTP parser that accepts invalid HTTP headers
+</ParamField>
+
+<ParamField path="--experimental-http2-fetch" type="boolean">
+  Offer <code>h2</code> in the TLS ALPN of <code>fetch()</code>. Same as{" "}
+  <code>BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1</code>
+</ParamField>
+
+<ParamField path="--experimental-http3-fetch" type="boolean">
+  Honor <code>Alt-Svc: h3</code> in <code>fetch()</code> and upgrade to HTTP/3. Same as{" "}
+  <code>BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT=1</code>
+</ParamField>
+
 <ParamField path="--redis-preconnect" type="boolean">
   Preconnect to <code>$REDIS_URL</code> at startup
 </ParamField>
@@ -294,6 +422,10 @@ bun run <file or script>
 
 <ParamField path="--env-file" type="string">
   Load environment variables from the specified file(s)
+</ParamField>
+
+<ParamField path="--no-env-file" type="boolean">
+  Disable automatic loading of <code>.env</code> files
 </ParamField>
 
 <ParamField path="--cwd" type="string">

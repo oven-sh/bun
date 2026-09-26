@@ -257,10 +257,12 @@ const isErrno = (name: string) => {
   const item = pick(mac.aarch64, name, "other");
   return /^E[A-Z0-9]+$/.test(name) && name !== "ELAST" && item?.kind === "constant" && item.type?.kind === "named" && item.type.name === "c_int" && Number(item.number) > 0 && Number(item.number) <= 106;
 };
+// The table is asked first: the libc crate has ENOATTR for Linux too, as a second name of ENODATA that
+// the headers of Linux do not have, and the name of 61 on the way back is ENODATA.
 const imageErrno = (name: string): { value: string; from: string } => {
-  const same = pick(image.x86_64, name, "other");
-  if (same?.number !== undefined) return { value: `::libc::${name}`, from: "the same name" };
   const other = onlyMacos[name];
+  const same = pick(image.x86_64, name, "other");
+  if (!other && same?.number !== undefined) return { value: `::libc::${name}`, from: "the same name" };
   if (!other) throw new Error(`darwin-errno.json has no number of the image for ${name}`);
   return /^\d+$/.test(other) ? { value: other, from: "a number that bun has and Linux has not" } : { value: `::libc::${other}`, from: `no such name in the image: ${other}` };
 };

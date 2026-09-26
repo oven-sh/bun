@@ -1,6 +1,6 @@
 {
  "about": "Inventory of bun's code for macOS for the portable image. Written by misctools/portable/inventory/macos.ts; see the head of that file for what the kinds mean.",
- "tree": "c1be38b82ac57ee125c9496ebea1474e3303a97c",
+ "tree": "112df562bf54ae3b324828ea20f0bc9a6cfb4766",
  "libc_crate": "0.2.186",
  "libc_of_the_image": "musl 1.2.5 with misctools/portable/libc/patch_musl.py",
  "host": "misctools/portable/host/host_posix.c",
@@ -57,9 +57,9 @@
   }
  ],
  "counts": {
-  "places_for_macos_only": 232,
+  "places_for_macos_only": 233,
   "of_them_with_a_function_of_the_system": 52,
-  "of_them_compiled_into_the_image": 45,
+  "of_them_compiled_into_the_image": 46,
   "places_for_linux_only": 241,
   "functions_of_shared_source": 140,
   "of_them_not_answered_by_the_host": 6,
@@ -4383,8 +4383,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/host_dispatch.rs",
-    "line": 94,
-    "end_line": 95,
+    "line": 95,
+    "end_line": 96,
     "item": "expression",
     "cfg": "not(any(target_os = \"linux\", target_os = \"android\"))",
     "effective": "all(not(bun_portable), not(any(target_os = \"linux\", target_os = \"android\")))",
@@ -4406,8 +4406,31 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/host_dispatch.rs",
-    "line": 98,
-    "end_line": 99,
+    "line": 99,
+    "end_line": 100,
+    "item": "expression",
+    "cfg": "all(unix, not(any(target_os = \"linux\", target_os = \"android\")))",
+    "effective": "all(not(bun_portable), all(unix, not(any(target_os = \"linux\", target_os = \"android\"))))",
+    "active": {
+     "linux": false,
+     "macos": true,
+     "windows": false,
+     "image": false
+    },
+    "same_source_serves_linux": false,
+    "side": "macos",
+    "kind": "K2",
+    "in_image": "not in the image",
+    "functions": [],
+    "types": [],
+    "constants": [],
+    "note": "no function of the system: data or logic"
+   },
+   {
+    "crate": "bun_core",
+    "file": "src/bun_core/host_dispatch.rs",
+    "line": 103,
+    "end_line": 104,
     "item": "expression",
     "cfg": "target_os = \"macos\"",
     "effective": "all(not(bun_portable), target_os = \"macos\")",
@@ -4429,8 +4452,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/host_dispatch.rs",
-    "line": 114,
-    "end_line": 115,
+    "line": 119,
+    "end_line": 120,
     "item": "expression",
     "cfg": "any(target_os = \"macos\", target_os = \"freebsd\")",
     "effective": "all(not(bun_portable), any(target_os = \"macos\", target_os = \"freebsd\"))",
@@ -4452,8 +4475,8 @@
    {
     "crate": "bun_core",
     "file": "src/bun_core/host_dispatch.rs",
-    "line": 335,
-    "end_line": 336,
+    "line": 343,
+    "end_line": 344,
     "item": "statement",
     "cfg": "target_os = \"macos\"",
     "effective": "all(not(bun_portable), target_os = \"macos\")",
@@ -4595,12 +4618,12 @@
      "linux": false,
      "macos": true,
      "windows": false,
-     "image": false
+     "image": true
     },
     "same_source_serves_linux": false,
     "side": "macos",
     "kind": "K2",
-    "in_image": "not in the image",
+    "in_image": "compiled into the image",
     "functions": [
      {
       "name": "fstatat",
@@ -12765,8 +12788,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/host_dispatch.rs",
-   "line": 90,
-   "end_line": 91,
+   "line": 91,
+   "end_line": 92,
    "item": "expression",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(not(bun_portable), any(target_os = \"linux\", target_os = \"android\"))",
@@ -12787,8 +12810,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/host_dispatch.rs",
-   "line": 102,
-   "end_line": 103,
+   "line": 107,
+   "end_line": 108,
    "item": "expression",
    "cfg": "not(target_os = \"macos\")",
    "effective": "all(not(bun_portable), not(target_os = \"macos\"))",
@@ -12809,8 +12832,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/host_dispatch.rs",
-   "line": 118,
-   "end_line": 119,
+   "line": 123,
+   "end_line": 124,
    "item": "expression",
    "cfg": "not(any(target_os = \"macos\", target_os = \"freebsd\"))",
    "effective": "all(not(bun_portable), not(any(target_os = \"macos\", target_os = \"freebsd\")))",
@@ -12831,8 +12854,8 @@
   {
    "crate": "bun_core",
    "file": "src/bun_core/host_dispatch.rs",
-   "line": 333,
-   "end_line": 334,
+   "line": 341,
+   "end_line": 342,
    "item": "statement",
    "cfg": "any(target_os = \"linux\", target_os = \"android\")",
    "effective": "all(not(bun_portable), any(target_os = \"linux\", target_os = \"android\"))",

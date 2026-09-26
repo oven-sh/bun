@@ -45,6 +45,7 @@ pub fn no_definition_for_this_host(function: &'static str) -> ! {
 /// | `unix`                | `unix`                                                         |
 /// | `linux`               | `any(target_os = "linux", target_os = "android")`              |
 /// | `not_linux`           | `not(any(target_os = "linux", target_os = "android"))`         |
+/// | `unix_not_linux`      | `all(unix, not(any(target_os = "linux", target_os = "android")))` |
 /// | `macos`               | `target_os = "macos"`                                          |
 /// | `not_macos`           | `not(target_os = "macos")`                                     |
 /// | `freebsd`             | `target_os = "freebsd"`                                        |
@@ -53,12 +54,12 @@ pub fn no_definition_for_this_host(function: &'static str) -> ! {
 /// | `not_macos_not_freebsd` | `not(any(target_os = "macos", target_os = "freebsd"))`       |
 ///
 /// The portable image is compiled for Linux and has three hosts. On a Windows host it runs the arm
-/// `windows`. On a macOS host it runs the arm `macos`, or `not_linux` where bun has one piece of code
-/// for every system that is not Linux; in such an arm the name `libc` is `bun_darwin_sys::libc`, which
-/// has macOS as the `libc` crate has it in a build for macOS. On a Linux host, and on a macOS host if
-/// there is no arm for macOS, it runs the arm `linux`, `posix`, `unix` or `not_macos`. It has no use
-/// for `freebsd` and `not_macos_not_linux`. `macos_freebsd` is an arm for macOS, and
-/// `not_macos_not_freebsd` one for the rest.
+/// `windows`. On a macOS host it runs the arm `macos`, or `not_linux` or `unix_not_linux` where bun
+/// has one piece of code for every system that is not Linux; in such an arm the name `libc` is
+/// `bun_darwin_sys::libc`, which has macOS as the `libc` crate has it in a build for macOS. On a
+/// Linux host, and on a macOS host if there is no arm for macOS, it runs the arm `linux`, `posix`,
+/// `unix` or `not_macos`. It has no use for `freebsd` and `not_macos_not_linux`. `macos_freebsd` is
+/// an arm for macOS, and `not_macos_not_freebsd` one for the rest.
 ///
 /// An arm for targets that the image has nothing to do with is written with its `cfg`,
 /// `cfg(target_os = "netbsd") => { .. }`: a build for one OS has it under that `cfg`, the image has not.
@@ -92,6 +93,10 @@ macro_rules! __host_select_arm {
     };
     (not_linux [] $block:block) => {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        $block
+    };
+    (unix_not_linux [] $block:block) => {
+        #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
         $block
     };
     (macos [] $block:block) => {
@@ -148,6 +153,9 @@ macro_rules! __host_select_portable {
         $crate::__host_select_portable!([$($windows)?] [$block] [$($other)?] $($rest)*)
     };
     ([$($windows:block)?] [] [$($other:block)?] not_linux => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$($windows)?] [$block] [$($other)?] $($rest)*)
+    };
+    ([$($windows:block)?] [] [$($other:block)?] unix_not_linux => $block:block $($rest:tt)*) => {
         $crate::__host_select_portable!([$($windows)?] [$block] [$($other)?] $($rest)*)
     };
     ([$($windows:block)?] [] [$($other:block)?] macos_freebsd => $block:block $($rest:tt)*) => {

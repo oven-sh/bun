@@ -307,6 +307,7 @@ const arms: Record<string, { cfg: string; inImage: NonNullable<Site["inImage"]> 
   unix: { cfg: "unix", inImage: "others" },
   linux: { cfg: 'any(target_os = "linux", target_os = "android")', inImage: "others" },
   not_linux: { cfg: 'not(any(target_os = "linux", target_os = "android"))', inImage: "macos" },
+  unix_not_linux: { cfg: 'all(unix, not(any(target_os = "linux", target_os = "android")))', inImage: "macos" },
   macos: { cfg: 'target_os = "macos"', inImage: "macos" },
   not_macos: { cfg: 'not(target_os = "macos")', inImage: "others" },
   freebsd: { cfg: 'target_os = "freebsd"', inImage: "no" },

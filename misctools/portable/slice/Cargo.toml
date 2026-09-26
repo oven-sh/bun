@@ -24,6 +24,7 @@ bun_windows_sys = { path = "../../../src/windows_sys" }
 [target.'cfg(bun_portable)'.dependencies]
 bun_portable_macros = { path = "../../../src/portable_macros" }
 bun_darwin_sys = { path = "../../../src/darwin_sys" }
+libc = "0.2"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_portable)'] }

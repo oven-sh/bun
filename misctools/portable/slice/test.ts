@@ -18,6 +18,9 @@
 //                   the first function of macOS has to stop it with a message
 //   imports         the import tables have the functions that bun's file system code for Windows and
 //                   for macOS calls, and none of them resolves on Linux
+//   translation     what the image makes of the flags of open, of AT_FDCWD and of error numbers for
+//                   macOS, against the numbers of the headers of macOS (xnu: bsd/sys/fcntl.h, errno.h,
+//                   socket.h), which are written down here
 //   layout          the image prints the layout of the definitions of macOS, and the host that was
 //                   compiled without the requests of the file system is enough for that
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -126,6 +129,52 @@ check("imports", () => {
   return r.code === 1 && ofWindows?.total === ofWindows?.missing && ofWindows.total > 100 && ofMacos?.total === ofMacos?.missing && ofMacos.total > 50 && absent.length === 0 && variadic.length === 0
     ? undefined
     : `exit code ${r.code}, ${JSON.stringify(ofWindows)}, ${JSON.stringify(ofMacos)}, not in the table: ${JSON.stringify(absent)}, variadic: ${JSON.stringify(variadic)}`;
+});
+check("translation for macOS", () => {
+  const r = run([image, "--translate"]);
+  const lines = r.out.split("\n").filter(Boolean).map(line => JSON.parse(line));
+  const macos = (step: string, of: string) => lines.find(line => line.step === step && line.of === of)?.macos;
+  const image_ = (step: string, of: string) => lines.find(line => line.step === step && line.of === of)?.image;
+  // bsd/sys/fcntl.h of xnu.
+  const open: Record<string, number> = {
+    O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2, O_NONBLOCK: 0x4, O_APPEND: 0x8, O_SYNC: 0x80, O_NOFOLLOW: 0x100, O_CREAT: 0x200, O_TRUNC: 0x400, O_EXCL: 0x800,
+    O_NOCTTY: 0x20000, O_DIRECTORY: 0x100000, O_DSYNC: 0x400000, O_CLOEXEC: 0x1000000,
+    // Flags that macOS does not have.
+    O_PATH: 0, O_NOATIME: 0, O_DIRECT: 0, O_LARGEFILE: 0,
+    "O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC": 0x1000601,
+    "O_RDONLY | O_DIRECTORY | O_CLOEXEC": 0x1100000,
+    "O_RDWR | O_APPEND | O_NONBLOCK | O_EXCL | O_NOFOLLOW | O_SYNC": 0x2 | 0x8 | 0x4 | 0x800 | 0x100 | 0x80,
+    "O_PATH | O_DIRECTORY | O_CLOEXEC": 0x1100000,
+  };
+  const problems: string[] = [];
+  for (const [name, value] of Object.entries(open)) if (macos("flags of open", name) !== value) problems.push(`${name}: ${macos("flags of open", name)}, and macOS has ${value}`);
+  // The way back gives the flags of Linux: O_APPEND 0x400, O_NONBLOCK 0x800, O_CLOEXEC 0x80000.
+  for (const [name, value] of Object.entries({ "O_WRONLY | O_APPEND": 0x401, "O_RDWR | O_NONBLOCK": 0x802, "O_RDONLY | O_CLOEXEC": 0x80000 }))
+    if (image_("flags of open, from macOS", name) !== value) problems.push(`${name} of macOS: ${image_("flags of open, from macOS", name)}, and Linux has ${value}`);
+  const others: [string, string, number][] = [
+    ["flags of a function with a directory", "AT_SYMLINK_NOFOLLOW", 0x20], ["flags of a function with a directory", "AT_REMOVEDIR", 0x80],
+    ["flags of a function with a directory", "AT_SYMLINK_FOLLOW", 0x40], ["flags of faccessat", "AT_EACCESS", 0x10], ["flags of faccessat", "AT_EACCESS | AT_SYMLINK_NOFOLLOW", 0x30],
+    ["directory", "AT_FDCWD", -2], ["directory", "5", 5], ["directory", "0", 0],
+    ["flags of recv and send", "MSG_PEEK", 0x2], ["flags of recv and send", "MSG_DONTWAIT", 0x80], ["flags of recv and send", "MSG_WAITALL", 0x40], ["flags of recv and send", "MSG_NOSIGNAL", 0x80000],
+  ];
+  for (const [step, name, value] of others) if (macos(step, name) !== value) problems.push(`${name}: ${macos(step, name)}, and macOS has ${value}`);
+  // bsd/sys/errno.h of xnu and the numbers of Linux: (macOS, image).
+  const errors: [string, number, number][] = [
+    ["EPERM", 1, 1], ["ENOENT", 2, 2], ["EINTR", 4, 4], ["EBADF", 9, 9], ["EDEADLK", 11, 35], ["EACCES", 13, 13], ["EEXIST", 17, 17], ["EXDEV", 18, 18], ["ENOTDIR", 20, 20],
+    ["EISDIR", 21, 21], ["EINVAL", 22, 22], ["EMFILE", 24, 24], ["ENOSPC", 28, 28], ["EPIPE", 32, 32], ["EAGAIN", 35, 11], ["EINPROGRESS", 36, 115], ["ENOTSUP", 45, 95],
+    ["EADDRINUSE", 48, 98], ["ECONNRESET", 54, 104], ["ETIMEDOUT", 60, 110], ["ECONNREFUSED", 61, 111], ["ELOOP", 62, 40], ["ENAMETOOLONG", 63, 36], ["ENOTEMPTY", 66, 39],
+    ["ENOLCK", 77, 37], ["ENOSYS", 78, 38], ["EFTYPE", 79, 137], ["EOVERFLOW", 84, 75], ["ECANCELED", 89, 125], ["ENOATTR", 93, 61], ["ENODATA", 96, 61], ["EOPNOTSUPP", 102, 95],
+  ];
+  const toImage = new Map(lines.filter(line => line.step === "error of macOS").map(line => [line.macos, line.image]));
+  const toMacos = new Map(lines.filter(line => line.step === "error of the image").map(line => [line.image, line.macos]));
+  for (const [name, ofMacos, ofImage] of errors) {
+    if (toImage.get(ofMacos) !== ofImage) problems.push(`${name}: ${ofMacos} of macOS is ${toImage.get(ofMacos)} in the image, and Linux has ${ofImage}`);
+    // Two names of macOS for one error of the image: the way back gives the one that the image has too.
+    const back = name === "ENOATTR" ? 96 : name === "EOPNOTSUPP" ? 45 : ofMacos;
+    if (toMacos.get(ofImage) !== back) problems.push(`${name}: ${ofImage} of the image is ${toMacos.get(ofImage)} for macOS, expected ${back}`);
+  }
+  if (toImage.size !== 106) problems.push(`${toImage.size} error numbers of macOS`);
+  return r.code === 0 && !problems.length ? undefined : `exit code ${r.code}: ${problems.join("; ")}`;
 });
 check("layout of macOS, host without the requests of the file system", () => {
   const r = run([hostWithoutFiles, image, "--layout-darwin"]);

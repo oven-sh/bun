@@ -10,6 +10,8 @@
 //!   bun_fs_slice --layout-darwin the same for the definitions of macOS (bun_darwin_sys), one fact on
 //!                                each line, as misctools/portable/bindings/darwin_layout.c prints them
 //!                                from the headers of macOS
+//!   bun_fs_slice --translate     prints what the flags of `open`, `AT_FDCWD` and the error numbers of
+//!                                the image become where the image calls macOS, and the way back
 //!   bun_fs_slice --abi           calls the functions of the Linux test host that have the calling
 //!                                convention of Windows
 //!
@@ -42,6 +44,8 @@ mod layout_generated;
 #[cfg(any(target_os = "macos", bun_portable))]
 mod macos;
 mod posix;
+#[cfg(bun_portable)]
+mod translate;
 
 use json::Report;
 
@@ -597,7 +601,7 @@ unsafe extern "C" {
 
 fn usage() -> c_int {
     let _ = File::borrow(&Fd::stderr()).write_all(
-        b"usage: bun_fs_slice <directory> | --imports | --layout | --layout-darwin | --abi\n",
+        b"usage: bun_fs_slice <directory> | --imports | --layout | --layout-darwin | --translate | --abi\n",
     );
     2
 }
@@ -627,6 +631,8 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
         [b"--layout"] => layout::print(),
         #[cfg(bun_portable)]
         [b"--layout-darwin"] => layout::print_darwin(),
+        #[cfg(bun_portable)]
+        [b"--translate"] => translate::print(),
         #[cfg(bun_portable)]
         [b"--abi"] => abi::run(),
         [directory] if !directory.starts_with(b"--") => run_steps(directory),

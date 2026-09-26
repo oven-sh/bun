@@ -8,11 +8,15 @@
 
 use crate::generated::{constants as macos, constants_for_bun as image, flag_pairs};
 
+/// Reading, writing or both: the same three numbers on both systems. `O_ACCMODE` of the image's C
+/// library is not this mask: it has the bit of `O_PATH` in it, which is `O_SYMLINK` on macOS.
+const ACCESS: i32 = 3;
+
 /// The flags of `open` for macOS. A flag that macOS does not have is left out, as `O::PATH` is 0 in a
 /// build of bun for macOS.
 pub fn open_flags(of_image: i32) -> i32 {
-    let mut of_macos = of_image & image::O_ACCMODE;
-    let mut rest = of_image & !image::O_ACCMODE;
+    let mut of_macos = of_image & ACCESS;
+    let mut rest = of_image & !ACCESS;
     // `O_SYNC` of Linux has the bit of `O_DSYNC` in it.
     if rest & image::O_SYNC == image::O_SYNC {
         of_macos |= macos::O_SYNC;
@@ -28,8 +32,8 @@ pub fn open_flags(of_image: i32) -> i32 {
 
 /// The flags of the image for flags of macOS: what `fcntl(F_GETFL)` answers.
 pub fn open_flags_to_image(of_macos: i32) -> i32 {
-    let mut of_image = of_macos & macos::O_ACCMODE;
-    let rest = of_macos & !macos::O_ACCMODE;
+    let mut of_image = of_macos & ACCESS;
+    let rest = of_macos & !ACCESS;
     for &(flag, flag_of_macos) in flag_pairs::OPEN {
         if flag_of_macos != 0 && rest & flag_of_macos == flag_of_macos {
             of_image |= flag;
@@ -39,11 +43,12 @@ pub fn open_flags_to_image(of_macos: i32) -> i32 {
 }
 
 /// The flags of a function whose name ends in `at` (`AT_SYMLINK_NOFOLLOW`, `AT_REMOVEDIR`) for macOS.
-/// `faccessat` has `AT_EACCESS`, which is the number of `AT_REMOVEDIR` in the image: see [`access_flags`].
+/// `AT_EACCESS` and `AT_REMOVEDIR` are one number in the image and two on macOS. Here the number is
+/// `AT_REMOVEDIR`; `faccessat`, the one function that takes `AT_EACCESS`, has [`access_flags`].
 pub fn at_flags(of_image: i32) -> i32 {
     let mut of_macos = 0;
     for &(flag, flag_of_macos) in flag_pairs::AT {
-        if flag == image::AT_EACCESS {
+        if flag_of_macos == macos::AT_EACCESS {
             continue;
         }
         if flag != 0 && of_image & flag == flag {

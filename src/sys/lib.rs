@@ -948,7 +948,7 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
             let stat = stat.map(Stat::from);
             stat
         }
-        cfg(all(unix, not(any(target_os = "linux", target_os = "android")))) => {
+        unix_not_linux => {
             let mut st = core::mem::MaybeUninit::<libc::stat>::uninit();
             let dirfd = if fd.is_valid() {
                 fd.native()
@@ -971,7 +971,7 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
                 Err(Error::from_code_int(last_errno(), Tag::fstatat).with_path(path.as_bytes()))
             }
         }
-        windows => {
+        cfg(windows) => {
             // Open with `O.NOFOLLOW` (→ `FILE_OPEN_REPARSE_POINT`),
             // `fstat` the handle, then close.
             match openat_windows_a(fd, path.as_bytes(), O::NOFOLLOW, 0) {
@@ -7963,7 +7963,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
             let len = unsafe { libc::strlen(out.0.as_ptr().cast()) };
             return Ok(&mut out.0[..len]);
         }
-        windows => {
+        cfg(windows) => {
             // `GetFinalPathNameByHandle` into a wide buffer,
             // then transcode WTF-16 → UTF-8 into `out`.
             let mut wide_buf = bun_paths::w_path_buffer_pool::get();

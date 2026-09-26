@@ -987,7 +987,7 @@ pub(crate) mod constants_for_bun {
     pub const ENETRESET: i32 = ::libc::ENETRESET as i32;
     pub const ENETUNREACH: i32 = ::libc::ENETUNREACH as i32;
     pub const ENFILE: i32 = ::libc::ENFILE as i32;
-    pub const ENOATTR: i32 = ::libc::ENOATTR as i32;
+    pub const ENOATTR: i32 = ::libc::ENODATA as i32;
     pub const ENOBUFS: i32 = ::libc::ENOBUFS as i32;
     pub const ENODATA: i32 = ::libc::ENODATA as i32;
     pub const ENODEV: i32 = ::libc::ENODEV as i32;
@@ -1317,7 +1317,6 @@ pub(crate) mod errno_names {
         (super::constants::ENETRESET, ::libc::ENETRESET as i32),
         (super::constants::ENETUNREACH, ::libc::ENETUNREACH as i32),
         (super::constants::ENFILE, ::libc::ENFILE as i32),
-        (super::constants::ENOATTR, ::libc::ENOATTR as i32),
         (super::constants::ENOBUFS, ::libc::ENOBUFS as i32),
         (super::constants::ENODATA, ::libc::ENODATA as i32),
         (super::constants::ENODEV, ::libc::ENODEV as i32),
@@ -1373,6 +1372,7 @@ pub(crate) mod errno_names {
         (super::constants::EDEVERR, ::libc::EIO as i32),
         (super::constants::EFTYPE, 137 as i32),
         (super::constants::ENEEDAUTH, ::libc::EACCES as i32),
+        (super::constants::ENOATTR, ::libc::ENODATA as i32),
         (super::constants::ENOPOLICY, ::libc::EPERM as i32),
         (super::constants::EPROCLIM, ::libc::EAGAIN as i32),
         (super::constants::EPROCUNAVAIL, ::libc::EREMOTEIO as i32),

@@ -144,7 +144,7 @@ pub(crate) fn steps(report: &mut Report, work: &Work, root_fd: Fd) {
                 Ok(flags) => {
                     let flags = flags as i32;
                     report.boolean("append", flags & O::APPEND != 0);
-                    report.boolean("write only", flags & O::ACCMODE == O::WRONLY);
+                    report.boolean("write only", flags & 3 == O::WRONLY);
                     report.boolean("non blocking", flags & O::NONBLOCK != 0);
                     report.end_ok();
                 }

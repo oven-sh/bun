@@ -2997,8 +2997,8 @@
   {
    "name": "ENOATTR",
    "macos": "93",
-   "in_the_image": "ENOATTR",
-   "why": "the same name"
+   "in_the_image": "ENODATA",
+   "why": "no such name in the image: ENODATA"
   },
   {
    "name": "ENOBUFS",
@@ -3797,12 +3797,6 @@
    "why": "the same name"
   },
   {
-   "name": "ENOATTR",
-   "macos": "93",
-   "in_the_image": "ENOATTR",
-   "why": "the same name"
-  },
-  {
    "name": "ENOBUFS",
    "macos": "55",
    "in_the_image": "ENOBUFS",
@@ -4131,6 +4125,12 @@
    "macos": "81",
    "in_the_image": "EACCES",
    "why": "no such name in the image: EACCES"
+  },
+  {
+   "name": "ENOATTR",
+   "macos": "93",
+   "in_the_image": "ENODATA",
+   "why": "no such name in the image: ENODATA"
   },
   {
    "name": "ENOPOLICY",

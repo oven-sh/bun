@@ -529,7 +529,8 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     expect(await lockText(packageDir)).toBe(pruned);
   });
 
-  // Like trustedDependencies above, patchedDependencies is not part of the frozen comparison (docs/pm/cli/install.mdx).
+  // Like trustedDependencies above, a patchedDependencies list bun.lock never recorded is not compared (turbo prune before
+  // vercel/turborepo#11027 dropped the section).
   test.concurrent("patchedDependencies added after bun.lock was written still passes --frozen-lockfile", async () => {
     const { packageDir, full } = await verbatimScenario(linker, monorepo, survivors);
     expect(full).not.toContain('"patchedDependencies"');
@@ -550,7 +551,8 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     expect(await lockText(packageDir)).toContain(patchedLockLine);
   });
 
-  test.concurrent("patchedDependencies removed after bun.lock was written still passes --frozen-lockfile", async () => {
+  // A recorded list is compared: turbo prune keeps the entries of packages it keeps, so a difference is a package.json edit.
+  test.concurrent("patchedDependencies removed after bun.lock was written fails --frozen-lockfile", async () => {
     const { fullDir, full } = await fullInstall(linker, patchedMonorepo);
     expect(full).toContain(patchedLockLine);
     expect(await exists(join(dirname(installedPath(fullDir, linker, "a-dep", "1.0.1")), "patched.txt"))).toBeTrue();
@@ -558,13 +560,11 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     await writeTree(packageDir, monorepo, survivors);
     await write(join(packageDir, "bun.lock"), full);
 
-    const { stderr } = await frozen(packageDir, linker, 0);
+    const { stderr } = await frozen(packageDir, linker, 1);
 
-    expect(stderr).not.toContain("patchedDependencies");
+    expect(stderr).toContain("note: bun.lock does not match patchedDependencies in package.json");
     expect(await lockText(packageDir)).toBe(full);
-    const aDep = installedPath(packageDir, linker, "a-dep", "1.0.1");
-    expect(await file(aDep).json()).toMatchObject({ name: "a-dep", version: "1.0.1" });
-    expect(await exists(join(dirname(aDep), "patched.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
   });
 
   test.concurrent("overrides added after bun.lock was written still fail --frozen-lockfile", async () => {
@@ -1301,8 +1301,10 @@ describe("hoisted", () => {
     expect(await lockText(packageDir)).toBe(full);
   });
 
+  // Without workspaces there is no pruned checkout, so a stripped trustedDependencies section is a frozen failure there
+  // (frozen-lockfile-outdated.test.ts). The difference here is a name bun.lock does not record because it is not installed.
   test.concurrent(
-    "single-package project: trustedDependencies stripped from bun.lock does not drop a peer-held package under --frozen-lockfile",
+    "single-package project: a trustedDependencies-only difference does not drop a peer-held package under --frozen-lockfile",
     async () => {
       const single: Tree = {
         root: {
@@ -1315,7 +1317,7 @@ describe("hoisted", () => {
       const { full } = await fullInstall("hoisted", single);
       expect(full).toContain('"trustedDependencies"');
       // The 8-space row is the root's declared dependency; the package entry stays, held only by optional-peer-deps' peer slot.
-      const pruned = full.replace(/\n        "no-deps": "1\.0\.0",/, "").replace(trustedDependenciesSection, "");
+      const pruned = full.replace(/\n        "no-deps": "1\.0\.0",/, "");
       expect(pruned).not.toBe(full);
       expect(pruned).toContain('"no-deps": ["no-deps@1.0.0"');
       const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
@@ -1324,7 +1326,7 @@ describe("hoisted", () => {
         JSON.stringify({
           name: "single",
           dependencies: { "optional-peer-deps": "1.0.0" },
-          trustedDependencies: ["optional-peer-deps"],
+          trustedDependencies: ["optional-peer-deps", "not-installed"],
         }),
       );
       await write(join(packageDir, "bun.lock"), pruned);

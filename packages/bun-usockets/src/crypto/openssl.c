@@ -2696,7 +2696,14 @@ unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
 }
 
 int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
-  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || length == 0) return 0;
+  struct us_iovec_t iov = {(void *)data, (size_t)length};
+  return us_internal_ssl_writev(s, &iov, 1);
+}
+
+/* The records of every part share one batch, so they reach the kernel in one write. Returns the plaintext bytes taken, in order. */
+int us_internal_ssl_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
+  while (count && iov->iov_len == 0) iov++, count--;
+  if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || count == 0) return 0;
 
   /* Fast-path connect attaches SSL eagerly on a SEMI_SOCKET (see
    * us_socket_group_connect_resolved_dns); on_open hasn't fired yet so
@@ -2743,12 +2750,17 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
 
   int total = 0;
   int last_ssl_written = 1;
-  while (total < length) {
-    int chunk = length - total;
-    if (chunk > 16384) chunk = 16384;
+  size_t part_offset = 0;
+  while (count) {
+    if (part_offset == iov->iov_len) {
+      iov++, count--, part_offset = 0;
+      continue;
+    }
+    size_t part_left = iov->iov_len - part_offset;
+    int chunk = part_left > 16384 ? 16384 : (int)part_left;
     /* Same deferred-close protocol as the SSL_do_handshake/SSL_read drivers. */
     s->ssl_in_use = 1;
-    last_ssl_written = SSL_write(s_ssl(s), data + total, chunk);
+    last_ssl_written = SSL_write(s_ssl(s), (const char *)iov->iov_base + part_offset, chunk);
     s->ssl_in_use = 0;
     if (s->ssl_pending_detach) {
       /* Closed from inside the call: drop this write's records (and any held
@@ -2761,6 +2773,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     }
     if (last_ssl_written <= 0) break;
     total += last_ssl_written;
+    part_offset += (size_t)last_ssl_written;
     /* A batching allocation failure marks the socket fatal from inside the BIO;
      * stop sealing records for a connection that is being torn down. */
     if (s->ssl_fatal_error) break;

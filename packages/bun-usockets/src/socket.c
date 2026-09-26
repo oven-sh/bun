@@ -621,6 +621,13 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     return written;
 }
 
+int us_socket_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
+    if (s->ssl) {
+        return us_internal_ssl_writev(s, iov, count);
+    }
+    return us_socket_raw_writev(s, iov, count);
+}
+
 int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
     if (us_socket_is_closed(s) ||
         us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN) {

@@ -2316,6 +2316,55 @@ describe("backpressure", () => {
     });
   });
 
+  // 16 KB is the size of the uWS cork buffer. A chunk that does not fit goes out with its framing in one vectored write.
+  describe.each(["http", "https"] as const)("chunk framing on the wire (%s)", protocol => {
+    const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+    const framingTls = {
+      cert: readFileSync(path.join(keysDir, "agent1-cert.pem")),
+      key: readFileSync(path.join(keysDir, "agent1-key.pem")),
+    };
+    it.each([1, 16 * 1024 - 200, 16 * 1024 - 1, 16 * 1024, 16 * 1024 + 1, 100_000, 3_000_000])(
+      "three chunks of %d bytes to a client that reads late",
+      async size => {
+        const chunks = ["a", "b", "c"].map(fill => Buffer.alloc(size, fill));
+        const written = Promise.withResolvers<void>();
+        const listener = (_req: http.IncomingMessage, res: http.ServerResponse) => {
+          res.write(chunks[0]);
+          res.write(chunks[1]);
+          res.end(chunks[2]);
+          written.resolve();
+        };
+        const server = protocol === "https" ? https.createServer(framingTls, listener) : http.createServer(listener);
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const { port } = server.address() as AddressInfo;
+        const client =
+          protocol === "https"
+            ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+            : net.connect(port, "127.0.0.1");
+        try {
+          await once(client, protocol === "https" ? "secureConnect" : "connect");
+          client.pause();
+          client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+          await written.promise;
+          const received: Buffer[] = [];
+          client.on("data", chunk => received.push(chunk));
+          client.resume();
+          await once(client, "end");
+
+          const response = Buffer.concat(received);
+          const body = response.subarray(response.indexOf("\r\n\r\n") + 4);
+          const line = Buffer.from(size.toString(16) + "\r\n");
+          const crlf = Buffer.from("\r\n");
+          const expected = Buffer.concat([...chunks.flatMap(chunk => [line, chunk, crlf]), Buffer.from("0\r\n\r\n")]);
+          expect({ length: body.length, same: body.equals(expected) }).toEqual({ length: expected.length, same: true });
+        } finally {
+          client.destroy();
+          server.close();
+        }
+      },
+    );
+  });
+
   it("should handle backpressure with INT_MAX bytes", async () => {
     const totalSize = 1024 * 1024 * 1024 * 2; // 2^31, one past INT_MAX
     const chunk = Buffer.alloc(64 * 1024 * 1024, "a");

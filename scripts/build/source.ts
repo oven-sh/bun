@@ -1253,6 +1253,10 @@ function emitNestedCmake(
       cxxflags += " -fPIC";
     }
     if (spec.pic) args.push(`-DCMAKE_POSITION_INDEPENDENT_CODE=ON`);
+  } else if (cfg.portable) {
+    // The portable image is a static-pie: what goes into it is position independent, the executable's kind.
+    cflags += " -fPIE";
+    cxxflags += " -fPIE";
   } else if (cfg.unix) {
     cflags += " -fno-pic -fno-pie";
     cxxflags += " -fno-pic -fno-pie";
@@ -1553,6 +1557,9 @@ function emitDirect(
   const picFlags: string[] = [];
   if (spec.pic || cfg.abi === "android") {
     if (!cfg.windows) picFlags.push("-fPIC");
+  } else if (cfg.portable) {
+    // The portable image is a static-pie: what goes into it is position independent, the executable's kind.
+    picFlags.push("-fPIE");
   } else if (cfg.unix) {
     picFlags.push("-fno-pic", "-fno-pie");
   }

@@ -319,9 +319,19 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // dylibs / build scripts), so those still build PIC. Darwin (Mach-O is
   // always PIC), Android (bionic loader requires PIE — flags.ts:934), and
   // Windows (COFF has its own model) are excluded.
-  if ((cfg.linux && cfg.abi !== "android") || cfg.freebsd) {
+  if (cfg.portable) {
+    // The portable image (Config.portable), Rust half; flags.ts has the C/C++ half and the reasons. A static-pie,
+    // so `pie` and a static C runtime; no red zone; thread-locals through __emutls_get_address. std is compiled
+    // from source with the same flags like every other crate (cargoBuildStdArg).
+    rustflags.push("-Crelocation-model=pie", "-Ctarget-feature=+crt-static", "-Cno-redzone=yes", "-Ztls-model=emulated");
+    // No syscall instruction outside libc: rustix's default backend on Linux issues them inline (linux_raw);
+    // this is the cfg it documents for its libc backend. `bun_portable` gates the same in bun's own crates, and
+    // what a static image cannot do (load a shared library).
+    rustflags.push("--cfg=rustix_use_libc", "--cfg=bun_portable");
+  } else if ((cfg.linux && cfg.abi !== "android") || cfg.freebsd) {
     rustflags.push("-Crelocation-model=static");
   }
+  rustflags.push("--check-cfg=cfg(bun_portable)");
   // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
   rustflags.push("-Cforce-frame-pointers=yes");

@@ -155,7 +155,15 @@ struct bun_clone_args {
 // Returns the child pid, or -errno.
 extern "C" long bun_clone3_vfork(bun_clone_args* args, size_t size, void (*fn)(void*), void* arg);
 
-#if CPU(X86_64)
+#if defined(BUN_PORTABLE)
+// The portable image has no syscall instruction outside libc, and libc has no
+// clone3 that returns twice. ENOSYS is the answer of a kernel without clone3:
+// the caller joins the cgroup from the vfork child instead.
+extern "C" long bun_clone3_vfork(bun_clone_args*, size_t, void (*)(void*), void*)
+{
+    return -ENOSYS;
+}
+#elif CPU(X86_64)
 asm(".pushsection .text\n"
     ".globl bun_clone3_vfork\n"
     ".type bun_clone3_vfork,@function\n"

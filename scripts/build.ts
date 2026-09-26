@@ -471,6 +471,8 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   freebsdSysroot: "string",
   freebsdVersion: "string",
   linuxSysroot: "string",
+  portable: "boolean",
+  portableSysroot: "string",
   macosSdk: "string",
   osxDeploymentTarget: "string",
   winsysroot: "string",
@@ -665,7 +667,9 @@ Options:
                                   package.json files the build needs),
                                   buildDir, mode (full|archive-link|codegen),
                                   unifiedSources, timeTrace, os, arch, abi,
-                                  winsysroot (Windows cross-compile SDK root)
+                                  winsysroot (Windows cross-compile SDK root),
+                                  portable + portable-sysroot (the static-pie
+                                  "portable image", linux-x64)
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it
   --timings               After the build (or, with --configure-only, without

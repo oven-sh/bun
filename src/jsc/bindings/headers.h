@@ -416,6 +416,10 @@ extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__relative(JSC::JSGlobalObject*
 extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__resolve(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
 extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__toNamespacedPath(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
 
+// Fixed-arity Bun__Path__resolve. Plain extern "C" on the Rust side too (HOST_EXPORT(..., c)), so no SYSV_ABI here.
+extern "C" JSC::EncodedJSValue Bun__Path__resolve2(JSC::JSGlobalObject* globalObject, bool isWindows, JSC::EncodedJSValue arg0, JSC::EncodedJSValue arg1);
+extern "C" JSC::EncodedJSValue Bun__Path__resolve3(JSC::JSGlobalObject* globalObject, bool isWindows, JSC::EncodedJSValue arg0, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
+
 #endif
 
 CPP_DECL JSC::EncodedJSValue ArrayBufferSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);

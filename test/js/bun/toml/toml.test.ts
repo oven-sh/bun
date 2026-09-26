@@ -898,6 +898,14 @@ describe("TOML.stringify", () => {
     expect(TOML.stringify({ a: 1, u: undefined, f: () => 1, s: Symbol("x") })).toBe("a = 1\n");
   });
 
+  test("symbol-keyed properties are skipped", () => {
+    const sym = Symbol("SYMK");
+    expect(TOML.stringify({ a: 2, [sym]: 1 })).toBe("a = 2\n");
+    expect(TOML.stringify({ [sym]: 1 })).toBe("");
+    expect(TOML.stringify({ [Symbol.iterator]: 1 })).toBe("");
+    expect(TOML.stringify({ t: { a: 1, [sym]: 2 } })).toBe("[t]\na = 1\n");
+  });
+
   test("empty shapes", () => {
     expect(TOML.stringify({})).toBe("");
     expect(TOML.stringify({ t: {} })).toBe("[t]\n");

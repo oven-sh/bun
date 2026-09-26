@@ -3891,8 +3891,12 @@ impl VirtualMachine {
                 if handle_unhandled() {
                     return;
                 }
-                // `expect(fn).toThrow()` reads the rejection itself: it goes to the hook below.
-                if self.hot_reload == HotReload::None && !self.unhandled_rejections_quiet {
+                // `expect(fn).toThrow()` reads the rejection itself, and a macro VM or the
+                // debugger's VM runs no program: there the rejection goes to the hook below.
+                if self.hot_reload == HotReload::None
+                    && !self.unhandled_rejections_quiet
+                    && (self.is_main_thread || self.worker.is_some())
+                {
                     // The listeners get node's wrapper for a reason that is not an error. The
                     // report shows the reason itself: a ResolveMessage, a BuildMessage or a plain
                     // value says more than the wrapper's "[object Object]".

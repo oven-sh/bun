@@ -1220,7 +1220,9 @@ test.concurrent("an async macro that rejects fails the build and leaves the proc
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build.ts"],
-    env: bunEnv,
+    // detect_leaks=0: the macro VM is never torn down, so the source map it
+    // parsed to print the error reads as a leak when the process exits.
+    env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

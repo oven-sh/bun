@@ -8,14 +8,16 @@
 //!
 //! Corresponds to `src/ReactiveScopes/MergeReactiveScopesThatInvalidateTogether.ts`.
 
-use std::collections::HashSet;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashSet};
 
-use crate::collections::IdMap;
+use crate::collections::{FxHashMap, IdMap};
 use crate::diagnostics::CompilerError;
 use crate::hir::{
-    DeclarationId, DependencyPathEntry, EvaluationOrder, HirVec, InstructionKind, InstructionValue,
-    Place, ReactiveBlock, ReactiveFunction, ReactiveScopeBlock, ReactiveScopeDependency,
-    ReactiveStatement, ReactiveValue, ScopeId, Type,
+    AstAlloc, DeclarationId, DependencyPathEntry, EvaluationOrder, HirVec, IdentifierId,
+    InstructionKind, InstructionValue, Place, ReactiveBlock, ReactiveFunction, ReactiveScopeBlock,
+    ReactiveScopeDeclaration, ReactiveScopeDependency, ReactiveStatement, ReactiveValue, ScopeId,
+    Type,
     environment::Environment,
     object_shape::{BUILT_IN_ARRAY_ID, BUILT_IN_FUNCTION_ID, BUILT_IN_JSX_ID, BUILT_IN_OBJECT_ID},
 };
@@ -140,6 +142,7 @@ impl<'a> MergeTransform<'a> {
             from: usize,
             to: usize,
             lvalues: HashSet<DeclarationId>,
+            declarations: CandidateDeclarations,
         }
 
         let mut current: Option<MergedScope> = None;
@@ -252,6 +255,7 @@ impl<'a> MergeTransform<'a> {
                         let current_scope_id = c.scope_id;
                         if can_merge_scopes(
                             current_scope_id,
+                            &c.declarations,
                             next_scope_id,
                             self.env,
                             &self.temporaries,
@@ -266,27 +270,16 @@ impl<'a> MergeTransform<'a> {
                                 self.env.scopes[next_scope_id.0 as usize].range.end;
                             let current_range_end =
                                 self.env.scopes[current_scope_id.0 as usize].range.end;
-                            self.env.scopes[current_scope_id.0 as usize].range.end =
+                            let range_end =
                                 EvaluationOrder(current_range_end.0.max(next_range_end.0));
+                            self.env.scopes[current_scope_id.0 as usize].range.end = range_end;
 
                             // Merge declarations from next into current
-                            let next_decls = self.env.scopes[next_scope_id.0 as usize]
-                                .declarations
-                                .clone();
-                            for (key, value) in next_decls {
-                                let current_decls =
-                                    &mut self.env.scopes[current_scope_id.0 as usize].declarations;
-                                if let Some(existing) =
-                                    current_decls.iter_mut().find(|(k, _)| *k == key)
-                                {
-                                    existing.1 = value;
-                                } else {
-                                    current_decls.push((key, value));
-                                }
-                            }
+                            c.declarations
+                                .extend(next_scope_id, &self.last_usage, self.env);
 
                             // Prune declarations that are no longer used after the merged scope
-                            update_scope_declarations(current_scope_id, &self.last_usage, self.env);
+                            c.declarations.update_scope_declarations(range_end);
 
                             c.to = i + 1;
                             c.lvalues.clear();
@@ -310,6 +303,11 @@ impl<'a> MergeTransform<'a> {
                                     from: i,
                                     to: i + 1,
                                     lvalues: HashSet::new(),
+                                    declarations: CandidateDeclarations::new(
+                                        next_scope_id,
+                                        &self.last_usage,
+                                        self.env,
+                                    ),
                                 });
                             }
                         }
@@ -321,6 +319,11 @@ impl<'a> MergeTransform<'a> {
                                 from: i,
                                 to: i + 1,
                                 lvalues: HashSet::new(),
+                                declarations: CandidateDeclarations::new(
+                                    next_scope_id,
+                                    &self.last_usage,
+                                    self.env,
+                                ),
                             });
                         }
                     }
@@ -343,7 +346,7 @@ impl<'a> MergeTransform<'a> {
         let mut index = 0;
         let all_stmts: Vec<ReactiveStatement> = std::mem::take(block);
 
-        for entry in &merged {
+        for entry in merged {
             // Push everything before the merge range
             while index < entry.from {
                 next_instructions.push(all_stmts[index].clone());
@@ -360,6 +363,8 @@ impl<'a> MergeTransform<'a> {
                     ));
                 }
             };
+            self.env.scopes[merged_scope.scope.0 as usize].declarations =
+                entry.declarations.into_declarations();
             index += 1;
             while index < entry.to {
                 let stmt = &all_stmts[index];
@@ -395,23 +400,108 @@ impl<'a> MergeTransform<'a> {
 // Helper functions
 // =============================================================================
 
-/// Updates scope declarations to remove any that are not used after the scope.
-fn update_scope_declarations(
-    scope_id: ScopeId,
-    last_usage: &IdMap<DeclarationId, EvaluationOrder>,
-    env: &mut Environment,
-) {
-    let range_end = env.scopes[scope_id.0 as usize].range.end;
-    env.scopes[scope_id.0 as usize]
-        .declarations
-        .retain(|(_id, decl)| {
-            let decl_declaration_id = env.identifiers[decl.identifier.0 as usize].declaration_id;
-            match last_usage.get(decl_declaration_id) {
-                Some(last_used_at) => *last_used_at >= range_end,
-                // If not tracked, keep the declaration (conservative)
-                None => true,
+/// Not in upstream: the declarations of a merge candidate. TS updates the `Map` of the scope.
+/// The scope here holds a `HirVec`, and a search and a `retain` of it per merged scope take
+/// time quadratic in the number of scopes that merge into one. Pass 3 stores the result in the
+/// scope.
+struct CandidateDeclarations {
+    /// Each declaration with its position in the insertion order of the `Map`. RenameVariables
+    /// names the declarations in that order.
+    entries: FxHashMap<IdentifierId, (u32, ReactiveScopeDeclaration)>,
+    next_position: u32,
+    /// The entries that a later range end removes, earliest last usage first.
+    by_last_usage: BinaryHeap<Reverse<(EvaluationOrder, IdentifierId, DeclarationId)>>,
+    /// The number of entries per declaration id.
+    declaration_ids: FxHashMap<DeclarationId, u32>,
+}
+
+impl CandidateDeclarations {
+    fn new(
+        scope_id: ScopeId,
+        last_usage: &IdMap<DeclarationId, EvaluationOrder>,
+        env: &Environment,
+    ) -> Self {
+        let mut declarations = Self {
+            entries: FxHashMap::default(),
+            next_position: 0,
+            by_last_usage: BinaryHeap::new(),
+            declaration_ids: FxHashMap::default(),
+        };
+        declarations.extend(scope_id, last_usage, env);
+        declarations
+    }
+
+    /// TS: `declarations.set(key, value)` for each declaration of the scope.
+    fn extend(
+        &mut self,
+        scope_id: ScopeId,
+        last_usage: &IdMap<DeclarationId, EvaluationOrder>,
+        env: &Environment,
+    ) {
+        for (key, value) in &env.scopes[scope_id.0 as usize].declarations {
+            // The key of a declaration is its identifier, so a new value for a key has the
+            // same last usage.
+            debug_assert_eq!(*key, value.identifier);
+            match self.entries.entry(*key) {
+                std::collections::hash_map::Entry::Occupied(mut existing) => {
+                    existing.get_mut().1 = value.clone();
+                }
+                std::collections::hash_map::Entry::Vacant(vacant) => {
+                    vacant.insert((self.next_position, value.clone()));
+                    self.next_position += 1;
+                    let declaration_id =
+                        env.identifiers[value.identifier.0 as usize].declaration_id;
+                    *self.declaration_ids.entry(declaration_id).or_insert(0) += 1;
+                    // If not tracked, keep the declaration (conservative)
+                    if let Some(&last_used_at) = last_usage.get(declaration_id) {
+                        self.by_last_usage
+                            .push(Reverse((last_used_at, *key, declaration_id)));
+                    }
+                }
             }
-        });
+        }
+    }
+
+    /// Updates scope declarations to remove any that are not used after the scope.
+    fn update_scope_declarations(&mut self, range_end: EvaluationOrder) {
+        while let Some(&Reverse((last_used_at, key, declaration_id))) = self.by_last_usage.peek() {
+            if last_used_at >= range_end {
+                break;
+            }
+            self.by_last_usage.pop();
+            self.entries.remove(&key);
+            if let Some(count) = self.declaration_ids.get_mut(&declaration_id) {
+                *count -= 1;
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &ReactiveScopeDeclaration> {
+        self.entries.values().map(|(_position, decl)| decl)
+    }
+
+    fn has_declaration_id(&self, declaration_id: DeclarationId) -> bool {
+        self.declaration_ids
+            .get(&declaration_id)
+            .is_some_and(|count| *count > 0)
+    }
+
+    fn into_declarations(self) -> HirVec<(IdentifierId, ReactiveScopeDeclaration)> {
+        let mut entries: Vec<_> = self.entries.into_iter().collect();
+        bun_collections::index_sort::sort_slice_unstable_by(
+            &mut entries,
+            |(_, (a, _)), (_, (b, _))| a.cmp(b),
+        );
+        AstAlloc::vec_from_iter(
+            entries
+                .into_iter()
+                .map(|(key, (_position, decl))| (key, decl)),
+        )
+    }
 }
 
 /// Returns whether all lvalues are last used at or before the given scope.
@@ -435,6 +525,7 @@ fn are_lvalues_last_used_by_scope(
 /// Check if two scopes can be merged.
 fn can_merge_scopes(
     current_id: ScopeId,
+    current_declarations: &CandidateDeclarations,
     next_id: ScopeId,
     env: &Environment,
     temporaries: &IdMap<DeclarationId, DeclarationId>,
@@ -453,25 +544,28 @@ fn can_merge_scopes(
     }
 
     // Merge scopes where outputs of current are inputs of next
-    // Build synthetic dependencies from current's declarations
-    let current_decl_deps: Vec<ReactiveScopeDependency> = current
-        .declarations
-        .iter()
-        .map(|(_key, decl)| ReactiveScopeDependency {
-            identifier: decl.identifier,
-            reactive: true,
-            path: crate::hir_vec![],
-            loc: None,
-        })
-        .collect();
+    // Not in upstream: `are_equal_dependencies` compares the lengths first, so the synthetic
+    // dependencies are built only when the lengths match.
+    if current_declarations.len() == next.dependencies.len() {
+        // Build synthetic dependencies from current's declarations
+        let current_decl_deps: Vec<ReactiveScopeDependency> = current_declarations
+            .iter()
+            .map(|decl| ReactiveScopeDependency {
+                identifier: decl.identifier,
+                reactive: true,
+                path: crate::hir_vec![],
+                loc: None,
+            })
+            .collect();
 
-    if are_equal_dependencies(&current_decl_deps, &next.dependencies, env) {
-        return true;
+        if are_equal_dependencies(&current_decl_deps, &next.dependencies, env) {
+            return true;
+        }
     }
 
     // Check if all next deps have empty paths, always-invalidating types,
     // and correspond to current declarations (possibly through temporaries)
-    if !next.dependencies.is_empty()
+    !next.dependencies.is_empty()
         && next.dependencies.iter().all(|dep| {
             if !dep.path.is_empty() {
                 return false;
@@ -481,16 +575,11 @@ fn can_merge_scopes(
                 return false;
             }
             let dep_decl = env.identifiers[dep.identifier.0 as usize].declaration_id;
-            current.declarations.iter().any(|(_key, decl)| {
-                let decl_decl_id = env.identifiers[decl.identifier.0 as usize].declaration_id;
-                decl_decl_id == dep_decl || temporaries.get(dep_decl).copied() == Some(decl_decl_id)
-            })
+            current_declarations.has_declaration_id(dep_decl)
+                || temporaries
+                    .get(dep_decl)
+                    .is_some_and(|decl_id| current_declarations.has_declaration_id(*decl_id))
         })
-    {
-        return true;
-    }
-
-    false
 }
 
 /// Check if a type is always invalidating (guaranteed to change when inputs change).

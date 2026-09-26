@@ -1794,15 +1794,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     // filename store.
                     let dep_name = this.lockfile.str_detached(&dependency.name);
                     let integrity = this.pinned_integrity_for_tarball(&res);
-                    let task = enqueue_local_tarball(
-                        this,
-                        task_id,
-                        id,
-                        dep_name,
-                        url,
-                        &res,
-                        &integrity,
-                    );
+                    let task =
+                        enqueue_local_tarball(this, task_id, id, dep_name, url, &res, &integrity);
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 dependency::tarball::Uri::Remote(_) => {

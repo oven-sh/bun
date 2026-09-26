@@ -2413,10 +2413,9 @@ pub(crate) fn install_isolated_packages(
                         match preinstall_state {
                             install::PreinstallState::Done => false,
                             _ if tarball_fetched_this_run => {
-                                installer.manager_mut().set_preinstall_state(
-                                    pkg_id,
-                                    install::PreinstallState::Done,
-                                );
+                                installer
+                                    .manager_mut()
+                                    .set_preinstall_state(pkg_id, install::PreinstallState::Done);
                                 false
                             }
                             _ => {

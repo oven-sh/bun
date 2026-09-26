@@ -24,8 +24,8 @@ use crate::package_manager_real::Command;
 use crate::package_manager_real::options::OfflineMode;
 use crate::package_manager_task as PmTask;
 use crate::resolution_real::Tag as ResolutionTag;
-use bun_install::lockfile::{Lockfile, Package};
 use bun_install::Resolution;
+use bun_install::lockfile::{Lockfile, Package};
 use bun_install::{
     DependencyID, Integrity, PackageID, PackageManager, PreinstallState, invalid_package_id,
 };

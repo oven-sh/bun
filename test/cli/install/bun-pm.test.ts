@@ -1084,3 +1084,50 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+test("bun pm cache rm warns when the cache holds the global store", async () => {
+  using dir = tempDir("pm-cache-rm-global-store", {
+    "package.json": JSON.stringify({ name: "cache-rm-global-store", version: "1.0.0" }),
+    "cache/links/foo@1.0.0@@@1/node_modules/foo/package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+    "cache/foo@1.0.0/package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+  });
+  const cacheDir = join(String(dir), "cache");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "cache", "rm"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toInclude("Cleared 'bun install' cache");
+  expect(stderr).toBe(
+    "note: the global store was removed with it. Run 'bun install' again in each project that uses it.\n",
+  );
+  expect(await exists(cacheDir)).toBeFalse();
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm cache rm does not mention the global store when the cache has none", async () => {
+  using dir = tempDir("pm-cache-rm-no-global-store", {
+    "package.json": JSON.stringify({ name: "cache-rm-no-global-store", version: "1.0.0" }),
+    "cache/foo@1.0.0/package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+  });
+  const cacheDir = join(String(dir), "cache");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "cache", "rm"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toInclude("Cleared 'bun install' cache");
+  expect(stderr).toBe("");
+  expect(await exists(cacheDir)).toBeFalse();
+  expect(exitCode).toBe(0);
+});

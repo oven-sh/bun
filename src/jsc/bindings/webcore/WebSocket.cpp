@@ -891,7 +891,11 @@ ExceptionOr<void> WebSocket::terminate()
 bool WebSocket::pause()
 {
     m_paused = true;
-    return applyPauseToConnectedClient();
+    bool applied = applyPauseToConnectedClient();
+    // A connected client refuses while it flushes a Close frame, and it keeps reading.
+    if (!applied && m_connectedWebSocketKind != ConnectedWebSocketKind::None)
+        m_paused = false;
+    return applied;
 }
 
 bool WebSocket::resume()

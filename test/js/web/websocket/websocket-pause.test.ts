@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { tls } from "harness";
+import { isLinux, isMacOS, tls } from "harness";
+import crypto from "node:crypto";
+import { readdirSync } from "node:fs";
 import net from "node:net";
 import nodeTls from "node:tls";
 
@@ -308,6 +310,189 @@ describe("WebSocket.pause() before open", () => {
     expect(ws.readyState).toBe(WebSocket.CLOSED);
     expect(ws.pause()).toBe(false);
     expect(ws.resume()).toBe(false);
+  });
+});
+
+// A closed WebSocket keeps its socket until a read sees the peer's FIN. Once
+// the close is dispatched nothing can call resume(), so a socket that stays
+// paused would never be closed.
+describe("WebSocket.close() while paused", () => {
+  function acceptUpgrade(sock: net.Socket, head: Buffer) {
+    const key = /Sec-WebSocket-Key: (.+)\r\n/.exec(head.toString("latin1"))![1].trim();
+    const accept = crypto
+      .createHash("sha1")
+      .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+      .digest("base64");
+    sock.write(
+      "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+        `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+    );
+  }
+
+  function listen(server: net.Server): Promise<number> {
+    return new Promise(resolve =>
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
+    );
+  }
+
+  it("still answers the peer's FIN (wss)", async () => {
+    // A raw origin, to see the TCP connection itself: it answers the client's
+    // Close frame with its own, sends FIN, and waits for the client's FIN.
+    const { promise: originSocketClosed, resolve: resolveOriginSocketClosed } = Promise.withResolvers<void>();
+    const server = nodeTls.createServer({ key: tls.key, cert: tls.cert }, sock => {
+      sock.once("data", head => {
+        acceptUpgrade(sock, head);
+        sock.once("data", () => sock.end(Buffer.from([0x88, 0x02, 0x03, 0xe8])));
+      });
+      sock.on("error", () => {});
+      sock.on("close", () => resolveOriginSocketClosed());
+    });
+    const port = await listen(server);
+    try {
+      const ws = new WebSocket(`wss://127.0.0.1:${port}`, { tls: { rejectUnauthorized: false } });
+      await open(ws);
+      expect(ws.pause()).toBe(true);
+      const closed = new Promise<CloseEvent>(resolve => (ws.onclose = resolve));
+      ws.close();
+      const { code, wasClean } = await closed;
+      expect({ code, wasClean }).toEqual({ code: 1000, wasClean: true });
+      await originSocketClosed;
+    } finally {
+      server.close();
+    }
+  });
+
+  // The plain-TCP client sends its FIN with the Close frame, so its peer cannot
+  // tell whether the client ever closes the socket. Look at the file descriptors.
+  //
+  // The servers are in this process on purpose. The client's own shutdown raises
+  // EPOLLHUP at once. A peer in another process can answer before the client
+  // polls again, and data that arrives after shutdown(SHUT_RD) resets the
+  // connection: the socket then closes on the error, paused or not.
+  describe.skipIf(!isLinux && !isMacOS)("leaves no file descriptor open", () => {
+    const openFds = () => readdirSync(isMacOS ? "/dev/fd" : "/proc/self/fd");
+
+    // Closes a few connections with `closeOne`. Returns the file descriptors
+    // that are open afterwards and were not open before.
+    async function leakedFds(url: string, options: object, closeOne: (ws: WebSocket) => Promise<CloseEvent>) {
+      // This connection stays open for the whole run. Whatever the first
+      // connection creates lazily is part of the baseline with it.
+      const held = new WebSocket(`${url}/held`, options);
+      await open(held);
+      const before = new Set(openFds());
+      try {
+        for (let i = 0; i < 4; i++) {
+          const { code, wasClean } = await closeOne(new WebSocket(url, options));
+          expect({ code, wasClean }).toEqual({ code: 1000, wasClean: true });
+        }
+        // Every socket of a closed connection (client, origin and proxy side)
+        // closes within a few turns of the event loop. A leaked one never does.
+        const leaked = () => openFds().filter(fd => !before.has(fd));
+        const deadline = performance.now() + 3000;
+        while (leaked().length > 0 && performance.now() < deadline) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        return leaked();
+      } finally {
+        held.terminate();
+      }
+    }
+
+    function closeEvent(ws: WebSocket): Promise<CloseEvent> {
+      return new Promise(resolve => (ws.onclose = resolve));
+    }
+
+    for (const mode of MODES) {
+      it(`pause(), then close() (${mode.name})`, async () => {
+        const proxy = mode.proxy ? await pipingConnectProxy(mode.proxy === "https") : undefined;
+        try {
+          using server = streamServer(newSignals(), mode.secure);
+          const url = `${mode.secure ? "wss" : "ws"}://127.0.0.1:${server.port}`;
+          const options = {
+            tls: { rejectUnauthorized: false },
+            ...(proxy ? { proxy: `${mode.proxy}://127.0.0.1:${proxy.port}` } : {}),
+          };
+          const leaked = await leakedFds(url, options, async ws => {
+            await open(ws);
+            const closed = closeEvent(ws);
+            expect(ws.pause()).toBe(true);
+            ws.close();
+            return closed;
+          });
+          expect(leaked).toEqual([]);
+        } finally {
+          proxy?.close();
+        }
+      });
+    }
+
+    it("pause() in the message handler, with the peer's Close in the same read", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req, { data: { held: new URL(req.url).pathname === "/held" } })) return;
+          return new Response();
+        },
+        websocket: {
+          open(ws: Bun.ServerWebSocket<{ held: boolean }>) {
+            if (ws.data.held) return;
+            ws.send("message");
+            ws.close(1000, "bye");
+          },
+          message() {},
+        },
+      });
+      const leaked = await leakedFds(`ws://127.0.0.1:${server.port}`, {}, ws => {
+        ws.onmessage = () => ws.pause();
+        return closeEvent(ws);
+      });
+      expect(leaked).toEqual([]);
+    });
+
+    // With unsent data queued, the Close frame queues behind it, and the close
+    // is dispatched once it drains. Until then C++ still holds the native client.
+    for (const order of ["pause(), then close()", "close(), then pause()"] as const) {
+      it(`${order} with the Close frame behind unsent data`, async () => {
+        // Completes the upgrade and then reads nothing until resumed.
+        let origin!: net.Socket;
+        const server = net.createServer(sock => {
+          sock.once("data", head => {
+            acceptUpgrade(sock, head);
+            sock.pause();
+            sock.on("data", () => {});
+            origin = sock;
+          });
+          sock.on("error", () => {});
+        });
+        const port = await listen(server);
+        try {
+          const leaked = await leakedFds(`ws://127.0.0.1:${port}`, {}, async ws => {
+            await open(ws);
+            const closed = closeEvent(ws);
+            // Fill the socket until the client has to queue.
+            for (let sent = 0; ws.bufferedAmount === 0; sent++) {
+              expect(sent).toBeLessThan(1024);
+              ws.send(CHUNK);
+            }
+            if (order === "pause(), then close()") {
+              expect(ws.pause()).toBe(true);
+              ws.close();
+            } else {
+              ws.close();
+              expect(ws.pause()).toBe(false);
+              expect(ws.isPaused).toBe(false);
+            }
+            // The Close frame had to wait.
+            expect(ws.bufferedAmount).toBeGreaterThan(0);
+            origin.resume();
+            return closed;
+          });
+          expect(leaked).toEqual([]);
+        } finally {
+          server.close();
+        }
+      });
+    }
   });
 });
 

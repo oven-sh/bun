@@ -598,7 +598,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                     },
                 );
-            } else if IS_POSSIBLY_DECL_TO_REMOVE {
+            } else if IS_POSSIBLY_DECL_TO_REMOVE && self.enclosing_namespace_arg_ref.is_none() {
+                // A namespace member with no value prints nothing, and a value would print as `NS.x = value`.
                 if let BData::BIdentifier(id) = decl.binding.data {
                     let id_ref = id.r#ref;
                     let name = self.load_name_from_ref(id_ref);
@@ -613,18 +614,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // which is not mutated during the visit pass.
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                            let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(
-                                decl,
-                                VisitDeclOpts {
-                                    was_anonymous_named_expr: false,
-                                    could_be_const_value: was_const && !is_after,
-                                    could_be_macro: false,
-                                },
-                            );
-                        } else {
                             continue 'outer;
                         }
+                        let is_after = self.vis_scope().is_after_const_local_prefix;
+                        self.visit_decl(
+                            decl,
+                            VisitDeclOpts {
+                                was_anonymous_named_expr: false,
+                                could_be_const_value: was_const && !is_after,
+                                could_be_macro: false,
+                            },
+                        );
                     }
                 }
             }

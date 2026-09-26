@@ -2064,11 +2064,16 @@ describe.concurrent("test file discovery (scanner)", () => {
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
+      // Each unmatched argument is reported before the run and again after
+      // the summary, where the exit code is decided.
+      const summaryAt = stderr.indexOf("Ran 1 test across 1 file.");
+      expect(summaryAt).toBeGreaterThan(-1);
       for (const arg of unmatched) {
-        expect(stderr).toContain(`Test filter "${arg}" had no matches`);
+        const line = `Test filter "${arg}" had no matches`;
+        expect(stderr.indexOf(line)).toBeLessThan(stderr.indexOf("(pass) exists"));
+        expect(stderr.indexOf(line, summaryAt)).toBeGreaterThan(summaryAt);
       }
       expect(stderr).toContain("(pass) exists");
-      expect(stderr).toContain("Ran 1 test across 1 file.");
       expect(exitCode).toBe(1);
     });
 

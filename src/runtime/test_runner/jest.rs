@@ -551,31 +551,8 @@ pub(crate) fn js_node_test_mark_result(
     };
     // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
     let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
-    // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
-    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done);
-    let Some(dcb) = bun_test::DoneCallback::from_js(wrapper) else {
+    let Some(bound) = node_test_done_entry(buntest, done) else {
         return Ok(JSValue::UNDEFINED);
-    };
-    // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
-    // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
-    let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
-    let bound = match dcb_ref {
-        Some(refdata) => refdata.phase,
-        // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
-        // drain before it stamps the DoneCallback. `get_current_state_data()`
-        // can't name a sequence inside a concurrent group, but
-        // `on_stack_entry_data` holds exactly the `cfg_data` that
-        // `run_test_callback` was invoked with (set/restored around it), so
-        // the mark lands on the right sequence under --concurrent too.
-        None if !dcb_called => match buntest.execution.on_stack_entry_data.get() {
-            Some(entry_data) => bun_test::RefDataValue::Execution {
-                group_index: buntest.execution.group_index,
-                entry_data: Some(entry_data),
-            },
-            None => buntest.get_current_state_data(),
-        },
-        // done() already ran and reported — nothing left to mark.
-        None => return Ok(JSValue::UNDEFINED),
     };
     let Some((sequence_ptr, _)) =
         buntest.execution.get_current_and_valid_execution_sequence(&bound)
@@ -588,6 +565,53 @@ pub(crate) fn js_node_test_mark_result(
         sequence.result = if mode.to_boolean() { ExecResult::Todo } else { ExecResult::Skip };
     }
     Ok(JSValue::UNDEFINED)
+}
+
+/// Reached only from `node:test`: registers `handler` for `done`'s entry, for [`bun_test::BunTest::offer_uncaught_to_node_test`].
+pub(crate) fn js_node_test_on_uncaught(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [done, handler] = callframe.arguments_as_array::<2>();
+    if !handler.is_callable() {
+        return Ok(JSValue::UNDEFINED);
+    }
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    let Some(entry) = node_test_done_entry(buntest, done) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    buntest.node_test_uncaught = Some(bun_test::NodeTestUncaught {
+        entry,
+        handler: bun_jsc::Strong::create(handler, global),
+    });
+    Ok(JSValue::UNDEFINED)
+}
+
+/// The entry that a `node:test` runner's `done` belongs to; `None` once it has been called.
+fn node_test_done_entry(buntest: &bun_test::BunTest, done: JSValue) -> Option<RefDataValue> {
+    // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
+    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done);
+    let dcb = bun_test::DoneCallback::from_js(wrapper)?;
+    // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
+    // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
+    let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
+    match dcb_ref {
+        Some(refdata) => Some(refdata.phase),
+        // Still inside run_test_callback, which stamps `r#ref` last: `on_stack_entry_data` is its `cfg_data`, under --concurrent too.
+        None if !dcb_called => Some(match buntest.execution.on_stack_entry_data.get() {
+            Some(entry_data) => RefDataValue::Execution {
+                group_index: buntest.execution.group_index,
+                entry_data: Some(entry_data),
+            },
+            None => buntest.get_current_state_data(),
+        }),
+        // done() already ran and reported.
+        None => None,
+    }
 }
 
 pub(crate) mod on_unhandled_rejection {
@@ -625,6 +649,17 @@ pub(crate) mod on_unhandled_rejection {
                 true,
                 &current_state_data,
             );
+            if bun_test::BunTest::offer_uncaught_to_node_test(
+                &buntest_strong,
+                global_object,
+                &current_state_data,
+                rejection,
+            ) {
+                // The entry has failed; its `done` advances the sequence.
+                return;
+            }
+            // SAFETY: as above; the handler has returned, so this is again the only handle.
+            let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
             buntest.add_result(current_state_data);
             if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
                 // As `RunTestsTask::call`: what advancing the runner threw is

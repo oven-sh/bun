@@ -777,6 +777,13 @@ pub(super) fn remove_leftover_node_modules(
             }
         }
     }
+
+    if manager.options.global {
+        // `bin_path` is the global bin dir, so the sweep above misses `node_modules/.bin`.
+        if let Ok(node_modules) = cwd.open_at(b"node_modules") {
+            crate::prune::prune_bins(&node_modules);
+        }
+    }
 }
 
 pub fn update_package_json_and_install_and_cli(

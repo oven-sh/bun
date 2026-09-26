@@ -123,7 +123,7 @@ pub(crate) struct Context<'a> {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct Stats {
+pub(crate) struct Stats {
     pub(crate) unpacked_size: usize,
     pub(crate) total_files: usize,
     pub(crate) packed_size: usize,
@@ -187,7 +187,7 @@ impl<'a> Context<'a> {
 }
 
 #[derive(Clone)]
-pub struct BundledDep {
+pub(crate) struct BundledDep {
     pub name: Box<[u8]>,
     pub(crate) was_packed: bool,
     pub(crate) from_root_package_json: bool,
@@ -1887,7 +1887,7 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // Const generics cannot vary the
 // return type directly, so both instantiations return an Option that is
 // `Some` only when FOR_PUBLISH == true.
-pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
+pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a>>;
 
 /// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
 /// the whole tree minus ignores. Shared with `bun pm diff`, whose local side is "what would be published".
@@ -3979,7 +3979,7 @@ fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool {
 // JS bindings
 // ───────────────────────────────────────────────────────────────────────────
 
-pub mod bindings {
+pub(crate) mod bindings {
     use super::*;
     use bun_core::String as BunString;
     use bun_jsc::{

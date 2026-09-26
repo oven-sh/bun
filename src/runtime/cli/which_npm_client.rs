@@ -5,7 +5,7 @@ pub(crate) struct NPMClient {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Tag {
+pub(crate) enum Tag {
     Bun,
 }
 

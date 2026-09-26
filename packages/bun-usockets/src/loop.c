@@ -121,7 +121,8 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 #endif
 
 
-void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
+/* -1 if the wakeup async cannot be created; nothing is left allocated in loop->data. */
+int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
 #ifdef LIBUS_USE_LIBUV
@@ -138,12 +139,21 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
+    if (!loop->data.wakeup_async) {
+        us_free(loop->data.recv_buf);
+        us_free(loop->data.send_buf);
+#ifdef LIBUS_USE_LIBUV
+        us_timer_close(loop->data.sweep_timer, 0);
+#endif
+        return -1;
+    }
     us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
 #if ASSERT_ENABLED
     if (Bun__lock__size != sizeof(loop->data.mutex)) {
         BUN_PANIC("The size of the mutex must match the size of the lock");
     }
 #endif
+    return 0;
 }
 
 void us_internal_loop_data_free(struct us_loop_t *loop) {
@@ -264,11 +274,11 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
                 s->timeout = 255;
                 us_dispatch_timeout(s);
             }
-            /* A timeout handler may have closed every socket and the owner may
-             * have deinit'd the embedding group in response (release builds —
-             * deinit() asserts iterator==NULL in debug). loop_data->iterator
-             * would have been advanced past `group` by unlink_group(); if so,
-             * `group` is freed storage and we must not touch it again. */
+            /* An owner must not deinit the embedding group from a timeout handler
+             * (see us_socket_group_deinit). Survive one that closed every socket
+             * and did it anyway: loop_data->iterator would have been advanced past
+             * `group` by unlink_group(); if so, `group` is freed storage and we
+             * must not touch it again. */
             if (loop_data->iterator != group) goto outer_continue;
 
             if (group->iterator == s && long_ticks == s->long_timeout) {
@@ -291,6 +301,32 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         loop_data->iterator = group->next;
         outer_continue:;
     }
+
+    /* Sockets parked in the low-priority queue are unlinked from head_sockets
+     * (the queue reuses prev/next), so the walk above never visits them. On an
+     * idle loop the queue drains only as fast as loop iterations occur, so a
+     * burst of pre-handshake TLS accepts can still be parked when the single
+     * tick their s->timeout stamp matches passes, after which the exact-match
+     * test above can never fire again. Sweep the parked set here against each
+     * socket's own group's freshly-advanced timestamps. low_prio_iterator lets
+     * close_raw/detach advance iteration past a socket they unlink, same as
+     * group->iterator does for head_sockets. */
+    for (loop_data->low_prio_iterator = loop_data->low_prio_head; loop_data->low_prio_iterator; ) {
+        struct us_socket_t *s = loop_data->low_prio_iterator;
+        unsigned char stamp = s->group->timestamp;
+        unsigned char long_stamp = s->group->long_timestamp;
+        if (stamp == s->timeout) {
+            s->timeout = 255;
+            us_dispatch_timeout(s);
+            if (loop_data->low_prio_iterator != s) continue;
+        }
+        if (long_stamp == s->long_timeout) {
+            s->long_timeout = 255;
+            us_dispatch_long_timeout(s);
+            if (loop_data->low_prio_iterator != s) continue;
+        }
+        loop_data->low_prio_iterator = s->next;
+    }
 }
 
 /* We do not want to block the loop with tons and tons of CPU-intensive work for SSL handshakes.
@@ -306,6 +342,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 
     for (s = loop_data->low_prio_head; s && loop_data->low_prio_budget > 0; s = loop_data->low_prio_head, loop_data->low_prio_budget--) {
         /* Unlink this socket from the low-priority queue */
+        if (s == loop_data->low_prio_iterator) loop_data->low_prio_iterator = s->next;
         loop_data->low_prio_head = s->next;
         if (s->next) s->next->prev = 0;
         s->next = 0;

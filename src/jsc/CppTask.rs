@@ -22,6 +22,10 @@ impl Taskable for CppTask {
         // SAFETY: fn contract; every CppTask payload is a heap EventLoopTask.
         unsafe { Bun__deleteEventLoopTask(this) }
     }
+    /// A `WebCore::EventLoopTask`: C++ posted it to a context and checks that context there.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl CppTask {

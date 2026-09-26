@@ -4,6 +4,7 @@
 // VM's own uses to post work to it, keep its loop alive, or ask whether it may still run
 // script. retain / retainRef take a count, release gives one up; valid however long it is held.
 #include "BunLoopKind.h"
+#include <wtf/SharedTask.h>
 struct BunVmHandleRef;
 extern "C" const BunVmHandleRef* Bun__VmHandle__retain(void* bunVM); // JS thread
 extern "C" const BunVmHandleRef* Bun__VmHandle__retainRef(const BunVmHandleRef*); // any thread
@@ -28,6 +29,7 @@ class EventLoopTask;
 // to outlive a lock).
 extern "C" void Bun__VmHandle__postAndRelease(const BunVmHandleRef*, WebCore::EventLoopTask*, BunLoopKind);
 extern "C" void Bun__VmHandle__refKeepAlive(const BunVmHandleRef*, BunLoopKind, int delta);
+extern "C" void Bun__VmHandle__wake(const BunVmHandleRef*); // any thread
 // Node's can_call_into_js(): false once the VM's stop was requested (terminate()/exit/teardown). Any thread.
 extern "C" bool Bun__VmHandle__scriptAllowed(const BunVmHandleRef*);
 // The handle's state byte, so hot paths test it inline (BUN_VM_HANDLE_STATE_OPEN == bun_jsc::vm_handle::State::Open).
@@ -71,6 +73,8 @@ class DOMWrapperWorld;
 #include "HTTPHeaderIdentifiers.h"
 #include "BunCommonStrings.h"
 #include "DOMURLBaseCache.h"
+#include "NodeVMOptionNames.h"
+#include "NodeVMSourceOriginCache.h"
 #include <JavaScriptCore/HeapObserver.h>
 namespace Zig {
 class GlobalObject;
@@ -175,6 +179,7 @@ public:
     JSC::IsoHeapCellType m_heapCellTypeForNapiHandleScopeImpl;
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
     JSC::IsoHeapCellType m_heapCellTypeForNativePromiseContext;
+    JSC::IsoHeapCellType m_heapCellTypeForJSModuleGraph;
     // JSC::IsoHeapCellType m_heapCellTypeForGeneratedClass;
 
 private:
@@ -241,9 +246,21 @@ public:
     Bun::CommonStrings commonStrings;
 
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
+    Bun::NodeVMOptionNames& nodeVMOptionNames() { return m_nodeVMOptionNames; }
+    Bun::NodeVMSourceOriginCache& nodeVMSourceOriginCache() { return m_nodeVMSourceOriginCache; }
 
     // Live size of the heap as measured by the most recent collection, eden or full.
     size_t heapSizeAfterLastCollection() const { return m_heapSizeAfterLastCollection.get(); }
+
+    // The VM's default (first) Zig::GlobalObject: what defaultGlobalObject(JSC::VM&) returns on threads whose thread-local
+    // default is not this VM's, e.g. the collector thread running a collection's end phase. gcProtect'ed for the VM's life.
+    JSC::JSGlobalObject* defaultGlobalObject { nullptr };
+
+    // Idle full collections GarbageCollectionController requested that have not finished (see
+    // Bun__JSC_onBeforeWait). Counted up on the JS thread, down at the end of each one's end phase, on either thread.
+    std::atomic<unsigned> idleCollectionsPending { 0 };
+    // Their GCRequest::didFinishEndPhase, made once (JSC__VM__collectAsyncIdle).
+    RefPtr<WTF::SharedTask<void()>> idleCollectionDidFinish;
 
     void* bunVM;
     // Opaque box of the Rust VmHandle for this VM: what any *other* thread uses
@@ -325,6 +342,8 @@ private:
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
 
     WebCore::DOMURLBaseCache m_urlBaseCache;
+    Bun::NodeVMOptionNames m_nodeVMOptionNames;
+    Bun::NodeVMSourceOriginCache m_nodeVMSourceOriginCache;
 
     Bun::HeapSizeAfterLastCollection m_heapSizeAfterLastCollection;
 

@@ -10,7 +10,7 @@ use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
 use bun_url::URL;
-pub use http_method::{Method, Optional as MethodOptional};
+pub(crate) use http_method::{Method, Optional as MethodOptional};
 
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
@@ -18,11 +18,11 @@ use super::{AnyRoute, AnyServer};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
 
-pub use crate::socket::ssl_config::SSLConfig;
+pub(crate) use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
 use bun_collections::index_sort;
 
-pub struct ServerConfig {
+pub(crate) struct ServerConfig {
     pub(crate) address: Address,
     pub(crate) idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
     pub(crate) has_idle_timeout: bool,
@@ -109,7 +109,7 @@ impl Default for ServerConfig {
     }
 }
 
-pub enum Address {
+pub(crate) enum Address {
     Tcp {
         port: u16,
         hostname: Option<ZBox>,
@@ -127,10 +127,20 @@ impl Default for Address {
     }
 }
 
+impl Address {
+    #[inline]
+    pub(crate) fn is_unix(&self) -> bool {
+        match self {
+            Address::Unix(_) => true,
+            Address::Tcp { .. } => false,
+        }
+    }
+}
+
 // ZBox frees on Drop; resetting is `*self = Address::default()`.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DevelopmentOption {
+pub(crate) enum DevelopmentOption {
     Development,
     Production,
     DevelopmentWithoutHmr,
@@ -168,12 +178,12 @@ impl ServerConfig {
 }
 
 // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
-pub struct RouteDeclaration {
+pub(crate) struct RouteDeclaration {
     pub path: ZBox,
     pub method: RouteMethod,
 }
 
-pub enum RouteMethod {
+pub(crate) enum RouteMethod {
     Any,
     Specific(Method),
 }
@@ -199,7 +209,7 @@ impl Default for RouteDeclaration {
 }
 
 // TODO: rename to StaticRoute.Entry
-pub struct StaticRouteEntry {
+pub(crate) struct StaticRouteEntry {
     pub path: Box<[u8]>,
     pub(crate) route: AnyRoute,
     pub method: MethodOptional,
@@ -606,7 +616,7 @@ fn convert_file_system_router_type(
 }
 
 impl ServerConfig {
-    pub fn from_js(
+    pub(crate) fn from_js(
         global: &JSGlobalObject,
         arguments: &mut bun_jsc::call_frame::ArgumentsSlice,
         opts: FromJSOptions,
@@ -615,10 +625,6 @@ impl ServerConfig {
         let env = vm.env_loader();
 
         let mut args = ServerConfig {
-            address: Address::Tcp {
-                port: 3000,
-                hostname: None,
-            },
             development: if let Some(hmr) = vm.transpiler.options.transform_options.serve_hmr {
                 if !hmr {
                     DevelopmentOption::DevelopmentWithoutHmr
@@ -634,7 +640,8 @@ impl ServerConfig {
             reuse_port: env.get(b"NODE_UNIQUE_ID").is_some(),
             ..ServerConfig::default()
         };
-        let mut has_hostname = false;
+        let mut hostname: Option<ZBox> = None;
+        let mut unix: Option<ZBox> = None;
 
         if env.get(b"NODE_ENV").unwrap_or(b"") == b"production" {
             args.development = DevelopmentOption::Production;
@@ -645,34 +652,22 @@ impl ServerConfig {
         }
 
         // Set tcp port from env / options
-        {
-            let port = 'brk: {
-                const PORT_ENV: [&[u8]; 3] = [b"BUN_PORT", b"PORT", b"NODE_PORT"];
+        let mut port: u16 = 'brk: {
+            const PORT_ENV: [&[u8]; 3] = [b"BUN_PORT", b"PORT", b"NODE_PORT"];
 
-                for port_env in PORT_ENV {
-                    if let Some(port) = env.get(port_env) {
-                        if let Ok(_port) = bun_core::strings::parse_int::<u16>(port, 10) {
-                            break 'brk _port;
-                        }
+            for port_env in PORT_ENV {
+                if let Some(port) = env.get(port_env) {
+                    if let Ok(_port) = bun_core::strings::parse_int::<u16>(port, 10) {
+                        break 'brk _port;
                     }
                 }
-
-                if let Some(port) = arguments.vm.transpiler.options.transform_options.port {
-                    break 'brk port;
-                }
-
-                match &args.address {
-                    Address::Tcp { port, .. } => *port,
-                    _ => unreachable!(),
-                }
-            };
-            if let Address::Tcp { port: p, .. } = &mut args.address {
-                *p = port;
             }
-        }
-        let mut port = match &args.address {
-            Address::Tcp { port, .. } => *port,
-            _ => unreachable!(),
+
+            if let Some(port) = arguments.vm.transpiler.options.transform_options.port {
+                break 'brk port;
+            }
+
+            3000
         };
 
         if let Some(origin) = &arguments.vm.transpiler.options.transform_options.origin {
@@ -967,7 +962,7 @@ impl ServerConfig {
 
                     let mut user_options = crate::bake::UserOptions {
                         arena,
-                        allocations: core::mem::replace(
+                        _allocations: core::mem::replace(
                             &mut init_ctx.js_string_allocations,
                             crate::bake::StringRefList::EMPTY,
                         ),
@@ -1078,11 +1073,7 @@ impl ServerConfig {
                     },
                 ));
             }
-            let p = number as u16;
-            if let Address::Tcp { port: tp, .. } = &mut args.address {
-                *tp = p;
-            }
-            port = p;
+            port = number as u16;
         }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
@@ -1104,24 +1095,20 @@ impl ServerConfig {
             if !host_str.slice().is_empty() {
                 // Does not reject interior
                 // NUL; the C `bind()` consumer will simply truncate at it.
-                let hostname = ZBox::from_bytes(host_str.slice());
-                if let Address::Tcp { hostname: h, .. } = &mut args.address {
-                    *h = Some(hostname);
-                }
-                has_hostname = true;
+                hostname = Some(ZBox::from_bytes(host_str.slice()));
             }
         }
 
-        if let Some(unix) = arg.get_stringish(global, "unix")? {
-            let unix_str = unix.to_utf8();
+        if let Some(unix_value) = arg.get_stringish(global, "unix")? {
+            let unix_str = unix_value.to_utf8();
             if !unix_str.slice().is_empty() {
-                if has_hostname {
+                if hostname.is_some() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Cannot specify both hostname and unix",
                     )));
                 }
 
-                args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
+                unix = Some(ZBox::from_bytes(unix_str.slice()));
             }
         }
 
@@ -1296,7 +1283,12 @@ impl ServerConfig {
                 "Cannot disable http1 without enabling http2 or http3"
             )));
         }
-        if !args.http1 && !args.http2 && matches!(args.address, Address::Unix(_)) {
+        args.address = match unix {
+            Some(path) => Address::Unix(path),
+            None => Address::Tcp { port, hostname },
+        };
+
+        if !args.http1 && !args.http2 && args.address.is_unix() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));
@@ -1379,13 +1371,12 @@ impl ServerConfig {
                 args.base_uri = buf.into_boxed_slice();
             }
         } else {
-            let hostname: &[u8] = if has_hostname {
-                match &args.address {
-                    Address::Tcp { hostname, .. } => hostname.as_ref().unwrap().as_bytes(),
-                    _ => unreachable!(),
-                }
-            } else {
-                b"0.0.0.0"
+            let hostname: &[u8] = match &args.address {
+                Address::Tcp {
+                    hostname: Some(hostname),
+                    ..
+                } => hostname.as_bytes(),
+                Address::Tcp { hostname: None, .. } | Address::Unix(_) => b"0.0.0.0",
             };
 
             let needs_brackets: bool =
@@ -1473,7 +1464,7 @@ impl ServerConfig {
 }
 
 #[derive(Clone, Copy)]
-pub struct FromJSOptions {
+pub(crate) struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
     pub(crate) is_fetch_required: bool,
     /// What the running server keeps answering with when a `reload()` config
@@ -1486,7 +1477,7 @@ pub struct FromJSOptions {
     pub(crate) previous_routes: bool,
 }
 
-pub struct UserRouteBuilder {
+pub(crate) struct UserRouteBuilder {
     pub(crate) route: RouteDeclaration,
     pub callback: Strong, // jsc.Strong.Optional
 }

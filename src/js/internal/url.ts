@@ -1,3 +1,5 @@
+const [domainToASCII, domainToUnicode, idnaToASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
+
 function urlToHttpOptions(url) {
   const options = {
     ...url,
@@ -23,5 +25,8 @@ function urlToHttpOptions(url) {
 }
 
 export default {
+  domainToASCII,
+  domainToUnicode,
+  idnaToASCII,
   urlToHttpOptions,
 };

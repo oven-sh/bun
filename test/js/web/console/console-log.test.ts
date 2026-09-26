@@ -50,6 +50,20 @@ it("long arrays get cutoff", () => {
   );
 });
 
+it("long arrays get cutoff at a nested indent", () => {
+  const row = "          4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,\n";
+  expect(Bun.inspect([[[[Array(1000).fill(4)]]]], { depth: 5 })).toEqual(
+    "[\n  [\n    [\n      [\n        [\n" +
+      row +
+      row +
+      row +
+      row +
+      "          4, 4, 4, 4,\n" +
+      "          ... 900 more items\n" +
+      "        ]\n      ]\n    ]\n  ]\n]",
+  );
+});
+
 it("console.group", async () => {
   const filepath = join(import.meta.dir, "console-group.fixture.js").replaceAll("\\", "/");
   const proc = Bun.spawnSync({

@@ -247,7 +247,7 @@ where
 }
 
 #[bun_jsc::JsClass]
-pub struct S3Client {
+pub(crate) struct S3Client {
     pub(crate) credentials: bun_ptr::RefPtr<S3Credentials>,
     pub(crate) options: MultiPartUploadOptions,
     pub(crate) acl: Option<ACL>,
@@ -449,7 +449,7 @@ impl S3Client {
             "check if it exists",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::S3BlobStatTask::exists(global, &blob)
+        S3File::S3BlobStatTask::exists(&global.js_thread_of_caller(callframe), &blob)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -464,7 +464,7 @@ impl S3Client {
             "check the size of",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::S3BlobStatTask::size(global, &mut blob)
+        S3File::S3BlobStatTask::size(&global.js_thread_of_caller(callframe), &mut blob)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -479,7 +479,7 @@ impl S3Client {
             "check the stat of",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::S3BlobStatTask::stat(global, &blob)
+        S3File::S3BlobStatTask::stat(&global.js_thread_of_caller(callframe), &blob)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -488,6 +488,7 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(callframe);
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
@@ -517,7 +518,7 @@ impl S3Client {
         // handled by `Drop`.
         let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(Box::new(blob));
         crate::webcore::blob::write_file_internal(
-            global,
+            &cx,
             &mut blob_internal,
             data,
             crate::webcore::blob::WriteFileOptions {
@@ -551,10 +552,12 @@ impl S3Client {
         )?;
 
         let store = blob.store.get().as_ref().unwrap();
-        store
-            .data
-            .as_s3()
-            .list_objects(store, global, object_keys, options)
+        store.data.as_s3().list_objects(
+            store,
+            &global.js_thread_of_caller(callframe),
+            object_keys,
+            options,
+        )
     }
 
     #[bun_jsc::host_fn(method)]
@@ -570,7 +573,10 @@ impl S3Client {
             MissingPathError::AlwaysMissingArgs,
         )?;
         let store = blob.store.get().as_ref().unwrap();
-        store.data.as_s3().unlink(store, global, options)
+        store
+            .data
+            .as_s3()
+            .unlink(store, &global.js_thread_of_caller(callframe), options)
     }
 
     // ── Static methods ────────────────────────────────────────────────────
@@ -654,10 +660,12 @@ impl S3Client {
         )?;
 
         let store = blob.store.get().as_ref().unwrap();
-        store
-            .data
-            .as_s3()
-            .list_objects(store, global, object_keys, options)
+        store.data.as_s3().list_objects(
+            store,
+            &global.js_thread_of_caller(callframe),
+            object_keys,
+            options,
+        )
     }
 }
 

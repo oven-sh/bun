@@ -1321,6 +1321,10 @@ pub struct BundleOptions<'a> {
     /// 0 disables that; chunks with identical load conditions always fold.
     /// `None` picks `default_min_chunk_size(target)`.
     pub min_chunk_size: Option<u64>,
+    /// Code splitting: fold chunks together (`merge_small_chunks`). Only
+    /// tests turn it off (`foldChunksForTesting: false`), to compare a bundle
+    /// with and without folding.
+    pub fold_chunks: bool,
     /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
     pub module_preload: bool,
 
@@ -1335,6 +1339,8 @@ pub struct BundleOptions<'a> {
     pub bytecode_depth: u32,
     /// Run JSC's build-time bytecode optimization passes over the cached bytecode (`optimize.bytecode`).
     pub optimize_bytecode: bool,
+    /// `--compile --bytecode`: payload order files to lay the bytecode out by (`bytecode_order`), most important first.
+    pub bytecode_order: Vec<Box<[u8]>>,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
     pub compile_target_builtins: CompileTargetBuiltins,
 
@@ -1530,6 +1536,7 @@ impl<'a> BundleOptions<'a> {
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
             min_chunk_size: self.min_chunk_size,
+            fold_chunks: self.fold_chunks,
             module_preload: self.module_preload,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
@@ -1537,6 +1544,7 @@ impl<'a> BundleOptions<'a> {
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
             optimize_bytecode: self.optimize_bytecode,
+            bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
@@ -1711,6 +1719,7 @@ impl<'a> BundleOptions<'a> {
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
             min_chunk_size: None,
+            fold_chunks: true,
             module_preload: true,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
@@ -1785,6 +1794,7 @@ impl<'a> BundleOptions<'a> {
             bytecode: false,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
+            bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
             debugger: false,
@@ -2110,7 +2120,7 @@ pub enum PlaceholderField {
 
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
 #[inline]
-fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
+pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
     let needle: &[u8] = match field {
         PlaceholderField::Dir => b"[dir]",
         PlaceholderField::Name => b"[name]",
@@ -2319,7 +2329,8 @@ fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
 fn path_template_print_tolerates_malformed_brackets() {
     fn run(template: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
-        path_template_print(&mut out, template, b"D", b"N", b"E", Some(0), b"T", false).unwrap();
+        let hash = Some(bun_core::fmt::ContentHash::short(0));
+        path_template_print(&mut out, template, b"D", b"N", b"E", hash, b"T", false).unwrap();
         out
     }
     // Unterminated known placeholder: used to slice one past the end.

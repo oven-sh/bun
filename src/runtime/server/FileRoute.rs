@@ -24,7 +24,7 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct FileRoute {
+pub(crate) struct FileRoute {
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
     blob: Blob,
@@ -41,7 +41,7 @@ pub struct FileRoute {
     has_date_header: bool,
 }
 
-pub struct InitOptions<'a> {
+pub(crate) struct InitOptions<'a> {
     pub(crate) server: Option<AnyServer>,
     pub(crate) status_code: u16, // default 200
     pub(crate) headers: Option<&'a FetchHeaders>,
@@ -129,7 +129,7 @@ impl FileRoute {
         RefPtr::new(FileRoute::new(blob, headers, opts.server, opts.status_code))
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<FileRoute>>> {

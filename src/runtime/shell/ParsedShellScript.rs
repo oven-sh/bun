@@ -20,7 +20,7 @@ use super::{EnvStr, Interpreter};
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
-pub struct ParsedShellScript {
+pub(crate) struct ParsedShellScript {
     pub args: JsCell<Option<Box<ShellArgs>>>,
     // Uses a global-alloc Vec; revisit if profiling shows
     // the extra alloc matters. JSValues here are GC-rooted via `toJSWithValues` codegen

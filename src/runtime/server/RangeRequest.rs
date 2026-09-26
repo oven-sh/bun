@@ -7,7 +7,7 @@ use bun_core::strings;
 use bun_uws::AnyRequest;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Result {
+pub(crate) enum Result {
     /// No Range header (or unsupported form) — serve 200 with the full body.
     None,
     /// Serve 206 with `Content-Range: bytes start-end/total`. `end` is inclusive.
@@ -19,7 +19,7 @@ pub enum Result {
 /// Parsed Range header before the total size is known. Safe to store on a
 /// request context: it owns no slices into the uWS request buffer.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Raw {
+pub(crate) enum Raw {
     None,
     /// bytes=-N
     Suffix(u64),

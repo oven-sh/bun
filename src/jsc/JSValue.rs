@@ -1096,6 +1096,22 @@ impl JSValue {
         }
     }
 
+    /// `get` for a key that is one of `BunCommonStrings.h`'s, without the
+    /// per-call `StringImpl` and atom-table probe.
+    pub fn get_common_string(
+        self,
+        global: &JSGlobalObject,
+        key: crate::CommonString,
+    ) -> JsResult<Option<JSValue>> {
+        debug_assert!(self.is_object());
+        let v = host_fn::from_js_host_call_generic(global, || key.get_property(self, global))?;
+        if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() {
+            Ok(None)
+        } else {
+            Ok(Some(v))
+        }
+    }
+
     /// Safe to use on any JSValue.
     /// Returns true iff the value is an object whose `toString` property is a callable cell.
     pub fn implements_to_string(self, global: &JSGlobalObject) -> JsResult<bool> {
@@ -1635,6 +1651,31 @@ impl JSValue {
         AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
 
+    /// For a handler script sets on something long-lived whose events arrive from the event loop: it
+    /// continues the `Bun.ModuleGraph` whose script set it, without the `AsyncLocalStorage` stores of
+    /// that moment. Outside any graph, `self` unchanged.
+    #[inline]
+    pub fn with_graph_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__withGraphContextIfNeeded(
+                global: &JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        AsyncContextFrame__withGraphContextIfNeeded(global, self)
+    }
+
+    /// The function [`with_async_context_if_needed`](Self::with_async_context_if_needed) or
+    /// [`with_graph_context_if_needed`](Self::with_graph_context_if_needed) was given
+    /// (`self` unchanged when it is not a wrapper): what a getter hands back to script.
+    #[inline]
+    pub fn without_async_context(self) -> JSValue {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__callbackOf(stored: JSValue) -> JSValue;
+        }
+        AsyncContextFrame__callbackOf(self)
+    }
+
     /// Protects a JSValue from garbage collection (refcounted). The is_cell
     /// check happens on the C++ side (bindings.cpp).
     #[inline]
@@ -1676,6 +1717,10 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
+        // A `Bun.ModuleGraph` that was disposed hears nothing more from native code.
+        if global.bun_vm().calls_nobody() {
+            return Ok(JSValue::UNDEFINED);
+        }
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.
@@ -1811,37 +1856,15 @@ impl FromAny for &[u16] {
     }
 }
 
-impl FromAny for () {
-    #[inline]
-    fn into_js_value(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
-    }
-}
 impl FromAny for &[u8] {
     #[inline]
     fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::create_utf8_for_js(global, self)
     }
 }
-impl FromAny for &str {
-    #[inline]
-    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global, self.as_bytes())
-    }
-}
 impl FromAny for Box<[bun_core::String]> {
     fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::to_js_array(global, &self)
-    }
-}
-impl<T: FromAny> FromAny for Option<T> {
-    /// `None` → `undefined`.
-    #[inline]
-    fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        match self {
-            Some(v) => v.into_js_value(global),
-            None => Ok(JSValue::UNDEFINED),
-        }
     }
 }
 

@@ -119,8 +119,9 @@ if [ "$arch" = aarch64 ]; then
   expect 42 "^linux_paths: mode=hosted $paths" "aarch64 linux_paths hosted (x18), traps on svc, tpidr_el0, tpidrro_el0" $run "$out/host-linux" "$v/linux_paths.x18-only.img" hosted
   expect 42 "^linux_paths: mode=hosted $paths" "aarch64 linux_paths hosted (tpidrro_el0, one thread), traps on svc, tpidr_el0, x18" env BUN_HOST_TEST=macos-tp $run "$out/host-linux" "$v/linux_paths.tpidrro-only.img" hosted
 
-  # 132 is SIGILL, 139 is SIGSEGV
-  expect 139 "Segmentation fault" "aarch64 must fail: hosted, host does not reload x18" $run "$v/host-linux.no-x18-reload" "$out/threads.img" "$out/probe.tmp"
+  # 132 is SIGILL. A host whose shims do not put x18 back is ended by its own check of x18
+  # (exit code 96): the next request finds what the host left in the register.
+  expect 96 "^host: the image changed x18: it is 0xdead" "aarch64 must fail: hosted, host does not reload x18" $run "$v/host-linux.no-x18-reload" "$out/threads.img" "$out/probe.tmp"
   expect 132 "Illegal instruction" "aarch64 must fail: direct, image with traps on svc" $run "$v/threads.x18-only.img" "$out/probe.tmp"
   expect 132 "Illegal instruction" "aarch64 must fail: hosted (x18), image with traps on x18" $run "$out/host-linux" "$v/threads.linux-only.img" "$out/probe.tmp"
   expect 132 "Illegal instruction" "aarch64 must fail: hosted (tpidrro_el0), image with traps on tpidrro_el0" env BUN_HOST_TEST=macos-tp $run "$out/host-linux" "$v/linux_paths.x18-only.img" hosted

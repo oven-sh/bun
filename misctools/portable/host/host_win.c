@@ -17,13 +17,19 @@
 //   BUN_HOST_COUNTS=file   at exit: how often every request number arrived
 //   BUN_HOST_PATHS=file    every path that the image hands over, with the answer
 //
-// Signals (x86-64). Windows has none. Faults of the processor arrive as exceptions: a
+// Signals. Windows has none. Faults of the processor arrive as exceptions: a
 // vectored handler turns them into the Linux siginfo and ucontext and calls the
 // handler that the image registered. A signal that the image sends to a thread
 // (tkill, tgkill) is kept as pending at the thread and taken by the thread itself:
 // at the end of the request that it is in, in a wait, or, when the thread runs code
 // of the image, after this host has stopped it and pointed it to signal_landing().
 // See "signals to a thread" below.
+//
+// arm64: x18 is the TEB, in the host and in the image. The image never writes it, and
+// what a handler of the image does to x18 in its ucontext is not taken over.
+// Code that the image writes (a JIT): memory with read, write and execute is what
+// VirtualAlloc gives, and the image says when it has written (the request clear_cache,
+// answered with FlushInstructionCache).
 #define WIN32_LEAN_AND_MEAN
 #define _CRT_SECURE_NO_WARNINGS
 #include <windows.h>
@@ -51,10 +57,23 @@
    TEB here: the image is built with -ffixed-x18 and no host table function is variadic. */
 #if defined(__x86_64__)
 #define SYSV __attribute__((sysv_abi))
-#define DELIVERS_FAULTS 1
+#define CONTEXT_PC(c) ((c)->Rip)
+/* What is read of a thread that is stopped for a signal. x64: the other registers are saved by signal_landing(). */
+#define CONTEXT_OF_STOPPED (CONTEXT_CONTROL | CONTEXT_INTEGER)
+#define STOPPED_IN_THE_KERNEL(c) 0
 #else
 #define SYSV
-#define DELIVERS_FAULTS 0
+#define CONTEXT_PC(c) ((c)->Pc)
+/* arm64: every register, and the word of Windows on where the thread was stopped. A thread
+   that is on its way into an exception (a fault of a page, a trap of WebAssembly) has the
+   program counter of the image and is inside of the kernel: what Windows does next with
+   its registers is not ours to change. The sender tries again. The runtime of .NET asks
+   the same question before it points a thread somewhere else (coreclr,
+   vm/threadsuspend.cpp, IsContextSafeToRedirect). A system that does not answer
+   (CONTEXT_EXCEPTION_REPORTING is not set) is taken as before. */
+#define CONTEXT_OF_STOPPED (CONTEXT_FULL | CONTEXT_EXCEPTION_REQUEST)
+#define STOPPED_IN_THE_KERNEL(c) \
+  (((c)->ContextFlags & CONTEXT_EXCEPTION_REPORTING) && ((c)->ContextFlags & (CONTEXT_EXCEPTION_ACTIVE | CONTEXT_SERVICE_ACTIVE)))
 #endif
 #define PAGE 4096ull
 
@@ -87,6 +106,7 @@ struct host_thread {
   struct l_stack altstack;
   uintptr_t fault_address;
   int fault_repeats;
+  int fault_access; /* of the fault that is delivered now: 0 read, 1 write, 8 execute, as Windows numbers them */
   /* Signals. mask: what the thread blocks, written by the thread only. pending: what was
      sent and not taken yet, bit n - 1 for signal n. in_host: the thread is inside of a
      request (or has not reached the image yet) and looks at pending by itself.
@@ -132,7 +152,7 @@ static long long precise_ms(void) {
 /* ---- what arrived, for the report ---- */
 enum { COUNT_LINUX = 1024, COUNT_SLOTS = COUNT_LINUX + 256 };
 static volatile LONG64 counts[COUNT_SLOTS], refused[COUNT_SLOTS];
-static volatile LONG64 futex_ops[16], madvise_advice[32], lazy_commits, signals_delivered[L_NSIG];
+static volatile LONG64 futex_ops[16], madvise_advice[32], lazy_commits, signals_delivered[L_NSIG], cache_bytes;
 static HANDLE paths_file = INVALID_HANDLE_VALUE;
 
 static int count_slot(long long n) {
@@ -162,6 +182,7 @@ static void write_counts(void) {
   for (int i = 0; i < L_NSIG; i++)
     if (signals_delivered[i]) fprintf(f, "detail signal_delivered %d %lld\n", i, (long long)signals_delivered[i]);
   if (lazy_commits) fprintf(f, "detail lazy_commits 0 %lld\n", (long long)lazy_commits);
+  if (cache_bytes) fprintf(f, "detail clear_cache_bytes 0 %lld\n", (long long)cache_bytes);
   fclose(f);
 }
 static void log_path(long long n, const char *path, long long result) {
@@ -965,8 +986,8 @@ static void end_by_signal(int sig) {
   leave_process(128 + sig);
 }
 
-#if DELIVERS_FAULTS
 typedef SYSV void (*ImageHandler)(int, struct l_siginfo *, struct l_ucontext *);
+#if defined(__x86_64__)
 #define HOST_REGISTERS(X, c) \
   X(R8, (c)->R8) X(R9, (c)->R9) X(R10, (c)->R10) X(R11, (c)->R11) X(R12, (c)->R12) X(R13, (c)->R13) X(R14, (c)->R14) \
   X(R15, (c)->R15) X(RDI, (c)->Rdi) X(RSI, (c)->Rsi) X(RBP, (c)->Rbp) X(RBX, (c)->Rbx) X(RDX, (c)->Rdx) X(RAX, (c)->Rax) \
@@ -1021,6 +1042,71 @@ static int deliver(int sig, int code, uintptr_t address, int fault, CONTEXT *con
   memcpy(fxsave, &uc.fpregs_mem, sizeof uc.fpregs_mem);
   return 1;
 }
+#else
+_Static_assert(offsetof(CONTEXT, X) == 0x8 && offsetof(CONTEXT, Sp) == 0x100 && offsetof(CONTEXT, Pc) == 0x108 && offsetof(CONTEXT, V) == 0x110 &&
+               offsetof(CONTEXT, Fpcr) == 0x310 && offsetof(CONTEXT, Fpsr) == 0x314 && sizeof(((CONTEXT *)0)->V[0]) == 16, "CONTEXT of arm64");
+/* arm64: the same for the CONTEXT of arm64. X[29] is the frame pointer, X[30] the link
+   register, as regs[29] and regs[30] are for Linux. The vector registers are part of the
+   CONTEXT, `unused` is what x64 needs for them. Windows has no word of the processor
+   about a fault (ESR_EL1): the record is made from what Windows says, the class of the
+   exception and whether the access was a write. */
+static int deliver(int sig, int code, uintptr_t address, int fault, CONTEXT *context, void *unused) {
+  (void)unused;
+  struct host_thread *t = this_thread();
+  AcquireSRWLockShared(&actions_lock);
+  struct l_k_sigaction action = image_actions[sig];
+  ReleaseSRWLockShared(&actions_lock);
+  if (action.handler == L_SIG_DFL || action.handler == L_SIG_IGN) return 0;
+  if (action.flags & L_SA_RESETHAND) image_actions[sig].handler = L_SIG_DFL;
+  InterlockedIncrement64(&signals_delivered[sig]);
+
+  struct l_siginfo info;
+  memset(&info, 0, sizeof info);
+  info.signo = sig;
+  info.code = code;
+  if (fault) info.u.fault.addr = address;
+  else {
+    info.u.kill.pid = main_tid;
+    info.u.kill.uid = 0;
+  }
+  struct l_ucontext uc;
+  memset(&uc, 0, offsetof(struct l_ucontext, mcontext.reserved));
+  uc.stack = t->altstack;
+  for (int n = 0; n < 31; n++) uc.mcontext.regs[n] = context->X[n];
+  uc.mcontext.sp = context->Sp;
+  uc.mcontext.pc = context->Pc;
+  uc.mcontext.pstate = context->Cpsr;
+  uc.mcontext.fault_address = fault ? address : 0;
+  int page = fault && (sig == L_SIGSEGV || sig == L_SIGBUS) && code != L_SI_KERNEL;
+  uint64_t esr = ((uint64_t)(t->fault_access == 8 ? L_ESR_CLASS_INSTRUCTION_ABORT : L_ESR_CLASS_DATA_ABORT) << 26) | 1u << 25 |
+                 (t->fault_access == 1 ? L_ESR_WRITE : 0) | (code == L_SEGV_ACCERR ? 0x0f : 0x07);
+  struct l_fpsimd *fp = l_context_records(&uc, page, esr);
+  memcpy(fp->vregs, context->V, sizeof fp->vregs);
+  fp->fpsr = context->Fpsr;
+  fp->fpcr = context->Fpcr;
+  int suspended = t->suspended;
+  uc.sigmask = suspended ? t->restore : t->mask;
+  t->suspended = 0;
+  t->mask |= action.mask | (action.flags & L_SA_NODEFER ? 0 : 1ull << (sig - 1));
+
+  ((ImageHandler)(uintptr_t)action.handler)(sig, &info, &uc);
+
+  t->mask = uc.sigmask;
+  if (suspended) t->restore = uc.sigmask;
+  for (int n = 0; n < 31; n++)
+    if (n != 18) context->X[n] = uc.mcontext.regs[n];
+  context->Sp = uc.mcontext.sp;
+  context->Pc = uc.mcontext.pc;
+  context->Cpsr = (DWORD)uc.mcontext.pstate;
+  fp = l_context_find(uc.mcontext.reserved, L_FPSIMD_MAGIC);
+  if (fp) {
+    memcpy(context->V, fp->vregs, sizeof fp->vregs);
+    context->Fpsr = fp->fpsr;
+    context->Fpcr = fp->fpcr;
+  }
+  return 1;
+}
+#endif
 
 /* ---- signals to a thread ----
    Linux stops a thread wherever it is and runs the handler on it. Windows has SuspendThread,
@@ -1053,6 +1139,7 @@ static int deliver_pending(struct host_thread *t, CONTEXT *context, void *fxsave
 /* For a thread that is inside of the host: the context is the one of here. The handler
    sees the stack pointer of the host function, which is below everything that the
    image has on this stack, and that is what a handler that looks at the stack needs. */
+#if defined(__x86_64__)
 static int take_signals(struct host_thread *t) {
   if (!signals_ready(t)) return 0;
   CONTEXT context;
@@ -1116,6 +1203,38 @@ static int stop_and_point(struct host_thread *target, CONTEXT *context) {
   go.EFlags &= ~0x500u; /* direction and trap flag */
   return SetThreadContext(target->handle, &go) != 0;
 }
+#else
+static int take_signals(struct host_thread *t) {
+  if (!signals_ready(t)) return 0;
+  CONTEXT context;
+  RtlCaptureContext(&context);
+  return deliver_pending(t, &context, 0);
+}
+/* arm64: where a stopped thread goes on, see stop_and_point(). x0: the registers that it
+   had, ALL of them (CONTEXT_FULL has the vector registers), saved on its own stack below
+   where it was. RtlRestoreContext puts them back and goes on where the thread was: no
+   assembly is needed, and x18 is the TEB before, during and after. */
+static void signal_landing(CONTEXT *saved) {
+  deliver_pending(this_thread(), saved, 0);
+  RtlRestoreContext(saved, 0);
+}
+/* The thread is stopped and runs code of the image: it goes on in signal_landing(). Code
+   for Linux keeps nothing below its stack pointer, the 128 bytes are left all the same. */
+static int stop_and_point(struct host_thread *target, CONTEXT *context) {
+  CONTEXT *saved = (CONTEXT *)((context->Sp - 128 - sizeof(CONTEXT)) & ~(uintptr_t)15);
+  *saved = *context;
+  /* What is put back is what was read: not the flags of the question above. */
+  saved->ContextFlags = CONTEXT_FULL;
+  CONTEXT go = *context;
+  go.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+  go.Pc = (DWORD64)(uintptr_t)signal_landing;
+  go.Sp = ((uintptr_t)saved - 64) & ~(uintptr_t)15;
+  go.X[0] = (DWORD64)(uintptr_t)saved;
+  go.X[29] = 0;
+  go.X[30] = 0;
+  return SetThreadContext(target->handle, &go) != 0;
+}
+#endif
 /* One sender at a time: two threads that stop each other would both stay stopped. */
 static SRWLOCK sender_lock = SRWLOCK_INIT;
 static long long send_to_thread(struct host_thread *target, int sig) {
@@ -1136,9 +1255,9 @@ static long long send_to_thread(struct host_thread *target, int sig) {
       if (target->in_host || !((l_sigset)target->pending & bit & ~target->mask)) settled = 1;
       else {
         CONTEXT context;
-        context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
-        if (GetThreadContext(target->handle, &context) && TryAcquireSRWLockExclusive(&memory_srw)) {
-          int of_image = region_at((uintptr_t)context.Rip) != 0;
+        context.ContextFlags = CONTEXT_OF_STOPPED;
+        if (GetThreadContext(target->handle, &context) && !STOPPED_IN_THE_KERNEL(&context) && TryAcquireSRWLockExclusive(&memory_srw)) {
+          int of_image = region_at((uintptr_t)CONTEXT_PC(&context)) != 0;
           ReleaseSRWLockExclusive(&memory_srw);
           if (of_image) settled = stop_and_point(target, &context);
         }
@@ -1152,9 +1271,6 @@ static long long send_to_thread(struct host_thread *target, int sig) {
   }
   return 0;
 }
-#else
-static int take_signals(struct host_thread *t) { (void)t; return 0; }
-#endif
 
 /* Every exception of the process passes here first. Two kinds are for this host:
    - a page of the image that is reserved and not committed yet: it is committed, and the
@@ -1168,11 +1284,8 @@ static LONG CALLBACK on_exception(EXCEPTION_POINTERS *e) {
   struct host_thread *t = this_thread();
   int sig = 0, code = 0;
   uintptr_t address = 0;
-#if defined(__x86_64__)
-  uintptr_t pc = context->Rip;
-#else
-  uintptr_t pc = context->Pc;
-#endif
+  uintptr_t pc = CONTEXT_PC(context);
+  t->fault_access = 0;
   switch (record->ExceptionCode) {
     case EXCEPTION_ACCESS_VIOLATION: case EXCEPTION_IN_PAGE_ERROR: {
       if (record->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
@@ -1183,6 +1296,7 @@ static LONG CALLBACK on_exception(EXCEPTION_POINTERS *e) {
         sig = L_SIGSEGV; code = L_SI_KERNEL; address = 0;
         break;
       }
+      t->fault_access = (int)kind;
       int again = t->fault_address == address ? t->fault_repeats + 1 : 0;
       t->fault_address = address;
       t->fault_repeats = again;
@@ -1202,9 +1316,28 @@ static LONG CALLBACK on_exception(EXCEPTION_POINTERS *e) {
       sig = L_SIGSEGV; code = L_SEGV_ACCERR;
       address = record->NumberParameters >= 2 ? record->ExceptionInformation[1] : 0;
       break;
+#if defined(__x86_64__)
     /* hlt and the like: a general protection fault on Linux, which is SIGSEGV without address. */
     case EXCEPTION_PRIV_INSTRUCTION: sig = L_SIGSEGV; code = L_SI_KERNEL; break;
     case EXCEPTION_ILLEGAL_INSTRUCTION: sig = L_SIGILL; code = L_ILL_ILLOPN; address = pc; break;
+#else
+    /* arm64: an instruction that code outside of the kernel may not use is an undefined
+       instruction for Linux. And "brk" is a breakpoint for Linux whatever its number is,
+       Windows knows a few numbers and reports the others as illegal instructions (the
+       program counter is in memory of the image, so the instruction can be read). */
+    case EXCEPTION_PRIV_INSTRUCTION: sig = L_SIGILL; code = L_ILL_ILLOPC; address = pc; break;
+    case EXCEPTION_ILLEGAL_INSTRUCTION: {
+      memory_lock();
+      struct region *r = region_at(pc);
+      int readable = r && (r->flags & R_COMMITTED) && (r->prot & L_PROT_READ);
+      memory_unlock();
+      if (readable && !(pc & 3) && l_is_brk(*(uint32_t *)pc)) { sig = L_SIGTRAP; code = L_TRAP_BRKPT; }
+      else { sig = L_SIGILL; code = L_ILL_ILLOPC; }
+      address = pc;
+      break;
+    }
+    case EXCEPTION_DATATYPE_MISALIGNMENT: sig = L_SIGBUS; code = L_BUS_ADRALN; address = pc; break;
+#endif
     case EXCEPTION_INT_DIVIDE_BY_ZERO: sig = L_SIGFPE; code = L_FPE_INTDIV; address = pc; break;
     case EXCEPTION_INT_OVERFLOW: sig = L_SIGSEGV; code = L_SI_KERNEL; break;
     case EXCEPTION_FLT_DIVIDE_BY_ZERO: sig = L_SIGFPE; code = L_FPE_FLTDIV; address = pc; break;
@@ -1214,7 +1347,11 @@ static LONG CALLBACK on_exception(EXCEPTION_POINTERS *e) {
     case EXCEPTION_FLT_INVALID_OPERATION: case EXCEPTION_FLT_DENORMAL_OPERAND: case EXCEPTION_FLT_STACK_CHECK:
       sig = L_SIGFPE; code = L_FPE_FLTINV; address = pc;
       break;
+#if defined(__x86_64__)
     case EXCEPTION_BREAKPOINT: sig = L_SIGTRAP; code = L_SI_KERNEL; break;
+#else
+    case EXCEPTION_BREAKPOINT: sig = L_SIGTRAP; code = L_TRAP_BRKPT; address = pc; break;
+#endif
     case EXCEPTION_SINGLE_STEP: sig = L_SIGTRAP; code = L_TRAP_TRACE; address = pc; break;
     default:
       return EXCEPTION_CONTINUE_SEARCH;
@@ -1223,10 +1360,13 @@ static LONG CALLBACK on_exception(EXCEPTION_POINTERS *e) {
   int of_image = region_at(pc) != 0;
   memory_unlock();
   if (!of_image) return EXCEPTION_CONTINUE_SEARCH;
-#if DELIVERS_FAULTS
+#if defined(__x86_64__)
   /* Windows reports a breakpoint at the instruction, Linux after it. */
   if (record->ExceptionCode == EXCEPTION_BREAKPOINT) context->Rip++;
   if (deliver(sig, code, address, 1, context, &context->FltSave)) return EXCEPTION_CONTINUE_EXECUTION;
+#else
+  /* arm64: both report "brk" at the instruction. */
+  if (deliver(sig, code, address, 1, context, 0)) return EXCEPTION_CONTINUE_EXECUTION;
 #endif
   (void)code;
   host_log("host: %s (Windows exception %#lx) at address %#llx, program counter %#llx%s, and the image has no handler for it\n", signal_name(sig),
@@ -1264,14 +1404,10 @@ static long long host_kill(int tid, int sig) {
     ReleaseSRWLockShared(&actions_lock);
     if (handler == L_SIG_IGN || (handler == L_SIG_DFL && ignored_by_default(sig))) r = 0;
     else if (handler == L_SIG_DFL) end_by_signal(sig);
-#if DELIVERS_FAULTS
     else if (target == t) {
       InterlockedOr64(&t->pending, (LONG64)(1ull << (sig - 1)));
       r = 0;
     } else r = send_to_thread(target, sig);
-#else
-    else r = -L_ENOSYS;
-#endif
   }
   ReleaseSRWLockShared(&threads_lock);
   /* raise(): the handler has run when the call returns. */
@@ -1386,7 +1522,7 @@ static long long dispatch(long long n, long long a, long long b, long long c, lo
     case N_tkill: return a > 0 ? host_kill((int)a, (int)b) : -L_EINVAL;
     case N_tgkill: return a == main_tid && b > 0 ? host_kill((int)b, (int)c) : -L_ESRCH;
     case N_kill: return a == main_tid || a == 0 ? host_kill(0, (int)b) : -L_ESRCH;
-    case N_rt_sigsuspend: return DELIVERS_FAULTS ? host_sigsuspend((void *)a) : -L_ENOSYS;
+    case N_rt_sigsuspend: return host_sigsuspend((void *)a);
     case N_rt_sigreturn:
       host_log("host: rt_sigreturn, and no signal frame of a kernel is there\n");
       leave_process(70);
@@ -1419,6 +1555,13 @@ static long long dispatch(long long n, long long a, long long b, long long c, lo
       TlsSetValue(tp_slot, (void *)b);
       return 0;
     case N_set_tp: TlsSetValue(tp_slot, (void *)a); return 0;
+    /* Code was written to [a, b). */
+    case N_clear_cache:
+      if ((uintptr_t)b < (uintptr_t)a) return -L_EINVAL;
+      InterlockedAdd64(&cache_bytes, b - a);
+      return FlushInstructionCache(GetCurrentProcess(), (void *)a, (SIZE_T)(b - a)) ? 0 : win_error();
+    /* Memory for code is writable and executable at once here: no thread has to say what it does. */
+    case N_jit_write_protect: return a == 2 ? 0 : -L_EINVAL;
     /* Robust mutexes are a matter between the libc and the Linux kernel. The list of a
        thread that ends is walked by the libc itself (pthread_exit). */
     case N_set_robust_list: return 0;
@@ -1462,6 +1605,39 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
   } while (signals_ready(t) && !InterlockedExchange(&t->in_host, 1));
   return r;
 }
+
+/* ---- what the processor can do (arm64) ----
+   Code that was built for Linux asks the kernel: AT_HWCAP and AT_HWCAP2 of the start
+   stack, with the bits of Linux. Windows answers IsProcessorFeaturePresent. What
+   Windows has no number for stays 0, and the image takes the way for a processor
+   without it: the rounding instructions of Armv8.5 (FRINT), FCMA, RDM, DPB, FLAGM, DIT,
+   SB, SSBS, the second set of RCPC. */
+#if !defined(__x86_64__)
+static void host_hwcap(uint64_t *hwcap, uint64_t *hwcap2) {
+  /* The numbers of winnt.h (PF_ARM_...), for an SDK that does not have the newer ones. */
+  static const struct { DWORD feature; uint64_t first, second; } features[] = {
+    {30 /* V8_CRYPTO */, L_HWCAP_AES | L_HWCAP_PMULL | L_HWCAP_SHA1 | L_HWCAP_SHA2, 0},
+    {31 /* V8_CRC32 */, L_HWCAP_CRC32, 0},
+    {34 /* V81_ATOMIC */, L_HWCAP_ATOMICS, 0},
+    {43 /* V82_DP */, L_HWCAP_ASIMDDP, 0},
+    {44 /* V83_JSCVT */, L_HWCAP_JSCVT, 0},
+    {45 /* V83_LRCPC */, L_HWCAP_LRCPC, 0},
+    {64 /* SHA3 */, L_HWCAP_SHA3, 0},
+    {65 /* SHA512 */, L_HWCAP_SHA512, 0},
+    {66 /* V82_I8MM */, 0, L_HWCAP2_I8MM},
+    {67 /* V82_FP16 */, L_HWCAP_FPHP | L_HWCAP_ASIMDHP, 0},
+    {68 /* V86_BF16 */, 0, L_HWCAP2_BF16},
+  };
+  /* Windows for arm64 does not run on a processor without floating point and the vector instructions. */
+  *hwcap = L_HWCAP_FP | L_HWCAP_ASIMD;
+  *hwcap2 = 0;
+  for (size_t i = 0; i < sizeof features / sizeof *features; i++) {
+    if (!IsProcessorFeaturePresent(features[i].feature)) continue;
+    *hwcap |= features[i].first;
+    *hwcap2 |= features[i].second;
+  }
+}
+#endif
 
 /* ---- image loading and start ---- */
 #if defined(__x86_64__)
@@ -1543,7 +1719,7 @@ int wmain(int argc, wchar_t **wide) {
   main_thread.in_host = 1;
   main_thread.wake = CreateEventW(0, FALSE, FALSE, 0);
   if (!main_thread.wake || !DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &main_thread.handle, 0, FALSE, DUPLICATE_SAME_ACCESS)) return 2;
-#if DELIVERS_FAULTS
+#if defined(__x86_64__)
   {
     /* XSAVE, and enabled by the system: the size of the area for what is enabled. */
     int info[4];
@@ -1692,13 +1868,21 @@ int wmain(int argc, wchar_t **wide) {
     cursor += n;
   }
   *v++ = 0;
+#if !defined(__x86_64__)
+  uint64_t hwcap[2];
+  host_hwcap(&hwcap[0], &hwcap[1]);
+  uint64_t processor[] = {L_AT_HWCAP, hwcap[0], L_AT_HWCAP2, hwcap[1]};
+  memcpy(v, processor, sizeof processor);
+  v += sizeof processor / sizeof *processor;
+  if (trace) fprintf(stderr, "[host] AT_HWCAP %#llx, AT_HWCAP2 %#llx\n", (unsigned long long)hwcap[0], (unsigned long long)hwcap[1]);
+#endif
   uint64_t aux[] = {L_AT_PHDR, (uint64_t)(uintptr_t)image_ph, L_AT_PHENT, sizeof(Phdr), L_AT_PHNUM, eh->phnum, L_AT_PAGESZ, PAGE, L_AT_BASE, 0,
                     L_AT_ENTRY, (uint64_t)(uintptr_t)(base + eh->entry), L_AT_UID, 0, L_AT_EUID, 0, L_AT_GID, 0, L_AT_EGID, 0, L_AT_SECURE, 0,
                     L_AT_RANDOM, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host, L_AT_NULL, 0};
   memcpy(v, aux, sizeof aux);
 
   if (trace) fprintf(stderr, "[host] file %lld bytes, image at %#llx, mapped at %p, entry %p, thread slot offset %#llx\n", (long long)file_size.QuadPart, (unsigned long long)image_off, base, base + eh->entry, host.tcb_offset);
-#if DELIVERS_FAULTS
+#if defined(__x86_64__)
   if (trace) fprintf(stderr, "[host] state of a thread that is stopped for a signal: %s, %u bytes\n", xsave_size ? "XSAVE" : "FXSAVE", xsave_size ? xsave_size : 512);
 #endif
   fflush(0);

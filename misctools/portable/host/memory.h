@@ -51,7 +51,8 @@ enum {
   R_FILE = 2,       /* the content of a file */
   R_LAZY = 4,       /* model: commit at the first touch */
   R_COMMITTED = 8,  /* model: the pages are committed */
-  R_MAIN_STACK = 16 /* the stack that the host made for the main thread */
+  R_MAIN_STACK = 16, /* the stack that the host made for the main thread */
+  R_JIT = 32        /* mapped with write and execute at once: code that is written */
 };
 struct region { uintptr_t start, end; uint32_t prot, flags; };
 struct block { uintptr_t base, size; };

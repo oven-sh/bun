@@ -7,7 +7,8 @@
 // file be tested on Linux). The host has the architecture of the image.
 //
 // Environment:
-//   BUN_HOST_TRACE=1|2     1: every request that the host refuses, 2: every request
+//   BUN_HOST_TRACE=1|2|3   1: every request that the host refuses, 2: every request, 3: every
+//                          request when it arrives and when it is answered, with the thread
 //   BUN_HOST_COUNTS=file   at exit: how often every request number arrived
 //   BUN_HOST_PATHS=file    every path that the image hands over, with the answer
 //   BUN_HOST_FORWARD=1     linux only, for taking stock: a request that the host does not
@@ -18,6 +19,18 @@
 //                          mmap and mprotect
 //   BUN_HOST_TEST=overlay  linux: discard pages (MADV_DONTNEED) the way the macOS branch does
 //   BUN_HOST_TEST=macos-tp arm64 linux only, see "x18" below
+//   BUN_HOST_TEST=jitwx    linux: memory for code is writable or executable, never both, for
+//                          every thread by itself, as on Apple Silicon. See "code that is written"
+//   BUN_HOST_HWCAP=a,b     arm64 linux only: AT_HWCAP and AT_HWCAP2 for the image (hexadecimal)
+//                          in place of what the machine has. 0,0: a processor that has nothing
+//   BUN_HOST_PAGE=bytes    linux only: the size of a page for the image, a multiple of the one
+//                          of the machine. 16384 is macOS on Apple Silicon: the image is told
+//                          so (AT_PAGESZ), what it maps starts on such a boundary, and a request
+//                          for an address that is not on one is refused as that system would
+//
+// Exit codes of the host itself: 2 the image cannot be started, 70 rt_sigreturn, 96 the image
+// changed x18 (arm64 linux), 97 and 98 the books of BUN_HOST_TEST=winmem, 99 a syscall that
+// the host did not issue (linux x86-64).
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -43,11 +56,15 @@
 #if __has_include(<sys/sysctl.h>)
 #include <sys/sysctl.h>
 #endif
+#if __has_include(<libkern/OSCacheControl.h>)
+#include <libkern/OSCacheControl.h>
+#endif
 #define MAP_ANON_HOST MAP_ANON
 int __ulock_wait(uint32_t operation, void *addr, uint64_t value, uint32_t timeout_us);
 int __ulock_wake(uint32_t operation, void *addr, uint64_t wake_value);
 #else
 #include <sched.h>
+#include <sys/auxv.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/sysinfo.h>
@@ -68,14 +85,6 @@ struct bun_host {
   HostThreadCreate *thread_create;
   HostThreadExit *thread_exit;
 };
-
-/* Signals reach the image on x86-64. The arm64 image gets its handlers
-   recorded and never called, as before. */
-#if defined(__x86_64__)
-#define DELIVERS_SIGNALS 1
-#else
-#define DELIVERS_SIGNALS 0
-#endif
 
 /* ---- stack switch ---- */
 #if defined(__x86_64__)
@@ -127,14 +136,25 @@ __attribute__((naked)) static void return_to_host(struct context *save) {
    returns into image code.
 
    So that a missing reload cannot go unseen, the host functions overwrite x18
-   themselves (FORGET_X18) as soon as they run. */
+   themselves (FORGET_X18) as soon as they run.
+
+   And the other direction, which is what this host is the test for: THE IMAGE
+   NEVER WRITES x18. Compiled code does not (-ffixed-x18), the code that a JIT
+   emits is another matter. So the shims hand the x18 that they found to the
+   host function (in x7, which no function of the host table uses), and every
+   request checks that it is the block of the thread (check_x18). A signal
+   that arrives in code of the image checks the same. Exit code 96. */
 #if defined(__aarch64__) && !defined(__APPLE__)
 #define X18_HOST 1
 #define IMAGE_ENTRY(name) \
   __attribute__((naked)) static void name##_entry(void) { \
-    __asm__("stp x29, x30, [sp, #-32]!\n mov x29, sp\n str x18, [sp, #16]\n bl " #name "\n" \
+    __asm__("stp x29, x30, [sp, #-32]!\n mov x29, sp\n str x18, [sp, #16]\n mov x7, x18\n bl " #name "\n" \
             "ldr x18, [sp, #16]\n ldp x29, x30, [sp], #32\n ret\n"); \
   }
+/* After seven arguments the next one is in x7. A function with fewer names the ones between. */
+#define X18_AT_ENTRY , void *x18_at_entry
+#define X18_AT_ENTRY_AFTER_TWO , long unused2, long unused3, long unused4, long unused5, long unused6, void *x18_at_entry
+#define CHECK_X18(what, n) check_x18(x18_at_entry, what, n)
 #define FORGET_X18() __asm__ __volatile__("mov x18, #0xdead" : : : "x18")
 __attribute__((naked)) static void enter_image(void *entry, void *sp, void *x18) {
   __asm__("mov x18, x2\n mov sp, x1\n mov x29, #0\n mov x30, #0\n br x0\n");
@@ -143,9 +163,22 @@ __attribute__((naked)) static void enter_image(void *entry, void *sp, void *x18)
 __attribute__((naked)) static int call_image(ImageThreadFn fn, void *arg, void *x18) {
   __asm__("mov x18, x2\n mov x16, x0\n mov x0, x1\n br x16\n");
 }
+/* A signal handler of the image, called from a handler of the host: x18 is whatever the
+   host left in it, and the kernel puts the x18 of the interrupted code back afterwards. */
+__attribute__((naked)) static void call_image_handler(uintptr_t handler, long sig, void *info, void *context, void *x18) {
+  __asm__("stp x29, x30, [sp, #-16]!\n mov x29, sp\n mov x18, x4\n mov x16, x0\n mov x0, x1\n mov x1, x2\n mov x2, x3\n"
+          "blr x16\n ldp x29, x30, [sp], #16\n ret\n");
+}
 #else
 #define X18_HOST 0
+#define X18_AT_ENTRY
+#define X18_AT_ENTRY_AFTER_TWO
+#define CHECK_X18(what, n) ((void)0)
 #define FORGET_X18() ((void)0)
+static void call_image_handler(uintptr_t handler, long sig, void *info, void *context, void *x18) {
+  (void)x18;
+  ((void (*)(int, void *, void *))handler)((int)sig, info, context);
+}
 static int call_image(ImageThreadFn fn, void *arg, void *x18) { (void)x18; return fn(arg); }
 #if defined(__aarch64__)
 __attribute__((naked)) static void enter_image(void *entry, void *sp, void *x18) {
@@ -167,11 +200,44 @@ struct host_thread {
   uintptr_t fault_address;
   int fault_repeats;
   unsigned sent; /* bit n: this host sent signal n of the host to the thread, and it has not arrived yet */
+  /* Code that is written: what the thread may do with that memory now (JIT_EXECUTE or
+     JIT_WRITE), how often it went from one to the other, and for BUN_HOST_TEST=jitwx
+     whether the thread is inside of the host and whether it has to give way. */
+  int jit_mode;
+  unsigned long jit_switches[2];
+  volatile int in_host, yield_wanted;
+  pthread_t self;
+  /* Which of FAULT_SIGNALS the image has blocked, see there. */
+  l_sigset fault_mask;
 };
+enum { JIT_EXECUTE = 0, JIT_WRITE = 1 };
+enum { IN_IMAGE = 0, IN_HOST = 1, IN_HOST_WAITING = 2 };
 
 static pthread_key_t tp_key, thread_key;
-static int trace, forward_unknown, test_winmem, test_overlay;
-static long host_page;
+static int trace, forward_unknown, test_winmem, test_overlay, test_jitwx;
+
+/* Code that is written gets its permission by faults, see "code that is written". */
+#if defined(__APPLE__) && defined(__aarch64__)
+#define JIT_BY_FAULTS 1
+#elif defined(__linux__)
+#define JIT_BY_FAULTS test_jitwx
+#else
+#define JIT_BY_FAULTS 0
+#endif
+/* A fault of a page may be a matter of the host, before it is one of the image: a page of
+   the memory model that is not committed yet, the permission for code that is written, and
+   on the arm64 test host a thread pointer that was read through an x18 that the image changed.
+   Where that is so, the system never blocks the signals of such faults (FAULT_SIGNALS): the
+   host would not see them, and a system ends the process that runs into a fault whose
+   signal is blocked. The image does block them: the handlers of JavaScriptCore run with
+   every signal blocked, and the one that serves the watchdog writes code from inside
+   (VMTraps.cpp, the handler for AccessFault: CodeBlock::jettison). What the image asked
+   for is in the books of the thread (fault_mask), it reads it back from there, and a
+   fault that is its own while it has the signal blocked ends the process, as on Linux. */
+#define FAULTS_OF_THE_HOST (test_winmem || JIT_BY_FAULTS || X18_HOST)
+#define FAULT_SIGNALS (1ull << (L_SIGSEGV - 1) | 1ull << (L_SIGBUS - 1))
+/* The page of the image, and the one of the machine. They differ with BUN_HOST_PAGE only. */
+static long host_page, system_page;
 static int main_tid;
 static struct host_thread main_thread;
 static uintptr_t image_base, image_end, main_stack_low, main_stack_high;
@@ -242,6 +308,15 @@ static void slot_release(void) {
   free(pthread_getspecific(tp_key));
   pthread_setspecific(tp_key, 0);
 }
+/* x18 as code of the image left it: it has to be the block of the thread. */
+static void check_x18(void *found, const char *what, long n) {
+  void *block = pthread_getspecific(tp_key);
+  if (macos_tp || !block || found == block) return;
+  struct host_thread *t = pthread_getspecific(thread_key);
+  host_log("host: the image changed x18: it is %p, the block of the thread is %p (%s %ld, thread %d, its thread pointer is %p, its stack ends at %p)\n", found, block, what, n,
+           t ? t->tid : main_tid, *(void **)((char *)block + slot_offset()), t ? t->stack_top : (void *)main_stack_high);
+  _exit(96);
+}
 #endif
 
 /* Reads the slot the way the image does. */
@@ -274,11 +349,14 @@ static unsigned long fault_mismatches;
 /* BUN_HOST_TEST=winmem: calls of a primitive of the memory model that Windows would refuse,
    see "reservations" below. */
 static unsigned long block_violations;
+/* Code that is written, see there. Threads that have ended are summed up here. */
+static unsigned long jit_switches_of_ended[2], jit_threads_that_switched, jit_thread_most[2], jit_same_fault_again, jit_said[2], cache_bytes;
 static int paths_fd = -1;
 
 /* For a build that measures (test/coverage.ts): called before the process ends by _exit(). */
 void (*bun_host_before_exit)(void);
 
+static void jit_counts(FILE *f);
 static int count_slot(long n) {
   if (n >= 0 && n < COUNT_LINUX) return (int)n;
   if ((n & ~0xffl) == AT_BUN_HOST) return COUNT_LINUX + (int)(n & 0xff);
@@ -306,6 +384,8 @@ static void write_counts(void) {
   if (lazy_commits) fprintf(f, "detail lazy_commits 0 %lu\n", lazy_commits);
   if (fault_mismatches) fprintf(f, "detail fault_mismatches 0 %lu\n", fault_mismatches);
   if (test_winmem) fprintf(f, "detail block_violations 0 %lu\n", block_violations);
+  if (cache_bytes) fprintf(f, "detail clear_cache_bytes 0 %lu\n", cache_bytes);
+  jit_counts(f);
   fclose(f);
 }
 static void log_path(long n, const char *path, long result) {
@@ -442,10 +522,20 @@ __attribute__((unused)) static int linux_signal(int hsig) {
     if (host_signal(sig) == hsig) return sig;
   return -1;
 }
+/* BUN_HOST_TEST=jitwx, see "code that is written". Not one of the last four: qemu keeps them. */
+#define YIELD_SIGNAL (SIGRTMIN + 8)
 static void to_host_sigset(l_sigset set, sigset_t *out) {
   sigemptyset(out);
   for (int sig = 1; sig < L_NSIG; sig++)
     if ((set >> (sig - 1) & 1) && host_signal(sig) > 0) sigaddset(out, host_signal(sig));
+#ifdef __linux__
+  /* BUN_HOST_TEST=jitwx: the signal that asks a thread to give way is the host's. */
+  if (test_jitwx) sigdelset(out, YIELD_SIGNAL);
+#endif
+  if (FAULTS_OF_THE_HOST) {
+    sigdelset(out, SIGSEGV);
+    sigdelset(out, SIGBUS);
+  }
 }
 static l_sigset to_linux_sigset(const sigset_t *set) {
   l_sigset out = 0;
@@ -576,6 +666,239 @@ static long long os_protect(uintptr_t start, size_t bytes, uint32_t prot) {
 static void touch(const void *p, size_t bytes) {
   if (test_winmem && p) model_touch((uintptr_t)p, bytes);
 }
+
+/* ---- code that is written ----
+   A JIT writes code into memory and runs it. JavaScriptCore asks for its memory for
+   code once, with read, write and execute (512 MiB on arm64, MAP_NORESERVE), and uses
+   it sparsely. Linux and Windows give memory like that. Apple Silicon does not: such
+   memory (MAP_JIT) is writable or executable, and every thread has its own answer to
+   which of the two (pthread_jit_write_protect_np). The image knows nothing of it, so
+   the host does it where the processor reports it:
+     - a thread starts with the permission to execute,
+     - a write into that memory is a fault: the thread gets the permission to write,
+       and the instruction runs again,
+     - to run code in it is a fault then: the thread gets the permission to execute.
+   Every such switch is a fault, a signal and the way back. They are counted for each
+   thread.
+
+   BUN_HOST_TEST=jitwx is the same rule on Linux, to count the switches of an image and
+   to see that the image runs under the rule at all. Linux has ONE protection of a page
+   for all threads. So in this mode one thread of the image runs at a time, and the
+   memory for code has the protection of the thread that runs: a thread gives way where
+   it asks the host for something that can wait (a lock, a sleep, a read), and after 2 ms
+   when others wait (the clock sends YIELD_SIGNAL). Which thread runs is decided by
+   numbers that are served in order. */
+static struct { uintptr_t start, end; } jit_ranges[16];
+static volatile int jit_range_count;
+static struct host_thread *this_thread(void);
+
+static int jit_contains(uintptr_t address) {
+  for (int i = 0; i < jit_range_count; i++)
+    if (address >= jit_ranges[i].start && address < jit_ranges[i].end) return 1;
+  return 0;
+}
+/* With the lock of the table. A range is there before it is counted: the fault handler reads without the lock. */
+static int jit_range_add(uintptr_t start, uintptr_t end) {
+  if (jit_contains(start) && jit_contains(end - 1)) return 0;
+  if (jit_range_count == (int)(sizeof jit_ranges / sizeof *jit_ranges)) return -1;
+  jit_ranges[jit_range_count].start = start;
+  jit_ranges[jit_range_count].end = end;
+  jit_range_count = jit_range_count + 1;
+  return 0;
+}
+static void jit_range_remove(uintptr_t start, uintptr_t end) {
+  for (int i = 0; i < jit_range_count; i++) {
+    if (end <= jit_ranges[i].start || start >= jit_ranges[i].end) continue;
+    if (start <= jit_ranges[i].start && end >= jit_ranges[i].end) {
+      jit_ranges[i] = jit_ranges[jit_range_count - 1];
+      jit_range_count = jit_range_count - 1;
+      i--;
+    } else if (start <= jit_ranges[i].start) jit_ranges[i].start = end;
+    else if (end >= jit_ranges[i].end) jit_ranges[i].end = start;
+  }
+}
+
+#ifdef __linux__
+/* What the memory for code allows now. */
+static int jit_protection = JIT_EXECUTE;
+static int jit_host_prot(uint32_t prot, int mode) { return host_prot(prot & ~(uint32_t)(mode == JIT_WRITE ? L_PROT_EXEC : L_PROT_WRITE)); }
+static void jit_protect(int mode) {
+  memory_lock();
+  for (int i = 0; i < jit_range_count; i++)
+    for (size_t k = region_index(jit_ranges[i].start); k < region_count && regions[k].start < jit_ranges[i].end; k++)
+      if (regions[k].flags & R_JIT) mprotect((void *)regions[k].start, regions[k].end - regions[k].start, jit_host_prot(regions[k].prot, mode));
+  jit_protection = mode;
+  memory_unlock();
+}
+
+static pthread_mutex_t run_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t run_turn = PTHREAD_COND_INITIALIZER;
+static unsigned long run_next, run_serving;
+static struct host_thread *running;
+
+/* No handler runs on a thread that is on its way in or out: a handler of the image is
+   code of the image, and asks for its turn itself (jit_leave_host). */
+static void run_acquire(struct host_thread *t, int state) {
+  sigset_t all, saved;
+  sigfillset(&all);
+  pthread_sigmask(SIG_BLOCK, &all, &saved);
+  pthread_mutex_lock(&run_mutex);
+  unsigned long mine = run_next++;
+  while (mine != run_serving || running) pthread_cond_wait(&run_turn, &run_mutex);
+  running = t;
+  pthread_mutex_unlock(&run_mutex);
+  if (jit_protection != t->jit_mode) jit_protect(t->jit_mode);
+  t->in_host = state;
+  pthread_sigmask(SIG_SETMASK, &saved, 0);
+}
+static void run_release(struct host_thread *t) {
+  sigset_t all, saved;
+  sigfillset(&all);
+  pthread_sigmask(SIG_BLOCK, &all, &saved);
+  t->in_host = IN_HOST_WAITING;
+  pthread_mutex_lock(&run_mutex);
+  running = 0;
+  run_serving++;
+  pthread_cond_broadcast(&run_turn);
+  pthread_mutex_unlock(&run_mutex);
+  pthread_sigmask(SIG_SETMASK, &saved, 0);
+}
+static void on_yield(int sig) {
+  (void)sig;
+  int saved_errno = errno;
+  struct host_thread *t = this_thread();
+  if (t->in_host != IN_IMAGE) t->yield_wanted = 1;
+  else if (running == t) {
+    run_release(t);
+    run_acquire(t, IN_IMAGE);
+  }
+  errno = saved_errno;
+}
+static void *run_clock(void *unused) {
+  (void)unused;
+  sigset_t all;
+  sigfillset(&all);
+  pthread_sigmask(SIG_BLOCK, &all, 0);
+  for (;;) {
+    struct timespec slice = {0, 2000000};
+    nanosleep(&slice, 0);
+    pthread_mutex_lock(&run_mutex);
+    if (running && run_next - run_serving > 1 && pthread_kill(running->self, YIELD_SIGNAL)) {
+      host_log("host: the thread that runs cannot be asked to give way (signal %d)\n", YIELD_SIGNAL);
+      _exit(2);
+    }
+    pthread_mutex_unlock(&run_mutex);
+  }
+  return 0;
+}
+static int may_wait(long n) {
+  switch (n) {
+    case N_futex: case N_nanosleep: case N_clock_nanosleep: case N_read: case N_readv: case N_pread64: case N_write: case N_writev:
+    case N_pwrite64: case N_rt_sigsuspend: case N_sched_yield: case N_poll: case N_wait4: case N_fsync: case N_fdatasync:
+      return 1;
+    default:
+      return 0;
+  }
+}
+static void run_before_request(struct host_thread *t, long n) {
+  t->in_host = IN_HOST;
+  if (may_wait(n)) run_release(t);
+}
+static void run_after_request(struct host_thread *t) {
+  if (t->in_host == IN_HOST_WAITING) run_acquire(t, IN_IMAGE);
+  else t->in_host = IN_IMAGE;
+  if (t->yield_wanted) {
+    t->yield_wanted = 0;
+    run_release(t);
+    run_acquire(t, IN_IMAGE);
+  }
+}
+static void run_start(void) {
+  struct sigaction sa;
+  memset(&sa, 0, sizeof sa);
+  sa.sa_handler = on_yield;
+  sa.sa_flags = SA_RESTART;
+  sigfillset(&sa.sa_mask);
+  pthread_t clock;
+  if (sigaction(YIELD_SIGNAL, &sa, 0) || pthread_create(&clock, 0, run_clock, 0)) {
+    host_log("host: BUN_HOST_TEST=jitwx cannot start (signal %d, or the thread of the clock)\n", YIELD_SIGNAL);
+    _exit(2);
+  }
+}
+#endif
+
+/* A handler of the image is about to run on a thread that may be inside of the host. */
+static int jit_leave_host(struct host_thread *t) {
+  int outer = t->in_host;
+#ifdef __linux__
+  if (test_jitwx) {
+    if (outer == IN_HOST_WAITING) run_acquire(t, IN_IMAGE);
+    else t->in_host = IN_IMAGE;
+  }
+#endif
+  return outer;
+}
+static void jit_enter_host(struct host_thread *t, int outer) {
+#ifdef __linux__
+  if (test_jitwx) {
+    if (outer == IN_HOST_WAITING) run_release(t);
+    else t->in_host = outer;
+  }
+#endif
+  (void)t; (void)outer;
+}
+static void jit_set_mode(struct host_thread *t, int mode) {
+  /* The books first: on Linux the thread may be asked to give way at any time, and what
+     it finds when it runs again is the protection of its books. */
+  t->jit_mode = mode;
+#if defined(__APPLE__) && defined(__aarch64__)
+  pthread_jit_write_protect_np(mode == JIT_EXECUTE);
+#elif defined(__linux__)
+  jit_protect(mode);
+#endif
+}
+/* A fault at `address`. 1: it was the permission of the thread, which it has now. */
+static int jit_fault(struct host_thread *t, uintptr_t address, uintptr_t pc, int write, int execute) {
+  if (!JIT_BY_FAULTS || !jit_contains(address) || (!write && !execute)) return 0;
+  /* JavaScriptCore puts pages without access at both ends of its memory for code: a fault
+     there is its own. */
+  memory_lock();
+  struct region *r = region_at(address);
+  int of_code = r && (r->flags & R_JIT) && (r->prot & (execute ? L_PROT_EXEC : L_PROT_WRITE));
+  memory_unlock();
+  if (!of_code) return 0;
+  int want = execute ? JIT_EXECUTE : JIT_WRITE;
+  (void)pc;
+  if (t->jit_mode == want) {
+    /* The thread has that permission. Either the memory has no access for another reason
+       (then the fault is a matter of the image), or the permission did not stay as this
+       handler set it: set again, and if the same fault comes back, say so. */
+    int again = t->fault_address == address ? t->fault_repeats + 1 : 0;
+    t->fault_address = address;
+    t->fault_repeats = again;
+    __atomic_fetch_add(&jit_same_fault_again, 1, __ATOMIC_RELAXED);
+    if (trace > 2) host_log("[host] code memory: thread %d has the permission to %s, and a fault at %#lx all the same (program counter %#lx)\n", t->tid, want == JIT_WRITE ? "write" : "execute", (unsigned long)address, (unsigned long)pc);
+    if (again >= 4) {
+      host_log("host: a fault at %#lx in memory for code, and the thread has the permission to %s there already\n", (unsigned long)address, want == JIT_WRITE ? "write" : "execute");
+      return 0;
+    }
+    jit_set_mode(t, want);
+    return 1;
+  }
+  jit_set_mode(t, want);
+  t->jit_switches[want]++;
+  if (trace > 2) host_log("[host] code memory: thread %d may %s now (fault at %#lx, program counter %#lx)\n", t->tid, want == JIT_WRITE ? "write" : "execute", (unsigned long)address, (unsigned long)pc);
+  return 1;
+}
+static void jit_thread_ends(struct host_thread *t) {
+  unsigned long n = t->jit_switches[JIT_WRITE] + t->jit_switches[JIT_EXECUTE];
+  if (!n) return;
+  jit_threads_that_switched++;
+  for (int m = 0; m < 2; m++) {
+    jit_switches_of_ended[m] += t->jit_switches[m];
+    if (t->jit_switches[m] > jit_thread_most[m]) jit_thread_most[m] = t->jit_switches[m];
+  }
+}
 /* readv and writev: the vector of the image becomes a vector of the host. */
 static long host_vector(int fd, const struct l_iovec *v, long n, int write) {
   struct iovec h[64];
@@ -597,14 +920,46 @@ static void discard_by_overlay(uintptr_t addr, size_t len) {
   memory_lock();
   for (size_t i = region_index(addr); i < region_count && regions[i].start < end; i++) {
     uintptr_t a = regions[i].start > addr ? regions[i].start : addr, b = regions[i].end < end ? regions[i].end : end;
+#ifdef MAP_JIT
+    /* MAP_JIT and MAP_FIXED do not go together (xnu, bsd/kern/kern_mman.c), and a mapping
+       without MAP_JIT could not be written and run. The pages are given back, and what
+       is in them is not promised to be zeros: JavaScriptCore does not ask for that. */
+    if (regions[i].flags & R_JIT) {
+      madvise((void *)a, b - a, MADV_FREE);
+      continue;
+    }
+#endif
     if (regions[i].flags & R_ANON) mmap((void *)a, b - a, host_prot(regions[i].prot), MAP_PRIVATE | MAP_ANON_HOST | MAP_NORESERVE | MAP_FIXED, -1, 0);
     else madvise((void *)a, b - a, MADV_DONTNEED);
   }
   memory_unlock();
 }
+/* Address space for `len` bytes that starts on a page of the image, without access. With
+   the page of the machine that is what mmap gives. With a larger one (BUN_HOST_PAGE) more
+   is asked for, and what is in front of the boundary and after the end is given back. */
+static void *place_pages(uintptr_t hint, size_t len) {
+  size_t slack = host_page > system_page ? (size_t)(host_page - system_page) : 0;
+  char *p = mmap((void *)hint, len + slack, PROT_NONE, MAP_PRIVATE | MAP_ANON_HOST | MAP_NORESERVE, -1, 0);
+  if (p == MAP_FAILED || !slack) return p;
+  char *start = (char *)page_up((uintptr_t)p);
+  if (start > p) munmap(p, (size_t)(start - p));
+  if (start + len < p + len + slack) munmap(start + len, (size_t)(p + len + slack - (start + len)));
+  return start;
+}
 static long native_map(uintptr_t addr, size_t len, uint32_t prot, long flags, int fd, off_t offset) {
   int h = 0;
   if (flags & L_MAP_HUGETLB) return -L_ENOMEM;
+  if (host_page > system_page) {
+    int fixed = !!(flags & (L_MAP_FIXED | L_MAP_FIXED_NOREPLACE));
+    if ((fixed && (addr & (uintptr_t)(host_page - 1))) || (offset & (off_t)(host_page - 1)) || !len) return -L_EINVAL;
+    len = page_up(len);
+    if (!fixed) {
+      void *at = place_pages(addr, len);
+      if (at == MAP_FAILED) return to_linux_errno(errno);
+      addr = (uintptr_t)at;
+      flags |= L_MAP_FIXED;
+    }
+  }
   if (flags & L_MAP_SHARED) h |= MAP_SHARED;
   if (flags & L_MAP_PRIVATE) h |= MAP_PRIVATE;
   if (flags & L_MAP_FIXED) h |= MAP_FIXED;
@@ -621,10 +976,31 @@ static long native_map(uintptr_t addr, size_t len, uint32_t prot, long flags, in
     h |= MAP_FIXED;
 #endif
   }
-  void *p = mmap((void *)addr, len, host_prot(prot), h, flags & L_MAP_ANONYMOUS ? -1 : fd, offset);
+  /* Code that is written: see there. */
+  int jit = JIT_BY_FAULTS && (flags & L_MAP_ANONYMOUS) && (prot & L_PROT_WRITE) && (prot & L_PROT_EXEC), hprot = host_prot(prot);
+#if defined(__APPLE__) && defined(__aarch64__)
+  if (jit) {
+    if (flags & (L_MAP_FIXED | L_MAP_FIXED_NOREPLACE)) {
+      /* Inside of memory for code that is there: the mapping stays, its pages are given
+         back. Anywhere else the system has no such mapping at an address of our choice. */
+      memory_lock();
+      int inside = jit_contains(addr) && jit_contains(addr + page_up(len) - 1) && !(flags & L_MAP_FIXED_NOREPLACE);
+      if (inside) region_set(addr, addr + page_up(len), prot, R_ANON | R_COMMITTED | R_JIT);
+      memory_unlock();
+      if (!inside) return -L_ENOMEM;
+      madvise((void *)addr, len, MADV_FREE);
+      return (long)addr;
+    }
+    h |= MAP_JIT;
+  }
+#elif defined(__linux__)
+  if (jit) hprot = jit_host_prot(prot, jit_protection);
+#endif
+  void *p = mmap((void *)addr, len, hprot, h, flags & L_MAP_ANONYMOUS ? -1 : fd, offset);
   if (p == MAP_FAILED) return to_linux_errno(errno);
   memory_lock();
-  region_set((uintptr_t)p, (uintptr_t)p + page_up(len), prot, (flags & L_MAP_ANONYMOUS ? R_ANON : R_FILE) | R_COMMITTED);
+  if (jit && jit_range_add((uintptr_t)p, (uintptr_t)p + page_up(len))) jit = 0;
+  region_set((uintptr_t)p, (uintptr_t)p + page_up(len), prot, (flags & L_MAP_ANONYMOUS ? R_ANON : R_FILE) | R_COMMITTED | (jit ? R_JIT : 0));
   memory_unlock();
   return (long)p;
 }
@@ -648,16 +1024,25 @@ static long host_mmap(uintptr_t addr, size_t len, uint32_t prot, long flags, int
   return (long)model_map(addr, len, prot, flags, R_ANON);
 }
 static long host_munmap(uintptr_t addr, size_t len) {
+  if (addr & (uintptr_t)(host_page - 1)) return -L_EINVAL;
   if (test_winmem) return (long)model_unmap(addr, len);
-  if (munmap((void *)addr, len)) return to_linux_errno(errno);
+  if (munmap((void *)addr, page_up(len))) return to_linux_errno(errno);
   memory_lock();
   region_clear(addr, addr + page_up(len));
+  jit_range_remove(addr, addr + page_up(len));
   memory_unlock();
   return 0;
 }
 static long host_mprotect(uintptr_t addr, size_t len, uint32_t prot) {
+  if (addr & (uintptr_t)(host_page - 1)) return -L_EINVAL;
   if (test_winmem) return (long)model_protect(addr, len, prot);
-  if (mprotect((void *)addr, len, host_prot(prot))) return to_linux_errno(errno);
+  int hprot = host_prot(prot);
+  len = page_up(len);
+#ifdef __linux__
+  /* BUN_HOST_TEST=jitwx: memory for code has what the image asks for, less what the thread that runs may not do. */
+  if (test_jitwx && jit_contains(addr)) hprot = jit_host_prot(prot, jit_protection);
+#endif
+  if (mprotect((void *)addr, len, hprot)) return to_linux_errno(errno);
   uintptr_t end = addr + page_up(len);
   memory_lock();
   if (!region_split(addr) && !region_split(end)) {
@@ -670,6 +1055,8 @@ static long host_mprotect(uintptr_t addr, size_t len, uint32_t prot) {
 }
 static long host_madvise(uintptr_t addr, size_t len, long advice) {
   if (advice >= 0 && advice < 32) __atomic_fetch_add(&madvise_advice[advice], 1, __ATOMIC_RELAXED);
+  if (addr & (uintptr_t)(host_page - 1)) return -L_EINVAL;
+  len = page_up(len);
   switch (advice) {
     case L_MADV_DONTNEED:
       if (test_winmem) return (long)model_discard(addr, len);
@@ -1004,13 +1391,27 @@ static void on_image_stack(void *p) {
   call_image(t->fn, t->arg, t->x18);
   return_to_host(&t->ctx);
 }
+/* A thread is about to run code of the image for the first time. */
+static void thread_starts(struct host_thread *t) {
+  t->self = pthread_self();
+  t->jit_mode = JIT_EXECUTE;
+#if defined(__APPLE__) && defined(__aarch64__)
+  pthread_jit_write_protect_np(1);
+#elif defined(__linux__)
+  if (test_jitwx) run_acquire(t, IN_IMAGE);
+#endif
+}
 static void *thread_main(void *p) {
   struct host_thread *t = p;
   pthread_setspecific(thread_key, t);
   slot_set(t->tls);
   t->x18 = thread_x18();
+  thread_starts(t);
   enter_image_stack(&t->ctx, (void *)((uintptr_t)t->stack_top & ~15ull), on_image_stack, t);
   /* From here on the thread is on the stack that the host gave it, and nobody can send it a signal. */
+#ifdef __linux__
+  if (test_jitwx && t->in_host != IN_HOST_WAITING) run_release(t);
+#endif
   sigset_t saved;
   threads_lock(&saved);
   for (int i = 0; i < thread_count; i++)
@@ -1018,6 +1419,7 @@ static void *thread_main(void *p) {
       threads[i] = threads[--thread_count];
       break;
     }
+  jit_thread_ends(t);
   threads_unlock(&saved);
   if (t->unmap_base) {
     if (test_winmem) model_unmap((uintptr_t)t->unmap_base, t->unmap_size);
@@ -1032,7 +1434,8 @@ static void *thread_main(void *p) {
   }
   return 0;
 }
-__attribute__((used)) static long host_thread_create(ImageThreadFn fn, void *stack, long flags, void *arg, int *ptid, void *tls, int *ctid) {
+__attribute__((used)) static long host_thread_create(ImageThreadFn fn, void *stack, long flags, void *arg, int *ptid, void *tls, int *ctid X18_AT_ENTRY) {
+  CHECK_X18("thread_create", 0l);
   FORGET_X18();
   count(counts, N_clone);
 #if X18_HOST
@@ -1074,7 +1477,35 @@ static void leave_thread(void *base, unsigned long size) {
   t->unmap_size = size;
   return_to_host(&t->ctx);
 }
-__attribute__((used)) static void host_thread_exit(void *base, unsigned long size) { leave_thread(base, size); }
+__attribute__((used)) static void host_thread_exit(void *base, unsigned long size X18_AT_ENTRY_AFTER_TWO) {
+  CHECK_X18("thread_exit", 0l);
+  leave_thread(base, size);
+}
+
+static void jit_counts(FILE *f) {
+  if (!JIT_BY_FAULTS) return;
+  unsigned long others[2] = {jit_switches_of_ended[0], jit_switches_of_ended[1]}, most[2] = {jit_thread_most[0], jit_thread_most[1]}, threads_that_switched = jit_threads_that_switched;
+  for (int i = 0; i < thread_count; i++) {
+    struct host_thread *t = threads[i].state;
+    if (t->jit_switches[0] + t->jit_switches[1]) threads_that_switched++;
+    for (int m = 0; m < 2; m++) {
+      others[m] += t->jit_switches[m];
+      if (t->jit_switches[m] > most[m]) most[m] = t->jit_switches[m];
+    }
+  }
+  fprintf(f, "detail jit_main_thread_to_write 0 %lu\n", main_thread.jit_switches[JIT_WRITE]);
+  fprintf(f, "detail jit_main_thread_to_execute 0 %lu\n", main_thread.jit_switches[JIT_EXECUTE]);
+  fprintf(f, "detail jit_other_threads_to_write 0 %lu\n", others[JIT_WRITE]);
+  fprintf(f, "detail jit_other_threads_to_execute 0 %lu\n", others[JIT_EXECUTE]);
+  fprintf(f, "detail jit_other_threads_that_switched 0 %lu\n", threads_that_switched);
+  fprintf(f, "detail jit_most_of_one_other_thread_to_write 0 %lu\n", most[JIT_WRITE]);
+  fprintf(f, "detail jit_most_of_one_other_thread_to_execute 0 %lu\n", most[JIT_EXECUTE]);
+  fprintf(f, "detail jit_fault_with_the_permission 0 %lu\n", jit_same_fault_again);
+  if (jit_said[JIT_WRITE] + jit_said[JIT_EXECUTE]) {
+    fprintf(f, "detail jit_said_by_the_image_write 0 %lu\n", jit_said[JIT_WRITE]);
+    fprintf(f, "detail jit_said_by_the_image_execute 0 %lu\n", jit_said[JIT_EXECUTE]);
+  }
+}
 
 /* ---- signals ---- */
 static struct l_k_sigaction image_actions[L_NSIG];
@@ -1082,7 +1513,15 @@ static pthread_t main_pthread;
 __attribute__((unused)) static int syscall_filter_installed;
 static long error_code(int e) { return e ? to_linux_errno(e) : 0; }
 
-#if DELIVERS_SIGNALS
+static int is_fault(int hsig) { return hsig == SIGSEGV || hsig == SIGBUS || hsig == SIGILL || hsig == SIGFPE || hsig == SIGTRAP; }
+
+/* What the handler of the host asks of the machine, for each architecture:
+     fault_of()            a fault of the processor, as Linux reports it. 1: the host has dealt
+                           with it (a page of the memory model, code that is written) and
+                           the instruction runs again
+     context_to_image()    the registers of the interrupted code, in the ucontext of Linux
+     context_from_image()  and back, with what the handler of the image changed */
+#if defined(__x86_64__)
 /* The machine context of the host, read and written through one set of names.
    macOS: the structures of xnu (bsd/sys/_types/_ucontext.h, mach/i386/_structs.h) are
    declared here under names of this file, so that nothing depends on how a header of the
@@ -1111,6 +1550,7 @@ typedef struct mac_ucontext host_context;
   X(RDI, (c)->mcontext->ss.rdi) X(RSI, (c)->mcontext->ss.rsi) X(RBP, (c)->mcontext->ss.rbp) X(RBX, (c)->mcontext->ss.rbx) \
   X(RDX, (c)->mcontext->ss.rdx) X(RAX, (c)->mcontext->ss.rax) X(RCX, (c)->mcontext->ss.rcx) X(RSP, (c)->mcontext->ss.rsp) \
   X(RIP, (c)->mcontext->ss.rip) X(EFL, (c)->mcontext->ss.rflags)
+#define HOST_PC(c) ((c)->mcontext->ss.rip)
 static long context_trap(host_context *c) { return c->mcontext->es.trapno; }
 static long context_error(host_context *c) { return c->mcontext->es.err; }
 static uintptr_t context_fault_address(host_context *c) { return c->mcontext->es.faultvaddr; }
@@ -1136,6 +1576,7 @@ typedef ucontext_t host_context;
   X(RSI, (c)->uc_mcontext.gregs[REG_RSI]) X(RBP, (c)->uc_mcontext.gregs[REG_RBP]) X(RBX, (c)->uc_mcontext.gregs[REG_RBX]) \
   X(RDX, (c)->uc_mcontext.gregs[REG_RDX]) X(RAX, (c)->uc_mcontext.gregs[REG_RAX]) X(RCX, (c)->uc_mcontext.gregs[REG_RCX]) \
   X(RSP, (c)->uc_mcontext.gregs[REG_RSP]) X(RIP, (c)->uc_mcontext.gregs[REG_RIP]) X(EFL, (c)->uc_mcontext.gregs[REG_EFL])
+#define HOST_PC(c) ((c)->uc_mcontext.gregs[REG_RIP])
 static long context_trap(host_context *c) { return (long)c->uc_mcontext.gregs[REG_TRAPNO]; }
 static long context_error(host_context *c) { return (long)c->uc_mcontext.gregs[REG_ERR]; }
 static uintptr_t context_fault_address(host_context *c) { return (uintptr_t)c->uc_mcontext.gregs[REG_CR2]; }
@@ -1171,7 +1612,257 @@ static int classify_fault(long trap, uintptr_t address, int *code, uintptr_t *re
     default: return 0;
   }
 }
-static int is_fault(int hsig) { return hsig == SIGSEGV || hsig == SIGBUS || hsig == SIGILL || hsig == SIGFPE || hsig == SIGTRAP; }
+static int fault_of(int hsig, siginfo_t *hinfo, host_context *hc, struct host_thread *t, int *sig, struct l_siginfo *info) {
+  uintptr_t address = hsig == SIGSEGV || hsig == SIGBUS ? context_fault_address(hc) : (uintptr_t)hinfo->si_addr, reported;
+  long trap = context_trap(hc), error = context_error(hc);
+  if (trap == TRAP_PAGE && jit_fault(t, address, (uintptr_t)HOST_PC(hc), !!(error & 2), !!(error & 16))) return 1;
+  if (test_winmem && trap == TRAP_PAGE) {
+    /* The page may be one that the model has not committed yet. The same address again
+       and again would mean that table and system disagree. */
+    int again = t->fault_address == address ? t->fault_repeats + 1 : 0;
+    t->fault_address = address;
+    t->fault_repeats = again;
+    if (again < 8 && model_fault(address, !!(error & 2), !!(error & 16))) {
+      __atomic_fetch_add(&lazy_commits, 1, __ATOMIC_RELAXED);
+      return 1;
+    }
+  }
+  int code = 0, classified = classify_fault(trap, address, &code, &reported);
+  if (classified) {
+#ifndef __APPLE__
+    if ((classified != *sig || (code && code != hinfo->si_code)) && !test_winmem) __atomic_fetch_add(&fault_mismatches, 1, __ATOMIC_RELAXED);
+#endif
+    *sig = classified;
+    info->code = code;
+    info->u.fault.addr = reported;
+  } else {
+    info->code = hinfo->si_code;
+    info->u.fault.addr = (uintptr_t)hinfo->si_addr;
+  }
+  return 0;
+}
+static void context_to_image(host_context *hc, struct l_ucontext *uc, struct host_thread *t, int fault, const struct l_siginfo *info) {
+  memset(uc, 0, offsetof(struct l_ucontext, fpregs_mem));
+  uc->stack = t->altstack;
+#define REGISTER_IN(name, field) uc->mcontext.gregs[L_REG_##name] = (int64_t)(field);
+  HOST_REGISTERS(REGISTER_IN, hc)
+#undef REGISTER_IN
+  uc->mcontext.gregs[L_REG_CSGSFS] = (int64_t)context_segments(hc);
+  uc->mcontext.gregs[L_REG_ERR] = context_error(hc);
+  uc->mcontext.gregs[L_REG_TRAPNO] = context_trap(hc);
+  uc->mcontext.gregs[L_REG_CR2] = fault ? (int64_t)info->u.fault.addr : 0;
+  if (context_fxsave(hc)) memcpy(&uc->fpregs_mem, context_fxsave(hc), sizeof uc->fpregs_mem);
+  else memset(&uc->fpregs_mem, 0, sizeof uc->fpregs_mem);
+  uc->mcontext.fpregs = (uint64_t)(uintptr_t)&uc->fpregs_mem;
+}
+static void context_from_image(struct l_ucontext *uc, host_context *hc) {
+#define REGISTER_OUT(name, field) (field) = (__typeof__(field))uc->mcontext.gregs[L_REG_##name];
+  HOST_REGISTERS(REGISTER_OUT, hc)
+#undef REGISTER_OUT
+  if (context_fxsave(hc)) memcpy(context_fxsave(hc), &uc->fpregs_mem, sizeof uc->fpregs_mem);
+}
+static void check_context_x18(host_context *hc, struct host_thread *t, int hsig) { (void)hc; (void)t; (void)hsig; }
+
+#else
+/* ---- arm64 ----
+   macOS: the structures of xnu (bsd/sys/_types/_ucontext.h, osfmk/mach/arm/_structs.h) are
+   declared here under names of this file, so that nothing depends on how a header of the
+   SDK spells them (arm64e has other names for some). If the SDK is there, sizes and
+   offsets are compared below. */
+#ifdef __APPLE__
+struct mac_exception_state { uint64_t far; uint32_t esr, exception; };
+struct mac_thread_state { uint64_t x[29], fp, lr, sp, pc; uint32_t cpsr, flags; };
+struct mac_neon_state { uint64_t v[32][2]; uint32_t fpsr, fpcr; uint64_t pad; };
+struct mac_mcontext { struct mac_exception_state es; struct mac_thread_state ss; struct mac_neon_state ns; };
+struct mac_ucontext {
+  int32_t onstack;
+  uint32_t sigmask;
+  struct { void *sp; uint64_t size; int32_t flags; } stack;
+  struct mac_ucontext *link;
+  uint64_t mcsize;
+  struct mac_mcontext *mcontext;
+};
+_Static_assert(offsetof(struct mac_mcontext, ss) == 16 && offsetof(struct mac_thread_state, sp) == 248 && offsetof(struct mac_mcontext, ns) == 288 &&
+               offsetof(struct mac_neon_state, fpsr) == 512 && sizeof(struct mac_mcontext) == 816 && offsetof(struct mac_ucontext, mcontext) == 48, "machine context of macOS arm64");
+#if __has_include(<mach/arm/_structs.h>)
+_Static_assert(sizeof(struct mac_thread_state) == sizeof(struct __darwin_arm_thread_state64) && sizeof(struct mac_neon_state) == sizeof(struct __darwin_arm_neon_state64) &&
+               sizeof(struct mac_exception_state) == sizeof(struct __darwin_arm_exception_state64) && sizeof(struct mac_mcontext) == sizeof(struct __darwin_mcontext64) &&
+               offsetof(struct mac_ucontext, mcontext) == offsetof(ucontext_t, uc_mcontext), "machine context of macOS arm64, compared with the SDK");
+#endif
+typedef struct mac_ucontext host_context;
+static uint64_t *context_x(host_context *c, int n) { return n < 29 ? &c->mcontext->ss.x[n] : n == 29 ? &c->mcontext->ss.fp : &c->mcontext->ss.lr; }
+static uint64_t *context_sp(host_context *c) { return &c->mcontext->ss.sp; }
+static uint64_t *context_pc(host_context *c) { return &c->mcontext->ss.pc; }
+static uint64_t context_get_pstate(host_context *c) { return c->mcontext->ss.cpsr; }
+static void context_set_pstate(host_context *c, uint64_t v) { c->mcontext->ss.cpsr = (uint32_t)v; }
+static void *context_vregs(host_context *c) { return c->mcontext->ns.v; }
+static uint32_t *context_fpsr(host_context *c) { return &c->mcontext->ns.fpsr; }
+static uint32_t *context_fpcr(host_context *c) { return &c->mcontext->ns.fpcr; }
+static int context_esr(host_context *c, uint64_t *esr) { *esr = c->mcontext->es.esr; return 1; }
+static uintptr_t context_fault_address(host_context *c, siginfo_t *info) { (void)info; return (uintptr_t)c->mcontext->es.far; }
+static void context_get_mask(host_context *c, sigset_t *out) {
+  sigemptyset(out);
+  for (int s = 1; s < 32; s++)
+    if (c->sigmask >> (s - 1) & 1) sigaddset(out, s);
+}
+static void context_set_mask(host_context *c, const sigset_t *in) {
+  uint32_t mask = 0;
+  for (int s = 1; s < 32; s++)
+    if (sigismember(in, s) == 1) mask |= 1u << (s - 1);
+  c->sigmask = mask;
+}
+static void context_vregs_written(host_context *c, const struct l_fpsimd *fp) { (void)c; (void)fp; }
+#else
+/* Linux: the context of the kernel has the layout of the one that the image gets. It
+   is read field by field all the same, so that the two sides of this host meet in one
+   place for every system. */
+typedef ucontext_t host_context;
+static uint64_t *context_x(host_context *c, int n) { return (uint64_t *)&c->uc_mcontext.regs[n]; }
+static uint64_t *context_sp(host_context *c) { return (uint64_t *)&c->uc_mcontext.sp; }
+static uint64_t *context_pc(host_context *c) { return (uint64_t *)&c->uc_mcontext.pc; }
+static uint64_t context_get_pstate(host_context *c) { return c->uc_mcontext.pstate; }
+static void context_set_pstate(host_context *c, uint64_t v) { c->uc_mcontext.pstate = v; }
+static struct l_fpsimd *context_fpsimd(host_context *c) { return l_context_find((uint8_t *)c->uc_mcontext.__reserved, L_FPSIMD_MAGIC); }
+static void *context_vregs(host_context *c) { return context_fpsimd(c) ? context_fpsimd(c)->vregs : 0; }
+static uint32_t *context_fpsr(host_context *c) { return context_fpsimd(c) ? &context_fpsimd(c)->fpsr : 0; }
+static uint32_t *context_fpcr(host_context *c) { return context_fpsimd(c) ? &context_fpsimd(c)->fpcr : 0; }
+static int context_esr(host_context *c, uint64_t *esr) {
+  struct l_esr *e = l_context_find((uint8_t *)c->uc_mcontext.__reserved, L_ESR_MAGIC);
+  *esr = e ? e->esr : 0;
+  return e != 0;
+}
+static uintptr_t context_fault_address(host_context *c, siginfo_t *info) { (void)c; return (uintptr_t)info->si_addr; }
+static void context_get_mask(host_context *c, sigset_t *out) { *out = c->uc_sigmask; }
+static void context_set_mask(host_context *c, const sigset_t *in) { c->uc_sigmask = *in; }
+/* A processor with SVE: the context of the kernel has a record with the longer registers
+   (magic 0x53564501: the header, the length of a register in bytes, then Z0 to Z31), and
+   the vector registers are their first 16 bytes. The kernel takes those from the record
+   above when the handler returns, qemu takes them from this one: both get them. */
+static void context_vregs_written(host_context *c, const struct l_fpsimd *fp) {
+  uint8_t *sve = l_context_find((uint8_t *)c->uc_mcontext.__reserved, 0x53564501u);
+  if (!sve) return;
+  uint16_t bytes;
+  memcpy(&bytes, sve + 8, sizeof bytes);
+  if (bytes < 16 || ((struct l_record *)(void *)sve)->size < 16u + 32u * bytes) return;
+  for (int n = 0; n < 32; n++) memcpy(sve + 16 + (size_t)n * bytes, fp->vregs[n], 16);
+}
+#endif
+#define HOST_PC(c) (*context_pc(c))
+
+/* A fault of the processor as Linux reports it, from what the processor said about it
+   (ESR_EL1) and from where the address is. macOS reports a page without access as SIGBUS,
+   Linux as SIGSEGV with SEGV_ACCERR. 0: the class says nothing that this host knows. */
+static int classify_fault(uint64_t esr, uintptr_t address, uintptr_t pc, int *code, uintptr_t *reported) {
+  *reported = address;
+  switch (l_esr_class(esr)) {
+    case L_ESR_CLASS_DATA_ABORT: case L_ESR_CLASS_INSTRUCTION_ABORT: {
+      memory_lock();
+      struct region *r = region_at(address);
+      uint32_t flags = r ? r->flags : 0;
+      memory_unlock();
+      *code = flags ? L_SEGV_ACCERR : L_SEGV_MAPERR;
+      return L_SIGSEGV;
+    }
+    case L_ESR_CLASS_PC_ALIGNMENT: *reported = pc; *code = L_BUS_ADRALN; return L_SIGBUS;
+    case L_ESR_CLASS_SP_ALIGNMENT: *code = L_BUS_ADRALN; return L_SIGBUS;
+    case L_ESR_CLASS_BREAKPOINT: *reported = pc; *code = L_TRAP_BRKPT; return L_SIGTRAP;
+    case L_ESR_CLASS_UNKNOWN: case L_ESR_CLASS_SYSTEM_REGISTER: case L_ESR_CLASS_ILLEGAL_STATE: *reported = pc; *code = L_ILL_ILLOPC; return L_SIGILL;
+    default: return 0;
+  }
+}
+static int fault_of(int hsig, siginfo_t *hinfo, host_context *hc, struct host_thread *t, int *sig, struct l_siginfo *info) {
+  uintptr_t address = context_fault_address(hc, hinfo), pc = (uintptr_t)*context_pc(hc), reported;
+  uint64_t esr;
+  int has_esr = context_esr(hc, &esr), page = hsig == SIGSEGV || hsig == SIGBUS;
+  /* What the access was. Without a word of the processor: code is run where the program
+     counter is the address, and everything else may be a write. */
+  int execute = has_esr ? l_esr_class(esr) == L_ESR_CLASS_INSTRUCTION_ABORT : address == pc;
+  int write = has_esr ? l_esr_class(esr) == L_ESR_CLASS_DATA_ABORT && (esr & L_ESR_WRITE) : !execute;
+  if (page && jit_fault(t, address, pc, write, execute)) return 1;
+  if (test_winmem && page) {
+    int again = t->fault_address == address ? t->fault_repeats + 1 : 0;
+    t->fault_address = address;
+    t->fault_repeats = again;
+    if (again < 8 && model_fault(address, has_esr && write, execute)) {
+      __atomic_fetch_add(&lazy_commits, 1, __ATOMIC_RELAXED);
+      return 1;
+    }
+  }
+  /* Without a word of the processor (qemu has none in its signal frame) a fault of a page is
+     known by its signal. Whether something is mapped there is what the table of the host
+     says, which is what the image asked for: with the memory model the system has more. */
+  if (!has_esr && hsig == SIGSEGV && (hinfo->si_code == SEGV_MAPERR || hinfo->si_code == SEGV_ACCERR)) {
+    esr = (uint64_t)(execute ? L_ESR_CLASS_INSTRUCTION_ABORT : L_ESR_CLASS_DATA_ABORT) << 26;
+    has_esr = 1;
+  }
+  int code = 0, classified = has_esr ? classify_fault(esr, address, pc, &code, &reported) : 0;
+  if (classified) {
+#ifndef __APPLE__
+    /* The kernel is Linux: what it said is the check of classify_fault(). */
+    if ((classified != *sig || code != hinfo->si_code) && !test_winmem) __atomic_fetch_add(&fault_mismatches, 1, __ATOMIC_RELAXED);
+#endif
+    *sig = classified;
+    info->code = code;
+    info->u.fault.addr = reported;
+    return 0;
+  }
+#ifdef __APPLE__
+  /* No class that this host knows: the signal of macOS, which is the one of Linux but for
+     a page without access. */
+  if (hsig == SIGBUS && hinfo->si_code == BUS_ADRERR) *sig = L_SIGSEGV;
+#endif
+  info->code = hinfo->si_code;
+  info->u.fault.addr = (uintptr_t)hinfo->si_addr;
+  return 0;
+}
+static void context_to_image(host_context *hc, struct l_ucontext *uc, struct host_thread *t, int fault, const struct l_siginfo *info) {
+  memset(uc, 0, offsetof(struct l_ucontext, mcontext.reserved));
+  uc->stack = t->altstack;
+  for (int n = 0; n < 31; n++) uc->mcontext.regs[n] = *context_x(hc, n);
+  uc->mcontext.sp = *context_sp(hc);
+  uc->mcontext.pc = *context_pc(hc);
+  uc->mcontext.pstate = context_get_pstate(hc);
+  uc->mcontext.fault_address = fault ? info->u.fault.addr : 0;
+  uint64_t esr;
+  int has_esr = context_esr(hc, &esr) && fault;
+  struct l_fpsimd *fp = l_context_records(uc, has_esr, esr);
+  if (context_vregs(hc)) {
+    memcpy(fp->vregs, context_vregs(hc), sizeof fp->vregs);
+    fp->fpsr = *context_fpsr(hc);
+    fp->fpcr = *context_fpcr(hc);
+  } else {
+    memset(fp->vregs, 0, sizeof fp->vregs);
+    fp->fpsr = fp->fpcr = 0;
+  }
+}
+static void context_from_image(struct l_ucontext *uc, host_context *hc) {
+  /* x18 is not the image's to change, on no system. */
+  for (int n = 0; n < 31; n++)
+    if (n != 18) *context_x(hc, n) = uc->mcontext.regs[n];
+  *context_sp(hc) = uc->mcontext.sp;
+  *context_pc(hc) = uc->mcontext.pc;
+  context_set_pstate(hc, uc->mcontext.pstate);
+  struct l_fpsimd *fp = l_context_find(uc->mcontext.reserved, L_FPSIMD_MAGIC);
+  if (fp && context_vregs(hc)) {
+    memcpy(context_vregs(hc), fp->vregs, sizeof fp->vregs);
+    *context_fpsr(hc) = fp->fpsr;
+    *context_fpcr(hc) = fp->fpcr;
+    context_vregs_written(hc, fp);
+  }
+}
+/* The signal arrived in code of the image (the image itself, or memory that it mapped:
+   the code of a JIT): x18 has to be the block of the thread. */
+static void check_context_x18(host_context *hc, struct host_thread *t, int hsig) {
+#if X18_HOST
+  uintptr_t pc = (uintptr_t)*context_pc(hc);
+  memory_lock();
+  int of_image = region_at(pc) != 0;
+  memory_unlock();
+  if (of_image) check_x18((void *)(uintptr_t)*context_x(hc, 18), "signal", hsig);
+#endif
+  (void)hc; (void)t; (void)hsig;
+}
+#endif
 
 static void native_handler(int hsig, siginfo_t *hinfo, void *hcontext) {
   int saved_errno = errno;
@@ -1190,31 +1881,9 @@ static void native_handler(int hsig, siginfo_t *hinfo, void *hcontext) {
   if (hsig < 32 && (__atomic_fetch_and(&t->sent, ~(1u << hsig), __ATOMIC_SEQ_CST) & (1u << hsig))) sent = 1;
   int fault = is_fault(hsig) && !sent;
   if (fault) {
-    uintptr_t address = hsig == SIGSEGV || hsig == SIGBUS ? context_fault_address(hc) : (uintptr_t)hinfo->si_addr, reported;
-    long trap = context_trap(hc), error = context_error(hc);
-    if (test_winmem && trap == TRAP_PAGE) {
-      /* The page may be one that the model has not committed yet. The same address again
-         and again would mean that table and system disagree. */
-      int again = t->fault_address == address ? t->fault_repeats + 1 : 0;
-      t->fault_address = address;
-      t->fault_repeats = again;
-      if (again < 8 && model_fault(address, !!(error & 2), !!(error & 16))) {
-        __atomic_fetch_add(&lazy_commits, 1, __ATOMIC_RELAXED);
-        errno = saved_errno;
-        return;
-      }
-    }
-    int code = 0, classified = classify_fault(trap, address, &code, &reported);
-    if (classified) {
-#ifndef __APPLE__
-      if ((classified != sig || (code && code != hinfo->si_code)) && !test_winmem) __atomic_fetch_add(&fault_mismatches, 1, __ATOMIC_RELAXED);
-#endif
-      sig = classified;
-      info.code = code;
-      info.u.fault.addr = reported;
-    } else {
-      info.code = hinfo->si_code;
-      info.u.fault.addr = (uintptr_t)hinfo->si_addr;
+    if (fault_of(hsig, hinfo, hc, t, &sig, &info)) {
+      errno = saved_errno;
+      return;
     }
   } else {
     info.code = hinfo->si_code == SI_USER ? L_SI_USER : L_SI_TKILL;
@@ -1222,9 +1891,15 @@ static void native_handler(int hsig, siginfo_t *hinfo, void *hcontext) {
     info.u.kill.uid = (uint32_t)hinfo->si_uid;
   }
   info.signo = sig;
+  check_context_x18(hc, t, hsig);
 
   struct l_k_sigaction action;
-  action = sig > 0 ? image_actions[sig] : (struct l_k_sigaction){0, 0, 0, 0};
+  action = sig > 0 ? image_actions[sig] : (struct l_k_sigaction){0};
+  /* A fault of the image while it has the signal blocked: what Linux does is the default. */
+  if (fault && sig > 0 && (t->fault_mask >> (sig - 1) & 1)) action.handler = L_SIG_DFL;
+  if (trace > 2)
+    host_log("[host] signal %d%s, code %d, address %#lx, program counter %#lx, thread %d: %s\n", sig, fault ? " (a fault)" : "", info.code, fault ? (unsigned long)info.u.fault.addr : 0ul,
+             (unsigned long)HOST_PC(hc), t->tid, action.handler == L_SIG_DFL ? "the default" : action.handler == L_SIG_IGN ? "ignored" : "the handler of the image");
   if (action.handler == L_SIG_DFL || action.handler == L_SIG_IGN) {
     /* Nobody of the image wants it. A fault comes again when this returns, and then it ends the process. */
     if (fault) signal(hsig, SIG_DFL);
@@ -1235,38 +1910,28 @@ static void native_handler(int hsig, siginfo_t *hinfo, void *hcontext) {
   if (sig < L_NSIG) __atomic_fetch_add(&signals_delivered[sig], 1, __ATOMIC_RELAXED);
 
   struct l_ucontext uc;
-  memset(&uc, 0, offsetof(struct l_ucontext, fpregs_mem));
-  uc.stack = t->altstack;
-#define REGISTER_IN(name, field) uc.mcontext.gregs[L_REG_##name] = (int64_t)(field);
-  HOST_REGISTERS(REGISTER_IN, hc)
-#undef REGISTER_IN
-  uc.mcontext.gregs[L_REG_CSGSFS] = (int64_t)context_segments(hc);
-  uc.mcontext.gregs[L_REG_ERR] = context_error(hc);
-  uc.mcontext.gregs[L_REG_TRAPNO] = context_trap(hc);
-  uc.mcontext.gregs[L_REG_CR2] = fault ? (int64_t)info.u.fault.addr : 0;
-  if (context_fxsave(hc)) memcpy(&uc.fpregs_mem, context_fxsave(hc), sizeof uc.fpregs_mem);
-  else memset(&uc.fpregs_mem, 0, sizeof uc.fpregs_mem);
-  uc.mcontext.fpregs = (uint64_t)(uintptr_t)&uc.fpregs_mem;
+  context_to_image(hc, &uc, t, fault, &info);
   sigset_t mask;
   context_get_mask(hc, &mask);
-  uc.sigmask = to_linux_sigset(&mask);
+  uc.sigmask = to_linux_sigset(&mask) | t->fault_mask;
   l_sigset mask_before = uc.sigmask;
+  if (FAULTS_OF_THE_HOST) t->fault_mask |= (action.mask | (action.flags & L_SA_NODEFER ? 0 : 1ull << (sig - 1))) & FAULT_SIGNALS;
 
-  ((void (*)(int, struct l_siginfo *, struct l_ucontext *))(uintptr_t)action.handler)(sig, &info, &uc);
+  /* The handler is code of the image, and so is what it returns to. */
+  int outer = jit_leave_host(t);
+  call_image_handler((uintptr_t)action.handler, sig, &info, &uc, t->x18);
+  jit_enter_host(t, outer);
+  if (FAULTS_OF_THE_HOST) t->fault_mask = uc.sigmask & FAULT_SIGNALS;
 
   /* What the handler changed is what the thread goes on with: the WebAssembly fault handler
      of JavaScriptCore sets the program counter, the libc sets the signal mask. */
-#define REGISTER_OUT(name, field) (field) = (__typeof__(field))uc.mcontext.gregs[L_REG_##name];
-  HOST_REGISTERS(REGISTER_OUT, hc)
-#undef REGISTER_OUT
-  if (context_fxsave(hc)) memcpy(context_fxsave(hc), &uc.fpregs_mem, sizeof uc.fpregs_mem);
+  context_from_image(&uc, hc);
   if (uc.sigmask != mask_before) {
     to_host_sigset(uc.sigmask, &mask);
     context_set_mask(hc, &mask);
   }
   errno = saved_errno;
 }
-#endif
 
 static long host_sigaction(int sig, const struct l_k_sigaction *act, struct l_k_sigaction *old) {
   if (sig < 1 || sig >= L_NSIG || sig == L_SIGKILL || sig == L_SIGSTOP) return -L_EINVAL;
@@ -1276,7 +1941,6 @@ static long host_sigaction(int sig, const struct l_k_sigaction *act, struct l_k_
   struct l_k_sigaction before = image_actions[sig];
   if (act) {
     image_actions[sig] = *act;
-#if DELIVERS_SIGNALS
     int hsig = host_signal(sig);
     /* A signal that this host cannot deliver is recorded, and that is all. */
     if (hsig > 0) {
@@ -1292,10 +1956,14 @@ static long host_sigaction(int sig, const struct l_k_sigaction *act, struct l_k_
         if (act->flags & L_SA_NODEFER) sa.sa_flags |= SA_NODEFER;
         if (act->flags & L_SA_RESETHAND) sa.sa_flags |= (int)SA_RESETHAND;
         to_host_sigset(act->mask, &sa.sa_mask);
+        /* See FAULT_SIGNALS: not blocked by the system while their own handler runs either. */
+        if (FAULTS_OF_THE_HOST && (hsig == SIGSEGV || hsig == SIGBUS)) sa.sa_flags |= SA_NODEFER;
       }
-      /* With the memory model the host keeps the handler for faults of pages: it commits there.
-         And it keeps the handler that reports a syscall from outside of the host. */
-      int keep = test_winmem && (hsig == SIGSEGV || hsig == SIGBUS) && sa.sa_sigaction != native_handler;
+      /* The host keeps the handler for faults of pages where they may be its own (the memory
+         model commits there, code that is written gets its permission there, the arm64
+         test host looks at x18 there). And it keeps the handler that reports a syscall
+         from outside of the host. */
+      int keep = FAULTS_OF_THE_HOST && (hsig == SIGSEGV || hsig == SIGBUS) && sa.sa_sigaction != native_handler;
       if (hsig == SIGSYS && syscall_filter_installed) keep = 1;
       if (!keep && sigaction(hsig, &sa, 0)) r = to_linux_errno(errno);
 #ifdef __APPLE__
@@ -1303,7 +1971,6 @@ static long host_sigaction(int sig, const struct l_k_sigaction *act, struct l_k_
       if (!keep && !r && hsig == SIGSEGV && sigaction(SIGBUS, &sa, 0)) r = to_linux_errno(errno);
 #endif
     }
-#endif
     if (r) image_actions[sig] = before;
   }
   threads_unlock(&saved);
@@ -1320,9 +1987,15 @@ static long host_sigprocmask(long how, const l_sigset *set, l_sigset *old) {
   if (set) to_host_sigset(*set, &h);
   int e = pthread_sigmask(host_how, set ? &h : 0, &before);
   if (e) return to_linux_errno(e);
+  struct host_thread *t = this_thread();
+  l_sigset faults_before = t->fault_mask;
+  if (set && FAULTS_OF_THE_HOST) {
+    l_sigset wanted = *set & FAULT_SIGNALS;
+    t->fault_mask = how == L_SIG_BLOCK ? faults_before | wanted : how == L_SIG_UNBLOCK ? faults_before & ~wanted : wanted;
+  }
   if (old) {
     touch(old, sizeof *old);
-    *old = to_linux_sigset(&before);
+    *old = to_linux_sigset(&before) | faults_before;
   }
   return 0;
 }
@@ -1360,9 +2033,6 @@ static long host_kill(int tid, int sig) {
   if (sig < 0 || sig >= L_NSIG) return -L_EINVAL;
   int hsig = sig ? host_signal(sig) : 0;
   if (hsig < 0) return -L_ENOSYS;
-#if !DELIVERS_SIGNALS
-  if (sig && image_actions[sig].handler > L_SIG_IGN) return -L_ENOSYS;
-#endif
   if (!tid) return ret(kill(getpid(), hsig));
   long r = -L_ESRCH;
   sigset_t saved;
@@ -1384,6 +2054,12 @@ static long host_kill(int tid, int sig) {
 }
 
 /* ---- syscalls ---- */
+/* For the trace: which thread. The text is the thread's own. */
+static const char *thread_note(void) {
+  static _Thread_local char note[32];
+  snprintf(note, sizeof note, "   thread %d", this_thread()->tid);
+  return note;
+}
 static long dispatch(long n, long a, long b, long c, long d, long e, long f) {
   switch (n) {
     case N_read: touch((void *)b, (size_t)c); return ret(read((int)a, (void *)b, (size_t)c));
@@ -1481,6 +2157,28 @@ static long dispatch(long n, long a, long b, long c, long d, long e, long f) {
       slot_set((void *)b);
       return 0;
     case N_set_tp: slot_set((void *)a); return 0;
+    /* Code was written to [a, b). On macOS the system has the call for it. The Linux test
+       host does what the image does by itself on Linux. */
+    case N_clear_cache:
+      if ((uintptr_t)b < (uintptr_t)a) return -L_EINVAL;
+      __atomic_fetch_add(&cache_bytes, (unsigned long)(b - a), __ATOMIC_RELAXED);
+#ifdef __APPLE__
+      sys_icache_invalidate((void *)a, (size_t)(b - a));
+#else
+      __builtin___clear_cache((char *)a, (char *)b);
+#endif
+      return 0;
+    /* The image says what the thread does with memory for code. What it does not say is
+       still found by the faults. */
+    case N_jit_write_protect: {
+      if (a == 2) return JIT_BY_FAULTS ? 1 : 0;
+      if (!JIT_BY_FAULTS || (a != 0 && a != 1)) return -L_EINVAL;
+      struct host_thread *t = this_thread();
+      int mode = a ? JIT_EXECUTE : JIT_WRITE;
+      __atomic_fetch_add(&jit_said[mode], 1, __ATOMIC_RELAXED);
+      if (t->jit_mode != mode) jit_set_mode(t, mode);
+      return 0;
+    }
     /* Robust mutexes are a matter between the libc and the Linux kernel. The list of a
        thread that ends is walked by the libc itself (pthread_exit). */
     case N_set_robust_list: return 0;
@@ -1523,12 +2221,20 @@ static long dispatch(long n, long a, long b, long c, long d, long e, long f) {
   count(refused, n);
   return -L_ENOSYS;
 }
-__attribute__((used)) static long host_syscall(long n, long a, long b, long c, long d, long e, long f) {
+__attribute__((used)) static long host_syscall(long n, long a, long b, long c, long d, long e, long f X18_AT_ENTRY) {
+  CHECK_X18("request", n);
   FORGET_X18();
   count(counts, n);
   if (trace > 2) host_log("[host] %s(%#lx, %#lx, %#lx, %#lx) ...\n", l_request_name(n), a, b, c, d);
+#ifdef __linux__
+  struct host_thread *waits = test_jitwx ? this_thread() : 0;
+  if (waits) run_before_request(waits, n);
+#endif
   long r = dispatch(n, a, b, c, d, e, f);
-  if (trace > 1 || (trace && r == -L_ENOSYS)) host_log("[host] %ld %s(%#lx, %#lx, %#lx, %#lx) = %ld\n", n, l_request_name(n), a, b, c, d, r);
+#ifdef __linux__
+  if (waits) run_after_request(waits);
+#endif
+  if (trace > 1 || (trace && r == -L_ENOSYS)) host_log("[host] %ld %s(%#lx, %#lx, %#lx, %#lx) = %ld%s\n", n, l_request_name(n), a, b, c, d, r, trace > 2 ? thread_note() : "");
   return r;
 }
 
@@ -1670,6 +2376,47 @@ static void register_signature(int fd, const struct image_place *p) {
 static void register_signature(int fd, const struct image_place *p) { (void)fd; (void)p; }
 #endif
 
+/* ---- what the processor can do (arm64) ----
+   Code that was built for Linux asks the kernel: AT_HWCAP and AT_HWCAP2 of the start
+   stack, with the bits of Linux. macOS answers by name (sysctl hw.optional, the names
+   are in bsd/kern/kern_mib.c of xnu). Only what linux_abi.h lists is handed on. */
+#if defined(__aarch64__)
+static void host_hwcap(uint64_t *hwcap, uint64_t *hwcap2) {
+#ifdef __APPLE__
+  static const struct { const char *name; uint64_t first, second; } features[] = {
+    {"hw.optional.arm.FEAT_AES", L_HWCAP_AES, 0}, {"hw.optional.arm.FEAT_PMULL", L_HWCAP_PMULL, 0}, {"hw.optional.arm.FEAT_SHA1", L_HWCAP_SHA1, 0},
+    {"hw.optional.arm.FEAT_SHA256", L_HWCAP_SHA2, 0}, {"hw.optional.armv8_crc32", L_HWCAP_CRC32, 0}, {"hw.optional.arm.FEAT_LSE", L_HWCAP_ATOMICS, 0},
+    {"hw.optional.arm.FEAT_FP16", L_HWCAP_FPHP | L_HWCAP_ASIMDHP, 0}, {"hw.optional.arm.FEAT_RDM", L_HWCAP_ASIMDRDM, 0},
+    {"hw.optional.arm.FEAT_JSCVT", L_HWCAP_JSCVT, 0}, {"hw.optional.arm.FEAT_FCMA", L_HWCAP_FCMA, 0}, {"hw.optional.arm.FEAT_LRCPC", L_HWCAP_LRCPC, 0},
+    {"hw.optional.arm.FEAT_DPB", L_HWCAP_DCPOP, 0}, {"hw.optional.arm.FEAT_SHA3", L_HWCAP_SHA3, 0}, {"hw.optional.arm.FEAT_DotProd", L_HWCAP_ASIMDDP, 0},
+    {"hw.optional.arm.FEAT_SHA512", L_HWCAP_SHA512, 0}, {"hw.optional.arm.FEAT_FHM", L_HWCAP_ASIMDFHM, 0}, {"hw.optional.arm.FEAT_DIT", L_HWCAP_DIT, 0},
+    {"hw.optional.arm.FEAT_LRCPC2", L_HWCAP_ILRCPC, 0}, {"hw.optional.arm.FEAT_FlagM", L_HWCAP_FLAGM, 0}, {"hw.optional.arm.FEAT_SSBS", L_HWCAP_SSBS, 0},
+    {"hw.optional.arm.FEAT_SB", L_HWCAP_SB, 0}, {"hw.optional.arm.FEAT_DPB2", 0, L_HWCAP2_DCPODP}, {"hw.optional.arm.FEAT_FlagM2", 0, L_HWCAP2_FLAGM2},
+    {"hw.optional.arm.FEAT_FRINTTS", 0, L_HWCAP2_FRINT}, {"hw.optional.arm.FEAT_I8MM", 0, L_HWCAP2_I8MM}, {"hw.optional.arm.FEAT_BF16", 0, L_HWCAP2_BF16},
+  };
+  /* Every processor that runs macOS for arm64 has floating point and the vector instructions. */
+  *hwcap = L_HWCAP_FP | L_HWCAP_ASIMD;
+  *hwcap2 = 0;
+  for (size_t i = 0; i < sizeof features / sizeof *features; i++) {
+    int has = 0;
+    size_t size = sizeof has;
+    if (sysctlbyname(features[i].name, &has, &size, 0, 0) || !has) continue;
+    *hwcap |= features[i].first;
+    *hwcap2 |= features[i].second;
+  }
+#else
+  *hwcap = getauxval(AT_HWCAP) & L_HWCAP_FOR_IMAGE;
+  *hwcap2 = getauxval(AT_HWCAP2) & L_HWCAP2_FOR_IMAGE;
+  const char *forced = getenv("BUN_HOST_HWCAP");
+  if (forced) {
+    char *rest = 0;
+    *hwcap = strtoull(forced, &rest, 16);
+    *hwcap2 = rest && *rest == ',' ? strtoull(rest + 1, 0, 16) : 0;
+  }
+#endif
+}
+#endif
+
 /* ---- image loading and start ---- */
 int main(int argc, char **argv) {
   if (argc < 2) { fprintf(stderr, "usage: host <image> [args]\n"); return 2; }
@@ -1680,18 +2427,26 @@ int main(int argc, char **argv) {
   forward_unknown = getenv("BUN_HOST_FORWARD") && atoi(getenv("BUN_HOST_FORWARD"));
   test_winmem = !strcmp(test, "winmem");
   test_overlay = !strcmp(test, "overlay");
+  test_jitwx = !strcmp(test, "jitwx");
 #endif
 #if X18_HOST
   macos_tp = !strcmp(test, "macos-tp");
 #endif
   (void)test;
+  (void)test_jitwx;
   if (getenv("BUN_HOST_PATHS")) paths_fd = open(getenv("BUN_HOST_PATHS"), O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_CLOEXEC, 0644);
   if (paths_fd >= 0 && paths_fd < 1000) {
     /* Out of the way of the numbers that the image expects for its own files. */
     int high = fcntl(paths_fd, F_DUPFD_CLOEXEC, 1000);
     if (high >= 0) { close(paths_fd); paths_fd = high; }
   }
-  host_page = sysconf(_SC_PAGESIZE);
+  host_page = system_page = sysconf(_SC_PAGESIZE);
+#ifdef __linux__
+  if (getenv("BUN_HOST_PAGE")) {
+    host_page = atol(getenv("BUN_HOST_PAGE"));
+    if (host_page < system_page || host_page > 65536 || (host_page & (host_page - 1))) { fprintf(stderr, "host: BUN_HOST_PAGE is a power of two from %ld to 65536\n", system_page); return 2; }
+  }
+#endif
   main_pthread = pthread_self();
   main_tid = next_tid = (int)getpid();
   main_thread.tid = main_tid;
@@ -1780,9 +2535,8 @@ int main(int argc, char **argv) {
   /* The stack of the main thread. The image asks for its bounds (N_main_stack), and for
      its size as the limit of the stack (getrlimit). */
   size_t stack_size = 8u << 20;
-  char *stack = test_winmem ? (char *)model_map(0, stack_size, L_PROT_READ | L_PROT_WRITE, L_MAP_PRIVATE | L_MAP_ANONYMOUS, R_ANON | R_MAIN_STACK)
-                            : mmap(0, stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON_HOST, -1, 0);
-  if (stack == MAP_FAILED || (test_winmem && (intptr_t)stack < 0)) { fprintf(stderr, "host: no memory for the stack\n"); return 2; }
+  char *stack = test_winmem ? (char *)model_map(0, stack_size, L_PROT_READ | L_PROT_WRITE, L_MAP_PRIVATE | L_MAP_ANONYMOUS, R_ANON | R_MAIN_STACK) : place_pages(0, stack_size);
+  if (stack == MAP_FAILED || (test_winmem && (intptr_t)stack < 0) || (!test_winmem && mprotect(stack, stack_size, PROT_READ | PROT_WRITE))) { fprintf(stderr, "host: no memory for the stack\n"); return 2; }
   main_stack_low = (uintptr_t)stack;
   main_stack_high = main_stack_low + stack_size;
   if (!test_winmem) {
@@ -1790,8 +2544,7 @@ int main(int argc, char **argv) {
     region_set(main_stack_low, main_stack_high, L_PROT_READ | L_PROT_WRITE, R_ANON | R_COMMITTED | R_MAIN_STACK);
     memory_unlock();
   }
-#if DELIVERS_SIGNALS
-  if (test_winmem) {
+  if (FAULTS_OF_THE_HOST) {
     struct sigaction sa;
     memset(&sa, 0, sizeof sa);
     sa.sa_sigaction = native_handler;
@@ -1799,7 +2552,6 @@ int main(int argc, char **argv) {
     sigaction(SIGSEGV, &sa, 0);
     sigaction(SIGBUS, &sa, 0);
   }
-#endif
 
   char *cursor = stack + stack_size - 262144;
   uint64_t *vec = (uint64_t *)(stack + stack_size - 262144 - 131072), *v = vec;
@@ -1816,6 +2568,14 @@ int main(int argc, char **argv) {
     cursor += n;
   }
   *v++ = 0;
+#if defined(__aarch64__)
+  uint64_t hwcap[2];
+  host_hwcap(&hwcap[0], &hwcap[1]);
+  uint64_t processor[] = {L_AT_HWCAP, hwcap[0], L_AT_HWCAP2, hwcap[1]};
+  memcpy(v, processor, sizeof processor);
+  v += sizeof processor / sizeof *processor;
+  if (trace) fprintf(stderr, "[host] AT_HWCAP %#llx, AT_HWCAP2 %#llx\n", (unsigned long long)hwcap[0], (unsigned long long)hwcap[1]);
+#endif
   /* AT_PAGESZ is the page of the host: musl for aarch64 has no fixed page size, and macOS on arm64 has 16 KiB pages. */
   uint64_t aux[] = {L_AT_PHDR, (uint64_t)(uintptr_t)(base + phoff), L_AT_PHENT, sizeof(Phdr), L_AT_PHNUM, phnum, L_AT_PAGESZ, (uint64_t)host_page,
                     L_AT_BASE, 0, L_AT_ENTRY, (uint64_t)(uintptr_t)(base + entry), L_AT_UID, 0, L_AT_EUID, 0, L_AT_GID, 0, L_AT_EGID, 0,
@@ -1832,6 +2592,11 @@ int main(int argc, char **argv) {
     if (trace && !r) fprintf(stderr, "[host] syscall filter installed, %d ranges of host code\n", host_code_count);
   }
   fflush(0);
-  enter_image(base + entry, vec, thread_x18());
+  main_thread.x18 = thread_x18();
+#ifdef __linux__
+  if (test_jitwx) run_start();
+#endif
+  thread_starts(&main_thread);
+  enter_image(base + entry, vec, main_thread.x18);
   return 0;
 }

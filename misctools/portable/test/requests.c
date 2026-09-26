@@ -63,6 +63,10 @@ static void on_fault(int sig, siginfo_t *info, void *context) {
   }
 #else
   fault_pc = uc->uc_mcontext.pc;
+  if (fault_skip >= 0) {
+    uc->uc_mcontext.pc += (unsigned long)fault_skip;
+    return;
+  }
 #endif
   /* A fault outside of faults(): there is nowhere to go back to. */
   if (!fault_expected) {
@@ -97,6 +101,15 @@ __asm__(".text\n"
         "fault_hlt: mov $7, %eax\n fault_hlt_at: hlt\n ret\n");
 static const unsigned char code_42[] = {0xb8, 0x2a, 0x00, 0x00, 0x00, 0xc3}; /* mov $42, %eax; ret */
 #else
+/* Each of them returns 7 after its instruction was stepped over by the handler. The third
+   is what JavaScriptCore writes into compiled code to stop a thread there (ARM64Assembler,
+   replaceWithVMHalt): zeros for the block of memory at address 0. */
+int fault_udf(void), fault_brk(void), fault_halt(void);
+extern char fault_udf_at[], fault_brk_at[], fault_halt_at[];
+__asm__(".text\n"
+        "fault_udf: mov w0, #7\n fault_udf_at: udf #0x77\n ret\n"
+        "fault_brk: mov w0, #7\n fault_brk_at: brk #0xc471\n ret\n"
+        "fault_halt: mov w0, #7\n fault_halt_at: dc zva, xzr\n ret\n");
 static const uint32_t code_42[] = {0x52800540, 0xd65f03c0}; /* mov w0, #42; ret */
 #endif
 
@@ -398,6 +411,25 @@ static void fault_kinds(void) {
   check(fault_hlt() == 7 && fault_signal == SIGSEGV && fault_code == SI_KERNEL && fault_address == 0 && fault_pc == (uintptr_t)fault_hlt_at, "hlt: SIGSEGV, SI_KERNEL, no address, at the instruction");
   signal(SIGILL, SIG_DFL);
   signal(SIGFPE, SIG_DFL);
+  signal(SIGTRAP, SIG_DFL);
+#else
+  struct sigaction sa;
+  memset(&sa, 0, sizeof sa);
+  sa.sa_sigaction = on_fault;
+  sa.sa_flags = SA_SIGINFO;
+  check(!sigaction(SIGILL, &sa, 0) && !sigaction(SIGTRAP, &sa, 0), "sigaction for SIGILL, SIGTRAP");
+  /* The code of an instruction that is none: ILL_ILLOPC from Linux and from the hosts, ILL_ILLOPN from qemu. */
+  fault_signal = 0;
+  fault_skip = 4;
+  check(fault_udf() == 7 && fault_signal == SIGILL && (fault_code == ILL_ILLOPC || fault_code == ILL_ILLOPN) && fault_address == (uintptr_t)fault_udf_at && fault_pc == (uintptr_t)fault_udf_at,
+        "udf: SIGILL, at the instruction");
+  fault_signal = 0;
+  fault_skip = 4;
+  check(fault_brk() == 7 && fault_signal == SIGTRAP && fault_code == TRAP_BRKPT && fault_address == (uintptr_t)fault_brk_at && fault_pc == (uintptr_t)fault_brk_at, "brk: SIGTRAP, TRAP_BRKPT, at the instruction");
+  fault_signal = 0;
+  fault_skip = 4;
+  check(fault_halt() == 7 && fault_signal == SIGSEGV && fault_code == SEGV_MAPERR && fault_address < 64 && fault_pc == (uintptr_t)fault_halt_at, "dc zva for address 0: SIGSEGV, SEGV_MAPERR, at the instruction");
+  signal(SIGILL, SIG_DFL);
   signal(SIGTRAP, SIG_DFL);
 #endif
 }

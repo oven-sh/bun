@@ -21,6 +21,15 @@
                               address, and the address after its highest */
 #define N_set_tp 0x62756e01
 #define N_main_stack 0x62756e02
+/* N_clear_cache(start, end)  aarch64 images: code was written to [start, end) and is about
+                              to run. The libc of the image sends it in place of the cache
+                              instructions that it issues itself on Linux (__clear_cache) */
+#define N_clear_cache 0x62756e03
+/* N_jit_write_protect(what)  aarch64 images that say themselves what a thread does with memory
+                              for code (libc/bun_jit_permission.c): 0 it writes, 1 it
+                              executes, 2 the question whether this host needs to be told.
+                              The answer to the question is 1 or 0 */
+#define N_jit_write_protect 0x62756e04
 
 #define BUN_OS_LINUX 1
 #define BUN_OS_WINDOWS 2
@@ -260,15 +269,111 @@ struct l_ucontext {
 };
 _Static_assert(offsetof(struct l_ucontext, mcontext) == 40 && offsetof(struct l_ucontext, sigmask) == 296 && sizeof(struct l_ucontext) == 936, "ucontext_t of linux x86-64");
 #else
-/* aarch64: no restorer field in front of the mask. Signals are not delivered to aarch64 images yet. */
+/* aarch64: no restorer field in front of the mask. */
 struct l_k_sigaction { uint64_t handler, flags; l_sigset mask; };
 _Static_assert(sizeof(struct l_k_sigaction) == 24, "struct k_sigaction of linux aarch64");
+
+/* struct sigcontext of the kernel, which is mcontext_t of the libc. regs[29] is the frame
+   pointer, regs[30] the link register. What does not fit into the fixed part follows as
+   records in `reserved`, each with a magic and its size, closed by a record of zeros. */
+struct l_mcontext {
+  uint64_t fault_address;
+  uint64_t regs[31];
+  uint64_t sp, pc, pstate;
+  uint64_t pad;
+  uint8_t reserved[4096];
+};
+_Static_assert(offsetof(struct l_mcontext, sp) == 256 && offsetof(struct l_mcontext, reserved) == 288 && sizeof(struct l_mcontext) == 4384, "struct sigcontext of linux aarch64");
+struct l_record { uint32_t magic, size; };
+/* The floating point and vector registers: always the first record. */
+#define L_FPSIMD_MAGIC 0x46508001u
+struct l_fpsimd { struct l_record head; uint32_t fpsr, fpcr; uint64_t vregs[32][2]; };
+_Static_assert(sizeof(struct l_fpsimd) == 528 && offsetof(struct l_fpsimd, vregs) == 16, "struct fpsimd_context of linux aarch64");
+/* What the processor said about a fault (ESR_EL1). The kernel adds it for faults. */
+#define L_ESR_MAGIC 0x45535201u
+struct l_esr { struct l_record head; uint64_t esr; };
+_Static_assert(sizeof(struct l_esr) == 16, "struct esr_context of linux aarch64");
+/* ucontext_t as the libc of the image declares it: its signal set has 128 bytes, the kernel
+   writes 8 of them. The machine context is aligned to 16. */
+struct l_ucontext {
+  uint64_t flags, link;
+  struct l_stack stack;
+  l_sigset sigmask;
+  uint64_t sigmask_rest[15];
+  uint64_t pad;
+  struct l_mcontext mcontext;
+};
+_Static_assert(offsetof(struct l_ucontext, sigmask) == 40 && offsetof(struct l_ucontext, mcontext) == 176 && sizeof(struct l_ucontext) == 4560, "ucontext_t of linux aarch64");
+
+/* The two records that a host writes, and the record of zeros after them. */
+static inline struct l_fpsimd *l_context_records(struct l_ucontext *uc, int with_esr, uint64_t esr) {
+  struct l_fpsimd *fp = (struct l_fpsimd *)(void *)uc->mcontext.reserved;
+  fp->head.magic = L_FPSIMD_MAGIC;
+  fp->head.size = sizeof *fp;
+  struct l_record *next = (struct l_record *)(void *)(fp + 1);
+  if (with_esr) {
+    struct l_esr *e = (struct l_esr *)(void *)next;
+    e->head.magic = L_ESR_MAGIC;
+    e->head.size = sizeof *e;
+    e->esr = esr;
+    next = (struct l_record *)(void *)(e + 1);
+  }
+  next->magic = 0;
+  next->size = 0;
+  return fp;
+}
+/* A record of a context that somebody else wrote (the kernel of the Linux test host), 0 if it has none. */
+static inline void *l_context_find(uint8_t *reserved, uint32_t magic) {
+  for (size_t at = 0; at + sizeof(struct l_record) <= 4096;) {
+    struct l_record *r = (struct l_record *)(void *)(reserved + at);
+    if (r->magic == magic) return r;
+    if (!r->magic || r->size < sizeof *r) return 0;
+    at += r->size;
+  }
+  return 0;
+}
+
+/* ESR_EL1: the class of the exception is in bits 26 to 31. */
+enum {
+  L_ESR_CLASS_UNKNOWN = 0x00, L_ESR_CLASS_ILLEGAL_STATE = 0x0e, L_ESR_CLASS_SVC = 0x15, L_ESR_CLASS_SYSTEM_REGISTER = 0x18,
+  L_ESR_CLASS_INSTRUCTION_ABORT = 0x20, L_ESR_CLASS_PC_ALIGNMENT = 0x22, L_ESR_CLASS_DATA_ABORT = 0x24,
+  L_ESR_CLASS_SP_ALIGNMENT = 0x26, L_ESR_CLASS_FP = 0x2c, L_ESR_CLASS_BREAKPOINT = 0x3c,
+  L_ESR_WRITE = 0x40, /* data abort: the access was a write */
+};
+static inline uint64_t l_esr_class(uint64_t esr) { return esr >> 26 & 0x3f; }
+/* The instruction: brk #n, for every n. */
+static inline int l_is_brk(uint32_t instruction) { return (instruction & 0xffe0001fu) == 0xd4200000u; }
+
+/* ---- AT_HWCAP and AT_HWCAP2 of linux aarch64: what the processor can do ----
+   A host sets the bits that it knows to be true for the machine, and no others. Never
+   set by a host that is not Linux:
+   - L_HWCAP_CPUID: it says that the kernel answers for the ID registers (mrs of
+     ID_AA64ISAR0_EL1 and the like traps, and Linux emulates it). No other system does.
+   - SVE, SME, MTE, BTI, pointer authentication: the image would need the kernel's part
+     of them (more state in a signal context, prctl), which no host has. */
+enum {
+  L_HWCAP_FP = 1 << 0, L_HWCAP_ASIMD = 1 << 1, L_HWCAP_AES = 1 << 3, L_HWCAP_PMULL = 1 << 4, L_HWCAP_SHA1 = 1 << 5,
+  L_HWCAP_SHA2 = 1 << 6, L_HWCAP_CRC32 = 1 << 7, L_HWCAP_ATOMICS = 1 << 8, L_HWCAP_FPHP = 1 << 9, L_HWCAP_ASIMDHP = 1 << 10,
+  L_HWCAP_CPUID = 1 << 11, L_HWCAP_ASIMDRDM = 1 << 12, L_HWCAP_JSCVT = 1 << 13, L_HWCAP_FCMA = 1 << 14, L_HWCAP_LRCPC = 1 << 15,
+  L_HWCAP_DCPOP = 1 << 16, L_HWCAP_SHA3 = 1 << 17, L_HWCAP_ASIMDDP = 1 << 20, L_HWCAP_SHA512 = 1 << 21, L_HWCAP_SVE = 1 << 22,
+  L_HWCAP_ASIMDFHM = 1 << 23, L_HWCAP_DIT = 1 << 24, L_HWCAP_ILRCPC = 1 << 26, L_HWCAP_FLAGM = 1 << 27, L_HWCAP_SSBS = 1 << 28,
+  L_HWCAP_SB = 1 << 29,
+  L_HWCAP2_DCPODP = 1 << 0, L_HWCAP2_FLAGM2 = 1 << 7, L_HWCAP2_FRINT = 1 << 8, L_HWCAP2_I8MM = 1 << 13, L_HWCAP2_BF16 = 1 << 14,
+};
+/* What a host may hand on of the bits that a kernel gave it. */
+#define L_HWCAP_FOR_IMAGE                                                                                                       \
+  ((uint64_t)(L_HWCAP_FP | L_HWCAP_ASIMD | L_HWCAP_AES | L_HWCAP_PMULL | L_HWCAP_SHA1 | L_HWCAP_SHA2 | L_HWCAP_CRC32 |          \
+              L_HWCAP_ATOMICS | L_HWCAP_FPHP | L_HWCAP_ASIMDHP | L_HWCAP_ASIMDRDM | L_HWCAP_JSCVT | L_HWCAP_FCMA |              \
+              L_HWCAP_LRCPC | L_HWCAP_DCPOP | L_HWCAP_SHA3 | L_HWCAP_ASIMDDP | L_HWCAP_SHA512 | L_HWCAP_ASIMDFHM | L_HWCAP_DIT | \
+              L_HWCAP_ILRCPC | L_HWCAP_FLAGM | L_HWCAP_SSBS | L_HWCAP_SB))
+#define L_HWCAP2_FOR_IMAGE ((uint64_t)(L_HWCAP2_DCPODP | L_HWCAP2_FLAGM2 | L_HWCAP2_FRINT | L_HWCAP2_I8MM | L_HWCAP2_BF16))
 #endif
 
 /* ---- the start of the image ---- */
 enum {
   L_AT_NULL = 0, L_AT_PHDR = 3, L_AT_PHENT = 4, L_AT_PHNUM = 5, L_AT_PAGESZ = 6, L_AT_BASE = 7, L_AT_ENTRY = 9,
   L_AT_UID = 11, L_AT_EUID = 12, L_AT_GID = 13, L_AT_EGID = 14, L_AT_HWCAP = 16, L_AT_SECURE = 23, L_AT_RANDOM = 25,
+  L_AT_HWCAP2 = 26,
 };
 typedef struct { unsigned char ident[16]; uint16_t type, machine; uint32_t version; uint64_t entry, phoff, shoff; uint32_t flags; uint16_t ehsize, phentsize, phnum, shentsize, shnum, shstrndx; } Ehdr;
 typedef struct { uint32_t type, flags; uint64_t offset, vaddr, paddr, filesz, memsz, align; } Phdr;
@@ -297,7 +402,7 @@ static inline const char *l_request_name(long long n) {
     L_NAME(openat) L_NAME(mkdirat) L_NAME(newfstatat) L_NAME(unlinkat) L_NAME(renameat) L_NAME(readlinkat)
     L_NAME(faccessat) L_NAME(set_robust_list) L_NAME(dup3) L_NAME(pipe2) L_NAME(prlimit64) L_NAME(getcpu)
     L_NAME(sched_setattr) L_NAME(sched_getattr) L_NAME(getrandom) L_NAME(membarrier) L_NAME(statx) L_NAME(faccessat2)
-    L_NAME(set_tp) L_NAME(main_stack)
+    L_NAME(set_tp) L_NAME(main_stack) L_NAME(clear_cache) L_NAME(jit_write_protect)
 #undef L_NAME
     default: return "?";
   }

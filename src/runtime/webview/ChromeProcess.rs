@@ -561,6 +561,9 @@ fn spawn(
             // No startup window — targets are Target.createTarget'd, not the
             // default about:blank. Saves one tab and the visual-complete wait.
             c"--no-startup-window".as_ptr(),
+            // An elevated parent on Windows makes Chrome relaunch itself
+            // de-elevated, and the relaunch loses the pipe handles (#42147).
+            c"--do-not-de-elevate".as_ptr(),
         ];
         // User extras last so they can override built-in flags (Chrome's
         // CommandLine last-wins for duplicate switches). Memory is the caller's

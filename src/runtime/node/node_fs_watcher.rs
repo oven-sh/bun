@@ -3,6 +3,8 @@ use core::ffi::c_void;
 #[cfg(not(windows))]
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
+#[cfg(not(windows))]
+use std::collections::VecDeque;
 
 use bun_core::Output;
 use bun_core::strings;
@@ -74,6 +76,9 @@ pub(crate) struct FSWatcher {
     /// While it's not closed, the pending activity
     pending_activity_count: AtomicU32,
     current_task: JsCell<FSWatchTask>,
+    /// JS thread: events the listener has not seen yet, oldest first.
+    #[cfg(not(windows))]
+    undelivered: JsCell<VecDeque<Event>>,
 
     /// Armed until `detach()`: the watcher closes with the context that started it.
     abort_handle: bun_jsc::AbortHandle,
@@ -211,36 +216,24 @@ impl FSWatchTaskPosix {
         self.count += 1;
     }
 
-    /// JS thread: deliver each batched event to the listener.
+    /// JS thread: hand the batch to the watcher and deliver one event.
     pub(crate) fn run(&mut self) -> JsResult<()> {
-        let ctx: *const FSWatcher = self.ctx();
-        // SAFETY: BACKREF — the FSWatcher outlives its tasks.
-        let _unref = scopeguard::guard((), |()| unsafe { (*ctx).unref_task() });
-        for i in 0..self.count as usize {
-            // SAFETY: entries [0..count) were written by `append`.
-            let entry = unsafe { self.entries[i].assume_init_ref() };
-            let emitted = match &entry.event {
-                Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
-                Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
-                Event::Error { err, close } => {
-                    self.ctx().emit_error(err, *close);
-                    Ok(())
-                }
-                #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-                Event::NoFilename(event_type) => {
-                    self.ctx().emit_null_filename(*event_type);
-                    Ok(())
-                }
-                Event::Abort => {
-                    self.ctx().emit_if_aborted();
-                    Ok(())
-                }
-            };
-            // A filename that could not be built (allocation failure, or the
-            // VM is stopping): the rest of the batch is dropped with the task.
-            emitted?;
+        // BACKREF — the FSWatcher outlives its tasks.
+        let watcher: &FSWatcher = &self.ctx.expect("FSWatchTask.ctx unset");
+        let _unref = scopeguard::guard((), |()| watcher.unref_task());
+        if watcher.closed.get() {
+            // Closed after the batch was posted: `deinit` frees the entries.
+            return Ok(());
         }
-        Ok(())
+        let count = core::mem::take(&mut self.count) as usize;
+        watcher.undelivered.with_mut(|undelivered| {
+            for entry in &self.entries[..count] {
+                // SAFETY: entries [0..count) were written by `append`, and
+                // `count` is now 0, so each is moved out once.
+                undelivered.push_back(unsafe { entry.assume_init_read() }.event);
+            }
+        });
+        watcher.deliver_one()
     }
 
     pub(crate) fn append_abort(&mut self) {
@@ -937,6 +930,42 @@ impl FSWatcher {
         }
     }
 
+    /// One event per task, as on Windows: node makes one `MakeCallback` per event.
+    #[cfg(not(windows))]
+    fn deliver_one(&self) -> JsResult<()> {
+        let Some(event) = self.undelivered.with_mut(VecDeque::pop_front) else {
+            return Ok(());
+        };
+        // Queued before the listener runs: a listener that spins the event loop gets the rest.
+        if !self.undelivered.get().is_empty() && self.ref_task() {
+            let task = bun_core::heap::into_raw(Box::new(FSWatchTaskPosix {
+                // SAFETY: `self` is the live FSWatcher (BACKREF); it outlives its tasks.
+                ctx: Some(unsafe { bun_ptr::ParentRef::from_raw(self.as_ctx_ptr()) }),
+                ..Default::default()
+            }));
+            // Ownership of `task` transfers to the queue.
+            let vm = self.global_this.bun_vm();
+            vm.event_loop_mut().enqueue_task(Task::init(task));
+        }
+        match &event {
+            Event::Rename(file_path) => self.emit::<{ EventType::Rename }>(file_path),
+            Event::Change(file_path) => self.emit::<{ EventType::Change }>(file_path),
+            Event::Error { err, close } => {
+                self.emit_error(err, *close);
+                Ok(())
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+            Event::NoFilename(event_type) => {
+                self.emit_null_filename(*event_type);
+                Ok(())
+            }
+            Event::Abort => {
+                self.emit_if_aborted();
+                Ok(())
+            }
+        }
+    }
+
     pub(crate) fn emit<const EVENT_TYPE: EventType>(&self, file_name: &[u8]) -> JsResult<()> {
         debug_assert!(EVENT_TYPE != EventType::Error);
         let Some(js_this) = self.js_this.try_get() else {
@@ -1120,6 +1149,9 @@ impl FSWatcher {
 
         // Idempotent: `detach()` can run more than once (close + finalize).
         self.js_this.set(JsRef::empty());
+
+        #[cfg(not(windows))]
+        self.undelivered.with_mut(VecDeque::clear);
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1176,6 +1208,8 @@ impl FSWatcher {
                 ctx: None,
                 ..Default::default()
             }),
+            #[cfg(not(windows))]
+            undelivered: JsCell::new(VecDeque::new()),
             mutex: Mutex::default(),
             signal: JsCell::new(args.signal.map(|s| s.ref_())),
             persistent: Cell::new(args.persistent),

@@ -2285,6 +2285,45 @@ describe("Bun.ModuleGraph — constructor / method contract", () => {
       proto: ["constructor", "dispose", "import", "run"],
     });
   });
+  test("ModuleGraph.current is not configurable: code in a graph cannot redefine or delete it for the host and the other graphs", async () => {
+    // In a child: a redefinition that goes through lasts for the rest of the process.
+    const d = fixture({
+      "tenant.mjs": `
+        export const whoAmI = () => whoCalls();
+        export const attempts = {
+          "redefine the getter": () => Object.defineProperty(Bun.ModuleGraph, "current", { get: () => undefined, configurable: true }),
+          "redefine as a value": () => Object.defineProperty(Bun.ModuleGraph, "current", { value: undefined }),
+          "delete": () => delete Bun.ModuleGraph.current,
+        };`,
+      "host.mjs": `
+        // A host function the graphs share through \`globals\`; it tells its callers apart.
+        const names = new Map();
+        const whoCalls = () => names.get(Bun.ModuleGraph.current) ?? "the host";
+        const a = new Bun.ModuleGraph({ globals: { whoCalls } }), b = new Bun.ModuleGraph({ globals: { whoCalls } });
+        names.set(a, "graph A").set(b, "graph B");
+        const [appA, appB] = [await a.import("./tenant.mjs"), await b.import("./tenant.mjs")];
+        const result = {};
+        for (const [name, attempt] of Object.entries(appA.attempts)) {
+          try { a.run(attempt); result[name] = "no throw"; } catch (e) { result[name] = e.constructor.name; }
+        }
+        result.callers = [a.run(appA.whoAmI), b.run(appB.whoAmI), whoCalls()];
+        console.log(JSON.stringify(result));`,
+    });
+    const { stdout, exitCode } = await runBun(["host.mjs"], { cwd: d });
+    expect(JSON.parse(stdout)).toEqual({
+      "redefine the getter": "TypeError",
+      "redefine as a value": "TypeError",
+      "delete": "TypeError",
+      callers: ["graph A", "graph B", "the host"],
+    });
+    expect(Object.getOwnPropertyDescriptor(Bun.ModuleGraph, "current")).toEqual({
+      get: expect.any(Function),
+      set: undefined,
+      enumerable: false,
+      configurable: false,
+    });
+    expect(exitCode).toBe(0);
+  });
   test("re-entrancy: onExit/onError callbacks may create graphs, import, and dispose the calling graph", async () => {
     const d = fixture({
       "x.mjs": `export function die() { setTimeout(() => { throw new Error("e") }, 0) } export function dieFromATick() { process.nextTick(() => { throw new Error("e") }) } export function quit() { process.exit(3) }`,

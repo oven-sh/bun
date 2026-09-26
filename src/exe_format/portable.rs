@@ -5,8 +5,12 @@ use core::mem::{offset_of, size_of};
 use bun_core::strings;
 
 use crate::elf::{ElfError, ElfFile};
+use crate::macho::{
+    CSMAGIC_CODEDIRECTORY, CSMAGIC_EMBEDDED_SIGNATURE, CSSLOT_CODEDIRECTORY,
+    SEC_CODE_SIGNATURE_HASH_SHA256, sha256_hash,
+};
 use crate::macho_types::{BlobIndex, CodeDirectory, SuperBlob};
-use crate::pe::{OptionalHeader64, PEHeader};
+use crate::pe::{OPTIONAL_HEADER_MAGIC_64, OptionalHeader64, PE_SIGNATURE, PEHeader};
 use crate::{align_up, read_struct, write_struct};
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
@@ -33,9 +37,6 @@ pub enum PortableError {
     Elf(#[from] ElfError),
 }
 
-pub const EM_X86_64: u16 = 62;
-pub const EM_AARCH64: u16 = 183;
-
 const TOC_MAGIC: [u8; 8] = *b"BUNPACK1";
 const TOC_VERSION: u32 = 1;
 const IMAGE_ALIGN: u64 = 0x10000;
@@ -47,12 +48,7 @@ const SCRIPT_START: usize = 0x42;
 const SCRIPT_IMAGE_LEN: &[u8] = b"image_len=";
 const SIGNATURE_IDENTIFIER: &[u8] = b"bun.portable.image\0";
 const SIGNATURE_HASH_SIZE: usize = 32;
-const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
-const CSMAGIC_CODEDIRECTORY: u32 = 0xfade_0c02;
-const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade_0cc0;
 const CS_ADHOC_LINKER_SIGNED: u32 = 0x20002;
-const PE_SIGNATURE: u32 = 0x0000_4550;
-const PE32_PLUS_MAGIC: u16 = 0x20b;
 
 /// The last 128 bytes of the file, little endian.
 #[repr(C)]
@@ -163,7 +159,7 @@ impl PackedImage {
         }
         let signature = read_struct::<PEHeader>(&self.head[pe_header..]).signature;
         let magic = read_struct::<OptionalHeader64>(&self.head[optional_header..]).magic;
-        if signature != PE_SIGNATURE || magic != PE32_PLUS_MAGIC {
+        if signature != PE_SIGNATURE || magic != OPTIONAL_HEADER_MAGIC_64 {
             return Err(PortableError::InvalidPEHeader);
         }
         let field = optional_header + offset_of!(OptionalHeader64, subsystem);
@@ -310,7 +306,7 @@ fn sign(image: &[u8], code_len: usize) -> Vec<u8> {
         count: 1u32.to_be(),
     };
     let blob_index = BlobIndex {
-        type_: 0,
+        type_: CSSLOT_CODEDIRECTORY.to_be(),
         offset: (code_directory_offset as u32).to_be(),
     };
     let code_directory = CodeDirectory {
@@ -346,17 +342,17 @@ fn sign(image: &[u8], code_len: usize) -> Vec<u8> {
     let mut digest = [0u8; SIGNATURE_HASH_SIZE];
     let (whole_pages, rest) = image.as_chunks::<HASH_PAGE>();
     for page in whole_pages {
-        crate::macho::sha256_hash(page, &mut digest);
+        sha256_hash(page, &mut digest);
         blob.extend_from_slice(&digest);
     }
     let mut page = [0u8; HASH_PAGE];
     if !rest.is_empty() {
         page[..rest.len()].copy_from_slice(rest);
-        crate::macho::sha256_hash(&page, &mut digest);
+        sha256_hash(&page, &mut digest);
         blob.extend_from_slice(&digest);
         page = [0u8; HASH_PAGE];
     }
-    crate::macho::sha256_hash(&page, &mut digest);
+    sha256_hash(&page, &mut digest);
     for _ in image.len().div_ceil(HASH_PAGE)..pages {
         blob.extend_from_slice(&digest);
     }

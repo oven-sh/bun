@@ -812,10 +812,10 @@ fn align_vmsize(size: u64, page_size: u64) -> u64 {
 
 const SEG_LINKEDIT: &[u8] = b"__LINKEDIT";
 
-const CSMAGIC_CODEDIRECTORY: u32 = 0xfade0c02;
-const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade0cc0;
-const CSSLOT_CODEDIRECTORY: u32 = 0;
-const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
+pub(crate) const CSMAGIC_CODEDIRECTORY: u32 = 0xfade0c02;
+pub(crate) const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade0cc0;
+pub(crate) const CSSLOT_CODEDIRECTORY: u32 = 0;
+pub(crate) const SEC_CODE_SIGNATURE_HASH_SHA256: u8 = 2;
 const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 
 /// `bun.sha.SHA256.hash(bytes, out, null)`.

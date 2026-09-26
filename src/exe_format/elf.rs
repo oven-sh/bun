@@ -768,7 +768,8 @@ const SHF_ALLOC: u64 = 0x2;
 const SHF_TLS: u64 = 0x400;
 
 const EM_PPC64: u16 = 21;
-const EM_AARCH64: u16 = 183;
+pub const EM_X86_64: u16 = 62;
+pub const EM_AARCH64: u16 = 183;
 
 #[repr(C)]
 #[derive(Clone, Copy)]

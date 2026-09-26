@@ -2451,6 +2451,7 @@ pub(crate) fn inject<'a>(
                         bun_core::pretty_errorln!("Error initializing ELF file: {}", e);
                     } else if inject_into_packed_image(
                         input_bytes,
+                        self_exe,
                         bytes,
                         inject_options,
                         target,
@@ -2601,6 +2602,7 @@ pub(crate) fn inject<'a>(
 /// Writes `packed_file` with the module graph in its image to `fd`; says what is wrong when it returns false.
 fn inject_into_packed_image(
     packed_file: Vec<u8>,
+    path: &ZStr,
     graph: &[u8],
     inject_options: &InjectOptions,
     target: &CompileTarget,
@@ -2624,7 +2626,8 @@ fn inject_into_packed_image(
         Ok(packed) => packed,
         Err(e) => {
             bun_core::pretty_errorln!(
-                "<r><red>error<r><d>:<r> the executable for '{}' is not a packed portable image: {}",
+                "<r><red>error<r><d>:<r> {} is not the packed file of a portable bun, which '{}' is compiled with: {}",
+                bun_core::fmt::quote(path.as_bytes()),
                 target,
                 e
             );
@@ -2632,15 +2635,20 @@ fn inject_into_packed_image(
         }
     };
     let machine = match target.arch() {
-        bun_core::Environment::Architecture::X64 => bun_portable::EM_X86_64,
-        bun_core::Environment::Architecture::Arm64 => bun_portable::EM_AARCH64,
+        bun_core::Environment::Architecture::X64 => bun_elf::EM_X86_64,
+        bun_core::Environment::Architecture::Arm64 => bun_elf::EM_AARCH64,
         bun_core::Environment::Architecture::Wasm => 0,
     };
     if packed.machine() != machine {
         bun_core::pretty_errorln!(
-            "<r><red>error<r><d>:<r> the executable for '{}' holds an image for another processor (ELF machine {})",
-            target,
-            packed.machine()
+            "<r><red>error<r><d>:<r> {} holds an image for {}, '{}' is for another processor",
+            bun_core::fmt::quote(path.as_bytes()),
+            match packed.machine() {
+                bun_elf::EM_X86_64 => "x64",
+                bun_elf::EM_AARCH64 => "arm64",
+                _ => "a processor that bun does not run on",
+            },
+            target
         );
         return false;
     }

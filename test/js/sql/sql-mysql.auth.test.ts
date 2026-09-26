@@ -260,3 +260,25 @@ test("public key retrieval refusal names allowPublicKeyRetrieval and TLS as reme
     server.close();
   }
 });
+
+// Connection-level failures used to surface as "Connection closed" whatever their
+// code; each variant now carries its own default message. An unknown auth plugin
+// in the handshake exercises a second variant through the same path.
+test("unsupported auth plugin error says so instead of Connection closed", async () => {
+  const { server, port } = await listeningServer(socket => {
+    socket.write(mysqlHandshakeV10({ authPlugin: "definitely_not_a_plugin" }));
+    socket.on("error", () => {});
+  });
+
+  try {
+    await using sql = new SQL({ url: `mysql://root:pw@127.0.0.1:${port}/db`, max: 1 });
+    const err = await sql.connect().then(
+      () => null,
+      e => e,
+    );
+    expect(err?.code).toBe("ERR_MYSQL_UNSUPPORTED_AUTH_PLUGIN");
+    expect(err?.message).toBe("Server requested an unsupported authentication plugin");
+  } finally {
+    server.close();
+  }
+});

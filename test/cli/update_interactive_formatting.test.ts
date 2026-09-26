@@ -1,16 +1,16 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { closeSync, createReadStream } from "fs";
-import { bunEnv, bunExe, isMusl, isWindows, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
-let registry: VerdaccioRegistry;
+let registry: TestRegistry;
 let registryUrl: string;
 
-beforeAll(async () => {
-  registry = new VerdaccioRegistry();
+beforeAll(() => {
+  registry = new TestRegistry().start();
   registryUrl = registry.registryUrl();
-  await registry.start();
 });
 
 afterAll(() => {

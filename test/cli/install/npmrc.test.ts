@@ -1,12 +1,13 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
+import { bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
 
-var registry = new VerdaccioRegistry();
+var registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();

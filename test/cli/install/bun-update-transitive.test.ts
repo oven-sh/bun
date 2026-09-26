@@ -1,12 +1,13 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { exists, rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, a-dep 1.0.1..1.0.10, @types/no-deps 1.0.0/2.0.0, one-range-dep@1.0.0 -> no-deps ^1.0.0, one-fixed-dep@1.0.0 -> no-deps 1.0.0, dep-with-tags latest=3.0.0, pre-2=2.0.1, 3.0.1 published above latest.
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();
@@ -1234,7 +1235,7 @@ test.concurrent("in a workspace, `bun update` from one member also re-points a s
 type Manifests = Record<string, Record<string, { dependencies?: Record<string, string> }>>;
 type Tags = Record<string, Record<string, string>>;
 
-// Serves one manifest per name from memory; verdaccio has no parent whose newer version keeps a range on the same child, and its dist-tags cannot move mid-test. `tags` is read per request, so a test can move a tag after installing.
+// Serves one manifest per name from memory; the fixture registry has no parent whose newer version keeps a range on the same child, and no test moves its dist-tags. `tags` is read per request, so a test can move a tag after installing.
 // `status` is keyed by package name or by tarball file name ("leaf-1.1.0.tgz"); `tarballOrigin` replaces this server's origin in every `dist.tarball`.
 type RegistryKnobs = {
   times?: Record<string, Record<string, string>>;
@@ -1569,7 +1570,7 @@ test.concurrent(
   },
 );
 
-// Mirrors verdaccio's dep-with-tags: 3.0.1 is published above `latest` (3.0.0), which `bun install` prefers whenever the range allows it.
+// Mirrors the fixture package dep-with-tags: 3.0.1 is published above `latest` (3.0.0), which `bun install` prefers whenever the range allows it.
 const ABOVE_LATEST: Manifests = {
   parent: { "1.0.0": { dependencies: { leaf: ">=1.0.0" } } },
   leaf: { "1.0.0": {}, "1.0.1": {}, "2.0.0": {}, "2.0.1": {}, "3.0.0": {}, "3.0.1": {} },

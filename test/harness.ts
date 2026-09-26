@@ -6,12 +6,12 @@
  */
 
 import * as numeric from "_util/numeric.ts";
-import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
+import { gc as bunGC, sleepSync, spawnSync, unsafe, which } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
-import { ChildProcess, execSync, fork } from "child_process";
-import { readdir, rm, writeFile } from "fs/promises";
-import fs, { closeSync, openSync, rmSync } from "node:fs";
+import { execSync } from "child_process";
+import { readdir, writeFile } from "fs/promises";
+import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
 
@@ -1908,157 +1908,6 @@ export function textLockfile(version: number, pkgs: any): string {
     ...pkgs,
   });
 }
-
-export class VerdaccioRegistry {
-  port: number;
-  process: ChildProcess | undefined;
-  configPath: string;
-  packagesPath: string;
-  users: Record<string, string> = {};
-
-  constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
-    this.port = randomPort();
-    this.configPath = opts?.configPath ?? join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml");
-    this.packagesPath = opts?.packagesPath ?? join(import.meta.dir, "cli", "install", "registry", "packages");
-  }
-
-  async start(silent: boolean = true) {
-    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
-    // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
-    // while the install client connects to 127.0.0.1 and every request is refused.
-    const listen = `127.0.0.1:${this.port}`;
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", listen], {
-      silent,
-      // Prefer using a release build of Bun since it's faster
-      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
-      env: {
-        ...(bunEnv as any),
-        NODE_NO_WARNINGS: "1",
-      },
-    });
-
-    this.process.stderr?.on("data", data => {
-      console.error(`[verdaccio] stderr: ${data}`);
-    });
-
-    const started = Promise.withResolvers();
-
-    this.process.on("error", error => {
-      console.error(`Failed to start verdaccio: ${error}`);
-      started.reject(error);
-    });
-
-    this.process.on("exit", (code, signal) => {
-      if (code !== 0) {
-        console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
-      } else {
-        console.log("Verdaccio exited successfully");
-      }
-    });
-
-    this.process.on("message", (message: { verdaccio_started: boolean }) => {
-      if (message.verdaccio_started) {
-        started.resolve();
-      }
-    });
-
-    await started.promise;
-  }
-
-  registryUrl() {
-    return `http://localhost:${this.port}/`;
-  }
-
-  stop() {
-    rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
-  }
-
-  /**
-   * returns auth token
-   */
-  async generateUser(username: string, password: string): Promise<string> {
-    if (this.users[username]) {
-      throw new Error(`User ${username} already exists`);
-    } else this.users[username] = password;
-
-    const url = `http://localhost:${this.port}/-/user/org.couchdb.user:${username}`;
-    const user = {
-      name: username,
-      password: password,
-      email: `${username}@example.com`,
-    };
-
-    const response = await fetch(url, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(user),
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      return data.token;
-    }
-
-    throw new Error("Failed to create user:", response.statusText);
-  }
-
-  async authBunfig(user: string) {
-    const authToken = await this.generateUser(user, user);
-    return Bun.TOML.stringify({
-      install: {
-        cache: false,
-        registry: { url: `http://localhost:${this.port}/`, token: authToken },
-      },
-    });
-  }
-
-  async createTestDir(
-    opts: { bunfigOpts?: BunfigOpts; files?: DirectoryTree | string } = {
-      bunfigOpts: { linker: "hoisted" },
-      files: {},
-    },
-  ) {
-    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
-    const packageDir = tempDir("verdaccio-test-", opts.files ?? {});
-    const packageJson = join(packageDir, "package.json");
-    await this.writeBunfig(packageDir, opts.bunfigOpts);
-    this.users = {};
-    return { packageDir: String(packageDir), packageJson };
-  }
-
-  async writeBunfig(dir: string, opts: BunfigOpts = {}) {
-    await write(
-      join(dir, "bunfig.toml"),
-      Bun.TOML.stringify({
-        install: {
-          cache: join(dir, ".bun-cache"),
-          saveTextLockfile: opts.saveTextLockfile,
-          registry: opts.npm ? undefined : this.registryUrl(),
-          linker: opts.linker,
-          globalStore: opts.globalStore,
-          publicHoistPattern: opts.publicHoistPattern,
-          hoistPattern: opts.hoistPattern,
-          hoist: opts.hoist,
-        },
-      }),
-    );
-  }
-}
-
-type BunfigOpts = {
-  saveTextLockfile?: boolean;
-  npm?: boolean;
-  linker?: "isolated" | "hoisted";
-  globalStore?: boolean;
-  publicHoistPattern?: string | string[];
-  hoistPattern?: string | string[];
-  hoist?: boolean;
-};
 
 export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);

@@ -93,7 +93,7 @@ await $`cp ${join(targetPkgDir, "bin", "main.js")} ${join(targetTarDir, "bin")}/
 await mkdir(join(packagesDir, "test-native-binlink-target"), { recursive: true });
 await $`cd ${targetPkgDir} && tar -czf ${join(packagesDir, "test-native-binlink-target", "test-native-binlink-target-1.0.0.tgz")} package`;
 
-// Create package.json for verdaccio registry with proper integrity hashes
+// Create the packument that the registry serves, with proper integrity hashes
 for (const pkgName of ["test-native-binlink", "test-native-binlink-target"]) {
   const version = "1.0.0";
   const tarballName = `${pkgName}-${version}.tgz`;

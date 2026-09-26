@@ -2,20 +2,21 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, realpathSync, statSync, symlinkSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, sep } from "path";
+import { TestRegistry } from "registry";
 
-let verdaccio: VerdaccioRegistry;
+let registry: TestRegistry;
 
 setDefaultTimeout(1000 * 60 * 5);
 
 beforeAll(async () => {
-  verdaccio = new VerdaccioRegistry();
-  await verdaccio.start();
+  registry = new TestRegistry();
+  await registry.start();
 });
 
 afterAll(() => {
-  verdaccio.stop();
+  registry.stop();
 });
 
 // POSIX puts a symlink at `.bin/<name>`. Windows writes `<name>.exe` (a copy
@@ -39,7 +40,7 @@ describe.concurrent("native binlink optimization", () => {
   for (const linker of ["hoisted", "isolated"]) {
     test(`uses platform-specific bin instead of main package bin with linker ${linker}`, async () => {
       let env = { ...bunEnv };
-      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      const { packageDir, packageJson } = await registry.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 
@@ -49,7 +50,7 @@ describe.concurrent("native binlink optimization", () => {
         Bun.TOML.stringify({
           install: {
             cache: join(packageDir, ".bun-cache"),
-            registry: verdaccio.registryUrl(),
+            registry: registry.registryUrl(),
             linker,
           },
         }),
@@ -124,7 +125,7 @@ describe.concurrent("native binlink optimization", () => {
     // and `.bin/<cmd>` was never created (broke `bunx @anthropic-ai/claude-code`).
     test(`falls back to main package bin when platform dep has no matching bin file with linker ${linker}`, async () => {
       let env = { ...bunEnv };
-      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      const { packageDir, packageJson } = await registry.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 
@@ -133,7 +134,7 @@ describe.concurrent("native binlink optimization", () => {
         Bun.TOML.stringify({
           install: {
             cache: join(packageDir, ".bun-cache"),
-            registry: verdaccio.registryUrl(),
+            registry: registry.registryUrl(),
             linker,
           },
         }),
@@ -217,7 +218,7 @@ describe.concurrent("native binlink optimization", () => {
   describe("nested nativeDependencies", () => {
     async function setup(opts: { linker: "hoisted" | "isolated"; deps: Record<string, string>; extraEnv?: object }) {
       let env: Record<string, string> = { ...bunEnv, ...(opts.extraEnv ?? {}) };
-      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      const { packageDir, packageJson } = await registry.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 
@@ -226,7 +227,7 @@ describe.concurrent("native binlink optimization", () => {
         Bun.TOML.stringify({
           install: {
             cache: join(packageDir, ".bun-cache"),
-            registry: verdaccio.registryUrl(),
+            registry: registry.registryUrl(),
             linker: opts.linker,
           },
         }),
@@ -466,7 +467,7 @@ describe.concurrent("native binlink altpath", () => {
     for (const { version, targetFile, description } of shapes) {
       test(`finds native bin via ${description} with linker ${linker}`, async () => {
         let env = { ...bunEnv };
-        const { packageDir, packageJson } = await verdaccio.createTestDir();
+        const { packageDir, packageJson } = await registry.createTestDir();
         env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
         env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 
@@ -475,7 +476,7 @@ describe.concurrent("native binlink altpath", () => {
           Bun.TOML.stringify({
             install: {
               cache: join(packageDir, ".bun-cache"),
-              registry: verdaccio.registryUrl(),
+              registry: registry.registryUrl(),
               linker,
             },
           }),

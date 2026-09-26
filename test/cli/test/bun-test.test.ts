@@ -1945,6 +1945,82 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The resolver lists the cwd and its parents before the scanner runs, and it
+  // keeps the listing of every directory an earlier path argument walked. The
+  // scanner has to walk those listings too.
+  const ranTest = (name: string) =>
+    `import { test } from "bun:test"; test("${name}", () => { console.log("RAN ${name}"); });`;
+  async function discover(cwd: string, args: readonly string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      ran: stdout
+        .split(/\r?\n/)
+        .filter(line => line.startsWith("RAN "))
+        .sort(),
+      summary: stderr.match(/^Ran \d+ tests? across \d+ files?\./m)?.[0] ?? stderr,
+      exitCode,
+    };
+  }
+
+  test.each(["./nested ./", "./ ./nested"])('path arguments "%s" run every test below both, once', async order => {
+    using dir = tempDir("scanner-two-paths", {
+      "root_only.test.ts": ranTest("root"),
+      "nested/inner.test.ts": ranTest("inner"),
+      "nested/deeper/most.test.ts": ranTest("most"),
+      "other/other.test.ts": ranTest("other"),
+    });
+
+    expect(await discover(String(dir), order.split(" "))).toEqual({
+      ran: ["RAN inner", "RAN most", "RAN other", "RAN root"],
+      summary: "Ran 4 tests across 4 files.",
+      exitCode: 0,
+    });
+  });
+
+  describe.each([
+    { how: "a path argument", args: ["../../"], bunfig: {} },
+    { how: "the bunfig test root", args: [], bunfig: { "pkg/app/bunfig.toml": `[test]\nroot = "../../"\n` } },
+  ])("$how that is a parent of the cwd", ({ args, bunfig }) => {
+    test("runs the tests in every directory", async () => {
+      using dir = tempDir("scanner-parent-of-cwd", {
+        ...bunfig,
+        "top.test.ts": ranTest("top"),
+        "sibling/sibling.test.ts": ranTest("sibling"),
+        "pkg/pkg.test.ts": ranTest("pkg"),
+        "pkg/lib/lib.test.ts": ranTest("lib"),
+        "pkg/app/app.test.ts": ranTest("app"),
+        "pkg/app/deeper/deeper.test.ts": ranTest("deeper"),
+      });
+
+      expect(await discover(join(String(dir), "pkg", "app"), args)).toEqual({
+        ran: ["RAN app", "RAN deeper", "RAN lib", "RAN pkg", "RAN sibling", "RAN top"],
+        summary: "Ran 6 tests across 6 files.",
+        exitCode: 0,
+      });
+    });
+
+    // Without the walk this run finds no test file and exits 1.
+    test("finds a test that is only below the cwd", async () => {
+      using dir = tempDir("scanner-parent-of-cwd-only", {
+        ...bunfig,
+        "pkg/app/app.test.ts": ranTest("app"),
+      });
+
+      expect(await discover(join(String(dir), "pkg", "app"), args)).toEqual({
+        ran: ["RAN app"],
+        summary: "Ran 1 test across 1 file.",
+        exitCode: 0,
+      });
+    });
+  });
+
   // The scanner builds every absolute path in a PathBuffer of MAX_PATH_BYTES:
   // 4096 on Linux, 1024 on every other POSIX (src/bun_core/util.rs). On Windows
   // it is 32767*3+1 bytes, more than a command line or an NT path can hold, so

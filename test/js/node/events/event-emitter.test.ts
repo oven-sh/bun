@@ -834,10 +834,12 @@ describe("EventEmitter captureRejections", () => {
   });
 
   // Node decides per call from this[kCapture], so the global default reaches an
-  // emitter whose constructor never ran (util.inherits without the super call).
+  // emitter whose constructor never ran (util.inherits without the super call),
+  // and an emitter constructed while the default was off keeps not capturing.
   test("EventEmitter.captureRejections applies to an emitter whose constructor never ran", async () => {
     function NoConstructor() {}
     Object.setPrototypeOf(NoConstructor.prototype, EventEmitter.prototype);
+    const constructedBefore = new EventEmitter();
     const before = EventEmitter.captureRejections;
     EventEmitter.captureRejections = true;
     try {
@@ -850,22 +852,56 @@ describe("EventEmitter captureRejections", () => {
       });
       ee.emit("something");
       expect(await promise).toBe(err);
+
+      const onError = mock();
+      constructedBefore.on("error", onError);
+      let returned;
+      constructedBefore.on("something", () => (returned = Promise.reject(new Error("not captured"))));
+      constructedBefore.emit("something");
+      // Capture would run as: rejection reaction (a microtask queued before this
+      // .catch()) -> process.nextTick -> emit('error'); so it would have fired by
+      // the time a nextTick queued after that microtask runs.
+      await returned.catch(() => {});
+      await new Promise(resolve => process.nextTick(resolve));
+      expect(onError).not.toHaveBeenCalled();
     } finally {
       EventEmitter.captureRejections = before;
     }
-    // ...and an emitter created while the default was off keeps not capturing.
-    const plain = new EventEmitter();
-    const onError = mock();
-    plain.on("error", onError);
-    let returned;
-    plain.on("something", () => (returned = Promise.reject(new Error("not captured"))));
-    plain.emit("something");
-    // Capture would run as: rejection reaction (a microtask queued before this
-    // .catch()) -> process.nextTick -> emit('error'); so it would have fired by
-    // the time a nextTick queued after that microtask runs.
-    await returned.catch(() => {});
-    await new Promise(resolve => process.nextTick(resolve));
-    expect(onError).not.toHaveBeenCalled();
+  });
+
+  // Node feeds every listener's result to the capture, 'error' listeners included.
+  test("a rejecting 'error' listener reaches the emitter's rejection handler", async () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers();
+    ee[captureRejectionSymbol] = (err, type, ...args) => resolve([err.message, type, args.map(arg => arg.message)]);
+    ee.on("error", async () => {
+      throw new Error("log failed");
+    });
+    expect(ee.emit("error", new Error("x"))).toBe(true);
+    expect(await promise).toEqual(["log failed", "error", ["x"]]);
+  });
+
+  test("a rejecting 'error' listener is emitted as 'error' when there is no rejection handler", async () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers();
+    const seen: string[] = [];
+    ee.on("error", async err => {
+      seen.push(err.message);
+      if (seen.length === 1) throw new Error("log failed");
+      resolve();
+    });
+    ee.emit("error", new Error("x"));
+    await promise;
+    expect(seen).toEqual(["x", "log failed"]);
+  });
+
+  test("'error' with no listener still throws, after the error monitor ran", () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const monitor = mock();
+    ee.on(EventEmitter.errorMonitor, monitor);
+    const err = new Error("y");
+    expect(() => ee.emit("error", err)).toThrow(err);
+    expect(monitor.mock.calls).toEqual([[err]]);
   });
 
   // Promises/A+: any thenable a listener returns is followed; `then` is read

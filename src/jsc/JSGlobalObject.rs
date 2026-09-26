@@ -1120,8 +1120,18 @@ impl JSGlobalObject {
 
     /// Runs the `unhandledRejection` machinery, which catches and reports its own exceptions; what
     /// can come back is the VM's termination (taken at this boundary when at loop level).
+    ///
+    /// As in Node, a batch's listeners all run before the ticks and microtasks they queued.
     pub fn handle_rejected_promises(&self) -> JsResult<()> {
-        crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__handleRejectedPromises(self))
+        while crate::from_js_host_call_generic(self, || {
+            JSC__JSGlobalObject__handleRejectedPromises(self)
+        })? {
+            self.bun_vm()
+                .event_loop_mut()
+                .drain_microtasks()
+                .map_err(|stopped| stopped.throw(self))?;
+        }
+        Ok(())
     }
 
     // The `readableStreamTo*` consumers throw `ERR_INVALID_ARG_TYPE` when
@@ -1546,7 +1556,7 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__generateHeapSnapshot(this: &JSGlobalObject) -> JSValue;
 
-    safe fn JSC__JSGlobalObject__handleRejectedPromises(this: &JSGlobalObject);
+    safe fn JSC__JSGlobalObject__handleRejectedPromises(this: &JSGlobalObject) -> bool;
 
     safe fn ZigGlobalObject__readableStreamToArrayBuffer(
         this: &JSGlobalObject,

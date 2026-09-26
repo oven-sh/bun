@@ -292,10 +292,13 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
 
 const emitWithRejectionCapture = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
-  if (type === "error") {
-    return emitError(this, args);
-  }
   var { _events: events } = this;
+  if (type === "error") {
+    // With 'error' listeners they are ordinary listeners below: their results are captured too.
+    if (events?.error === undefined) return emitError(this, args);
+    const errorMonitor = events[kErrorMonitor];
+    if (errorMonitor !== undefined) applyHandlers(errorMonitor, this, args);
+  }
   if (events === undefined) return false;
   var handler = events[type];
   if (handler === undefined) return false;

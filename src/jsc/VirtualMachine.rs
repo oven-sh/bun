@@ -4331,39 +4331,42 @@ impl VirtualMachine {
     ) {
         // Reported as it happens: it belongs to the context that is current.
         let owner = Bun__ModuleGraph__rejecting(global_object);
-        self.unhandled_rejection_owned(global_object, reason, promise, owner);
+        let _ = self.unhandled_rejection_owned(global_object, reason, promise, owner);
     }
 
     /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its `onError`
     /// takes it), or null. The tracker queue reports after the fact, so it decided when it happened.
+    ///
+    /// Returns whether a process 'unhandledRejection' listener took it: a microtask checkpoint is owed.
+    #[must_use]
     pub fn unhandled_rejection_owned(
         &mut self,
         global_object: &JSGlobalObject,
         reason: JSValue,
         promise: JSValue,
         owner: JSValue,
-    ) {
+    ) -> bool {
         use bun_options_types::schema::api::UnhandledRejections as Mode;
 
         if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
             bun_core::debug_warn!("unhandledRejection during shutdown.");
-            return;
+            return false;
         }
 
         if owner.is_cell()
             && Bun__ModuleGraph__handleUnhandledRejection(global_object, reason, owner)
         {
             let _ = self.event_loop_mut().drain_microtasks();
-            return;
+            return false;
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, reason);
-            return;
+            return false;
         }
 
-        // Each arm drains microtasks on exit — hoisted into a closure.
+        // Each arm but the default mode's drains microtasks on exit — hoisted into a closure.
         let drain = |this: &mut Self| {
             let _ = this.event_loop_mut().drain_microtasks();
         };
@@ -4386,22 +4389,20 @@ impl VirtualMachine {
         match self.unhandled_rejections_mode() {
             Mode::Bun => {
                 if handle_unhandled() {
-                    // Run what the listener queued; on the loop's last turn no later checkpoint would.
-                    drain(self);
-                    return;
+                    return true;
                 }
                 // continue to default handler
             }
             Mode::None => {
                 let _ = handle_unhandled();
                 drain(self);
-                return; // ignore the unhandled rejection
+                return false; // ignore the unhandled rejection
             }
             Mode::Warn => {
                 let _ = handle_unhandled();
                 emit_warning(self);
                 drain(self);
-                return;
+                return false;
             }
             Mode::WarnWithErrorCode => {
                 let handled = handle_unhandled();
@@ -4410,10 +4411,7 @@ impl VirtualMachine {
                     self.exit_handler.exit_code = 1;
                 }
                 drain(self);
-                if handled {
-                    return;
-                }
-                return;
+                return false;
             }
             Mode::Strict => {
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
@@ -4423,28 +4421,29 @@ impl VirtualMachine {
                     emit_warning(self);
                 }
                 drain(self);
-                return;
+                return false;
             }
             Mode::Throw => {
                 if handle_unhandled() {
                     drain(self);
-                    return;
+                    return false;
                 }
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
                 if self.uncaught_exception(global_object, wrapped, true) {
                     drain(self);
-                    return;
+                    return false;
                 }
                 // continue to default handler — but RETURN if this drain
                 // errors (the VM is dead; don't bump the counter or invoke the
                 // handler).
                 if self.event_loop_mut().drain_microtasks().is_err() {
-                    return;
+                    return false;
                 }
             }
         }
         self.unhandled_error_counter += 1;
         (self.on_unhandled_rejection)(self, global_object, reason);
+        false
     }
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.

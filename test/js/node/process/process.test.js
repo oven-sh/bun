@@ -1994,14 +1994,15 @@ describe.concurrent(() => {
     expect(exitCode).toBe(0);
   });
 
-  // Node's processTicksAndRejections loops ticks, microtasks and rejections
-  // until all are empty, so work an 'unhandledRejection' listener queues runs
-  // even when that rejection was the loop's last activity.
-  it("runs the nextTicks and microtasks an unhandledRejection listener queues", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
+  // Node's processTicksAndRejections: the listeners of a batch of rejections run,
+  // then the ticks and microtasks they queued, then the rejections that left,
+  // until none is left. That work runs even when the rejection was the loop's
+  // last activity.
+  describe("what an unhandledRejection listener queues", () => {
+    const onExit = `process.on("exit", c => console.log("exit", c));`;
+    it.each([
+      [
+        "runs after the only rejection",
         `process.on("unhandledRejection", e => {
            process.nextTick(() => console.log("tick after", e.message));
            Promise.resolve().then(() => {
@@ -2009,18 +2010,56 @@ describe.concurrent(() => {
              setTimeout(() => console.log("timer after", e.message), 0);
            });
          });
-         process.on("exit", c => console.log("exit", c));
+         ${onExit}
          Promise.reject(new Error("a"));`,
+        "tick after a\nmicrotask after a\ntimer after a\nexit 0\n",
       ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "tick after a\nmicrotask after a\ntimer after a\nexit 0\n",
-      stderr: "",
-      exitCode: 0,
+      [
+        "runs after the listeners of every rejection of the turn",
+        `process.on("unhandledRejection", e => {
+           console.log("listener", e.message);
+           process.nextTick(() => console.log("tick after", e.message));
+           Promise.resolve().then(() => console.log("microtask after", e.message));
+         });
+         ${onExit}
+         Promise.reject(new Error("a"));
+         Promise.reject(new Error("b"));`,
+        "listener a\nlistener b\ntick after a\ntick after b\nmicrotask after a\nmicrotask after b\nexit 0\n",
+      ],
+      [
+        "handles a later rejection of the turn after it was reported",
+        `let b;
+         process.on("unhandledRejection", e => {
+           console.log("listener", e.message);
+           if (e.message === "a") Promise.resolve().then(() => b.catch(() => console.log("b handled")));
+         });
+         process.on("rejectionHandled", () => console.log("rejectionHandled"));
+         ${onExit}
+         Promise.reject(new Error("a"));
+         b = Promise.reject(new Error("b"));`,
+        "listener a\nlistener b\nb handled\nrejectionHandled\nexit 0\n",
+      ],
+      [
+        "runs before the rejections the listener left",
+        `process.on("unhandledRejection", e => {
+           console.log("listener", e.message);
+           if (e.message !== "a") return;
+           process.nextTick(() => console.log("tick after a"));
+           Promise.reject(new Error("nested"));
+         });
+         ${onExit}
+         Promise.reject(new Error("a"));`,
+        "listener a\ntick after a\nlistener nested\nexit 0\n",
+      ],
+    ])("%s", async (_label, script, expected) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
     });
   });
 

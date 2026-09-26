@@ -97,7 +97,24 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       stderr: "pipe",
     });
 
-    expect(await stdout.text()).toContain(`bun why v${Bun.version.replace("-debug", "")}`);
+    const text = await stdout.text();
+    expect(text).toContain(`bun why v${Bun.version.replace("-debug", "")}`);
+    expect(text.split("\n").slice(1)).toEqual([
+      "Explain why a package is installed",
+      "",
+      "Arguments:",
+      "  <package>     The package name to explain (supports glob patterns like '@org/*')",
+      "",
+      "Options:",
+      "  --top         Show only the top dependency tree instead of nested ones",
+      "  --depth <NUM> Maximum depth of the dependency tree to display",
+      "",
+      "Examples:",
+      "  $ bun why react",
+      '  $ bun why "@types/*" --depth 2',
+      '  $ bun why "*-lodash" --top',
+      "",
+    ]);
     expect(await exited).toBe(1);
   });
 

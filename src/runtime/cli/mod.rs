@@ -1821,13 +1821,20 @@ pub(crate) mod command {
         // if template_name is "react" — deprecated; redirect to react-app/vite.
         if template_name == b"react" {
             pretty_errorln!(
-                "The \"react\" template has been deprecated.\n\
-It is recommended to use \"react-app\" or \"vite\" instead.\n\n\
-To create a project using Create React App, run\n\n\
-  <d>bun create react-app<r>\n\n\
-To create a React project using Vite, run\n\n\
-  <d>bun create vite<r>\n\n\
-Then select \"React\" from the list of frameworks.\n"
+                "\
+The \"react\" template has been deprecated.
+It is recommended to use \"react-app\" or \"vite\" instead.
+
+To create a project using Create React App, run
+
+  <d>bun create react-app<r>
+
+To create a React project using Vite, run
+
+  <d>bun create vite<r>
+
+Then select \"React\" from the list of frameworks.
+"
             );
             Global::exit(1);
         }
@@ -1835,8 +1842,9 @@ Then select \"React\" from the list of frameworks.\n"
         // if template_name is "next" — redirect to next-app.
         if template_name == b"next" {
             pretty_errorln!(
-                "<yellow>warn: No template <b>create-next<r> found.\n\
-To create a project with the official Next.js scaffolding tool, run\n\
+                "\
+<yellow>warn: No template <b>create-next<r> found.
+To create a project with the official Next.js scaffolding tool, run
   <b>bun create next-app <cyan>[destination]<r>"
             );
             Global::exit(1);

@@ -2,7 +2,7 @@ import { realpathSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
-import { once } from "node:events";
+import { getEventListeners, once } from "node:events";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -528,6 +528,31 @@ describe("net.createServer events", () => {
       .listen({ port: 0, signal: controller.signal }, () => {
         controller.abort();
       });
+  });
+
+  it("listen({ signal }) removes its abort listener from the signal once the server closes", async () => {
+    const controller = new AbortController();
+    const { signal } = controller;
+    const abortListenerCounts: number[] = [];
+    let closeEvents = 0;
+
+    for (let i = 0; i < 3; i++) {
+      const server = createServer();
+      server.on("close", () => closeEvents++);
+      server.listen({ port: 0, host: "127.0.0.1", signal });
+      await once(server, "listening");
+      abortListenerCounts.push(getEventListeners(signal, "abort").length);
+      server.close();
+      await once(server, "close");
+      abortListenerCounts.push(getEventListeners(signal, "abort").length);
+    }
+    expect(abortListenerCounts).toEqual([1, 0, 1, 0, 1, 0]);
+
+    // A stale listener would call close() on the already-closed server again,
+    // which emits a second 'close' on the next tick.
+    controller.abort();
+    await new Promise(resolve => process.nextTick(resolve));
+    expect(closeEvents).toBe(3);
   });
 
   it("should echo data", done => {

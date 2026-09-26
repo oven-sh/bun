@@ -987,6 +987,7 @@ pub(crate) struct ReportersConfig {
 
 impl CommandLineReporter {
     fn print_test_line<const DIM: bool>(
+        file: &[u8],
         status: bun_test::Execution::Result,
         sequence: &mut bun_test::Execution::ExecutionSequence,
         test_entry: &mut bun_test::ExecutionEntry,
@@ -1011,7 +1012,7 @@ impl CommandLineReporter {
         }
 
         let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
-        let display_label: &[u8] = test_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
+        let display_label = test_entry.display_name();
 
         // Quieter output when claude code is in use.
         if !Output::is_ai_agent() || !status.is_pass(bun_test::PendingMode::PendingIsFail) {
@@ -1067,6 +1068,12 @@ impl CommandLineReporter {
                     }
                 }
                 _ => {}
+            }
+
+            if test_entry.hook_name.is_some() {
+                let _ = writer.write_all(b" ");
+                let _ = writer.write_all(file);
+                let _ = writer.write_all(b" >");
             }
 
             if Output::enable_ansi_colors_stderr() {
@@ -1181,10 +1188,12 @@ impl CommandLineReporter {
                     );
                 }
                 R::FailBecauseHookTimeout => {
+                    let (hook, timeout) = sequence.timed_out_hook.expect("hook timeout metadata");
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n"
+                        "  <d>^<r> <red>the {s} hook timed out after {d}ms.<r>\n",
+                        hook, timeout
                     );
                 }
                 R::FailBecauseTimeoutWithDoneCallback => {
@@ -1196,14 +1205,27 @@ impl CommandLineReporter {
                     );
                 }
                 R::FailBecauseHookTimeoutWithDoneCallback => {
+                    let (hook, timeout) = sequence.timed_out_hook.expect("hook timeout metadata");
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n"
+                        "  <d>^<r> <red>the {s} hook timed out after {d}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n",
+                        hook, timeout
                     );
                 }
             }
         }
+    }
+
+    fn test_file_name(buntest: &bun_test::BunTest) -> &'static [u8] {
+        let file: &[u8] = if let Some(runner) = jest::Jest::runner() {
+            runner.files.items_source()[buntest.file_id as usize]
+                .path
+                .text
+        } else {
+            b""
+        };
+        junit_file_name(file)
     }
 
     /// Everything a structured reporter needs about one finished test. Built
@@ -1218,14 +1240,7 @@ impl CommandLineReporter {
         elapsed_ns: u64,
         failure: Option<TestFailure>,
     ) -> TestCaseReport<'a> {
-        let file: &[u8] = if let Some(runner) = jest::Jest::runner() {
-            runner.files.items_source()[buntest.file_id as usize]
-                .path
-                .text
-        } else {
-            b""
-        };
-        let file = junit_file_name(file);
+        let file = Self::test_file_name(buntest);
 
         // Innermost first while walking up; reversed below.
         let mut scopes: Vec<(&'a [u8], u32)> = Vec::new();
@@ -1248,7 +1263,7 @@ impl CommandLineReporter {
         TestCaseReport {
             file,
             scopes,
-            name: test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
+            name: test_entry.display_name(),
             status,
             assertions: sequence.expect_call_count,
             elapsed_ns,
@@ -1335,9 +1350,13 @@ impl CommandLineReporter {
                     bun_test::BasicResult::Pass | bun_test::BasicResult::Fail => false,
                 };
                 if dim {
-                    Self::print_test_line::<true>(result, sequence, test_entry, elapsed_ns, writer);
+                    Self::print_test_line::<true>(
+                        Self::test_file_name(buntest),
+                        result, sequence, test_entry, elapsed_ns, writer,
+                    );
                 } else {
                     Self::print_test_line::<false>(
+                        Self::test_file_name(buntest),
                         result, sequence, test_entry, elapsed_ns, writer,
                     );
                 }

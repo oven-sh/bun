@@ -422,6 +422,7 @@ impl ScopeFunctions {
                     description,
                     if matches_filter { callback } else { None },
                     bun_test::ExecutionEntryCfg {
+                        hook_name: None,
                         has_done_parameter,
                         timeout: options.timeout,
                         retry_count: options.retry.unwrap_or(0),

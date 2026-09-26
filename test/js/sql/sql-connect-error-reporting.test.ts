@@ -24,6 +24,7 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
+import { isWindows } from "harness";
 import type net from "node:net";
 import {
   closedPort,
@@ -414,3 +415,34 @@ test("mysql: connectionTimeout: 0 disables connect retries", async () => {
     server.close();
   }
 });
+
+// A unix socket path that does not exist is a connect failure for that path.
+// It must not fall through to the TCP hostname:port of the same options.
+for (const adapter of ["postgres", "mysql"] as const) {
+  test.skipIf(isWindows)(`${adapter}: a missing unix socket path errors instead of dialing TCP`, async () => {
+    let tcpConnections = 0;
+    const { port, server } = await listeningServer(socket => {
+      tcpConnections++;
+      socket.destroy();
+    });
+    const db = new SQL({
+      adapter,
+      path: "/nonexistent/dir/database.sock",
+      hostname: "127.0.0.1",
+      port,
+      username: "user",
+      database: "db",
+      max: 1,
+      connectionTimeout: 0.25,
+    });
+    try {
+      const err = await db.connect().catch(e => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).toContain(`failed to connect to ${adapter === "postgres" ? "postgresql" : "mysql"}`);
+      expect(tcpConnections).toBe(0);
+    } finally {
+      await db.close({ timeout: 0 });
+      server.close();
+    }
+  });
+}

@@ -798,6 +798,7 @@ impl ExitHandler {
         let exit_code = vm.exit_handler.exit_code;
         // `process.on('exit')` handlers are user script (see `on_exit`).
         if vm.script_allowed() && !vm.exit_handler.skip_exit_listeners {
+            let _entered = vm.enter_event_loop_scope_without_checkpoint();
             Process__dispatchOnExit(vm.global(), exit_code);
         }
         if vm.worker.is_none() {
@@ -813,6 +814,7 @@ impl ExitHandler {
         }
         let exit_code = vm.exit_handler.exit_code;
         let global = vm.global();
+        let _entered = vm.enter_event_loop_scope_without_checkpoint();
         let _ = jsc::from_js_host_call_generic(global, || {
             Process__dispatchOnBeforeExit(global, exit_code)
         });
@@ -2091,6 +2093,14 @@ impl VirtualMachine {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
 
+    /// None under `bun test`: its runner can start the next test from inside the report.
+    fn enter_error_handler_scope(
+        &self,
+    ) -> Option<crate::event_loop::EventLoopEnterNoCheckpointGuard> {
+        (!isBunTest.load(core::sync::atomic::Ordering::Relaxed))
+            .then(|| self.enter_event_loop_scope_without_checkpoint())
+    }
+
     pub fn uncaught_exception(
         &mut self,
         global_object: &JSGlobalObject,
@@ -2103,6 +2113,7 @@ impl VirtualMachine {
             return true;
         }
 
+        let _entered = self.enter_error_handler_scope();
         // An exception thrown by a Bun.ModuleGraph's module code is that graph's to
         // handle, ahead of the test runner and the thread-wide path. (A rejection
         // re-entering here under --unhandled-rejections=strict/throw was already judged.)
@@ -4350,6 +4361,7 @@ impl VirtualMachine {
             return;
         }
 
+        let _entered = self.enter_error_handler_scope();
         if owner.is_cell()
             && Bun__ModuleGraph__handleUnhandledRejection(global_object, reason, owner)
         {

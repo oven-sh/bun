@@ -3205,3 +3205,126 @@ it("no socket close handler runs after the 'exit' event", async () => {
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
 });
+
+// Native code calls these between event loop turns. A native call they make that
+// dispatches a callback of its own (socket.destroy() runs the close callback)
+// must return before the nextTicks and promise jobs they queued run, as it does
+// in every other callback and in Node. They run once the listener has returned,
+// except after 'exit', where Bun runs nothing more.
+describe.concurrent("socket.destroy() returns before the queued nextTicks and promise jobs run", () => {
+  const fixture = /* js */ `
+    import net from "node:net";
+    const caller = process.argv[1];
+    const server = net.createServer(serverSocket => {
+      serverSocket.unref();
+      serverSocket.on("error", () => {});
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    await new Promise(resolve => socket.once("connect", resolve));
+    server.unref();
+    socket.unref();
+    socket.on("error", () => {});
+
+    const ran = [];
+    function probe() {
+      Promise.resolve().then(() => ran.push("promise job"));
+      process.nextTick(() => ran.push("nextTick"));
+      socket.destroy();
+      console.log("inside destroy():", JSON.stringify(ran));
+    }
+    process.on("exit", () => console.log("by the end:", JSON.stringify(ran.sort())));
+
+    let graph;
+    switch (caller) {
+      case "a 'beforeExit' listener":
+        process.once("beforeExit", probe);
+        break;
+      case "a nextTick that a 'beforeExit' listener queued":
+        process.once("beforeExit", () => process.nextTick(probe));
+        break;
+      case "an 'exit' listener":
+        process.prependOnceListener("exit", probe);
+        break;
+      case "an 'unhandledRejection' listener":
+        process.once("unhandledRejection", probe);
+        setImmediate(() => Promise.reject(new Error("rejected")));
+        break;
+      case "a nextTick that an 'unhandledRejection' listener queued, with --unhandled-rejections=none":
+        process.once("unhandledRejection", () => process.nextTick(probe));
+        setImmediate(() => Promise.reject(new Error("rejected")));
+        break;
+      case "an 'uncaughtException' listener, for a throw of the entry module":
+        process.once("uncaughtException", probe);
+        throw new Error("thrown");
+      case "the onError of a Bun.ModuleGraph, for an unhandled rejection":
+        graph = new Bun.ModuleGraph({ onError: probe });
+        graph.run(() => setImmediate(() => Promise.reject(new Error("rejected"))));
+        break;
+      default:
+        throw new Error("unknown caller: " + caller);
+    }
+  `;
+
+  it.each([
+    ["a 'beforeExit' listener", ["nextTick", "promise job"]],
+    ["a nextTick that a 'beforeExit' listener queued", ["nextTick", "promise job"]],
+    ["an 'exit' listener", []],
+    // Whether what this one queued still runs once the loop has ended is not the subject here.
+    ["an 'unhandledRejection' listener", undefined],
+    [
+      "a nextTick that an 'unhandledRejection' listener queued, with --unhandled-rejections=none",
+      ["nextTick", "promise job"],
+      ["--unhandled-rejections=none"],
+    ],
+    ["an 'uncaughtException' listener, for a throw of the entry module", ["nextTick", "promise job"]],
+    ["the onError of a Bun.ModuleGraph, for an unhandled rejection", ["nextTick", "promise job"]],
+  ])("called from %s", async (caller, byTheEnd, flags = []) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", fixture, caller],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [insideDestroy, atTheEnd] = stdout.split("\n");
+    expect(insideDestroy).toBe("inside destroy(): []");
+    if (byTheEnd) expect(atTheEnd).toBe("by the end: " + JSON.stringify(byTheEnd));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // Another native call that runs its callback before it returns, in a program without a nextTick queue.
+  it("fs.watch().close() in a 'beforeExit' listener returns before the queued promise job runs", async () => {
+    using dir = tempDir("before-exit-promise-job", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import fs from "node:fs";
+         const watcher = fs.watch(process.cwd());
+         watcher.unref();
+         process.once("beforeExit", () => {
+           const order = [];
+           Promise.resolve().then(() => {
+             order.push("promise job");
+             console.log(JSON.stringify(order));
+           });
+           order.push("before close()");
+           watcher.close();
+           order.push("after close()");
+         });`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(["before close()", "after close()", "promise job"]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

@@ -392,6 +392,28 @@ describeWithContainer("postgres: AsyncLocalStorage", { image: "postgres_plain" }
       }
     });
   }
+
+  // https://github.com/oven-sh/bun/issues/43887
+  // close() gives the query to the pool, so it is close() that makes the pool dial.
+  test("a function-valued password observes the store of a close() that opens the pool for a started query", async () => {
+    await container.ready;
+    const seen: (string | undefined)[] = [];
+    const create = () =>
+      new SQL({
+        url: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`,
+        max: 1,
+        password: () => (seen.push(als.getStore()), ""),
+      });
+    const sql = als.run("created", create);
+    const query = als.run("starter", () =>
+      sql`select 1 as x`.then(
+        rows => rows,
+        e => e.code,
+      ),
+    );
+    await als.run("closer", () => sql.close());
+    expect({ rows: await query, seen }).toEqual({ rows: [{ x: 1 }], seen: ["closer"] });
+  });
 });
 
 // The server ends the session of the pool's only connection. A query that starts inside the onclose that follows

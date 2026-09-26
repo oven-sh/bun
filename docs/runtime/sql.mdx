@@ -982,6 +982,23 @@ await sql.close({ timeout: 0 }); // close all connections from the pool immediat
 
 You can call `close()` on the pool again while it is still closing. A later call waits for that close, for at most its `timeout`. When the timeout ends, and at once with `timeout: 0`, the pool rejects the queries that are still in flight and the call resolves.
 
+`close()` waits for the queries that started before the call. A query that starts after the call rejects with the adapter's `ERR_*_CONNECTION_CLOSED` error. A query starts when your code calls `.then()`, `.catch()`, `.finally()` or `.execute()` on it. `await` and the functions of `Promise` (`Promise.all()`, `Promise.race()`, `Promise.resolve()`) call `.then()` in a later microtask. A query that only they start has not started yet when a `close()` follows in the same tick:
+
+```ts
+sql`INSERT INTO users ${sql(alice)}`.catch(report); // started, close() waits for it
+const inserted = (async () => await sql`INSERT INTO users ${sql(bob)}`)(); // not started yet
+await sql.close(); // `inserted` rejects
+```
+
+To make `close()` wait for such a query, call `.execute()` on it, or `await` it before `close()`. In `Promise.all([query, sql.close()])` the `close()` call comes before the start of the query, so the query rejects.
+
+`close()` does not wait for:
+
+- A query from `sql.file()`. It starts after the file is read.
+- A query on a reserved connection that `release()` gave back to the pool before the query finished.
+- With the SQLite adapter, a `sql.begin()` that started in the same tick.
+- With the SQLite adapter, a query that started while the callback of a `sql.begin()` has its transaction open.
+
 ---
 
 ## Reserved Connections

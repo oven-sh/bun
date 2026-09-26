@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
-use bun_core::{ZStr, strings};
+use bun_core::{ZStr, handle_oom, strings};
 use bun_paths::platform;
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, Platform, SEP};
@@ -12,7 +12,8 @@ use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _};
-use crate::isolated_install::FileCopier;
+use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
+use crate::isolated_install::{FileCopier, Timings, build_store};
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::tree;
 use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
@@ -22,8 +23,8 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
 use crate::{
-    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
-    initialize_store, invalid_package_id,
+    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, ResolutionTag,
+    buntaghashbuf_make, initialize_store, invalid_package_id,
 };
 
 #[inline]
@@ -159,7 +160,7 @@ pub fn do_patch_commit(
     };
 
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
-    let (changes_dir, pkg): (Vec<u8>, Package) = match arg_kind {
+    let (changes_dir, pkg, other_store_folders): (Vec<u8>, Package, Vec<Vec<u8>>) = match arg_kind {
         PatchArgKind::Path => 'result: {
             let package_json_path =
                 resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
@@ -250,22 +251,34 @@ pub fn do_patch_commit(
                 }
             };
 
-            break 'result (argument.to_vec(), actual_package);
+            break 'result (argument.to_vec(), actual_package, Vec::new());
         }
         PatchArgKind::NameAndVersion => 'brk: {
             let (name, version) = Dependency::split_name_and_maybe_version(argument);
             let (pkg_id, node_modules_relative_path) =
                 pkg_info_for_name_and_version(&lockfile, &mut iterator, argument, name, version);
 
-            let changes_dir = resolve_path::join_z_buf::<platform::Auto>(
+            let hoisted_folder = resolve_path::join_z_buf::<platform::Auto>(
                 &mut pathbuf[..],
                 &[&node_modules_relative_path, name],
             )
             .as_bytes()
             .to_vec();
-            break 'brk (changes_dir, *lockfile.packages.get(pkg_id as usize));
+            let (changes_dir, other_store_folders) = installed_module_folder(
+                manager,
+                &lockfile,
+                pkg_id,
+                workspace_package_id,
+                hoisted_folder,
+            );
+            break 'brk (
+                changes_dir,
+                *lockfile.packages.get(pkg_id as usize),
+                other_store_folders,
+            );
         }
     };
+    let changes_dir = resolve_symlinked_folder(changes_dir);
 
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
     manager.lockfile = lockfile;
@@ -535,6 +548,19 @@ pub fn do_patch_commit(
                 bstr::BStr::new(old_folder),
                 bstr::BStr::new(new_folder)
             );
+            // `bun patch` in another directory prepares the entry that the workspace there loads.
+            if !other_store_folders.is_empty() {
+                bun_core::pretty!(
+                    "\n<b>{}<r> has more than one folder. To commit another one, run:\n\n",
+                    bstr::BStr::new(name),
+                );
+            }
+            for folder in &other_store_folders {
+                bun_core::pretty!(
+                    "  <cyan>bun patch --commit '{}'<r>\n",
+                    bstr::BStr::new(folder),
+                );
+            }
             Output::flush();
             drop(contents);
             return Ok(None);
@@ -887,6 +913,14 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     version,
                 );
 
+                let (module_folder_, _) = installed_module_folder(
+                    manager,
+                    &manager.lockfile,
+                    pkg_id,
+                    workspace_package_id,
+                    resolve_path::join::<platform::Auto>(&[&folder_relative_path, name]).to_vec(),
+                );
+
                 let strbuf = manager.lockfile.buffers.string_bytes.as_slice();
                 let pkg = *manager.lockfile.packages.get(pkg_id as usize);
                 let pkg_name = pkg.name.slice(strbuf).to_vec();
@@ -925,14 +959,12 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 let cache_dir = cache_result.cache_dir;
                 let cache_dir_subpath = cache_result.cache_dir_subpath;
 
-                let module_folder_ =
-                    resolve_path::join::<platform::Auto>(&[&folder_relative_path, name]);
                 #[cfg(windows)]
                 let buf =
-                    resolve_path::path_to_posix_buf::<u8>(module_folder_, &mut win_normalizer[..])
+                    resolve_path::path_to_posix_buf::<u8>(&module_folder_, &mut win_normalizer[..])
                         .to_vec();
                 #[cfg(not(windows))]
-                let buf = module_folder_.to_vec();
+                let buf = module_folder_;
 
                 break 'brk (cache_dir, cache_dir_subpath.as_bytes(), buf, pkg_name);
             }
@@ -1004,13 +1036,22 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     Ok(())
 }
 
-fn is_real_dir_not_symlink(path: &[u8]) -> bool {
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum FolderKind {
+    Missing,
+    Symlink,
+    RealDir,
+    Other,
+}
+
+/// What `path` itself is: a symlink or junction in its last component is not followed.
+fn folder_kind(path: &[u8]) -> FolderKind {
     #[cfg(windows)]
     let mut native_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     let native: &[u8] = {
         if path.len() > native_buf.len() {
-            return false;
+            return FolderKind::Missing;
         }
         native_buf[0..path.len()].copy_from_slice(path);
         let slice = &mut native_buf[0..path.len()];
@@ -1021,23 +1062,152 @@ fn is_real_dir_not_symlink(path: &[u8]) -> bool {
     let native: &[u8] = path;
 
     let Ok(mut p) = bun_paths::Path::<u8>::from(native) else {
-        return false;
+        return FolderKind::Missing;
     };
 
     #[cfg(windows)]
     {
         match sys::get_file_attributes(p.slice_z()) {
-            Some(attrs) => attrs.is_directory && !attrs.is_reparse_point,
-            None => false,
+            Some(attrs) if attrs.is_reparse_point => FolderKind::Symlink,
+            Some(attrs) if attrs.is_directory => FolderKind::RealDir,
+            Some(_) => FolderKind::Other,
+            None => FolderKind::Missing,
         }
     }
     #[cfg(not(windows))]
     {
         match sys::lstat(p.slice_z()) {
-            Ok(st) => sys::posix::s_isdir(st.st_mode as u32),
-            Err(_) => false,
+            Ok(st) if sys::posix::s_islnk(st.st_mode as u32) => FolderKind::Symlink,
+            Ok(st) if sys::posix::s_isdir(st.st_mode as u32) => FolderKind::RealDir,
+            Ok(_) => FolderKind::Other,
+            Err(_) => FolderKind::Missing,
         }
     }
+}
+
+fn is_real_dir_not_symlink(path: &[u8]) -> bool {
+    folder_kind(path) == FolderKind::RealDir
+}
+
+/// The isolated linker puts nothing at the hoisted path of a package that the root does not link.
+fn installed_module_folder(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    pkg_id: PackageID,
+    workspace_package_id: PackageID,
+    hoisted_folder: Vec<u8>,
+) -> (Vec<u8>, Vec<Vec<u8>>) {
+    if folder_kind(&hoisted_folder) != FolderKind::Missing {
+        return (hoisted_folder, Vec::new());
+    }
+    let mut store_folders =
+        isolated_store_folders(manager, lockfile, pkg_id, workspace_package_id).into_iter();
+    match store_folders.next() {
+        Some(folder) => (folder, store_folders.collect()),
+        None => (hoisted_folder, Vec::new()),
+    }
+}
+
+/// A package has one store entry for each peer resolution: the ones that the workspace loads first.
+fn isolated_store_folders(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    pkg_id: PackageID,
+    workspace_package_id: PackageID,
+) -> Vec<Vec<u8>> {
+    let store = handle_oom(build_store(
+        manager,
+        lockfile,
+        true,
+        &[],
+        None,
+        Timings::Quiet,
+    ));
+    let name = lockfile.packages.items_name()[pkg_id as usize]
+        .slice(lockfile.buffers.string_bytes.as_slice());
+    let resolutions = lockfile.packages.items_resolution();
+    let entry_dependencies = store.entries.items_dependencies();
+    let node_pkg_ids = store.nodes.items_pkg_id();
+    let entry_pkgs: Vec<PackageID> = store
+        .entries
+        .items_node_id()
+        .iter()
+        .map(|node_id| node_pkg_ids[node_id.get() as usize])
+        .collect();
+
+    let project_folder = |entry: usize| -> Option<Vec<u8>> {
+        let mut folder = Vec::new();
+        write!(
+            folder,
+            "node_modules/.bun/{}",
+            store_entry::fmt_store_path(store_entry::Id::from(entry as u32), &store, lockfile),
+        )
+        .expect("formatting into a Vec is infallible");
+        // `link_project_to_global_store` puts a global store link back over a detached copy.
+        if folder_kind(&folder) != FolderKind::RealDir {
+            return None;
+        }
+        write!(folder, "/node_modules/{}", bstr::BStr::new(name))
+            .expect("formatting into a Vec is infallible");
+        (folder_kind(&folder) == FolderKind::RealDir).then_some(folder)
+    };
+
+    // Breadth first from the current package, then the entries that it does not load.
+    let mut seen = vec![false; entry_pkgs.len()];
+    let mut queue: Vec<usize> = Vec::with_capacity(entry_pkgs.len());
+    let mut enqueue = |entry: usize, queue: &mut Vec<usize>| {
+        let pkg = entry_pkgs[entry];
+        // Only one entry of a workspace has its dependencies: a `workspace:` range links another.
+        let same_package = matches!(
+            resolutions[pkg as usize].tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        );
+        let entries = if same_package {
+            0..entry_pkgs.len()
+        } else {
+            entry..entry + 1
+        };
+        for entry in entries {
+            if entry_pkgs[entry] == pkg && !core::mem::replace(&mut seen[entry], true) {
+                queue.push(entry);
+            }
+        }
+    };
+    if let Some(start) = entry_pkgs
+        .iter()
+        .position(|&pkg| pkg == workspace_package_id)
+    {
+        enqueue(start, &mut queue);
+    }
+    let mut next = 0;
+    while let Some(&entry) = queue.get(next) {
+        next += 1;
+        for dependency in entry_dependencies[entry].slice() {
+            if let Some(dependency_entry) = dependency.entry_id.try_get() {
+                enqueue(dependency_entry as usize, &mut queue);
+            }
+        }
+    }
+    queue.extend((0..entry_pkgs.len()).filter(|&entry| !seen[entry]));
+
+    queue
+        .into_iter()
+        .filter(|&entry| entry_pkgs[entry] == pkg_id)
+        .filter_map(project_folder)
+        .collect()
+}
+
+/// `git diff --no-index` reads a symlink operand as a file, not as the folder it points to.
+fn resolve_symlinked_folder(folder: Vec<u8>) -> Vec<u8> {
+    if folder_kind(&folder) != FolderKind::Symlink {
+        return folder;
+    }
+    let Ok(dir) = Dir::cwd().open_dir(&folder, sys::OpenDirOptions::default()) else {
+        return folder;
+    };
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let resolved = sys::get_fd_path(dir.fd, &mut buf).map(|path| path.to_vec());
+    resolved.unwrap_or(folder)
 }
 
 fn detach_module_folder_from_shared_store(module_folder: &[u8]) {

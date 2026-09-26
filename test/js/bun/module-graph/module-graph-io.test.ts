@@ -963,7 +963,7 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
         const tell = who => error => { if (error?.message === told?.expecting) told.resolve(who); };
         process.on("uncaughtException", tell("host"));
         process.on("unhandledRejection", tell("host"));
-        const graph = new Bun.ModuleGraph({ onError: tell("graph") });
+        const graph = new Bun.ModuleGraph({ uncaughtException: tell("graph") });
         const { cases, throws } = await graph.import(import.meta.dir + "/tenant.mjs");
         const out = {};
         const expect = async (name, start) => {
@@ -1021,7 +1021,7 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
         import { host } from "./host.mjs";
         const { promise, resolve } = Promise.withResolvers();
         process.on("uncaughtException", error => resolve("host: " + error.code));
-        const graph = new Bun.ModuleGraph({ globals: { closedPort: await host.closedUdpPort() }, onError: error => resolve("graph: " + error.code) });
+        const graph = new Bun.ModuleGraph({ globals: { closedPort: await host.closedUdpPort() }, uncaughtException: error => resolve("graph: " + error.code) });
         const { stop } = await graph.import(import.meta.dir + "/tenant.mjs");
         console.log(await promise);
         stop();
@@ -1084,9 +1084,9 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
         const tell = who => error => { told.push(who + ": " + error.message); if (told.length === 2) done.resolve(); };
         process.on("uncaughtException", tell("host"));
         const listening = Promise.withResolvers();
-        const server = new Bun.ModuleGraph({ globals: { ready: listening.resolve }, onError: tell("server graph") });
+        const server = new Bun.ModuleGraph({ globals: { ready: listening.resolve }, uncaughtException: tell("server graph") });
         await server.import(import.meta.dir + "/server.mjs");
-        const client = new Bun.ModuleGraph({ globals: { port: await listening.promise }, onError: tell("client graph") });
+        const client = new Bun.ModuleGraph({ globals: { port: await listening.promise }, uncaughtException: tell("client graph") });
         await client.import(import.meta.dir + "/client.mjs");
         await done.promise;
         console.log(told.sort().join("\\n"));
@@ -1124,7 +1124,7 @@ describe.concurrent("ModuleGraph: a request through an Agent of the host's is st
         const origin = https.createServer({ key: fs.readFileSync(import.meta.dir + "/key.pem"), cert: fs.readFileSync(import.meta.dir + "/cert.pem") }, (request, response) => response.end("ok"));
         await new Promise(resolve => origin.listen(0, "127.0.0.1", resolve));
         const out = {};
-        const graph = new Bun.ModuleGraph({ onError: error => told.resolve("the graph's onError: " + error.code) });
+        const graph = new Bun.ModuleGraph({ uncaughtException: error => told.resolve("the graph's uncaughtException: " + error.code) });
         process.on("uncaughtException", error => told.resolve("the host's uncaughtException: " + error.code));
         let told;
         const app = await graph.import(import.meta.dir + "/tenant.mjs");
@@ -1176,7 +1176,7 @@ describe.concurrent("ModuleGraph: a request through an Agent of the host's is st
       expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
         stdout: {
           response: "the graph's context",
-          error: "the graph's onError: " + (how === "direct" ? "ECONNREFUSED" : "ERR_PROXY_TUNNEL"),
+          error: "the graph's uncaughtException: " + (how === "direct" ? "ECONNREFUSED" : "ERR_PROXY_TUNNEL"),
         },
         stderr: "",
         exitCode: 0,

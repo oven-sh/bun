@@ -13,8 +13,8 @@ const tenantProcess = Object.create(process, { env: { value: { TENANT: "a" }, en
 
 const graph = new Bun.ModuleGraph({
   globals: { process: tenantProcess }, // free identifiers in the graph's modules
-  onError(error, kind) {
-    console.error("tenant failed", kind, error);
+  uncaughtException(error, origin) {
+    console.error("tenant failed", origin, error);
   },
 });
 
@@ -64,7 +64,9 @@ A thread-safe function keeps the process running only for as long as the graph t
 
 ## Disposing
 
-`graph.dispose()` also drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and an error in what still runs in its context, such as a tick it had queued, still goes to `onError`. From then on:
+`graph.dispose()` also drops the graph's module registry and `require.cache`. Code of the graph that is still referenced keeps working, and an error in what still runs in its context, such as a tick it had queued, still goes to the graph's error handlers. From then on:
+
+Keep a reference to a graph for as long as its work should run. When nothing references a graph any more, the garbage collector frees it, and Bun then closes what its code opened as `dispose()` does. A `fetch()` or a file read that was in flight never settles.
 
 - `graph.import()`, `graph.run()` and the graph's `require()` fail with `ERR_INVALID_STATE`.
 - `import()` from a function of the graph that the host calls fails the same way.
@@ -105,19 +107,40 @@ const graph = new Bun.ModuleGraph({
 
 ## Errors
 
-Uncaught exceptions and unhandled rejections go to the `onError` of the graph in whose context they happen, instead of the process-wide handlers. It is the same context that owns what the code opens: a graph's modules and everything they start run in the graph's context, and so does what the host calls through `run()`.
+Uncaught exceptions and unhandled rejections go to the handlers of the graph in whose context they happen, instead of the process-wide handlers. The two handlers take what the `process` events of the same name take:
+
+```ts
+const graph = new Bun.ModuleGraph({
+  // as process.on("uncaughtException", (error, origin) => {})
+  uncaughtException(error, origin) {},
+  // as process.on("unhandledRejection", (reason, promise) => {})
+  unhandledRejection(reason, promise) {},
+});
+```
+
+| What happened                                                                                   | Bun calls            | With                                                 |
+| ----------------------------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------- |
+| Nothing caught an exception.                                                                    | `uncaughtException`  | The exception, and the origin `"uncaughtException"`. |
+| Nothing handled a rejection.                                                                    | `unhandledRejection` | The reason, unchanged, and the rejected promise.     |
+| Nothing handled a rejection, and the graph has `uncaughtException` but no `unhandledRejection`. | `uncaughtException`  | An error, and the origin `"unhandledRejection"`.     |
+
+In the last row the error is the reason when the reason is an error, as in Node.js. Otherwise it is a new error with the code `ERR_UNHANDLED_REJECTION` that describes the reason.
+
+When a graph's handler takes a rejection, `process` gets no `unhandledRejection` event for it and no `rejectionHandled` event later.
+
+The context an error happens in is the same context that owns what the code opens: a graph's modules and everything they start run in the graph's context, and so does what the host calls through `run()`.
 
 Whose code threw does not matter, only where it ran. A function of the graph's that the host calls directly runs in the host's context, so what it throws later is the host's; call it through `run()` for the graph to get it. A host function that the graph's code calls runs in the graph's context, so what it throws there is the graph's.
 
 `run()` rethrows to its caller what the function throws. If the caller does not catch it either, it is still the graph's: it was thrown in the graph's context, whatever it unwound through afterwards.
 
-An error that no code threw belongs to whoever opened the thing it happened to. A socket the graph opened that fails with no `error` handler reports to the graph's `onError`.
+An error that no code threw belongs to whoever opened the thing it happened to. A socket the graph opened that fails with no `error` handler reports to the graph's `uncaughtException`.
 
 `graph.import()` returns its promise to whoever called it. If a module throws while it is evaluated the promise rejects, and if nobody handles that promise it is the caller's unhandled rejection, like a specifier that does not resolve or an `import()` into a disposed graph.
 
-`onError` itself runs in the context the graph was made in: the host's, or the enclosing graph's for a graph that a graph's code made. What it throws, rejects or starts is that context's, so an error the handler lets escape again goes on to the host and does not come back to the same handler.
+A handler itself runs in the context the graph was made in: the host's, or the enclosing graph's for a graph that a graph's code made. What it throws, rejects or starts is that context's, so an error the handler lets escape again goes on to the host and does not come back to the same handler.
 
-A graph that was given no `onError` hands its errors to the `onError` of the graph in whose context it was made, and so on up to the host. It was made in a graph's context if that graph's code made it, or a host function that graph's code called did.
+A graph that was given no handler for an error hands it to the graph in whose context it was made, and so on up to the host. It was made in a graph's context if that graph's code made it, or a host function that graph's code called did.
 
 ## What is shared
 

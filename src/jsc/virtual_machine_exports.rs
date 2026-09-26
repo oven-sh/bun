@@ -108,6 +108,15 @@ pub fn vm_handle_queue_task_concurrently(
     unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(crate::LoopKind::Regular, task) };
 }
 
+// HOST_EXPORT(Bun__unhandledRejectionAsUncaughtError, c)
+/// What an `uncaughtException` handler is given for an unhandled rejection: the reason if it is
+/// an error, else an `ERR_UNHANDLED_REJECTION` error that names it, as in Node. (A termination
+/// that wrapping it ran into is returned in its place.)
+pub fn unhandled_rejection_as_uncaught_error(global: &JSGlobalObject, reason: JSValue) -> JSValue {
+    crate::mark_binding!();
+    crate::virtual_machine::unhandled_rejection_as_uncaught_error(global, reason)
+}
+
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
 /// `rejection_owner`: the `Bun.ModuleGraph` whose code rejected the promise
 /// (decided by promiseRejectionTracker when it happened), or null.

@@ -36,7 +36,7 @@ public:
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM&);
     // `maker`: the graph in whose context this one is being made (null: the host's).
-    static JSModuleGraph* create(JSC::VM&, Zig::GlobalObject*, JSC::Structure*, JSC::JSModuleLoader*, unsigned overlayShape, JSC::JSObject* onError, JSModuleGraph* maker);
+    static JSModuleGraph* create(JSC::VM&, Zig::GlobalObject*, JSC::Structure*, JSC::JSModuleLoader*, unsigned overlayShape, JSC::JSObject* uncaughtException, JSC::JSObject* unhandledRejection, JSModuleGraph* maker);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -48,9 +48,11 @@ public:
     // (see commonJSSourceForGraph).
     unsigned overlayShape() const { return m_overlayShape; }
     JSC::JSMap* requireMap() const { return m_requireMap.get(); }
-    JSC::JSObject* onError() const { return m_onError.get(); } // null if the host gave none
-    // The graph in whose context this one was made (null: the host's). Errors of a graph that was
-    // given no onError go to its maker's.
+    // options.uncaughtException and options.unhandledRejection: null if the host gave none.
+    JSC::JSObject* uncaughtExceptionHandler() const { return m_uncaughtExceptionHandler.get(); }
+    JSC::JSObject* unhandledRejectionHandler() const { return m_unhandledRejectionHandler.get(); }
+    // The graph in whose context this one was made (null: the host's). Errors a graph was given no
+    // handler for go to its maker's.
     JSModuleGraph* maker() const { return m_maker.get(); }
     // Key of the first module import()ed: import.meta.main / require.main. Undefined before.
     JSC::JSValue mainPath() const { return m_mainPath ? JSC::JSValue(m_mainPath.get()) : JSC::jsUndefined(); }
@@ -66,14 +68,15 @@ public:
     void dispose(Zig::GlobalObject*);
 
 private:
-    JSModuleGraph(JSC::VM&, JSC::Structure*, Ref<WebCore::ScriptExecutionContext>&&, JSC::JSModuleLoader*, unsigned overlayShape, JSC::JSObject* onError, JSModuleGraph* maker);
+    JSModuleGraph(JSC::VM&, JSC::Structure*, Ref<WebCore::ScriptExecutionContext>&&, JSC::JSModuleLoader*, unsigned overlayShape, JSC::JSObject* uncaughtException, JSC::JSObject* unhandledRejection, JSModuleGraph* maker);
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
     Ref<WebCore::ScriptExecutionContext> m_context;
     JSC::WriteBarrier<JSC::JSModuleLoader> m_loader;
     JSC::WriteBarrier<JSC::JSMap> m_requireMap;
     JSC::WriteBarrier<JSC::Unknown> m_requireCache;
-    JSC::WriteBarrier<JSC::JSObject> m_onError;
+    JSC::WriteBarrier<JSC::JSObject> m_uncaughtExceptionHandler;
+    JSC::WriteBarrier<JSC::JSObject> m_unhandledRejectionHandler;
     JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
     unsigned m_overlayShape { 0 };
@@ -110,7 +113,8 @@ JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
 // ── Which graph ──────────────────────────────────────────────────────────────────────
 // The graph `loader` is the loader of; null for the global object's own.
 JSModuleGraph* moduleGraphOfLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
-// promiseRejectionTracker: the graph whose onError a promise rejected now is reported to, or null.
+// promiseRejectionTracker: the graph a promise rejected now is reported to (its unhandledRejection, or
+// its uncaughtException), or null.
 JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*);
 // The innermost graph that the current async context is inside of; null in the host's.
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);

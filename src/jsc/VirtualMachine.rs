@@ -434,21 +434,24 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__ModuleGraph__enterRootContext(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__ModuleGraph__leaveContext(global: &JSGlobalObject, previous: JSValue);
-    /// ModuleGraph.cpp: deliver an uncaught exception to the `onError` of the `Bun.ModuleGraph` in
-    /// whose context it was thrown (the `Exception` carries it; a bare value: the context that is
-    /// current), or an unhandled rejection whose owner promiseRejectionTracker decided. true:
-    /// delivered (no test failure, exit code or `--unhandled-rejections` policy); false: not a
-    /// graph's, continue with the normal thread-wide handling.
+    /// ModuleGraph.cpp: deliver an uncaught exception to the `uncaughtException` of the
+    /// `Bun.ModuleGraph` in whose context it was thrown (the `Exception` carries it; a bare value:
+    /// the context that is current). true: delivered (no test failure, exit code or
+    /// `--unhandled-rejections` policy); false: not a graph's, continue with the normal thread-wide
+    /// handling.
     safe fn Bun__ModuleGraph__handleUncaughtException(
         global: &JSGlobalObject,
         exception: JSValue,
     ) -> bool;
     /// The `Bun.ModuleGraph` a promise rejected now is reported to (its context is current and it, or
-    /// a graph that made it, has an `onError`), or null.
+    /// a graph that made it, has a handler for it), or null.
     safe fn Bun__ModuleGraph__rejecting(global: &JSGlobalObject) -> JSValue;
+    /// ModuleGraph.cpp: deliver an unhandled rejection to `owner`'s `unhandledRejection`, else to its
+    /// `uncaughtException`. true and false as above.
     safe fn Bun__ModuleGraph__handleUnhandledRejection(
         global: &JSGlobalObject,
         reason: JSValue,
+        promise: JSValue,
         owner: JSValue,
     ) -> bool;
 
@@ -4334,7 +4337,7 @@ impl VirtualMachine {
         self.unhandled_rejection_owned(global_object, reason, promise, owner);
     }
 
-    /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its `onError`
+    /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its handler
     /// takes it), or null. The tracker queue reports after the fact, so it decided when it happened.
     pub fn unhandled_rejection_owned(
         &mut self,
@@ -4351,7 +4354,7 @@ impl VirtualMachine {
         }
 
         if owner.is_cell()
-            && Bun__ModuleGraph__handleUnhandledRejection(global_object, reason, owner)
+            && Bun__ModuleGraph__handleUnhandledRejection(global_object, reason, promise, owner)
         {
             let _ = self.event_loop_mut().drain_microtasks();
             return;
@@ -7528,11 +7531,12 @@ fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bo
     })
 }
 
-/// What `--unhandled-rejections=strict|throw` hand to the uncaught-exception path for `reason`. If describing the
+/// What `--unhandled-rejections=strict|throw`, and a `Bun.ModuleGraph` with no `unhandledRejection`, hand to the
+/// uncaught-exception path for `reason`. If describing the
 /// rejection itself throws (a hostile Proxy under isErrorLike, an OOM resolving a rope), that failure does not
 /// replace the thing being reported: the rejection is the user's bug, so it is reported as-is — unless what was
 /// thrown is a termination, which has to win.
-fn unhandled_rejection_as_uncaught_error(
+pub(crate) fn unhandled_rejection_as_uncaught_error(
     global_object: &JSGlobalObject,
     reason: JSValue,
 ) -> JSValue {

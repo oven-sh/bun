@@ -2,6 +2,8 @@
 #include "napi.h"
 
 #include "BunProcess.h"
+#include "ZigGeneratedClasses.h"
+#include "JSDOMException.h"
 #include "DLHandleMap.h"
 #include "WebCoreJSBuiltins.h"
 #include "v8/node.h"
@@ -1405,6 +1407,11 @@ extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JS
     auto object = obj.getObject();
     if (!object)
         return false;
+    // In Node every error has a `stack` of its own. Here one that was made with no script on the stack (by a
+    // promise job, or by what completes native work) has none, nor has a DOMException that script made, and
+    // ResolveMessage and BuildMessage have theirs on the prototype.
+    if (object->isErrorInstance() || object->inherits<WebCore::JSDOMException>() || object->inherits<WebCore::JSResolveMessage>() || object->inherits<WebCore::JSBuildMessage>())
+        return true;
 
     RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, object, vm.propertyNames->stack));
 }
@@ -1463,7 +1470,10 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
         CLEAR_IF_EXCEPTION(scope);
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return;
-        warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
+        if (reasonStack.isUndefined())
+            reasonStack = {};
+        else
+            warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));

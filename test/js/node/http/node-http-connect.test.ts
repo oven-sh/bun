@@ -1749,8 +1749,9 @@ test("CONNECT: process exits after the tunnel socket is re-emitted as a connecti
        server.on("connect", (req, socket) => {
          socket.on("end", () => endCount++);
          socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
-         server.emit("connection", socket);
+         // In this order: close() destroys a connection that has received nothing (nodejs/node 417aacbc365).
          server.close();
+         server.emit("connection", socket);
        });
        server.listen(0, () => {
          http.request({ port: server.address().port, method: "CONNECT" }).end();

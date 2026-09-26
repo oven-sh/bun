@@ -166,8 +166,7 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
 test("do not leak", async () => {
   await using server = createServer((req, res) => {
     res.end();
-  }).listen(0);
-  await once(server, "listening");
+  });
 
   let url;
   let isDone = false;

@@ -171,6 +171,7 @@ private:
 
             /* Call filter */
             httpResponseData->filteredOpen = true;
+            httpResponseData->isIdle = fromSocket(s)->isNodeHttp();
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -227,6 +228,8 @@ private:
         /* ...and open (TLS: once the handshake completes, in onHandshake) */
         if(!SSL) {
             ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredOpen = true;
+            /* node:http: a connection that has received nothing is idle (nodejs/node 417aacbc365). */
+            ((AsyncSocketData<SSL> *) us_socket_ext(s))->isIdle = IsNodeHttp;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }

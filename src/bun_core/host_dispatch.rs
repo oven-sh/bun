@@ -12,8 +12,9 @@
 //! | functions               |                                                                            |
 //! | blocks in a body        | [`host_select!`]                                                           |
 //! | a constant              | [`host_const!`]: the constant, and a function that every build has         |
-//! | a type                  | one type that holds what either OS needs (`Fd`), or one alias for each     |
-//! |                         | flavour of the code (`bun_core::flavor`)                                   |
+//! | a type                  | one type that holds what either OS needs (`Fd`, `bun_sys::Stat`); the     |
+//! |                         | definition for one OS keeps its name inside of the code for that OS        |
+//! |                         | (`bun_portable_macros::flavor`, `bun_sys::flavor`)                        |
 
 /// Called by a function that has no definition for the OS of this host.
 #[cold]

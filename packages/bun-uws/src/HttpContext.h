@@ -117,11 +117,20 @@ private:
     static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_HTTP_TLS : US_SOCKET_KIND_UWS_HTTP; }
 
 public:
+    /* Whether this socket is still in an HTTP context. A WebSocket upgrade adopts it into
+     * another one and builds WebSocketData over the HttpResponseData in its ext, so nothing
+     * may read the ext as HTTP state after that. */
+    static bool ownsSocket(us_socket_t *s) {
+        return us_socket_kind(s) == socketKind();
+    }
+
     /* node:http flood prevention: re-feed parked request bytes through the same
      * parse path fresh socket data takes. The caller guarantees the buffer has
-     * LIBUS_RECV_BUFFER_PADDING of writable slack past `length`. */
+     * LIBUS_RECV_BUFFER_PADDING of writable slack past `length`.
+     * Returns nullptr when a request in these bytes upgraded the socket. */
     static us_socket_t *feedNodeHttpData(us_socket_t *s, char *data, int length) {
-        return onData<true>(s, data, length);
+        us_socket_t *returned = onData<true>(s, data, length);
+        return ownsSocket(returned) ? returned : nullptr;
     }
 
     us_socket_group_t *getSocketGroup() {

@@ -475,6 +475,10 @@ public:
             webSocketContextData->openHandler(webSocket);
         }
 
+        /* The HTTP context can have paused reads (node:http flood prevention), and nothing on the WebSocket
+         * side resumes them. After the open handler, because a resume that fails closes the socket. */
+        us_socket_resume(usSocket);
+
         return usSocket;
     }
 

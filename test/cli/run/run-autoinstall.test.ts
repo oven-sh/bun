@@ -121,3 +121,105 @@ test("--install=fallback to install missing packages", async () => {
   expect(stderr?.toString("utf8")).not.toContain("error: Cannot find package 'is-odd'");
   expect(stdout?.toString("utf8")).toBe("true false\n");
 });
+
+// `bun install` lowers the process-wide cap on concurrent HTTP requests when a download fails at
+// the connection level, and nothing raises the cap again. The runtime's package manager shares
+// that cap with fetch() and lives as long as the program: one failed auto-install left the
+// program's own fetch() calls at 4 at a time.
+describe.concurrent("a failed auto-install download does not lower the concurrency of fetch()", () => {
+  const fixture = /* js */ `
+    // A burst is as large as the cap: all of it is in flight at once only while the cap is whole.
+    const requests = Number(process.env.BUN_CONFIG_MAX_HTTP_REQUESTS);
+    let inFlight = 0;
+    let release;
+    // Holds every response until all the requests of a burst are in flight at once.
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch() {
+        if (++inFlight === requests) release.resolve();
+        await release.promise;
+        inFlight--;
+        return new Response("ok");
+      },
+    });
+    async function burst() {
+      release = Promise.withResolvers();
+      // Under a lowered cap the rest of the burst waits in the client for a response that never
+      // comes, and no event reports that. This bound only ends such a burst: the child says how
+      // far the burst came and exits. A burst that fits under the cap takes a few milliseconds.
+      const stuck = setTimeout(() => {
+        console.log(inFlight + " requests in flight at once");
+        process.exit(1);
+      }, 4000);
+      await Promise.all(Array.from({ length: requests }, () => fetch(server.url).then(res => res.text())));
+      clearTimeout(stuck);
+      console.log(requests + " requests in flight at once");
+    }
+
+    await burst();
+    try {
+      require("never-there");
+    } catch (e) {
+      console.log(e.code);
+    }
+    await burst();
+  `;
+
+  test.each(["manifest", "tarball"] as const)("when the %s request fails", async failing => {
+    // Closes every connection before it answers.
+    let droppedConnections = 0;
+    using dropped = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          droppedConnections++;
+          socket.end();
+        },
+        data() {},
+      },
+    });
+    const manifests: string[] = [];
+    using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const name = new URL(req.url).pathname.slice(1);
+        manifests.push(name);
+        const tarball = `http://127.0.0.1:${dropped.port}/${name}/-/${name}-1.0.0.tgz`;
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball } } },
+        });
+      },
+    });
+
+    using dir = tempDir("autoinstall-fetch-concurrency", {
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${failing === "manifest" ? dropped.port : registry.port}/"\n`,
+      "index.mjs": fixture,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+        BUN_CONFIG_MAX_HTTP_REQUESTS: "8",
+        BUN_CONFIG_HTTP_RETRY_COUNT: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim().split("\n"), manifests, droppedConnections, exitCode }).toEqual({
+      stdout: ["8 requests in flight at once", "MODULE_NOT_FOUND", "8 requests in flight at once"],
+      manifests: failing === "manifest" ? [] : ["never-there"],
+      // the failed request and its one retry
+      droppedConnections: 2,
+      exitCode: 0,
+    });
+  });
+});

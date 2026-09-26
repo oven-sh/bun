@@ -60,6 +60,8 @@ pub struct Options {
 
     pub(crate) max_retry_count: u16,
     pub(crate) min_simultaneous_requests: usize,
+    /// Only `bun install` sets this: the cap it lowers is process-wide and `fetch()` shares it.
+    pub(crate) throttle_after_network_error: bool,
 
     pub max_concurrent_lifecycle_scripts: usize,
 
@@ -156,6 +158,7 @@ impl Default for Options {
             json_output: false,
             max_retry_count: 5,
             min_simultaneous_requests: 4,
+            throttle_after_network_error: false,
             // Placeholder only — every constructor supplies the real value
             // (`cli.concurrent_scripts` or `cpu_count * 2`).
             max_concurrent_lifecycle_scripts: 0,

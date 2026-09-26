@@ -1972,6 +1972,7 @@ pub fn init(
         max_concurrent_lifecycle_scripts: cli
             .concurrent_scripts
             .unwrap_or((cpu_count * 2) as usize),
+        throttle_after_network_error: true,
         ..Default::default()
     };
 

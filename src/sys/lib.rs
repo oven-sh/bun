@@ -2505,9 +2505,9 @@ mod posix_impl {
                 unsafe {
                     libc::syscall(
                         libc::SYS_renameat2,
-                        from_dir.native() as libc::c_long,
+                        from_dir.posix() as libc::c_long,
                         from.as_ptr(),
-                        to_dir.native() as libc::c_long,
+                        to_dir.posix() as libc::c_long,
                         to.as_ptr(),
                         flags.int() as libc::c_long,
                     )
@@ -2704,7 +2704,7 @@ mod posix_impl {
                 let n = {
                     use std::io::Write as _;
                     let mut c = std::io::Cursor::new(&mut buf[..]);
-                    let _ = write!(c, "/proc/self/fd/{}\0", tmpfd.native());
+                    let _ = write!(c, "/proc/self/fd/{}\0", tmpfd.posix());
                     c.position() as usize - 1
                 };
                 let _ = n;
@@ -2822,7 +2822,7 @@ mod posix_impl {
                 let rc = unsafe {
                     libc::syscall(
                         SYS_FCHMODAT2,
-                        Fd::cwd().native() as libc::c_long,
+                        Fd::cwd().posix() as libc::c_long,
                         path.as_ptr(),
                         mode as libc::c_long,
                         libc::AT_SYMLINK_NOFOLLOW as libc::c_long,
@@ -5474,9 +5474,9 @@ pub mod linux {
         unsafe {
             libc::syscall(
                 libc::SYS_ioctl,
-                dest_fd.native() as libc::c_long,
+                dest_fd.posix() as libc::c_long,
                 FICLONE,
-                src_fd.native() as libc::c_long,
+                src_fd.posix() as libc::c_long,
             ) as isize
         }
     }
@@ -7505,7 +7505,7 @@ fn get_fd_path_freebsd_linuxulator<'a>(
     let n = {
         use std::io::Write as _;
         let mut c = std::io::Cursor::new(&mut dev[..]);
-        let _ = write!(c, "/dev/fd/{}\0", fd.native());
+        let _ = write!(c, "/dev/fd/{}\0", fd.posix());
         c.position() as usize - 1
     };
     // SAFETY: NUL written above.
@@ -7528,7 +7528,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         let n = {
             use std::io::Write as _;
             let mut c = std::io::Cursor::new(&mut proc[..]);
-            let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
+            let _ = write!(c, "/proc/self/fd/{}\0", fd.posix());
             c.position() as usize - 1
         };
         // SAFETY: NUL written above.
@@ -9234,7 +9234,14 @@ fn qw_fd(qw: &bun_core::output::QuietWriter) -> Fd {
     // first word through a same-align pointer cast of a live `&QuietWriter`
     // is in-bounds and aligned.
     let raw = unsafe { *core::ptr::from_ref(qw).cast::<*mut ()>() };
-    Fd::from_native(raw as usize as _)
+    bun_core::host_select! {
+        windows => {
+            Fd::from_native(raw as usize as u64)
+        }
+        posix => {
+            Fd::from_native(raw as usize as i32)
+        }
+    }
 }
 #[inline]
 fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
@@ -9242,8 +9249,17 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
     // carries fd-as-usize-as-ptr. Writing the first word through a same-align
     // pointer cast of a live `&mut QuietWriter` is in-bounds, aligned, and
     // exclusively borrowed.
+    let word = bun_core::host_select! {
+        windows => {
+            let handle: *mut c_void = fd.native();
+            handle as usize
+        }
+        posix => {
+            fd.posix() as usize
+        }
+    };
     unsafe {
-        *core::ptr::from_mut(qw).cast::<*mut ()>() = fd.native() as usize as *mut ();
+        *core::ptr::from_mut(qw).cast::<*mut ()>() = word as *mut ();
     }
 }
 

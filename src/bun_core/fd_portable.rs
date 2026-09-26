@@ -28,7 +28,7 @@ impl FdNativeRepr for i32 {
         if host::is_windows() {
             no_definition_for_this_host("Fd::native as a file descriptor of POSIX");
         }
-        fd.native__posix()
+        fd.posix()
     }
 
     #[inline]

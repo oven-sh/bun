@@ -841,15 +841,16 @@ impl Fd {
     #[cfg(any(windows, bun_portable))]
     pub const INVALID: Fd = Fd(0);
 
-    /// The file descriptor of POSIX code.
+    /// The file descriptor, for code of a POSIX system that passes it where the type of the argument
+    /// does not say `int`: a variadic `syscall`, a cast, a formatted string. Elsewhere `native`.
     #[cfg(not(any(windows, bun_portable)))]
     #[inline]
-    pub(crate) const fn int(self) -> i32 {
+    pub const fn posix(self) -> i32 {
         self.0
     }
     #[cfg(bun_portable)]
     #[inline]
-    pub(crate) const fn int(self) -> i32 {
+    pub const fn posix(self) -> i32 {
         (self.0 & FD_VALUE_MASK) as u32 as i32
     }
 
@@ -893,7 +894,7 @@ impl Fd {
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn native(self) -> FdNative {
-        self.int()
+        self.posix()
     }
     #[cfg(any(windows, bun_portable))]
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows))]
@@ -939,7 +940,7 @@ impl Fd {
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn uv(self) -> i32 {
-        self.int()
+        self.posix()
     }
     #[cfg(any(windows, bun_portable))]
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, dispatch(posix, windows)))]
@@ -1052,7 +1053,7 @@ impl Fd {
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn is_stdio(self) -> bool {
-        matches!(self.int(), 0..=2)
+        matches!(self.posix(), 0..=2)
     }
     #[cfg(any(windows, bun_portable))]
     #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, dispatch(posix, windows)))]
@@ -1192,7 +1193,7 @@ impl Fd {
                 }
             }
             posix => {
-                match self.int() {
+                match self.posix() {
                     0 => Some(Stdio::StdIn),
                     1 => Some(Stdio::StdOut),
                     2 => Some(Stdio::StdErr),
@@ -1270,7 +1271,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         let mut proc = [0u8; 32];
         use std::io::Write as _;
         let mut c = std::io::Cursor::new(&mut proc[..]);
-        let _ = write!(c, "/proc/self/fd/{}\0", fd.int());
+        let _ = write!(c, "/proc/self/fd/{}\0", fd.posix());
         // SAFETY: proc is NUL-terminated above; buf has cap bytes.
         let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.cast(), cap) };
         if n < 0 {
@@ -1433,9 +1434,9 @@ impl core::fmt::Display for Fd {
                 }
             }
             posix => {
-                write!(w, "{}", fd.int())?;
+                write!(w, "{}", fd.posix())?;
                 #[cfg(debug_assertions)]
-                if fd.int() >= 3 {
+                if fd.posix() >= 3 {
                     let mut buf = [0u8; 1024];
                     // SAFETY: buf is 1024 bytes, passed with matching cap.
                     let n = unsafe { fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };

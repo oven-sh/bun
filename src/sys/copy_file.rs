@@ -439,7 +439,7 @@ pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> cra
     // SAFETY: `read` below is the only writer of `buf`; only `buf[..amt_read]` is read back.
     let buf = unsafe { stack_buf.as_bytes_mut() };
     let adjusted_count = buf.len().min(len);
-    match crate::read(Fd::from_native(in_ as _), &mut buf[0..adjusted_count]) {
+    match crate::read(Fd::from_native(in_), &mut buf[0..adjusted_count]) {
         Ok(amt_read) => {
             let mut amt_written: usize = 0;
             if amt_read == 0 {
@@ -449,7 +449,7 @@ pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> cra
             while amt_written < amt_read {
                 {
                     let wrote =
-                        crate::write(Fd::from_native(out as _), &buf[amt_written..amt_read])?;
+                        crate::write(Fd::from_native(out), &buf[amt_written..amt_read])?;
                     if wrote == 0 {
                         return Ok(amt_written);
                     }

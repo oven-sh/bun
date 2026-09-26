@@ -18,6 +18,32 @@ test("indexOfLine handles non-number offset", () => {
   expect(indexOfLine(buf, "2")).toBe(5); // "2" coerces to 2, newline is at 5
 });
 
+test("indexOfLine offset outside the int64 range saturates instead of wrapping", () => {
+  const buf = new Uint8Array([104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100]); // "hello\nworld"
+  const found = (offset: unknown) => [offset, indexOfLine(buf, offset as number)];
+
+  // At or past the end there is nothing to find, however large the offset.
+  // Strings and BigInts take the same path (no 32-bit wrap for "4294967296").
+  const pastEnd = [buf.length, 2 ** 31, 2 ** 53, 2 ** 63, 2 ** 64, 1e300, Number.MAX_VALUE, Infinity, "4294967296", 6n];
+  expect(pastEnd.map(found)).toEqual(pastEnd.map(offset => [offset, -1]));
+
+  // Negative offsets clamp to the start, however small. NaN is 0.
+  const beforeStart = [
+    -1,
+    -0.5,
+    -(2 ** 31),
+    -(2 ** 53),
+    -(2 ** 63),
+    -(2 ** 64),
+    -1e300,
+    -Infinity,
+    NaN,
+    "-4294967296",
+    -1n,
+  ];
+  expect(beforeStart.map(found)).toEqual(beforeStart.map(offset => [offset, 5]));
+});
+
 test("indexOfLine", () => {
   const source = `
         const a = 1;

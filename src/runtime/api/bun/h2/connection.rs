@@ -27,6 +27,13 @@ mod pseudo {
     pub(super) const UNKNOWN: u8 = 64;
 }
 
+/// nghttp2 (`parse_status_code`, `http_response_on_header`): a `:status` value is three ASCII
+/// digits from 100 to 999 and is never 101, which HTTP/2 removed (RFC 9113 §8.6). Any other value
+/// makes the block malformed.
+fn is_valid_status(value: &[u8]) -> bool {
+    matches!(value, [b'1'..=b'9', b'0'..=b'9', b'0'..=b'9']) && value != b"101"
+}
+
 /// Snapshot of the local-settings values carried by one sent-but-unACKed SETTINGS frame, so an
 /// inbound ACK is attributed to the submission it actually acknowledges (RFC 9113 §6.5.3) rather
 /// than to the latest submission.
@@ -1300,8 +1307,12 @@ impl Connection {
                             {
                                 malformed = true;
                             }
-                            if rest == b"status" && value_b.len() == 3 && value_b[0] == b'1' {
-                                informational = true;
+                            if bit == pseudo::STATUS {
+                                if !is_valid_status(value_b) {
+                                    malformed = true;
+                                } else if value_b[0] == b'1' {
+                                    informational = true;
+                                }
                             }
                             seen_pseudo |= bit;
                             if rest == b"method" && value_b == b"CONNECT" {

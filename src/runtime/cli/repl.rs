@@ -2120,25 +2120,10 @@ impl<'a> Repl<'a> {
             return None;
         }
 
-        // Check if code looks like an object literal that would be misinterpreted as a block
-        // If code starts with { (after whitespace) and doesn't end with ;
-        let is_object_literal = is_likely_object_literal(code);
-        let processed_buf: Option<Vec<u8>>;
-        let processed_code: &[u8] = if is_object_literal {
-            let mut v = Vec::with_capacity(code.len() + 2);
-            v.push(b'(');
-            v.extend_from_slice(code);
-            v.push(b')');
-            processed_buf = Some(v);
-            processed_buf.as_deref().unwrap()
-        } else {
-            processed_buf = None;
-            let _ = &processed_buf;
-            code
-        };
-
         // Create arena for parsing
         let arena = bun_alloc::Arena::new();
+
+        let processed_code = wrap_likely_object_literal(code, &arena);
 
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
@@ -3065,6 +3050,6 @@ fn is_incomplete_code(code: &[u8]) -> bool {
     in_string != 0 || in_template || brace_count > 0 || bracket_count > 0 || paren_count > 0
 }
 
-use crate::api::js_transpiler::is_likely_object_literal;
+use crate::api::js_transpiler::wrap_likely_object_literal;
 
 const VERSION: &str = Environment::VERSION_STRING;

@@ -183,4 +183,35 @@ describe("ArrayBufferSink", () => {
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  it("write() rejects a String object instead of coercing it mid-write", async () => {
+    // write() accepted any string-like value, including a String object. Its
+    // string coercion runs user JS (Symbol.toPrimitive), which can close the
+    // sink and free it, so the write then read freed memory. write() now
+    // accepts a primitive string only, which never runs JS.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const s = new Bun.ArrayBufferSink();
+        s.start({ highWaterMark: 64 });
+        s.write("seed");
+        const h = Object.assign(new String("x"), {
+          [Symbol.toPrimitive]() { s.close(); return "payload"; },
+        });
+        let code = "";
+        try { s.write(h); } catch (e) { code = e.code; }
+        console.log(code);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ERR_INVALID_ARG_TYPE");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

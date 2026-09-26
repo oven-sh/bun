@@ -1312,8 +1312,8 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
       importInto(imported, join(dir, "missing.mjs"));
     });
     await until(() => heard.length === 2);
-    expect(heard.map(line => line.replace(dir, "")).sort()).toEqual([
-      "the graph that called import(): Cannot find module '/missing.mjs'",
+    expect(heard.map(line => line.replace(join(dir, "missing.mjs"), "missing.mjs")).sort()).toEqual([
+      "the graph that called import(): Cannot find module 'missing.mjs'",
       "the graph that called import(): thrown by the module",
     ]);
   });

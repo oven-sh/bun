@@ -15,6 +15,52 @@ test("hasNonReifiedStatic", () => {
   expect(hasNonReifiedStatic(Bun)).toBe(false);
 });
 
+// A lazy static-table property builder that reifies another lazy property on
+// Bun (transitioning the object) and then throws used to trip
+// ASSERT(object->structure() == this) in JSC::Structure::storedPrototype,
+// because JSObject::getPropertySlot kept using the pre-transition structure
+// for the prototype step. Here the bun:sql module evaluation inside the
+// Bun.sql builder reads Error.prototype, which the proxy intercepts.
+test("lazy property builder that transitions Bun and throws does not abort", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let phase = 0;
+globalThis.Error = new Proxy(function () {}, {
+  get(target, key, receiver) {
+    if (key === "prototype" && phase === 0) {
+      phase = 1;
+      Bun.semver;
+      throw "boom";
+    }
+    return Reflect.get(target, key, receiver);
+  },
+});
+let caught;
+try {
+  Bun.sql;
+} catch (e) {
+  caught = e;
+}
+console.log("caught:", caught, "phase:", phase);`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // "phase: 1" proves the builder re-entered the Bun object mid-lookup; if the
+  // sql module stops reading Error.prototype at evaluation time, this test no
+  // longer exercises the code path and needs a new trigger.
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "caught: boom phase: 1\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("require('bun')", () => {
   const str = eval("'bun'");
   expect(require(str)).toBe(Bun);
@@ -39,17 +85,15 @@ test("a lazy property whose builtin fails to load throws from the read", async (
   // The shell builtin ($) and the sql module body (sql, SQL, postgres) call Symbol(), so
   // breaking it makes each builder throw. The read must throw that error (debug builds used to
   // report the still-pending exception from inside the sql builders and abort) and the slot
-  // must stay unreified so a later read runs the builder again.
-  //
-  // process.env is read first because the shell builtin reads it before calling Symbol(), and
-  // building it on Windows reifies another property of the Bun object; doing that in the middle
-  // of the throwing read trips a separate structure assertion in debug builds.
+  // must stay unreified so a later read runs the builder again. On Windows the shell builtin also
+  // builds process.env before it calls Symbol(), which reifies Bun.inspect, so there the throwing
+  // read transitions the Bun object mid-lookup as well, the case the Error proxy test above sets
+  // up by hand.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
-      `process.env;
-       globalThis.Symbol = NaN;
+      `globalThis.Symbol = NaN;
        const results = {};
        for (const name of ["$", "sql", "SQL", "postgres"]) {
          results[name] = [];

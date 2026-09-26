@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -1948,7 +1948,27 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.js": [`Could not resolve: "#". Maybe you need to "bun install"?`],
     },
   });
-  itBundled("packagejson/ImportsErrorStartsWithHashSlash", {
+  // Exactly "#/" is an invalid specifier (PACKAGE_IMPORTS_RESOLVE), even with
+  // an "imports" entry that would otherwise match it. esbuild resolves it.
+  itBundled("packagejson/ImportsErrorEqualsHashSlash", {
+    skipOnEsbuild: true,
+    files: {
+      "/Users/user/project/src/entry.js": `import '#/'`,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "imports": {
+            "#/": "./index.js",
+            "#/*": "./src/*"
+          }
+        }
+      `,
+      "/Users/user/project/src/index.js": `console.log('index.js')`,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "#/". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("packagejson/ImportsErrorHashSlashNotDefined", {
     files: {
       "/Users/user/project/src/entry.js": `import '#/foo'`,
       "/Users/user/project/src/package.json": /* json */ `
@@ -1959,6 +1979,217 @@ describe("bundler", () => {
     },
     bundleErrors: {
       "/Users/user/project/src/entry.js": [`Could not resolve: "#/foo". Maybe you need to "bun install"?`],
+    },
+  });
+  // Specifiers that start with "#/" are valid since Node.js 25.4 (nodejs/node#60864).
+  itBundled("packagejson/ImportsHashSlashWithWildcard", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import '#/foo.js'
+        import '#/bar/baz.js'
+      `,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "imports": {
+            "#/*": "./src/*"
+          }
+        }
+      `,
+      "/Users/user/project/src/src/foo.js": `console.log('foo.js')`,
+      "/Users/user/project/src/src/bar/baz.js": `console.log('bar/baz.js')`,
+    },
+    run: {
+      stdout: `foo.js\nbar/baz.js`,
+    },
+  });
+  itBundled("packagejson/ImportsHashSlashExactMatch", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import '#/utils'
+        import '#/config.js'
+      `,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "imports": {
+            "#/utils": "./utils.js",
+            "#/config.js": "./config.js"
+          }
+        }
+      `,
+      "/Users/user/project/src/utils.js": `console.log('utils.js')`,
+      "/Users/user/project/src/config.js": `console.log('config.js')`,
+    },
+    run: {
+      stdout: `utils.js\nconfig.js`,
+    },
+  });
+  itBundled("packagejson/ImportsHashSlashWithConditions", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import '#/lib'
+        require('#/lib')
+      `,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "imports": {
+            "#/*": {
+              "import": "./esm/*.js",
+              "require": "./cjs/*.js"
+            }
+          }
+        }
+      `,
+      "/Users/user/project/src/esm/lib.js": `console.log('esm/lib.js')`,
+      "/Users/user/project/src/cjs/lib.js": `console.log('cjs/lib.js')`,
+    },
+    run: {
+      stdout: `esm/lib.js\ncjs/lib.js`,
+    },
+  });
+  itBundled("packagejson/ImportsHashSlashSymmetricWithExports", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import '#/components/button.js'
+        import '#/utils/format.js'
+      `,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "exports": { "./*": "./src/*" },
+          "imports": { "#/*": "./src/*" }
+        }
+      `,
+      "/Users/user/project/src/src/components/button.js": `console.log('button.js')`,
+      "/Users/user/project/src/src/utils/format.js": `console.log('format.js')`,
+    },
+    run: {
+      stdout: `button.js\nformat.js`,
+    },
+  });
+  // `--packages=external` must not treat a "#" specifier as a package. It
+  // resolves through the "imports" map: a file target is bundled, a package
+  // target becomes the external package path. The output lands outside the
+  // source package, where the runtime cannot see its "imports" map, and
+  // `dep` only exists at runtime.
+  itBundled("packagejson/ImportsPackagesExternal", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import { internal } from '#internal'
+        import { d } from '#dep'
+        import { d as direct } from 'dep'
+        import { sub } from '#dep/sub.js'
+        import { cond } from '#cond'
+        import { condDep } from '#cond-dep'
+        import { root } from '#/foo.js'
+        import { nested } from '#internal/bar.js'
+        console.log(internal, d, direct, sub, cond, condDep, root, nested)
+      `,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "name": "app",
+          "imports": {
+            "#internal": "./lib/internal.js",
+            "#dep": "dep",
+            "#dep/*": "dep/*",
+            "#cond": { "import": "./lib/cond-import.js", "default": "./lib/cond-default.js" },
+            "#cond-dep": { "import": "dep/esm.js", "default": "dep/cjs.js" },
+            "#/*": "./src/*",
+            "#internal/*": "./lib/*"
+          }
+        }
+      `,
+      "/Users/user/project/src/lib/internal.js": `export const internal = 'internal'`,
+      "/Users/user/project/src/lib/cond-import.js": `export const cond = 'cond-import'`,
+      "/Users/user/project/src/lib/cond-default.js": `export const cond = 'cond-default'`,
+      "/Users/user/project/src/src/foo.js": `export const root = 'foo'`,
+      "/Users/user/project/src/lib/bar.js": `export const nested = 'bar'`,
+    },
+    packages: "external",
+    runtimeFiles: {
+      "/node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0" }`,
+      "/node_modules/dep/index.js": `export const d = 'dep'`,
+      "/node_modules/dep/sub.js": `export const sub = 'dep/sub'`,
+      "/node_modules/dep/esm.js": `export const condDep = 'dep/esm'`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain(`"#`);
+      expect(out).toContain(`from "dep"`);
+      expect(out).toContain(`from "dep/sub.js"`);
+      expect(out).toContain(`from "dep/esm.js"`);
+      expect(out).toContain(`"internal"`);
+      expect(out).toContain(`"cond-import"`);
+      expect(out).not.toContain(`"cond-default"`);
+    },
+    run: {
+      stdout: "internal dep dep dep/sub cond-import dep/esm foo bar",
+    },
+  });
+  // A "#" specifier the "imports" map does not define is an error, also
+  // under `--packages=external`.
+  itBundled("packagejson/ImportsPackagesExternalErrorNotDefined", {
+    files: {
+      "/Users/user/project/src/entry.js": `import '#missing'`,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "imports": {
+            "#internal": "./internal.js"
+          }
+        }
+      `,
+      "/Users/user/project/src/internal.js": `console.log('internal.js')`,
+    },
+    packages: "external",
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "#missing". Maybe you need to "bun install"?`],
+    },
+  });
+  // With no "imports" map at all, `--packages=external` leaves a "#"
+  // specifier in the output like any other package path.
+  itBundled("packagejson/ImportsPackagesExternalNoImportsMap", {
+    files: {
+      "/Users/user/project/src/entry.js": `import '#foo'`,
+      "/Users/user/project/src/package.json": `{ "name": "app" }`,
+    },
+    packages: "external",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`"#foo"`);
+    },
+  });
+  // `--external` matches the specifier as written. "#internal" matches
+  // itself. "dep" matches the direct import only: the "#dep" entry resolves
+  // to the dep package on disk and is bundled.
+  itBundled("packagejson/ImportsUserExternal", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import { internal } from '#internal'
+        import { d } from '#dep'
+        import { d as direct } from 'dep'
+        console.log(internal, d, direct)
+      `,
+      "/Users/user/project/package.json": /* json */ `
+        {
+          "name": "app",
+          "imports": {
+            "#internal": "./src/internal.js",
+            "#dep": "dep"
+          }
+        }
+      `,
+      "/Users/user/project/src/internal.js": `export const internal = 'internal'`,
+      "/Users/user/project/node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0" }`,
+      "/Users/user/project/node_modules/dep/index.js": `export const d = 'dep'`,
+    },
+    external: ["#internal", "dep"],
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      const out = api.readFile("/Users/user/project/out.js");
+      expect(out).toContain(`from "#internal"`);
+      expect(out).toContain(`from "dep"`);
+      expect(out).not.toContain(`from "#dep"`);
+      expect(out).toContain(`= "dep"`);
+    },
+    run: {
+      stdout: "internal dep dep",
     },
   });
   itBundled("packagejson/MainFieldsErrorMessageDefault", {

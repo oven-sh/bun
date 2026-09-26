@@ -13,19 +13,38 @@ import {
   mysqlHandshakeV10,
   mysqlOkPacket,
   mysqlReadPackets,
+  mysqlStmtPrepareOk,
   pgAuthenticationOk,
+  pgBindComplete,
   pgCommandComplete,
+  pgNoData,
+  pgParameterDescription,
+  pgParseComplete,
   pgReadyForQuery,
 } from "./wire-frames";
 
 type Received = { conn: number; sql: string };
-type MockServer = (received: Received[]) => Promise<{ port: number; server: net.Server }>;
+// `hold` can delay the answer to a statement. Answers keep the order of the statements.
+type Hold = (sql: string) => Promise<void> | void;
+type MockServer = (received: Received[], hold?: Hold) => Promise<{ port: number; server: net.Server }>;
 
-// Query text containing "KILL" destroys the socket without answering.
-const pgMockServer: MockServer = received => {
+function answerInOrder(hold: Hold | undefined) {
+  let chain = Promise.resolve();
+  return (sql: string, answer: () => void) => {
+    if (!hold) return answer();
+    chain = chain.then(() => hold(sql)).then(answer);
+  };
+}
+
+// Query text containing "KILL" destroys the socket without answering. A prepared
+// statement (the extended protocol, what a tagged template sends) is answered as a
+// statement with no parameters and no columns.
+const pgMockServer: MockServer = (received, hold) => {
   let nextConn = 0;
   return listeningServer(socket => {
     const connId = nextConn++;
+    const answer = answerInOrder(hold);
+    let prepared = "";
     let buffered = Buffer.alloc(0);
     let startup = true;
     socket.on("data", (chunk: Buffer) => {
@@ -44,6 +63,32 @@ const pgMockServer: MockServer = received => {
         if (buffered.length < 1 + len) return;
         const body = buffered.subarray(5, 1 + len);
         buffered = buffered.subarray(1 + len);
+        if (type === "P") {
+          // Parse: String(statement name) String(query) ...
+          const nameEnd = body.indexOf(0);
+          prepared = body.subarray(nameEnd + 1, body.indexOf(0, nameEnd + 1)).toString("utf8");
+          received.push({ conn: connId, sql: prepared });
+          answer(prepared, () => socket.write(pgParseComplete()));
+          continue;
+        }
+        if (type === "D") {
+          // Describe: Byte1('S' statement | 'P' portal). Only a statement describe lists the parameters.
+          const replies = body[0] === 0x53 ? [pgParameterDescription([]), pgNoData()] : [pgNoData()];
+          answer(prepared, () => socket.write(Buffer.concat(replies)));
+          continue;
+        }
+        if (type === "B") {
+          answer(prepared, () => socket.write(pgBindComplete()));
+          continue;
+        }
+        if (type === "E") {
+          answer(prepared, () => socket.write(pgCommandComplete("SELECT 0")));
+          continue;
+        }
+        if (type === "S") {
+          answer(prepared, () => socket.write(pgReadyForQuery()));
+          continue;
+        }
         if (type !== "Q") continue;
         const sql = body.subarray(0, body.indexOf(0)).toString("utf8");
         received.push({ conn: connId, sql });
@@ -51,19 +96,24 @@ const pgMockServer: MockServer = received => {
           socket.destroy();
           return;
         }
-        socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
+        answer(sql, () => socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()])));
       }
     });
     socket.on("error", () => {});
   });
 };
 
-const mysqlMockServer: MockServer = received => {
+const mysqlMockServer: MockServer = (received, hold) => {
   const COM_QUIT = 0x01;
   const COM_QUERY = 0x03;
+  const COM_STMT_PREPARE = 0x16;
+  const COM_STMT_EXECUTE = 0x17;
   let nextConn = 0;
   return listeningServer(socket => {
     const connId = nextConn++;
+    const answer = answerInOrder(hold);
+    let prepared = "";
+    let nextStatementId = 1;
     let buffered = Buffer.alloc(0);
     let authed = false;
     socket.write(mysqlHandshakeV10());
@@ -82,7 +132,14 @@ const mysqlMockServer: MockServer = received => {
             socket.destroy();
             return;
           }
-          socket.write(mysqlOkPacket(1));
+          answer(sql, () => socket.write(mysqlOkPacket(1)));
+        } else if (payload[0] === COM_STMT_PREPARE) {
+          prepared = payload.subarray(1).toString("utf8");
+          received.push({ conn: connId, sql: prepared });
+          const statementId = nextStatementId++;
+          answer(prepared, () => socket.write(mysqlStmtPrepareOk(1, statementId, 0, 0)));
+        } else if (payload[0] === COM_STMT_EXECUTE) {
+          answer(prepared, () => socket.write(mysqlOkPacket(1)));
         } else if (payload[0] === COM_QUIT) {
           socket.end();
         }
@@ -109,9 +166,24 @@ function firstInterleaving(received: Received[]): string | null {
   return null;
 }
 
-const adapters: Array<{ adapter: "postgres" | "mysql"; mockServer: MockServer; beginCommand: string }> = [
-  { adapter: "postgres", mockServer: pgMockServer, beginCommand: "BEGIN" },
-  { adapter: "mysql", mockServer: mysqlMockServer, beginCommand: "START TRANSACTION" },
+const adapters: Array<{
+  adapter: "postgres" | "mysql";
+  mockServer: MockServer;
+  beginCommand: string;
+  closedCode: string;
+}> = [
+  {
+    adapter: "postgres",
+    mockServer: pgMockServer,
+    beginCommand: "BEGIN",
+    closedCode: "ERR_POSTGRES_CONNECTION_CLOSED",
+  },
+  {
+    adapter: "mysql",
+    mockServer: mysqlMockServer,
+    beginCommand: "START TRANSACTION",
+    closedCode: "ERR_MYSQL_CONNECTION_CLOSED",
+  },
 ];
 
 // reserved.begin() / beginDistributed() calls that reject before anything is sent.
@@ -128,7 +200,7 @@ const rejectedBeforeBegin = [
   },
 ];
 
-describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
+describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, closedCode }) => {
   const options = (port: number): Bun.SQL.Options => ({
     adapter,
     hostname: "127.0.0.1",
@@ -385,6 +457,95 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
         { conn: 0, sql: beginCommand },
         { conn: 0, sql: "SELECT 'T1a'" },
         { conn: 0, sql: "ROLLBACK" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // The handle stops accepting statements once the callback settles. A statement sent
+  // while COMMIT or ROLLBACK is still in flight would otherwise be written after it on
+  // the same connection, and the server would run it outside the transaction.
+  test.each(["COMMIT", "ROLLBACK"])(
+    "a statement sent while %s is in flight is rejected and never reaches the server",
+    async end => {
+      const received: Received[] = [];
+      const endReceived = Promise.withResolvers<void>();
+      const endAnswer = Promise.withResolvers<void>();
+      const { port, server } = await mockServer(received, sql => {
+        if (sql !== end) return;
+        endReceived.resolve();
+        return endAnswer.promise;
+      });
+      const sql = new SQL(options(port));
+      try {
+        // Settles to null when the late statement runs, or to its rejection error.
+        let late!: Promise<any>;
+        const begun = sql
+          .begin(async tx => {
+            await tx.unsafe("SELECT 'T1a'");
+            late = endReceived.promise
+              .then(() => tx`SELECT 'late'`)
+              .then(
+                () => null,
+                err => err,
+              );
+            if (end === "ROLLBACK") throw new Error("t1-app-error");
+            return "t1";
+          })
+          .then(
+            value => value,
+            err => err.message,
+          );
+        await endReceived.promise;
+        endAnswer.resolve();
+        expect(await begun).toBe(end === "ROLLBACK" ? "t1-app-error" : "t1");
+        const lateError = await late;
+        expect(received).toEqual([
+          { conn: 0, sql: beginCommand },
+          { conn: 0, sql: "SELECT 'T1a'" },
+          { conn: 0, sql: end },
+        ]);
+        expect(lateError?.code).toBe(closedCode);
+      } finally {
+        await sql.close({ timeout: 0 }).catch(() => {});
+        await new Promise<void>(r => server.close(() => r()));
+      }
+    },
+  );
+
+  // handle(row) builds a fragment for a later query. On a handle that no longer accepts
+  // queries it has to stay a fragment: a rejected promise in its place is one that the
+  // query it is part of never awaits, and bun:test fails this test if one is reported.
+  test("a fragment built on a settled or released handle is not a rejected promise", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      let tx!: Bun.TransactionSQL;
+      await sql.begin(async handle => {
+        tx = handle;
+        await handle.unsafe("SELECT 'T1a'");
+      });
+      const reserved = await sql.reserve();
+      reserved.release();
+
+      const results = await Promise.all(
+        [tx, reserved].map(handle => {
+          const fragment = handle({ v: "late" });
+          expect(typeof (fragment as any).then).toBe("undefined");
+          return handle`INSERT INTO t ${fragment}`.then(
+            () => null,
+            err => err.code,
+          );
+        }),
+      );
+      expect(results).toEqual([closedCode, closedCode]);
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T1a'" },
+        { conn: 0, sql: "COMMIT" },
       ]);
     } finally {
       await sql.close({ timeout: 0 }).catch(() => {});

@@ -369,12 +369,7 @@ const SQL = function SQL(
     }
 
     function reserved_sql(strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, any>, ...values: any[]) {
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
+      // a fragment (sql(row), sql([...])) is inert until a query uses it, so it is never rejected
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray(strings.raw)) {
@@ -382,6 +377,12 @@ const SQL = function SQL(
         }
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
         return new SQLHelper([strings], values);
+      }
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
+        return Promise.$reject(pool.connectionClosedError());
       }
       // we use the same code path as the transaction sql
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
@@ -676,12 +677,7 @@ const SQL = function SQL(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
       ...values: any[]
     ) {
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
+      // a fragment (sql(row), sql([...])) is inert until a query uses it, so it is never rejected
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
@@ -689,6 +685,12 @@ const SQL = function SQL(
         }
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
         return new SQLHelper([strings], values);
+      }
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
+        return Promise.$reject(pool.connectionClosedError());
       }
 
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
@@ -880,12 +882,15 @@ const SQL = function SQL(
       }
       // at this point we dont need to rollback anymore
       needs_rollback = false;
+      // the callback settled: a statement sent from now on would run after COMMIT, outside the transaction
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
       }
       await run_internal_transaction_sql(COMMIT_COMMAND);
       return resolve(transaction_result);
     } catch (err) {
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
       try {
         if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
           if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {

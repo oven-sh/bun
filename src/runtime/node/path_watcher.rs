@@ -199,41 +199,50 @@ pub(crate) struct PathWatcher {
     is_file: bool,
 
     /// JS `FSWatcher` contexts sharing this OS watch. Guarded by `manager.mutex`.
-    handlers: ArrayHashMap<*mut c_void, HandlerState>,
+    handlers: ArrayHashMap<*mut c_void, Tail>,
 
     /// Per-platform per-watch state (inotify wds, kqueue fds, or the FSEventsWatcher).
     #[cfg(not(windows))]
     platform: PlatformWatch,
 }
 
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-type HandlerState = Tail;
-#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
-type HandlerState = ();
-
-/// What the kernel compares, with the path, to merge a record into an unread one.
+/// What a record merges on, beside its path. inotify compares the mask: https://github.com/torvalds/linux/blob/028ef9c96e96197026887c0f092424679298aae8/fs/notify/inotify/inotify_fsnotify.c#L32-L47
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Record {
-    mask: u32,
-    cookie: u32,
+enum Record {
+    /// An inotify mask, or the kind of a kqueue event.
+    Kernel(u32),
+    /// An entry that the walk of a new directory found.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    Found,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+impl Record {
+    fn merges(self, next: Record) -> bool {
+        // The kernel queues the entry's own record when the entry appears while the walk runs.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if let (Record::Found, Record::Kernel(mask)) = (self, next) {
+            use bun_sys::linux::IN;
+            return mask & (IN::CREATE | IN::MOVED_TO) != 0;
+        }
+        self == next
+    }
 }
 
 /// The last event posted to one handler, which `emit_record` merges into.
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 #[derive(Default)]
-pub(crate) struct Tail {
-    /// `FSWatcher::delivered` is the number of the newest event the listener got.
-    seq: Cell<u64>,
-    /// `None` when the last event is not one to merge into.
+struct Tail {
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     record: Cell<Option<Record>>,
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     path: Cell<Vec<u8>>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 impl Tail {
-    fn is(&self, record: Record, path: &[u8]) -> bool {
-        if self.record.get() != Some(record) {
+    fn merges(&self, record: Record, path: &[u8]) -> bool {
+        if !self.record.get().is_some_and(|last| last.merges(record)) {
             return false;
         }
         let last = self.path.take();
@@ -242,19 +251,12 @@ impl Tail {
         same
     }
 
-    fn set(&self, record: Record, path: &[u8]) -> u64 {
+    fn set(&self, record: Record, path: &[u8]) {
         self.record.set(Some(record));
         let mut last = self.path.take();
         last.clear();
         last.extend_from_slice(path);
         self.path.set(last);
-        let seq = self.seq.get() + 1;
-        self.seq.set(seq);
-        seq
-    }
-
-    fn clear(&self) {
-        self.record.set(None);
     }
 }
 
@@ -271,12 +273,12 @@ impl PathWatcher {
     /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
     #[cfg(not(any(windows, target_os = "freebsd")))]
     fn emit(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
-        for &ctx in self.unmerged() {
+        for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(Some(ctx), event_type.to_event(rel_path.into()), is_file);
         }
     }
 
-    /// Drops a record identical to the last event of a handler that has not got it yet.
+    /// Drops a record that merges into the last event of a handler that has not got that event.
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     fn emit_record(
         &self,
@@ -286,34 +288,20 @@ impl PathWatcher {
         is_file: bool,
     ) {
         for (&ctx, tail) in self.handlers.iter() {
-            if tail.is(record, rel_path) && FSWatcher::delivered(ctx) < tail.seq.get() {
+            if tail.merges(record, rel_path) && FSWatcher::tail_pending(ctx) {
                 continue;
             }
-            let seq = tail.set(record, rel_path);
-            FSWatcher::on_record(
-                Some(ctx),
-                event_type.to_event(rel_path.into()),
-                is_file,
-                seq,
-            );
+            tail.set(record, rel_path);
+            FSWatcher::on_record(ctx, event_type.to_event(rel_path.into()), is_file);
         }
-    }
-
-    /// The handlers, for an event that no record merges into.
-    #[cfg(not(windows))]
-    fn unmerged(&self) -> &[*mut c_void] {
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-        for tail in self.handlers.values() {
-            tail.clear();
-        }
-        self.handlers.keys()
     }
 
     /// The shared inotify queue overflowed and events were lost; every handler
-    /// gets `('change', null)`. Caller holds `manager.mutex`.
+    /// gets `('change', null)`. No duplicate suppression — a loss signal must
+    /// always be delivered. Caller holds `manager.mutex`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn emit_overflow(&self) {
-        for &ctx in self.unmerged() {
+        for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(
                 Some(ctx),
                 Event::NoFilename(WatchEventKind::Change),
@@ -324,7 +312,7 @@ impl PathWatcher {
 
     #[cfg(not(windows))]
     fn emit_error(&self, err: &sys::Error, close: bool) {
-        for &ctx in self.unmerged() {
+        for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(
                 Some(ctx),
                 Event::Error {
@@ -500,7 +488,7 @@ pub(crate) fn watch(
     // scoped to this lookup.
     if let Some(&existing) = unsafe { (*manager.watchers.get()).get(key) } {
         // SAFETY: existing is a live PathWatcher under manager.mutex.
-        unsafe { handle_oom((*existing).handlers.put(ctx, HandlerState::default())) };
+        unsafe { handle_oom((*existing).handlers.put(ctx, Tail::default())) };
         manager.mutex.unlock();
         return Ok(existing);
     }
@@ -521,7 +509,7 @@ pub(crate) fn watch(
         platform: PlatformWatch::default(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.
-    unsafe { handle_oom((*watcher).handlers.put(ctx, HandlerState::default())) };
+    unsafe { handle_oom((*watcher).handlers.put(ctx, Tail::default())) };
     // SAFETY: holding manager.mutex; exclusive access to manager.watchers.
     unsafe { handle_oom((*manager.watchers.get()).put(key, watcher)) };
 
@@ -1130,10 +1118,7 @@ impl Linux {
                     // SAFETY: owner_watcher live under manager.mutex; shared access only.
                     unsafe {
                         (*owner_watcher).emit_record(
-                            Record {
-                                mask: ev.mask,
-                                cookie: ev.cookie,
-                            },
+                            Record::Kernel(ev.mask),
                             event_type,
                             rel,
                             !is_dir_child
@@ -1178,7 +1163,7 @@ impl Linux {
                         // for every discovered entry, like node's recursive watcher
                         // does when it scans a newly added folder
                         // (lib/internal/fs/recursive_watch.js). An entry created after
-                        // the watch attached also gets its own IN_CREATE.
+                        // the watch attached also has a record of its own.
                         walk_subtree::<false>(
                             child_abs,
                             &rel_owned,
@@ -1194,20 +1179,11 @@ impl Linux {
                                         }
                                     }
                                 }
-                                // The record that the entry's own IN_CREATE carries.
-                                let record = Record {
-                                    mask: if entry_is_file {
-                                        IN::CREATE
-                                    } else {
-                                        IN::CREATE | IN::ISDIR
-                                    },
-                                    cookie: 0,
-                                };
                                 // SAFETY: owner_watcher live under manager.mutex;
                                 // `emit_record` takes `&self`.
                                 unsafe {
                                     (*owner_watcher).emit_record(
-                                        record,
+                                        Record::Found,
                                         WatchEventKind::Rename,
                                         entry_rel,
                                         entry_is_file,
@@ -1656,11 +1632,8 @@ impl Kqueue {
                     entry.subpath.as_bytes()
                 };
 
-                // kqueue merges the notes of one file while its event is unread.
-                let record = Record {
-                    mask: event_type as u32,
-                    cookie: 0,
-                };
+                // The kernel merges more: each note of one file, https://github.com/freebsd/freebsd-src/blob/c8918d6c7412fce87922e9bd7e4f5c7d7ca96eb7/sys/kern/vfs_subr.c#L6636-L6652
+                let record = Record::Kernel(event_type as u32);
                 watcher.emit_record(record, event_type, rel, entry.is_file);
                 let _ = handle_oom(touched.get_or_put(entry.watcher));
             }

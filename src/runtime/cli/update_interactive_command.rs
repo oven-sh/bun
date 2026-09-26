@@ -34,6 +34,7 @@ use bun_resolver::fs::FileSystem;
 use bun_ast::Loc;
 use bun_ast::{self, E, Expr, expr as js_expr};
 use bun_core::strings;
+use bun_core::strings::visible::width::exclude_ansi_colors as visible_width;
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as semver, SlicedString};
 
@@ -1045,11 +1046,12 @@ impl UpdateInteractiveCommand {
                 dev_tag_len = 9; // " optional"
             }
 
-            max_name_len = max_name_len.max(pkg.name.len() + dev_tag_len);
+            max_name_len = max_name_len.max(visible_width::utf8(&pkg.name) + dev_tag_len);
+            // A formatted semver version is ASCII, so its byte length is its width.
             max_current_len = max_current_len.max(pkg.current_version.len());
             max_target_len = max_target_len.max(pkg.update_version.len());
             max_latest_len = max_latest_len.max(pkg.latest_version.len());
-            max_workspace_len = max_workspace_len.max(pkg.workspace_name.len());
+            max_workspace_len = max_workspace_len.max(visible_width::utf8(&pkg.workspace_name));
 
             // Check if we have any non-empty workspace names
             if !pkg.workspace_name.is_empty() {
@@ -1155,8 +1157,9 @@ impl UpdateInteractiveCommand {
         } // Default fallback
     }
 
+    /// `max_width` and the result are in terminal columns, not bytes.
     fn truncate_with_ellipsis(text: &[u8], max_width: usize, only_end: bool) -> Box<[u8]> {
-        if text.len() <= max_width {
+        if visible_width::utf8(text) <= max_width {
             return Box::from(text);
         }
 
@@ -1166,20 +1169,18 @@ impl UpdateInteractiveCommand {
 
         // Put ellipsis in the middle to show both start and end of package name
         let ellipsis = "…".as_bytes();
-        let available_chars = max_width - 1; // Reserve 1 char for ellipsis
-        let start_chars = if only_end {
-            available_chars
+        let available_width = max_width - 1; // Reserve 1 column for ellipsis
+        let start_width = if only_end {
+            available_width
         } else {
-            available_chars / 2
+            available_width / 2
         };
-        let end_chars = available_chars - start_chars;
+        let end_width = available_width - start_width;
 
-        let mut result = vec![0u8; start_chars + ellipsis.len() + end_chars];
-        result[0..start_chars].copy_from_slice(&text[0..start_chars]);
-        result[start_chars..start_chars + ellipsis.len()].copy_from_slice(ellipsis);
-        result[start_chars + ellipsis.len()..].copy_from_slice(&text[text.len() - end_chars..]);
+        let (start, rest) = text.split_at(visible_width::utf8_index_at_width(text, start_width));
+        let end = &rest[visible_width::utf8_suffix_index_at_width(rest, end_width)..];
 
-        result.into_boxed_slice()
+        [start, ellipsis, end].concat().into_boxed_slice()
     }
 
     fn prompt_for_updates(packages: &mut [OutdatedPackage]) -> crate::Result<Box<[bool]>> {
@@ -1546,8 +1547,6 @@ impl UpdateInteractiveCommand {
                     } else if pkg.behavior.is_optional() {
                         dev_tag_len = 9; // " optional"
                     }
-                    let total_name_len = pkg.name.len() + dev_tag_len;
-                    let name_padding = state.max_name_len.saturating_sub(total_name_len);
 
                     // Determine version change severity for checkbox color
                     let current_ver_parsed = semver::Version::parse(SlicedString::init(
@@ -1647,6 +1646,9 @@ impl UpdateInteractiveCommand {
                     };
                     let display_name =
                         Self::truncate_with_ellipsis(&pkg.name, available_name_width, false);
+                    let name_padding = state
+                        .max_name_len
+                        .saturating_sub(visible_width::utf8(&display_name) + dev_tag_len);
 
                     let package_url: Box<[u8]> =
                         if Output::enable_ansi_colors_stdout() && pkg.uses_default_registry {
@@ -1717,11 +1719,9 @@ impl UpdateInteractiveCommand {
                     bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_current));
 
                     // Print padding after current version (2 spaces)
-                    let current_padding = if truncated_current.len() >= state.max_current_len {
-                        0
-                    } else {
-                        state.max_current_len - truncated_current.len()
-                    };
+                    let current_padding = state
+                        .max_current_len
+                        .saturating_sub(visible_width::utf8(&truncated_current));
                     j = 0;
                     while j < current_padding + 2 {
                         Output::print(format_args!(" "));
@@ -1741,8 +1741,8 @@ impl UpdateInteractiveCommand {
                         false,
                     );
 
-                    // For width calculation, use the truncated version string length
-                    let target_width: usize = truncated_target.len();
+                    // For width calculation, use the truncated version string
+                    let target_width: usize = visible_width::utf8(&truncated_target);
 
                     if current_ver_parsed.valid && target_ver_parsed.valid {
                         let current_full = semver::Version {
@@ -1764,7 +1764,7 @@ impl UpdateInteractiveCommand {
                         if selected && !pkg.use_latest {
                             Output::print(format_args!("\x1B[4m")); // Start underline
                         }
-                        if truncated_target.len() < pkg.update_version.len() {
+                        if truncated_target != pkg.update_version {
                             // If truncated, use plain display instead of diffFmt to avoid confusion
                             bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_target));
                         } else {
@@ -1837,7 +1837,7 @@ impl UpdateInteractiveCommand {
                         if selected && pkg.use_latest {
                             Output::print(format_args!("\x1B[4m")); // Start underline
                         }
-                        if truncated_latest.len() < pkg.latest_version.len() {
+                        if truncated_latest != pkg.latest_version {
                             // If truncated, use plain display instead of diffFmt to avoid confusion
                             bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_latest));
                         } else {
@@ -1878,7 +1878,7 @@ impl UpdateInteractiveCommand {
 
                     // Workspace column
                     if state.show_workspace {
-                        let latest_width: usize = truncated_latest.len();
+                        let latest_width: usize = visible_width::utf8(&truncated_latest);
                         let latest_padding = state.max_latest_len.saturating_sub(latest_width);
                         j = 0;
                         while j < latest_padding + 2 {

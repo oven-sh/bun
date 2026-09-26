@@ -75,6 +75,23 @@ pub mod visible {
                     )
                 }
             }
+
+            /// Byte index where the longest suffix of `input` with a visible width <= `max_width` starts.
+            pub fn utf8_suffix_index_at_width(input: &[u8], max_width: usize) -> usize {
+                let total = utf8(input);
+                if total <= max_width {
+                    return 0;
+                }
+                let excess = total - max_width;
+                let index = utf8_index_at_width(input, excess);
+                if utf8(&input[..index]) >= excess {
+                    return index;
+                }
+                // A 2-column codepoint straddles the cut. Drop it too.
+                let index = utf8_index_at_width(input, excess + 1);
+                debug_assert!(utf8(&input[..index]) >= excess);
+                index
+            }
         }
     }
 }

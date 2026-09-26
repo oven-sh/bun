@@ -34,6 +34,10 @@ struct GroupedOutdatedInfo {
     grouped_workspace_names: Option<Box<[u8]>>,
 }
 
+fn visible_width(text: &[u8]) -> usize {
+    strings::visible::width::exclude_ansi_colors::utf8(text)
+}
+
 /// The rows of the `bun outdated` table and the column widths that fit them.
 struct OutdatedTable {
     rows: Vec<GroupedOutdatedInfo>,
@@ -464,7 +468,7 @@ impl OutdatedCommand {
                     has_filtered_versions = true;
                 }
 
-                let package_name_len = package_name.len()
+                let package_name_len = visible_width(package_name)
                     + if dep.behavior.is_dev() {
                         " (dev)".len()
                     } else if dep.behavior.is_peer() {
@@ -517,9 +521,7 @@ impl OutdatedCommand {
                 let workspace_name = manager.lockfile.packages.items_name()
                     [workspace_pkg_id as usize]
                     .slice(string_buf);
-                if workspace_name.len() > max_workspace {
-                    max_workspace = workspace_name.len();
-                }
+                max_workspace = max_workspace.max(visible_width(workspace_name));
 
                 outdated_ids.push(OutdatedInfo {
                     package_id,
@@ -542,9 +544,7 @@ impl OutdatedCommand {
         let mut has_catalog_deps = false;
         for item in &rows {
             if let Some(names) = &item.grouped_workspace_names {
-                if names.len() > new_max_workspace {
-                    new_max_workspace = names.len();
-                }
+                new_max_workspace = new_max_workspace.max(visible_width(names));
                 has_catalog_deps = true;
             }
         }
@@ -697,7 +697,7 @@ impl OutdatedCommand {
                         bun_core::pretty!(" ");
                     }
                     bun_core::pretty!("{}<d>{}<r>", BStr::new(package_name), behavior_str);
-                    for _ in package_name.len() + behavior_str.len()
+                    for _ in visible_width(package_name) + behavior_str.len()
                         ..package_column_inside_length + COLUMN_RIGHT_PAD
                     {
                         bun_core::pretty!(" ");
@@ -796,7 +796,8 @@ impl OutdatedCommand {
                     };
                     bun_core::pretty!("{}", BStr::new(workspace_name));
 
-                    for _ in workspace_name.len()..workspace_column_inside_length + COLUMN_RIGHT_PAD
+                    for _ in visible_width(workspace_name)
+                        ..workspace_column_inside_length + COLUMN_RIGHT_PAD
                     {
                         bun_core::pretty!(" ");
                     }

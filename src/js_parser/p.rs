@@ -315,6 +315,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
+    /// This file prints such a `var` as an assignment: `var f = 1` becomes `f = 1`.
+    pub(crate) lowers_var_merged_with_function: bool,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
@@ -3417,6 +3419,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.hoist_symbols(self.module_scope_ref());
 
+        let pair_is_an_early_error_in_the_source = self.has_es_module_syntax;
+        let output_is_a_function_body = self.options.features.hot_module_reloading;
+        self.lowers_var_merged_with_function = self.options.bundle
+            && self.has_top_level_function_merged_with_var
+            && !pair_is_an_early_error_in_the_source
+            && !output_is_a_function_body;
+        if self.lowers_var_merged_with_function {
+            self.mark_functions_overwritten_after_var();
+        }
+
         let mut generated_symbols_count: u32 = 3;
 
         if self.options.features.react_fast_refresh {
@@ -3711,6 +3723,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     && Symbol::is_kind_function(existing_kind)
                                 {
                                     self.has_top_level_function_merged_with_var = true;
+                                    self.symbols[existing_idx].set_function_merged_with_var(true);
                                 }
                                 continue 'next_member;
                             }
@@ -5213,6 +5226,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.symbols[symbol_idx].link.set(ref_);
 
                     let existing_kind = self.symbols[symbol_idx].kind;
+                    let mut merges_function_with_var =
+                        self.symbols[symbol_idx].function_merged_with_var();
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
@@ -5223,6 +5238,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         // "var foo; function foo() {}" or "function foo() {} var foo;"
                         self.has_top_level_function_merged_with_var = true;
+                        self.symbols[symbol_idx].set_function_merged_with_var(true);
+                        merges_function_with_var = true;
+                    }
+                    if merges_function_with_var {
+                        self.symbols[ref_.inner_index() as usize]
+                            .set_function_merged_with_var(true);
                     }
                 }
                 MR::BecomePrivateGetSetPair => {
@@ -5630,6 +5651,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 let declaration_entry = already_declared.get_or_put(ref_)?;
                 if !declaration_entry.found_existing {
+                    if self.lowers_var_merged_with_function
+                        && self.keeps_function_merged_with_var(ref_)
+                    {
+                        continue;
+                    }
                     let mut decls = bun_alloc::AstAlloc::vec();
                     VecExt::append(
                         &mut decls,
@@ -5714,6 +5740,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.import_records_for_current_part.clear();
         }
         Ok(())
+    }
+
+    /// The test that `stmts_can_be_removed_if_unused` applies to a `var` statement.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn decls_can_be_removed_if_unused(&mut self, decls: &[Decl]) -> bool {
+        for decl in decls {
+            if !self.decl_binding_can_be_removed_if_unused_without_dce_check(decl) {
+                return false;
+            }
+            if let Some(value) = &decl.value {
+                if !self.expr_can_be_removed_if_unused_without_dce_check(value) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// A pattern runs getters or the iterator on its value, so only a literal value is side-effect free.
@@ -8118,6 +8161,88 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr::init_identifier(r#ref, loc)
     }
 
+    /// Tree shaking looks up a use by its own ref, so a live use of a linked symbol needs a use of `root` to keep the function.
+    #[cold]
+    #[inline(never)]
+    fn keeps_function_merged_with_var(&mut self, root: Ref) -> bool {
+        if !self.symbols[root.inner_index() as usize].function_merged_with_var() {
+            return false;
+        }
+        let generation = u64::from(self.part_generation) << 32;
+        let mut uses_linked_symbol = false;
+        for (at, &(used, _)) in self.part_uses.iter().enumerate() {
+            if self.part_use_slot[used.inner_index() as usize] != generation | at as u64 {
+                continue;
+            }
+            if used == root {
+                return true;
+            }
+            let mut used_root = used;
+            loop {
+                let link = self.symbols[used_root.inner_index() as usize].link.get();
+                if !link.is_valid() {
+                    break;
+                }
+                used_root = link;
+            }
+            uses_linked_symbol |= used_root == root;
+        }
+        if uses_linked_symbol {
+            self.record_usage(root);
+        }
+        true
+    }
+
+    /// True if one of `decls` declares a name that a top-level function declaration has too.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn decls_bind_function_merged_with_var(&self, decls: &[Decl]) -> bool {
+        decls
+            .iter()
+            .any(|decl| self.binds_function_merged_with_var(&decl.binding))
+    }
+
+    fn binds_function_merged_with_var(&self, binding: &Binding) -> bool {
+        match binding.data {
+            js_ast::b::B::BIdentifier(id) => {
+                let mut symbol = &self.symbols[id.r#ref.inner_index() as usize];
+                while symbol.has_link() {
+                    symbol = &self.symbols[symbol.link.get().inner_index() as usize];
+                }
+                symbol.function_merged_with_var()
+            }
+            js_ast::b::B::BArray(array) => array
+                .items()
+                .iter()
+                .any(|item| self.binds_function_merged_with_var(&item.binding)),
+            js_ast::b::B::BObject(object) => object
+                .properties()
+                .iter()
+                .any(|property| self.binds_function_merged_with_var(&property.value)),
+            js_ast::b::B::BMissing(_) => false,
+        }
+    }
+
+    /// Of `function f() {} var f; function f() {}` only the last function prints: `declare_symbol` sees no pair of functions.
+    #[cold]
+    #[inline(never)]
+    fn mark_functions_overwritten_after_var(&mut self) {
+        for index in 0..self.symbols.len() {
+            let symbol = &self.symbols[index];
+            if !symbol.kind.is_function() || !symbol.function_merged_with_var() {
+                continue;
+            }
+            let mut later = symbol;
+            while later.has_link() {
+                later = &self.symbols[later.link.get().inner_index() as usize];
+                if later.kind.is_function() {
+                    self.symbols[index].set_remove_overwritten_function_declaration(true);
+                    break;
+                }
+            }
+        }
+    }
+
     // One statement could potentially expand to several statements
     pub(crate) fn stmts_to_single_stmt(
         &mut self,
@@ -9833,6 +9958,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
+            lowers_var_merged_with_function: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,

@@ -44,8 +44,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Super {}, loc))
     }
 
-    fn pfx_t_open_paren(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
+    fn pfx_t_open_paren(
+        p: &mut Self,
+        level: Level,
+        errors: Option<&mut DeferredErrors>,
+        flags: EFlags,
+    ) -> PResult<Expr> {
         let loc = p.lexer.loc();
+        if let Some(errors) = errors {
+            errors.invalid_paren = Some(p.lexer.range());
+        }
         p.lexer.next()?;
 
         // Arrow functions aren't allowed in the middle of expressions
@@ -781,7 +789,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Is this a binding pattern?
         if p.will_need_binding_pattern() {
-            // noop
+            // Only an arrow parameter list rejects "[(a)] = b"
+            if let Some(errors) = errors {
+                errors.invalid_paren = self_errors.invalid_paren.or(errors.invalid_paren);
+            }
         } else if errors.is_none() {
             // Is this an expression?
             p.log_expr_errors(&mut self_errors);
@@ -867,7 +878,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = old_allow_in;
 
         if p.will_need_binding_pattern() {
-            // Is this a binding pattern?
+            // Only an arrow parameter list rejects "{a: (b)} = c"
+            if let Some(errors) = errors {
+                errors.invalid_paren = self_errors.invalid_paren.or(errors.invalid_paren);
+            }
         } else if errors.is_none() {
             // Is this an expression?
             p.log_expr_errors(&mut self_errors);
@@ -1010,7 +1024,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenBrace => Self::pfx_t_open_brace(p, errors),
             T::TLessThan => Self::pfx_t_less_than(p, level, errors, flags),
             T::TImport => Self::pfx_t_import(p, level),
-            T::TOpenParen => Self::pfx_t_open_paren(p, level, flags),
+            T::TOpenParen => Self::pfx_t_open_paren(p, level, errors, flags),
             T::TPrivateIdentifier => Self::pfx_t_private_identifier(p, level),
             T::TIdentifier => Self::pfx_t_identifier(p, level, flags),
             T::TFalse => Self::pfx_t_false(p),

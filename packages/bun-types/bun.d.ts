@@ -905,7 +905,10 @@ declare module "bun" {
      * insert this string at the cut edge(s). The ellipsis is counted against
      * the visible-width budget and is emitted *inside* any active SGR styles
      * (color, bold, etc.) so it inherits them, but *outside* any active OSC 8
-     * hyperlink.
+     * hyperlink. If the ellipsis itself fits the range, the result is never
+     * wider than the range: a wide character that does not fit in the columns
+     * left beside the ellipsis is dropped. (A plain slice without `ellipsis`
+     * keeps a wide character that starts before `end`.)
      *
      * This turns `sliceAnsi` into a drop-in `cli-truncate` replacement:
      * - truncate-end: `sliceAnsi(str, 0, max, { ellipsis: "\u2026" })`

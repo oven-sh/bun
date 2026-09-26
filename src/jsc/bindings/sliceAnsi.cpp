@@ -993,16 +993,38 @@ static WTF::String emitSliceStreaming(
     SgrStyleState specStyles;
     bool specHyperlink = false;
     String specHyperlinkClosePrefix, specHyperlinkTerminator;
-    auto enterSpecZone = [&]() {
-        if (inSpecZone) return;
-        inSpecZone = true;
-        specZoneMark = result.length();
+    auto snapshotStyles = [&]() {
         specStyles = activeStyles;
         specHyperlink = activeHyperlink;
         specHyperlinkClosePrefix = activeHyperlinkClosePrefix;
         specHyperlinkTerminator = activeHyperlinkTerminator;
     };
+    auto enterSpecZone = [&]() {
+        if (inSpecZone) return;
+        inSpecZone = true;
+        specZoneMark = result.length();
+        snapshotStyles();
+    };
     const size_t specEnd = (ellipsisEndBudget > 0) ? end + ellipsisEndBudget : end;
+
+    // With an ellipsis, a kept cluster that ends past `contentEnd` makes the result too wide: it opens the zone at its own start.
+    const bool clusterMustFit = (needStartEllipsis || needEndEllipsis) && !endUnbounded;
+    size_t contentEnd = SIZE_MAX; // set with the first kept cluster: `end`, plus the columns a cluster straddling `start` left unused
+    unsigned clusterMark = 0; // result.length() before the open cluster's first codepoint
+    unsigned stylesSavedForCluster = std::numeric_limits<unsigned>::max(); // clusterMark whose pre-ANSI snapshot is in spec*
+    auto checkClusterFit = [&]() { // `position` just passed `contentEnd`; `gs` still holds the cluster that did it
+        if (inSpecZone || position - gs.width() >= end) return;
+        inSpecZone = true;
+        specZoneMark = clusterMark;
+        if (stylesSavedForCluster != clusterMark) snapshotStyles();
+    };
+    auto beginInclude = [&]() {
+        include = true;
+        if (clusterMustFit) contentEnd = end + (position - start);
+        activeStyles.emitOpenCodes(result);
+        if (needStartEllipsis) result.append(ellipsis);
+        if (activeHyperlink) result.append(activeHyperlinkCode);
+    };
 
     // ------------------------------------------------------------------------
     // ASCII prefix fast-forward: every char is width 1, no ANSI, always a
@@ -1042,7 +1064,10 @@ static WTF::String emitSliceStreaming(
             shouldBreak = Bun__graphemeBreak(prevVisCp, cp, &breakState);
 
         if (shouldBreak) {
-            if (hasPrev) position += gs.width();
+            if (hasPrev) {
+                position += gs.width();
+                if (position > contentEnd) checkClusterFit();
+            }
 
             if (!endUnbounded && position >= specEnd) {
                 // A visible cut needs width past specEnd: the prior cluster
@@ -1064,16 +1089,13 @@ static WTF::String emitSliceStreaming(
                 return true;
             }
 
-            if (!include && position >= start) {
-                include = true;
-                activeStyles.emitOpenCodes(result);
-                if (needStartEllipsis) result.append(ellipsis);
-                if (activeHyperlink) result.append(activeHyperlinkCode);
-            }
+            if (!include && position >= start)
+                beginInclude();
             if (include) {
                 flushPending(/*filterCloseOnly=*/false);
                 if (!endUnbounded && position >= end && ellipsisEndBudget > 0)
                     enterSpecZone();
+                clusterMark = result.length();
                 result.append(std::span { p, charLen });
             } else {
                 pending.clear();
@@ -1083,7 +1105,13 @@ static WTF::String emitSliceStreaming(
         } else {
             // JOIN: continuation, position unchanged. Pending is inside cluster.
             if (include && !pastSpecEnd) {
-                flushPending(/*filterCloseOnly=*/false);
+                if (!pending.isEmpty()) {
+                    if (clusterMustFit && !inSpecZone && stylesSavedForCluster != clusterMark) {
+                        snapshotStyles();
+                        stylesSavedForCluster = clusterMark;
+                    }
+                    flushPending(/*filterCloseOnly=*/false);
+                }
                 result.append(std::span { p, charLen });
             } else if (!include) {
                 pending.clear();
@@ -1157,6 +1185,7 @@ static WTF::String emitSliceStreaming(
                 // Finalize any pending cluster first (first ASCII is a break).
                 if (hasPrev) {
                     position += gs.width();
+                    if (position > contentEnd) checkClusterFit();
                     hasPrev = false;
                     if (!endUnbounded && position >= specEnd) {
                         sawCutEnd = true;
@@ -1172,12 +1201,8 @@ static WTF::String emitSliceStreaming(
                     position += skipN;
                     bulkN -= skipN;
                 }
-                if (bulkN > 0 && !include && position >= start) {
-                    include = true;
-                    activeStyles.emitOpenCodes(result);
-                    if (needStartEllipsis) result.append(ellipsis);
-                    if (activeHyperlink) result.append(activeHyperlinkCode);
-                }
+                if (bulkN > 0 && !include && position >= start)
+                    beginInclude();
                 if (bulkN > 0 && include) {
                     flushPending(/*filterCloseOnly=*/false);
                     // How many can we emit before specEnd?
@@ -1285,7 +1310,10 @@ walkDone:;
     // last cluster, i.e. the highest break column the walk reached.
     const size_t lastClusterCol = position;
     if (reachedEOF) {
-        if (hasPrev) position += gs.width();
+        if (hasPrev) {
+            position += gs.width();
+            if (position > contentEnd) checkClusterFit();
+        }
         // The last cluster may have overflowed specEnd (wide char straddling
         // the boundary, or a Prepend-led cluster that started zero-width).
         if (!endUnbounded && position > specEnd) sawCutEnd = true;
@@ -1305,7 +1333,7 @@ walkDone:;
     // Resolve the lazy cutEnd BEFORE trailing pending ANSI so close codes
     // land after the last spec-zone column, not before it.
     bool discardedZone = false;
-    if (ellipsisEndBudget > 0) {
+    if (ellipsisEndBudget > 0 || inSpecZone) {
         if (sawCutEnd) {
             // Cut confirmed: discard spec-zone content and restore the style
             // state from the zone boundary, so the ellipsis and close codes
@@ -1320,6 +1348,7 @@ walkDone:;
             }
         } else {
             // No cut: spec-zone content is already in result. Cancel ellipsis.
+            ASSERT(ellipsisEndBudget > 0); // without a budget the zone only opens past specEnd, which is a cut
             needEndEllipsis = false;
         }
     }

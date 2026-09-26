@@ -14,6 +14,8 @@
 use core::ffi::c_void;
 
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
+// Its exports are what uSockets on epoll calls (`sys_epoll_pwait2`); `bun_runtime` holds it the same way.
+use bun_platform as _;
 
 mod child;
 mod hooks;

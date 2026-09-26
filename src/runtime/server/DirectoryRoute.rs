@@ -12,8 +12,13 @@ use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd, File};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
-use crate::server::file_route::{status_for_preconditions, write_any_status, write_content_range};
+use crate::server::file_response_stream::{
+    StartOptions as FileResponseStreamOptions, StreamOwner, UnsizedBody,
+};
+use crate::server::file_route::{
+    end_unsized, sends_unsized_body, status_for_preconditions, write_any_status,
+    write_content_range,
+};
 use crate::server::jsc::{JSGlobalObject, JsResult};
 use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
 
@@ -33,6 +38,8 @@ pub(crate) struct DirectoryRoute {
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
     root_fd: Cell<Fd>,
+    /// `st_dev` of the root: a file whose `st_size` is 0 is read only on the filesystem the route names.
+    root_dev: Option<u64>,
     /// Mount prefix with trailing `/` (`"/static/"`, or `"/"` for `"/*"`).
     url_prefix: Box<[u8]>,
     stat_cache: Box<[Cell<StatCacheEntry>]>,
@@ -75,6 +82,12 @@ impl DirectoryRoute {
             }
         };
 
+        let root_dev = if UnsizedBody::SUPPORTED {
+            bun_sys::fstat(root_fd).ok().map(|stat| stat.st_dev as u64)
+        } else {
+            None
+        };
+
         let slots = if enable_stat_cache {
             STAT_CACHE_SLOTS
         } else {
@@ -89,6 +102,7 @@ impl DirectoryRoute {
             ref_count: Cell::new(1),
             server: Cell::new(None),
             root_fd: Cell::new(root_fd),
+            root_dev,
             url_prefix: url_prefix.to_vec().into_boxed_slice(),
             stat_cache: stat_cache.into_boxed_slice(),
             stat_cache_path_bytes: Cell::new(0),
@@ -155,6 +169,14 @@ impl DirectoryRoute {
         };
 
         let size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
+
+        // `open_subpath` gives regular files only.
+        if UnsizedBody::applies_to(size, true, u64::MAX)
+            && Some(stat.st_dev as u64) == this.root_dev
+            && this.serve_unsized(file.handle(), rel, is_index, &mut req, resp, method)
+        {
+            return;
+        }
 
         let (last_modified_ms, lm_buf, lm_len) = this.stat_cache_lookup(rel, &stat);
         let last_modified = (lm_len > 0).then(|| &lm_buf[..lm_len]);
@@ -256,6 +278,75 @@ impl DirectoryRoute {
             idle_timeout: server.config().idle_timeout,
             owner: StreamOwner::DirectoryRoute(guard.into_route()),
         });
+    }
+
+    /// Answers with the bytes of a regular file whose `st_size` is 0 when they end inside the read buffer; `false` leaves the answer to the caller, which frames from the `stat`.
+    #[cold]
+    #[inline(never)]
+    fn serve_unsized(
+        &self,
+        fd: Fd,
+        rel: &[u8],
+        is_index: bool,
+        req: &mut AnyRequest,
+        resp: AnyResponse,
+        method: Method,
+    ) -> bool {
+        match self.try_serve_unsized(fd, rel, is_index, req, resp, method) {
+            Ok(answered) => answered,
+            Err(err) => {
+                bun_output::scoped_log!(
+                    DirectoryRoute,
+                    "read  {} failed: {}",
+                    bstr::BStr::new(rel),
+                    err
+                );
+                write_miss(req, resp);
+                true
+            }
+        }
+    }
+
+    fn try_serve_unsized(
+        &self,
+        fd: Fd,
+        rel: &[u8],
+        is_index: bool,
+        req: &mut AnyRequest,
+        resp: AnyResponse,
+        method: Method,
+    ) -> bun_sys::Result<bool> {
+        let Some(mut body) = UnsizedBody::probe(fd, (0, u64::MAX), false)? else {
+            return Ok(false);
+        };
+        // The `stat` of such a file gives no length and no time of change, so the response has no Range and no validator.
+        let status_code =
+            status_for_preconditions(req, method, 200, None, None, RangeRequest::Result::None);
+        if sends_unsized_body(method, status_code) && !body.fill(fd)? {
+            return Ok(false);
+        }
+
+        req.set_yield(false);
+        write_any_status(resp, status_code);
+        resp.write_mark();
+        let ext: &[u8] = if is_index {
+            b"html"
+        } else {
+            extension_for_mime(rel)
+        };
+        resp.write_header(
+            b"content-type",
+            &bun_http_types::MimeType::by_extension(ext).value,
+        );
+        if !matches!(resp, AnyResponse::H3(_)) {
+            if let Some(srv) = self.server.get() {
+                if let Some(alt) = srv.h3_alt_svc() {
+                    resp.write_header(b"alt-svc", alt);
+                }
+            }
+        }
+        end_unsized(&body, resp, method, status_code);
+        Ok(true)
     }
 
     /// Open `rel` under the root. For directories: serve `index.html` when the

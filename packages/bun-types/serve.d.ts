@@ -612,6 +612,11 @@ declare module "bun" {
      * slash, `index.html` from that directory is served. Missing files
      * return `404`.
      *
+     * A file that reports a size of `0` and has content (a file on `procfs`
+     * or `cgroupfs` on Linux) is read before the response is sent, when it
+     * is on the same filesystem as `dir`. Its response has no
+     * `Last-Modified` and no `ETag`, and does not support `Range` requests.
+     *
      * @example
      * ```ts
      * Bun.serve({

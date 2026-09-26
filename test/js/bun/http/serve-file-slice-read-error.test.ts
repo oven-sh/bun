@@ -210,6 +210,36 @@ server.stop(true);
 console.log("DONE " + okBodies);
 `;
 
+// A regular file on procfs reports a stat size of 0 and has content, so the
+// server reads it before it frames the response. A response with no body
+// takes one read(): it tells such a file from an empty one. Only a response
+// that sends the body reads to the end of the file.
+const UNSIZED_FIXTURE_JS = /* js */ `
+const { basename, dirname } = require("node:path");
+const path = process.argv[2];
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  routes: {
+    "/static": new Response(Bun.file(path)),
+    "/dir/*": { dir: dirname(path) },
+  },
+  fetch() { return new Response("not a route", { status: 500 }); },
+});
+const file = "/dir/" + basename(path);
+const statuses = [];
+for (const [url, method, headers] of JSON.parse(process.argv[3])) {
+  const response = await fetch("http://127.0.0.1:" + server.port + (url === "/dir" ? file : url), {
+    method,
+    headers: { connection: "close", ...headers },
+  });
+  await response.arrayBuffer();
+  statuses.push(response.status);
+}
+server.stop(true);
+console.log("DONE " + statuses.join(" "));
+`;
+
 let dir: ReturnType<typeof tempDir> | undefined;
 let supervisorBin: string | undefined;
 let served: string;
@@ -219,6 +249,7 @@ beforeAll(async () => {
   dir = tempDir("serve-file-slice-read-error", {
     "supervisor.c": SUPERVISOR_C,
     "fixture.mjs": FIXTURE_JS,
+    "unsized.mjs": UNSIZED_FIXTURE_JS,
     "served.bin": Buffer.alloc(4096, 97).toString("latin1"),
   });
   served = join(String(dir), "served.bin");
@@ -266,6 +297,54 @@ test.skipIf(!isLinux || !cc)(
     expect(stderr).toContain("matched read() calls on target:");
     const reads = Number(stderr.match(/matched read\(\) calls on target:\s*(\d+)/)![1]);
     expect({ stdout: stdout.trim(), reads }).toEqual({ stdout: "DONE 2", reads: 3 });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.skipIf(!isLinux || !cc)(
+  "Bun.serve reads a file whose stat size is 0 once for a response with no body",
+  async () => {
+    expect(supervisorBin).toBeDefined();
+
+    // Nothing else in the process reads this file.
+    const unsized = "/proc/loadavg";
+    const noBody = [
+      ["/static", "HEAD", {}],
+      ["/static", "GET", { "if-none-match": "*" }],
+      ["/static", "GET", { "if-match": '"v1"' }],
+      ["/dir", "HEAD", {}],
+      ["/dir", "GET", { "if-none-match": "*" }],
+      ["/dir", "GET", { "if-match": '"v1"' }],
+    ];
+    // The second read() of each of these responses finds the end of the file.
+    const body = [
+      ["/static", "GET", {}],
+      ["/dir", "GET", {}],
+    ];
+    const asanOpts = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+    await using proc = Bun.spawn({
+      // "0": no read() fails.
+      cmd: [
+        supervisorBin!,
+        unsized,
+        "0",
+        "--",
+        bunExe(),
+        join(String(dir), "unsized.mjs"),
+        unsized,
+        JSON.stringify([...noBody, ...body]),
+      ],
+      env: { ...bunEnv, ASAN_OPTIONS: asanOpts, LSAN_OPTIONS: "detect_leaks=0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const reads = Number(stderr.match(/matched read\(\) calls on target:\s*(\d+)/)?.[1]);
+    expect({ stdout: stdout.trim(), reads }).toEqual({
+      stdout: "DONE 200 304 412 200 304 412 200 200",
+      reads: noBody.length + 2 * body.length,
+    });
     expect(exitCode).toBe(0);
   },
 );

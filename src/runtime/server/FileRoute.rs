@@ -14,7 +14,9 @@ use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::node::types::PathOrFileDescriptor;
-use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
+use crate::server::file_response_stream::{
+    StartOptions as FileResponseStreamOptions, StreamOwner, UnsizedBody,
+};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
 
@@ -22,6 +24,8 @@ use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest}
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
+
+bun_output::declare_scope!(FileRoute, hidden);
 
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct FileRoute {
@@ -191,6 +195,8 @@ impl FileRoute {
         Ok(None)
     }
 
+    // `serve` is the hot caller: the second caller, `try_serve_unsized`, must not turn this into a call there.
+    #[inline(always)]
     fn write_headers(&self, resp: AnyResponse) {
         use bun_http_types::ETag::HeaderEntryColumns;
         let entries = self.headers.entries.slice();
@@ -341,6 +347,12 @@ impl FileRoute {
                 break 'brk (false, 0, 0, FileType::File, false);
             }
 
+            if UnsizedBody::applies_to(stat_size, bun_sys::S::ISREG(mode), self.blob.size.get())
+                && self.serve_unsized(fd, req, resp, method)
+            {
+                return Serve::Done;
+            }
+
             // `Cell::take` → mutate → `set`: single-threaded event loop, no
             // re-entry reads `stat_hash` between take/set.
             let mut sh = self.stat_hash.take();
@@ -458,6 +470,74 @@ impl FileRoute {
         }
     }
 
+    /// Answers with the bytes of a regular file whose `st_size` is 0 when they end inside the read buffer; `false` leaves the answer to the caller, which frames from the `stat`.
+    #[cold]
+    #[inline(never)]
+    fn serve_unsized(
+        &self,
+        fd: Fd,
+        req: &mut AnyRequest,
+        resp: AnyResponse,
+        method: Method,
+    ) -> bool {
+        match self.try_serve_unsized(fd, req, resp, method) {
+            Ok(answered) => answered,
+            // The next handler answers, as for a file that the route cannot open.
+            Err(err) => {
+                bun_output::scoped_log!(FileRoute, "read of an unsized file failed: {}", err);
+                req.set_yield(true);
+                true
+            }
+        }
+    }
+
+    fn try_serve_unsized(
+        &self,
+        fd: Fd,
+        req: &mut AnyRequest,
+        resp: AnyResponse,
+        method: Method,
+    ) -> bun_sys::Result<bool> {
+        let window = (self.blob.offset.get(), self.blob.size.get());
+        let Some(mut body) = UnsizedBody::probe(fd, window, false)? else {
+            return Ok(false);
+        };
+        // The mtime of such a file is not the time its content changed: only the headers of the route are validators.
+        self.stat_hash.set(StatHash::default());
+        let etag = self.headers.get(b"etag").filter(|v| !v.is_empty());
+        let last_modified_ms = if req.header(b"if-modified-since").is_some()
+            || req.header(b"if-unmodified-since").is_some()
+        {
+            let Ok(last_modified) = self.last_modified_date() else {
+                return Ok(true);
+            };
+            last_modified
+        } else {
+            None
+        };
+        let status_code = status_for_preconditions(
+            req,
+            method,
+            self.status_code,
+            etag,
+            last_modified_ms,
+            RangeRequest::Result::None,
+        );
+        if sends_unsized_body(method, status_code) && !body.fill(fd)? {
+            return Ok(false);
+        }
+
+        req.set_yield(false);
+        write_any_status(resp, status_code);
+        if self.has_date_header {
+            resp.mark_wrote_date_header();
+        }
+        resp.write_mark();
+        self.write_headers(resp);
+        end_unsized(&body, resp, method, status_code);
+        Ok(true)
+    }
+
     /// The last thing a response does with the route; callers then release
     /// the ref `on()` took for it.
     pub(crate) fn on_response_complete(&self, resp: AnyResponse) {
@@ -554,6 +634,37 @@ pub(crate) fn write_content_range(
         RangeRequest::Result::Satisfiable { start, end } => Some((start, end - start + 1)),
         _ => None,
     }
+}
+
+/// Whether a route sends the body of a file whose `st_size` is 0, and so reads all of it before the status line.
+pub(crate) fn sends_unsized_body(method: Method, status_code: u16) -> bool {
+    method != Method::HEAD
+        && status_code != 412
+        && !HTTPStatusText::is_null_body(status_code)
+        && !matches!(status_code, 307 | 308)
+}
+
+/// Ends a route's response after its status line and headers: `Content-Length` when the reads reached the end of the body, then the body.
+#[cold]
+#[inline(never)]
+pub(crate) fn end_unsized(body: &UnsizedBody, resp: AnyResponse, method: Method, status_code: u16) {
+    let close = resp.should_close_connection();
+    if HTTPStatusText::is_null_body(status_code) || matches!(status_code, 307 | 308) {
+        return resp.end_without_body(close);
+    }
+    if status_code == 412 {
+        return resp.end(b"", close);
+    }
+    if let Some(len) = body.whole_len()
+        && !resp.state().has_written_content_length_header()
+    {
+        resp.write_header_int(b"content-length", len);
+        resp.mark_wrote_content_length_header();
+    }
+    if method == Method::HEAD {
+        return resp.end_without_body(close);
+    }
+    resp.end(body.bytes(), close);
 }
 
 pub(crate) fn write_any_status(resp: AnyResponse, status: u16) {

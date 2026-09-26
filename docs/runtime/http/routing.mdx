@@ -194,6 +194,20 @@ Bun.serve({
 - **Memory efficient** - Only buffers small chunks during transfer, not entire file
 - **Best for**: Large files, dynamic content, user uploads, files that change frequently
 
+Some files have content and report a size of `0`. On Linux, the files on `procfs` and `cgroupfs` do. Bun reads such a file before it sends the response headers, and sends the content that it reads:
+
+- The response has a `Content-Length` header with the number of bytes that Bun read.
+- The response has no `Last-Modified` or `ETag` header from the file, and Bun ignores the `Range` header of the request. The size and the modification time of such a file do not describe its content.
+- A response to a `HEAD` request has no `Content-Length` header. Bun does not read the whole file for it.
+
+File routes and a `Response` with a `BunFile` body from a `fetch` handler serve such a file this way. These limits apply:
+
+- The content must end inside the read buffer of the server. If it does not, the response body is empty.
+- The `BunFile` must not hold a size already. After `file.size` or `await file.exists()`, it holds the size of `0`, and the response body is empty.
+- Bun does not do this on Windows.
+
+To send such a file without these limits, read it first: `new Response(await Bun.file(path).bytes())`.
+
 ### Directory routes
 
 To serve an entire directory tree at a URL prefix, pass `{ dir }` as the route value. The route path must end in `/*`.
@@ -218,10 +232,17 @@ Bun percent-decodes the part of the request URL after the prefix once and opens 
 Directory routes share the response path with file routes:
 
 - **Content-Type** is set from the file extension.
-- **Last-Modified** and a weak `ETag` (`W/"<size>-<mtime>"`) are sent on every response, and `If-Modified-Since` / `If-None-Match` are honored with `304 Not Modified`.
+- **Last-Modified** and a weak `ETag` (`W/"<size>-<mtime>"`) are sent, and `If-Modified-Since` / `If-None-Match` are honored with `304 Not Modified`.
 - **Range requests** are supported with `Accept-Ranges: bytes` and `Content-Range`.
 - A request that resolves to a directory without a trailing `/` receives a `301` redirect to the trailing-slash URL. With the trailing slash, Bun serves `index.html` from that directory.
 - Missing files return `404`.
+
+A file that reports a size of `0` and has content is served as [a file route serves it](#file-responses-vs-static-responses), with no `Last-Modified`, `ETag`, or `Accept-Ranges` header. A directory route reads such a file only when the file is on the same filesystem as `dir`. For a file on another filesystem, the response body is empty.
+
+<Warning>
+  A directory route with a `dir` on `procfs` sends each file there that the server process can read, for example
+  `/proc/self/environ`. Do not use such a `dir` on a server that other people can reach.
+</Warning>
 
 Pass `statCache: false` to disable the per-path `Last-Modified` cache (saves roughly 20 KB per route).
 

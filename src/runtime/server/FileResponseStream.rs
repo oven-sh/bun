@@ -106,8 +106,7 @@ pub(crate) struct StartOptions {
     pub pollable: bool,
     /// Byte offset into the file to begin reading from.
     pub offset: u64,
-    /// Maximum bytes to send; `None` reads to EOF. For regular files this
-    /// should be `stat.size - offset` (after Range/slice clamping).
+    /// Maximum bytes to send; `None` reads to EOF. For a regular file this is `stat.size - offset` (after Range/slice clamping), and an `st_size` of 0 is not a length: see `UnsizedBody`.
     pub length: Option<u64>,
     pub idle_timeout: u8,
     pub owner: StreamOwner,
@@ -653,6 +652,133 @@ impl Drop for FileResponseStream {
             #[cfg(not(windows))]
             Closer::close(self.fd.get(), ());
         }
+    }
+}
+
+/// The body of a regular file whose `st_size` is 0, read before the response is framed: procfs and cgroupfs files report 0 and have content, so only the reads give a length, and the `stat` gives no Range and no validator.
+pub(crate) struct UnsizedBody {
+    buf: UnsizedBuf,
+    len: usize,
+    /// A read returned no bytes or the window is used up.
+    whole: bool,
+    /// `pread` at `offset`; otherwise `read` from the file position, which moves.
+    pread: bool,
+    offset: u64,
+    window: u64,
+}
+
+enum UnsizedBuf {
+    Scratch(bun_io::PipeReadScratchGuard<'static>),
+    /// A read further up the stack holds the scratch.
+    Heap(Box<[u8]>),
+}
+
+impl core::ops::Deref for UnsizedBuf {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            UnsizedBuf::Scratch(scratch) => scratch,
+            UnsizedBuf::Heap(heap) => heap,
+        }
+    }
+}
+
+impl core::ops::DerefMut for UnsizedBuf {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        match self {
+            UnsizedBuf::Scratch(scratch) => scratch,
+            UnsizedBuf::Heap(heap) => heap,
+        }
+    }
+}
+
+impl UnsizedBody {
+    /// Windows has no procfs or cgroupfs, so the reads are not supported there and an `st_size` of 0 stays an empty body.
+    pub(crate) const SUPPORTED: bool = cfg!(not(windows));
+
+    /// Whether a file is regular and reports no size, and the response wants `window` bytes of it. It takes the fields, because a reference keeps the whole `Stat` in memory for every file.
+    #[inline]
+    pub(crate) fn applies_to(st_size: u64, is_regular: bool, window: u64) -> bool {
+        Self::SUPPORTED && st_size == 0 && is_regular && window > 0
+    }
+
+    /// The body, when the file has bytes and they end inside the read buffer; `None` otherwise, and the caller frames from the `stat`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn read(fd: Fd, window: (u64, u64)) -> sys::Result<Option<UnsizedBody>> {
+        let Some(mut body) = Self::probe(fd, window, false)? else {
+            return Ok(None);
+        };
+        Ok(body.fill(fd)?.then_some(body))
+    }
+
+    /// One read of at most `window` bytes at `offset`; `None` when it finds no bytes. `keep_position` reads with `pread`, for a descriptor the caller does not own.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn probe(
+        fd: Fd,
+        (offset, window): (u64, u64),
+        keep_position: bool,
+    ) -> sys::Result<Option<UnsizedBody>> {
+        debug_assert!(Self::SUPPORTED && window > 0);
+        let vm = VirtualMachine::get();
+        let ctx = EventLoopHandle::init(vm.event_loop().cast::<()>()).as_event_loop_ctx();
+        let buf = match ctx.claim_pipe_read_scratch() {
+            Some(scratch) => UnsizedBuf::Scratch(scratch),
+            None => UnsizedBuf::Heap(
+                vec![0; bun_io::pipe_read_scratch::PIPE_READ_BUFFER_SIZE].into_boxed_slice(),
+            ),
+        };
+        let mut body = UnsizedBody {
+            buf,
+            len: 0,
+            whole: false,
+            pread: offset > 0 || keep_position,
+            offset,
+            window,
+        };
+        body.read_once(fd)?;
+        Ok((body.len > 0).then_some(body))
+    }
+
+    /// Reads until the end of the body or a full buffer; `false` when the body does not end inside the buffer.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn fill(&mut self, fd: Fd) -> sys::Result<bool> {
+        while !self.whole && self.len < self.buf.len() {
+            self.read_once(fd)?;
+        }
+        Ok(self.whole)
+    }
+
+    fn read_once(&mut self, fd: Fd) -> sys::Result<()> {
+        let len = self.len;
+        let end = (self.buf.len() as u64).min(self.window) as usize;
+        let dst = &mut self.buf[len..end];
+        let read = if self.pread {
+            let at = i64::try_from(self.offset + len as u64).expect("int cast");
+            sys::pread(fd, dst, at)
+        } else {
+            sys::read(fd, dst)
+        };
+        let n = match read {
+            Ok(n) => n,
+            // The descriptor is non-blocking: a file that has no bytes for now (`/proc/kmsg`) ends here.
+            Err(err) if err.is_retry() => 0,
+            Err(err) => return Err(err),
+        };
+        self.len += n;
+        self.whole = n == 0 || self.len as u64 == self.window;
+        Ok(())
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+
+    /// The length of the body, once the reads reached its end.
+    pub(crate) fn whole_len(&self) -> Option<u64> {
+        self.whole.then_some(self.len as u64)
     }
 }
 

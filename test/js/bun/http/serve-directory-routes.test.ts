@@ -1,6 +1,6 @@
 import { serve, type Server } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { symlinkSync } from "fs";
+import { readFileSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "path";
 
@@ -39,6 +39,7 @@ describe("Bun.serve() directory routes", () => {
   // send raw request bytes over a socket.
   async function raw(
     path: string,
+    requestHeaders = "",
   ): Promise<{ status: number; headers: Record<string, string>; head: string; body: string }> {
     const { promise, resolve } = Promise.withResolvers<string>();
     let buf = "";
@@ -57,7 +58,7 @@ describe("Bun.serve() directory routes", () => {
         },
       },
     });
-    sock.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    sock.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n${requestHeaders}\r\n`);
     const full = await promise;
     const status = parseInt(full.slice(9, 12), 10);
     const headEnd = full.indexOf("\r\n\r\n");
@@ -326,6 +327,98 @@ describe("Bun.serve() directory routes", () => {
     });
     expect(unsat.status).toBe(416);
     expect(unsat.headers.get("content-range")).toBe("bytes */10");
+  });
+
+  it("serves an empty file with `Content-Length: 0` and its validators", async () => {
+    using dir = tempDir("serve-dir-empty", { "public/empty.txt": "" });
+    server = serve({
+      port: 0,
+      routes: { "/*": { dir: join(String(dir), "public") } },
+    });
+
+    const { status, headers, body } = await raw("/empty.txt");
+    expect({
+      status,
+      contentLength: headers["content-length"],
+      acceptRanges: headers["accept-ranges"],
+      etag: headers["etag"],
+      hasLastModified: "last-modified" in headers,
+      body,
+    }).toEqual({
+      status: 200,
+      contentLength: "0",
+      acceptRanges: "bytes",
+      etag: expect.stringMatching(/^W\/"0-[0-9a-f]+"$/),
+      hasLastModified: true,
+      body: "",
+    });
+  });
+
+  // A regular file on procfs reports a stat size of 0 and has content, and
+  // its mtime is not the time the content changed. The response takes its
+  // length from the reads, and no validator and no Range from the stat.
+  describe.skipIf(!isLinux)("a file whose stat size is 0", () => {
+    const framing = ({ status, headers, body }: Awaited<ReturnType<typeof raw>>) => {
+      const header = (name: string): string | null => headers[name] ?? null;
+      return {
+        status,
+        contentLength: header("content-length"),
+        transferEncoding: header("transfer-encoding"),
+        contentRange: header("content-range"),
+        acceptRanges: header("accept-ranges"),
+        etag: header("etag"),
+        lastModified: header("last-modified"),
+        body,
+      };
+    };
+    const plain = { contentRange: null, acceptRanges: null, etag: null, lastModified: null };
+
+    it("is served with the bytes a read finds", async () => {
+      server = serve({ port: 0, routes: { "/*": { dir: "/proc/sys/kernel" } } });
+      const bytes = readFileSync("/proc/sys/kernel/ostype", "latin1");
+      const sent = { ...plain, status: 200, contentLength: String(bytes.length), transferEncoding: null };
+
+      const head = await fetch(`${server.url}ostype`, { method: "HEAD" });
+      expect({
+        get: framing(await raw("/ostype")),
+        range: framing(await raw("/ostype", "Range: bytes=0-1\r\n")),
+        ifNoneMatch: framing(await raw("/ostype", `If-None-Match: W/"0-0"\r\n`)),
+        head: { status: head.status, contentLength: head.headers.get("content-length"), body: await head.text() },
+      }).toEqual({
+        get: { ...sent, body: bytes },
+        range: { ...sent, body: bytes },
+        ifNoneMatch: { ...sent, body: bytes },
+        head: { status: 200, contentLength: null, body: "" },
+      });
+    });
+
+    // The route reads such a file on the filesystem of its root only. A root
+    // that holds a mount of procfs does not hand out the files of the process.
+    it("is not read on another filesystem than the root", async () => {
+      server = serve({ port: 0, routes: { "/*": { dir: "/" } } });
+      const { status, headers, body } = await raw("/proc/self/environ");
+      expect({ status, contentLength: headers["content-length"], body }).toEqual({
+        status: 200,
+        contentLength: "0",
+        body: "",
+      });
+    });
+
+    it("is not read through a symlink that leaves the root", async () => {
+      using dir = tempDir("serve-dir-unsized-link", { "public/a.txt": "a" });
+      symlinkSync("/proc/version", join(String(dir), "public", "absolute"));
+      symlinkSync("../../../../../../../../proc/version", join(String(dir), "public", "relative"));
+      server = serve({ port: 0, routes: { "/*": { dir: join(String(dir), "public") } } });
+      // 404 where the kernel keeps the link inside the root (`openat2`). Elsewhere the answer of the stat.
+      const answer = async (path: string) => {
+        const { status, body } = await raw(path);
+        return { status: status === 404 ? "404 or 200" : status === 200 ? "404 or 200" : status, body };
+      };
+      expect({ absolute: await answer("/absolute"), relative: await answer("/relative") }).toEqual({
+        absolute: { status: "404 or 200", body: "" },
+        relative: { status: "404 or 200", body: "" },
+      });
+    });
   });
 
   it("rejects path traversal", async () => {

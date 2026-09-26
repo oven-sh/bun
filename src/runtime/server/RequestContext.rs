@@ -275,6 +275,7 @@ mod NativePromiseContext {
     }
 }
 use crate::node::types::PathLikeExt as _;
+use crate::server::file_response_stream::UnsizedBody;
 use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
@@ -1865,6 +1866,22 @@ where
             _ => unreachable!(),
         };
         let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
+        if UnsizedBody::applies_to(stat_size as u64, is_regular, original_size as u64)
+            && self.method.has_body()
+        {
+            let window = (blob_offset as u64, original_size as u64);
+            match UnsizedBody::read(fd, window) {
+                Ok(None) => {}
+                Ok(Some(body)) => return self.send_unsized_file(fd, auto_close, &body),
+                Err(err) => {
+                    if auto_close {
+                        fd.close();
+                    }
+                    let js_err = file_error_to_js(&err, &file.pathlike, global_this);
+                    return self.run_error_handler(js_err);
+                }
+            }
+        }
         if let AnyBlob::Blob(b) = blob_ref {
             b.size.set(if is_regular {
                 stat_size
@@ -2015,6 +2032,30 @@ where
                 on_error: Self::on_file_stream_error,
             },
         });
+    }
+
+    /// Answers with the body of a regular file whose `st_size` is 0: the reads give the length, and the response has no Range.
+    #[cold]
+    #[inline(never)]
+    fn send_unsized_file(&self, fd: bun_sys::Fd, auto_close: bool, body: &UnsizedBody) {
+        let resp = self.resp.get().expect("infallible: resp bound");
+        if auto_close {
+            fd.close();
+        }
+        if let AnyBlob::Blob(blob) = self.blob.get() {
+            blob.size.set(body.bytes().len() as BlobSizeType);
+        }
+        self.flags.set_needs_content_length(true);
+        let mut send = (self, body);
+        resp.run_corked_with_type(
+            |send: *mut (&Self, &UnsizedBody)| {
+                // SAFETY: `send` is a stack local threaded through the synchronous cork call.
+                let (this, body) = unsafe { *send };
+                this.render_metadata();
+                this.end(body.bytes(), this.should_close_connection());
+            },
+            &raw mut send,
+        );
     }
 
     fn do_render_with_body_locked(this: NonNull<c_void>, value: &mut Body::Value) {
@@ -4769,6 +4810,20 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         let mut bits = self.0.get();
         bits.set(FlagsBits::HAS_FINALIZED, v);
         self.0.set(bits);
+    }
+}
+
+/// The error of a read of the file that `pathlike` names, with the path or the descriptor attached. Not for the `fstat` arm of `do_sendfile`: a reference to its error makes each request copy the `Stat`.
+#[cold]
+fn file_error_to_js(
+    err: &bun_sys::Error,
+    pathlike: &crate::webcore::node_types::PathOrFileDescriptor,
+    global_this: &JSGlobalObject,
+) -> JSValue {
+    use crate::webcore::node_types::PathOrFileDescriptor;
+    match pathlike {
+        PathOrFileDescriptor::Path(path) => err.with_path(path.slice()).to_js(global_this),
+        PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd).to_js(global_this),
     }
 }
 

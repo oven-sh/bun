@@ -186,11 +186,12 @@ pub struct Comparator {
 impl Comparator {
     /// `<0.0.0-0`: no version satisfies it. node-semver uses it for the empty set.
     pub(crate) fn null_set() -> Comparator {
+        let zero: &[u8] = b"0";
         Comparator {
             op: Op::Lt,
             version: Version {
                 tag: Tag {
-                    pre: SlicedString::init(b"0", b"0").external(),
+                    pre: SlicedString::init(zero, zero).external(),
                     ..Default::default()
                 },
                 ..Default::default()

@@ -1049,10 +1049,9 @@ test("a range with a number above u64::MAX gives the same answers as node-semver
   expect({ seed, disagreements }).toEqual({ seed, disagreements: [] });
 });
 
-test.concurrent("bun install does not resolve a dependency range that has a number above u64::MAX", async () => {
-  // "^99999999999999999999" used to be read as "^0", so this installed foo@0.5.0.
-  const requested: string[] = [];
-  await using registry = Bun.serve({
+// A registry with one package, "foo". It serves the manifest and no tarball.
+function fooRegistry(versions: string[], requested: string[] = []) {
+  return Bun.serve({
     port: 0,
     fetch(req) {
       const { pathname } = new URL(req.url);
@@ -1060,9 +1059,9 @@ test.concurrent("bun install does not resolve a dependency range that has a numb
       if (pathname !== "/foo") return new Response("not found", { status: 404 });
       return Response.json({
         name: "foo",
-        "dist-tags": { latest: "1.0.0" },
+        "dist-tags": { latest: versions.at(-1) },
         versions: Object.fromEntries(
-          ["0.5.0", "1.0.0"].map(version => [
+          versions.map(version => [
             version,
             { name: "foo", version, dist: { tarball: new URL(`/foo-${version}.tgz`, req.url).href } },
           ]),
@@ -1070,6 +1069,12 @@ test.concurrent("bun install does not resolve a dependency range that has a numb
       });
     },
   });
+}
+
+test.concurrent("bun install does not resolve a dependency range that has a number above u64::MAX", async () => {
+  // "^99999999999999999999" used to be read as "^0", so this installed foo@0.5.0.
+  const requested: string[] = [];
+  await using registry = fooRegistry(["0.5.0", "1.0.0"], requested);
   using dir = tempDir("semver-number-above-u64-max", {
     "package.json": JSON.stringify({
       name: "app",
@@ -1091,6 +1096,41 @@ test.concurrent("bun install does not resolve a dependency range that has a numb
   );
   expect(requested).toEqual(["/foo"]);
   expect(exitCode).toBe(1);
+});
+
+describe.concurrent("bun install and an override selector with a number above u64::MAX", () => {
+  // Every rule sets 0.5.0, so `resolved` is 0.5.0 when the rule applies.
+  test.each([
+    // No version satisfies the selector, so the rule never applies. The selector used to be read as "^0".
+    { selector: "^99999999999999999999", declared: "<2.0.0", resolved: "1.0.0" },
+    { selector: "^99999999999999999999", declared: "<=1.0.0", resolved: "1.0.0" },
+    { selector: "^99999999999999999999", declared: "*", resolved: "2.0.0" },
+    { selector: "^1.0.0 || ^99999999999999999999", declared: "^1.0.0", resolved: "1.0.0" },
+    // A selector that fits still applies.
+    { selector: "^1.0.0", declared: "<2.0.0", resolved: "0.5.0" },
+  ])("foo@$selector on $declared", async ({ selector, declared, resolved }) => {
+    await using registry = fooRegistry(["0.5.0", "1.0.0", "2.0.0"]);
+    using dir = tempDir("semver-override-selector", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { foo: declared },
+        overrides: { [`foo@${selector}`]: "0.5.0" },
+      }),
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.url}"\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) expect(stderr).toBe("");
+    const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
+    expect({ resolved: /"foo": \["foo@([^"]+)"/.exec(lockfile)?.[1], exitCode }).toEqual({ resolved, exitCode: 0 });
+  });
 });
 
 describe.concurrent("bun pm version and a version number above u64::MAX", () => {

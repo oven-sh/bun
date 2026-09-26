@@ -75,13 +75,19 @@ impl<'a> Interval<'a> {
     }
 
     fn is_non_empty(&self) -> bool {
-        match (self.lower, self.upper) {
-            (Some(l), Some(u)) => match l.version.order_without_build(u.version, l.buf, u.buf) {
-                Ordering::Less => true,
-                Ordering::Equal => l.inclusive && u.inclusive,
-                Ordering::Greater => false,
-            },
-            _ => true,
+        let Some(u) = self.upper else {
+            return true;
+        };
+        // `0.0.0-0` is the lowest version, so a missing lower bound starts there and `<0.0.0-0` alone is empty.
+        let l = self.lower.unwrap_or_else(|| Bound {
+            version: Comparator::null_set().version,
+            buf: b"",
+            inclusive: true,
+        });
+        match l.version.order_without_build(u.version, l.buf, u.buf) {
+            Ordering::Less => true,
+            Ordering::Equal => l.inclusive && u.inclusive,
+            Ordering::Greater => false,
         }
     }
 }

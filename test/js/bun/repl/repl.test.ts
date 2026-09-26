@@ -1,6 +1,6 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, statSync } from "node:fs";
 import path from "path";
 
@@ -332,6 +332,36 @@ async function withTerminalRepl(
 }
 
 describe.concurrent("Bun REPL", () => {
+  // Without pidfd_open the waiter thread posts the exit of a child, and the prompt does not poll.
+  test.skipIf(!isLinux && !isAndroid)(
+    "reports the exit of a child after the next input on the waiter thread",
+    async () => {
+      const { outputs, exitCode } = await runRepl(
+        [
+          `globalThis.child = Bun.spawn({ cmd: ["sleep", "60"], stdio: ["ignore", "ignore", "ignore"], onExit: () => console.log("exit reported") }); "spawned"`,
+          // Stays in this input until the child is dead. The waiter thread handles its children in spawn order.
+          [
+            `child.kill();`,
+            `for (;;) {`,
+            `  let stat;`,
+            `  try { stat = require("node:fs").readFileSync("/proc/" + child.pid + "/stat", "latin1"); } catch { break; }`,
+            `  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");`,
+            `  if (fields[0] === "Z" && fields[17] === "1") break;`,
+            `  Bun.sleepSync(1);`,
+            `}`,
+            `Bun.spawnSync({ cmd: ["true"] });`,
+            `"killed"`,
+          ].join(" "),
+          `"next"`,
+        ],
+        // The flag is read when BUN_GARBAGE_COLLECTOR_LEVEL is set, and bunEnv sets it.
+        { env: { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } },
+      );
+      expect(outputs).toEqual([`"spawned"`, `"killed"\nexit reported`, `"next"`]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   describe("basic evaluation", () => {
     test("prints the value of each evaluated line", async () => {
       const { outputs, stderr, exitCode } = await runRepl([

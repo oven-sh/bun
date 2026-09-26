@@ -662,13 +662,14 @@ describe.skipIf(!isLinux && !isAndroid)("the waiter thread reports the exit of a
       }, 0);
     }
   `;
-  // Says "ready", then answers SIGTERM with "last" and exits.
+  // Says "ready", then answers SIGTERM with "last" and exits. It also ends when its parent is gone.
   const ipcChild = /* js */ `
     process.on("SIGTERM", () => process.send("last", () => process.exit(0)));
+    process.on("disconnect", () => process.exit(0));
     process.send("ready");
     setInterval(() => {}, 1 << 30);
   `;
-  const stdoutChild = `trap "printf last; exit" TERM; printf ready; while :; do sleep 0.01; done`;
+  const stdoutChild = `trap "printf last; exit" TERM; printf ready; while kill -0 $PPID 2>/dev/null; do sleep 0.01; done`;
 
   async function run(parent: string) {
     using dir = tempDir("waiter-thread-exit", { "parent.js": prelude + parent, "child.js": ipcChild });

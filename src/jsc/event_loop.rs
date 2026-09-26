@@ -998,6 +998,11 @@ impl EventLoop {
         true
     }
 
+    /// Whether a task waits for a poll of the loop. See [`EventLoop::yield_tasks`].
+    pub fn has_yielded_tasks(&self) -> bool {
+        !self.yield_tasks.is_empty()
+    }
+
     /// The poll of a driver that does not use `auto_tick`. With a yielded task to promote, it does not wait.
     pub fn promote_and_poll(&mut self, timeout: bun_core::Timespec) {
         let promoted = self.promote_yield_tasks();

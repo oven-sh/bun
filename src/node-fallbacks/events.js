@@ -65,10 +65,17 @@ function emitError(emitter, args) {
   return true;
 }
 
-function addCatch(emitter, promise, type, args) {
-  promise.then(undefined, function (err) {
-    queueMicrotask(() => emitUnhandledRejectionOrErr(emitter, err, type, args));
-  });
+function addCatch(emitter, value, type, args) {
+  try {
+    // Any thenable is captured, not only native promises. `then` is read once for Promises/A+ compat.
+    const then = value.then;
+    if (typeof then !== "function") return;
+    then.call(value, undefined, function (err) {
+      queueMicrotask(() => emitUnhandledRejectionOrErr(emitter, err, type, args));
+    });
+  } catch (err) {
+    emitter.emit("error", err);
+  }
 }
 
 function emitUnhandledRejectionOrErr(emitter, err, type, args) {
@@ -156,7 +163,8 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = handler.apply(this, args);
         break;
     }
-    if (result !== undefined && typeof result?.then === "function" && result.then === Promise.prototype.then) {
+    // `undefined` is checked first because it is by far the most common result.
+    if (result !== undefined && result !== null) {
       addCatch(this, result, type, args);
     }
   }
@@ -228,7 +236,8 @@ function overflowWarning(emitter, type, handlers) {
 
 function onceWrapper(type, listener, ...args) {
   this.removeListener(type, listener);
-  listener.apply(this, args);
+  // The return value reaches captureRejections' addCatch, so it must not be swallowed.
+  return listener.apply(this, args);
 }
 
 EventEmitterPrototype.once = function once(type, fn) {

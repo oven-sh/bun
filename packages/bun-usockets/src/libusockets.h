@@ -413,6 +413,11 @@ void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
 /* Returns an owned reference; the caller must release it. */
 struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
+/* tls.Server#setSecureContext(): swap the default SSL_CTX used for NEWLY
+ * accepted sockets (SNI-selected contexts are untouched). Up_refs ctx; live
+ * connections keep the previous context alive through their own SSL refs. */
+void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
+    struct ssl_ctx_st *ctx) __attribute__((nonnull(1, 2)));
 /* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees);
  * returns 0 with a static *err_reason tag on failure. */
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
@@ -643,6 +648,8 @@ struct us_iovec_t {
  * partial-write poll handling, one writev for all chunks (sequential sends
  * on platforms without writev). Returns total bytes written. */
 int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
+/* Vectored us_socket_write: through TLS if `s->ssl` is set, with the records of all chunks in one write. */
+int us_socket_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
 
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
 /* Like us_socket_write, but additionally reports a fatal (non-would-block)

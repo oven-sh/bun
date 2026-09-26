@@ -299,7 +299,8 @@ initPostgres(
     reject: Error | (PostgresErrorOptions & { message: string }),
     queries: Query<any, any>[],
   ) {
-    reject = wrapPostgresError(reject);
+    // A parameter can throw a non-object, and the query rejects with it.
+    if ($isObject(reject)) reject = wrapPostgresError(reject);
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {

@@ -2421,11 +2421,12 @@ impl RunCommand {
                         temp_script_buffer.extend_from_slice(b"\x00pre");
                         temp_script_buffer.extend_from_slice(target_name);
 
-                        let package_json_dir =
-                            strings::without_trailing_slash(strings::without_suffix_comptime(
+                        let package_json_dir = strings::paths::without_trailing_slash_windows_path(
+                            strings::without_suffix_comptime(
                                 package_json.source.path.text,
                                 b"package.json",
-                            ));
+                            ),
+                        );
                         bun_core::scoped_log!(
                             RUN_LOG,
                             "Running in dir `{}`",

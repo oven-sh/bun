@@ -11,6 +11,7 @@ import {
   normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
+  substDrive,
   tempDir,
   textLockfile,
   toBeValidBin,
@@ -7416,6 +7417,94 @@ describe.concurrent("bun-install", () => {
       expect(await file(join(ctx.package_dir, "moo", "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
         version: "0.0.2",
+      });
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/29273
+  //
+  // `C:` is the current directory of drive C, it is not the root `C:\`. `bun install` removed the
+  // separator from a cwd of `C:\`, and the project directory it then opened did not exist.
+  describe.skipIf(!isWindows)("project in the root of a drive", () => {
+    async function run(cwd: string, ...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const bar = { name: "bar", version: "0.0.2" };
+
+    it.each(["hoisted", "isolated"] as const)("bun install with the %s linker", async linker => {
+      await withContext({ linker }, async ctx => {
+        setContextHandler(ctx, dummyRegistryForContext(ctx, []));
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { bar: "^0" },
+            scripts: { postinstall: "echo INIT_CWD=$INIT_CWD" },
+          }),
+        );
+        using drive = substDrive(ctx.package_dir);
+
+        const { stdout, stderr, exitCode } = await run(drive.root, "install");
+        expect(stderr).toContain("Saved lockfile");
+        expect(stdout).toContain("+ bar@0.0.2");
+        expect(stdout.split(/\r?\n/)).toContain(`INIT_CWD=${drive.root}`);
+        expect(exitCode).toBe(0);
+        expect(await file(join(drive.root, "node_modules", "bar", "package.json")).json()).toEqual(bar);
+        await access(join(drive.root, "bun.lockb"));
+      });
+    });
+
+    it("bun install from a directory below a package.json in the root", async () => {
+      await withContext(defaultOpts, async ctx => {
+        setContextHandler(ctx, dummyRegistryForContext(ctx, []));
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "^0" } }),
+        );
+        await mkdir(join(ctx.package_dir, "moo", "src"), { recursive: true });
+        using drive = substDrive(ctx.package_dir);
+
+        const { stdout, stderr, exitCode } = await run(join(drive.root, "moo", "src"), "install");
+        expect(stderr).toContain("Saved lockfile");
+        expect(stdout).toContain("+ bar@0.0.2");
+        expect(exitCode).toBe(0);
+        expect(await file(join(drive.root, "node_modules", "bar", "package.json")).json()).toEqual(bar);
+        expect(await readdirSorted(join(drive.root, "moo"))).toEqual(["src"]);
+      });
+    });
+
+    it("bun add and bun remove", async () => {
+      await withContext(defaultOpts, async ctx => {
+        setContextHandler(ctx, dummyRegistryForContext(ctx, []));
+        await writeFile(join(ctx.package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+        using drive = substDrive(ctx.package_dir);
+
+        const added = await run(drive.root, "add", "bar");
+        expect(added.stderr).toContain("Saved lockfile");
+        expect(added.stdout).toContain("installed bar@0.0.2");
+        expect(added.exitCode).toBe(0);
+        expect(await file(join(drive.root, "package.json")).json()).toEqual({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { bar: "^0.0.2" },
+        });
+        expect(await file(join(drive.root, "node_modules", "bar", "package.json")).json()).toEqual(bar);
+
+        const removed = await run(drive.root, "remove", "bar");
+        expect(removed.stderr).toContain("package.json has no dependencies! Deleted empty lockfile");
+        expect(removed.exitCode).toBe(0);
+        expect(await file(join(drive.root, "package.json")).json()).toEqual({ name: "foo", version: "0.0.1" });
       });
     });
   });

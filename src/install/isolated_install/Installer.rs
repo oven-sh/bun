@@ -554,19 +554,21 @@ impl<'a> Installer<'a> {
             break 'state (node_id, state);
         };
 
+        let pkg_id = nodes.items_pkg_id()[node_id.get() as usize];
         match real_state {
             CompleteState::Success => {}
             CompleteState::Skipped => {
                 self.summary.skipped += 1;
+                self.manager_mut().note_package_present(pkg_id);
                 return;
             }
             CompleteState::Fail => {
                 self.summary.fail += 1;
                 return;
             }
+            CompleteState::OfflineMiss => return,
         }
-
-        let pkg_id = nodes.items_pkg_id()[node_id.get() as usize];
+        self.manager_mut().note_package_present(pkg_id);
 
         let is_duplicate = self.installed.is_set(pkg_id as usize);
         self.summary.success += (!is_duplicate) as u32;
@@ -619,6 +621,8 @@ pub enum CompleteState {
     Success,
     Skipped,
     Fail,
+    /// `--offline` and the package is not in the cache: `report_offline_misses` decides whether that is an error.
+    OfflineMiss,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

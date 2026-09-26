@@ -615,6 +615,101 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     !WorkspaceFilter::is_selected(workspace_filters, pkg_id)
 }
 
+pub(crate) struct PlacedPackages {
+    /// A placed dependency without `Behavior::OPTIONAL` resolves to the package.
+    pub(crate) required: DynamicBitSet,
+    /// Any placed dependency resolves to the package.
+    pub(crate) seen: DynamicBitSet,
+    /// A peer dependency without `Behavior::OPTIONAL` of a walked package resolves to the package.
+    pub(crate) peers: DynamicBitSet,
+}
+
+/// What an install found, for `placed_packages`. Both sets are `bit[package_id]`.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct InstalledPackages<'a> {
+    /// The walk goes below one of these only if it is required.
+    pub(crate) not_installed: Option<&'a DynamicBitSet>,
+    /// A folder of the package is in place. The walk goes below the package of a peer only then.
+    pub(crate) in_place: Option<&'a DynamicBitSet>,
+}
+
+/// Walks what the linkers place, from the root.
+pub(crate) fn placed_packages(
+    lockfile: &Lockfile,
+    manager: &PackageManager,
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    packages_to_install: Option<&[PackageID]>,
+    installed: InstalledPackages<'_>,
+) -> Result<PlacedPackages, AllocError> {
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let pkgs = lockfile.packages.slice();
+    let pkg_dependencies = pkgs.items_dependencies();
+    let pkg_metas = pkgs.items_meta();
+
+    let mut placed = PlacedPackages {
+        required: DynamicBitSet::init_empty(pkg_dependencies.len())?,
+        seen: DynamicBitSet::init_empty(pkg_dependencies.len())?,
+        peers: DynamicBitSet::init_empty(pkg_dependencies.len())?,
+    };
+    let mut queued = DynamicBitSet::init_empty(pkg_dependencies.len())?;
+    let mut queue: Vec<PackageID> = vec![0];
+    queued.set(0);
+
+    while let Some(parent_pkg_id) = queue.pop() {
+        let slice = pkg_dependencies[parent_pkg_id as usize];
+        for dep_id in slice.begin()..slice.end() {
+            let pkg_id = resolutions[dep_id as usize];
+            let behavior = dependencies[dep_id as usize].behavior;
+            if pkg_id as usize >= pkg_dependencies.len()
+                // `is_filtered_dependency_or_workspace` would print this package under `--verbose`.
+                || pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os)
+                || is_filtered_dependency_or_workspace(
+                    dep_id,
+                    parent_pkg_id,
+                    workspace_filters,
+                    install_root_dependencies,
+                    manager,
+                    lockfile,
+                    resolutions,
+                )
+                || (parent_pkg_id == 0
+                    && packages_to_install.is_some_and(|packages| !packages.contains(&pkg_id)))
+            {
+                continue;
+            }
+            let is_optional = behavior.contains(crate::dependency::Behavior::OPTIONAL);
+            let is_in = |set: Option<&DynamicBitSet>| {
+                set.is_some_and(|set| set.is_set_allow_out_of_bound(pkg_id as usize, false))
+            };
+            if behavior.is_peer() {
+                // An optional peer installs nothing. A linker can bind the other kind to another package, so it judges nothing.
+                if is_optional {
+                    continue;
+                }
+                placed.peers.set(pkg_id as usize);
+                if !is_in(installed.in_place) {
+                    continue;
+                }
+            } else {
+                placed.seen.set(pkg_id as usize);
+                if !is_optional {
+                    placed.required.set(pkg_id as usize);
+                } else if is_in(installed.not_installed) {
+                    continue;
+                }
+            }
+            if !queued.is_set(pkg_id as usize) {
+                queued.set(pkg_id as usize);
+                queue.push(pkg_id);
+            }
+        }
+    }
+
+    Ok(placed)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // process_subtree / hoist_dependency
 // ──────────────────────────────────────────────────────────────────────────

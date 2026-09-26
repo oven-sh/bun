@@ -603,3 +603,82 @@ test("error.stack doesnt lose frames", () => {
   // We allow it to differ by the existence of <anonymous> as a string. But that's it.
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
 });
+
+// process.argv is a writable property, so a program can store any value in it.
+// LifecycleReporter.getModuleGraph read that slot with uncheckedDowncast<JSArray>:
+// an attached inspector client that called getModuleGraph crashed the process
+// (SIGSEGV) when the value was not a cell, and read a bogus length off an
+// unrelated cell otherwise.
+test("LifecycleReporter.getModuleGraph survives a process.argv that is not an array", async () => {
+  await using child = spawn({
+    cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/", "-e", "setInterval(() => {}, 1000);"],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  let url: string | undefined;
+  const decoder = new TextDecoder();
+  for await (const chunk of child.stderr as ReadableStream) {
+    stderr += decoder.decode(chunk);
+    url = stderr.match(/(ws:\/\/[^\s]+)/)?.[1];
+    if (url) break;
+  }
+  if (!url) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
+
+  type Reply = { result?: any; error?: { message: string } };
+  const pending = new Map<number, (reply: Reply) => void>();
+  // A crash closes the socket. Resolving instead of rejecting keeps the failure
+  // in the snapshot below.
+  const closed = Promise.withResolvers<Reply>();
+  const opened = Promise.withResolvers<Reply>();
+  const webSocket = new WebSocket(url);
+  webSocket.addEventListener("open", () => opened.resolve({}));
+  webSocket.addEventListener("close", () => closed.resolve({ error: { message: "the inspector closed the socket" } }));
+  webSocket.addEventListener("error", () => closed.resolve({ error: { message: "the inspector socket failed" } }));
+  webSocket.addEventListener("message", ({ data }) => {
+    const reply: Reply & { id: number } = JSON.parse(data.toString());
+    pending.get(reply.id)?.(reply);
+    pending.delete(reply.id);
+  });
+
+  let nextId = 1;
+  function send(method: string, params: object = {}): Promise<Reply> {
+    const id = nextId++;
+    const { promise, resolve } = Promise.withResolvers<Reply>();
+    pending.set(id, resolve);
+    webSocket.send(JSON.stringify({ id, method, params }));
+    return Promise.race([promise, closed.promise]);
+  }
+
+  expect(await Promise.race([opened.promise, closed.promise])).toEqual({});
+
+  const argv: Record<string, unknown> = {};
+  for (const expression of ["undefined", "null", "0", "NaN", "true", `"abc"`, "{}", "Symbol()", `["a", "b"]`]) {
+    const assigned = await send("Runtime.evaluate", { expression: `process.argv = ${expression}` });
+    const graph = assigned.error ? assigned : await send("LifecycleReporter.getModuleGraph");
+    argv[expression] = graph.error?.message ?? graph.result.argv;
+  }
+
+  expect(argv).toMatchInlineSnapshot(`
+    {
+      "\\"abc\\"": [],
+      "0": [],
+      "NaN": [],
+      "Symbol()": [],
+      "[\\"a\\", \\"b\\"]": [
+        "a",
+        "b",
+      ],
+      "null": [],
+      "true": [],
+      "undefined": [],
+      "{}": [],
+    }
+  `);
+
+  // The process is still running. A crash would have ended it before the replies.
+  expect(child.exitCode).toBe(null);
+  webSocket.close();
+});

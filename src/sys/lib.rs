@@ -2317,7 +2317,7 @@ mod posix_impl {
             }
             if rc < 0 {
                 let raw_errno = last_errno();
-                let errno = SystemErrno::init(raw_errno as _);
+                let errno = SystemErrno::init(raw_errno as i64);
                 // Retry on EINTR.
                 if errno == Some(E::EINTR) {
                     continue;

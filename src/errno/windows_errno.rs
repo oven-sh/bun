@@ -83,6 +83,10 @@ macro_rules! __errno_enum_with_uv_tail {
 // E
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(bun_portable)]
+pub use crate::portable_errno::E;
+
+#[cfg(not(bun_portable))]
 for_each_uv_errno! { __errno_enum_with_uv_tail {
 #[repr(u16)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::FromRepr, enum_map::Enum)]
@@ -229,6 +233,7 @@ pub enum E {
 }
 }} // ← UV_* tail appended by `for_each_uv_errno!`
 
+#[cfg(not(bun_portable))]
 impl E {
     /// An undeclared discriminant maps to `UNKNOWN`.
     #[inline]
@@ -318,6 +323,7 @@ impl E {
 }
 
 /// `ENOENT`, as the POSIX alias `E = SystemErrno` spells it, not the variant name `NOENT`.
+#[cfg(not(bun_portable))]
 impl From<E> for &'static str {
     #[inline]
     fn from(e: E) -> &'static str {
@@ -326,6 +332,7 @@ impl From<E> for &'static str {
     }
 }
 
+#[cfg(not(bun_portable))]
 impl From<&E> for &'static str {
     #[inline]
     fn from(e: &E) -> &'static str {
@@ -564,6 +571,11 @@ impl SystemErrnoInit for i64 {
         let n = u16::try_from(self.unsigned_abs()).ok()?;
         if let Some(e) = SystemErrno::from_repr(n) {
             return Some(e);
+        }
+        // A host that is not Windows has no Win32 or Winsock code to find here.
+        #[cfg(bun_portable)]
+        if !bun_core::host::is_windows() {
+            return None;
         }
         SystemErrno::init_c_int(self as c_int)
     }

@@ -8,8 +8,10 @@ use bun_core::strings;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 // ── unary predicates: expect(x).toBe<Kind>() ───────────────────────────────
-crate::unary_predicate_matcher!(to_be_array, "toBeArray", |v| v.js_type().is_array());
-crate::unary_predicate_matcher!(to_be_boolean, "toBeBoolean", |v| v.is_boolean());
+crate::unary_predicate_matcher!(to_be_array, "toBeArray", |v| v.is_array_or_proxied_array());
+// jest-extended: `typeof v === "boolean" || v instanceof Boolean`
+crate::unary_predicate_matcher!(to_be_boolean, "toBeBoolean", |v| v.is_boolean()
+    || v.js_type() == bun_jsc::JSType::BooleanObject);
 crate::unary_predicate_matcher!(to_be_date, "toBeDate", |v| v.is_date());
 crate::unary_predicate_matcher!(to_be_defined, "toBeDefined", |v| !v.is_undefined());
 crate::unary_predicate_matcher!(to_be_false, "toBeFalse", |v| v.is_boolean()

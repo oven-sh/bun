@@ -12,7 +12,7 @@ use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
 use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
-use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
+use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe, portable as bun_portable};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
 use bun_paths::fs as bun_fs;
 #[cfg(not(windows))]
@@ -2443,10 +2443,26 @@ pub(crate) fn inject<'a>(
                 }
             };
 
-            let mut elf_file = match bun_elf::ElfFile::init(input_bytes) {
+            let mut elf_file = match bun_elf::ElfFile::init_or_return(input_bytes) {
                 Ok(f) => f,
-                Err(e) => {
-                    bun_core::pretty_errorln!("Error initializing ELF file: {}", e);
+                Err((e, input_bytes)) => {
+                    // The executable of a portable target is the ELF image, or the packed file that holds it.
+                    if !target.is_portable() {
+                        bun_core::pretty_errorln!("Error initializing ELF file: {}", e);
+                    } else if inject_into_packed_image(
+                        input_bytes,
+                        bytes,
+                        inject_options,
+                        target,
+                        cloned_executable_fd,
+                    ) {
+                        return Some(Injected::new(
+                            cloned_executable_fd,
+                            cwd,
+                            zname,
+                            temp_path_buf,
+                        ));
+                    }
                     cleanup(zname, cloned_executable_fd);
                     return None;
                 }
@@ -2580,6 +2596,98 @@ pub(crate) fn inject<'a>(
             ));
         }
     }
+}
+
+/// Writes `packed_file` with the module graph in its image to `fd`; says what is wrong when it returns false.
+fn inject_into_packed_image(
+    packed_file: Vec<u8>,
+    graph: &[u8],
+    inject_options: &InjectOptions,
+    target: &CompileTarget,
+    fd: Fd,
+) -> bool {
+    if inject_options.icon.is_some()
+        || inject_options.title.is_some()
+        || inject_options.publisher.is_some()
+        || inject_options.version.is_some()
+        || inject_options.description.is_some()
+        || inject_options.copyright.is_some()
+    {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> {}",
+            bun_options_types::compile_target::PORTABLE_TARGET_WITH_WINDOWS_METADATA
+        );
+        return false;
+    }
+
+    let mut packed = match bun_portable::PackedImage::init(packed_file) {
+        Ok(packed) => packed,
+        Err(e) => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> the executable for '{}' is not a packed portable image: {}",
+                target,
+                e
+            );
+            return false;
+        }
+    };
+    let machine = match target.arch() {
+        bun_core::Environment::Architecture::X64 => bun_portable::EM_X86_64,
+        bun_core::Environment::Architecture::Arm64 => bun_portable::EM_AARCH64,
+        bun_core::Environment::Architecture::Wasm => 0,
+    };
+    if packed.machine() != machine {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> the executable for '{}' holds an image for another processor (ELF machine {})",
+            target,
+            packed.machine()
+        );
+        return false;
+    }
+    if inject_options.hide_console {
+        if let Err(e) = packed.set_subsystem(bun_pe::IMAGE_SUBSYSTEM_WINDOWS_GUI) {
+            bun_core::pretty_errorln!("Error setting PE subsystem: {}", e);
+            return false;
+        }
+    }
+    if let Err(e) = packed.write_bun_section(graph) {
+        bun_core::pretty_errorln!(
+            "Error writing the module graph to the portable image: {}",
+            e
+        );
+        return false;
+    }
+
+    if let Err(err) = Syscall::set_file_offset(fd, 0) {
+        bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
+        return false;
+    }
+    let mut buffered_writer =
+        std::io::BufWriter::with_capacity(512 * 1024, bun_sys::FileWriter(fd));
+    let written = match packed.write(&mut buffered_writer) {
+        Ok(written) => written,
+        Err(e) => {
+            bun_core::pretty_errorln!(
+                "Error writing the portable executable: {}",
+                bstr::BStr::new(e.name())
+            );
+            return false;
+        }
+    };
+    if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
+        bun_core::pretty_errorln!("Error flushing the portable executable: {}", e);
+        return false;
+    }
+    if let Err(err) = Syscall::ftruncate(fd, i64::try_from(written).expect("int cast")) {
+        bun_core::pretty_errorln!("Error truncating the portable executable: {}", err);
+        return false;
+    }
+    #[cfg(not(windows))]
+    {
+        // SAFETY: libc fchmod on a valid native fd.
+        unsafe { bun_sys::c::fchmod(fd.native(), 0o755) };
+    }
+    true
 }
 
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
@@ -2778,6 +2886,9 @@ pub fn target_executable(
 
         if needs_download {
             if let Err(e) = download_to_path(target, env, dest_z) {
+                if target.is_portable() {
+                    return Err(portable_executable_not_found(target, e));
+                }
                 return Err(match e {
                     crate::Error::TargetNotFound => CompileError::fmt(format_args!(
                         "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
@@ -2806,6 +2917,20 @@ pub fn target_executable(
 
         bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
     })
+}
+
+/// No portable bun is published yet, so this is what a portable target without `--compile-executable-path` ends in.
+fn portable_executable_not_found(target: &CompileTarget, reason: crate::Error) -> CompileError {
+    let mut url_buffer = [0u8; 2048];
+    let url = target
+        .to_npm_registry_url(&mut url_buffer)
+        .unwrap_or_default();
+    CompileError::fmt(format_args!(
+        "No portable bun for '{}' to compile with: it is not in the cache and could not be downloaded from {} ({}). Pass the packed file of a portable bun with --compile-executable-path.",
+        target,
+        bstr::BStr::new(url),
+        bstr::BStr::new(reason.name()),
+    ))
 }
 
 /// `--compile --bytecode` for another platform: that executable's builtins section (`bun_exe_format::builtins`), so
@@ -3163,7 +3288,10 @@ impl StandaloneModuleGraph {
     /// every first call into a page fault. Only applies when running as a
     /// compiled standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
     /// skips the hint.
-    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    #[cfg(all(
+        not(bun_portable),
+        any(target_os = "macos", target_os = "linux", target_os = "android")
+    ))]
     pub fn hint_source_pages_dont_need() {
         let Some(graph) = Self::get_ref() else {
             return;
@@ -3207,14 +3335,24 @@ impl StandaloneModuleGraph {
         }
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    #[cfg(all(
+        not(bun_portable),
+        not(any(target_os = "macos", target_os = "linux", target_os = "android"))
+    ))]
+    pub fn hint_source_pages_dont_need() {}
+
+    /// A host program may hold the portable image in memory of its own, where a dropped page comes back as zeroes.
+    #[cfg(bun_portable)]
     pub fn hint_source_pages_dont_need() {}
 
     /// The whole pages covered by the files' `contents` regions: `(start, end)`
     /// rounded inward, or `None` when the run does not cover a full page or the
     /// payload was not written with `Flags::SOURCE_TEXT_CONTIGUOUS` (an older
     /// `bun build` interleaves bytecode with the source text).
-    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    #[cfg(all(
+        not(bun_portable),
+        any(target_os = "macos", target_os = "linux", target_os = "android")
+    ))]
     fn source_text_pages(&self) -> Option<(usize, usize)> {
         if !self.flags.contains(Flags::SOURCE_TEXT_CONTIGUOUS) {
             return None;

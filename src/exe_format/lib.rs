@@ -6,6 +6,7 @@ pub mod error;
 pub mod macho;
 pub mod macho_types;
 pub mod pe;
+pub mod portable;
 
 pub use error::{Error, Result};
 

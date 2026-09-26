@@ -46,6 +46,18 @@ impl ElfFile {
         Ok(Box::new(ElfFile { data }))
     }
 
+    /// `init` that hands `data` back when it is not an ELF file.
+    pub fn init_or_return(data: Vec<u8>) -> Result<Box<ElfFile>, (ElfError, Vec<u8>)> {
+        match validate_elf64_le(&data) {
+            Ok(()) => Ok(Box::new(ElfFile { data })),
+            Err(err) => Err((err, data)),
+        }
+    }
+
+    pub fn machine(&self) -> u16 {
+        read_ehdr(&self.data).e_machine
+    }
+
     /// If PT_INTERP points into a Nix/Guix store path, rewrite it to the
     /// standard FHS path so `bun build --compile` output stays portable when
     /// the bun binary itself was patchelf'd (NixOS autoPatchelfHook). See #24742.

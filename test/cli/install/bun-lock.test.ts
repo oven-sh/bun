@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { readlinkSync } from "fs";
+import { readlinkSync, statSync } from "fs";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -46,9 +46,12 @@ it("should write plaintext lockfiles", async () => {
     }),
   );
 
-  // Run 'bun install' to generate the lockfile
+  // Run 'bun install' to generate the lockfile. The lockfile mode is
+  // `0o666 & ~umask`, so pin the umask for the assertion below.
   const installResult = spawn({
-    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cmd: isWindows
+      ? [bunExe(), "install", "--save-text-lockfile"]
+      : ["sh", "-c", `umask 022 && exec "$0" install --save-text-lockfile`, bunExe()],
     cwd: packageDir,
     env,
   });
@@ -61,7 +64,7 @@ it("should write plaintext lockfiles", async () => {
   await using file = await open(join(packageDir, "bun.lock"), "r");
   const stat = await file.stat();
 
-  // in unix, 0o644 == 33188
+  // in unix, 0o644 == 33188 (at umask 022)
   let mode = 33188;
   // ..but windows is different
   if (isWindows) {
@@ -1018,6 +1021,42 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
 
   // No yarn.lock line is forged from the version literal's contents.
   expect(lines.filter(line => line.trimStart().startsWith('resolved "http://injected.example'))).toEqual([]);
+});
+
+// bun.lock and yarn.lock are created `0o666 & ~umask`, like package.json and
+// like yarn itself. They used to get a constant mode from an fchmod after the
+// open (yarn.lock was 0o666 at any umask).
+describe.each([
+  ["022", "644"],
+  ["077", "600"],
+])("umask %s", (umask, expectedMode) => {
+  it.skipIf(isWindows)("bun.lock and yarn.lock honor umask", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({ name: "lockfile-umask", workspaces: ["packages/*"], dependencies: { pkg1: "workspace:*" } }),
+      ),
+      write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.0.0" })),
+    ]);
+
+    await using proc = spawn({
+      cmd: ["sh", "-c", `umask ${umask} && exec "$0" install --yarn`, bunExe()],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).toContain("Saved yarn.lock");
+    expect(exitCode).toBe(0);
+
+    const modes = Object.fromEntries(
+      ["bun.lock", "yarn.lock"].map(name => [name, (statSync(join(packageDir, name)).mode & 0o777).toString(8)]),
+    );
+    expect(modes).toEqual({ "bun.lock": expectedMode, "yarn.lock": expectedMode });
+  });
 });
 
 it("prints an actionable error for a lockfile version newer than this build supports", async () => {

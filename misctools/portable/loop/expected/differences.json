@@ -1,0 +1,23 @@
+{
+ "about": "What a run of bun_loop_slice may print on a host that is not Linux where expected/linux.jsonl has something else. compare-run.ts reads this file. A step is named as in the output.",
+ "win32": {
+  "host": {
+   "fields": {
+    "os": "win32",
+    "code": "windows"
+   },
+   "why": "the host, and the code that the image takes for it"
+  }
+ },
+ "darwin": {
+  "host": {
+   "fields": {
+    "os": "darwin"
+   },
+   "why": "the host"
+  }
+ },
+ "not_run": {
+  "win32": "Nothing of this program has run on Windows when this file was written. The lines of the steps are expected to be the ones of Linux: a child that uv_process_kill ended is Signaled for bun (src/spawn/process.rs, on_exit_uv), and 16 MiB do not pass a loopback socket in one write on either system. A line that differs is a finding, not an accepted difference."
+ }
+}

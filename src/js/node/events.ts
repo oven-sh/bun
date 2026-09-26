@@ -229,16 +229,8 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
   }
 }
 
-// Mirrors `EventEmitter.captureRejections` so the default emit tests a local, not a property.
-let captureRejectionsByDefault = false;
-
 const emitWithoutRejectionCapture = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
-
-  // Constructor never ran (util.inherits without super call): follow the global default.
-  if (captureRejectionsByDefault && this[kCapture]) {
-    return emitWithRejectionCapture.$call(this, type, ...args);
-  }
 
   if (type === "error") {
     return emitError(this, args);
@@ -1019,7 +1011,11 @@ Object.defineProperties(EventEmitter, {
       validateBoolean(value, "EventEmitter.captureRejections");
 
       EventEmitterPrototype[kCapture] = value;
-      captureRejectionsByDefault = value;
+      // An emitter whose constructor never ran has no own `emit`. A user's replacement stays.
+      const emit = EventEmitterPrototype.emit;
+      if (emit === emitWithoutRejectionCapture || emit === emitWithRejectionCapture) {
+        EventEmitterPrototype.emit = value ? emitWithRejectionCapture : emitWithoutRejectionCapture;
+      }
     },
     enumerable: true,
   },

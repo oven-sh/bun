@@ -841,6 +841,7 @@ describe("EventEmitter captureRejections", () => {
     Object.setPrototypeOf(NoConstructor.prototype, EventEmitter.prototype);
     const constructedBefore = new EventEmitter();
     const before = EventEmitter.captureRejections;
+    const emitBefore = EventEmitter.prototype.emit;
     EventEmitter.captureRejections = true;
     try {
       const ee = new (NoConstructor as any)();
@@ -865,6 +866,25 @@ describe("EventEmitter captureRejections", () => {
       await new Promise(resolve => process.nextTick(resolve));
       expect(onError).not.toHaveBeenCalled();
     } finally {
+      EventEmitter.captureRejections = before;
+    }
+    expect(EventEmitter.prototype.emit).toBe(emitBefore);
+  });
+
+  test("EventEmitter.captureRejections leaves a replaced EventEmitter.prototype.emit in place", () => {
+    const before = EventEmitter.captureRejections;
+    const emitBefore = EventEmitter.prototype.emit;
+    const replacement = function emit(this: EventEmitter, ...args: unknown[]) {
+      return emitBefore.apply(this, args);
+    };
+    EventEmitter.prototype.emit = replacement;
+    try {
+      EventEmitter.captureRejections = true;
+      expect(EventEmitter.prototype.emit).toBe(replacement);
+      EventEmitter.captureRejections = false;
+      expect(EventEmitter.prototype.emit).toBe(replacement);
+    } finally {
+      EventEmitter.prototype.emit = emitBefore;
       EventEmitter.captureRejections = before;
     }
   });

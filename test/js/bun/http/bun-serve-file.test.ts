@@ -1225,6 +1225,76 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   }
 });
 
+// The kernel refuses to poll these character devices (epoll_ctl EPERM). The
+// server must read them synchronously, not fail the response.
+describe.skipIf(isWindows)("Response(Bun.file(<character device>))", () => {
+  it("/dev/null ends as an empty body a keep-alive client can frame", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(Bun.file("/dev/null"));
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    expect({
+      status: res.status,
+      contentLength: res.headers.get("content-length"),
+      body: (await res.arrayBuffer()).byteLength,
+    }).toEqual({ status: 200, contentLength: "0", body: 0 });
+  });
+
+  it("/dev/urandom slice delivers the slice", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(Bun.file("/dev/urandom").slice(0, 200_000));
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(200_000);
+  });
+});
+
+// A writer that leaves without a byte ends the reader at EOF before the first
+// body write. The response must still frame its empty body. Linux only: the
+// server does not see a FIFO hangup on macOS yet.
+test.skipIf(!isLinux)("Response(Bun.file(FIFO)) whose writer leaves without data frames an empty body", async () => {
+  using dir = tempDir("serve-fifo-empty", {});
+  const fifoPath = join(String(dir), "body.fifo");
+  mkfifo(fifoPath);
+
+  // Held read+write, so the server's open finds a writer and its first read
+  // waits on the poll instead of ending at once.
+  let writerFd: number | undefined = openSync(fifoPath, "r+");
+  const closeWriter = () => {
+    if (writerFd !== undefined) closeSync(writerFd);
+    writerFd = undefined;
+  };
+  try {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        // The server opens and polls the FIFO when this handler returns, in
+        // the same event-loop turn. The writer leaves on the next turn.
+        setImmediate(closeWriter);
+        return new Response(Bun.file(fifoPath));
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    expect({
+      status: res.status,
+      contentLength: res.headers.get("content-length"),
+      body: (await res.arrayBuffer()).byteLength,
+    }).toEqual({ status: 200, contentLength: "0", body: 0 });
+  } finally {
+    closeWriter();
+  }
+});
+
 // A file route serves the window of the Bun.file() slice it was built from,
 // given either the slice or its unread stream (which is turned back into the
 // slice). FileRoute used to clamp the window to the file size without taking

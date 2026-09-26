@@ -582,7 +582,10 @@ impl FileResponseStream {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             let resp = self.resp.get();
-            resp.end_without_body(resp.should_close_connection());
+            // The reader hit EOF before any write. `end` frames the empty body
+            // (`content-length: 0`, or the last chunk) so a keep-alive client
+            // does not wait for more.
+            resp.end(b"", resp.should_close_connection());
             self.deliver(resp, StreamEnd::Complete);
             // This end runs uncorked (reader callbacks), so no cork or parser
             // gate will run the close check; do it here, after `on_complete`

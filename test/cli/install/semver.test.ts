@@ -1049,7 +1049,7 @@ test("a range with a number above u64::MAX gives the same answers as node-semver
   expect({ seed, disagreements }).toEqual({ seed, disagreements: [] });
 });
 
-test("bun install does not resolve a dependency range that has a number above u64::MAX", async () => {
+test.concurrent("bun install does not resolve a dependency range that has a number above u64::MAX", async () => {
   // "^99999999999999999999" used to be read as "^0", so this installed foo@0.5.0.
   const requested: string[] = [];
   await using registry = Bun.serve({
@@ -1093,7 +1093,7 @@ test("bun install does not resolve a dependency range that has a number above u6
   expect(exitCode).toBe(1);
 });
 
-describe("bun pm version and a version number above u64::MAX", () => {
+describe.concurrent("bun pm version and a version number above u64::MAX", () => {
   // The parser used to read such a number as 0, so `patch` on "1.0.18446744073709551616" printed v1.0.1.
   const aboveU64Max = "18446744073709551616";
   // Number.MAX_SAFE_INTEGER, the largest number npm accepts.

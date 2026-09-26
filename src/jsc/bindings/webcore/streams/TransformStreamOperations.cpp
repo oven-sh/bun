@@ -128,8 +128,7 @@ void transformStreamError(JSGlobalObject* globalObject, JSTransformStream* strea
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // With m_readableErrorAfterDrain set, the source pull algorithm errors the readable instead.
-    if (auto* readableController = transformReadableController(stream); readableController && !stream->m_readableErrorAfterDrain) {
+    if (auto* readableController = transformReadableController(stream); readableController && readableController->m_algorithms.kind != SourceKind::TransformErrorWhenDrained) {
         readableStreamDefaultControllerError(globalObject, readableController, error);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -139,8 +138,11 @@ void transformStreamError(JSGlobalObject* globalObject, JSTransformStream* strea
 void transformStreamKeepQueuedOutputReadable(VM& vm, JSTransformStream* stream, JSValue error)
 {
     auto* readableController = transformReadableController(stream);
-    if (readableController && !readableController->m_queue.isEmpty())
-        stream->m_readableErrorAfterDrain.set(vm, stream, error);
+    if (!readableController || readableController->m_queue.isEmpty())
+        return;
+    ASSERT(readableController->m_algorithms.kind == SourceKind::Transform);
+    readableController->m_algorithms.kind = SourceKind::TransformErrorWhenDrained;
+    readableController->m_algorithms.underlyingObject.set(vm, readableController, error);
 }
 
 void transformStreamErrorWritableAndUnblockWrite(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue error)
@@ -286,12 +288,6 @@ JSPromise* transformStreamDefaultSourcePullAlgorithm(JSGlobalObject* globalObjec
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (JSValue junkError = stream->m_readableErrorAfterDrain.get()) [[unlikely]] {
-        stream->m_readableErrorAfterDrain.clear();
-        if (auto* readableController = transformReadableController(stream))
-            readableStreamDefaultControllerError(globalObject, readableController, junkError);
-        RELEASE_AND_RETURN(scope, nullptr);
-    }
     ASSERT(stream->m_backpressure);
     ASSERT(stream->m_backpressureChangePromise);
     transformStreamSetBackpressure(globalObject, stream, false);

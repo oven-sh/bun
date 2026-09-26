@@ -271,7 +271,6 @@ void JSTransformStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_nativeSinkCell);
     visitor.appendHidden(thisObject->m_nativeSinkReadyPromise);
     visitor.appendHidden(thisObject->m_codecPromise);
-    visitor.appendHidden(thisObject->m_readableErrorAfterDrain);
 }
 
 void JSTransformStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -287,7 +286,6 @@ void JSTransformStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeSinkCell, "nativeSinkCell"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeSinkReadyPromise, "nativeSinkReadyPromise"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_codecPromise, "codecPromise"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_readableErrorAfterDrain, "readableErrorAfterDrain"_s);
 }
 
 // Prototype host functions

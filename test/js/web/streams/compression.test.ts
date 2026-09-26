@@ -1367,6 +1367,15 @@ describe("bounded output per input chunk", () => {
           );
         return { output: Buffer.concat(pieces), error };
       },
+      // One hop downstream the error may not overtake the output either.
+      "both branches of tee()": async (readable: ReadableStream<Uint8Array>) => {
+        const [a, b] = await Promise.all(readable.tee().map(readUntilError));
+        expect(b.output.equals(a.output)).toBe(true);
+        expect(b.error).toBe(a.error);
+        return a;
+      },
+      "pipeThrough()": (readable: ReadableStream<Uint8Array>) =>
+        readUntilError(readable.pipeThrough(new TransformStream<Uint8Array, Uint8Array>())),
     };
 
     describe.each([
@@ -1402,10 +1411,10 @@ describe("bounded output per input chunk", () => {
 
     // The write side never waits for a reader: with nobody reading, a held error
     // would leave this write, and a close() queued behind it, pending forever. A
-    // reader that comes later still gets the output, then the error.
-    test.each(formats)(
-      "DecompressionStream(%s): with nobody reading, the write rejects and a late reader gets the output",
-      async format => {
+    // consumer that comes later still gets the output, then the error.
+    test.each(formats.flatMap(format => Object.keys(consumers).map(consumer => [format, consumer] as const)))(
+      "DecompressionStream(%s): with nobody reading, the write rejects; read later by %s",
+      async (format, consumer) => {
         const plain = Buffer.from("hello hello hello hello");
         const ds = new DecompressionStream(format);
         const writer = ds.writable.getWriter();
@@ -1413,11 +1422,28 @@ describe("bounded output per input chunk", () => {
         expect(await rejection(writer.write(chunk))).toMatchObject(trailingJunk);
         expect(await rejection(writer.closed)).toMatchObject(trailingJunk);
 
-        const { output, error } = await readUntilError(ds.readable);
+        const { output, error } = await consumers[consumer as keyof typeof consumers](ds.readable);
         expect(output.toString()).toBe(plain.toString());
         expect(error).toMatchObject(trailingJunk);
       },
     );
+
+    // The readable reports the junk like a source whose next pull fails: after
+    // the reader has taken the queued output, not before.
+    test.each(formats)("DecompressionStream(%s): reader.closed rejects after the output is read", async format => {
+      const plain = Buffer.from("hello hello hello hello");
+      const ds = new DecompressionStream(format);
+      const writer = ds.writable.getWriter();
+      await rejection(writer.write(Buffer.concat([bombs[format](plain), junk])));
+
+      const events: unknown[] = [];
+      const reader = ds.readable.getReader();
+      const closed = reader.closed.catch(error => void events.push(error.code));
+      const { value } = await reader.read();
+      events.push(Buffer.from(value!).toString());
+      await closed;
+      expect(events).toEqual([plain.toString(), "ERR_TRAILING_JUNK_AFTER_STREAM_END"]);
+    });
 
     // The producer awaits each 64 KiB write, so the last write (the tail of the
     // stream plus one pad byte, a one-step chunk) is transformed between two

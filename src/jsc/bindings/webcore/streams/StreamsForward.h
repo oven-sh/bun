@@ -120,6 +120,7 @@ enum class SourceKind : uint8_t {
     TextDecode, // Body.textStream() reading from an existing byte stream
                 // (algorithmContext = source JSReadableStreamDefaultReader;
                 // decode state inline on m_algorithms.textDecodeState)
+    TransformErrorWhenDrained, // a Transform readable whose next pull rejects (underlyingObject = the error)
 };
 
 // Which arm runs a writable controller's write/close/abort algorithms.

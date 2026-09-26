@@ -333,7 +333,7 @@ impl PendingValue {
         global_object: &JSGlobalObject,
         this_value: JSValue,
     ) -> bool {
-        if self.promise.is_some() {
+        if self.has_consumer() {
             return true;
         }
 
@@ -352,7 +352,7 @@ impl PendingValue {
     }
 
     pub(crate) fn is_disturbed2(&self, global_object: &JSGlobalObject) -> bool {
-        if self.promise.is_some() {
+        if self.has_consumer() {
             return true;
         }
 
@@ -1480,13 +1480,7 @@ impl Value {
             }));
         }
 
-        // `on_receive_value`: same consumer-owned-task guard as
-        // `locked_to_native_stream`.
-        if locked.promise.is_some()
-            || !locked.action.is_none()
-            || locked.readable.has()
-            || locked.on_receive_value.is_some()
-        {
+        if locked.has_consumer() || locked.readable.has() {
             return Ok(Value::Used);
         }
 

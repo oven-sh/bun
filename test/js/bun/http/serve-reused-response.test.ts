@@ -140,7 +140,11 @@ describe("returning a Response with an already-used body", () => {
   });
 
   // The upstream body arrives after the handler returns, so the consumer is still waiting on it.
-  it("returning a fetch() Response that a pending text() reads calls the error handler", async () => {
+  it.concurrent.each([
+    ["GET", { status: 500, body: "handled", errors: [alreadyUsedError] }],
+    // HEAD sends no body, so it has nothing to refuse.
+    ["HEAD", { status: 200, body: "", errors: [] }],
+  ])("%s for a fetch() Response that a pending text() reads leaves the body to text()", async (method, expected) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -167,11 +171,11 @@ describe("returning a Response with an already-used body", () => {
             return response;
           },
           error(err) {
-            errors.push(err.code);
+            errors.push({ code: err.code, name: err.constructor.name, message: err.message });
             return new Response("handled", { status: 500 });
           },
         });
-        const response = await fetch(server.url);
+        const response = await fetch(server.url, { method: ${JSON.stringify(method)} });
         const body = await response.text();
         sendBody.resolve();
         console.log(JSON.stringify({ status: response.status, body, errors, consumed: await consumed }));
@@ -181,12 +185,11 @@ describe("returning a Response with an already-used body", () => {
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe(
-      JSON.stringify({ status: 500, body: "handled", errors: ["ERR_BODY_ALREADY_USED"], consumed: "hello" }) + "\n",
-    );
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ ...expected, consumed: "hello" });
     expect(exitCode).toBe(0);
   });
 

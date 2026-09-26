@@ -372,6 +372,11 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 /// monomorphizations share one copy.
 #[inline(never)]
 fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
+    if let Body::Value::Locked(locked) = response.get_body_value()
+        && locked.has_consumer()
+    {
+        return;
+    }
     if let Some(stream) = response.get_body_readable_stream() {
         stream.value.ensure_still_alive();
         response.detach_readable_stream(global_this);
@@ -736,8 +741,13 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Cancel the body stream of a Response the server will not transmit.
+    /// Cancel the body stream of a Response the server will not transmit, unless a consumer reads it.
     fn cancel_unread_body(response: &Response, global_this: &JSGlobalObject) {
+        if let Body::Value::Locked(locked) = response.get_body_value()
+            && locked.has_consumer()
+        {
+            return;
+        }
         if let Some(stream) = response.get_body_readable_stream() {
             let _keep = jsc::EnsureStillAlive(stream.value);
             response.detach_readable_stream(global_this);

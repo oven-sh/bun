@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -1541,6 +1542,10 @@ describe("css tests", () => {
       }
 
       @supports (color: lab(0% 0 0)) {
+        .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+          border-right: var(--border-width) solid lab(40% 56.6 39);
+        }
+
         .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
           border-right: var(--border-width) solid lab(40% 56.6 39);
         }
@@ -1555,6 +1560,10 @@ describe("css tests", () => {
       }
 
       @supports (color: lab(0% 0 0)) {
+        .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+          border-left: var(--border-width) solid lab(40% 56.6 39);
+        }
+
         .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
           border-left: var(--border-width) solid lab(40% 56.6 39);
         }
@@ -7908,6 +7917,376 @@ describe("css tests", () => {
           safari: 14 << 16,
         },
       );
+    });
+
+    // A color in an unparsed value (one with var()) gets its wider-gamut
+    // fallbacks as `@supports` rules after the style rule. Those rules print
+    // the selector in the same vendor prefix passes as the style rule, so the
+    // override reaches every browser that the base declaration reaches.
+    describe("@supports color fallbacks keep the vendor prefix passes of the rule", () => {
+      // Safari 15 to 16.3 has lab() and display-p3, and matches only `:-webkit-full-screen`.
+      const targets = { chrome: 80 << 16, safari: 14 << 16 };
+
+      prefix_test(
+        `
+          .f:fullscreen {
+            color: var(--x, lab(40% 56.6 39));
+          }
+        `,
+        indoc`
+          .f:-webkit-full-screen {
+            color: var(--x, #b32323);
+          }
+
+          .f:fullscreen {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .f:-webkit-full-screen {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+
+            .f:fullscreen {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f:-webkit-full-screen {
+              color: var(--x, lab(40% 56.6 39));
+            }
+
+            .f:fullscreen {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        targets,
+      );
+
+      // A prefix that is in the source stays as written.
+      prefix_test(
+        `
+          .f:-webkit-full-screen {
+            color: var(--x, lab(40% 56.6 39));
+          }
+        `,
+        indoc`
+          .f:-webkit-full-screen {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .f:-webkit-full-screen {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f:-webkit-full-screen {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        targets,
+      );
+      prefix_test(
+        `
+          .f::-moz-selection {
+            color: var(--x, lab(40% 56.6 39));
+          }
+        `,
+        indoc`
+          .f::-moz-selection {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f::-moz-selection {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        { firefox: 60 << 16 },
+      );
+      prefix_test(
+        `
+          .f:-webkit-any(.a, .b) {
+            color: var(--x, lab(40% 56.6 39));
+          }
+        `,
+        indoc`
+          .f:-webkit-any(.a, .b) {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .f:-webkit-any(.a, .b) {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f:-webkit-any(.a, .b) {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        targets,
+      );
+
+      // Pseudo-elements, and !important declarations.
+      prefix_test(
+        `
+          .f::selection {
+            color: var(--x, lab(40% 56.6 39)) !important;
+          }
+        `,
+        indoc`
+          .f::-moz-selection {
+            color: var(--x, #b32323) !important;
+          }
+
+          .f::selection {
+            color: var(--x, #b32323) !important;
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f::-moz-selection {
+              color: var(--x, lab(40% 56.6 39)) !important;
+            }
+
+            .f::selection {
+              color: var(--x, lab(40% 56.6 39)) !important;
+            }
+          }
+        `,
+        { firefox: 60 << 16 },
+      );
+
+      // Safari 10.1 to 13.1 has display-p3 and no `:is()`, so the
+      // `:-webkit-any()` copy is the only one that gives it the p3 color.
+      prefix_test(
+        `
+          .f:is(.a, .b) {
+            color: var(--x, lab(40% 56.6 39));
+          }
+        `,
+        indoc`
+          .f:-webkit-any(.a, .b) {
+            color: var(--x, #b32323);
+          }
+
+          .f:is(.a, .b) {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .f:-webkit-any(.a, .b) {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+
+            .f:is(.a, .b) {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f:-webkit-any(.a, .b) {
+              color: var(--x, lab(40% 56.6 39));
+            }
+
+            .f:is(.a, .b) {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        { chrome: 80 << 16, safari: 13 << 16 },
+      );
+
+      // A rule with no prefix of its own prints once, as before.
+      prefix_test(
+        `
+          .f {
+            color: var(--x, lab(40% 56.6 39));
+          }
+        `,
+        indoc`
+          .f {
+            color: var(--x, #b32323);
+          }
+
+          @supports (color: color(display-p3 0 0 0)) {
+            .f {
+              color: var(--x, color(display-p3 .643308 .192455 .167712));
+            }
+          }
+
+          @supports (color: lab(0% 0 0)) {
+            .f {
+              color: var(--x, lab(40% 56.6 39));
+            }
+          }
+        `,
+        targets,
+      );
+
+      // The selectors below have a descendant combinator, so compare the exact
+      // minified output. `fallbacks` prints one base rule per selector, then one
+      // `@supports` block per wider-gamut value with the same selectors.
+      const { minifyTest } = cssInternals;
+      const values = {
+        hex: "#b32323",
+        p3: "color(display-p3 .643308 .192455 .167712)",
+        lab: "lab(40% 56.6 39)",
+      };
+      const conditions = {
+        p3: "@supports (color:color(display-p3 0 0 0))",
+        lab: "@supports (color:lab(0% 0 0))",
+      };
+      const rules = (selectors: string[], value: keyof typeof values) =>
+        selectors.map(selector => `${selector}{color:var(--x,${values[value]})}`).join("");
+      const fallbacks = (selectors: string[], base: keyof typeof values, better: (keyof typeof conditions)[]) =>
+        rules(selectors, base) + better.map(value => `${conditions[value]}{${rules(selectors, value)}}`).join("");
+
+      test("the rule is split around the @supports rules when it has nested rules", () => {
+        const output = minifyTest(
+          ".p:fullscreen { color: var(--x, lab(40% 56.6 39)); & .k { color: red } }",
+          "",
+          targets,
+        );
+        expect(output).toBe(
+          fallbacks([".p:-webkit-full-screen", ".p:fullscreen"], "hex", ["p3", "lab"]) +
+            ".p:-webkit-full-screen .k{color:red}.p:fullscreen .k{color:red}",
+        );
+      });
+
+      test("a selector that moves to a rule of its own takes its passes along", () => {
+        // `.f:fullscreen` is not compatible with Safari 14, so the list is split.
+        const output = minifyTest(".f:fullscreen, .g { color: var(--x, lab(40% 56.6 39)) }", "", targets);
+        expect(output).toBe(
+          fallbacks([".g"], "hex", ["p3", "lab"]) +
+            fallbacks([".f:-webkit-full-screen", ".f:fullscreen"], "hex", ["p3", "lab"]),
+        );
+      });
+
+      test("a nested rule with no prefix of its own gets its @supports rules in each pass of its parent", () => {
+        const output = minifyTest(".p:fullscreen { & .k { color: var(--x, lab(40% 56.6 39)) } }", "", targets);
+        expect(output).toBe(
+          fallbacks([".p:-webkit-full-screen .k"], "hex", ["p3", "lab"]) +
+            fallbacks([".p:fullscreen .k"], "hex", ["p3", "lab"]),
+        );
+      });
+
+      test("the prefix of the parent stays as written", () => {
+        const output = minifyTest(".p:-webkit-full-screen { & .k { color: var(--x, lab(40% 56.6 39)) } }", "", targets);
+        expect(output).toBe(fallbacks([".p:-webkit-full-screen .k"], "hex", ["p3", "lab"]));
+      });
+
+      test("a nested rule with its own passes gets every pass in its @supports rules", () => {
+        // The rule prints all of its passes in the last pass of its parent, and so do
+        // its `@supports` rules. Only that part is checked: the earlier passes of
+        // the parent still print the `@supports` blocks empty (see #43407).
+        const output = minifyTest(
+          ".p:fullscreen { & .k:fullscreen { color: var(--x, lab(40% 56.6 39)) } }",
+          "",
+          targets,
+        );
+        expect(output).toEndWith(
+          fallbacks([".p:-webkit-full-screen .k:-webkit-full-screen", ".p:fullscreen .k:fullscreen"], "hex", [
+            "p3",
+            "lab",
+          ]),
+        );
+      });
+
+      // After a sibling prints its own passes, the printer has no prefix. A rule
+      // that follows the pass of its parent prints there. The widened prefix set
+      // of the parent must print as the standard name, not as `:full-screen`,
+      // `::input-placeholder`, `::file-upload-button` or `::browse`. There is one
+      // row for each prefix that has a legacy name.
+      test.each([
+        {
+          pseudo: ":fullscreen",
+          prefixed: ":-webkit-full-screen",
+          browsers: { chrome: 80 << 16, safari: 14 << 16 },
+          base: "hex",
+          better: ["p3", "lab"],
+        },
+        {
+          pseudo: ":fullscreen",
+          prefixed: ":-moz-full-screen",
+          browsers: { firefox: 60 << 16 },
+          base: "hex",
+          better: ["lab"],
+        },
+        // Safari 10.0 has no display-p3.
+        {
+          pseudo: "::placeholder",
+          prefixed: "::-webkit-input-placeholder",
+          browsers: { safari: 10 << 16 },
+          base: "hex",
+          better: ["lab"],
+        },
+        {
+          pseudo: "::placeholder",
+          prefixed: "::-ms-input-placeholder",
+          browsers: { edge: 15 << 16 },
+          base: "hex",
+          better: ["lab"],
+        },
+        // Safari 14.0 has display-p3, so that is the base value.
+        {
+          pseudo: "::file-selector-button",
+          prefixed: "::-webkit-file-upload-button",
+          browsers: { safari: 14 << 16 },
+          base: "p3",
+          better: ["lab"],
+        },
+        {
+          pseudo: "::file-selector-button",
+          prefixed: "::-ms-browse",
+          browsers: { edge: 15 << 16 },
+          base: "hex",
+          better: ["lab"],
+        },
+      ] as const)(
+        "@supports rules after a sibling with its own passes: $prefixed",
+        ({ pseudo, prefixed, browsers, base, better }) => {
+          const output = minifyTest(
+            `.p${pseudo} { & .j${pseudo} { color: red } & .k { color: var(--x, lab(40% 56.6 39)) } }`,
+            "",
+            browsers,
+          );
+          expect(output).toBe(
+            fallbacks([`.p${prefixed} .k`], base, [...better]) +
+              `.p${prefixed} .j${prefixed}{color:red}.p${pseudo} .j${pseudo}{color:red}` +
+              fallbacks([`.p${pseudo} .k`], base, [...better]),
+          );
+        },
+      );
+
+      test("@supports rules after the rules of a logical property", () => {
+        // The `:dir()` rules print their own passes between `.k` and its `@supports` rules.
+        const langs = "ae ar arc bcc bqi ckb dv fa glk he ku mzn nqo pnb ps sd ug ur yi"
+          .split(" ")
+          .map(lang => `:lang(${lang})`)
+          .join(",");
+        const output = minifyTest(
+          ".p:fullscreen { & .k { color: var(--x, lab(40% 56.6 39)); inset-inline-start: 1px } }",
+          "",
+          targets,
+        );
+        expect(output).toBe(
+          fallbacks([".p:-webkit-full-screen .k"], "hex", ["p3", "lab"]) +
+            rules([".p:fullscreen .k"], "hex") +
+            `.p:-webkit-full-screen .k:not(:-webkit-any(${langs})){left:1px}.p:fullscreen .k:not(:is(${langs})){left:1px}` +
+            `.p:-webkit-full-screen .k:-webkit-any(${langs}){right:1px}.p:fullscreen .k:is(${langs}){right:1px}` +
+            `${conditions.p3}{${rules([".p:fullscreen .k"], "p3")}}` +
+            `${conditions.lab}{${rules([".p:fullscreen .k"], "lab")}}`,
+        );
+      });
     });
 
     // rgb()/hsl() whose alpha is only known at runtime (var(), calc(var()), ...)

@@ -710,6 +710,8 @@ mod draft {
         Print(&'static [u8]),
         Resolver,
         Dlopen(&'static [u8]),
+        /// Inside `JSC::initialize()`. See `exit_if_jsc_initialization_ran_out_of_address_space`.
+        InitializeJsc,
     }
 
     impl fmt::Display for Action {
@@ -722,6 +724,7 @@ mod draft {
                 Action::Dlopen(path) => {
                     write!(writer, "loading native module: {}", bstr::BStr::new(path))
                 }
+                Action::InitializeJsc => writer.write_str("initializing JavaScriptCore"),
             }
         }
     }
@@ -794,6 +797,10 @@ mod draft {
 
         match PANIC_STAGE.with(|s| s.get()) {
             0 => {
+                if matches!(current_action(), Some(Action::InitializeJsc)) {
+                    exit_if_jsc_initialization_ran_out_of_address_space();
+                }
+
                 bun_core::maybe_handle_panic_during_process_reload();
 
                 PANIC_STAGE.with(|s| s.set(1));
@@ -1239,6 +1246,86 @@ mod draft {
         }
 
         crash(reason);
+    }
+
+    /// 64 MB is the smallest Structure heap rung that mimalloc accepts as an arena
+    /// (`StructureAlignedMemoryAllocator.cpp`). JSC reserves it as size + alignment.
+    #[cfg(unix)]
+    const JSC_MINIMUM_RESERVATION_MB: usize = 128;
+
+    /// A crash in `JSC::initialize()` while [`JSC_MINIMUM_RESERVATION_MB`] cannot be reserved
+    /// anymore is the environment's doing (`ulimit -v`): print that and exit instead of reporting it.
+    fn exit_if_jsc_initialization_ran_out_of_address_space() {
+        #[cfg(unix)]
+        {
+            use bun_core::pretty_error;
+
+            if can_reserve_address_space(JSC_MINIMUM_RESERVATION_MB * 1024 * 1024) {
+                return;
+            }
+
+            pretty_error!(
+                "\n<r><red>error<r>: Bun ran out of virtual address space while initializing JavaScriptCore.\n\nJavaScriptCore reserves address space for its heaps at startup. This process could not reserve another {} MB.\n",
+                JSC_MINIMUM_RESERVATION_MB,
+            );
+            match address_space_limit() {
+                // `ulimit -v` sets and prints the limit in KB.
+                Some(limit) => pretty_error!(
+                    "\n<d>Current limit: {} KB (ulimit -v)<r>\n\nTo fix this, raise or remove the limit:\n\n  <cyan>ulimit -v unlimited<r>\n",
+                    limit / 1024,
+                ),
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                None => pretty_error!(
+                    "\nThis process has no <cyan>ulimit -v<r> limit. Check the memory limits of the container or sandbox it runs in, and <cyan>vm.overcommit_memory<r> if it is set to 2.\n",
+                ),
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                None => pretty_error!(
+                    "\nThis process has no <cyan>ulimit -v<r> limit. Check the memory limits of the container or sandbox it runs in.\n",
+                ),
+            }
+            Global::exit(1);
+        }
+    }
+
+    /// Maps and unmaps `len` bytes the way JSC reserves its heaps on POSIX.
+    #[cfg(unix)]
+    fn can_reserve_address_space(len: usize) -> bool {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        const FLAGS: c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        const FLAGS: c_int = libc::MAP_PRIVATE | libc::MAP_ANONYMOUS;
+
+        // SAFETY: an anonymous mapping ignores the fd and offset; nothing is
+        // written through the mapping before it is unmapped again.
+        unsafe {
+            let ptr = libc::mmap(
+                core::ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                FLAGS,
+                -1,
+                0,
+            );
+            if ptr == libc::MAP_FAILED {
+                return false;
+            }
+            libc::munmap(ptr, len);
+        }
+        true
+    }
+
+    /// The soft `RLIMIT_AS` limit in bytes, `None` when it is unlimited.
+    #[cfg(unix)]
+    fn address_space_limit() -> Option<usize> {
+        // SAFETY: zeroed rlimit is valid POD; getrlimit only writes to it.
+        let mut lim: libc::rlimit = bun_core::ffi::zeroed();
+        // SAFETY: &mut lim is a valid out-pointer.
+        if unsafe { libc::getrlimit(libc::RLIMIT_AS, &raw mut lim) } != 0
+            || lim.rlim_cur == libc::RLIM_INFINITY
+        {
+            return None;
+        }
+        usize::try_from(lim.rlim_cur).ok()
     }
 
     /// This is called when `main` returns an error.

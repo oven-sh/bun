@@ -40,6 +40,7 @@ Bun statically links these libraries:
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) | MIT |
 | [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
+| [`Little CMS`](https://github.com/mm2/Little-CMS) | [MIT](https://github.com/mm2/Little-CMS/blob/master/LICENSE) |
 | [`libspng`](https://github.com/randy408/libspng) | BSD 2-Clause |
 | [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |
 | [`highway`](https://github.com/google/highway) | Apache 2.0 |

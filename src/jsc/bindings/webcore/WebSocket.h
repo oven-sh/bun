@@ -190,7 +190,8 @@ public:
     // decoded still dispatch. Before OPEN it latches and applies on connect.
     bool pause();
     bool resume();
-    bool isPaused() const { return m_paused; }
+    // m_paused outlives the connection: only a connected socket, or a CONNECTING one (the latch), is paused.
+    bool isPaused() const { return m_paused && (m_connectedWebSocketKind != ConnectedWebSocketKind::None || m_state == CONNECTING); }
 
     void setProtocol(const String& protocol);
 

@@ -17,6 +17,14 @@ export class SimpleRegistry {
     "test-security-scanner": ["1.0.0"],
   };
 
+  // `is-even` and `is-odd` depend on each other, so installing either one installs both.
+  public static readonly dependencies: Record<string, Record<string, string>> = {
+    "left-pad": {},
+    "is-even": { "is-odd": "^1.0.0" },
+    "is-odd": { "is-even": "^1.0.0" },
+    "test-security-scanner": {},
+  };
+
   setScannerBehavior(behavior: "none" | "warn" | "fatal") {
     // ternary because it was originally called "clean" but I renamed it "none" and didnt want to update the .tgz files. easier this way
     this.scannerBehavior = behavior === "none" ? "clean" : behavior;
@@ -91,23 +99,13 @@ export class SimpleRegistry {
         dist: {
           tarball: `http://localhost:${this.port}/${packageName}-${version}.tgz`,
         },
-        dependencies: this.getDependencies(packageName, version),
+        dependencies: SimpleRegistry.dependencies[packageName],
       };
     }
 
     return new Response(JSON.stringify(metadata), {
       headers: { "Content-Type": "application/json" },
     });
-  }
-
-  private getDependencies(packageName: string, _version: string) {
-    if (packageName === "is-even") {
-      return { "is-odd": "^1.0.0" };
-    }
-    if (packageName === "is-odd") {
-      return { "is-even": "^1.0.0" };
-    }
-    return {};
   }
 
   private async handleTarball(name: string, version: string): Promise<Response> {

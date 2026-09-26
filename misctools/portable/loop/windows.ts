@@ -14,6 +14,12 @@
 // declaration that does stands before each of them: windows-include/callbacks.h, written here from the
 // definitions in eventing/libuv.c whose first parameter is a handle of libuv.
 //
+// A function that the host OS calls checks the slot of the thread pointer first, and a thread that has
+// none is adopted (bun_windows_sys::host_thread for Rust). The sources do not do that either, so the
+// compiler writes the call of the check at the entry of the same functions: it is given their names,
+// windows-include/callbacks.list (-fsanitize-coverage=func,trace-pc with an allowlist), and the C
+// library of the image has the function that is called (libc/patch_musl.ts, __bun_thread_enter).
+//
 // The names: the image holds uSockets twice. What this flavour defines, and what it calls that the
 // image has once for each flavour, gets the suffix that flavor.ts gives the Rust of the flavour
 // (us_socket_write__windows). What the image has once keeps its name (the C library, mimalloc,
@@ -67,13 +73,25 @@ function compile() {
       "",
     ].join("\n"),
   );
+  writeFileSync(
+    join(include, "callbacks.list"),
+    [
+      "# Written by misctools/portable/loop/windows.ts. Do not edit.",
+      "#",
+      "# The functions of eventing/libuv.c that libuv calls: the compiler writes the check of the thread",
+      "# pointer at the entry of each, and of no other function.",
+      "src:*",
+      ...callbacks.map(found => `fun:${found[2]}`),
+      "",
+    ].join("\n"),
+  );
 
   rmSync(plain, { recursive: true, force: true });
   mkdirSync(plain, { recursive: true });
   mkdirSync(join(work, "logs"), { recursive: true });
   const flags = [
     `--config=${join(sysroot, "portable.cfg")}`,
-    "-march=nehalem", "-DNDEBUG", "-O2", "-fno-exceptions", "-fno-omit-frame-pointer", "-fno-stack-protector", "-fvisibility=hidden",
+    "-march=nehalem", "-DNDEBUG", "-O2", "-fno-exceptions", "-fno-omit-frame-pointer", "-fno-stack-protector", "-fstack-clash-protection", "-fvisibility=hidden",
     "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", "-std=gnu17",
     "-Wno-c23-extensions", "-Wno-nullability-completeness", "-Wno-pointer-sign", "-Wno-unknown-pragmas", "-Wno-incompatible-pointer-types",
     "-Werror=implicit-function-declaration",
@@ -90,7 +108,7 @@ function compile() {
   for (const name of sources) {
     const base = name.split("/").pop()!;
     run(
-      [`${llvm}/clang`, ...flags, ...(base === "libuv" ? ["-include", join(include, "callbacks.h")] : []), "-c", join(repo, "packages/bun-usockets/src", `${name}.c`), "-o", join(plain, `${base}.o`)],
+      [`${llvm}/clang`, ...flags, ...(base === "libuv" ? ["-include", join(include, "callbacks.h"), "-fsanitize-coverage=func,trace-pc", `-fsanitize-coverage-allowlist=${join(include, "callbacks.list")}`] : []), "-c", join(repo, "packages/bun-usockets/src", `${name}.c`), "-o", join(plain, `${base}.o`)],
       join(work, "logs", `usockets-windows-${base}.log`),
     );
   }

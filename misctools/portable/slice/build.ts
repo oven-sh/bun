@@ -80,6 +80,7 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
         ...cpuFlags(ARCH),
         "-fno-omit-frame-pointer",
         "-fno-stack-protector",
+        "-fstack-clash-protection",
         "-fvisibility=hidden",
         "-ffunction-sections",
         "-fdata-sections",
@@ -163,6 +164,11 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
         "-Clink-arg=-lc++",
         "-Clink-arg=-lclang_rt.builtins",
       ];
+      // cargo does not know the archives and the C library of the link: what it made of the program
+      // before goes, so that it links again.
+      const made = join(slice, "target", triple, "release");
+      rmSync(join(made, "bun-fs-slice"), { force: true });
+      rmSync(join(made, "build/bun-fs-slice"), { recursive: true, force: true });
       run(
         [
           "cargo",

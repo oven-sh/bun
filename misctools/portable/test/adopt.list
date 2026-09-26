@@ -1,0 +1,7 @@
+# The functions of adopt.c and adopt_cpp.cpp that the host calls on threads of its own, and whose
+# source has no check of the thread pointer: clang -fsanitize-coverage=func,trace-pc
+# -fsanitize-coverage-allowlist=adopt.list writes a call of the check at the entry of each, and of
+# no other function. A name is the name the linker sees.
+src:*
+fun:listed_callback
+fun:_ZN8bun_test9Callbacks6listedEPvxx

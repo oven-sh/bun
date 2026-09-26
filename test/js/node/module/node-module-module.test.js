@@ -4,6 +4,7 @@ import fs from "fs";
 import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
+import { Worker } from "worker_threads";
 
 describe.concurrent("node-module-module", () => {
   test("builtinModules exists", () => {
@@ -24,6 +25,191 @@ describe.concurrent("node-module-module", () => {
     expect(isBuiltin("node:bacon")).toBe(false);
     expect(isBuiltin("node:test")).toBe(true);
     expect(isBuiltin("test")).toBe(false); // "test" does not alias to "node:test"
+  });
+
+  test("syncBuiltinESMExports updates existing builtin bindings", async () => {
+    const source = String.raw`
+      import assert from "node:assert/strict";
+      import { createRequire, syncBuiltinESMExports } from "node:module";
+      import timersDefault, { setTimeout as esmSetTimeout } from "node:timers/promises";
+      import fsDefault, { readFile as esmReadFile, readFileSync as esmReadFileSync } from "node:fs";
+      import eventsDefault, { once as esmOnce } from "node:events";
+
+      const require = createRequire(import.meta.url);
+      const timers = require("node:timers/promises");
+      const fs = require("node:fs");
+      const events = require("node:events");
+      assert.strictEqual(timersDefault, timers);
+      assert.strictEqual(fsDefault, fs);
+      assert.strictEqual(eventsDefault, events);
+
+      const firstTimeout = () => "first timeout";
+      const firstReadFile = () => "first read";
+      const firstOnce = () => "first once";
+      timers.setTimeout = firstTimeout;
+      fs.readFile = firstReadFile;
+      events.once = firstOnce;
+      delete fs.readFileSync;
+      fs.newAPI = () => "new";
+      syncBuiltinESMExports();
+
+      assert.strictEqual(esmSetTimeout, firstTimeout);
+      assert.strictEqual(esmReadFile, firstReadFile);
+      assert.strictEqual(esmReadFileSync, undefined);
+      assert.strictEqual(esmOnce, firstOnce);
+      const fsNamespace = await import("node:fs");
+      assert.strictEqual("newAPI" in fsNamespace, false);
+
+      const onceDescriptor = Object.getOwnPropertyDescriptor(events, "once");
+      const sentinel = new Error("sync getter");
+      Object.defineProperty(events, "once", {
+        configurable: true,
+        enumerable: onceDescriptor.enumerable,
+        get() {
+          throw sentinel;
+        },
+      });
+      assert.throws(() => syncBuiltinESMExports(), error => error === sentinel);
+      Object.defineProperty(events, "once", onceDescriptor);
+
+      const secondTimeout = () => "second timeout";
+      const secondReadFile = () => "second read";
+      const secondOnce = () => "second once";
+      timers.setTimeout = secondTimeout;
+      fs.readFile = secondReadFile;
+      events.once = secondOnce;
+      syncBuiltinESMExports();
+      syncBuiltinESMExports();
+      assert.strictEqual(esmSetTimeout, secondTimeout);
+      assert.strictEqual(esmReadFile, secondReadFile);
+      assert.strictEqual(esmOnce, secondOnce);
+      assert.strictEqual(timersDefault, timers);
+      assert.strictEqual(fsDefault, fs);
+      assert.strictEqual(eventsDefault, events);
+      console.log("synced");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--eval", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "synced\n", stderr: "", exitCode: 0 });
+  });
+
+  test("syncBuiltinESMExports preserves CommonJS-first builtin loading", async () => {
+    const source = String.raw`
+      import assert from "node:assert/strict";
+      import { createRequire, syncBuiltinESMExports } from "node:module";
+      const require = createRequire(import.meta.url);
+      const timers = require("node:timers/promises");
+      const replacement = () => "required first";
+      timers.setTimeout = replacement;
+      syncBuiltinESMExports();
+      const namespace = await import("node:timers/promises");
+      assert.strictEqual(namespace.default, timers);
+      assert.strictEqual(namespace.setTimeout, replacement);
+      console.log(namespace.setTimeout());
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--eval", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "required first\n", stderr: "", exitCode: 0 });
+  });
+
+  test("syncBuiltinESMExports handles node-prefixed builtin names", async () => {
+    const source = String.raw`
+      import assert from "node:assert/strict";
+      import { createRequire, syncBuiltinESMExports } from "node:module";
+      import sqliteDefault, { DatabaseSync as esmDatabaseSync } from "node:sqlite";
+      const require = createRequire(import.meta.url);
+      const sqlite = require("node:sqlite");
+      const replacement = () => "prefixed";
+      assert.strictEqual(sqliteDefault, sqlite);
+      sqlite.DatabaseSync = replacement;
+      syncBuiltinESMExports();
+      assert.strictEqual(esmDatabaseSync, replacement);
+      console.log(esmDatabaseSync());
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--eval", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "prefixed\n", stderr: "", exitCode: 0 });
+  });
+
+  test("syncBuiltinESMExports snapshots getters before updating bindings", async () => {
+    const source = String.raw`
+      import assert from "node:assert/strict";
+      import { createRequire, syncBuiltinESMExports } from "node:module";
+      import { access as esmAccess } from "node:fs";
+      const require = createRequire(import.meta.url);
+      const fs = require("node:fs");
+      const originalAccess = esmAccess;
+      const appendFileDescriptor = Object.getOwnPropertyDescriptor(fs, "appendFile");
+      const sentinel = new Error("sync getter");
+      fs.access = () => "replacement";
+      Object.defineProperty(fs, "appendFile", {
+        configurable: true,
+        enumerable: appendFileDescriptor.enumerable,
+        get() {
+          throw sentinel;
+        },
+      });
+      assert.throws(() => syncBuiltinESMExports(), error => error === sentinel);
+      assert.strictEqual(esmAccess, originalAccess);
+      console.log("unchanged");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--eval", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "unchanged\n", stderr: "", exitCode: 0 });
+  });
+
+  test("syncBuiltinESMExports updates builtin bindings in workers", async () => {
+    const source = String.raw`
+      const { parentPort } = require("node:worker_threads");
+      const { syncBuiltinESMExports } = require("node:module");
+      const timers = require("node:timers/promises");
+      import("node:timers/promises").then(namespace => {
+        const replacement = () => "worker";
+        timers.setTimeout = replacement;
+        syncBuiltinESMExports();
+        const same = namespace.setTimeout === replacement;
+        parentPort.postMessage({ same, value: same ? namespace.setTimeout() : "stale" });
+      }, error => {
+        throw error;
+      });
+    `;
+    const worker = new Worker(source, { eval: true });
+    const message = new Promise((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+    });
+    const exited = new Promise((resolve, reject) => {
+      worker.once("exit", resolve);
+      worker.once("error", reject);
+    });
+
+    const [workerMessage, exitCode] = await Promise.all([message, exited]);
+    expect(workerMessage).toEqual({ same: true, value: "worker" });
+    expect(exitCode).toBe(0);
   });
 
   test("module.globalPaths exists", () => {

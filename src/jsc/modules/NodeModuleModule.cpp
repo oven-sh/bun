@@ -14,7 +14,10 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
+#include "JavaScriptCore/ModuleRegistryEntry.h"
 #include "JSCommonJSExtensions.h"
 
 #include "PathInlines.h"
@@ -865,6 +868,78 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinESMExports,
     (JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+
+    MarkedArgumentBuffer namespaces;
+    auto* moduleLoader = zigGlobalObject->moduleLoader();
+    for (auto moduleName : builtinModuleNames) {
+        String moduleKey(moduleName);
+        if (!moduleKey.startsWith("node:"_s))
+            moduleKey = makeString("node:"_s, moduleName);
+        auto key = Identifier::fromString(vm, moduleKey);
+        auto* entry = moduleLoader->registryEntry(key);
+        if (!entry)
+            continue;
+        auto* record = entry->record();
+        if (!record || !record->moduleEnvironmentMayBeNull())
+            continue;
+
+        auto* namespaceObject = record->getModuleNamespace(globalObject);
+        if (scope.exception()) [[unlikely]]
+            break;
+        namespaces.append(namespaceObject);
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    if (namespaces.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    struct ExportUpdate {
+        JSModuleNamespaceObject* namespaceObject;
+        Identifier name;
+    };
+    Vector<ExportUpdate, 32> updates;
+    MarkedArgumentBuffer values;
+
+    // A throwing CommonJS getter must leave every live ESM binding unchanged.
+    for (JSValue namespaceValue : namespaces) {
+        auto* namespaceObject = uncheckedDowncast<JSModuleNamespaceObject>(namespaceValue);
+        JSValue exportsValue = namespaceObject->get(globalObject, vm.propertyNames->defaultKeyword);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* exportsObject = exportsValue.getObject();
+        if (!exportsObject)
+            continue;
+
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        namespaceObject->methodTable()->getOwnPropertyNames(namespaceObject, globalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        for (auto& name : names) {
+            if (name == vm.propertyNames->defaultKeyword)
+                continue;
+
+            PropertySlot slot(exportsObject, PropertySlot::InternalMethodType::GetOwnProperty);
+            bool hasOwn = exportsObject->methodTable()->getOwnPropertySlot(exportsObject, globalObject, name, slot);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue value = hasOwn ? slot.getValue(globalObject, name) : jsUndefined();
+            RETURN_IF_EXCEPTION(scope, {});
+            updates.append({ namespaceObject, name });
+            values.append(value);
+        }
+    }
+    if (values.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    for (size_t i = 0; i < updates.size(); ++i) {
+        updates[i].namespaceObject->overrideExportValue(globalObject, updates[i].name, values.at(i));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

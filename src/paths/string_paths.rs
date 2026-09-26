@@ -76,7 +76,7 @@ pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
 }
 
 pub fn without_nt_prefix<T: Ch>(path: &[T]) -> &[T] {
-    if !bun_core::host::is_windows() {
+    if !bun_core::host_cfg!(windows) {
         return path;
     }
     // A local `has_prefix_ascii_t` covers both widths (widens each ASCII byte

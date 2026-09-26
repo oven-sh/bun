@@ -35,6 +35,13 @@ pub mod native {
             _ => HostOs::Linux,
         }
     }
+
+    /// The name of that host, as `process.platform` has it.
+    #[cfg(bun_portable)]
+    #[inline]
+    pub fn name() -> &'static str {
+        os().name_string()
+    }
 }
 
 #[cfg(not(bun_portable))]
@@ -51,4 +58,11 @@ pub fn os() -> HostOs {
         bun_alloc::host::MAC => HostOs::Mac,
         _ => HostOs::Linux,
     }
+}
+
+/// The name of the host OS, as `process.platform` has it.
+#[cfg(bun_portable)]
+#[inline]
+pub fn name() -> &'static str {
+    os().name_string()
 }

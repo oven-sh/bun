@@ -104,6 +104,9 @@ impl FdExt for Fd {
         let result: Option<sys::Error> = {
             bun_core::host_select! {
                 linux => {
+                    #[cfg(not(bun_portable))]
+                    debug_assert!(self.native() >= 0);
+                    #[cfg(bun_portable)]
                     debug_assert!(self.posix() >= 0);
                     // Raw `SYS_close` via rustix — no glibc wrapper (which is a
                     // pthread cancellation point). Never retry on EINTR.
@@ -118,7 +121,7 @@ impl FdExt for Fd {
                     }
                 }
                 freebsd => {
-                    debug_assert!(self.posix() >= 0);
+                    debug_assert!(self.native() >= 0);
                     match sys::get_errno(sys::safe_libc::close(self.native())) {
                         sys::E::EBADF => Some(sys::Error {
                             errno: sys::E::EBADF as _,
@@ -130,7 +133,7 @@ impl FdExt for Fd {
                     }
                 }
                 macos => {
-                    debug_assert!(self.posix() >= 0);
+                    debug_assert!(self.native() >= 0);
                     match sys::get_errno(close_nocancel(self.native())) {
                         sys::E::EBADF => Some(sys::Error {
                             errno: sys::E::EBADF as _,

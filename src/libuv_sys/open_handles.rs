@@ -17,6 +17,7 @@
 //! the reader itself moves) with itself as owner; the stop phase closes it the
 //! same way, and the drained completion then finds a closed reader instead of a
 //! parent that is gone or may no longer run script.
+#![cfg_attr(bun_portable, bun_portable_macros::win_abi)]
 
 use super::*;
 

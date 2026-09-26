@@ -8,6 +8,7 @@
 //! Layouts are layout-asserted at the bottom of this file against the
 //! authoritative `sizeof`s from a Windows-x64 build of libuv.
 #![cfg(any(windows, bun_portable))]
+#![cfg_attr(bun_portable, bun_portable_macros::win_abi)]
 #![allow(
     non_camel_case_types,
     non_snake_case,
@@ -15,7 +16,12 @@
     clippy::missing_safety_doc
 )]
 
+#[cfg(bun_portable)]
+use bun_windows_sys::{c_long, c_ulong};
 use core::cell::{Cell, UnsafeCell};
+#[cfg(not(bun_portable))]
+use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
+#[cfg(bun_portable)]
 use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
 use core::mem::MaybeUninit;
 use core::{fmt, mem, ptr};
@@ -1748,7 +1754,7 @@ pub struct uv_signal_t {
     pub signum: c_int,
     tree_entry: signal_tree_entry,
     pub signal_req: uv_req_t,
-    pub pending_signum: u32,
+    pub pending_signum: c_ulong,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1790,14 +1796,14 @@ pub struct uv_work_t {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct uv_timespec_t {
-    pub sec: i32,
-    pub nsec: i32,
+    pub sec: c_long,
+    pub nsec: c_long,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct uv_timeval_t {
-    pub sec: i32,
-    pub usec: i32,
+    pub sec: c_long,
+    pub usec: c_long,
 }
 #[repr(C)]
 #[derive(Clone, Copy)]

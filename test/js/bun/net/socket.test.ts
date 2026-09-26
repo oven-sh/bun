@@ -1,7 +1,7 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair, socketFaultInjection } from "bun:internal-for-testing";
-import { afterAll, describe, expect, it, jest } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
 import { closeSync, readFileSync } from "fs";
 import {
   bunEnv,
@@ -3922,6 +3922,14 @@ Reo=
     const reader = tlsConnect({ socket: slowReader, servername: "localhost", rejectUnauthorized: false });
     reader.on("error", () => {});
     let writing = true;
+    const stop = () => {
+      leftOpen.delete(stop);
+      writing = false;
+      reader.destroy();
+      slowReader.destroy();
+      writer?.terminate();
+    };
+    leftOpen.add(stop);
     try {
       await Promise.all([once(reader, "secureConnect"), writerReady.promise]);
       reader.pause();
@@ -3939,10 +3947,7 @@ Reo=
       await firstShortWrite.promise;
       await body();
     } finally {
-      writing = false;
-      reader.destroy();
-      slowReader.destroy();
-      writer?.terminate();
+      stop();
     }
   }
 
@@ -4409,6 +4414,11 @@ Reo=
 
   // The slow reader takes the spill slot of the loop.
   describe.serial("shutdown() while the handshake runs and another socket waits for a slow reader", () => {
+    // One test at a time here, so what a test left open is released before the next one.
+    afterEach(() => {
+      for (const close of [...leftOpen]) close();
+    });
+
     it("a client finishes its handshake", () =>
       whileAnotherSocketWaitsForASlowReader(async () => {
         using server = Bun.listen({

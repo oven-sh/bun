@@ -36,6 +36,23 @@ test("new $.Shell() inherits process.env and throws on non-zero exit by default"
   expect(exitCode).toBe(0);
 });
 
+test("$ and new $.Shell() inherit from Function.prototype", async () => {
+  const $$ = new $.Shell();
+  for (const shell of [$, $$]) {
+    expect(shell instanceof Function).toBe(true);
+    expect(typeof shell.bind).toBe("function");
+    expect(typeof shell.call).toBe("function");
+    expect(typeof shell.apply).toBe("function");
+    expect(String(shell)).toStartWith("function");
+    expect(typeof shell.env).toBe("function");
+    expect(typeof shell.cwd).toBe("function");
+    expect(typeof shell.nothrow).toBe("function");
+    expect(typeof shell.throws).toBe("function");
+  }
+  expect(await $`echo hi`.text()).toBe("hi\n");
+  expect(await $$`echo there`.text()).toBe("there\n");
+});
+
 test("$$", async () => {
   const $$ = new $.Shell();
   $$.env({ BUN: "bun" });

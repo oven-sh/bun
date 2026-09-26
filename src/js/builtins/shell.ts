@@ -309,6 +309,9 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
   }
 
+  // `$` and every `new $.Shell()` are functions whose prototype is ShellPrototype.prototype.
+  Object.setPrototypeOf(ShellPrototype.prototype, Function.prototype);
+
   var BunShell = function BunShell(first, ...rest) {
     if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
     const parsed_shell_script = createParsedShellScript(first.raw, rest);

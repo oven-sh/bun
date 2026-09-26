@@ -1977,6 +1977,7 @@ mod kernel32_2 {
         // safe: by-value `HANDLE` only; bad/stale handle →
         // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX `close(fd)` →
         // `EBADF`, which is `safe fn` in `safe_libc`).
+        #[cfg_attr(bun_portable, library = "ntdll")]
         pub(super) safe fn NtClose(Handle: HANDLE) -> NTSTATUS;
     }
 }

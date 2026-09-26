@@ -165,6 +165,10 @@ impl FdExt for Fd {
                             rc.to_error(sys::Tag::close).map(|e| e.with_fd(self))
                         }
                         DecodeWindows::Windows(handle) => {
+                            #[cfg_attr(
+                                bun_portable,
+                                bun_portable_macros::imports(library = "ntdll")
+                            )]
                             unsafe extern "system" {
                                 // safe: by-value `HANDLE` only; bad/stale handle →
                                 // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX

@@ -40,12 +40,21 @@ const TREE: &[u8] = b"slice-tree";
 
 /// The directory the steps run in, and the paths inside of it.
 struct Work {
-    /// `<directory>/slice-tree`, absolute, in the path flavour of the host.
+    /// `<directory>`, absolute, in the path flavour of the host.
+    base: Vec<u8>,
+    /// `<directory>/slice-tree`
     root: Vec<u8>,
     windows_paths: bool,
 }
 
 impl Work {
+    /// Removes the tree with everything in it, the way `rm -rf` of bun does: through a handle of
+    /// the directory it is in.
+    fn delete_tree(&self) -> Maybe<()> {
+        let parent = bun_sys::Dir::from_fd(bun_sys::open_dir_absolute(&self.base)?);
+        parent.delete_tree(TREE)
+    }
+
     /// `<root>/<relative>` with the separators of the host, NUL-terminated.
     fn path(&self, relative: &[u8]) -> Vec<u8> {
         let mut buffer = bun_paths::path_buffer_pool::get();
@@ -114,7 +123,7 @@ fn run_steps(directory: &[u8]) -> bool {
     report.end_ok();
 
     let mut cwd_buffer = bun_paths::path_buffer_pool::get();
-    let root = {
+    let (base, root) = {
         let cwd = match bun_sys::getcwd(&mut cwd_buffer[..]) {
             Ok(length) => cwd_buffer[..length].to_vec(),
             Err(error) => {
@@ -124,18 +133,20 @@ fn run_steps(directory: &[u8]) -> bool {
                 return false;
             }
         };
-        let mut buffer = bun_paths::path_buffer_pool::get();
-        let joined = if windows_paths {
-            resolve_path::join_abs_string_buf::<platform::Windows>(&cwd, &mut buffer[..], &[directory, TREE])
-        } else {
-            resolve_path::join_abs_string_buf::<platform::Posix>(&cwd, &mut buffer[..], &[directory, TREE])
+        let join = |parts: &[&[u8]]| {
+            let mut buffer = bun_paths::path_buffer_pool::get();
+            if windows_paths {
+                resolve_path::join_abs_string_buf::<platform::Windows>(&cwd, &mut buffer[..], parts).to_vec()
+            } else {
+                resolve_path::join_abs_string_buf::<platform::Posix>(&cwd, &mut buffer[..], parts).to_vec()
+            }
         };
-        joined.to_vec()
+        (join(&[directory]), join(&[directory, TREE]))
     };
-    let work = Work { root, windows_paths };
+    let work = Work { base, root, windows_paths };
 
     // Left by a run that did not finish.
-    let _ = bun_sys::delete_tree_absolute(&work.root);
+    let _ = work.delete_tree();
     report.begin("start");
     report.boolean("tree_exists", bun_sys::exists(&work.root));
     report.end_ok();
@@ -435,7 +446,7 @@ fn run_steps(directory: &[u8]) -> bool {
     report.step("rmdirat", b"a/side", bun_sys::rmdirat(root_fd, z(b"a/side\0")));
     report.step("rmdir", b"a/b/c", bun_sys::rmdir(z(&work.path(b"a/b/c"))));
     let _ = bun_sys::close(root_fd);
-    report.step("delete_tree_absolute", b"", bun_sys::delete_tree_absolute(&work.root));
+    report.step("delete_tree", b"", work.delete_tree());
     report.begin("end");
     report.boolean("tree_exists", bun_sys::exists(&work.root));
     report.end_ok();

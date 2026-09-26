@@ -1,0 +1,51 @@
+{"step":"host","os":"linux","path_flavour":"posix","image":"portable","ok":true}
+{"step":"start","tree_exists":false,"ok":true}
+{"step":"mkdir","ok":true}
+{"step":"mkdir again","ok":false,"error":"EEXIST","syscall":"mkdir"}
+{"step":"mkdir, parent missing","path":"no/such","ok":false,"error":"ENOENT","syscall":"mkdir"}
+{"step":"open directory","ok":true}
+{"step":"mkdir_recursive_at","path":"a/b/c","ok":true}
+{"step":"mkdir_recursive_at again","path":"a/b/c","ok":true}
+{"step":"mkdirat","path":"a/side","ok":true}
+{"step":"open, create","path":"a/hello.txt","ok":true}
+{"step":"write","path":"a/hello.txt","ok":true}
+{"step":"write","path":"a/hello.txt","ok":true}
+{"step":"fstat","kind":"file","size":13,"ok":true}
+{"step":"close","path":"a/hello.txt","ok":true}
+{"step":"open, create exclusive, exists","ok":false,"error":"EEXIST","syscall":"open"}
+{"step":"open, append","ok":true}
+{"step":"write, appended","path":"a/hello.txt","ok":true}
+{"step":"openat, read","path":"a/hello.txt","content":"hello, world\nappended\n","ok":true}
+{"step":"pread","content":"world","ok":true}
+{"step":"pread, past the end","count":0,"ok":true}
+{"step":"fstat, of openat","kind":"file","size":22,"ok":true}
+{"step":"open, missing","ok":false,"error":"ENOENT","syscall":"open"}
+{"step":"stat","path":"a/hello.txt","kind":"file","size":22,"ok":true}
+{"step":"stat, directory","path":"a/b","kind":"directory","ok":true}
+{"step":"stat, missing","path":"a/missing.txt","ok":false,"error":"ENOENT","syscall":"stat"}
+{"step":"lstat","path":"a/hello.txt","kind":"file","size":22,"ok":true}
+{"step":"exists","a/hello.txt":true,"a/missing.txt":false,"ok":true}
+{"step":"rename","path":"a/hello.txt -> a/b/renamed.txt","ok":true}
+{"step":"rename, missing","path":"a/hello.txt -> a/b/renamed.txt","ok":false,"error":"ENOENT","syscall":"rename"}
+{"step":"renameat","path":"a/b/renamed.txt -> a/renamed.txt","ok":true}
+{"step":"copy_file","path":"a/renamed.txt -> a/copy.txt","ok":true}
+{"step":"read the copy","content":"hello, world\nappended\n","ok":true}
+{"step":"ftruncate","path":"a/copy.txt","content":"hello","ok":true}
+{"step":"create, name that is not ASCII","ok":true}
+{"step":"symlink","path":"a/link -> renamed.txt","ok":true}
+{"step":"readlink","target":"renamed.txt","ok":true}
+{"step":"lstat, link","kind":"symlink","ok":true}
+{"step":"stat, through the link","kind":"file","size":22,"ok":true}
+{"step":"readlink, not a link","ok":false,"error":"EINVAL","syscall":"readlink"}
+{"step":"list","path":"a","entries":[{"name":"b","kind":"directory"},{"name":"copy.txt","kind":"file"},{"name":"grüße ✓ 🍞.txt","kind":"file"},{"name":"link","kind":"symlink"},{"name":"renamed.txt","kind":"file"},{"name":"side","kind":"directory"}],"ok":true}
+{"step":"rmdir, not empty","path":"a","ok":false,"error":"ENOTEMPTY","syscall":"unlink"}
+{"step":"unlink, directory","path":"a/side","ok":false,"error":"EISDIR","syscall":"unlink"}
+{"step":"unlink, missing","path":"a/missing.txt","ok":false,"error":"ENOENT","syscall":"unlink"}
+{"step":"unlink, link","path":"a/link","ok":true}
+{"step":"unlink","path":"a/copy.txt","ok":true}
+{"step":"unlinkat","path":"a/renamed.txt","ok":true}
+{"step":"unlinkat, name that is not ASCII","ok":true}
+{"step":"rmdirat","path":"a/side","ok":true}
+{"step":"rmdir","path":"a/b/c","ok":true}
+{"step":"delete_tree","ok":true}
+{"step":"end","tree_exists":false,"ok":true}

@@ -3392,6 +3392,27 @@ declare module "bun" {
     deprecatedNamespaceObjectSetters?: boolean;
 
     /**
+     * Emit top-level `const` and `let` declarations as `var` in the bundle.
+     * When `false`, a module the bundler merges into the output scope keeps
+     * the declared kind, and the binding it creates for `export default <expr>`
+     * is a `const`. A read before initialization (for example across an
+     * import cycle) then throws a `ReferenceError` like the unbundled code.
+     * With `minify.syntax`, a `const` becomes `let`. The TDZ stays.
+     *
+     * Only a module the bundler merges into the output scope keeps the kind.
+     * An ES module the bundler wraps in a lazy `__esm` closure (one that is
+     * `require()`d, `import()`ed without code splitting, imported by a
+     * CommonJS module, or imported by one of those) still hoists its
+     * declarations out of the closure as `var`. A read before it has run
+     * never throws. A module with a top-level `using` keeps `var` too when
+     * the target lowers `using`. A CommonJS module keeps the declared kind
+     * inside its wrapper.
+     *
+     * @default true
+     */
+    topLevelVar?: boolean;
+
+    /**
      * Whether to enable tree-shaking (removal of unreferenced top-level
      * declarations and unused exports). Defaults to `true`. Set to `false` to
      * keep dead code in the output for debugging or test fixtures.

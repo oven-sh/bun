@@ -3287,6 +3287,7 @@ pub mod bv2_impl {
             this.linker.options.emit_dce_annotations = this.transpiler.options.emit_dce_annotations;
             this.linker.options.deprecated_namespace_object_setters =
                 this.transpiler.options.deprecated_namespace_object_setters;
+            this.linker.options.top_level_var = this.transpiler.options.top_level_var;
             this.linker.options.ignore_dce_annotations =
                 this.transpiler.options.ignore_dce_annotations;
             // SAFETY: `transpiler.options.{banner,footer,public_path,metafile_*}` are

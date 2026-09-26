@@ -125,6 +125,7 @@ pub(crate) mod js_bundler {
         pub(crate) ignore_dce_annotations: bool,
         pub(crate) emit_dce_annotations: Option<bool>,
         pub(crate) deprecated_namespace_object_setters: bool,
+        pub(crate) top_level_var: bool,
         pub(crate) tree_shaking: Option<bool>,
         pub(crate) names: Names,
         pub(crate) external: StringSet,
@@ -196,6 +197,7 @@ pub(crate) mod js_bundler {
                 ignore_dce_annotations: false,
                 emit_dce_annotations: None,
                 deprecated_namespace_object_setters: true,
+                top_level_var: true,
                 tree_shaking: None,
                 names: Names::default(),
                 external: StringSet::default(),
@@ -957,6 +959,9 @@ pub(crate) mod js_bundler {
                 config.get_boolean_loose(global_this, "deprecatedNamespaceObjectSetters")?
             {
                 this.deprecated_namespace_object_setters = flag;
+            }
+            if let Some(flag) = config.get_boolean_loose(global_this, "topLevelVar")? {
+                this.top_level_var = flag;
             }
             if let Some(flag) = config.get_boolean_loose(global_this, "emitDCEAnnotations")? {
                 this.emit_dce_annotations = Some(flag);

@@ -1440,6 +1440,33 @@ Default `true`. When a namespace object does have to be created, each property c
   </Tab>
 </Tabs>
 
+### topLevelVar
+
+Default `true`. The bundler emits top-level `const` and `let` declarations as `var`. A `var` has no temporal dead zone, so a module that reads another module's export before that module has run gets `undefined` instead of a `ReferenceError`. This happens in an import cycle where one side reads the other at module evaluation time.
+
+Set this to `false` to keep the declared kind. A module the bundler merges into the output scope then throws the same `ReferenceError: Cannot access 'x' before initialization` as the unbundled code. The binding the bundler creates for `export default <expr>` becomes a `const` as well. With `minify.syntax`, a `const` becomes `let`, which keeps the temporal dead zone.
+
+Only a module that the bundler merges into the output scope keeps the declared kind. An ES module that the bundler wraps in a lazy `__esm` closure is not affected. The bundler wraps an ES module when it cannot merge it: an ES module that is `require()`d, one that is `import()`ed without code splitting, one that a CommonJS module imports, and every module those import statically, which can include the entry point. The bundler hoists the declarations of a wrapped module out of the closure as `var`. A read before the module has run never throws. It gets the value when the bundler can hoist the initializer too (a function, an arrow, a plain class, or a literal) and `undefined` otherwise. A CommonJS module keeps the declared kind inside its `__commonJS` wrapper, as in Node.
+
+A module with a top-level `using` or `await using` is also not affected when the target lowers `using` (every target except `bun`). The bundler moves its body into a `try` block, so its declarations become `var`.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      topLevelVar: false,
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --no-top-level-var
+    ```
+  </Tab>
+</Tabs>
+
 ### metafile
 
 Generate metadata about the build in a structured format. The metafile describes every input and output file: sizes, imports, and exports. Use it for:
@@ -1866,6 +1893,12 @@ interface BuildConfig {
    * the only behavior in a future release.
    */
   deprecatedNamespaceObjectSetters?: boolean;
+  /**
+   * Emit top-level const/let as var (default). Set to `false` to keep the
+   * declared kind so a read before initialization throws a ReferenceError.
+   * An ES module wrapped in a lazy closure still hoists to var.
+   */
+  topLevelVar?: boolean;
 
   /**
    * Generate bytecode for the output. This can dramatically improve cold

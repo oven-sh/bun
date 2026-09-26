@@ -1334,6 +1334,8 @@ pub struct BundleOptions<'a> {
     /// assigning to them is silently accepted instead of throwing. Deprecated;
     /// off makes them getter-only like real module namespace objects.
     pub deprecated_namespace_object_setters: bool,
+    /// Emit top-level `const`/`let` as `var` (default). `false` keeps the kind in scope-hoisted modules.
+    pub top_level_var: bool,
     pub bytecode: bool,
     /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
     pub bytecode_depth: u32,
@@ -1541,6 +1543,7 @@ impl<'a> BundleOptions<'a> {
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
+            top_level_var: self.top_level_var,
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
             optimize_bytecode: self.optimize_bytecode,
@@ -1791,6 +1794,7 @@ impl<'a> BundleOptions<'a> {
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
             deprecated_namespace_object_setters: true,
+            top_level_var: true,
             bytecode: false,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,

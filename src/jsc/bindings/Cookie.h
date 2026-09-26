@@ -105,8 +105,8 @@ public:
 
     bool isExpired() const;
 
-    void appendTo(JSC::VM& vm, StringBuilder& builder) const;
-    String toString(JSC::VM& vm) const;
+    // OutOfMemoryError when the Set-Cookie string would be longer than String::MaxLength.
+    ExceptionOr<String> toString(JSC::VM& vm) const;
     JSC::JSValue toJSON(JSC::VM& vm, JSC::JSGlobalObject*) const;
     size_t memoryCost() const;
 
@@ -119,6 +119,9 @@ private:
         const String& domain, const String& path,
         int64_t expires, bool secure, CookieSameSite sameSite,
         bool httpOnly, double maxAge, bool partitioned);
+
+    // The builder must use OverflowPolicy::RecordOverflow; the caller checks hasOverflowed().
+    void appendTo(JSC::VM& vm, StringBuilder& builder) const;
 
     String m_name;
     String m_value;

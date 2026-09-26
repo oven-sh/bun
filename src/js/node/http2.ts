@@ -143,6 +143,8 @@ function throwSettingTypeError(name: string, value: any) {
 }
 
 function validateSettings(settings: any) {
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1010-L1011
+  if (settings === undefined) return;
   if (typeof settings !== "object" || settings === null || $isArray(settings)) {
     throw $ERR_INVALID_ARG_TYPE("settings", "object", settings);
   }
@@ -226,10 +228,6 @@ function validateSettings(settings: any) {
       }
     }
   }
-}
-
-function assertSettings(settings: any) {
-  validateSettings(settings);
 }
 
 function getPackedSettings(settings?: any): Buffer {
@@ -4508,9 +4506,7 @@ class ServerHttp2Session extends Http2Session {
       this.#advertisedMaxConcurrentStreams = advertisedMaxConcurrentStreams;
     }
 
-    if (options?.settings !== undefined) {
-      validateSettings(options.settings);
-    }
+    validateSettings(options?.settings);
     const nativeSettings = serverNativeSettings(options);
     this.#localSettings = initialLocalSettings(nativeSettings);
     this.#parser = new H2FrameParser({
@@ -5760,9 +5756,7 @@ class ClientHttp2Session extends Http2Session {
     const nativeSocket = socket._handle;
     this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
 
-    if (options?.settings !== undefined) {
-      validateSettings(options.settings);
-    }
+    validateSettings(options?.settings);
     const nativeSettings = { ...options, ...options?.settings };
     this.#localSettings = initialLocalSettings(nativeSettings);
     // #onConnect attaches the native socket; frames written before that (the preface) queue.
@@ -6580,7 +6574,7 @@ class Http2Server extends (net.Server as unknown as Http2ServerBase) {
     return this;
   }
   updateSettings(settings) {
-    assertSettings(settings);
+    validateSettings(settings);
     const options = this[bunSocketServerOptions];
     if (options) {
       options.settings = { ...options.settings, ...settings };
@@ -6703,7 +6697,7 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
     return this;
   }
   updateSettings(settings) {
-    assertSettings(settings);
+    validateSettings(settings);
     const options = this[bunSocketServerOptions];
     if (options) {
       options.settings = { ...options.settings, ...settings };

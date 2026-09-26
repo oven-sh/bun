@@ -6,7 +6,11 @@
 #   <out>/sysroot     musl 1.2.5 with the host table patch (libc/patch_musl.py)
 #   <out>/threads.img static-pie image, runs on linux as is (test/threads.c)
 #   <out>/linux_paths.img  second image, for test/run.sh (test/linux_paths.c)
+#   <out>/requests.img  one request after the other, with the answers of Linux (test/requests.c)
+#   <out>/raw_syscall.img  x86_64: an image that issues a syscall itself, test/run.sh shows
+#                     that the host ends it (test/raw_syscall.c)
 #   <out>/host-linux  POSIX host in hosted mode, for testing the host path on linux
+#   <out>/memory_model  test of host/memory.h by itself (test/memory_model.c)
 # aarch64 only:
 #   <out>/builtins    compiler-rt builtins, built from source with the flags of the image
 #   the images end with an ad-hoc Apple code signature (tools/apple_sign.py)
@@ -17,9 +21,13 @@
 #   MUSL_GIT, LLVM_GIT, LLVM_TAG (where the sources are cloned from).
 #   An existing <out>/llvm-project is used as it is.
 #
-# The Windows and macOS hosts build on their own OS, for the architecture of the image:
-#   clang -O2 -o host.exe host/host_win.c -lsynchronization -ladvapi32
+# The Windows and macOS hosts are built for the architecture of the image (host/linux_abi.h
+# and host/memory.h are included by both). Windows: clang for the MSVC target in a developer
+# prompt of Visual Studio. macOS: the compiler of the system.
+#   clang -O2 --target=x86_64-pc-windows-msvc -o host.exe host\host_win.c
 #   cc -O2 -o host host/host_posix.c
+#
+# The image of JavaScriptCore's shell is built by jsc/build.ts and tested by test/jsc_scenarios.ts.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 arch=x86_64
@@ -113,6 +121,9 @@ image() {
 }
 image threads
 image linux_paths
+image requests
+[ "$arch" != x86_64 ] || image raw_syscall
+cc -O2 -o "$out/memory_model" "$here/test/memory_model.c"
 
 if [ "$arch" = x86_64 ]; then
   cc -O2 -o "$out/host-linux" "$here/host/host_posix.c" -lpthread

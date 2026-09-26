@@ -95,6 +95,11 @@ def common():
    aarch64 needs it because Linux has no syscall for that there (a program
    writes tpidr_el0 itself). x86_64 keeps using arch_prctl(ARCH_SET_FS). */
 #define BUN_SYS_set_tp 0x62756e01
+/* BUN_SYS_main_stack(unsigned long bounds[2]): the stack that the host made
+   for the main thread. bounds[0] is its lowest address, bounds[1] the address
+   after its highest. musl finds these on Linux by probing with mremap
+   (pthread_getattr_np), which means nothing anywhere else. */
+#define BUN_SYS_main_stack 0x62756e02
 
 struct bun_host {
 	unsigned long os;
@@ -140,10 +145,33 @@ struct bun_host __bun_host = { BUN_OS_LINUX, 0, 0, 0, 0 };
 	void *bun_emutls;
 """)
 
+    # The allocator that musl keeps for itself gets names of its own. An image
+    # may bring its own malloc, and mimalloc defines __libc_malloc,
+    # __libc_calloc, __libc_realloc and __libc_free next to malloc ("forward
+    # __libc interface" in its alloc-override.c). In a static link those
+    # definitions are taken in place of musl's, and what the libc allocates for
+    # itself comes from the malloc of the image after all. Every file of musl
+    # that uses these names gets them from this header.
+    replace("src/include/stdlib.h", "hidden void *__libc_malloc(size_t);", """#define __libc_malloc __bun_libc_malloc
+#define __libc_malloc_impl __bun_libc_malloc_impl
+#define __libc_calloc __bun_libc_calloc
+#define __libc_realloc __bun_libc_realloc
+#define __libc_free __bun_libc_free
+
+hidden void *__libc_malloc(size_t);""")
+
+    # Emulated TLS. The memory comes from the allocator that musl keeps for
+    # itself (__libc_malloc, __libc_calloc, __libc_free), never from the
+    # public malloc family: the malloc of the image may read thread locals
+    # (mimalloc does), which would come back here.
+    # __libc_free is in mallocng's free.c, so a reference to it also makes
+    # mallocng the allocator behind __libc_malloc (and not the bump allocator
+    # of lite_malloc.c, whose blocks cannot be freed).
     write("src/thread/bun_emutls.c", """#include <stdlib.h>
 #include <string.h>
 #include "pthread_impl.h"
 #include "lock.h"
+#include "atomic.h"
 
 struct emutls_control { size_t size, align; uintptr_t index; void *value; };
 struct emutls_array { size_t count; void *slots[]; };
@@ -151,30 +179,40 @@ struct emutls_array { size_t count; void *slots[]; };
 static volatile int emutls_lock[1];
 static uintptr_t emutls_next;
 
+/* The allocator aligns to 16. An object can ask for more, so every object
+   sits in a block that is larger by the alignment and by one word: the word
+   in front of the object holds the address of the block. */
+static void *emutls_object(struct emutls_control *c)
+{
+	size_t align = c->align < sizeof(void *) ? sizeof(void *) : c->align;
+	if (align & (align - 1)) a_crash();
+	char *block = __libc_malloc(sizeof(void *) + align - 1 + c->size);
+	if (!block) a_crash();
+	char *p = (char *)(((uintptr_t)block + sizeof(void *) + align - 1) & -align);
+	((void **)p)[-1] = block;
+	if (c->value) memcpy(p, c->value, c->size);
+	else memset(p, 0, c->size);
+	return p;
+}
+
 static void *emutls_slow(struct emutls_control *c)
 {
 	pthread_t self = __pthread_self();
 	LOCK(emutls_lock);
 	if (!c->index) c->index = ++emutls_next;
-	UNLOCK(emutls_lock);
 	uintptr_t i = c->index;
+	UNLOCK(emutls_lock);
 	struct emutls_array *a = self->bun_emutls;
 	if (!a || a->count < i) {
 		size_t n = i + 16;
-		struct emutls_array *b = calloc(1, sizeof *b + n * sizeof(void *));
-		if (!b) abort();
+		struct emutls_array *b = __libc_calloc(1, sizeof *b + n * sizeof(void *));
+		if (!b) a_crash();
 		if (a) memcpy(b->slots, a->slots, a->count * sizeof(void *));
 		b->count = n;
-		free(a);
+		__libc_free(a);
 		self->bun_emutls = a = b;
 	}
-	size_t align = c->align < sizeof(void *) ? sizeof(void *) : c->align;
-	void *p = aligned_alloc(align, (c->size + align - 1) & -align);
-	if (!p) abort();
-	if (c->value) memcpy(p, c->value, c->size);
-	else memset(p, 0, c->size);
-	a->slots[i - 1] = p;
-	return p;
+	return a->slots[i - 1] = emutls_object(c);
 }
 
 void *__emutls_get_address(struct emutls_control *c)
@@ -187,11 +225,13 @@ void *__emutls_get_address(struct emutls_control *c)
 
 hidden void __bun_emutls_exit(void)
 {
-	struct emutls_array *a = __pthread_self()->bun_emutls;
+	pthread_t self = __pthread_self();
+	struct emutls_array *a = self->bun_emutls;
 	if (!a) return;
-	for (size_t i = 0; i < a->count; i++) free(a->slots[i]);
-	free(a);
-	__pthread_self()->bun_emutls = 0;
+	self->bun_emutls = 0;
+	for (size_t i = 0; i < a->count; i++)
+		if (a->slots[i]) __libc_free(((void **)a->slots[i])[-1]);
+	__libc_free(a);
 }
 """)
 
@@ -205,9 +245,8 @@ hidden void __bun_emutls_exit(void)
 static void dummy_0()
 """)
 
-    # Signal return trampoline, see aarch64(). Only an architecture that
-    # defines BUN_HOST_RESTORER is affected: x86_64 does not, its code is the
-    # same as before.
+    # Signal return trampoline, see restorer(). syscall_arch.h of both
+    # architectures defines BUN_HOST_RESTORER.
     replace("src/signal/sigaction.c", """		ksa.restorer = (sa->sa_flags & SA_SIGINFO) ? __restore_rt : __restore;
 """, """		ksa.restorer = (sa->sa_flags & SA_SIGINFO) ? __restore_rt : __restore;
 #ifdef BUN_HOST_RESTORER
@@ -215,8 +254,83 @@ static void dummy_0()
 #endif
 """)
 
+    # Stack of the main thread. musl probes for it with mremap, which only a
+    # Linux kernel answers in a way that means something (and the loop would
+    # not end on a host that refuses every mremap). Another host made that
+    # stack itself and is asked for it.
+    replace("src/thread/pthread_getattr_np.c", """	} else {
+		char *p = (void *)libc.auxv;
+""", """	} else if (__bun_host.os != BUN_OS_LINUX) {
+		unsigned long bounds[2];
+		long r = (__bun_host.syscall)(BUN_SYS_main_stack, (long)bounds, 0, 0, 0, 0, 0);
+		if (r) return -r;
+		a->_a_stackaddr = bounds[1];
+		a->_a_stacksize = bounds[1] - bounds[0];
+	} else {
+		char *p = (void *)libc.auxv;
+""")
+    replace("src/thread/pthread_getattr_np.c", '#include "libc.h"', '#include "libc.h"\n#include "bun_host.h"')
+
+
+VFORK_C = """#define _GNU_SOURCE
+#include <unistd.h>
+#include <signal.h>
+#include "syscall.h"
+
+hidden pid_t __vfork_linux(void);
+
+pid_t vfork(void)
+{
+	if (__bun_host.os == BUN_OS_LINUX)
+		__attribute__((musttail)) return __vfork_linux();
+#ifdef SYS_fork
+	return __syscall_ret((__bun_host.syscall)(SYS_fork, 0, 0, 0, 0, 0, 0));
+#else
+	return __syscall_ret((__bun_host.syscall)(SYS_clone, SIGCHLD, 0, 0, 0, 0, 0));
+#endif
+}
+"""
+
+
+def vfork(arch):
+    # The child runs on the parent's stack and returns from vfork() before the
+    # parent does, so the Linux path must not leave a frame of this function
+    # behind. musttail makes the compiler guarantee that. Other hosts get the
+    # request that musl's generic vfork() makes: fork.
+    move_asm(f"src/process/{arch}/vfork.s", f"src/process/{arch}/vfork_linux.s", "vfork", "__vfork_linux", hide=True)
+    write(f"src/process/{arch}/vfork.c", VFORK_C)
+
+
+def restorer(arch, attribute=""):
+    # Signal return. restore.s stays the instructions that the kernel,
+    # debuggers and unwinders know (x86_64 "mov $15,%rax; syscall", aarch64
+    # "mov x8,#139; svc 0"): a dispatcher in front of them would break
+    # unwinding through signal frames on Linux, and sigreturn needs the stack
+    # pointer exactly as the handler left it. The choice is made in
+    # sigaction() instead: a host that is not Linux is handed this function.
+    write(f"src/signal/{arch}/bun_restore.c", f"""#include "syscall.h"
+
+{attribute}hidden void __bun_restore_host(void)
+{{
+	(__bun_host.syscall)(SYS_rt_sigreturn, 0, 0, 0, 0, 0, 0);
+	for (;;);
+}}
+""")
+
 
 def x86_64():
+    # Every "syscall" instruction of the x86_64 tree and what guards it:
+    #   arch/x86_64/syscall_arch.h         branch on __bun_host.os, below
+    #   src/thread/x86_64/clone.s          now __clone_linux, called by clone.c on Linux only
+    #   src/thread/x86_64/__unmapself.s    now __unmapself_linux, called by __unmapself.c on Linux only
+    #   src/thread/x86_64/syscall_cp.s     __syscall_cp_c returns before it on other hosts (common())
+    #   src/process/x86_64/vfork.s         now __vfork_linux, called by vfork.c on Linux only
+    #   src/signal/x86_64/restore.s        unchanged. It is entered only through a signal frame that
+    #                                      the Linux kernel built. Other hosts get __bun_restore_host.
+    #   src/thread/x86_64/__set_thread_area.s   now C, arch_prctl through __syscall
+    # and every use of a segment register:
+    #   arch/x86_64/pthread_arch.h         __get_tp(), below: fs on Linux, gs on the other hosts
+    #   src/ldso/x86_64/tlsdesc.s          dynamic linker only, not part of a static image
     regs = ['"D"(a1)', '"S"(a2)', '"d"(a3)', '"r"(r10)', '"r"(r8)', '"r"(r9)']
     out = ['#include "bun_host.h"\n\n#define __SYSCALL_LL_E(x) (x)\n#define __SYSCALL_LL_O(x) (x)\n']
     for n in range(7):
@@ -242,7 +356,10 @@ static __inline long __syscall{n}(long n{params})
 """)
     tail = read("arch/x86_64/syscall_arch.h")
     tail = tail[tail.index("#define VDSO_USEFUL"):]
-    write("arch/x86_64/syscall_arch.h", "".join(out) + "\n" + tail)
+    write("arch/x86_64/syscall_arch.h", "".join(out) + "\n" + tail + """
+hidden void __bun_restore_host(void);
+#define BUN_HOST_RESTORER __bun_restore_host
+""")
 
     replace("arch/x86_64/pthread_arch.h", """static inline uintptr_t __get_tp()
 {
@@ -275,6 +392,63 @@ int __set_thread_area(void *p)
     write("src/thread/x86_64/clone.c", CLONE_C)
     move_asm("src/thread/x86_64/__unmapself.s", "src/thread/x86_64/unmapself_linux.s", "__unmapself", "__unmapself_linux")
     write("src/thread/x86_64/__unmapself.c", UNMAPSELF_C)
+
+    vfork("x86_64")
+    # A handler that a host calls like the kernel does returns here with
+    # "ret": the stack pointer is then a multiple of 16, which is not what a
+    # function finds after a call.
+    restorer("x86_64", "__attribute__((force_align_arg_pointer))\n")
+
+    # Hand-written assembly that keeps values below the stack pointer (the red
+    # zone of the System V ABI). -mno-red-zone does not reach assembly files,
+    # and Windows may write below the stack pointer at any time.
+    replace("src/fenv/x86_64/fenv.s", """1:	stmxcsr -8(%rsp)
+	and $0x3f,%eax
+	or %eax,-8(%rsp)
+	test %ecx,-8(%rsp)
+	jz 1f
+	not %ecx
+	and %ecx,-8(%rsp)
+	ldmxcsr -8(%rsp)
+1:	xor %eax,%eax
+	ret
+""", """1:	push %rdx
+	stmxcsr (%rsp)
+	and $0x3f,%eax
+	or %eax,(%rsp)
+	test %ecx,(%rsp)
+	jz 1f
+	not %ecx
+	and %ecx,(%rsp)
+	ldmxcsr (%rsp)
+1:	pop %rdx
+	xor %eax,%eax
+	ret
+""")
+    replace("src/fenv/x86_64/fenv.s", """	and $0x3f,%edi
+	stmxcsr -8(%rsp)
+	or %edi,-8(%rsp)
+	ldmxcsr -8(%rsp)
+	xor %eax,%eax
+	ret
+""", """	and $0x3f,%edi
+	push %rax
+	stmxcsr (%rsp)
+	or %edi,(%rsp)
+	ldmxcsr (%rsp)
+	pop %rax
+	xor %eax,%eax
+	ret
+""")
+    replace("src/math/x86_64/exp2l.s", """	movl $0xc2820000,-4(%rsp)
+	flds -4(%rsp)
+""", """	push %rax
+	movl $0xc2820000,(%rsp)
+	flds (%rsp)
+	pop %rax
+""")
+    for path in ("src/fenv/x86_64/fenv.s", "src/math/x86_64/exp2l.s"):
+        assert "-8(%rsp)" not in read(path) and "-4(%rsp)" not in read(path), path
 
 
 def aarch64():
@@ -363,39 +537,8 @@ int __set_thread_area(void *p)
     move_asm("src/thread/aarch64/__unmapself.s", "src/thread/aarch64/unmapself_linux.s", "__unmapself", "__unmapself_linux", hide=True)
     write("src/thread/aarch64/__unmapself.c", UNMAPSELF_C)
 
-    # vfork: the child runs on the parent's stack and returns from vfork()
-    # before the parent does, so the Linux path must not leave a frame of this
-    # function behind. musttail makes the compiler guarantee that. Other hosts
-    # get the request that musl's generic vfork() makes: fork.
-    move_asm("src/process/aarch64/vfork.s", "src/process/aarch64/vfork_linux.s", "vfork", "__vfork_linux", hide=True)
-    write("src/process/aarch64/vfork.c", """#define _GNU_SOURCE
-#include <unistd.h>
-#include <signal.h>
-#include "syscall.h"
-
-hidden pid_t __vfork_linux(void);
-
-pid_t vfork(void)
-{
-	if (__bun_host.os == BUN_OS_LINUX)
-		__attribute__((musttail)) return __vfork_linux();
-	return __syscall_ret((__bun_host.syscall)(SYS_clone, SIGCHLD, 0, 0, 0, 0, 0));
-}
-""")
-
-    # Signal return. restore.s stays the two instructions that the kernel,
-    # debuggers and unwinders know ("mov x8,#139; svc 0"): a dispatcher in
-    # front of them would break unwinding through signal frames on Linux, and
-    # sigreturn needs sp exactly as the handler left it. The choice is made in
-    # sigaction() instead: a host that is not Linux is handed this function.
-    write("src/signal/aarch64/bun_restore.c", """#include "syscall.h"
-
-hidden void __bun_restore_host(void)
-{
-	(__bun_host.syscall)(SYS_rt_sigreturn, 0, 0, 0, 0, 0, 0);
-	for (;;);
-}
-""")
+    vfork("aarch64")
+    restorer("aarch64")
 
 
 common()

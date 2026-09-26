@@ -101,9 +101,13 @@ test("plugin onResolve with rejected promise should throw error", () => {
     cmd: [bunExe(), "--preload", "./plugin.js", "./index.js"],
     env: bunEnv,
     cwd: String(dir),
+    stdout: "pipe",
     stderr: "pipe",
   });
 
-  expect(result.exitCode).toBe(1);
   expect(result.stderr.toString()).toContain("Custom plugin error");
+  // The error has to fail the resolution, not arrive later as an unhandled
+  // rejection while index.js runs anyway.
+  expect(result.stdout.toString()).toBe("");
+  expect(result.exitCode).toBe(1);
 });

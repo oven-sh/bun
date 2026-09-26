@@ -3,6 +3,8 @@ use bstr::BStr;
 #[cfg(windows)]
 use bun_core::{WStr, w};
 use bun_core::{ZStr, strings};
+#[cfg(all(not(windows), not(bun_portable)))]
+use bun_paths::SEP;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 #[cfg(windows)]
@@ -25,6 +27,9 @@ fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Opt
     fn len_with_sep(part: &[u8]) -> usize {
         match part.last() {
             None => 0,
+            #[cfg(not(bun_portable))]
+            Some(&SEP) => part.len(),
+            #[cfg(bun_portable)]
             Some(&last) if last == sep() => part.len(),
             Some(_) => part.len() + 1,
         }
@@ -179,7 +184,11 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 
         // Strip trailing SEP bytes from cwd, keeping a bare "/".
         let mut cwd_trimmed = cwd;
-        while cwd_trimmed.len() > 1 && cwd_trimmed[cwd_trimmed.len() - 1] == sep() {
+        #[cfg(not(bun_portable))]
+        let separator = Some(&SEP);
+        #[cfg(bun_portable)]
+        let separator = Some(&sep());
+        while cwd_trimmed.len() > 1 && cwd_trimmed.last() == separator {
             cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
         }
 

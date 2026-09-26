@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 import { DEFAULT_CREDENTIALS, S3Server, serve, SigningClient, spawnServer, type RequestRecord } from "../index.ts";
+import { parseBucketOption } from "../src/spawn.ts";
 import { expectError, start, toObject, xml } from "./helpers.ts";
 
 /** True when the server answers at the URL. Another program can have the port after the server released it. */
@@ -49,6 +50,9 @@ describe("S3Server", () => {
     ]);
     expect(() => server.createBucket("plain")).toThrow('The bucket "plain" exists');
     expect(() => server.createBucket("Not_Valid")).toThrow('"Not_Valid" is not a valid bucket name');
+    expect(() => server.createBucket({ name: "nowhere", region: "" })).toThrow(
+      'The bucket "nowhere" has an empty region',
+    );
 
     for (const [accessKeyId, secretAccessKey, sessionToken] of [
       ["first", "first-secret", undefined],
@@ -250,6 +254,18 @@ describe("S3Server", () => {
   });
 });
 
+test("the --bucket option of the program is a name, or a name and a region", () => {
+  const values = ["name", "name@eu-west-1", "name@", "@eu-west-1", "name@eu-west-1@more", ""];
+  expect(values.map(parseBucketOption)).toEqual([
+    { name: "name" },
+    { name: "name", region: "eu-west-1" },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+  ]);
+});
+
 describe.concurrent("the server as a process", () => {
   test("spawnServer() starts it and stop() ends it", async () => {
     let url: string;
@@ -319,16 +335,19 @@ describe.concurrent("the server as a process", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("the program refuses a port that is not a number", async () => {
+  test.each([
+    ["--port", "not-a-port", '"not-a-port" is not a port'],
+    ["--bucket", "name@", '"name@" is not <name> or <name>@<region>'],
+  ])("the program refuses %s %s", async (option, value, message) => {
     await using child = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "..", "cli.ts"), "--port", "not-a-port"],
+      cmd: [bunExe(), join(import.meta.dir, "..", "cli.ts"), "--port", "0", option, value],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
     expect(stdout).toBe("");
-    expect(stderr).toStartWith('"not-a-port" is not a port\n\nUsage: bun cli.ts [options]');
+    expect(stderr).toStartWith(message + "\n\nUsage: bun cli.ts [options]");
     expect(exitCode).toBe(1);
   });
 });

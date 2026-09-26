@@ -203,6 +203,7 @@ export class S3Server {
       objectLock,
     } = typeof options === "string" ? ({ name: options } as BucketOptions) : options;
     if (!isValidBucketName(name)) throw new Error(`"${name}" is not a valid bucket name`);
+    if (region === "") throw new Error(`The bucket "${name}" has an empty region`);
     if (this.buckets.has(name)) throw new Error(`The bucket "${name}" exists`);
     const bucket = new Bucket(name, owner, region, this.#clock(), privateAcl(owner));
     bucket.versioning = objectLock ? "Enabled" : versioning;

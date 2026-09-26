@@ -35,6 +35,16 @@ export interface SpawnedServer extends AsyncDisposable {
   stop(): Promise<void>;
 }
 
+/**
+ * Reads a value of the `--bucket` option of the program: `<name>` or
+ * `<name>@<region>`. The result is `undefined` for a value of another form.
+ */
+export function parseBucketOption(value: string): { name: string; region?: string } | undefined {
+  const [name, region, ...more] = value.split("@");
+  if (name === "" || region === "" || more.length > 0) return undefined;
+  return region === undefined ? { name } : { name, region };
+}
+
 /** Starts the server in a child process and waits until it listens. */
 export async function spawnServer(options: SpawnOptions = {}): Promise<SpawnedServer> {
   const args = ["--port", "0", "--exit-on-stdin-close"];

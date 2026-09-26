@@ -8,6 +8,7 @@
 
 import { parseArgs } from "node:util";
 import { DEFAULT_CREDENTIALS, serve } from "./index.ts";
+import { parseBucketOption } from "./src/spawn.ts";
 import { warmUp } from "./src/warm-up.ts";
 
 const usage = `Usage: bun cli.ts [options]
@@ -50,11 +51,17 @@ if (values.help) {
   process.exit(0);
 }
 
-const port = Number(values.port);
-if (!Number.isInteger(port) || port < 0 || port > 65535) {
-  process.stderr.write(`"${values.port}" is not a port\n\n${usage}`);
+function refuse(message: string): never {
+  process.stderr.write(`${message}\n\n${usage}`);
   process.exit(1);
 }
+
+const port = Number(values.port);
+if (!Number.isInteger(port) || port < 0 || port > 65535) refuse(`"${values.port}" is not a port`);
+
+const buckets = values.bucket.map(
+  value => parseBucketOption(value) ?? refuse(`"${value}" is not <name> or <name>@<region>`),
+);
 
 const server = serve({
   port,
@@ -65,10 +72,7 @@ const server = serve({
     sessionToken: values["session-token"],
   },
   region: values.region,
-  buckets: values.bucket.map(bucket => {
-    const [name, region] = bucket.split("@");
-    return { name, region };
-  }),
+  buckets,
   domains: values.domain,
   maxRequestLog: 0,
   onRequest: values.log

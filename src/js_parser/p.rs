@@ -229,6 +229,15 @@ pub struct ReactRefreshImportClause<'a> {
     pub(crate) r#ref: Ref,
 }
 
+/// `export { <reference> as <alias> }` where
+/// `var <reference> = registerClientReference(<value>, path, "<alias>")`.
+pub(crate) struct ClientReferenceExport<'a> {
+    pub(crate) reference: Ref,
+    pub(crate) value: Ref,
+    pub(crate) alias: &'a [u8],
+    pub(crate) loc: bun_ast::Loc,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ReactRefreshExportKind {
     Named,
@@ -489,6 +498,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
     pub(crate) server_components_wrap_ref: Ref,
+    /// Filled by `export_client_reference`, drained by `append_client_reference_exports`.
+    pub(crate) client_reference_exports: Vec<ClientReferenceExport<'a>>,
 
     pub(crate) jest: Jest,
 
@@ -5593,6 +5604,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
     ) -> Result<(), crate::Error> {
+        self.begin_part();
+
+        let arena = self.arena;
+        let mut opts = PrependTempRefsOpts::default();
+        let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
+
+        self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
+        self.finish_part(parts, part_stmts)
+    }
+
+    /// Starts the per-part bookkeeping that `finish_part` collects.
+    fn begin_part(&mut self) {
         // Uses recorded outside a part's visit (the parse pass resolving
         // decorator-metadata types) belong to no part.
         self.part_uses.clear();
@@ -5603,13 +5626,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_symbol_property_uses.clear_retaining_capacity();
 
         self.had_commonjs_named_exports_this_visit = false;
+    }
 
-        let arena = self.arena;
-        let mut opts = PrependTempRefsOpts::default();
-        let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
-
-        self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
-
+    /// Pushes a part of statements that were visited since `begin_part`.
+    fn finish_part(
+        &mut self,
+        parts: &mut ListManaged<'a, js_ast::Part>,
+        mut part_stmts: BumpVec<'a, Stmt>,
+    ) -> Result<(), crate::Error> {
         // Insert any relocated variable statements now
         if !self.relocated_top_level_vars.is_empty() {
             let mut already_declared = RefMap::default();
@@ -8649,6 +8673,147 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
+    /// A "use client" module on the server without a separate SSR graph.
+    pub(crate) fn wraps_exports_as_client_references(&self) -> bool {
+        self.options.features.server_components
+            == options::ServerComponents::WrapExportsForClientReference
+    }
+
+    /// The symbol to export under `alias` instead of `value`. Its declaration
+    /// comes after every module statement (`append_client_reference_exports`),
+    /// because `value` may be a class or const declared below the export clause.
+    pub(crate) fn export_client_reference(
+        &mut self,
+        value: Ref,
+        alias: &'a [u8],
+        loc: bun_ast::Loc,
+    ) -> Ref {
+        debug_assert!(self.wraps_exports_as_client_references());
+        let name: &'a [u8] = bun_alloc::arena_format!(
+            in self.arena,
+            "{}_ref",
+            bun_core::fmt::fmt_identifier(alias)
+        )
+        .into_bump_str()
+        .as_bytes();
+        let reference = self.generate_temp_ref_with_scope(Some(name), self.module_scope);
+        self.record_usage(reference);
+        self.client_reference_exports.push(ClientReferenceExport {
+            reference,
+            value,
+            alias,
+            loc,
+        });
+        reference
+    }
+
+    /// The clause item `{ <name>_ref as <name> }` for a declared symbol.
+    pub(crate) fn client_reference_export_item(
+        &mut self,
+        value: Ref,
+        loc: bun_ast::Loc,
+    ) -> js_ast::ClauseItem {
+        let alias: &'a [u8] = self.symbols[value.inner_index() as usize]
+            .original_name
+            .slice();
+        let reference = self.export_client_reference(value, alias, loc);
+        js_ast::ClauseItem {
+            alias: js_ast::StoreStr::new(alias),
+            alias_loc: loc,
+            name: js_ast::LocRef {
+                loc,
+                ref_: reference,
+            },
+            original_name: self.symbols[reference.inner_index() as usize].original_name,
+        }
+    }
+
+    /// One clause item per identifier in an exported declaration's binding.
+    pub(crate) fn client_reference_export_items_for_binding(
+        &mut self,
+        items: &mut BumpVec<'a, js_ast::ClauseItem>,
+        binding: Binding,
+    ) {
+        match binding.data {
+            js_ast::b::B::BMissing(_) => {}
+            js_ast::b::B::BIdentifier(ident) => {
+                let ident = ident.get();
+                items.push(self.client_reference_export_item(ident.r#ref, binding.loc));
+            }
+            js_ast::b::B::BArray(array) => {
+                for prop in array.items.slice() {
+                    self.client_reference_export_items_for_binding(items, prop.binding);
+                }
+            }
+            js_ast::b::B::BObject(obj) => {
+                for prop in obj.properties.slice() {
+                    self.client_reference_export_items_for_binding(items, prop.value);
+                }
+            }
+        }
+    }
+
+    /// `export { <name>_ref as <name>, ... }` after the declaration the items name.
+    pub(crate) fn push_client_reference_export_clause(
+        &mut self,
+        stmts: &mut crate::parser::StmtList<'a>,
+        items: BumpVec<'a, js_ast::ClauseItem>,
+        loc: bun_ast::Loc,
+    ) {
+        if items.is_empty() {
+            return;
+        }
+        stmts.push(self.s(
+            S::ExportClause {
+                items: js_ast::StoreSlice::new_mut(items.into_bump_slice_mut()),
+                is_single_line: true,
+            },
+            loc,
+        ));
+    }
+
+    /// The declarations that `export_client_reference` deferred, as one part.
+    pub(crate) fn append_client_reference_exports(
+        &mut self,
+        parts: &mut ListManaged<'a, js_ast::Part>,
+    ) -> Result<(), crate::Error> {
+        if self.client_reference_exports.is_empty() {
+            return Ok(());
+        }
+        debug_assert!(self.current_scope == self.module_scope);
+        self.begin_part();
+        let exports = core::mem::take(&mut self.client_reference_exports);
+        let mut stmts = BumpVec::<Stmt>::with_capacity_in(exports.len(), self.arena);
+        for export in exports {
+            debug_assert!(
+                self.symbols[export.value.inner_index() as usize].kind
+                    != js_ast::symbol::Kind::Import
+            );
+            self.record_usage(export.value);
+            let value = Expr::init_identifier(export.value, export.loc);
+            let wrapped = self.wrap_value_for_server_component_reference(value, export.alias);
+            self.record_declared_symbol(export.reference);
+            let binding = self.b(
+                B::Identifier {
+                    r#ref: export.reference,
+                },
+                export.loc,
+            );
+            stmts.push(self.s(
+                S::Local {
+                    kind: S::Kind::KVar,
+                    decls: G::DeclList::from_slice(&[G::Decl {
+                        binding,
+                        value: Some(wrapped),
+                    }]),
+                    ..Default::default()
+                },
+                export.loc,
+            ));
+        }
+        self.finish_part(parts, stmts)
+    }
+
     pub(crate) fn handle_react_refresh_hook_call(
         &mut self,
         hook_call: &mut E::Call,
@@ -9874,6 +10039,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
             server_components_wrap_ref: Ref::NONE,
+            client_reference_exports: Vec::new(),
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),
             export_star_import_records: BumpVec::new_in(arena),

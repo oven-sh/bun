@@ -2428,6 +2428,8 @@ impl<'a> Parser<'a> {
             p.generate_import_stmt_for_bake_response(&mut before)?;
         }
 
+        p.append_client_reference_exports(&mut after)?;
+
         if !before.is_empty() || !after.is_empty() {
             // Single up-front reserve; the inner
             // reserve() calls in prepend_from / append become no-ops.

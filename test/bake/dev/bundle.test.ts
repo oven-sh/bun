@@ -412,6 +412,89 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+// With separateSSRGraph: false the parser wraps each export of a "use client"
+// module in registerClientReference. Every export of a local declaration has
+// to get a reference, not only `export default`, `export function` and
+// `export const`. A re-export passes through what its own module exports.
+devTest("'use client' wraps every export of a local declaration in a client reference", {
+  framework: minimalFramework,
+  files: {
+    "impl.ts": `
+      "use client";
+      export function Inner() {}
+      Inner.version = 1;
+      export default function ImplDefault() {}
+    `,
+    "Button.ts": `
+      "use client";
+      // An export clause above the declarations it names (a class and a const
+      // have no hoisting) has to work too.
+      export { Early, Panel as EarlyPanel, label as earlyLabel, Plain as Alias };
+      function Button() {}
+      function Early() {}
+      export { Button };
+      export { Button as Renamed };
+      export { Button as default };
+      export { Button as "with space" };
+      export class Panel {
+        static count = 1;
+      }
+      export const label = "label", { first, second } = { first: 1, second: 2 };
+      export function Plain() {}
+      export { Inner, Inner as Outer, default as ImplDefault } from "./impl";
+      import { Inner as Local } from "./impl";
+      export { Local };
+      // Inside the module a name is the implementation, not the reference.
+      export const sameAsPlain = typeof Plain === "function";
+    `,
+    "routes/index.ts": `
+      import * as all from "../Button";
+      export default function () {
+        // minimal.server.ts registers a reference as { value, file, uid }. The
+        // value has to be the implementation, so a reference of a reference
+        // shows up as "object".
+        const refs = Object.keys(all)
+          .sort()
+          .map(name => {
+            const value = all[name];
+            const isRef = value && typeof value === "object" && "uid" in value;
+            if (!isRef) return name + "=raw " + typeof value;
+            const file = value.file.slice(value.file.lastIndexOf("/") + 1);
+            return name + "=" + file + ":" + value.uid + ":" + typeof value.value;
+          });
+        return new Response(refs.join(", ") + "\\n" + all.sameAsPlain.value + " " + all.Inner.value.version);
+      }
+    `,
+  },
+  async test(dev) {
+    const refs = [
+      "Early=Button.ts:Early:function",
+      "EarlyPanel=Button.ts:EarlyPanel:function",
+      "earlyLabel=Button.ts:earlyLabel:string",
+      "Alias=Button.ts:Alias:function",
+      "Button=Button.ts:Button:function",
+      "ImplDefault=impl.ts:default:function",
+      "Inner=impl.ts:Inner:function",
+      "Local=impl.ts:Inner:function",
+      "Outer=impl.ts:Inner:function",
+      "Panel=Button.ts:Panel:function",
+      "Plain=Button.ts:Plain:function",
+      "Renamed=Button.ts:Renamed:function",
+      "default=Button.ts:default:function",
+      "first=Button.ts:first:number",
+      "second=Button.ts:second:number",
+      "label=Button.ts:label:string",
+      "sameAsPlain=Button.ts:sameAsPlain:boolean",
+      "with space=Button.ts:with space:function",
+    ]
+      .sort()
+      .join(", ");
+    await dev.fetch("/").equals(refs + "\ntrue 1");
+    // A re-export follows an edit of the module it comes from.
+    await dev.patch("impl.ts", { find: "Inner.version = 1", replace: "Inner.version = 2" });
+    await dev.fetch("/").equals(refs + "\ntrue 2");
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

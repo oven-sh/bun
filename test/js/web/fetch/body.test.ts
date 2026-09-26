@@ -5,6 +5,7 @@ import net from "net";
 import { join } from "node:path";
 import { isDisturbed, isErrored, isReadable, Readable } from "node:stream";
 import { finished } from "node:stream/promises";
+import { s3LocalEndpoint } from "../../bun/s3/s3-local-endpoint";
 
 const exampleServer = exampleSite("http");
 
@@ -2040,5 +2041,142 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     });
     release();
     expect(await text).toBe("payload");
+  });
+});
+
+// The size of an S3 object is not known before the download. A body made from
+// one reads the whole object, or the whole slice, whatever looked at it first.
+describe("a body made from an S3 file", () => {
+  const payload = Buffer.alloc(100, "0123456789").toString();
+
+  const owners = [
+    {
+      name: "Request",
+      make: async (blob: Blob) => new Request("http://example.com/", { method: "POST", body: blob }),
+    },
+    {
+      // new Response(s3file) is a redirect. fetch() of a blob: URL gives a Response that holds the S3 blob.
+      name: "Response",
+      make: async (blob: Blob) => {
+        const url = URL.createObjectURL(blob);
+        try {
+          return await fetch(url);
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      },
+    },
+  ];
+
+  for (const { name, make } of owners) {
+    describe(name, () => {
+      test(".body and textStream() download the whole object", async () => {
+        using endpoint = s3LocalEndpoint(payload);
+        const body = await Bun.readableStreamToText((await make(endpoint.file())).body!);
+        const textStream = (await Array.fromAsync((await make(endpoint.file())).textStream())).join("");
+        expect({ body, textStream, ranges: endpoint.ranges }).toEqual({
+          body: payload,
+          textStream: payload,
+          ranges: [null, null],
+        });
+      });
+
+      test(".body of a slice downloads the whole slice", async () => {
+        using endpoint = s3LocalEndpoint(payload);
+        const body = await Bun.readableStreamToText((await make(endpoint.file().slice(10, 30))).body!);
+        const textStream = (await Array.fromAsync((await make(endpoint.file().slice(10, 30))).textStream())).join("");
+        expect({ body, textStream, ranges: endpoint.ranges }).toEqual({
+          body: payload.slice(10, 30),
+          textStream: payload.slice(10, 30),
+          ranges: ["bytes=10-29", "bytes=10-29"],
+        });
+      });
+
+      test("a clone and its original both download the whole object", async () => {
+        using endpoint = s3LocalEndpoint(payload);
+        const original = await make(endpoint.file());
+        const clone = original.clone();
+        expect({
+          clone: await Bun.readableStreamToText(clone.body!),
+          original: await Bun.readableStreamToText(original.body!),
+          ranges: endpoint.ranges,
+        }).toEqual({ clone: payload, original: payload, ranges: [null, null] });
+      });
+
+      test("Bun.inspect() does not change what the body reads", async () => {
+        using endpoint = s3LocalEndpoint(payload);
+        const inspected = async () => {
+          const subject = await make(endpoint.file());
+          // The size in the header is unknown, so it prints as 0.
+          expect(Bun.inspect(subject)).toStartWith(`${name} (0 KB) {`);
+          return subject;
+        };
+        const blob = await (await inspected()).blob();
+        expect({
+          body: await Bun.readableStreamToText((await inspected()).body!),
+          text: await (await inspected()).text(),
+          bytes: Buffer.from(await (await inspected()).bytes()).toString(),
+          blob: [blob.size, await blob.text()],
+          ranges: endpoint.ranges,
+        }).toEqual({
+          body: payload,
+          text: payload,
+          bytes: payload,
+          blob: [NaN, payload],
+          ranges: [null, null, null, null],
+        });
+      });
+    });
+  }
+
+  test("new Request(request) downloads the whole object", async () => {
+    using endpoint = s3LocalEndpoint(payload);
+    const request = new Request(new Request("http://example.com/", { method: "POST", body: endpoint.file() }));
+    expect({ body: await Bun.readableStreamToText(request.body!), ranges: endpoint.ranges }).toEqual({
+      body: payload,
+      ranges: [null],
+    });
+  });
+
+  test("fetch(request) uploads the whole object after Bun.inspect(request)", async () => {
+    using endpoint = s3LocalEndpoint(payload);
+    const uploads: string[] = [];
+    await using sink = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        uploads.push(await req.text());
+        return new Response("ok");
+      },
+    });
+    const request = new Request(sink.url, { method: "POST", body: endpoint.file() });
+    Bun.inspect(request);
+    expect(await (await fetch(request)).text()).toBe("ok");
+    expect({ uploads, ranges: endpoint.ranges }).toEqual({ uploads: [payload], ranges: [null] });
+  });
+
+  test("HTMLRewriter.transform() reads the whole object", async () => {
+    using endpoint = s3LocalEndpoint("<p>" + payload + "</p>");
+    const seen: string[] = [];
+    const response = await owners[1].make(endpoint.file());
+    const output = await new HTMLRewriter()
+      .on("p", { text: chunk => void seen.push(chunk.text) })
+      .transform(response as Response)
+      .text();
+    expect({ output, seen: seen.join(""), ranges: endpoint.ranges }).toEqual({
+      output: "<p>" + payload + "</p>",
+      seen: payload,
+      ranges: [null],
+    });
+  });
+
+  test("WebAssembly.compileStreaming() reads the whole object", async () => {
+    // The smallest module: the magic number and the version.
+    using endpoint = s3LocalEndpoint(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
+    const response = owners[1].make(endpoint.file("application/wasm")) as Promise<Response>;
+    const module = await WebAssembly.compileStreaming(response);
+    expect({ exports: WebAssembly.Module.exports(module), ranges: endpoint.ranges }).toEqual({
+      exports: [],
+      ranges: [null],
+    });
   });
 });

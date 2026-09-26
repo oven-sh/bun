@@ -5,6 +5,7 @@ import child_process from "child_process";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
+import { s3LocalEndpoint } from "./s3-local-endpoint";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
@@ -2178,5 +2179,97 @@ describe("presigned url signature", () => {
       const { signature, expected } = verifyPresignedUrl(presigned, credentials);
       expect(signature).toBe(expected);
     }
+  });
+});
+
+// The size of an S3 object is not known before the download. Whatever asks the file
+// for its size must leave it unknown: a file whose size became 0 requests one byte
+// (`Range: bytes=0-0`) on the next read and returns an empty Blob from slice().
+describe("s3 file size stays unknown", () => {
+  const payload = Buffer.alloc(100, "0123456789").toString();
+
+  async function readsAfter(look: (file: Bun.S3File) => unknown) {
+    using endpoint = s3LocalEndpoint(payload);
+    const file = endpoint.file();
+    await look(file);
+    const requestsWhileLooking = endpoint.ranges.length;
+    return {
+      requestsWhileLooking,
+      size: file.size,
+      text: await file.text(),
+      stream: await Bun.readableStreamToText(file.stream()),
+      slice: await file.slice(10, 20).text(),
+      ranges: endpoint.ranges,
+    };
+  }
+  const untouched = {
+    requestsWhileLooking: 0,
+    size: NaN,
+    text: payload,
+    stream: payload,
+    slice: payload.slice(10, 20),
+    ranges: [null, null, "bytes=10-19"],
+  };
+
+  it("after expect().toHaveLength() and expect().toBeEmpty()", async () => {
+    expect(
+      await readsAfter(file => {
+        expect(() => expect(file).toHaveLength(0)).toThrow("Received length");
+        expect(() => expect(file).toBeEmpty()).toThrow("Expected value to be empty");
+      }),
+    ).toEqual(untouched);
+  });
+
+  it("after structuredClone()", async () => {
+    expect(
+      await readsAfter(file => {
+        try {
+          structuredClone(file);
+        } catch {}
+      }),
+    ).toEqual(untouched);
+  });
+
+  it("for a FormData entry after the FormData became a body", async () => {
+    using endpoint = s3LocalEndpoint(payload);
+    const form = new FormData();
+    form.append("file", endpoint.file());
+    try {
+      await new Response(form).arrayBuffer();
+    } catch {}
+    const entry = form.get("file") as Blob;
+    expect({ size: entry.size, text: await entry.text(), ranges: endpoint.ranges }).toEqual({
+      size: NaN,
+      text: payload,
+      ranges: [null],
+    });
+  });
+
+  it("a slice requests its own window", async () => {
+    using endpoint = s3LocalEndpoint(payload);
+    const file = endpoint.file();
+    expect({
+      "slice(10, 20).text()": await file.slice(10, 20).text(),
+      "slice(0, 5).text()": await file.slice(0, 5).text(),
+      "slice(95).text()": await file.slice(95).text(),
+      "slice(10, 20).stream()": await Bun.readableStreamToText(file.slice(10, 20).stream()),
+      "slice(0, 5).stream()": await Bun.readableStreamToText(file.slice(0, 5).stream()),
+      sizes: [file.slice(10, 20).size, file.slice(0, 5).size],
+    }).toEqual({
+      "slice(10, 20).text()": payload.slice(10, 20),
+      "slice(0, 5).text()": payload.slice(0, 5),
+      "slice(95).text()": payload.slice(95),
+      "slice(10, 20).stream()": payload.slice(10, 20),
+      "slice(0, 5).stream()": payload.slice(0, 5),
+      sizes: [10, 5],
+    });
+    // The end that an open-ended slice sends is not pinned here, only its start.
+    expect(endpoint.ranges.map(range => range?.replace(/^(bytes=95-)\d+$/, "$1"))).toEqual([
+      "bytes=10-19",
+      "bytes=0-4",
+      "bytes=95-",
+      "bytes=10-19",
+      "bytes=0-4",
+    ]);
   });
 });

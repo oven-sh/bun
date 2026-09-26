@@ -68,8 +68,10 @@ pub struct FileSink {
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
     pub(crate) js_sink_ref: JsCell<bun_jsc::strong::Optional>,
-    /// Armed while a file this sink opened for a `Bun.ModuleGraph`'s script is open.
+    /// Armed for a file opened for a `Bun.ModuleGraph`'s script, and for process stdio under `bun test --isolate`.
     abort_handle: bun_jsc::AbortHandle,
+    /// `process.stdout`/`process.stderr` under `bun test --isolate`: the stop flushes before it closes.
+    flush_on_abort: Cell<bool>,
 }
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
@@ -272,6 +274,29 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
 
         // Fallback to WriteFile() if it fails.
         this.force_sync.set(true);
+    }
+}
+
+/// Under `bun test --isolate`, arms a new `process.stdout`/`process.stderr` sink on the root context so the global swap ends it.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__trackProcessStdioSinkForTestIsolation(
+    global: &JSGlobalObject,
+    jsvalue: JSValue,
+) {
+    let vm = global.bun_vm();
+    if !vm.test_isolation_enabled {
+        return;
+    }
+    let Some(this_ptr) = JSSink::from_js(jsvalue) else {
+        return;
+    };
+    // SAFETY: `from_js` returned a live `*mut JSSink<FileSink>`; the wrapper is
+    // `repr(transparent)` over `sink: FileSink`, so this recovers the canonical
+    // `*mut FileSink`. A started sink is heap-allocated; it leaves its context in `on_close`.
+    unsafe {
+        let this: *mut FileSink = &raw mut (*this_ptr).sink;
+        (*this).flush_on_abort.set(true);
+        bun_jsc::AbortHandle::arm_owner(this, vm.root_context());
     }
 }
 
@@ -1630,6 +1655,7 @@ impl FileSink {
             pump_promise_ref: Cell::new(false),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
+            flush_on_abort: Cell::new(false),
         }
     }
 }
@@ -1642,6 +1668,10 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
     // write+dealloc provenance; the guard keeps it so across `close()` and `run_pending`.
     unsafe {
         let _guard = RefPtr::init_ref(this);
+        if (*this).flush_on_abort.get() {
+            let _ = (*this).end(None);
+            return;
+        }
         (*this).done.set(true);
         #[cfg(windows)]
         if !(*this).writer.get().owns_fd {

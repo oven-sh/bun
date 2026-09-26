@@ -902,7 +902,7 @@ impl RunCommand {
                     match bun_sys::mkdir_w(WStr::from_buf(buf, dir_len)) {
                         Ok(()) => {}
                         Err(m) if m.get_errno() == bun_sys::E::EEXIST => {}
-                        Err(_) => return Err(e.into()),
+                        Err(m) => return Err(m.into()),
                     }
                     buf[dir_len..][..name.len()].copy_from_slice(name);
                 }

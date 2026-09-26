@@ -1548,8 +1548,9 @@ declare module "bun" {
      * const cycle = {};
      * cycle.obj = cycle;
      * console.log(YAML.stringify(cycle, null, 2));
-     * // &1
-     * // obj: *1
+     * // &root
+     * // obj:
+     * //   *root
      * ```
      */
     export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
@@ -1564,8 +1565,9 @@ declare module "bun" {
    * - `render()` — render with custom callbacks for each element
    * - `react()` — parse to React-compatible JSX elements
    *
-   * Supports GFM extensions (tables, strikethrough, task lists, autolinks) and
-   * component overrides to replace default HTML tags with custom components.
+   * Supports GFM extensions (tables, strikethrough, task lists), md4c's
+   * permissive autolinks, and component overrides to replace default HTML tags
+   * with custom components.
    *
    * @example
    * ```tsx
@@ -1627,7 +1629,11 @@ declare module "bun" {
       tagFilter?: boolean;
       /**
        * Enable autolinks. Pass `true` to enable all autolink types (URL, WWW, email),
-       * or an object to enable individually.
+       * or an object to enable individually. Default: `false`.
+       *
+       * The rules are md4c's permissive autolinks, not the GFM autolink extension as
+       * cmark-gfm implements it. For example, `mailto:` URIs, URLs with a non-ASCII
+       * character, and URLs that directly follow a quote character are not linked.
        *
        * @example
        * ```ts

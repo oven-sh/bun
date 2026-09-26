@@ -7,9 +7,10 @@ description: Parse and render Markdown with Bun's built-in Markdown API, support
   **Unstable API** — This API is under active development and may change in future versions of Bun.
 </Callout>
 
-Bun includes a fast, built-in Markdown parser written in Rust. It supports GitHub Flavored Markdown (GFM) extensions and provides three APIs:
+Bun includes a fast, built-in Markdown parser written in Rust. It supports GitHub Flavored Markdown (GFM) extensions and provides four APIs:
 
 - `Bun.markdown.html()` — render Markdown to an HTML string
+- `Bun.markdown.ansi()` — render Markdown to an ANSI-colored string for terminals
 - `Bun.markdown.render()` — render Markdown with custom callbacks for each element
 - `Bun.markdown.react()` — render Markdown to React JSX elements
 
@@ -84,6 +85,15 @@ Bun.markdown.html("Visit www.example.com", {
 });
 ```
 
+The autolink rules are the permissive autolinks of [md4c](https://github.com/mity/md4c), the parser that Bun's parser is a port of. They are not the autolink extension as GitHub implements it in [cmark-gfm](https://github.com/github/cmark-gfm). Both link common input such as `www.example.com`, `https://example.com/path`, and `user@example.com`. Unlike cmark-gfm, Bun does not link:
+
+- `mailto:` and `xmpp:` URIs (`mailto:user@example.com`)
+- a URL that contains a non-ASCII character (`https://example.com/å`)
+- a URL that directly follows a quote character (`"https://example.com"`)
+- a URL whose host name has no dot (`http://localhost:3000`)
+
+To link any of these, use the `<https://example.com/å>` or `[text](url)` syntax.
+
 #### Heading IDs
 
 Pass `true` to enable both heading IDs and autolink headings, or an object for granular control:
@@ -96,6 +106,45 @@ Bun.markdown.html("## Hello World", { headings: true });
 // Enable only heading IDs (no autolink)
 Bun.markdown.html("## Hello World", { headings: { ids: true } });
 // '<h2 id="hello-world">Hello World</h2>\n'
+```
+
+---
+
+## `Bun.markdown.ansi()`
+
+Render a Markdown string to an ANSI-colored string for the terminal. `bun ./file.md` uses the same renderer.
+
+```ts
+const out = Bun.markdown.ansi("# Hello\n\n**bold** and *italic*\n");
+process.stdout.write(out);
+```
+
+`ansi()` renders headings, lists, tables, blockquotes, links, images, inline styles, and fenced code blocks. It highlights the syntax of JavaScript and TypeScript code blocks.
+
+`ansi()` takes no parser options. It always enables tables, strikethrough, task lists, autolinks, wiki links, underline, and LaTeX math.
+
+### Theme
+
+Pass a theme object as the second argument:
+
+| Option          | Default  | Description                                                                                         |
+| --------------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `colors`        | `true`   | Emit ANSI color and style escape codes. When `false`, the output is plain text with ASCII borders   |
+| `hyperlinks`    | `false`  | Emit OSC 8 hyperlinks, which modern terminals make clickable. When `false`, a link is `text (url)`  |
+| `light`         | detected | Use the palette for a light terminal background. Detected from the `COLORFGBG` environment variable |
+| `columns`       | `80`     | Line width for word wrapping. Pass `0` to disable wrapping                                          |
+| `kittyGraphics` | `false`  | Show images from local files inline with the Kitty Graphics Protocol                                |
+
+```ts
+// Plain text, no escape codes
+Bun.markdown.ansi("# Hello\n\n[docs](https://bun.com)\n", { colors: false });
+// "Hello\n=====\n\ndocs (https://bun.com)\n"
+
+// Clickable links
+Bun.markdown.ansi("[docs](https://bun.com)", { hyperlinks: true });
+
+// Wrap at 60 columns
+Bun.markdown.ansi(longText, { columns: 60 });
 ```
 
 ---

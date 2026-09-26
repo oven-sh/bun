@@ -3001,10 +3001,14 @@ impl PostgresSQLConnection {
                         self.evict_statement(stmt);
                     } else if stmt.status == StatementStatus::Prepared
                         && invalidates
+                        && request.status.get() == QueryStatus::Binding
                         && !stmt.signature.prepared_statement_name.is_empty()
                     {
                         // Server-side named statement gone or stale: evict so
-                        // later queries with this signature re-prepare.
+                        // later queries with this signature re-prepare. The
+                        // server reports that in answer to Bind; after
+                        // BindComplete the same SQLSTATE comes from the query
+                        // itself, and rows of this request may have arrived.
                         self.evict_statement(stmt);
                         // Retry only when no other Bind/Execute responses are
                         // already on the wire and the session is idle (inside a

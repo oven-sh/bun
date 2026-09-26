@@ -4,7 +4,8 @@
 // so every later execution of that query bound the dead server-side name and
 // failed forever. The ErrorResponse handler now evicts the cached entry and,
 // when the failing exchange is the only one in flight, transparently
-// re-prepares under a fresh name and re-runs once.
+// re-prepares under a fresh name and re-runs once. Only an error that answers
+// the Bind counts: after BindComplete the same SQLSTATE comes from the query.
 import { SQL, randomUUIDv7 } from "bun";
 import { expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
@@ -154,6 +155,42 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       expect(await prepared()).toEqual(before);
     } finally {
       await sql`drop function if exists ${sql(fn)}(int)`.simple();
+    }
+  });
+
+  test("a 26000 raised by the query itself after rows were sent is surfaced and not retried", async () => {
+    await container.ready;
+    await using sql = connect();
+    const id = randomUUIDv7("hex").replaceAll("-", "");
+    const seq = "seq_inv_" + id;
+    const fn = "fn_inv_" + id;
+    try {
+      await sql.unsafe(`create sequence ${seq}`);
+      // Raises on row 3 of its first run only. nextval is not rolled back, so
+      // the sequence counts the runs that reached row 3.
+      await sql.unsafe(`
+        create function ${fn}(i int) returns int as $$
+        begin
+          if i = 3 and nextval('${seq}') = 1 then
+            raise exception 'boom' using errcode = '26000';
+          end if;
+          return i;
+        end $$ language plpgsql
+      `);
+      const settled = await sql`select ${sql(fn)}(i::int) as v from generate_series(1, ${5}) as i`.catch(e => e);
+      const [{ runs }] = await sql.unsafe(
+        `select (case when is_called then last_value else 0 end)::int as runs from ${seq}`,
+      );
+      // A retry runs the function a second time and resolves with the rows of
+      // both runs: [1, 2, 1, 2, 3, 4, 5].
+      expect({ errno: (settled as any)?.errno, routine: (settled as any)?.routine, runs }).toEqual({
+        errno: "26000",
+        routine: "exec_stmt_raise",
+        runs: 1,
+      });
+    } finally {
+      await sql.unsafe(`drop function if exists ${fn}(int)`);
+      await sql.unsafe(`drop sequence if exists ${seq}`);
     }
   });
 
@@ -388,6 +425,79 @@ test("postgres: a 0A000 without routine RevalidateCachedQuery is not retried", a
       routine: "some_fdw_handler",
       parses: 1,
       executes: 2,
+    });
+  } finally {
+    server.close();
+  }
+});
+
+// The position in the exchange decides, not the fields of the error. After
+// BindComplete the server has found the statement and its plan, so a 26000
+// there comes from the query itself. Rows of the request can have arrived by
+// then, and a retry would resolve with the rows of both attempts.
+test("postgres: a 26000 after BindComplete is surfaced and the statement stays cached", async () => {
+  let parses = 0;
+  let executes = 0;
+  const { port, server } = await listeningServer(socket => {
+    let sawStartup = false;
+    let pending = Buffer.alloc(0);
+    const rowDesc = pgRowDescription([{ name: "v", typeOid: 25 }]);
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      pending = Buffer.concat([pending, chunk]);
+      if (!sawStartup) {
+        if (pending.length < 4) return;
+        const len = pending.readInt32BE(0);
+        if (pending.length < len) return;
+        pending = pending.subarray(len);
+        sawStartup = true;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+      }
+      const out: Buffer[] = [];
+      pending = pgReadFrontendMessages(pending, type => {
+        if (type === 0x50 /* Parse */) {
+          parses++;
+          out.push(pgParseComplete());
+        } else if (type === 0x44 /* Describe */) {
+          out.push(rowDesc);
+        } else if (type === 0x42 /* Bind */) {
+          out.push(pgBindComplete());
+        } else if (type === 0x45 /* Execute */) {
+          executes++;
+          if (executes === 2) {
+            out.push(
+              pgDataRow([Buffer.from("a")]),
+              pgDataRow([Buffer.from("b")]),
+              pgErrorResponse({
+                S: "ERROR",
+                C: "26000",
+                M: 'prepared statement "other" does not exist',
+                R: "FetchPreparedStatement",
+              }),
+            );
+          } else {
+            out.push(pgDataRow([Buffer.from("ok")]), pgCommandComplete("SELECT 1"));
+          }
+        } else if (type === 0x53 /* Sync */) {
+          out.push(pgReadyForQuery());
+        }
+      });
+      if (out.length) socket.write(Buffer.concat(out));
+    });
+  });
+
+  try {
+    await using sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, idleTimeout: 5 });
+    expect(await sql`select v`).toEqual([{ v: "ok" }]);
+    const err = await sql`select v`.catch(e => e);
+    const after = await sql`select v`;
+    // One Parse for three runs: the second run was not re-prepared, and the
+    // third one still found the statement in the cache.
+    expect({ errno: (err as any)?.errno, after, parses, executes }).toEqual({
+      errno: "26000",
+      after: [{ v: "ok" }],
+      parses: 1,
+      executes: 3,
     });
   } finally {
     server.close();

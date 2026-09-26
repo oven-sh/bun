@@ -435,7 +435,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
         parse_param!(
-            "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"
+            "--asset <STR>...                 Embed a file or directory into the compiled executable under its basename, next to the entry point (requires --compile)"
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(

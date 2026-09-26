@@ -2365,12 +2365,13 @@ pub mod O {
     pub(crate) const DIRECT: i32 = 0x0200_0000;
     pub(crate) const DSYNC: i32 = 0x0400_0000;
     pub(crate) const SYNC: i32 = 0x0800_0000;
+    /// `FILE_FLAG_OPEN_REPARSE_POINT`. oven-sh/libuv only: upstream has 0 here.
+    pub(crate) const NOFOLLOW: i32 = 0x0100_0000;
     // No-ops on Windows.
     pub const DIRECTORY: i32 = 0;
     pub const EXLOCK: i32 = 0x1000_0000;
     pub const NOATIME: i32 = 0;
     pub const NOCTTY: i32 = 0;
-    pub(crate) const NOFOLLOW: i32 = 0;
     pub const NONBLOCK: i32 = 0;
     pub const SYMLINK: i32 = 0;
 
@@ -2469,6 +2470,9 @@ pub mod O {
             flags |= bun_o::SYNC;
         } else if uv_flags & DSYNC != 0 {
             flags |= bun_o::DSYNC;
+        }
+        if uv_flags & NOFOLLOW != 0 {
+            flags |= bun_o::NOFOLLOW;
         }
         if uv_flags & DIRECT != 0 {
             flags |= bun_o::DIRECT;

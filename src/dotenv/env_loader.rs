@@ -864,21 +864,21 @@ const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 =
 #[cfg(not(unix))]
 const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 
-/// Decides what happens to an env file that is not a regular file.
+/// Decides what happens to an env file that is not a regular file, or that fails to read.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EnvFileSource {
     /// A `.env*` name from the cwd listing: skipped.
     Default,
-    /// An `--env-file` argument: read whatever its kind, as in Node.
+    /// An `--env-file` argument: read whatever its kind, as in Node. A read
+    /// errno outside ENOMEM/EPIPE/EACCES/EISDIR stops the process.
     Explicit,
 }
 
 /// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`.
 enum ReadEnvFile {
-    /// Zero-length, or a default entry that is not a regular file. The caller marks the slot.
+    /// Nothing to read, or a default entry that is not a regular file. The caller marks the slot.
     Empty,
-    /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
-    /// (unless `quiet`), marks the slot, and returns.
+    /// A read errno that skips the file. The caller prints (unless `quiet`) and marks the slot.
     ReadErr(bun_sys::Error),
     /// File contents; `buf.len()` is the amount read.
     Bytes(Vec<u8>),
@@ -889,25 +889,25 @@ fn read_env_file_contents(
     source: EnvFileSource,
 ) -> crate::Result<ReadEnvFile> {
     let stat = file.stat()?;
-    let result = if bun_sys::is_regular_file(stat.st_mode as _) {
-        if stat.st_size == 0 {
-            return Ok(ReadEnvFile::Empty);
-        }
-        file.read_to_end()
-    } else if source == EnvFileSource::Explicit {
-        // A pipe or device is not seekable, so `read(2)` until EOF, not `pread`.
-        let mut buf = Vec::new();
-        file.read_to_end_into(&mut buf).map(|_| buf)
-    } else {
+    if source == EnvFileSource::Default && !bun_sys::is_regular_file(stat.st_mode as _) {
         return Ok(ReadEnvFile::Empty);
-    };
-    match result {
-        Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
-        Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),
+    }
+    // `st_size` only presizes the buffer: a file system can report 0 for a file
+    // that has content. The file ends where a read returns 0 bytes.
+    let mut buf = Vec::new();
+    let size_hint = usize::try_from(stat.st_size).unwrap_or(0);
+    if size_hint > 0 && buf.try_reserve_exact(size_hint.saturating_add(16)).is_err() {
+        return Ok(ReadEnvFile::ReadErr(bun_sys::Error::oom()));
+    }
+    // `read(2)`, not `pread`: a pipe or a device cannot seek.
+    match file.read_to_end_into(&mut buf) {
+        Ok(0) => Ok(ReadEnvFile::Empty),
+        Ok(_) => Ok(ReadEnvFile::Bytes(buf)),
         Err(err) => {
             use bun_sys::E;
             match err.get_errno() {
                 E::ENOMEM | E::EPIPE | E::EACCES | E::EISDIR => Ok(ReadEnvFile::ReadErr(err)),
+                _ if source == EnvFileSource::Default => Ok(ReadEnvFile::ReadErr(err)),
                 _ => Err(err.into()),
             }
         }

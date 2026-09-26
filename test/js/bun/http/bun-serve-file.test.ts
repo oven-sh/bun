@@ -1221,7 +1221,9 @@ for (let i = 0; i < 100 && fds > baseline; i++) {
   await Bun.sleep(10);
   fds = openFds();
 }
-console.log(JSON.stringify({ leaked: Math.max(0, fds - baseline), aborted: source === "fetch" ? aborted : N }));
+const leaked = Math.max(0, fds - baseline);
+// A route has no request signal, so only the fetch handler can count aborts.
+console.log(JSON.stringify(source === "fetch" ? { leaked, aborted } : { leaked }));
 
 server.stop(true);
 process.exit(0);
@@ -1243,7 +1245,7 @@ process.exit(0);
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout.trim())).toEqual({ leaked: 0, aborted: N });
+      expect(JSON.parse(stdout.trim())).toEqual(source === "fetch" ? { leaked: 0, aborted: N } : { leaked: 0 });
       expect(exitCode).toBe(0);
     },
   );

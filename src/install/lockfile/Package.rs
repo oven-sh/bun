@@ -749,8 +749,8 @@ impl Package<u64> {
                 'list: for (i, (key, version_string_)) in
                     keys.iter().zip(version_strings.iter()).enumerate()
                 {
-                    // Duplicate peer & dev dependencies are promoted to whichever appeared first
-                    // In practice, npm validates this so it shouldn't happen
+                    // A name in multiple groups keeps one entry. dev: keep the earlier one.
+                    // optional, peer: override the earlier one (peer-over-prod matches yarn/pnpm).
                     let mut duplicate_at: Option<usize> = None;
                     if group.behavior.is_peer()
                         || group.behavior.is_dev()
@@ -761,7 +761,9 @@ impl Package<u64> {
                             .enumerate()
                         {
                             if dependency.name_hash == key.hash {
-                                if group.behavior.is_optional() {
+                                if group.behavior.is_optional()
+                                    || (group.behavior.is_peer() && dependency.behavior.is_prod())
+                                {
                                     duplicate_at = Some(j);
                                     break;
                                 }
@@ -780,7 +782,7 @@ impl Package<u64> {
                     let sliced = dep_version.sliced(string_builder.string_bytes.as_slice());
 
                     let mut behavior = group.behavior;
-                    if is_peer {
+                    if is_peer && duplicate_at.is_none() {
                         behavior.set(
                             Behavior::OPTIONAL,
                             (i as u32) < package_version.non_optional_peer_dependencies_start,
@@ -817,7 +819,8 @@ impl Package<u64> {
                     lockfile::CatalogMap::strip_reference(&mut dependency);
 
                     // If a dependency appears in both "dependencies" and "optionalDependencies", it is considered optional!
-                    if group.behavior.is_optional() {
+                    // If a dependency appears in both "dependencies" and "peerDependencies", it is considered a peer.
+                    if group.behavior.is_optional() || group.behavior.is_peer() {
                         if let Some(j) = duplicate_at {
                             // need to shift dependencies after the duplicate to maintain sort order
                             // (in-place left-rotate by 1 over `[j .. total_dependencies_count)`)

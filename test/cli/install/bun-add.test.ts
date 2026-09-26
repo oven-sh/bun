@@ -2013,7 +2013,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
   });
 });
 
-it("should prefer dependencies over peerDependencies of the same name", async () => {
+it("should prefer peerDependencies over dependencies of the same name", async () => {
   const urls: string[] = [];
   setHandler(
     dummyRegistry(urls, {
@@ -2053,7 +2053,7 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
     `${root_url}/bar`,
     `${root_url}/bar-0.0.2.tgz`,
     `${root_url}/baz`,
-    `${root_url}/baz-0.0.3.tgz`,
+    `${root_url}/baz-0.0.5.tgz`,
   ]);
   expect(requested).toBe(4);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
@@ -2065,9 +2065,9 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
   });
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
     name: "baz",
-    version: "0.0.3",
+    version: "0.0.5",
     bin: {
-      "baz-run": "index.js",
+      "baz-exec": "index.js",
     },
   });
 });

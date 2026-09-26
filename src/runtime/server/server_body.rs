@@ -2994,8 +2994,8 @@ where
 
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
-        // The ctx and Request each own a +1 on the
-        // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
+        // The ctx and Request each own a +1 on the same slot: see the
+        // `RequestContext::request_body` doc and `Request::finalize`.
         ctx.set_request_body(Some(body_hive.clone()));
 
         let _context = server.vm().enter_context(server.context.get());
@@ -3274,8 +3274,8 @@ where
 
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
-        // The ctx and Request each own a +1 on the
-        // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
+        // The ctx and Request each own a +1 on the same slot: see the
+        // `RequestContext::request_body` doc and `Request::finalize`.
         ctx.request_body.set(Some(body_hive.clone()));
 
         let _context = this.vm().enter_context(this.context.get());

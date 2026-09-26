@@ -1937,6 +1937,40 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     char_ @ (b'`' | b'"' | b'\'') => {
                         prev_keyword = None;
 
+                        // TOML `"""..."""` or `'''...'''` on one line
+                        if should_redact_value
+                            && char_ != b'`'
+                            && text.len() > 2
+                            && text[1] == char_
+                            && text[2] == char_
+                        {
+                            should_redact_value = false;
+                            match strings::find_closing_triple_quote(&text[3..], char_) {
+                                Some(close) => {
+                                    write!(
+                                        writer,
+                                        crate::pretty_fmt!("<r><green>{s}", true),
+                                        bstr::BStr::new(&text[..3]),
+                                    )?;
+                                    splat_byte_all(writer, b'*', close)?;
+                                    write!(
+                                        writer,
+                                        "{}{}",
+                                        bstr::BStr::new(&text[..3]),
+                                        Output::RESET
+                                    )?;
+                                    text = &text[3 + close + 3..];
+                                }
+                                None => {
+                                    let len = crate::strings::index_of_char_usize(text, b'\n')
+                                        .unwrap_or(text.len());
+                                    splat_byte_all(writer, b'*', len)?;
+                                    text = &text[len..];
+                                }
+                            }
+                            continue;
+                        }
+
                         let mut i: usize = 1;
                         while i < text.len() && text[i] != char_ {
                             // if we're redacting, no need to syntax highlight contents
@@ -2027,6 +2061,20 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                                 if inner.is_empty() {
                                     break 'try_redact;
+                                }
+
+                                // TOML quoted key: `"token" = "..."`, or `"token" "..."` with the `=` missing
+                                if RedactedKeywords::has(inner.trim_ascii()) {
+                                    let mut sep = i;
+                                    while sep < text.len() && text[sep].is_ascii_whitespace() {
+                                        sep += 1;
+                                    }
+                                    if sep < text.len()
+                                        && matches!(text[sep], b'=' | b':' | b'"' | b'\'')
+                                    {
+                                        should_redact_value = true;
+                                        break 'try_redact;
+                                    }
                                 }
 
                                 if inner.len() == 36 && strings::is_uuid(inner) {

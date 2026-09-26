@@ -2013,6 +2013,26 @@ pub(crate) mod strings_impl {
         }
         i
     }
+    /// Length of a TOML triple-quoted value from `text` to its closing quote run on the same line.
+    pub(crate) fn find_closing_triple_quote(text: &[u8], q: u8) -> Option<usize> {
+        let mut i = 0usize;
+        while i + 2 < text.len() {
+            match text[i] {
+                b'\n' => return None,
+                b'\\' if q == b'"' && text[i + 1] != b'\n' => i += 2,
+                c if c == q && text[i + 1] == q && text[i + 2] == q => {
+                    let mut extra = 0usize;
+                    while extra < 2 && i + 3 + extra < text.len() && text[i + 3 + extra] == q {
+                        extra += 1;
+                    }
+                    return Some(i + extra);
+                }
+                _ => i += 1,
+            }
+        }
+        None
+    }
+
     fn starts_with_redacted_item(text: &[u8], item: &'static [u8]) -> Option<(usize, usize)> {
         if text.len() < item.len() || &text[..item.len()] != item {
             return None;
@@ -2043,7 +2063,28 @@ pub(crate) mod strings_impl {
                 crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
             ));
         }
-        offset += 1;
+        match text[offset] {
+            q @ (b'"' | b'\'') => {
+                let mut sep = offset + 1;
+                while sep < text.len() && text[sep].is_ascii_whitespace() {
+                    sep += 1;
+                }
+                let triple =
+                    offset + 2 < text.len() && text[offset + 1] == q && text[offset + 2] == q;
+                if sep < text.len() && matches!(text[sep], b'=' | b':') {
+                    // the closing quote of a quoted key
+                    offset = sep + 1;
+                } else if !whitespace && !triple {
+                    // not a value opener (`x-access-token", password = ...`)
+                    let rest = &text[offset..];
+                    return Some((
+                        offset,
+                        crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
+                    ));
+                }
+            }
+            _ => offset += 1,
+        }
 
         let mut end = offset;
         while end < text.len() && text[end].is_ascii_whitespace() {
@@ -2055,6 +2096,21 @@ pub(crate) mod strings_impl {
         }
 
         match text[end] {
+            // TOML `"""..."""` or `'''...'''` on one line
+            q @ (b'\'' | b'"')
+                if end + 2 < text.len() && text[end + 1] == q && text[end + 2] == q =>
+            {
+                let opening = end + 3;
+                if let Some(close) = find_closing_triple_quote(&text[opening..], q) {
+                    return Some((opening, close));
+                }
+
+                let rest = &text[offset..];
+                Some((
+                    offset,
+                    crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
+                ))
+            }
             q @ (b'\'' | b'"' | b'`') => {
                 // attempt to find closing
                 let opening = end;

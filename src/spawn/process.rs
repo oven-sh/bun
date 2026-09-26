@@ -183,10 +183,9 @@ impl ProcessHandle {
         self.process_mut().watch_or_reap()
     }
 
-    /// See [`Process::on_exit`]; runs the exit handler (same rule as
-    /// [`watch_or_reap`](Self::watch_or_reap)).
-    pub fn on_exit(&self, status: Status, rusage: &Rusage) {
-        self.process_mut().on_exit(status, rusage)
+    /// See [`Process::on_watch_failed`]; it runs the exit handler.
+    pub fn on_watch_failed(&self, err: bun_sys::Error) {
+        self.process_mut().on_watch_failed(err)
     }
 
     pub fn kill(&self, signal: u8) -> Maybe<()> {
@@ -402,14 +401,24 @@ impl Process {
         self.on_exit(status, &rusage_result);
     }
 
+    /// `Ok(true)`: the exit handler ran. `Err`: it never will, see [`on_watch_failed`](Self::on_watch_failed).
     pub fn watch_or_reap(&mut self) -> bun_sys::Result<bool> {
+        self.watch_or_reap_with(true)
+    }
+
+    /// For spawnSync, which blocks in `wait(true)` on `Err`: an unwatchable child is left running.
+    pub fn watch_or_reap_leave_running(&mut self) -> bun_sys::Result<bool> {
+        self.watch_or_reap_with(false)
+    }
+
+    fn watch_or_reap_with(&mut self, kill_unwatchable: bool) -> bun_sys::Result<bool> {
         if self.has_exited() {
             let zeroed = rusage_zeroed();
             self.on_exit(self.status.clone(), &zeroed);
             return Ok(true);
         }
 
-        match self.watch() {
+        match self.watch_with(kill_unwatchable) {
             Err(err) => {
                 #[cfg(unix)]
                 if err.get_errno() == bun_sys::E::ESRCH {
@@ -422,7 +431,40 @@ impl Process {
         }
     }
 
+    /// After `watch_or_reap()` returned `Err` no exit will be reported: run the exit handler with the error.
+    pub fn on_watch_failed(&mut self, err: bun_sys::Error) {
+        self.on_exit(Status::Err(err), &rusage_zeroed());
+    }
+
+    /// Kill and reap a running child whose exit nothing would report. `ESRCH`: it was reaped before the watch.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cold]
+    #[inline(never)]
+    fn kill_and_reap_unwatchable(&mut self, err: bun_sys::Error) -> bun_sys::Error {
+        if self.has_exited() {
+            self.close();
+            return bun_sys::Error::from_code(bun_sys::E::ESRCH, err.syscall);
+        }
+        // A child that cannot be signalled stays as the caller found it: `wait4` would block for its whole life.
+        if self.kill(libc::SIGKILL as u8).is_err() {
+            return err;
+        }
+        let reaped = posix_spawn::wait4(self.pid, 0, None);
+        self.status = Status::from(self.pid, &reaped).unwrap_or_else(|| Status::Err(err.clone()));
+        self.close();
+        err
+    }
+
+    /// On Linux an `Err` other than `ESRCH` describes a killed and reaped child (kqueue: it can still run).
     pub fn watch(&mut self) -> bun_sys::Result<()> {
+        self.watch_with(true)
+    }
+
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "android")),
+        allow(unused_variables)
+    )]
+    fn watch_with(&mut self, kill_unwatchable: bool) -> bun_sys::Result<()> {
         #[cfg(windows)]
         {
             if let Poller::Uv(p) = &mut self.poller {
@@ -490,6 +532,11 @@ impl Process {
                 Err(err) => {
                     // SAFETY: poll is live; borrow scoped to the call.
                     unsafe { (*poll).disable_keeping_process_alive(ctx) };
+                    // Linux only: on XNU a pty session leader is not reapable until this thread drains the pty master.
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    if kill_unwatchable && err.get_errno() != bun_sys::E::ESRCH {
+                        return Err(self.kill_and_reap_unwatchable(err));
+                    }
                     Err(err)
                 }
             }
@@ -521,6 +568,13 @@ impl Process {
             );
             if maybe.is_ok() {
                 self.ref_();
+            }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if let Err(err) = maybe {
+                if err.get_errno() == bun_sys::E::ESRCH {
+                    return Err(err);
+                }
+                return Err(self.kill_and_reap_unwatchable(err));
             }
             maybe
         } else {

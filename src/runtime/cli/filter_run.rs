@@ -5,7 +5,7 @@ use std::time::Instant;
 
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
@@ -197,15 +197,8 @@ impl<'a> ProcessHandle<'a> {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::FilterRunHandle, handle_ptr)
         });
 
-        match process.watch_or_reap() {
-            Ok(_) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (POD C struct)
-                    let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    process.on_exit(Status::Err(err), &rusage);
-                }
-            }
+        if let Err(err) = process.watch_or_reap() {
+            process.on_watch_failed(err);
         }
         Ok(())
     }

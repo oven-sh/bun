@@ -866,6 +866,15 @@ impl ShellSubprocess {
         // SAFETY: scoped access; `watch` does not re-enter the subprocess.
         match unsafe { (*subprocess).proc().watch() } {
             bun_sys::Result::Ok(()) => {}
+            // Linux: `watch()` killed and reaped a child whose exit it could not watch.
+            bun_sys::Result::Err(err)
+                if cfg!(any(target_os = "linux", target_os = "android"))
+                    && err.get_errno() != bun_sys::E::ESRCH =>
+            {
+                let sys_err = err.to_shell_system_error();
+                Self::abort_after_failed_start(subprocess);
+                return Err(ShellErr::Sys(sys_err));
+            }
             bun_sys::Result::Err(_) => {
                 *notify_caller_process_already_exited = true;
                 spawn_args.lazy = false;
@@ -942,7 +951,7 @@ impl ShellSubprocess {
             }
 
             if matches!(status, Status::Err(_)) {
-                // TODO: handle error
+                break 'brk Some(1);
             }
 
             if let Some(code) = status.signal().map(|signal| signal.to_exit_code()) {

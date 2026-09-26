@@ -1627,6 +1627,8 @@ fn spawn_maybe_sync(
     }
 
     let mut send_exit_notification = false;
+    // Linux: `watch()` killed and reaped a child whose exit it could not watch, so the spawn fails.
+    let mut watch_err: Option<sys::Error> = None;
 
     if !is_sync {
         // This must go before other things happen so that the exit handler is
@@ -1685,18 +1687,23 @@ fn spawn_maybe_sync(
 
         match subprocess.process_mut().watch() {
             sys::Result::Ok(()) => {}
-            sys::Result::Err(_) => {
+            sys::Result::Err(err) => {
                 send_exit_notification = true;
                 lazy = false;
+                if cfg!(any(target_os = "linux", target_os = "android"))
+                    && err.get_errno() != sys::E::ESRCH
+                {
+                    watch_err = Some(err);
+                }
             }
         }
     }
 
     // Note: reshaped for borrowck — copy `subprocess_ptr` so the
-    // non-`move` `defer!` closure captures a disjoint place from the
+    // non-`move` guard closure captures a disjoint place from the
     // `AbortHandle::follow_owner(subprocess_ptr, …)` calls that follow.
     let subprocess_ptr_exit = subprocess_ptr;
-    scopeguard::defer! {
+    let exit_notification = scopeguard::guard((), |()| {
         if send_exit_notification {
             // SAFETY: subprocess_ptr is live for the lifetime of this defer.
             let proc = unsafe { &*subprocess_ptr_exit }.process_mut();
@@ -1711,7 +1718,7 @@ fn spawn_maybe_sync(
                 proc.wait(is_sync);
             }
         }
-    }
+    });
 
     // Start the readers before the Writable::Buffer stdin writer so that if
     // the writer's start() throws below, both PipeReaders have taken their
@@ -1748,6 +1755,17 @@ fn spawn_maybe_sync(
         #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.on_close_io(Subprocess::StdioKind::Stdin);
         let _ = subprocess.try_kill(subprocess.kill_signal);
+        // A failed watch ends the spawn in the arm below.
+        if watch_err.is_none() {
+            return Err(cx.global().throw_value(err.to_js(cx.global())));
+        }
+    }
+    if let Some(err) = watch_err {
+        // JS never gets this Subprocess: drop its callbacks, then deliver the exit before the throw to release it.
+        let _ = Subprocess::js::on_exit_callback_take_cached(out, cx.global());
+        let _ = Subprocess::js::on_disconnect_callback_take_cached(out, cx.global());
+        let _ = Subprocess::js::ipc_callback_take_cached(out, cx.global());
+        drop(exit_notification);
         return Err(cx.global().throw_value(err.to_js(cx.global())));
     }
 
@@ -1816,7 +1834,7 @@ fn spawn_maybe_sync(
         // watchOrReap will handle the already exited case for us.
     }
 
-    match subprocess.process_mut().watch_or_reap() {
+    match subprocess.process_mut().watch_or_reap_leave_running() {
         sys::Result::Ok(_) => {
             // Once everything is set up, we can add the abort listener
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted

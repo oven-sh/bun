@@ -709,11 +709,7 @@ impl GitSubprocess {
         match process.watch_or_reap() {
             Ok(false) => this.process.set(Some(process)),
             Ok(true) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    process.on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>());
-                }
-            }
+            Err(err) => process.on_watch_failed(err),
         }
         Ok(())
     }

@@ -764,10 +764,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
 
             if let Err(err) = (*process).watch_or_reap() {
-                if !(*process).has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
-                    (*process).on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>());
-                }
+                (*process).on_watch_failed(err);
             }
 
             Ok(())

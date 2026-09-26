@@ -18,29 +18,33 @@ const MSG_DONTWAIT = linux ? 0x40 : 0x80;
  * fixtures.
  */
 export function unixSockets(libcPath: string) {
-  const libc = dlopen(libcPath, {
-    socketpair: { args: ["i32", "i32", "i32", "ptr"], returns: "i32" },
-    setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
-    send: { args: ["i32", "ptr", "usize", "i32"], returns: "i64" },
-  }).symbols;
+  const open = () =>
+    dlopen(libcPath, {
+      socketpair: { args: ["i32", "i32", "i32", "ptr"], returns: "i32" },
+      setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+      send: { args: ["i32", "ptr", "usize", "i32"], returns: "i64" },
+    }).symbols;
+  // Opened at the first call, not here: a test file makes this object while it loads.
+  let symbols: ReturnType<typeof open> | undefined;
+  const libc = () => (symbols ??= open());
 
-  // A socket holds 208 KiB by default on Linux and 8 KiB on macOS. The kernel cuts the request to its limit
-  // (net.core.wmem_max, kern.ipc.maxsockbuf) and reports no error, so a test checks `holds()` first.
+  // Asks for room for 1 MiB. A socket holds 208 KiB by default on Linux and 8 KiB on macOS. Above the limit of
+  // the host, Linux cuts the request (net.core.wmem_max). macOS cuts it too, or refuses it with ENOBUFS before
+  // 14.4 (kern.ipc.maxsockbuf). The result is not checked for that reason: the socket takes fewer bytes then,
+  // and `limitIsBelow()` tells a test so.
   function setBuffer(fd: number, option: number): void {
-    if (libc.setsockopt(fd, SOL_SOCKET, option, ptr(new Int32Array([1 << 20])), 4) !== 0) {
-      throw new Error(`setsockopt() failed on fd ${fd}`);
-    }
+    libc().setsockopt(fd, SOL_SOCKET, option, ptr(new Int32Array([1 << 20])), 4);
   }
 
   /** Queues `bytes` on the socket `fd` and does not wait for room. Returns how many bytes the socket took. */
   function sendWithoutBlocking(fd: number, bytes: Uint8Array): number {
-    return Number(libc.send(fd, ptr(bytes), bytes.length, MSG_DONTWAIT));
+    return Number(libc().send(fd, ptr(bytes), bytes.length, MSG_DONTWAIT));
   }
 
-  /** A connected pair of sockets that holds up to 1 MiB of unread bytes. */
+  /** A connected pair of sockets that holds up to 1 MiB of unread bytes, or less on a host with a low limit. */
   function pair() {
     const fds = new Int32Array(2);
-    if (libc.socketpair(AF_UNIX, SOCK_STREAM, 0, ptr(fds)) !== 0) throw new Error("socketpair() failed");
+    if (libc().socketpair(AF_UNIX, SOCK_STREAM, 0, ptr(fds)) !== 0) throw new Error("socketpair() failed");
     const [source, peer] = fds;
     setBuffer(peer, SO_SNDBUF);
     setBuffer(source, SO_RCVBUF);
@@ -69,10 +73,19 @@ export function unixSockets(libcPath: string) {
     raiseSendBuffer(fd: number): void {
       setBuffer(fd, SO_SNDBUF);
     },
-    /** Whether a socket of this host holds `length` unread bytes. A host with a low limit does not. */
-    holds(length: number): boolean {
-      using probe = pair();
-      return probe.hangUp(Buffer.alloc(length)) === length;
+    /**
+     * Whether a socket of this host takes only a part of `length` unread bytes, because the limit of the host
+     * for a socket buffer is too low. A test skips its rows then. This never throws, because a test file calls
+     * it while it loads. A probe that fails gives `false`: the rows run and report that failure.
+     */
+    limitIsBelow(length: number): boolean {
+      try {
+        using probe = pair();
+        const queued = probe.hangUp(Buffer.alloc(length));
+        return queued >= 0 && queued < length;
+      } catch {
+        return false;
+      }
     },
   };
 }

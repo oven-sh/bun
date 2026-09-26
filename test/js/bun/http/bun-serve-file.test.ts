@@ -1,4 +1,4 @@
-import type { Server } from "bun";
+import type { Server, SocketHandler } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import {
   bunEnv,
@@ -1170,7 +1170,8 @@ process.exit(0);
 // poll for the other end. A host whose limit for a socket buffer is too low for
 // the largest row skips them all.
 const sockets = isLinux || isMacOS ? unixSockets(libcPathForDlopen()) : undefined;
-describe.skipIf(!sockets?.holds(400_000))("a file response whose socket hangs up with bytes unread", () => {
+const skipHungUpSockets = !sockets || sockets.limitIsBelow(400_000);
+describe.skipIf(skipHungUpSockets)("a file response whose socket hangs up with bytes unread", () => {
   const first = Buffer.from("first");
 
   function parse(wire: Buffer) {
@@ -1195,35 +1196,35 @@ describe.skipIf(!sockets?.holds(400_000))("a file response whose socket hangs up
 
   // One GET from a raw client on this thread. It ends when the message is complete or the connection is gone.
   // `whenBodyStarts` runs once the first bytes of the body are in.
-  async function get(server: Server, unix: string | undefined, whenBodyStarts?: () => void) {
+  async function get(server: Server<undefined>, unix: string | undefined, whenBodyStarts?: () => void) {
     const { promise, resolve } = Promise.withResolvers<void>();
     let wire = Buffer.alloc(0);
     let closed: string | undefined;
-    await using _ = await Bun.connect({
-      ...(unix ? { unix } : { hostname: "127.0.0.1", port: server.port }),
-      socket: {
-        open(socket) {
-          socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
-        },
-        data(_socket, chunk) {
-          wire = Buffer.concat([wire, chunk]);
-          const { body, complete } = parse(wire);
-          if (body.length >= first.length) {
-            whenBodyStarts?.();
-            whenBodyStarts = undefined;
-          }
-          if (complete) resolve();
-        },
-        close(_socket, err) {
-          closed = (err as { code?: string } | undefined)?.code ?? "end";
-          resolve();
-        },
-        error(_socket, err) {
-          closed = (err as { code?: string }).code;
-          resolve();
-        },
+    const socket: SocketHandler<undefined> = {
+      open(socket) {
+        socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
       },
-    });
+      data(_socket, chunk) {
+        wire = Buffer.concat([wire, chunk]);
+        const { body, complete } = parse(wire);
+        if (body.length >= first.length) {
+          whenBodyStarts?.();
+          whenBodyStarts = undefined;
+        }
+        if (complete) resolve();
+      },
+      close(_socket, err) {
+        closed = (err as { code?: string } | undefined)?.code ?? "end";
+        resolve();
+      },
+      error(_socket, err) {
+        closed = (err as { code?: string }).code;
+        resolve();
+      },
+    };
+    await using _ = await (unix
+      ? Bun.connect({ unix, socket })
+      : Bun.connect({ hostname: "127.0.0.1", port: server.port!, socket }));
     await promise;
     return { ...parse(wire), closed };
   }

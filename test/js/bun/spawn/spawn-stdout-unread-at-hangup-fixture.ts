@@ -21,7 +21,7 @@ if (consumer === "shell") {
 } else {
   const child = Bun.spawn({ cmd, stdin: "ignore", stdout: "pipe", stderr: "inherit" });
   if (consumer === "write" || consumer === "write-response") {
-    const written = Bun.write(out, consumer === "write" ? child.stdout : new Response(child.stdout));
+    const written = consumer === "write" ? Bun.write(out, child.stdout) : Bun.write(out, new Response(child.stdout));
     setImmediate(untilChildHungUp);
     await written;
     received = readFileSync(out);

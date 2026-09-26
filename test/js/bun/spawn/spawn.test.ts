@@ -945,8 +945,8 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
 // queues the bytes on its stdout socket and closes it while the parent is
 // blocked in a synchronous read, so the parent polls the socket only after
 // the hangup. A host whose limit for a socket buffer is too low skips the rows.
-const socketsHoldTheBytes = (isLinux || isMacOS) && unixSockets(libcPathForDlopen()).holds(270_000);
-describe.skipIf(!socketsHoldTheBytes)("stdout bytes that are still unread when the child hangs up", () => {
+const skipHungUpStdout = !(isLinux || isMacOS) || unixSockets(libcPathForDlopen()).limitIsBelow(270_000);
+describe.skipIf(skipHungUpStdout)("stdout bytes that are still unread when the child hangs up", () => {
   it.concurrent.each([
     ["Bun.write(file, proc.stdout)", "write"],
     ["Bun.write(file, new Response(proc.stdout))", "write-response"],

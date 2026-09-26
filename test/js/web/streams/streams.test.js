@@ -2692,7 +2692,8 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
 // closes that end, in one turn of this thread. A host whose limit for a socket
 // buffer is too low for the largest row skips them all.
 const sockets = isLinux || isMacOS ? unixSockets(libcPathForDlopen()) : undefined;
-describe.skipIf(!sockets?.holds(270_000))("a native sink over a socket that hung up with bytes unread", () => {
+const skipHungUpSockets = !sockets || sockets.limitIsBelow(270_000);
+describe.skipIf(skipHungUpSockets)("a native sink over a socket that hung up with bytes unread", () => {
   // The element gives the rewriter's handler one call.
   const html = length => Buffer.concat([Buffer.from("<p>"), positionDependentBytes(length - 3)]);
 

@@ -251,6 +251,10 @@ impl FileResponseStream {
             this_ref.fail_with(err);
             return;
         }
+        // A failed poll registration arrives through `on_reader_error`, not the result.
+        if this_ref.state.get().contains(State::FINISHED) {
+            return;
+        }
 
         // The reader closes the fd: only it can wait for a threadpool read in flight.
         #[cfg(windows)]

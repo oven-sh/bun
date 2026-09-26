@@ -278,7 +278,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // BoringSSL is a fork of OpenSSL 1.1.0, so we can report OpenSSL 1.1.0
         { "openssl", "1.1.0" },
         // keep in sync with src/jsc/bindings/node/http/llhttp/README.md
-        { "llhttp", "9.3.0" },
+        { "llhttp", "9.4.2" },
         { "libarchive", BUN_VERSION_LIBARCHIVE },
         { "mimalloc", BUN_VERSION_MIMALLOC },
         { "picohttpparser", BUN_VERSION_PICOHTTPPARSER },

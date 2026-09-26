@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, exampleSite, isWindows, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -146,6 +146,19 @@ describe("node:http", () => {
       listenResponse.close();
     });
 
+    it("server.listening follows listen() and close()", async () => {
+      const server = createServer();
+      expect(server.listening).toBe(false);
+      server.listen(0);
+      try {
+        await once(server, "listening");
+        expect(server.listening).toBe(true);
+      } finally {
+        server.close();
+      }
+      expect(server.listening).toBe(false);
+    });
+
     it("listen callback should be bound to server", async () => {
       const server = createServer();
       const { resolve, reject, promise } = Promise.withResolvers();
@@ -263,6 +276,61 @@ describe("node:http", () => {
       });
     });
 
+    it("listen({ signal }) closes the server when the signal is aborted", async () => {
+      const server = createServer();
+      try {
+        const controller = new AbortController();
+        await new Promise<void>(resolve =>
+          server.listen({ port: 0, host: "127.0.0.1", signal: controller.signal }, resolve),
+        );
+        const { port } = server.address() as AddressInfo;
+        const closed = once(server, "close");
+
+        controller.abort();
+
+        expect(server.listening).toBe(false);
+        expect(server.address()).toBeNull();
+        await closed;
+
+        const socket = connect({ port, host: "127.0.0.1" });
+        const [err] = await once(socket, "error");
+        expect(err.code).toBe("ECONNREFUSED");
+      } finally {
+        server.close();
+      }
+    });
+
+    it("listen({ signal }) with an already aborted signal closes the server without emitting 'listening'", async () => {
+      const server = createServer();
+      try {
+        const onListening = mock(() => {});
+        server.on("listening", onListening);
+        const closed = once(server, "close");
+
+        server.listen({ port: 0, host: "127.0.0.1", signal: AbortSignal.abort() }, onListening);
+        await new Promise<void>(resolve => process.nextTick(resolve));
+
+        expect(server.listening).toBe(false);
+        expect(server.address()).toBeNull();
+        await closed;
+        expect(onListening).not.toHaveBeenCalled();
+      } finally {
+        server.close();
+      }
+    });
+
+    it("listen({ signal }) rejects a value that is not an AbortSignal", () => {
+      const server = createServer();
+      try {
+        expect(() => server.listen({ port: 0, host: "127.0.0.1", signal: "INVALID_SIGNAL" as any })).toThrow(
+          expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+        );
+        expect(server.address()).toBeNull();
+      } finally {
+        server.close();
+      }
+    });
+
     it("should use the provided port", async () => {
       while (true) {
         try {
@@ -329,6 +397,54 @@ describe("node:http", () => {
         "set-cookie": ["swag=true", "yolo=true"],
         "test": "test",
       });
+    });
+
+    // Node's Writable.prototype.write uses the default encoding for a falsy
+    // encoding argument, so res.write(chunk, "") and res.end(chunk, "") write utf8.
+    test.each(["write", "end"])("res.%s accepts an empty-string encoding (#43370)", async method => {
+      const body = "héllo wörld ✓";
+      await using server = http.createServer((req, res) => {
+        try {
+          if (method === "write") {
+            res.write(body, "");
+            res.end();
+          } else {
+            res.end(body, "");
+          }
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.end(`${e.code}: ${e.message}`);
+        }
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe(body);
+      expect(response.status).toBe(200);
+    });
+
+    test.each(["write", "end"])("res.%s throws ERR_UNKNOWN_ENCODING for an unknown encoding", async method => {
+      const errors: string[] = [];
+      await using server = http.createServer((req, res) => {
+        for (const encoding of ["bogus", 123, {}]) {
+          try {
+            res[method]("x", encoding);
+          } catch (e: any) {
+            errors.push(`${e.code}: ${e.message}`);
+          }
+        }
+        res.end();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      await fetch(`http://127.0.0.1:${port}/`);
+      expect(errors).toEqual([
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: bogus",
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: 123",
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: {}",
+      ]);
     });
   });
 
@@ -1582,6 +1698,76 @@ it("should propagate exception in async data handler", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("request(urlString, cb) does not read options from Object.prototype", async () => {
+  // Pollutes Object.prototype, so it runs in a subprocess.
+  const script = `
+    const net = require("node:net");
+    const http = require("node:http");
+    const heads = [];
+    const server = net.createServer(socket => {
+      socket.once("data", data => {
+        heads.push(String(data).split("\\r\\n\\r\\n")[0]);
+        socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
+      });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const url = "http://127.0.0.1:" + server.address().port + "/victim";
+    const get = () =>
+      new Promise((resolve, reject) => {
+        http.get(url, res => {
+          res.resume();
+          res.on("end", resolve);
+        }).on("error", reject);
+      });
+    const clean = await get().then(() => heads[0]);
+
+    Object.prototype.headers = { "x-injected": "1", host: "attacker.example" };
+    Object.prototype.auth = "attacker:pw";
+    Object.prototype.method = "DELETE";
+    await get();
+
+    let hijacked = false;
+    const { promise: hijack, resolve: onHijack } = Promise.withResolvers();
+    Object.prototype.agent = {
+      addRequest(req) {
+        hijacked = true;
+        req.destroy();
+        onHijack();
+      },
+    };
+    await Promise.race([get(), hijack]);
+    server.close();
+    console.log(JSON.stringify({ same: heads[1] === clean, hijacked, head: heads[1] }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout);
+  expect(result.head).not.toContain("x-injected");
+  expect(result.head).not.toContain("Authorization");
+  expect(result.head).toStartWith("GET /victim HTTP/1.1");
+  expect(result).toMatchObject({ same: true, hijacked: false });
+  expect(exitCode).toBe(0);
+});
+
+it("a paused Upgrade request destroyed in its listener does not crash while the TLS close is deferred", async () => {
+  // The request is destroyed inside the read that carried it, and spilled TLS
+  // bytes keep the socket open after that read is parsed.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-upgrade-paused-destroy-tls-fixture.js")],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+});
+
 // This test is disabled because it can OOM the CI
 it.skip("should be able to stream huge amounts of data", async () => {
   const buf = Buffer.alloc(1024 * 1024 * 256);
@@ -1646,6 +1832,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
     // Close the server if it's still running
     if (server.listening) {
       server.closeAllConnections();
+      server.close();
     }
   });
 
@@ -2384,6 +2571,49 @@ it("socket handle write keeps buffered data intact when encoding coercion re-ent
   expect(exitCode).toBe(0);
 }, 30_000);
 
+it.each([
+  ["write", `result = res.write(payload, enc); res.end();`, "returned boolean"],
+  ["end", `res.flushHeaders(); result = res.end(payload, enc);`, "returned object"],
+])(
+  "ServerResponse.%s() with an encoding whose toPrimitive destroys the response does not crash",
+  async (_method, call, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("node:http");
+        const server = http.createServer((req, res) => {
+          const enc = Object.assign(new String("hex"), {
+            [Symbol.toPrimitive]() { res.destroy(); Bun.gc(true); return "hex"; },
+          });
+          const payload = Buffer.alloc(40000, "41").toString();
+          let result;
+          try {
+            ${call}
+            result = "returned " + typeof result;
+          } catch (e) {
+            result = "threw " + (e.code || e.message);
+          }
+          console.log(result);
+          setImmediate(() => { server.close(); process.exit(0); });
+        });
+        server.listen(0, "127.0.0.1", () => {
+          fetch("http://127.0.0.1:" + server.address().port + "/").then(r => r.text()).catch(() => {});
+        });
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected + "\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
 it("client request path that does not begin with a slash stays on the configured host", async () => {
   // `options.path` must only ever influence the request target that is written
   // on the wire; it must never change which server the client connects to,
@@ -2618,6 +2848,44 @@ it("ClientRequest.destroy(err) with a throwing error listener still tears down; 
   expect(exitCode).toBe(0);
 });
 
+it("captureRejections: a rejecting async listener on a Server event other than 'request' emits 'error'", async () => {
+  // node: http.Server's and Http2Server's [captureRejectionSymbol] handle
+  // 'request' (and 'stream') themselves and hand every other event to
+  // net.Server's handler, whose default is this.emit('error', err). The
+  // rejection must not be dropped.
+  const script = `
+    const events = require("node:events");
+    events.captureRejections = true;
+    const http = require("node:http");
+    const http2 = require("node:http2");
+    process.on("unhandledRejection", err => console.log("unhandledRejection: " + err.message));
+    for (const [name, server] of [["http", http.createServer()], ["http2", http2.createServer()]]) {
+      server.on("error", err => console.log(name + " error event: " + err.message));
+      server.on("custom", async () => {
+        throw new Error(name + " custom-rejects");
+      });
+      server.emit("custom");
+    }
+    // rejection (microtask) -> nextTick -> 'error'; all settle within one turn.
+    setImmediate(() => setImmediate(() => console.log("done")));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // node v26.3.0 verified.
+  expect(stdout.trim().split("\n")).toEqual([
+    "http error event: http custom-rejects",
+    "http2 error event: http2 custom-rejects",
+    "done",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 it("keep-alive socket reused after a 304 response still frames the next response body", async () => {
   // The native per-request reset must clear the 204/304 no-body flag, or the
   // 200 that follows a 304 on the same connection is sent with no framing
@@ -2709,34 +2977,142 @@ it("removing only Content-Length falls back to chunked encoding and keeps the co
   }
 });
 
-it("an explicit Connection: close response header closes the server-side socket after finish", async () => {
-  // Node.js's matchHeader sets _last for a user-set Connection: close, and
-  // resOnFinish then ends the socket; the transport must match the header.
-  const server = createServer((req, res) => {
-    res.setHeader("Connection", "close");
-    res.end("ok");
-  });
-  try {
+// Node.js's resOnFinish destroySoon()s the socket after a response that ends the
+// connection: the server sends its FIN and releases the socket right behind it
+// ('close' on the server-side socket, fd gone) without waiting for the peer to
+// close its side. A half-close that waits for the client's FIN lets a client
+// that never closes pin one socket per completed request.
+describe("a response that closes the connection releases the server-side socket without waiting for the peer", () => {
+  const cases = [
+    {
+      name: "Connection: close response header",
+      request: "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      prepare: (res: ServerResponse) => res.setHeader("Connection", "close"),
+      expected: /^HTTP\/1\.1 200 OK\r\n[^]*ok$/,
+    },
+    {
+      name: "Connection: close request header",
+      request: "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      expected: /^HTTP\/1\.1 200 OK\r\n[^]*ok$/,
+    },
+    {
+      name: "HTTP/1.0 request",
+      request: "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n",
+      expected: /^HTTP\/1\.1 200 OK\r\n[^]*ok$/,
+    },
+    {
+      // Node answers this itself with res.writeHead(400, ['Connection', 'close']).
+      name: "HTTP/1.1 request without a Host header",
+      request: "GET / HTTP/1.1\r\n\r\n",
+      expected: /^HTTP\/1\.1 400 Bad Request\r\n[^]*\r\n0\r\n\r\n$/,
+    },
+  ];
+  for (const { name, request, prepare, expected } of cases) {
+    it.concurrent(name, async () => {
+      const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
+      const server = createServer((req, res) => {
+        prepare?.(res);
+        res.end("ok");
+      });
+      server.on("connection", socket => socket.on("close", onServerSocketClose));
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      // allowHalfOpen: the client keeps its side open after the server's FIN, so
+      // only the server can release the server-side socket.
+      const client = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+      try {
+        const out = await new Promise<string>((resolve, reject) => {
+          let data = "";
+          client.setEncoding("latin1");
+          client.on("data", chunk => (data += chunk));
+          client.on("end", () => resolve(data));
+          client.on("error", reject);
+          client.write(request);
+        });
+        expect(out).toMatch(expected);
+        expect(out).toContain("\r\nConnection: close\r\n");
+        // The client has the whole response and the server's FIN, and has not
+        // sent its own. The server-side socket must close on its own now.
+        await serverSocketClosed;
+        expect(client.writableEnded).toBe(false);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+  }
+
+  // net.Socket.destroySoon() is what Node's resOnFinish uses: end(), then
+  // destroy() once the write side is done, without waiting for the peer.
+  it.concurrent("socket.destroySoon() from a handler", async () => {
+    const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      req.socket.write("raw bytes\r\n");
+      req.socket.destroySoon();
+    });
+    server.on("connection", socket => socket.on("close", onServerSocketClose));
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
+    const client = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    try {
+      const out = await new Promise<string>((resolve, reject) => {
+        let data = "";
+        client.setEncoding("latin1");
+        client.on("data", chunk => (data += chunk));
+        client.on("end", () => resolve(data));
+        client.on("error", reject);
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      });
+      expect(out).toBe("raw bytes\r\n");
+      await serverSocketClosed;
+      expect(client.writableEnded).toBe(false);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
 
-    const out = await new Promise<string>((resolve, reject) => {
-      const socket = connect(port, "127.0.0.1");
-      let data = "";
-      socket.on("data", chunk => (data += chunk));
-      // The server must send FIN on its own; the client never half-closes.
-      socket.on("end", () => resolve(data));
-      socket.on("error", reject);
-      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  // destroySoon() with response bytes still queued in the transport (the client
+  // is not reading yet) and no res.end(): the queued bytes are delivered first,
+  // then the connection closes, like Node's destroy() on the socket's 'finish'.
+  it.concurrent("socket.destroySoon() behind a backed-up response that never ends", async () => {
+    const CHUNK = Buffer.alloc(16 * 1024, "a");
+    const CHUNKS = 1024; // 16 MB: more than the loopback socket buffers absorb
+    const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
+    const { promise: destroyed, resolve: onDestroySoonCalled } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      res.on("error", () => {});
+      for (let i = 0; i < CHUNKS; i++) res.write(CHUNK);
+      req.socket.destroySoon();
+      onDestroySoonCalled();
     });
-
-    expect(out).toContain("HTTP/1.1 200");
-    expect(out).toContain("Connection: close");
-    expect(out).toEndWith("ok");
-  } finally {
-    server.close();
-  }
+    server.on("connection", socket => socket.on("close", onServerSocketClose));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const client = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    try {
+      let received = 0;
+      const ended = new Promise<void>((resolve, reject) => {
+        client.on("data", chunk => (received += chunk.length));
+        client.on("end", resolve);
+        client.on("error", reject);
+      });
+      client.pause();
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await destroyed;
+      client.resume();
+      await ended;
+      expect(received).toBeGreaterThan(CHUNK.length * CHUNKS);
+      await serverSocketClosed;
+      expect(client.writableEnded).toBe(false);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
 });
 
 it("a pipelined request behind Connection: close is never dispatched (clientError HPE_CLOSED_CONNECTION)", async () => {
@@ -2893,6 +3269,146 @@ it("pipelined responses buffered past the high water mark pause reads on the con
   }
 });
 
+it("a pipelined response is started when no response is in flight to hand it the socket", async () => {
+  // The dispatcher kicks the pipeline when it queues a response and nothing is in flight (the
+  // previous response finished and detached while it still counts as pending). Clearing
+  // socket._httpMessage by hand reaches that state: only the kick can start /second then.
+  // Bun only: Node.js v26.3.0 fails an internal assertion (resOnFinish) on this use of its internals.
+  const server = createServer((req, res) => {
+    if (req.url === "/first") {
+      (req.socket as any)._httpMessage = null;
+      return;
+    }
+    res.end("second-response");
+  });
+  let socket: ReturnType<typeof connect> | undefined;
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const { promise: started, resolve: onStarted, reject: onFailure } = Promise.withResolvers<void>();
+    let received = "";
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+      if (received.includes("second-response")) onStarted();
+    });
+    socket.on("error", onFailure);
+    socket.on("close", () => onFailure(new Error("closed before the queued response was started")));
+    socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+    await started;
+    // /first never writes, so the stream is the one response to /second and nothing else.
+    const [head, ...bodies] = received.split("\r\n\r\n");
+    expect({ status: head.split("\r\n")[0], bodies }).toEqual({
+      status: "HTTP/1.1 200 OK",
+      bodies: ["second-response"],
+    });
+  } finally {
+    socket?.destroy();
+    server.close();
+  }
+});
+
+// The native dispatch tail answers a throw by ending the connection's current response. For a
+// pipelined request that was the response ahead of it: the client got "first" of a 10-byte body,
+// then the close. The throw is an uncaught exception, so each scenario runs in a child process.
+describe("a dispatch that throws while an earlier response on the connection is pending", () => {
+  async function run(mode: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "node-http-pipelined-throw-fixture.js")],
+      env: { ...bunEnv, MODE: mode },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { result: stdout ? JSON.parse(stdout) : undefined, exitCode };
+  }
+
+  // node v26.3.0 gives the same result for the tests in these four loops.
+  for (const emitted of ["request", "checkContinue", "checkExpectation"]) {
+    it.concurrent(`'${emitted}' listener: the response ahead still completes`, async () => {
+      expect(await run(emitted)).toEqual({
+        result: {
+          events: ["request /first", `${emitted} /second`, `uncaught: ${emitted} threw`],
+          bodies: ["first-done"],
+          closed: false,
+        },
+        exitCode: 0,
+      });
+    });
+  }
+  // The response ahead has ended, and most of its 8 MB are still in the send buffer when the
+  // connection is reset at the turn of the response behind it. A destroyed queued response
+  // resets the connection in the same way, with no throw.
+  for (const [mode, events] of [
+    ["large", ["request /first", "request /second", "uncaught: request threw"]],
+    ["large-destroyed", ["request /first", "request /second"]],
+  ] as const) {
+    it.concurrent(`a large response ahead arrives in full before the connection is reset (${mode})`, async () => {
+      expect(await run(mode)).toEqual({
+        result: { events, firstBodyBytes: 8 * 1024 * 1024, closed: false },
+        exitCode: 0,
+      });
+    });
+  }
+  for (const mode of ["ended", "ended-later"]) {
+    it.concurrent(`a response that is complete when its turn comes is sent (${mode})`, async () => {
+      expect(await run(mode)).toEqual({
+        result: {
+          events: ["request /first", "request /second", "uncaught: request threw"],
+          bodies: ["first-done", "second"],
+          closed: false,
+        },
+        exitCode: 0,
+      });
+    });
+  }
+
+  // The throw comes before node:http has a response to queue. The turn of /second is still held:
+  // the connection closes when it comes, and no later response goes out in its place. Node ends
+  // with the same result, because it answers the next request with a 400 and closes.
+  for (const thrower of ["ServerResponse", "IncomingMessage"]) {
+    it.concurrent(`a throw from the ${thrower} constructor closes the connection at its turn`, async () => {
+      const mode = thrower === "ServerResponse" ? "constructor-response" : "constructor-request";
+      expect(await run(mode)).toEqual({
+        result: {
+          events: ["request /first", `${thrower} /second`, `uncaught: ${thrower} threw`],
+          bodies: ["first-done"],
+          closed: true,
+        },
+        exitCode: 0,
+      });
+    });
+  }
+
+  // The tests below wait for a close. Node never makes it: it answers nothing and keeps the
+  // connection, which then waits forever. Bun answers a throw with a close. For a queued response
+  // that happens when its turn comes, after the responses ahead of it. The requests behind it are
+  // aborted with the connection.
+  it.concurrent("a response that is not complete resets the connection when its turn comes", async () => {
+    expect(await run("unfinished")).toEqual({
+      result: {
+        events: ["request /first", "request /third", "uncaught: request threw"],
+        bodies: ["first-done", "second"],
+        closed: true,
+        serverSideCloses: ["/fourth", "/fourth", "/second", "/second", "/third", "/third"],
+      },
+      exitCode: 0,
+    });
+  });
+
+  // Unchanged: with no response ahead, the throwing request is the current one and is answered at once.
+  it.concurrent("a request that is not pipelined is still answered with a close", async () => {
+    expect(await run("not-pipelined")).toEqual({
+      result: {
+        events: ["request /first", "request /second", "uncaught: request threw"],
+        bodies: ["first-done"],
+        closed: true,
+      },
+      exitCode: 0,
+    });
+  });
+});
+
 it("requireHostHeader still rejects Upgrade-carrying requests that dispatch as normal requests", async () => {
   // The native parser exempts Upgrade requests from the Host check so genuine
   // upgrades can reach the 'upgrade' event, but a request that falls through
@@ -3043,6 +3559,35 @@ it("standalone ServerResponse discards body writes to a no-body response without
   const out = Buffer.concat(chunks).toString();
   expect(out).toStartWith("HTTP/1.1 204 No Content\r\n");
   expect(out).not.toContain("body");
+});
+
+it("standalone ServerResponse end() after writeHead() sets writableEnded (#25632)", async () => {
+  // With no native handle and no socket assigned, end() after writeHead() must
+  // still transition to `finished` / `writableEnded` and buffer the rendered
+  // header block into outputData, like Node.js's OutgoingMessage.end().
+  const res = new ServerResponse(new IncomingMessage(null as any));
+  res.writeHead(403);
+  res.end("forbidden");
+  expect({ finished: res.finished, writableEnded: res.writableEnded }).toEqual({
+    finished: true,
+    writableEnded: true,
+  });
+  const buffered = (res as any).outputData.map((x: any) => String(x.data)).join("");
+  expect(buffered).toStartWith("HTTP/1.1 403 Forbidden\r\n");
+  expect(buffered).toEndWith("\r\n\r\nforbidden");
+
+  // And with end() alone (no chunk), the end() callback is registered on
+  // 'finish' (which never fires without a socket), not invoked via nextTick.
+  const res2 = new ServerResponse(new IncomingMessage(null as any));
+  let cbCalled = false;
+  res2.writeHead(200);
+  res2.end(() => (cbCalled = true));
+  expect({ finished: res2.finished, writableEnded: res2.writableEnded }).toEqual({
+    finished: true,
+    writableEnded: true,
+  });
+  await new Promise<void>(r => process.nextTick(r));
+  expect(cbCalled).toBe(false);
 });
 
 it("flushHeaders on a 204 response carries no chunked framing", async () => {
@@ -3435,6 +3980,51 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
   });
 });
 
+it("req.upgrade is true inside shouldUpgradeCallback like Node.js", async () => {
+  // The parser flags the request as an upgrade before the server consults the
+  // callback, so the callback sees true whether it accepts or declines.
+  const seen: [string, string | undefined, unknown][] = [];
+  const server = createServer(
+    {
+      shouldUpgradeCallback: req => {
+        seen.push(["shouldUpgradeCallback", req.url, req.upgrade]);
+        return req.url === "/accept";
+      },
+    },
+    (req, res) => {
+      seen.push(["request", req.url, req.upgrade]);
+      res.writeHead(200, { Connection: "close" });
+      res.end("ok");
+    },
+  );
+  server.on("upgrade", (req, socket) => {
+    seen.push(["upgrade", req.url, req.upgrade]);
+    socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    for (const target of ["/accept", "/decline"]) {
+      const socket = connect(port, "127.0.0.1");
+      socket.resume();
+      socket.write(`GET ${target} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: upgrade\r\n\r\n`);
+      // The server closes the connection once it has answered.
+      await once(socket, "close");
+    }
+
+    expect(seen).toEqual([
+      ["shouldUpgradeCallback", "/accept", true],
+      ["upgrade", "/accept", true],
+      ["shouldUpgradeCallback", "/decline", true],
+      ["request", "/decline", false],
+    ]);
+  } finally {
+    server.close();
+  }
+});
+
 it("req.upgrade reflects the upgrade dispatch decision like Node.js", async () => {
   // true inside the 'upgrade' listener; false for an Upgrade-carrying request
   // that falls through to 'request' (no Connection: upgrade token here).
@@ -3471,6 +4061,110 @@ it("req.upgrade reflects the upgrade dispatch decision like Node.js", async () =
     await sawRequest;
     s2.destroy();
     expect(requestValue).toBe(false);
+  } finally {
+    server.close();
+  }
+});
+
+it("'upgrade' fires only when llhttp would flag the request as an upgrade", async () => {
+  // Node takes the upgrade bit from llhttp (F_UPGRADE && F_CONNECTION_UPGRADE):
+  // the Upgrade value must be non-empty and "upgrade" must be a whole item of
+  // the Connection list (OWS around the item ignored, llhttp >= 9.4.2, in Node
+  // since the 9.4.2 bump; 9.4.1 rejected a HTAB after the item). The other
+  // rows are verified against Node v26.3.0.
+  const cases: [string, string, "upgrade" | "request"][] = [
+    ["Connection: Upgrade\r\nUpgrade: x\r\n", "control", "upgrade"],
+    ["Connection: keep-alive, Upgrade \r\nUpgrade: x\r\n", "list item with SP after it", "upgrade"],
+    ["Connection:\tupgrade\r\nUpgrade: x\r\n", "HTAB before the item", "upgrade"],
+    ["Connection: Upgrade\t, close\r\nUpgrade: x\r\n", "HTAB after the item", "upgrade"],
+    ["Connection: Upgrade\r\nUpgrade:\r\n", "empty Upgrade value", "request"],
+    ["Connection: Upgrade\r\nUpgrade: \t\r\n", "whitespace-only Upgrade value", "request"],
+    ["Connection: upgrade-x\r\nUpgrade: x\r\n", "upgrade-x is one token", "request"],
+    ["Connection: foo upgrade\r\nUpgrade: x\r\n", "no comma between the tokens", "request"],
+    ["Connection: foo,upgrade-x,x-upgrade\r\nUpgrade: x\r\n", "no whole item in the list", "request"],
+  ];
+  const results: Record<string, string> = {};
+  const expected: Record<string, string> = {};
+  const server = createServer((req, res) => {
+    res.end(`request (req.upgrade=${req.upgrade})`);
+  });
+  server.on("upgrade", (req, socket) => {
+    socket.end(
+      `HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\nupgrade (req.upgrade=${req.upgrade})`,
+    );
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    for (const [headers, name, verdict] of cases) {
+      expected[name] = verdict === "upgrade" ? "upgrade (req.upgrade=true)" : "request (req.upgrade=false)";
+      const client = connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      client.write(`GET / HTTP/1.1\r\nHost: x\r\n${headers}Connection: close\r\n\r\n`);
+      const chunks: Buffer[] = [];
+      client.on("data", chunk => chunks.push(chunk));
+      await once(client, "close");
+      const body = Buffer.concat(chunks).toString();
+      results[name] = body.slice(body.indexOf("\r\n\r\n") + 4);
+    }
+    expect(results).toEqual(expected);
+  } finally {
+    server.close();
+  }
+});
+
+it("Connection: close closes the connection only as a whole list item like llhttp", async () => {
+  // Same grammar as the upgrade bit (F_CONNECTION_CLOSE): "close-x" and
+  // "foo close" keep the connection alive. Verified against Node v26.3.0.
+  const cases: [string, string, "close" | "keep-alive"][] = [
+    ["Connection: close\r\n", "control", "close"],
+    ["Connection: keep-alive, close\r\n", "list item", "close"],
+    ["Connection: close-x\r\n", "close-x is one token", "keep-alive"],
+    ["Connection: foo close\r\n", "no comma between the tokens", "keep-alive"],
+    ["Connection: x-close,close-x\r\n", "no whole item in the list", "keep-alive"],
+  ];
+  const results: Record<string, string> = {};
+  const expected: Record<string, string> = {};
+  const server = createServer((req, res) => {
+    res.end("ok");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    for (const [headers, name, verdict] of cases) {
+      expected[name] = verdict;
+      const client = connect(port, "127.0.0.1");
+      client.write(`GET / HTTP/1.1\r\nHost: x\r\n${headers}\r\n`);
+      let received = "";
+      let waiter = Promise.withResolvers<void>();
+      client.on("data", chunk => {
+        received += chunk.toString();
+        if (received.endsWith("ok")) waiter.resolve();
+      });
+      // A close or error before the body ends fails the case with what was received.
+      client.on("error", err =>
+        waiter.reject(new Error(`${name}: ${err.message}; received ${JSON.stringify(received)}`)),
+      );
+      client.on("close", () => waiter.reject(new Error(`${name}: closed; received ${JSON.stringify(received)}`)));
+      await waiter.promise;
+      const connection = /^connection: (.*)$/im.exec(received)?.[1];
+      if (connection === "close") {
+        // The server closes after the response.
+        await once(client, "close");
+        results[name] = "close";
+      } else {
+        // The server keeps the connection open: a second request gets a response.
+        received = "";
+        waiter = Promise.withResolvers<void>();
+        client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        await waiter.promise;
+        await once(client, "close");
+        results[name] = connection ?? "(no Connection header)";
+      }
+    }
+    expect(results).toEqual(expected);
   } finally {
     server.close();
   }
@@ -3659,6 +4353,80 @@ it("req.upgrade is true inside the 'connect' listener", async () => {
   } finally {
     server.close();
   }
+});
+
+// Reading an earlier request on the connection, or a 'data' listener from the 'connection' event,
+// leaves the socket flowing. The handoff to 'connect' / 'upgrade' resets that: a listener that
+// attaches its reader later (a proxy does so once its upstream connects) still gets every byte the
+// client sent in between. Every expectation below is Node v26.3.0's.
+describe.each([
+  ["CONNECT", "connect", "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"],
+  ["Upgrade", "upgrade", "GET /chat HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: custom\r\n\r\n"],
+])("%s handoff of a socket that was flowing", (_name, eventName, handoffRequest) => {
+  it.each([
+    ["after a request in an earlier read", "earlier-read"],
+    ["after a request in the same read", "same-read"],
+    ["after a 'connection' listener read the socket", "connection-listener"],
+  ])("buffers tunnel bytes until the listener reads them (%s)", async (_why, flowedBy) => {
+    await using server = createServer((req, res) => res.end(req.url));
+    if (flowedBy === "connection-listener") {
+      server.on("connection", socket => socket.on("data", () => {}));
+    }
+    const { promise: handedOff, resolve: resolveHandedOff } = Promise.withResolvers<{
+      socket: Duplex;
+      head: string;
+      flowing: boolean | null;
+    }>();
+    server.on(eventName, (req, socket, head) => {
+      resolveHandedOff({ socket, head: head.toString(), flowing: socket.readableFlowing });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { promise: firstAnswered, resolve: resolveFirstAnswered } = Promise.withResolvers<void>();
+    let received = "";
+    // noDelay: the server never answers the handoff request, so Nagle's algorithm would hold the
+    // next small write until the delayed ACK, long after the barrier below.
+    const client = connect({ port, host: "127.0.0.1", noDelay: true });
+    client.on("data", data => {
+      received += data;
+      if (received.endsWith("/first")) resolveFirstAnswered();
+    });
+    const firstRequest = "GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n";
+    if (flowedBy === "earlier-read") {
+      client.write(firstRequest);
+      await firstAnswered;
+      client.write(handoffRequest);
+    } else if (flowedBy === "same-read") {
+      client.write(firstRequest + handoffRequest);
+    } else {
+      client.write(handoffRequest);
+    }
+
+    const { socket, head, flowing: flowingAtHandoff } = await handedOff;
+    client.write("early,");
+    // Nothing reads the tunnel yet, so the server reports no progress on it. A whole request on a
+    // second connection is the barrier: the server has read "early," by the time it has answered
+    // and closed that connection.
+    const barrier = connect(port, "127.0.0.1");
+    barrier.resume();
+    barrier.end("GET /barrier HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
+    await once(barrier, "close");
+
+    const atAttach = { flowing: socket.readableFlowing, buffered: socket.readableLength };
+    let tunneled = head;
+    socket.on("data", chunk => (tunneled += chunk));
+    const ended = once(socket, "end");
+    client.end("late");
+    await ended;
+    socket.end();
+
+    expect({ flowingAtHandoff, atAttach, tunneled }).toEqual({
+      flowingAtHandoff: null,
+      atAttach: { flowing: null, buffered: 6 },
+      tunneled: "early,late",
+    });
+  });
 });
 
 it("plain HEAD with flushHeaders carries no auto-chunked framing", async () => {
@@ -3988,6 +4756,161 @@ it("the over-limit 503 advertises Connection: close, not keep-alive", async () =
   } finally {
     server.close();
   }
+});
+
+const upgradeRequest = "GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n";
+
+// Uses up a limit of one request with a plain request, then sends `second` on
+// the same connection once that response has fully arrived. Returns the two
+// status codes the client saw and the server events each request reached.
+// Resolves as soon as both responses are in: whether the connection is closed
+// afterwards differs per case (and Node keeps it open after a 503).
+async function pastTheLimit(
+  second: string,
+  options: { shouldUpgradeCallback?: (req: IncomingMessage) => boolean; onUpgrade?: boolean } = {},
+): Promise<{ statuses: string[]; events: string[] }> {
+  const events: string[] = [];
+  const server = createServer({ shouldUpgradeCallback: options.shouldUpgradeCallback }, (req, res) => {
+    events.push(`request ${req.url}`);
+    res.end("served");
+  });
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", req => events.push(`dropRequest ${req.url}`));
+  if (options.onUpgrade) {
+    server.on("upgrade", (req, socket) => {
+      events.push(`upgrade ${req.url}`);
+      socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
+    });
+  }
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const socket = connect(port, "127.0.0.1", () => socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\n"));
+    let data = "";
+    let sentSecond = false;
+    socket.setEncoding("utf8");
+    socket.on("data", chunk => {
+      data += chunk;
+      if (!sentSecond) {
+        if (data.endsWith("served")) {
+          sentSecond = true;
+          socket.write(second);
+        }
+        return;
+      }
+      // Responses are back to back ("...servedHTTP/1.1 503 ..."), so no anchors.
+      const statuses = [...data.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1]);
+      if (statuses.length === 2) {
+        socket.destroy();
+        resolve(statuses);
+      }
+    });
+    socket.on("error", reject);
+    socket.on("close", () => reject(new Error(`connection closed after receiving: ${JSON.stringify(data)}`)));
+    return { statuses: await promise, events };
+  } finally {
+    server.close();
+  }
+}
+
+it.concurrent("an upgrade past maxRequestsPerSocket reaches 'upgrade' instead of being dropped", async () => {
+  // Node's parserOnIncoming hands an accepted upgrade off before it counts the
+  // request or checks the limit (Node v26.3.0 answers 200 then 101 here), so
+  // 'dropRequest' and the 503 never apply to it.
+  expect(await pastTheLimit(upgradeRequest, { onUpgrade: true })).toEqual({
+    statuses: ["200", "101"],
+    events: ["request /first", "upgrade /ws"],
+  });
+});
+
+it.concurrent("an Upgrade request nobody accepts still counts against maxRequestsPerSocket", async () => {
+  // With no 'upgrade' listener the request falls through to normal dispatch,
+  // which Node counts and drops like any other request (200 then 503).
+  expect(await pastTheLimit(upgradeRequest)).toEqual({
+    statuses: ["200", "503"],
+    events: ["request /first", "dropRequest /ws"],
+  });
+});
+
+it.concurrent("shouldUpgradeCallback decides whether the request past maxRequestsPerSocket is counted", async () => {
+  // The exemption follows the callback's verdict, not the headers or the
+  // presence of an 'upgrade' listener (Node v26.3.0: 101 and 503 respectively).
+  const [accepted, declined] = await Promise.all([
+    pastTheLimit(upgradeRequest, { shouldUpgradeCallback: () => true, onUpgrade: true }),
+    pastTheLimit(upgradeRequest, { shouldUpgradeCallback: () => false, onUpgrade: true }),
+  ]);
+  expect({ accepted, declined }).toEqual({
+    accepted: { statuses: ["200", "101"], events: ["request /first", "upgrade /ws"] },
+    declined: { statuses: ["200", "503"], events: ["request /first", "dropRequest /ws"] },
+  });
+});
+
+it.concurrent("a declined upgrade without Host past maxRequestsPerSocket gets the 400, not the 503", async () => {
+  // Node rejects a missing Host before counting the request, so the limit is
+  // never consulted and 'dropRequest' is not emitted (200 then 400). Only
+  // Upgrade-carrying requests can reach this point without a Host header: the
+  // native parser answers every other Host-less request itself.
+  expect(await pastTheLimit("GET /nohost HTTP/1.1\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n")).toEqual({
+    statuses: ["200", "400"],
+    events: ["request /first"],
+  });
+});
+
+it.each([
+  ["res.end(body)", res => res.end("ok")],
+  ["res.write(body) then res.end()", res => (res.write("ok"), res.end())],
+])("Keep-Alive prints a server.keepAliveTimeout assigned after construction as is: %s", async (_, respond) => {
+  // server.keepAliveTimeout is a plain property in Node, so only the constructor option is
+  // validated. _storeHeader prints Math.floor(keepAliveTimeout / 1000) without a range check
+  // (Node v26.3.0 answers with exactly these lines). The first four do not fit the integer the
+  // native header writer takes: -5 used to go out as 4294967291 and 2^31 as 2147483647.
+  const expected = [
+    [-5000, "Keep-Alive: timeout=-5"],
+    [-0.5, "Keep-Alive: timeout=-1"],
+    [2 ** 31 * 1000, "Keep-Alive: timeout=2147483648"],
+    [Infinity, "Keep-Alive: timeout=Infinity"],
+    [(2 ** 31 - 1) * 1000, "Keep-Alive: timeout=2147483647"],
+    [5999, "Keep-Alive: timeout=5"],
+  ];
+  const actual: [number, string | undefined][] = [];
+  for (const [keepAliveTimeout] of expected) {
+    const server = createServer((req, res) => {
+      // The response took its copy when the request arrived. The idle timer reads the server's
+      // value once the response is done, and must not be armed with the numbers above.
+      server.keepAliveTimeout = 1000;
+      respond(res);
+    });
+    server.keepAliveTimeout = keepAliveTimeout as number;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const head = await new Promise<string>((resolve, reject) => {
+        const socket = connect(port, "127.0.0.1");
+        let data = "";
+        socket.on("data", chunk => {
+          data += chunk;
+          const end = data.indexOf("\r\n\r\n");
+          if (end === -1) return;
+          socket.destroy();
+          resolve(data.slice(0, end));
+        });
+        socket.on("close", () =>
+          reject(new Error(`closed before the end of the response head: ${JSON.stringify(data)}`)),
+        );
+        socket.on("error", reject);
+        socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      });
+      actual.push([keepAliveTimeout as number, head.split("\r\n").find(line => line.startsWith("Keep-Alive:"))]);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+  expect(actual).toEqual(expected);
 });
 
 it("a non-200 CONNECT through a proxy that holds the connection open is destroyed client-side", async () => {
@@ -4472,6 +5395,612 @@ describe("response header values are written as latin-1 bytes", () => {
   });
 });
 
+describe("HTTP server transport shutdown", () => {
+  it("binds a successful close callback to the server", async () => {
+    const server = createServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    let receiver: unknown;
+    const error = await new Promise<Error | undefined>(resolve => {
+      server.close(function (error) {
+        receiver = this;
+        resolve(error);
+      });
+    });
+
+    expect({ error, receiver }).toEqual({ error: undefined, receiver: server });
+  });
+
+  it("waits for an active keep-alive connection to close before server.close() completes", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const paths: string[] = [];
+    let wire = "";
+    let dataArrived = Promise.withResolvers<void>();
+    const server = createServer(async (req, res) => {
+      paths.push(req.url!);
+      entered.resolve();
+      await release.promise;
+      res.end("done");
+    });
+    server.on("connection", socket => socket.once("close", () => events.push("socket close")));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const client = connect(port, "127.0.0.1");
+    const clientClosed = Promise.withResolvers<void>();
+    client.on("data", chunk => {
+      wire += chunk.toString("latin1");
+      dataArrived.resolve();
+    });
+    client.on("error", () => {});
+    client.on("close", clientClosed.resolve);
+
+    try {
+      await once(client, "connect");
+      client.write("GET /first HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+      await entered.promise;
+      const closed = Promise.withResolvers<Error | undefined>();
+      let closeCallbackCalled = false;
+      server.close(error => {
+        closeCallbackCalled = true;
+        events.push("close callback");
+        closed.resolve(error);
+      });
+      release.resolve();
+
+      while (!wire.endsWith("done")) {
+        await dataArrived.promise;
+        dataArrived = Promise.withResolvers<void>();
+      }
+      expect(closeCallbackCalled).toBe(false);
+      client.write("GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+      while ((wire.match(/done/g)?.length ?? 0) < 2) {
+        await dataArrived.promise;
+        dataArrived = Promise.withResolvers<void>();
+      }
+      expect(closeCallbackCalled).toBe(false);
+      expect(paths).toEqual(["/first", "/healthz"]);
+
+      client.destroy();
+      expect(await closed.promise).toBeUndefined();
+      await clientClosed.promise;
+      expect(events[0]).toBe("socket close");
+      expect(events.indexOf("socket close")).toBeLessThan(events.indexOf("close callback"));
+      expect(wire).toContain("Content-Length: 4\r\n");
+      expect(wire).toEndWith("\r\n\r\ndone");
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  it("reports a close() that leaves no connection open, also when listen() follows it at once", async () => {
+    // Node queues 'close' inside close() when the server has no connection. A
+    // listen() in the same tick does not hold it back.
+    const events: string[] = [];
+    const firstClose = Promise.withResolvers<Error | undefined>();
+    const finalClose = Promise.withResolvers<Error | undefined>();
+    const server = createServer((_req, res) => res.end("done"));
+    server.on("close", () => events.push("server close"));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      server.close(error => {
+        events.push("first close callback");
+        firstClose.resolve(error);
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      expect(await firstClose.promise).toBeUndefined();
+      expect(events).toEqual(["server close", "first close callback"]);
+      expect(server.listening).toBe(true);
+
+      const { port } = server.address() as AddressInfo;
+      const body = await new Promise<string>((resolve, reject) => {
+        get({ host: "127.0.0.1", port, headers: { connection: "close" } }, res => {
+          let text = "";
+          res.setEncoding("utf8");
+          res.on("data", chunk => (text += chunk));
+          res.on("end", () => resolve(text));
+        }).on("error", reject);
+      });
+      expect(body).toBe("done");
+
+      server.close(error => {
+        events.push("final close callback");
+        finalClose.resolve(error);
+      });
+      expect(await finalClose.promise).toBeUndefined();
+      expect(events).toEqual(["server close", "first close callback", "server close", "final close callback"]);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+  });
+
+  it.each(["http", "https"])(
+    "%s: reports a close() that closes its only connection as idle, also when listen() follows it at once",
+    async proto => {
+      // Node counts a connection that close() destroys as gone at once. The
+      // close of an idle TLS connection ends later, with the peer's close_notify.
+      const events: string[] = [];
+      const firstClose = Promise.withResolvers<Error | undefined>();
+      const handler = (_req: IncomingMessage, res: ServerResponse) => res.end("done");
+      const server = proto === "https" ? createHttpsServer(tlsCert, handler) : createServer(handler);
+      server.on("close", () => events.push("server close"));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = proto === "https" ? https : http;
+      const agent = new client.Agent({ keepAlive: true });
+      try {
+        const { port } = server.address() as AddressInfo;
+        const body = await new Promise<string>((resolve, reject) => {
+          client
+            .get({ host: "127.0.0.1", port, agent, rejectUnauthorized: false }, res => {
+              let text = "";
+              res.setEncoding("utf8");
+              res.on("data", chunk => (text += chunk));
+              res.on("end", () => resolve(text));
+            })
+            .on("error", reject);
+        });
+        expect(body).toBe("done");
+
+        server.close(error => {
+          events.push("first close callback");
+          firstClose.resolve(error);
+        });
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        expect(await firstClose.promise).toBeUndefined();
+        expect(events).toEqual(["server close", "first close callback"]);
+        expect(server.listening).toBe(true);
+      } finally {
+        agent.destroy();
+        server.closeAllConnections();
+        if (server.listening) {
+          await new Promise<void>(resolve => server.close(() => resolve()));
+        }
+      }
+    },
+  );
+
+  it("defers a stopped listener's close event while a replacement listener is active", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const responseReceived = Promise.withResolvers<void>();
+    const relistened = Promise.withResolvers<void>();
+    const firstClose = Promise.withResolvers<Error | undefined>();
+    const finalClose = Promise.withResolvers<Error | undefined>();
+    const events: string[] = [];
+    const server = createServer(async (req, res) => {
+      if (req.url === "/first") {
+        entered.resolve();
+        await release.promise;
+      }
+      res.end("done");
+    });
+    server.on("close", () => events.push("server close"));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const firstPort = (server.address() as AddressInfo).port;
+    const client = connect(firstPort, "127.0.0.1");
+    let responseWire = "";
+    client.on("error", () => {});
+    client.on("data", chunk => {
+      responseWire += chunk.toString("latin1");
+      if (responseWire.endsWith("done")) responseReceived.resolve();
+    });
+
+    try {
+      await once(client, "connect");
+      client.write("GET /first HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+      await entered.promise;
+      server.close(error => {
+        events.push("first close callback");
+        firstClose.resolve(error);
+      });
+      server.listen(0, "127.0.0.1", () => {
+        events.push("relisten");
+        relistened.resolve();
+      });
+      await relistened.promise;
+      release.resolve();
+      await responseReceived.promise;
+      const clientClosed = once(client, "close");
+      client.destroy();
+      await clientClosed;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(events).toEqual(["relisten"]);
+      expect(server.listening).toBe(true);
+
+      const secondPort = (server.address() as AddressInfo).port;
+      expect(
+        await new Promise<string>((resolve, reject) => {
+          get({ host: "127.0.0.1", port: secondPort, headers: { connection: "close" } }, res => {
+            let body = "";
+            res.setEncoding("utf8");
+            res.on("data", chunk => (body += chunk));
+            res.on("end", () => resolve(body));
+          }).on("error", reject);
+        }),
+      ).toBe("done");
+      server.close(error => {
+        events.push("final close callback");
+        finalClose.resolve(error);
+      });
+      expect(await Promise.all([firstClose.promise, finalClose.promise])).toEqual([undefined, undefined]);
+      expect(events).toEqual(["relisten", "server close", "first close callback", "final close callback"]);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+  });
+
+  it.each(["first", "replacement"] as const)(
+    "waits for both overlapping listener generations when the %s listener drains first",
+    async firstToDrain => {
+      const firstClose = Promise.withResolvers<Error | undefined>();
+      const finalClose = Promise.withResolvers<Error | undefined>();
+      const events: string[] = [];
+      // The response never ends, so its connection stays open until the client destroys it.
+      const server = createHttpsServer(tlsCert, (_req, res) => void res.write("answer"));
+      server.on("close", () => events.push("server close"));
+
+      const startHeldHandshake = async (port: number) => {
+        const raw = connect(port, "127.0.0.1");
+        raw.on("error", () => {});
+        await once(raw, "connect");
+        let hold = true;
+        const held: Buffer[] = [];
+        const wire = new Duplex({
+          read() {},
+          write(chunk, _encoding, callback) {
+            raw.write(chunk, callback);
+          },
+        });
+        raw.on("data", chunk => (hold ? held.push(chunk) : wire.push(chunk)));
+        raw.on("close", () => wire.push(null));
+        const client = tlsConnect({ socket: wire, rejectUnauthorized: false });
+        client.on("error", () => {});
+        await once(raw, "data");
+        return {
+          client,
+          raw,
+          release() {
+            hold = false;
+            for (const chunk of held) wire.push(chunk);
+          },
+          async destroy() {
+            const closed = once(raw, "close");
+            client.destroy();
+            raw.destroy();
+            await closed;
+          },
+        };
+      };
+
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const first = await startHeldHandshake((server.address() as AddressInfo).port);
+
+      server.close(error => {
+        events.push("first close callback");
+        firstClose.resolve(error);
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const final = await startHeldHandshake((server.address() as AddressInfo).port);
+
+      try {
+        server.close(error => {
+          events.push("final close callback");
+          finalClose.resolve(error);
+        });
+        const [early, late] = firstToDrain === "first" ? [first, final] : [final, first];
+        early.release();
+        const [earlyServerSocket] = await once(server, "secureConnection");
+        const earlyServerSocketClosed = once(earlyServerSocket, "close");
+        await early.destroy();
+        await earlyServerSocketClosed;
+        // The server knows only the held handshake now. Its answer needs more reads, so a 'close' event for the early listener alone comes before it.
+        late.release();
+        late.client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        await once(late.client, "data");
+        events.push("the other connection is answered");
+        await late.destroy();
+        expect(await Promise.all([firstClose.promise, finalClose.promise])).toEqual([undefined, undefined]);
+        expect(events).toEqual([
+          "the other connection is answered",
+          "server close",
+          "first close callback",
+          "final close callback",
+        ]);
+      } finally {
+        first.client.destroy();
+        first.raw.destroy();
+        final.client.destroy();
+        final.raw.destroy();
+        server.closeAllConnections();
+        if (server.listening) {
+          await new Promise<void>(resolve => server.close(() => resolve()));
+        }
+      }
+    },
+    15_000,
+  );
+
+  it("waits for a socket first wrapped by the parser-error path", async () => {
+    const clientError = Promise.withResolvers<import("node:net").Socket>();
+    const closed = Promise.withResolvers<Error | undefined>();
+    const server = createServer();
+    server.on("clientError", (_error, socket) => clientError.resolve(socket));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+
+    try {
+      await once(client, "connect");
+      client.write("NOT-HTTP\r\n\r\n");
+      const serverSocket = await clientError.promise;
+      let closeCalled = false;
+      server.close(error => {
+        closeCalled = true;
+        closed.resolve(error);
+      });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(closeCalled).toBe(false);
+
+      serverSocket.destroy();
+      expect(await closed.promise).toBeUndefined();
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+  });
+
+  it.each([
+    ["destroy", "end", false],
+    ["resetAndDestroy", "ECONNRESET", true],
+  ] as const)("req.socket.%s() uses the matching TCP close", async (method, peerEvent, hadError) => {
+    const called = Promise.withResolvers<{ returnedSameSocket: boolean; destroyed: boolean }>();
+    const serverSocketClosed = Promise.withResolvers<void>();
+    const server = createServer(req => {
+      const socket = req.socket;
+      const returned = socket[method]();
+      called.resolve({ returnedSameSocket: returned === socket, destroyed: socket.destroyed });
+    });
+    server.on("connection", socket => socket.once("close", () => serverSocketClosed.resolve()));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    let addressCalls = 0;
+    Object.defineProperty(server, "address", {
+      configurable: true,
+      value() {
+        addressCalls++;
+        return { address: "127.0.0.1", family: "IPv4", port };
+      },
+    });
+    const client = connect(port, "127.0.0.1");
+    const clientEvents: string[] = [];
+    const clientClosed = Promise.withResolvers<boolean>();
+    client.on("error", (error: NodeJS.ErrnoException) => clientEvents.push(error.code ?? error.message));
+    client.on("end", () => clientEvents.push("end"));
+    client.on("close", clientClosed.resolve);
+
+    try {
+      await once(client, "connect");
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      expect(await called.promise).toEqual({ returnedSameSocket: true, destroyed: true });
+      expect(await clientClosed.promise).toBe(hadError);
+      await serverSocketClosed.promise;
+      expect(clientEvents).toEqual([peerEvent]);
+      expect(addressCalls).toBe(0);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+  });
+
+  it.each(["https", "unix"] as const)("req.socket.resetAndDestroy() rejects a %s transport", async kind => {
+    const attempted = Promise.withResolvers<unknown>();
+    const handler = (req: IncomingMessage, res: ServerResponse) => {
+      try {
+        req.socket.resetAndDestroy();
+        attempted.resolve(undefined);
+      } catch (error) {
+        attempted.resolve(error);
+        res.end("caught");
+      }
+    };
+    const server = kind === "https" ? createHttpsServer(tlsCert, handler) : createServer(handler);
+    const socketPath = path.join(tmpdir(), `bun-http-reset-${process.pid}.sock`);
+    if (kind === "https") {
+      server.listen(0, "127.0.0.1");
+    } else {
+      server.listen(socketPath);
+    }
+    await once(server, "listening");
+    const responseBody = Promise.withResolvers<string>();
+    void responseBody.promise.catch(() => {});
+    const onResponse = (res: IncomingMessage) => {
+      let body = "";
+      res.setEncoding("utf8");
+      res.on("data", chunk => (body += chunk));
+      res.on("end", () => responseBody.resolve(body));
+      res.on("error", responseBody.reject);
+    };
+    const req =
+      kind === "https"
+        ? https.get(
+            { host: "127.0.0.1", port: (server.address() as AddressInfo).port, rejectUnauthorized: false },
+            onResponse,
+          )
+        : get({ socketPath }, onResponse);
+    req.on("error", responseBody.reject);
+
+    try {
+      expect(await attempted.promise).toMatchObject({ name: "TypeError", code: "ERR_INVALID_HANDLE_TYPE" });
+      expect(await responseBody.promise).toBe("caught");
+    } finally {
+      req.destroy();
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+  });
+
+  it("flushes response bytes before a successful write callback can destroy the response", async () => {
+    const callback = Promise.withResolvers<Error | undefined>();
+    const events: string[] = [];
+    const server = createServer((_req, res) => {
+      res.on("close", () => events.push("response close"));
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.write("hello", error => {
+        events.push("write callback");
+        callback.resolve(error ?? undefined);
+        res.destroy();
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const client = connect(port, "127.0.0.1");
+    let wire = "";
+    const closed = Promise.withResolvers<void>();
+    client.on("data", chunk => (wire += chunk.toString("latin1")));
+    client.on("error", () => {});
+    client.on("close", closed.resolve);
+
+    try {
+      await once(client, "connect");
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await closed.promise;
+      expect(await callback.promise).toBeUndefined();
+      expect(events).toEqual(["write callback", "response close"]);
+      expect(wire).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(wire).toEndWith("\r\n\r\n5\r\nhello\r\n");
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+  });
+
+  // More than a Linux or macOS loopback socket takes in one write(), so the rest of the body waits
+  // for the client to read. Winsock takes a body of any size in one send().
+  const backedUpBodySize = (isWindows ? 2 : 64) * 1024 * 1024;
+
+  it("waits for post-flush backpressure before running a write callback", async () => {
+    const body = Buffer.alloc(backedUpBodySize, "x");
+    const writeReturned = Promise.withResolvers<boolean>();
+    const callback = Promise.withResolvers<Error | undefined>();
+    let callbackCalled = false;
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-length": body.length });
+      const accepted = res.write(body, error => {
+        callbackCalled = true;
+        callback.resolve(error ?? undefined);
+        res.destroy();
+      });
+      writeReturned.resolve(accepted);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const client = connect(port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    const closed = Promise.withResolvers<void>();
+    client.pause();
+    client.on("data", chunk => chunks.push(chunk));
+    client.on("error", () => {});
+    client.on("close", closed.resolve);
+
+    try {
+      await once(client, "connect");
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      expect(await writeReturned.promise).toBe(false);
+      if (!isWindows) expect(callbackCalled).toBe(false);
+      client.resume();
+      await closed.promise;
+      expect(await callback.promise).toBeUndefined();
+      const wire = Buffer.concat(chunks);
+      const headerEnd = wire.indexOf("\r\n\r\n");
+      expect(headerEnd).toBeGreaterThan(0);
+      expect(wire.subarray(headerEnd + 4)).toEqual(body);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+  });
+
+  it("fails a buffered write callback when the peer resets before drain", async () => {
+    const body = Buffer.alloc(backedUpBodySize, "x");
+    const writeReturned = Promise.withResolvers<boolean>();
+    const responseClosed = Promise.withResolvers<void>();
+    const callbackErrors: string[] = [];
+    const server = createServer((_req, res) => {
+      res.on("close", responseClosed.resolve);
+      const accepted = res.write(body, (error: NodeJS.ErrnoException | null | undefined) => {
+        callbackErrors.push(error?.code ?? "success");
+      });
+      writeReturned.resolve(accepted);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const client = connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    client.pause();
+
+    try {
+      await once(client, "connect");
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      expect(await writeReturned.promise).toBe(false);
+      // Windows 11 takes the whole body at once. The write is then complete before the reset, and its callback has run.
+      const completedBeforeReset = callbackErrors.length > 0;
+      if (!isWindows) expect(completedBeforeReset).toBe(false);
+      client.resetAndDestroy();
+      await responseClosed.promise;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      if (completedBeforeReset) {
+        expect(callbackErrors).toEqual(["success"]);
+      } else {
+        expect(callbackErrors).toHaveLength(1);
+        expect(["ERR_STREAM_DESTROYED", "ECONNRESET", "EPIPE"]).toContain(callbackErrors[0]);
+      }
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+  });
+});
+
 it("connectionListener queues pipelined responses like Node", async () => {
   // Both requests parse in one socket 'data' event, so the second one's
   // headers complete while the first response is still assigned (its 'finish'
@@ -4548,6 +6077,179 @@ it("connectionListener queues pipelined responses like Node", async () => {
     expect(out.indexOf("r:/2;")).toBeLessThan(out.indexOf("r:/3;"));
     expect(out.match(/HTTP\/1\.1 200/g)).toHaveLength(3);
   }
+});
+
+describe("a pipelined request whose body continues after the previous response ends", () => {
+  // uws keeps one request body handler per connection. The pipelined request
+  // arms it while the earlier response is still pending; that response ending
+  // must not drop it, or the rest of the body never reaches the request.
+  async function exchange(
+    steps: { write: string; waitFor: string }[],
+    lastUrl: string,
+    describeBody = (body: Buffer) => `${body.length}`,
+  ) {
+    const { promise: lastDispatched, resolve: resolveLastDispatched } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      const read = () => {
+        const chunks: Buffer[] = [];
+        req.on("data", c => chunks.push(c));
+        req.on("end", () => {
+          const trailers = Object.entries(req.trailers)
+            .map(([name, value]) => `,${name}=${value}`)
+            .join("");
+          res.end(`${req.url}=${describeBody(Buffer.concat(chunks))}${trailers};`);
+        });
+      };
+      if (req.url === lastUrl) {
+        resolveLastDispatched();
+        read();
+      } else {
+        // Answer only once the last request is dispatched behind this response.
+        lastDispatched.then(read);
+      }
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.setNoDelay(true);
+    let out = "";
+    const { promise: closed, reject: rejectClosed } = Promise.withResolvers<never>();
+    closed.catch(() => {});
+    client.on("data", d => (out += d));
+    client.on("error", rejectClosed);
+    client.on("close", () => rejectClosed(new Error("closed before expected output: " + out)));
+    await once(client, "connect");
+    try {
+      for (const { write, waitFor } of steps) {
+        client.write(write);
+        while (!out.includes(waitFor)) {
+          await Promise.race([once(client, "data"), closed]);
+        }
+      }
+      return out.match(/\/\w+=[^;]+;/g);
+    } finally {
+      client.destroy();
+      await once(server.close(), "close");
+    }
+  }
+
+  // No byte of the body comes with the head. The dropped body still advanced
+  // the parser to the end of /two, so /three ended it: 'end' with 0 body bytes,
+  // no trailers and no error.
+  it.each([
+    ["Content-Length", "Content-Length: 10\r\n", "0123456789", "/two=10;"],
+    [
+      "Content-Length of 1 MiB",
+      `Content-Length: ${1024 * 1024}\r\n`,
+      Buffer.alloc(1024 * 1024, "b").toString(),
+      `/two=${1024 * 1024};`,
+    ],
+    ["Expect: 100-continue", "Content-Length: 10\r\nExpect: 100-continue\r\n", "0123456789", "/two=10;"],
+    [
+      "chunked with a trailer",
+      "Transfer-Encoding: chunked\r\nTrailer: X-T\r\n",
+      "a\r\n0123456789\r\n0\r\nX-T: v\r\n\r\n",
+      "/two=10,x-t=v;",
+    ],
+  ])("whole body, then the next request: %s", async (_, headers, body, two) => {
+    expect(
+      await exchange(
+        [
+          {
+            write: "GET /one HTTP/1.1\r\nHost: a\r\n\r\n" + `POST /two HTTP/1.1\r\nHost: a\r\n${headers}\r\n`,
+            waitFor: "/one=0;",
+          },
+          { write: body + "GET /three HTTP/1.1\r\nHost: a\r\n\r\n", waitFor: "/three=0;" },
+        ],
+        "/two",
+      ),
+    ).toEqual(["/one=0;", two, "/three=0;"]);
+  });
+
+  it("two late bodies in one write each reach their own request", async () => {
+    // /two lost its own body and received the first reads of the body of /three.
+    const size = 1024 * 1024;
+    // Each body is one repeated byte: report the length, then that byte.
+    const lengthAndFill = (body: Buffer) => {
+      if (body.length === 0) return "0";
+      const uniform = body.equals(Buffer.alloc(body.length, body[0]));
+      return `${body.length}${uniform ? String.fromCharCode(body[0]) : "(mixed)"}`;
+    };
+    expect(
+      await exchange(
+        [
+          {
+            write:
+              "GET /one HTTP/1.1\r\nHost: a\r\n\r\n" +
+              `POST /two HTTP/1.1\r\nHost: a\r\nContent-Length: ${size}\r\n\r\n`,
+            waitFor: "/one=0;",
+          },
+          {
+            write:
+              Buffer.alloc(size, "a").toString() +
+              `POST /three HTTP/1.1\r\nHost: a\r\nContent-Length: ${size}\r\n\r\n` +
+              Buffer.alloc(size, "c").toString() +
+              "GET /four HTTP/1.1\r\nHost: a\r\n\r\n",
+            waitFor: "/four=0;",
+          },
+        ],
+        "/two",
+        lengthAndFill,
+      ),
+    ).toEqual(["/one=0;", `/two=${size}a;`, `/three=${size}c;`, "/four=0;"]);
+  });
+
+  it("Content-Length body", async () => {
+    expect(
+      await exchange(
+        [
+          {
+            write:
+              "POST /one HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello" +
+              "POST /two HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\n01234",
+            waitFor: "/one=5;",
+          },
+          { write: "56789", waitFor: "/two=10;" },
+        ],
+        "/two",
+      ),
+    ).toEqual(["/one=5;", "/two=10;"]);
+  });
+
+  it("chunked body", async () => {
+    expect(
+      await exchange(
+        [
+          {
+            write:
+              "POST /one HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello" +
+              "POST /two HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\n01234\r\n",
+            waitFor: "/one=5;",
+          },
+          { write: "5\r\n56789\r\n0\r\n\r\n", waitFor: "/two=10;" },
+        ],
+        "/two",
+      ),
+    ).toEqual(["/one=5;", "/two=10;"]);
+  });
+
+  it("third request behind two pending responses, then keep-alive reuse", async () => {
+    expect(
+      await exchange(
+        [
+          {
+            write:
+              "POST /one HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello" +
+              "POST /two HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nworld" +
+              "POST /three HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\n01234",
+            waitFor: "/two=5;",
+          },
+          { write: "56789", waitFor: "/three=10;" },
+          { write: "POST /four HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\nabc", waitFor: "/four=3;" },
+        ],
+        "/three",
+      ),
+    ).toEqual(["/one=5;", "/two=5;", "/three=10;", "/four=3;"]);
+  });
 });
 
 it("connectionListener aborts queued pipelined responses when the connection dies", async () => {
@@ -4710,6 +6412,685 @@ it("connectionListener pauses reads when queued pipelined responses back up", as
   expect(dispatched).toBe(N);
   clientSide.destroy();
   serverSide.destroy();
+});
+
+// https://github.com/oven-sh/bun/issues/4733
+// https://github.com/oven-sh/bun/issues/18613
+// Ending the response inside the request handler must not drop the request
+// body: like Node.js, the body keeps flowing to req's 'data' listeners and
+// piped destinations until it has been fully received, and resOnFinish (the
+// 'finish' listener) decides whether to _dump() based on the state *at*
+// 'finish', so a consumer attached after res.end() in the same tick still
+// receives the body. (req.complete / 'end' / 'close' tracking the body, and
+// connections the response closes, are covered in
+// node-http-server-abort-events.test.ts.)
+describe("request body still flows after res.end() was called in the handler", () => {
+  async function run(handler: (req: IncomingMessage, res: ServerResponse, out: Writable) => void) {
+    const events: string[] = [];
+    const chunks: Buffer[] = [];
+    const { promise: finished, resolve: finish, reject } = Promise.withResolvers<void>();
+
+    let reqRef: IncomingMessage | undefined;
+    await using server = createServer((req, res) => {
+      reqRef = req;
+      const out = new Writable({
+        write(chunk, _enc, cb) {
+          chunks.push(Buffer.from(chunk));
+          cb();
+        },
+      });
+      req.once("end", () => events.push("req-end"));
+      req.once("close", () => events.push("req-close"));
+      req.once("error", reject);
+      out.once("error", reject);
+      out.once("finish", () => {
+        events.push("out-finish");
+        finish();
+      });
+      handler(req, res, out);
+    });
+
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const resp = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "testing-body" });
+    expect(await resp.text()).toBe("ok");
+    await finished;
+
+    expect({
+      body: Buffer.concat(chunks).toString(),
+      events,
+      dumped: reqRef!._dumped,
+    }).toEqual({
+      body: "testing-body",
+      events: ["req-end", "out-finish", "req-close"],
+      dumped: false,
+    });
+  }
+
+  it("req.pipe(out) before res.end()", async () => {
+    await run((req, res, out) => {
+      req.pipe(out);
+      res.end("ok");
+    });
+  });
+
+  it("req.on('data') before res.end()", async () => {
+    await run((req, res, out) => {
+      req.on("data", c => out.write(c));
+      req.on("end", () => out.end());
+      res.end("ok");
+    });
+  });
+
+  it("req.pipe(out) after res.end() in the same tick", async () => {
+    await run((req, res, out) => {
+      res.end("ok");
+      req.pipe(out);
+    });
+  });
+
+  it("req.on('data') after res.end() in the same tick", async () => {
+    await run((req, res, out) => {
+      res.end("ok");
+      req.on("data", c => out.write(c));
+      req.on("end", () => out.end());
+    });
+  });
+
+  it("req.pipe(out) with res.write() + res.end()", async () => {
+    await run((req, res, out) => {
+      req.pipe(out);
+      res.write("o");
+      res.end("k");
+    });
+  });
+
+  it("req.pipe(out) with res.end() on nextTick", async () => {
+    await run((req, res, out) => {
+      req.pipe(out);
+      process.nextTick(() => res.end("ok"));
+    });
+  });
+
+  it("with no consumer, req is _dumped on 'finish' like Node's resOnFinish", async () => {
+    let dumpedAtFinish: boolean | undefined;
+    let reqRef: IncomingMessage | undefined;
+    const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      reqRef = req;
+      req.once("error", reject);
+      req.once("close", resolve);
+      res.end("ok");
+      // emitResponseFinish is registered before the 'request' event, so by the
+      // time this listener runs req._dump() has already been called.
+      res.on("finish", () => (dumpedAtFinish = req._dumped));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const resp = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "testing-body" });
+    expect(await resp.text()).toBe("ok");
+    await closed;
+    expect({ dumpedAtFinish, dumped: reqRef!._dumped }).toEqual({ dumpedAtFinish: true, dumped: true });
+  });
+
+  it("req.resume() after res.end() in the same tick prevents _dump()", async () => {
+    let dumped: boolean | undefined;
+    const { promise: ended, resolve, reject } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      req.once("error", reject);
+      res.end("ok");
+      req.resume();
+      req.once("end", () => {
+        dumped = req._dumped;
+        resolve();
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const resp = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "testing-body" });
+    expect(await resp.text()).toBe("ok");
+    await ended;
+    expect(dumped).toBe(false);
+  });
+
+  it("keep-alive connection reused after a consumed body releases the request", async () => {
+    // The body's fin arriving on the re-armed inStream after res.end() must
+    // release the pending-request ref so server.close() resolves and the
+    // process exits.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const http = require("http");
+         const { once } = require("events");
+         (async () => {
+           const bodies = [];
+           const server = http.createServer((req, res) => {
+             let body = "";
+             req.on("data", c => body += c);
+             req.once("end", () => bodies.push(body));
+             res.end("ok");
+           });
+           await once(server.listen(0, "127.0.0.1"), "listening");
+           const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+           const port = server.address().port;
+           for (let i = 0; i < 3; i++) {
+             await new Promise((resolve, reject) => {
+               const r = http.request({ agent, method: "POST", port }, res => {
+                 res.resume();
+                 res.on("end", resolve);
+                 res.on("error", reject);
+               });
+               r.on("error", reject);
+               r.end("body" + i);
+             });
+           }
+           agent.destroy();
+           await new Promise(r => server.close(r));
+           console.log(JSON.stringify(bodies));
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('["body0","body1","body2"]');
+    expect(exitCode).toBe(0);
+  });
+
+  it("chunked request body split across writes", async () => {
+    let body = "";
+    const { promise: ended, resolve, reject } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      req.on("data", c => (body += c));
+      req.once("end", resolve);
+      req.once("error", reject);
+      req.once("close", () => reject(new Error("closed before end")));
+      res.end("ok");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const sock = connect(port, "127.0.0.1");
+    await once(sock, "connect");
+    sock.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
+    // A second TCP segment carrying the remainder (via setNoDelay + event-loop
+    // bounce) so res.end() has already run when it arrives.
+    sock.setNoDelay(true);
+    await new Promise<void>(r => setImmediate(r));
+    sock.write("6\r\n world\r\n0\r\n\r\n");
+
+    await ended;
+    sock.end();
+    expect(body).toBe("hello world");
+  });
+
+  it("socket closed mid-upload does not strand the event loop", async () => {
+    // Covers the case where the body's fin never arrives after the response
+    // ended: the body-read ref must be released on teardown.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const http = require("http");
+         const net = require("net");
+         const { once } = require("events");
+         (async () => {
+           const events = [];
+           const server = http.createServer((req, res) => {
+             req.on("data", c => events.push("data(" + c.length + ")"));
+             req.on("end", () => events.push("end"));
+             res.end("ok");
+           });
+           await once(server.listen(0, "127.0.0.1"), "listening");
+           const s = net.connect(server.address().port, "127.0.0.1");
+           await once(s, "connect");
+           s.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 100\\r\\n\\r\\nabc");
+           s.resume();
+           await once(s, "data");
+           s.destroy();
+           await once(s, "close");
+           server.close();
+           process.on("beforeExit", () => console.log(JSON.stringify(events)));
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Like Node.js: the partial body is delivered, 'end' is not (incomplete),
+    // and the process reaches beforeExit.
+    expect(stdout.trim()).toBe('["data(3)"]');
+    expect(exitCode).toBe(0);
+  });
+
+  // The body outliving the response must not leave anything holding the event
+  // loop open: the process has to exit on its own both when the body does
+  // arrive later (with the connection then reused, so the early request is no
+  // longer the connection's current one when it closes) and when the client
+  // goes away mid-body instead.
+  it.each(["complete", "abort"])(
+    "process exits on its own after an early response (%s)",
+    async mode => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        const { createServer } = require("node:http");
+        const { connect } = require("node:net");
+        const server = createServer((req, res) => {
+          if (req.url === "/early") {
+            req.on("close", () => console.log("req close complete=" + req.complete));
+            req.socket.on("close", () => console.log("socket close complete=" + req.complete));
+          }
+          res.end("ok:" + req.url);
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = connect(server.address().port, "127.0.0.1");
+          let received = "";
+          client.on("data", chunk => {
+            received += chunk;
+            if (received.endsWith("ok:/early")) {
+              received = "";
+              if (${JSON.stringify(mode)} === "abort") {
+                client.destroy();
+                server.close(() => console.log("server closed"));
+              } else {
+                client.write("def");
+                client.write("GET /second HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+              }
+            } else if (received.endsWith("ok:/second")) {
+              client.end();
+              server.close(() => console.log("server closed"));
+            }
+          });
+          client.write("POST /early HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 6\\r\\n\\r\\nabc");
+        });
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n").sort()).toEqual(
+        mode === "abort"
+          ? ["server closed", "socket close complete=false"]
+          : ["req close complete=true", "server closed", "socket close complete=true"],
+      );
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+});
+
+describe("res.strictContentLength", () => {
+  // Runs `handler(res)` inside a request handler and resolves with its return
+  // value. The raw socket client keeps the response from being consumed, so the
+  // only observable effect is what the handler throws.
+  async function inServer<T>(handler: (res: http.ServerResponse) => T): Promise<T> {
+    const { promise, resolve, reject } = Promise.withResolvers<T>();
+    const server = http.createServer((req, res) => {
+      new Promise<T>(done => done(handler(res))).then(resolve, reject).finally(() => res.destroy());
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    try {
+      return await promise;
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  function code(fn: () => unknown): string | undefined {
+    try {
+      fn();
+    } catch (e: any) {
+      return e.code;
+    }
+    return undefined;
+  }
+
+  const MISMATCH = "ERR_HTTP_CONTENT_LENGTH_MISMATCH";
+
+  test("Content-Length: 0 is checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 0);
+      return code(() => res.end("abc"));
+    });
+    expect(result).toBe(MISMATCH);
+  });
+
+  test("Content-Length: 0 with an empty body does not throw", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 0);
+      return code(() => res.end());
+    });
+    expect(result).toBeUndefined();
+  });
+
+  test("the write that sends the headers is counted but not checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 5);
+      return [code(() => res.write("abcdefghijk")), code(() => res.end("abc"))];
+    });
+    expect(result).toEqual([undefined, MISMATCH]);
+  });
+
+  test("writes after writeHead are checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.writeHead(200, { "Content-Length": 10 });
+      return [code(() => res.write("123456789")), code(() => res.write("123456789")), code(() => res.end("0"))];
+    });
+    expect(result).toEqual([undefined, MISMATCH, undefined]);
+  });
+
+  test("a Content-Length set after removeHeader is checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 3);
+      res.removeHeader("Content-Length");
+      res.setHeader("Content-Length", 5);
+      return code(() => res.end("hello world"));
+    });
+    expect(result).toBe(MISMATCH);
+  });
+
+  test("a Content-Length from writeHead's flat array form is checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.writeHead(200, ["Content-Length", "5"]);
+      return [code(() => res.write("hello")), code(() => res.end("!"))];
+    });
+    expect(result).toEqual([undefined, MISMATCH]);
+  });
+
+  test("a string header value is parsed like Node (+value)", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", "1e1");
+      return [code(() => res.end("abcdefghij"))];
+    });
+    expect(result).toEqual([undefined]);
+  });
+
+  test("a string header value with a mismatch throws", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", "5");
+      return [code(() => res.write("hello")), code(() => res.end("!"))];
+    });
+    expect(result).toEqual([undefined, MISMATCH]);
+  });
+});
+
+describe("connectionListener maxRequestsPerSocket", () => {
+  // Sockets fed in through server.emit("connection", ...) take the JS fallback parser. This
+  // client sends raw keep-alive requests over such a socket one at a time (never pipelined) and
+  // parses each response as it arrives. The servers below only produce Content-Length framed
+  // bodies and the bodiless chunked 503 (a lone terminating chunk), which is all it understands.
+  function keepAliveClientOverEmittedConnection(server: Server) {
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    let received = "";
+    let waiter: PromiseWithResolvers<string> | undefined;
+    function takeResponse() {
+      const headEnd = received.indexOf("\r\n\r\n");
+      if (headEnd === -1) return undefined;
+      const head = received.slice(0, headEnd);
+      let bodyEnd = headEnd + 4;
+      const contentLength = /^Content-Length: (\d+)$/m.exec(head);
+      if (contentLength) {
+        bodyEnd += Number(contentLength[1]);
+      } else if (/^Transfer-Encoding: chunked$/m.test(head)) {
+        bodyEnd += "0\r\n\r\n".length;
+      }
+      if (received.length < bodyEnd) return undefined;
+      const response = received.slice(0, bodyEnd);
+      received = received.slice(bodyEnd);
+      return response;
+    }
+    function deliver() {
+      if (waiter === undefined) return;
+      const response = takeResponse();
+      if (response === undefined) return;
+      const { resolve } = waiter;
+      waiter = undefined;
+      resolve(response);
+    }
+    function fail(reason: string) {
+      waiter?.reject(new Error(`${reason} while waiting for a response; received ${JSON.stringify(received)}`));
+      waiter = undefined;
+    }
+    clientSide.on("data", chunk => {
+      received += chunk.toString("latin1");
+      deliver();
+    });
+    clientSide.on("end", () => fail("the server ended the connection"));
+    clientSide.on("close", () => fail("the connection closed"));
+    return {
+      serverSide,
+      async request(rawRequest: string) {
+        waiter = Promise.withResolvers<string>();
+        const { promise } = waiter;
+        clientSide.write(rawRequest);
+        deliver();
+        const raw = await promise;
+        return {
+          statusCode: Number(raw.slice("HTTP/1.1 ".length, "HTTP/1.1 ".length + 3)),
+          connection: /^Connection: (.*)$/m.exec(raw)?.[1],
+          keepAlive: /^Keep-Alive: (.*)$/m.exec(raw)?.[1],
+          body: raw.slice(raw.indexOf("\r\n\r\n") + 4).replace(/^0\r\n\r\n$/, ""),
+        };
+      },
+      [Symbol.dispose]() {
+        clientSide.destroy();
+        serverSide.destroy();
+      },
+    };
+  }
+
+  it("advertises Connection: close at the limit and answers every request past it with 503 and 'dropRequest'", async () => {
+    const served: [string, boolean][] = [];
+    const dropped: [string, boolean][] = [];
+    const server = createServer((req, res) => {
+      // Set before 'request' is emitted, like Node; it is what turns the Connection header into "close".
+      served.push([req.url!, (res as any).maxRequestsOnConnectionReached]);
+      res.end("served");
+    });
+    server.maxRequestsPerSocket = 2;
+    using client = keepAliveClientOverEmittedConnection(server);
+    server.on("dropRequest", (req, socket) => dropped.push([req.url!, socket === client.serverSide]));
+
+    const responses: Awaited<ReturnType<typeof client.request>>[] = [];
+    for (const path of ["/1", "/2", "/3", "/4"]) {
+      responses.push(await client.request(`GET ${path} HTTP/1.1\r\nHost: example.test\r\n\r\n`));
+    }
+    expect(responses).toEqual([
+      { statusCode: 200, connection: "keep-alive", keepAlive: "timeout=5, max=2", body: "served" },
+      { statusCode: 200, connection: "close", keepAlive: undefined, body: "served" },
+      { statusCode: 503, connection: "close", keepAlive: undefined, body: "" },
+      { statusCode: 503, connection: "close", keepAlive: undefined, body: "" },
+    ]);
+    expect(served).toEqual([
+      ["/1", false],
+      ["/2", true],
+    ]);
+    expect(dropped).toEqual([
+      ["/3", true],
+      ["/4", true],
+    ]);
+  });
+
+  it("counts requests per connection", async () => {
+    const dropped: string[] = [];
+    const server = createServer((req, res) => res.end("served"));
+    server.maxRequestsPerSocket = 1;
+    server.on("dropRequest", req => dropped.push(req.url!));
+    using first = keepAliveClientOverEmittedConnection(server);
+    using second = keepAliveClientOverEmittedConnection(server);
+
+    const statusCodes = [
+      (await first.request("GET /first HTTP/1.1\r\nHost: example.test\r\n\r\n")).statusCode,
+      (await second.request("GET /second HTTP/1.1\r\nHost: example.test\r\n\r\n")).statusCode,
+      (await first.request("GET /first-again HTTP/1.1\r\nHost: example.test\r\n\r\n")).statusCode,
+      (await second.request("GET /second-again HTTP/1.1\r\nHost: example.test\r\n\r\n")).statusCode,
+    ];
+    expect(statusCodes).toEqual([200, 200, 503, 503]);
+    expect(dropped).toEqual(["/first-again", "/second-again"]);
+  });
+
+  it("drops an over-limit request before looking at its Expect header", async () => {
+    // Node's parserOnIncoming checks the limit before the Expect routing, so the dropped
+    // request gets its 503 straight away: no 100 Continue, no 'checkContinue'.
+    const events: string[] = [];
+    const server = createServer((req, res) => {
+      events.push(`request ${req.url}`);
+      res.end("served");
+    });
+    server.maxRequestsPerSocket = 1;
+    server.on("checkContinue", (req, res) => {
+      events.push(`checkContinue ${req.url}`);
+      res.writeContinue();
+      res.end("served");
+    });
+    server.on("dropRequest", req => events.push(`dropRequest ${req.url}`));
+    using client = keepAliveClientOverEmittedConnection(server);
+
+    expect((await client.request("GET /1 HTTP/1.1\r\nHost: example.test\r\n\r\n")).statusCode).toBe(200);
+    expect(
+      await client.request(
+        "POST /2 HTTP/1.1\r\nHost: example.test\r\nExpect: 100-continue\r\nContent-Length: 0\r\n\r\n",
+      ),
+    ).toEqual({ statusCode: 503, connection: "close", keepAlive: undefined, body: "" });
+    expect(events).toEqual(["request /1", "dropRequest /2"]);
+  });
+
+  it("still hands off an Upgrade request once the limit is reached", async () => {
+    // Node's parserOnIncoming hands upgrades off before it counts requests, so the limit never
+    // turns an upgrade into a 503.
+    const events: string[] = [];
+    const server = createServer((req, res) => {
+      events.push(`request ${req.url}`);
+      res.end("served");
+    });
+    server.maxRequestsPerSocket = 1;
+    server.on("upgrade", (req, socket) => {
+      events.push(`upgrade ${req.url}`);
+      socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
+    });
+    server.on("dropRequest", req => events.push(`dropRequest ${req.url}`));
+    using client = keepAliveClientOverEmittedConnection(server);
+
+    expect(await client.request("GET /1 HTTP/1.1\r\nHost: example.test\r\n\r\n")).toEqual({
+      statusCode: 200,
+      connection: "close",
+      keepAlive: undefined,
+      body: "served",
+    });
+    expect(
+      (await client.request("GET /ws HTTP/1.1\r\nHost: example.test\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n"))
+        .statusCode,
+    ).toBe(101);
+    expect(events).toEqual(["request /1", "upgrade /ws"]);
+  });
+});
+
+it("connectionListener applies the server's joinDuplicateHeaders option like the native path and Node", async () => {
+  // Node keeps only the first value of a header it treats as single-valued (Authorization,
+  // Content-Type, ...) unless the server was created with joinDuplicateHeaders; Cookie and unknown
+  // headers are joined either way. The same raw request goes through server.emit("connection", ...)
+  // (the JS parser path, which has to read the option off the server itself) and through the same
+  // server options listening normally (the native path); both must produce Node's req.headers.
+  const rawRequest =
+    "GET / HTTP/1.1\r\nHost: example.test\r\n" +
+    "Authorization: one\r\nAuthorization: two\r\n" +
+    "Content-Type: text/plain\r\nContent-Type: text/html\r\n" +
+    "Cookie: a=1\r\nCookie: b=2\r\n" +
+    "X-Custom: first\r\nX-Custom: second\r\n" +
+    "Connection: close\r\n\r\n";
+
+  function serverRecordingHeaders(options: { joinDuplicateHeaders?: boolean }) {
+    const { promise: headers, resolve, reject } = Promise.withResolvers<http.IncomingHttpHeaders>();
+    const server = createServer(options, (req, res) => {
+      resolve({ ...req.headers });
+      res.end();
+    });
+    // A no-op once the handler has resolved, so the connection closing after the response is fine.
+    const closedEarly = () => reject(new Error("the connection closed before the request was dispatched"));
+    return { server, headers, reject, closedEarly };
+  }
+
+  async function headersSeenOverEmittedConnection(options: { joinDuplicateHeaders?: boolean }) {
+    const { server, headers, reject, closedEarly } = serverRecordingHeaders(options);
+    const [clientSide, serverSide] = duplexPair();
+    clientSide.on("error", reject);
+    serverSide.on("error", reject);
+    serverSide.on("close", closedEarly);
+    clientSide.resume();
+    server.emit("connection", serverSide);
+    clientSide.write(rawRequest);
+    try {
+      return await headers;
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  }
+
+  async function headersSeenOverListeningServer(options: { joinDuplicateHeaders?: boolean }) {
+    const { server, headers, reject, closedEarly } = serverRecordingHeaders(options);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    socket.on("error", reject);
+    socket.on("close", closedEarly);
+    socket.resume();
+    socket.write(rawRequest);
+    try {
+      return await headers;
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  }
+
+  const joined = {
+    host: "example.test",
+    authorization: "one, two",
+    "content-type": "text/plain, text/html",
+    cookie: "a=1; b=2",
+    "x-custom": "first, second",
+    connection: "close",
+  };
+  const firstValueWins = { ...joined, authorization: "one", "content-type": "text/plain" };
+  for (const [options, expected] of [
+    [{ joinDuplicateHeaders: true }, joined],
+    [{ joinDuplicateHeaders: false }, firstValueWins],
+    [{}, firstValueWins],
+  ] as const) {
+    expect({
+      options,
+      emitted: await headersSeenOverEmittedConnection(options),
+      listening: await headersSeenOverListeningServer(options),
+    }).toEqual({ options, emitted: expected, listening: expected });
+  }
 });
 
 it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async () => {

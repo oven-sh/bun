@@ -90,6 +90,12 @@ pub(crate) struct PathWatcherManager {
     /// manager reference is defined.
     watchers: UnsafeCell<StringArrayHashMap<*mut PathWatcher>>,
 
+    /// Watchers a reader took out of `watchers` because their root inode left
+    /// its path (see `retire_watcher_locked`). They keep their handlers until
+    /// `detach()`. Same access rules as `watchers`.
+    #[cfg(not(windows))]
+    retired: UnsafeCell<Vec<*mut PathWatcher>>,
+
     /// Platform-specific dispatch maps (inotify wd_map / kqueue entries).
     /// Interior-mutable for the same reason as `watchers`.
     #[cfg(not(windows))]
@@ -112,8 +118,8 @@ pub(crate) struct PathWatcherManager {
     next_gen: Cell<usize>,
 }
 
-// SAFETY: all interior-mutable state (`watchers`, `platform` dispatch maps,
-// `next_gen`) is only accessed while holding `mutex`. `running` is atomic.
+// SAFETY: all interior-mutable state (`watchers`, `retired`, `platform`
+// dispatch maps, `next_gen`) is only accessed while holding `mutex`. `running` is atomic.
 // `platform_fd` is written before the reader thread spawns (on macOS under
 // `mutex`, which every JS-thread read also holds) and not afterwards, so
 // cross-thread `Cell::get()` reads observe only the publish ordered by the spawn
@@ -130,6 +136,8 @@ impl Default for PathWatcherManager {
         Self {
             mutex: Mutex::new(),
             watchers: UnsafeCell::new(StringArrayHashMap::default()),
+            #[cfg(not(windows))]
+            retired: UnsafeCell::new(Vec::new()),
             #[cfg(not(windows))]
             platform: UnsafeCell::new(Platform::default()),
             #[cfg(not(windows))]
@@ -168,40 +176,66 @@ impl PathWatcherManager {
         &buf[..resolved_path.len() + 1]
     }
 
-    /// Remove `watcher` from the dedup map. Caller holds `mutex`. Besides the
-    /// last `detach()`, the inotify and kqueue readers call this when the watched
-    /// root's inode is deleted or renamed away, so the next `fs.watch(path)`
-    /// registers the file now at that path instead of joining the dead watch.
-    fn unlink_watcher_locked(&self, watcher: *mut PathWatcher) {
-        // SAFETY: caller holds self.mutex; exclusive access to self.watchers
-        // for the duration of this block (nothing here re-enters the map).
+    /// Remove `watcher` from the dedup map and the retired list. Caller holds
+    /// `mutex`. Returns whether it was in the dedup map.
+    fn unlink_watcher_locked(&self, watcher: *mut PathWatcher) -> bool {
+        // SAFETY: caller holds self.mutex; exclusive access to self.watchers and
+        // self.retired for the duration of this block (nothing here re-enters).
         unsafe {
+            let retired = &mut *self.retired.get();
+            if let Some(i) = retired.iter().position(|&w| w == watcher) {
+                retired.swap_remove(i);
+            }
             let watchers = &mut *self.watchers.get();
-            if let Some(i) = watchers.values().iter().position(|&w| w == watcher) {
-                // Key is an owned Box<[u8]>; swap_remove_at drops it.
-                watchers.swap_remove_at(i);
+            match watchers.values().iter().position(|&w| w == watcher) {
+                Some(i) => {
+                    // Key is an owned Box<[u8]>; swap_remove_at drops it.
+                    watchers.swap_remove_at(i);
+                    true
+                }
+                None => false,
             }
         }
     }
 
-    /// The reader thread's fd failed for good: every JS `FSWatcher` behind one
-    /// of `registered` (the backend's dispatch map, which also holds a watcher
-    /// that left the dedup map) gets `err` and closes. Caller holds `mutex`.
+    /// The inotify and kqueue readers call this when the watched root's inode
+    /// is deleted or renamed away: those backends follow the inode, so the next
+    /// `fs.watch(path)` must register the file now at that path instead of
+    /// joining this watch. The watcher keeps its handlers and stays reachable
+    /// through `retired` until `detach()`. Caller holds `mutex`.
     #[cfg(not(windows))]
-    fn fail_watchers_locked(
-        &self,
-        registered: impl Iterator<Item = *mut PathWatcher>,
-        err: &sys::Error,
-    ) {
-        let mut seen: ArrayHashMap<*mut PathWatcher, ()> = ArrayHashMap::default();
-        for w in registered {
-            if handle_oom(seen.get_or_put(w)).found_existing {
-                continue;
-            }
-            // SAFETY: caller holds self.mutex; w is live while its registration is.
+    fn retire_watcher_locked(&self, watcher: *mut PathWatcher) {
+        if self.unlink_watcher_locked(watcher) {
+            // SAFETY: caller holds self.mutex; exclusive access to self.retired.
+            unsafe { (*self.retired.get()).push(watcher) };
+        }
+    }
+
+    /// Every live watcher: the dedup map plus the retired ones. Caller holds
+    /// `mutex`.
+    #[cfg(not(windows))]
+    fn all_watchers_locked(&self) -> impl Iterator<Item = *mut PathWatcher> + '_ {
+        // SAFETY: caller holds self.mutex; shared access to both lists.
+        unsafe {
+            (*self.watchers.get())
+                .values()
+                .iter()
+                .chain((*self.retired.get()).iter())
+                .copied()
+        }
+    }
+
+    /// The reader thread's fd failed for good: every live watcher that `hit`
+    /// accepts gets `err` and closes. Caller holds `mutex`.
+    #[cfg(not(windows))]
+    fn fail_watchers_locked(&self, hit: impl Fn(&PathWatcher) -> bool, err: &sys::Error) {
+        for w in self.all_watchers_locked() {
+            // SAFETY: caller holds self.mutex; every listed watcher is live.
             unsafe {
-                (*w).emit_error(err, true);
-                (*w).flush();
+                if hit(&*w) {
+                    (*w).emit_error(err, true);
+                    (*w).flush();
+                }
             }
         }
     }
@@ -925,12 +959,8 @@ impl Linux {
                 errno => {
                     // Fatal: surface to every watcher, then exit the thread.
                     manager.mutex.lock();
-                    // SAFETY: holding manager.mutex.
-                    let wd_map = unsafe { &(*plat).wd_map };
-                    manager.fail_watchers_locked(
-                        wd_map.values().flatten().map(|o| o.watcher),
-                        &sys::Error::from_code(errno, Tag::read),
-                    );
+                    manager
+                        .fail_watchers_locked(|_| true, &sys::Error::from_code(errno, Tag::read));
                     manager.mutex.unlock();
                     return;
                 }
@@ -962,9 +992,7 @@ impl Linux {
                 // events (wd == -1 matches no watch). Every watcher on this fd
                 // is affected — notify all, like node on Windows does.
                 if ev.mask & IN::Q_OVERFLOW != 0 {
-                    // SAFETY: holding manager.mutex.
-                    let watchers = unsafe { &*manager.watchers.get() };
-                    for &w in watchers.values() {
+                    for w in manager.all_watchers_locked() {
                         // SAFETY: w live under manager.mutex.
                         unsafe { (*w).emit_overflow() };
                         let _ = handle_oom(touched.get_or_put(w));
@@ -1118,10 +1146,10 @@ impl Linux {
                     }
                     let _ = handle_oom(touched.get_or_put(owner_watcher));
 
-                    // The watched root left its path (see `unlink_watcher_locked`).
+                    // The watched root left its path (see `retire_watcher_locked`).
                     if owner_subpath.is_empty() && ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0
                     {
-                        manager.unlink_watcher_locked(owner_watcher);
+                        manager.retire_watcher_locked(owner_watcher);
                     }
 
                     // Recursive: a new directory appeared under this owner's tree —
@@ -1663,10 +1691,9 @@ impl Kqueue {
                     // `sys::kevent` retried EINTR; anything else is fatal, as in
                     // the inotify reader.
                     manager.mutex.lock();
-                    // SAFETY: holding manager.mutex.
-                    let entries = unsafe { &(*plat).entries };
+                    // macOS: directory watches live on FSEvents, not on this kqueue.
                     manager.fail_watchers_locked(
-                        entries.values().iter().map(|e| e.watcher),
+                        |w| cfg!(target_os = "freebsd") || w.is_file,
                         &sys::Error::from_code(err.get_errno(), Tag::kevent),
                     );
                     // macOS: the next file watch starts a fresh kqueue and reader.
@@ -1732,11 +1759,11 @@ impl Kqueue {
                 watcher.emit(event_type, rel, entry.is_file);
                 let _ = handle_oom(touched.get_or_put(entry.watcher));
 
-                // The watched root left its path (see `unlink_watcher_locked`).
+                // The watched root left its path (see `retire_watcher_locked`).
                 if entry.subpath.is_empty()
                     && kev.fflags & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE) != 0
                 {
-                    manager.unlink_watcher_locked(entry.watcher);
+                    manager.retire_watcher_locked(entry.watcher);
                 }
             }
 

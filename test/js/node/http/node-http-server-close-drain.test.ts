@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
+import { connect as tlsConnect } from "node:tls";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
 // every accepted connection has ended. A connection that was mid-request
@@ -161,6 +162,104 @@ test("server.close(cb) fires once an idle keep-alive connection is reaped", asyn
   } finally {
     socket.destroy();
     server.closeAllConnections();
+  }
+});
+
+// nodejs/node 417aacbc365: a connection that has received nothing is idle.
+test.each(["http", "https"] as const)(
+  "%s server.close(cb) reaps a connection that has sent no request",
+  async protocol => {
+    const server = protocol === "https" ? createHttpsServer(tlsCert) : createServer();
+    server.on("request", () => expect.unreachable());
+    const accepted = once(server, protocol === "https" ? "secureConnection" : "connection");
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket =
+      protocol === "https"
+        ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    try {
+      const socketClosed = once(socket, "close");
+      await accepted;
+      const closed = Promise.withResolvers<Error | undefined>();
+      server.close(closed.resolve);
+      expect(await closed.promise).toBeUndefined();
+      await socketClosed;
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+    }
+  },
+);
+
+test("closeIdleConnections() leaves a connection that has sent part of a request head", async () => {
+  const server = createServer((req, res) => res.end("ok"));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const fresh = connect(port, "127.0.0.1");
+  const partial = connect(port, "127.0.0.1");
+  const barrier = connect(port, "127.0.0.1");
+  for (const socket of [fresh, partial, barrier]) socket.on("error", () => {});
+  try {
+    const freshClosed = once(fresh, "close");
+    await Promise.all([once(fresh, "connect"), once(partial, "connect")]);
+    partial.write("GET / HTTP/1.1\r\nHost: x\r\n");
+    // The partial head was written first, so the server has read it when it answers this.
+    barrier.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    barrier.resume();
+    await once(barrier, "close");
+
+    server.closeIdleConnections();
+    await freshClosed;
+    let received = "";
+    partial.on("data", chunk => (received += chunk));
+    partial.write("Connection: close\r\n\r\n");
+    await once(partial, "close");
+    expect(received).toEndWith("ok");
+  } finally {
+    for (const socket of [fresh, partial, barrier]) socket.destroy();
+    server.close();
+    server.closeAllConnections();
+  }
+});
+
+test.each([
+  ["listen(port)", (server: ReturnType<typeof createServer>, cb: () => void) => server.listen(0, cb)],
+  ["listen(options)", (server: ReturnType<typeof createServer>, cb: () => void) => server.listen({ port: 0 }, cb)],
+  [
+    "listen(path)",
+    (server: ReturnType<typeof createServer>, cb: () => void) => server.listen("/nonexistent/x.sock", cb),
+  ],
+])("%s on a listening server throws ERR_SERVER_ALREADY_LISTEN and changes nothing", async (_name, listenAgain) => {
+  const server = createServer((req, res) => res.end("ok"));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  try {
+    let called = false;
+    expect(() => listenAgain(server, () => (called = true))).toThrow(
+      expect.objectContaining({ code: "ERR_SERVER_ALREADY_LISTEN" }),
+    );
+    expect({ address: server.address(), listeners: server.listenerCount("listening") }).toEqual({
+      address,
+      // setupConnectionsTracking, from the constructor.
+      listeners: 1,
+    });
+
+    const closed = Promise.withResolvers<Error | undefined>();
+    server.close(closed.resolve);
+    expect(await closed.promise).toBeUndefined();
+    expect(called).toBe(false);
+    // The port is free again: no second listener is left behind.
+    const refused = connect((address as AddressInfo).port, "127.0.0.1");
+    expect((await once(refused, "error"))[0].code).toBe("ECONNREFUSED");
+  } finally {
+    server.close();
   }
 });
 

@@ -188,6 +188,7 @@ impl WebSocketProxyTunnel {
                 // SSL off the parked session/keylog queues entirely.
                 on_session: None,
                 on_keylog: None,
+                on_ssl_error: None,
                 server_identity: Some(Self::server_identity),
             },
         )

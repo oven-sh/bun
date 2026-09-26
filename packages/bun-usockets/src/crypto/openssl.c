@@ -1793,6 +1793,20 @@ static long us_internal_verify_peer_certificate(const SSL *ssl, long def) {
   return err;
 }
 
+/* The packed error that names a fatal SSL_read failure the way node reports
+ * it: the first SSL-library entry on the thread's queue (for a bad record
+ * BoringSSL queues the cipher's BAD_DECRYPT ahead of the TLS reason), else the
+ * oldest entry, else 0. Drains the queue up to the entry it returns. */
+uint32_t us_ssl_take_fatal_error(void) {
+  uint32_t oldest = ERR_peek_error();
+  for (uint32_t queued; (queued = ERR_get_error()) != 0;) {
+    if (ERR_GET_LIB(queued) == ERR_LIB_SSL) {
+      return queued;
+    }
+  }
+  return oldest;
+}
+
 struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
   long x509_verify_error =
       us_internal_verify_peer_certificate(ssl, X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);

@@ -406,6 +406,9 @@ pub mod ssl_wrapper {
         pub write: fn(T, &[u8]),
         pub on_data: fn(T, &[u8]),
         pub on_close: fn(T),
+        /// A fatal `SSL_read` failure (a packed BoringSSL error), reported just
+        /// before `on_close`. `None`: the owner only needs the close.
+        pub on_ssl_error: Option<fn(T, u32)>,
         /// A new resumable TLS session arrived (serialized SSL_SESSION bytes)
         /// - node's `'session'` event. `None` opts the SSL out of session
         /// parking entirely (fetch / WebSocket tunnels have no consumer).
@@ -979,6 +982,16 @@ pub mod ssl_wrapper {
             (handlers.on_close)(handlers.ctx);
         }
 
+        fn trigger_ssl_error_callback(&self, err: u32) {
+            if self.flags.closed_notified() {
+                return;
+            }
+            let handlers = self.handlers.get();
+            if let Some(on_ssl_error) = handlers.on_ssl_error {
+                on_ssl_error(handlers.ctx, err);
+            }
+        }
+
         /// The SSL's X509 verdict. Shutdown state does not change it.
         fn verify_error(&self) -> us_bun_verify_error_t {
             let Some(ssl) = self.ssl.get() else {
@@ -1140,6 +1153,14 @@ pub mod ssl_wrapper {
                 if just_read <= 0 {
                     // SAFETY: ssl is still valid.
                     let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), just_read) };
+                    let is_fatal =
+                        err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL;
+                    // Take the error before the queue is cleared.
+                    let fatal_error = if is_fatal {
+                        us_ssl_take_fatal_error()
+                    } else {
+                        0
+                    };
                     boring_sys::ERR_clear_error();
 
                     if err != boring_sys::SSL_ERROR_WANT_READ
@@ -1186,8 +1207,7 @@ pub mod ssl_wrapper {
                             self.flags.set_received_ssl_shutdown(true);
                             self.handle_end_of_renegotiation();
                         }
-                        if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL
-                        {
+                        if is_fatal {
                             self.flags.set_fatal_error(true);
                         }
 
@@ -1201,12 +1221,27 @@ pub mod ssl_wrapper {
                                 return false;
                             }
                         }
+                        if is_fatal {
+                            // Send the alert BoringSSL sealed into the write BIO
+                            // before the close frees it, so the peer gets its error.
+                            self.handle_writing(buffer);
+                            if self.ssl.get().is_none() || self.flags.closed_notified() {
+                                return false;
+                            }
+                        }
                         // A NewSessionTicket/keylog line that rode in ahead of the
                         // peer's close_notify is still parked; deliver it before the
                         // close tears the wrapper down (mirrors the C ZERO_RETURN path).
                         self.flush_pending_events();
                         if self.ssl.get().is_none() || self.flags.closed_notified() {
                             return false;
+                        }
+                        if fatal_error != 0 {
+                            // Like node's ClearOut: the error goes to the owner, then the close.
+                            self.trigger_ssl_error_callback(fatal_error);
+                            if self.ssl.get().is_none() || self.flags.closed_notified() {
+                                return false;
+                            }
                         }
                         if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                             // 2-step shutdown, last: write_data fails once our close_notify is out.
@@ -1500,6 +1535,9 @@ pub mod ssl_wrapper {
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
+        /// openssl.c: the packed error that names a fatal `SSL_read` failure, taken off the thread's error queue (0 if none).
+        // safe: no args; reads the calling thread's own queue.
+        safe fn us_ssl_take_fatal_error() -> u32;
         fn SSL_SESSION_up_ref(session: *mut boring_sys::SSL_SESSION) -> c_int;
         /// openssl.c: 1 when the verify step of this handshake asked the owner for the server's name.
         fn us_ssl_identity_checked(ssl: *mut boring_sys::SSL) -> c_int;

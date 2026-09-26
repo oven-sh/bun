@@ -38,7 +38,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForNapiExternal { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForBundlerPlugin { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMGlobalObject { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForNodeVMSpecialSandbox { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMScript { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMSourceTextModule { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeVMSyntheticModule { nullptr };

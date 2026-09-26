@@ -1590,6 +1590,53 @@ describe("the options argument", () => {
       expect(runInNewContext("1 + 1;", {}, options as any)).toBe(2);
     }
   });
+
+  test("vm.runInNewContext() validates the context options before it copies options, like Node", () => {
+    const thrown = (options: object) => {
+      try {
+        runInNewContext("1", {}, options as any);
+      } catch (e) {
+        return { code: (e as any).code, message: (e as Error).message };
+      }
+      return "did not throw";
+    };
+    expect({
+      // An invalid contextName is rejected before a later getter runs.
+      nameBeforeGetter: thrown({
+        contextName: 5,
+        get filename() {
+          throw new Error("getter ran first");
+        },
+      }),
+      microtaskModeType: thrown({ microtaskMode: 123 }),
+      microtaskModeValue: thrown({ microtaskMode: "bogus" }),
+    }).toEqual({
+      nameBeforeGetter: {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.contextName" property must be of type string. Received type number (5)',
+      },
+      microtaskModeType: {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.microtaskMode" property must be of type string. Received type number (123)',
+      },
+      microtaskModeValue: {
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The property 'options.microtaskMode' must be one of: 'afterEvaluate', undefined. Received 'bogus'",
+      },
+    });
+  });
+
+  test("an undefined codeGeneration member counts as absent, like Node", () => {
+    const undefinedMembers = { strings: undefined, wasm: undefined };
+    expect({
+      runInNewContext: runInNewContext("eval('1')", {}, { contextCodeGeneration: undefinedMembers }),
+      scriptRunInNewContext: new Script("eval('1')").runInNewContext({}, { contextCodeGeneration: undefinedMembers }),
+      createContext: runInContext("eval('1')", createContext({}, { codeGeneration: undefinedMembers })),
+    }).toEqual({ runInNewContext: 1, scriptRunInNewContext: 1, createContext: 1 });
+    expect(() => createContext({}, { codeGeneration: { strings: null } } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
 });
 
 describe("a run option rejected with a vm context's global", () => {
@@ -1689,8 +1736,10 @@ describe("context options with throwing getters", () => {
   // the process, so run the matrix in a subprocess.
   test.concurrent("the getter's exception propagates to the caller", async () => {
     // Each entry point tests the context-option keys it actually reads:
-    // createContext takes codeGeneration, Script#runInNewContext takes
-    // contextCodeGeneration, and vm.runInNewContext goes through both.
+    // createContext takes codeGeneration; Script#runInNewContext and
+    // vm.runInNewContext take contextCodeGeneration (vm.runInNewContext remaps
+    // it to codeGeneration before calling createContext, like Node, so a
+    // nested codeGeneration.* getter is never read there).
     // A dotted key puts the throwing getter on the nested object.
     const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
     const contextKeys = (...codeGenerationKeyNames: string[]) => [
@@ -1702,7 +1751,7 @@ describe("context options with throwing getters", () => {
     ];
     const matrix = {
       createContext: contextKeys("codeGeneration"),
-      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
+      runInNewContext: contextKeys("contextCodeGeneration"),
       scriptRunInNewContext: contextKeys("contextCodeGeneration"),
     };
     const code = `
@@ -1747,6 +1796,28 @@ describe("context options with throwing getters", () => {
     expect(stdout).toBe(expected);
     expect(exitCode).toBe(0);
   });
+});
+
+// Installing the proxy as the sandbox of its own global recursed natively
+// until the stack overflowed, so this runs in a subprocess.
+test.concurrent("a contextified context runs code given its own global proxy", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const ctx = vm.createContext({ fromSandbox: 1 });
+    const inner = vm.runInContext("this", ctx);
+    console.log(vm.runInContext("typeof missing + ':' + fromSandbox", inner));
+    console.log(new vm.Script("fromSandbox + 1").runInContext(inner));
+    console.log(vm.runInContext("fromSandbox", ctx));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("undefined:1\n2\n1\n");
+  expect(exitCode).toBe(0);
 });
 
 describe("DONT_CONTEXTIFY", () => {
@@ -1805,6 +1876,131 @@ describe("DONT_CONTEXTIFY", () => {
 
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
+  });
+
+  test("script-level this === globalThis and var/function declarations land on the real global", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+
+    expect(runInContext("this === globalThis", ctx)).toBe(true);
+    expect(runInContext("this", ctx)).toBe(ctx);
+
+    runInContext("var vv = 3; function ff() { return 99; }", ctx);
+    runInContext("(0, eval)('var ie = 7')", ctx);
+    expect({
+      varPersists: runInContext("typeof vv", ctx),
+      fnPersists: runInContext("typeof ff", ctx),
+      varValue: runInContext("vv", ctx),
+      fnCall: runInContext("ff()", ctx),
+      handleVar: ctx.vv,
+      handleFnType: typeof ctx.ff,
+      sameScript: runInContext("var zz = 9; typeof zz", ctx),
+      indirectEvalVarPersists: runInContext("ie", ctx),
+      handleIndirectEvalVar: ctx.ie,
+    }).toEqual({
+      varPersists: "number",
+      fnPersists: "function",
+      varValue: 3,
+      fnCall: 99,
+      handleVar: 3,
+      handleFnType: "function",
+      sameScript: "number",
+      indirectEvalVarPersists: 7,
+      handleIndirectEvalVar: 7,
+    });
+
+    // Script#runInContext goes through the same path.
+    const script = new Script("var sv = 42; sv");
+    expect(script.runInContext(ctx)).toBe(42);
+    expect(runInContext("sv", ctx)).toBe(42);
+    expect(ctx.sv).toBe(42);
+  });
+
+  test("vm.runInNewContext honors contextCodeGeneration with DONT_CONTEXTIFY", () => {
+    // The errors come from the context's own realm, so compare by name.
+    const thrownName = (code: string, contextCodeGeneration: object) => {
+      try {
+        runInNewContext(code, constants.DONT_CONTEXTIFY, { contextCodeGeneration });
+      } catch (e) {
+        return (e as Error).name;
+      }
+      return "did not throw";
+    };
+    const wasmModule = "new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]))";
+    expect({
+      strings: thrownName("eval('1')", { strings: false }),
+      wasm: thrownName(wasmModule, { wasm: false }),
+      wasmAllowedByDefault: thrownName(wasmModule, {}),
+    }).toEqual({
+      strings: "EvalError",
+      wasm: "CompileError",
+      wasmAllowedByDefault: "did not throw",
+    });
+  });
+
+  test("invalid contextCodeGeneration is rejected when reusing a DONT_CONTEXTIFY context", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const invalid = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(() => new Script("1").runInNewContext(ctx, { contextCodeGeneration: 123 })).toThrow(invalid);
+    expect(() => new Script("1").runInNewContext(ctx, { contextCodeGeneration: { strings: 123 } })).toThrow(invalid);
+    expect(() => runInNewContext("1", ctx, { contextCodeGeneration: 123 })).toThrow(invalid);
+  });
+
+  test("var/function declarations work via runInNewContext", () => {
+    expect(
+      runInNewContext(
+        "var a = 1; function b(){}; [this === globalThis, typeof a, typeof b]",
+        constants.DONT_CONTEXTIFY,
+      ),
+    ).toEqual([true, "number", "function"]);
+    expect(
+      new Script("var a = 1; function b(){}; [this === globalThis, typeof a, typeof b]").runInNewContext(
+        constants.DONT_CONTEXTIFY,
+      ),
+    ).toEqual([true, "number", "function"]);
+
+    // Passing an existing DONT_CONTEXTIFY handle runs in that context, so the
+    // declarations stay visible through the handle and to later scripts.
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    runInNewContext("var q = 1; function qf() { return 2; }", ctx);
+    new Script("var r = 3").runInNewContext(ctx);
+    expect({ q: ctx.q, qf: typeof ctx.qf, r: ctx.r, later: runInContext("[q, qf(), r]", ctx) }).toEqual({
+      q: 1,
+      qf: "function",
+      r: 3,
+      later: [1, 2, 3],
+    });
+  });
+
+  test("compileFunction accepts a DONT_CONTEXTIFY context as parsingContext", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const fn = compileFunction("return [globalThis === g, Array]", ["g"], { parsingContext: ctx });
+    const [isContextGlobal, ctxArray] = fn(ctx);
+    expect(isContextGlobal).toBe(true);
+    expect(ctxArray).toBe(ctx.Array);
+    expect(ctxArray).not.toBe(Array);
+  });
+
+  test("a private field stamped on the context handle is visible on `this` inside the context", () => {
+    // jsdom 30.1.0 brands its window this way, then uses runInContext("this", window) as the window.
+    class ReturnValue {
+      constructor(value: object) {
+        return value;
+      }
+    }
+    class Brand extends ReturnValue {
+      #stamped = true;
+      static has(value: object) {
+        return #stamped in value;
+      }
+    }
+
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    new Brand(ctx);
+    expect({
+      handle: Brand.has(ctx),
+      this: Brand.has(runInContext("this", ctx)),
+      globalThis: Brand.has(runInContext("globalThis", ctx)),
+    }).toEqual({ handle: true, this: true, globalThis: true });
   });
 });
 

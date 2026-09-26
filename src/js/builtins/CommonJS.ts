@@ -246,6 +246,19 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
   this.exports = moduleExports ?? namespace;
 }
 
+// For a file Bun could not load: like Node, hand the replaced `module._compile` the file as it is on disk.
+export function compileFromHijackedExtension(this: JSCommonJSModule, filename: string, loadError: unknown) {
+  $assert(this);
+  let source: string;
+  try {
+    source = require("node:fs").readFileSync(filename, "utf8");
+  } catch {
+    // Missing, a directory, a `blob:` id: nothing to hand over, so keep the first error.
+    throw loadError;
+  }
+  this._compile(source, filename);
+}
+
 $visibility = "Private";
 // `requireMap`: the global require cache, or a Bun.ModuleGraph's together with one of
 // the graph's modules (`owner`, which names the loader whose ES modules it also lists).

@@ -3322,6 +3322,8 @@ describe("portable target", () => {
     const arch = templateToc?.arch === ELF_MACHINE.aarch64 ? "arm64" : "x64";
     const otherArch = arch === "x64" ? "arm64" : "x64";
     const shells = ["sh", "dash", "bash"].filter(shell => Bun.which(shell));
+    // For the tests that write or hash the ~100 MB of the packed file more than once.
+    const imageTimeout = 30_000;
     /** The script of a packed file without the two things that follow the length of the image. */
     const script = (file: Buffer, toc: Toc) =>
       file
@@ -3350,7 +3352,7 @@ describe("portable target", () => {
       appBytes = readFileSync(app);
       // The shell script of the file puts the loader stub here, not in the home directory of the user.
       env = { ...bunEnv, BUN_PORTABLE_CACHE: join(String(dir), "stub-cache") };
-    });
+    }, imageTimeout);
     afterAll(() => dir?.[Symbol.dispose]());
 
     async function run(cmd: string[], more: Record<string, string> = {}, stdin = "") {
@@ -3462,165 +3464,191 @@ describe("portable target", () => {
       },
     );
 
-    test("a signed template gives a file whose signature covers the image with the graph", async () => {
-      // What the packer does as its last step, for a template that came without a signature.
-      const { imageOff, imageLen } = templateToc;
-      const codeLen = signedLength(imageLen);
-      const code = Buffer.alloc(codeLen);
-      templateBytes.copy(code, 0, imageOff, imageOff + imageLen);
-      const blob = signature(code);
-      const tocOff = Math.ceil((imageOff + codeLen + blob.length) / 8) * 8;
-      const signed = Buffer.alloc(tocOff + 128);
-      templateBytes.copy(signed, 0, 0, imageOff);
-      code.copy(signed, imageOff);
-      blob.copy(signed, imageOff + codeLen);
-      const signedToc = {
-        ...templateToc,
-        fileSize: signed.length,
-        codeOff: imageOff,
-        codeLen,
-        sigOff: imageOff + codeLen,
-        sigLen: blob.length,
-      };
-      encodeToc(signedToc).copy(signed, tocOff);
-      expect(checkSignature(signed).checks.filter(check => !check.ok)).toEqual([]);
-      writeFileSync(join(String(dir), "signed-template"), signed);
+    test(
+      "a signed template gives a file whose signature covers the image with the graph",
+      async () => {
+        // What the packer does as its last step, for a template that came without a signature.
+        const { imageOff, imageLen } = templateToc;
+        const codeLen = signedLength(imageLen);
+        const code = Buffer.alloc(codeLen);
+        templateBytes.copy(code, 0, imageOff, imageOff + imageLen);
+        const blob = signature(code);
+        const tocOff = Math.ceil((imageOff + codeLen + blob.length) / 8) * 8;
+        const signed = Buffer.alloc(tocOff + 128);
+        templateBytes.copy(signed, 0, 0, imageOff);
+        code.copy(signed, imageOff);
+        blob.copy(signed, imageOff + codeLen);
+        const signedToc = {
+          ...templateToc,
+          fileSize: signed.length,
+          codeOff: imageOff,
+          codeLen,
+          sigOff: imageOff + codeLen,
+          sigLen: blob.length,
+        };
+        encodeToc(signedToc).copy(signed, tocOff);
+        expect(checkSignature(signed).checks.filter(check => !check.ok)).toEqual([]);
+        writeFileSync(join(String(dir), "signed-template"), signed);
 
-      const { stderr, exitCode } = await build(String(dir), [
-        `--target=bun-portable-${arch}`,
-        "--compile-executable-path=signed-template",
-        "app.ts",
-        "worker.ts",
-        "--outfile",
-        "signed/app",
-      ]);
-      expect(stderr).not.toContain("error");
-      expect(exitCode).toBe(0);
-
-      const path = join(String(dir), "signed", "app");
-      const file = readFileSync(path);
-      const toc = decodeToc(file)!;
-      expect(toc.imageLen).toBeGreaterThan(imageLen);
-      expect(toc).toEqual({
-        ...signedToc,
-        fileSize: file.length,
-        imageLen: toc.imageLen,
-        codeLen: signedLength(toc.imageLen),
-        sigOff: imageOff + signedLength(toc.imageLen),
-        sigLen: signatureLength(signedLength(toc.imageLen)),
-      });
-      expect(checkSignature(file).checks.filter(check => !check.ok)).toEqual([]);
-      expect(inspect(file, { path }).checks.filter(check => !check.ok)).toEqual([]);
-      // The image of both is the same bytes: the signature is behind it.
-      expect(
-        file.subarray(imageOff, imageOff + toc.imageLen).equals(appBytes.subarray(imageOff, imageOff + toc.imageLen)),
-      ).toBe(true);
-
-      if (shells.length) {
-        const { stdout, stderr, exitCode } = await run([shells[0], path]);
-        expect(stderr).toBe("");
-        expect(JSON.parse(stdout)).toMatchObject({ shout: "TWO MODULES!", execPath: realpathSync(path) });
+        const { stderr, exitCode } = await build(String(dir), [
+          `--target=bun-portable-${arch}`,
+          "--compile-executable-path=signed-template",
+          "app.ts",
+          "worker.ts",
+          "--outfile",
+          "signed/app",
+        ]);
+        expect(stderr).not.toContain("error");
         expect(exitCode).toBe(0);
-      }
-    });
 
-    test("--windows-hide-console is the subsystem of the Windows host in the file", async () => {
-      const { stderr, exitCode } = await build(String(dir), [
-        `--target=bun-portable-${arch}`,
-        `--compile-executable-path=${template}`,
-        "--windows-hide-console",
-        "app.ts",
-        "worker.ts",
-        "--outfile",
-        "hidden/app",
-      ]);
-      expect(stderr).not.toContain("error");
-      expect(exitCode).toBe(0);
+        const path = join(String(dir), "signed", "app");
+        const file = readFileSync(path);
+        const toc = decodeToc(file)!;
+        expect(toc.imageLen).toBeGreaterThan(imageLen);
+        expect(toc).toEqual({
+          ...signedToc,
+          fileSize: file.length,
+          imageLen: toc.imageLen,
+          codeLen: signedLength(toc.imageLen),
+          sigOff: imageOff + signedLength(toc.imageLen),
+          sigLen: signatureLength(signedLength(toc.imageLen)),
+        });
+        expect(checkSignature(file).checks.filter(check => !check.ok)).toEqual([]);
+        expect(inspect(file, { path }).checks.filter(check => !check.ok)).toEqual([]);
+        // The image of both is the same bytes: the signature is behind it.
+        expect(
+          file.subarray(imageOff, imageOff + toc.imageLen).equals(appBytes.subarray(imageOff, imageOff + toc.imageLen)),
+        ).toBe(true);
 
-      const path = join(String(dir), "hidden", "app");
-      const file = readFileSync(path);
-      const toc = decodeToc(file)!;
-      // PE signature, COFF header, then the optional header, whose Subsystem is at 68.
-      const subsystem = toc.headerSize + 4 + 20 + 68;
-      expect(templateBytes.readUInt16LE(subsystem)).toBe(3);
-      expect(file.readUInt16LE(subsystem)).toBe(2);
-      file.writeUInt16LE(3, subsystem);
-      expect(file.equals(appBytes)).toBe(true);
-      expect(inspect(readFileSync(path), { path }).checks.filter(check => !check.ok)).toEqual([]);
-    });
+        if (shells.length) {
+          const { stdout, stderr, exitCode } = await run([shells[0], path]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout)).toMatchObject({ shout: "TWO MODULES!", execPath: realpathSync(path) });
+          expect(exitCode).toBe(0);
+        }
+      },
+      imageTimeout,
+    );
 
-    test.each([false, true])("Bun.build compiles for the target, windows.hideConsole %p", async hideConsole => {
-      const outfile = join(String(dir), `api-${hideConsole}`, "app");
-      const result = await Bun.build({
-        entrypoints: [join(String(dir), "app.ts"), join(String(dir), "worker.ts")],
-        compile: {
-          target: `bun-portable-${arch}` as any,
-          executablePath: template,
-          outfile,
-          windows: { hideConsole },
-        },
-      });
-      expect(result.success).toBe(true);
-      expect(result.outputs.map(output => output.path)).toEqual([outfile]);
-      const file = readFileSync(outfile);
-      expect(inspect(file, { path: outfile }).checks.filter(check => !check.ok)).toEqual([]);
-      expect(file.readUInt16LE(decodeToc(file)!.headerSize + 4 + 20 + 68)).toBe(hideConsole ? 2 : 3);
-      if (shells.length) {
-        const { stdout, stderr, exitCode } = await run([shells[0], outfile, "one"]);
-        expect(stderr).toBe("");
-        expect(JSON.parse(stdout)).toMatchObject({ worker: "the worker got ping", args: ["one"] });
+    test(
+      "--windows-hide-console is the subsystem of the Windows host in the file",
+      async () => {
+        const { stderr, exitCode } = await build(String(dir), [
+          `--target=bun-portable-${arch}`,
+          `--compile-executable-path=${template}`,
+          "--windows-hide-console",
+          "app.ts",
+          "worker.ts",
+          "--outfile",
+          "hidden/app",
+        ]);
+        expect(stderr).not.toContain("error");
         expect(exitCode).toBe(0);
-      }
-    });
 
-    test("without --compile-executable-path the install cache is where the executable of the target is", async () => {
-      // A version that no bun has: the bun that runs this is not the executable of the target, whatever it is.
-      const cache = join(String(dir), "install-cache");
-      mkdirSync(cache, { recursive: true });
-      cpSync(template!, join(cache, `bun-portable-${arch === "arm64" ? "aarch64" : "x64"}-v0.0.2`));
-      const { stderr, exitCode } = await build(
-        String(dir),
-        [`--target=bun-portable-${arch}-v0.0.2`, "app.ts", "worker.ts", "--outfile", "cached/app"],
-        { BUN_INSTALL_CACHE_DIR: cache },
-      );
-      expect(stderr).not.toContain("error");
-      expect(exitCode).toBe(0);
-      expect(readFileSync(join(String(dir), "cached", "app")).equals(appBytes)).toBe(true);
-    });
+        const path = join(String(dir), "hidden", "app");
+        const file = readFileSync(path);
+        const toc = decodeToc(file)!;
+        // PE signature, COFF header, then the optional header, whose Subsystem is at 68.
+        const subsystem = toc.headerSize + 4 + 20 + 68;
+        expect(templateBytes.readUInt16LE(subsystem)).toBe(3);
+        expect(file.readUInt16LE(subsystem)).toBe(2);
+        file.writeUInt16LE(3, subsystem);
+        expect(file.equals(appBytes)).toBe(true);
+        expect(inspect(readFileSync(path), { path }).checks.filter(check => !check.ok)).toEqual([]);
+      },
+      imageTimeout,
+    );
 
-    test("a shell script that names another length of the image is refused", async () => {
-      const changed = Buffer.from(templateBytes);
-      const at = changed.indexOf(`image_len=${templateToc.imageLen}`) + "image_len=".length;
-      changed[at] = changed[at] === 0x39 ? 0x38 : 0x39;
-      writeFileSync(join(String(dir), "other-length"), changed);
-      const { stderr, exitCode } = await build(String(dir), [
-        `--target=bun-portable-${arch}`,
-        "--compile-executable-path=other-length",
-        "app.ts",
-        "--outfile",
-        "length/app",
-      ]);
-      expect(stderr).toContain("the shell script does not name the length of the image that the table of contents has");
-      expect(existsSync(join(String(dir), "length", "app"))).toBe(false);
-      expect(exitCode).toBe(1);
-    });
+    test.each([false, true])(
+      "Bun.build compiles for the target, windows.hideConsole %p",
+      async hideConsole => {
+        const outfile = join(String(dir), `api-${hideConsole}`, "app");
+        const result = await Bun.build({
+          entrypoints: [join(String(dir), "app.ts"), join(String(dir), "worker.ts")],
+          compile: {
+            target: `bun-portable-${arch}` as any,
+            executablePath: template,
+            outfile,
+            windows: { hideConsole },
+          },
+        });
+        expect(result.success).toBe(true);
+        expect(result.outputs.map(output => output.path)).toEqual([outfile]);
+        const file = readFileSync(outfile);
+        expect(inspect(file, { path: outfile }).checks.filter(check => !check.ok)).toEqual([]);
+        expect(file.readUInt16LE(decodeToc(file)!.headerSize + 4 + 20 + 68)).toBe(hideConsole ? 2 : 3);
+        if (shells.length) {
+          const { stdout, stderr, exitCode } = await run([shells[0], outfile, "one"]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout)).toMatchObject({ worker: "the worker got ping", args: ["one"] });
+          expect(exitCode).toBe(0);
+        }
+      },
+      imageTimeout,
+    );
 
-    test("--windows-hide-console of a file without a PE header is refused", async () => {
-      const changed = Buffer.from(templateBytes);
-      changed.fill(0, templateToc.headerSize, templateToc.headerSize + 4);
-      writeFileSync(join(String(dir), "no-pe-header"), changed);
-      const { stderr, exitCode } = await build(String(dir), [
-        `--target=bun-portable-${arch}`,
-        "--compile-executable-path=no-pe-header",
-        "--windows-hide-console",
-        "app.ts",
-        "--outfile",
-        "no-pe/app",
-      ]);
-      expect(stderr).toContain("there is no PE header where the table of contents says the shell script ends");
-      expect(existsSync(join(String(dir), "no-pe", "app"))).toBe(false);
-      expect(exitCode).toBe(1);
-    });
+    test(
+      "without --compile-executable-path the install cache is where the executable of the target is",
+      async () => {
+        // A version that no bun has: the bun that runs this is not the executable of the target, whatever it is.
+        const cache = join(String(dir), "install-cache");
+        mkdirSync(cache, { recursive: true });
+        cpSync(template!, join(cache, `bun-portable-${arch === "arm64" ? "aarch64" : "x64"}-v0.0.2`));
+        const { stderr, exitCode } = await build(
+          String(dir),
+          [`--target=bun-portable-${arch}-v0.0.2`, "app.ts", "worker.ts", "--outfile", "cached/app"],
+          { BUN_INSTALL_CACHE_DIR: cache },
+        );
+        expect(stderr).not.toContain("error");
+        expect(exitCode).toBe(0);
+        expect(readFileSync(join(String(dir), "cached", "app")).equals(appBytes)).toBe(true);
+      },
+      imageTimeout,
+    );
+
+    test(
+      "a shell script that names another length of the image is refused",
+      async () => {
+        const changed = Buffer.from(templateBytes);
+        const at = changed.indexOf(`image_len=${templateToc.imageLen}`) + "image_len=".length;
+        changed[at] = changed[at] === 0x39 ? 0x38 : 0x39;
+        writeFileSync(join(String(dir), "other-length"), changed);
+        const { stderr, exitCode } = await build(String(dir), [
+          `--target=bun-portable-${arch}`,
+          "--compile-executable-path=other-length",
+          "app.ts",
+          "--outfile",
+          "length/app",
+        ]);
+        expect(stderr).toContain(
+          "the shell script does not name the length of the image that the table of contents has",
+        );
+        expect(existsSync(join(String(dir), "length", "app"))).toBe(false);
+        expect(exitCode).toBe(1);
+      },
+      imageTimeout,
+    );
+
+    test(
+      "--windows-hide-console of a file without a PE header is refused",
+      async () => {
+        const changed = Buffer.from(templateBytes);
+        changed.fill(0, templateToc.headerSize, templateToc.headerSize + 4);
+        writeFileSync(join(String(dir), "no-pe-header"), changed);
+        const { stderr, exitCode } = await build(String(dir), [
+          `--target=bun-portable-${arch}`,
+          "--compile-executable-path=no-pe-header",
+          "--windows-hide-console",
+          "app.ts",
+          "--outfile",
+          "no-pe/app",
+        ]);
+        expect(stderr).toContain("there is no PE header where the table of contents says the shell script ends");
+        expect(existsSync(join(String(dir), "no-pe", "app"))).toBe(false);
+        expect(exitCode).toBe(1);
+      },
+      imageTimeout,
+    );
 
     test("a template for another processor is refused", async () => {
       const { stderr, exitCode } = await build(String(dir), [

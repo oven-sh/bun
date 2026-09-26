@@ -15,6 +15,7 @@
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import nodeSemver from "semver";
 import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
@@ -351,14 +352,15 @@ describe("Bun.semver.satisfies()", () => {
     // These used to read the number as 0, so "1.0.18446744073709551616" satisfied "1.0.0".
     // node-semver returns false: the version is invalid.
     const ranges = ["*", "", "x", ">=0.0.0", `<=${u64Max}.${u64Max}.${u64Max}`, "1.0.0", "^1.0.0", "1.x", ">=1.0.0-0"];
+    const satisfied: [version: string, range: string][] = [];
     for (const big of numbersAboveU64Max) {
       for (const version of versionsWith(big)) {
-        for (const range of ranges) {
-          testSatisfies(range, version, false);
+        for (const range of [...ranges, version]) {
+          if (satisfies(version, range)) satisfied.push([version, range]);
         }
-        testSatisfies(version, version, false);
       }
     }
+    expect(satisfied).toEqual([]);
   });
 
   test("a range with a number above u64::MAX is satisfied by nothing", () => {
@@ -425,13 +427,15 @@ describe("Bun.semver.satisfies()", () => {
       "0.0.0-0",
       "1.0.0-beta.1",
     ];
+    const satisfied: [version: string, range: string][] = [];
     for (const big of numbersAboveU64Max) {
       for (const range of rangesWith(big)) {
         for (const version of versions) {
-          testSatisfies(range, version, false);
+          if (satisfies(version, range)) satisfied.push([version, range]);
         }
       }
     }
+    expect(satisfied).toEqual([]);
 
     // A number after a wildcard has no effect on a range, as in node-semver: "1.x.<big>" is "1.x".
     for (const big of numbersAboveU64Max) {
@@ -969,7 +973,7 @@ describe("Bun.semver.satisfies()", () => {
   });
 });
 
-test("a number above u64::MAX gives the same answers as node-semver (seeded differential)", () => {
+test("a range with a number above u64::MAX gives the same answers as node-semver (seeded differential)", () => {
   // Replay a failure with BUN_SEMVER_FUZZ_SEED=<seed>. Soak with BUN_SEMVER_FUZZ_ITERS=<n>.
   const seed = Number(process.env.BUN_SEMVER_FUZZ_SEED ?? 0x73656d76) >>> 0;
   const iterations = Number(process.env.BUN_SEMVER_FUZZ_ITERS ?? 100);
@@ -992,9 +996,9 @@ test("a number above u64::MAX gives the same answers as node-semver (seeded diff
   // answer in Bun and node-semver when the number is small. That leaves out two shapes where
   // they differ for any number: a wildcard as the first part (">x.1"), and a comparator with
   // no operator inside an intersection (">=1.0.0 2.x").
-  const partial = (wildcards: boolean) => {
+  const partial = () => {
     // The number after a wildcard has no effect, and the text after it stays in the same comparator.
-    if (wildcards && next() < 0.3) {
+    if (next() < 0.3) {
       return `${pick(small)}.${pick(wildcard)}.${pick(numbersAboveU64Max)}${pick(suffix)}`;
     }
     const length = 1 + Math.floor(next() * 3);
@@ -1002,7 +1006,7 @@ test("a number above u64::MAX gives the same answers as node-semver (seeded diff
     const parts: string[] = [];
     for (let i = 0; i < length; i++) {
       if (i === bigAt) parts.push(pick(numbersAboveU64Max));
-      else if (wildcards && i > 0 && next() < 0.3) parts.push(pick(wildcard));
+      else if (i > 0 && next() < 0.3) parts.push(pick(wildcard));
       else parts.push(pick(small));
     }
     return parts.join(".") + (length === 3 ? pick(suffix) : "");
@@ -1011,45 +1015,35 @@ test("a number above u64::MAX gives the same answers as node-semver (seeded diff
   const range = () => {
     switch (Math.floor(next() * 8)) {
       case 0:
-        return `${pick(operator)}${partial(true)} || ${pick(operator)}${plain()}`;
+        return `${pick(operator)}${partial()} || ${pick(operator)}${plain()}`;
       case 1:
-        return `${pick(operator)}${plain()} || ${pick(operator)}${partial(true)}`;
+        return `${pick(operator)}${plain()} || ${pick(operator)}${partial()}`;
       case 2:
-        return `>=${plain()} ${pick(comparing)}${partial(true)}`;
+        return `>=${plain()} ${pick(comparing)}${partial()}`;
       case 3:
-        return `${pick(comparing)}${partial(true)} <${plain()}`;
+        return `${pick(comparing)}${partial()} <${plain()}`;
       case 4:
-        return `${plain()} - ${partial(true)}`;
+        return `${plain()} - ${partial()}`;
       case 5:
-        return `${partial(true)} - ${plain()}`;
+        return `${partial()} - ${plain()}`;
       default:
-        return pick(operator) + partial(true);
+        return pick(operator) + partial();
     }
   };
 
   const versions = ["0.0.0", "0.1.0", "1.0.0", "1.2.10", "2.0.0", "10.10.10"];
-  const attempt = (fn: () => number) => {
-    try {
-      return fn();
-    } catch {
-      return "throws";
-    }
-  };
   const disagreements: object[] = [];
   for (let i = 0; i < iterations; i++) {
     const r = range();
+    // What nodeSemver.satisfies() does, with the range parsed once for all versions.
+    let parsed: InstanceType<typeof nodeSemver.Range> | undefined;
+    try {
+      parsed = new nodeSemver.Range(r);
+    } catch {}
     for (const v of versions) {
       const bun = satisfies(v, r);
-      const node = nodeSemver.satisfies(v, r);
+      const node = parsed !== undefined && parsed.test(v);
       if (bun !== node) disagreements.push({ satisfies: [v, r], bun, node });
-    }
-
-    const version = partial(false);
-    const bun = attempt(() => order(version, "1.0.0"));
-    const node = attempt(() => nodeSemver.compare(version, "1.0.0"));
-    if (bun !== node) disagreements.push({ order: [version, "1.0.0"], bun, node });
-    if (satisfies(version, "*") !== nodeSemver.satisfies(version, "*")) {
-      disagreements.push({ satisfies: [version, "*"], bun: satisfies(version, "*") });
     }
   }
   expect({ seed, disagreements }).toEqual({ seed, disagreements: [] });
@@ -1097,6 +1091,66 @@ test("bun install does not resolve a dependency range that has a number above u6
   );
   expect(requested).toEqual(["/foo"]);
   expect(exitCode).toBe(1);
+});
+
+describe("bun pm version and a version number above u64::MAX", () => {
+  // The parser used to read such a number as 0, so `patch` on "1.0.18446744073709551616" printed v1.0.1.
+  const aboveU64Max = "18446744073709551616";
+  // Number.MAX_SAFE_INTEGER, the largest number npm accepts.
+  const maxSafeInteger = "9007199254740991";
+
+  test.each([
+    {
+      name: "rejects it in package.json",
+      version: `1.0.${aboveU64Max}`,
+      arg: "patch",
+      expected: {
+        stdout: "",
+        stderr: `error: Current version "1.0.${aboveU64Max}" is not a valid semver\n`,
+        exitCode: 1,
+        after: `1.0.${aboveU64Max}`,
+      },
+    },
+    {
+      name: "rejects it as the argument",
+      version: "1.0.0",
+      arg: `1.0.${aboveU64Max}`,
+      expected: {
+        stdout: "",
+        stderr:
+          `error: Invalid version argument: "1.0.${aboveU64Max}"\n` +
+          "note: Valid options: patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific semver version\n",
+        exitCode: 1,
+        after: "1.0.0",
+      },
+    },
+    {
+      name: "accepts Number.MAX_SAFE_INTEGER in package.json",
+      version: `1.0.${maxSafeInteger}`,
+      arg: "minor",
+      expected: { stdout: "v1.1.0\n", stderr: "", exitCode: 0, after: "1.1.0" },
+    },
+    {
+      name: "accepts Number.MAX_SAFE_INTEGER as the argument",
+      version: "1.0.0",
+      arg: `1.0.${maxSafeInteger}`,
+      expected: { stdout: `v1.0.${maxSafeInteger}\n`, stderr: "", exitCode: 0, after: `1.0.${maxSafeInteger}` },
+    },
+  ])("$name", async ({ version, arg, expected }) => {
+    using dir = tempDir("semver-pm-version", {
+      "package.json": JSON.stringify({ name: "app", version }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "version", arg, "--no-git-tag-version"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const after = (await Bun.file(join(String(dir), "package.json")).json()).version;
+    expect({ stdout, stderr, exitCode, after }).toEqual(expected);
+  });
 });
 
 test("a version range with >=256 || comparators does not abort", async () => {

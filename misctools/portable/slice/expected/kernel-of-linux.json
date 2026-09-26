@@ -1,0 +1,10 @@
+{
+ "about": "What the kernel of Linux answers in another way than the one of macOS. For the tests that run bun's code for macOS on Linux (test.ts, test-run-on-mac.ts): a step that goes through shared code and the C library of the image is answered by the kernel of the machine, so there the line of Linux stands in the place of the line that is expected of a Mac.",
+ "lines": [
+  {
+   "of_macos": "{\"step\":\"unlink, directory\",\"path\":\"a/side\",\"ok\":false,\"error\":\"EPERM\",\"errno\":1}",
+   "of_linux": "{\"step\":\"unlink, directory\",\"path\":\"a/side\",\"ok\":false,\"error\":\"EISDIR\",\"errno\":21}",
+   "why": "unlink(2) of a directory: EPERM on macOS, EISDIR on Linux"
+  }
+ ]
+}

@@ -5,11 +5,10 @@
 //
 // darwin_layout.c is the program that a Mac compiles and runs (run-on-mac.sh): it prints the size of
 // every structure, the offset of every field and the value of every constant. It cannot run here. But
-// everything it prints is known to the compiler: clang puts the numbers into the calls of printf when
-// it translates the program, whatever the level of optimization. So each part of the program is
-// compiled for macOS, with the headers of macOS (tools/macos-sdk.ts), into the intermediate language of
-// LLVM, and the calls of printf are read from there: the format and the number. The output has the
-// lines that the program prints on a Mac whose headers are the ones of that SDK.
+// everything it prints is known to the compiler, so each part of the program is translated for macOS,
+// with the headers of macOS (tools/macos-sdk.ts), and what it prints is read from the translation
+// (evaluate-c.ts). The output has the lines that the program prints on a Mac whose headers are the
+// ones of that SDK.
 //
 // A part that does not compile is treated as run-on-mac.sh treats it: a field that the headers do not
 // have is left out (-DSKIP_<type>_<field>, from the message of the compiler) and the part is compiled
@@ -27,6 +26,7 @@
 // no such name today, and no such file.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { evaluate, sdkOfMacos, targetOfMacos } from "./evaluate-c.ts";
 
 const here = dirname(import.meta.path);
 const work = resolve(process.env.WORK ?? "/tmp/portable/n3");
@@ -35,45 +35,11 @@ const argv = process.argv.slice(2);
 const arch = argv[0];
 if (arch !== "x86_64" && arch !== "aarch64") throw new Error("usage: bun darwin-headers.ts <x86_64|aarch64> [--sdk directory] [--out file] [--compare image.jsonl]");
 const option = (name: string) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
-const sdk = resolve(option("--sdk") ?? join(work, "ref/macos-sdk"));
-if (!existsSync(join(sdk, "SDK.txt"))) {
-  const made = Bun.spawnSync(["bun", join(here, "../tools/macos-sdk.ts"), "--out", sdk], { stdout: "inherit", stderr: "inherit" });
-  if (made.exitCode !== 0) throw new Error("tools/macos-sdk.ts did not make the SDK");
-}
+const sdk = sdkOfMacos(option("--sdk") ?? join(work, "ref/macos-sdk"));
 const source = join(here, "darwin_layout.c");
 const parts: { part: number; what: string }[] = JSON.parse(readFileSync(join(here, "darwin.json"), "utf8")).parts_of_darwin_layout_c;
-const target = `${arch === "aarch64" ? "arm64" : "x86_64"}-apple-macos11.0`;
-
-function translate(part: number, skip: string[]): { ok: boolean; text: string; messages: string } {
-  const result = Bun.spawnSync([`${llvm}/clang`, `--target=${target}`, "-isysroot", sdk, "-w", ...skip, `-DPART=${part}`, "-S", "-emit-llvm", "-O0", "-o", "-", source], { stdout: "pipe", stderr: "pipe" });
-  return { ok: result.exitCode === 0, text: result.stdout.toString(), messages: result.stderr.toString() };
-}
-
-/** The text of a string constant of the intermediate language: `\22` is the byte 0x22. */
-function decode(text: string): string {
-  return text.replace(/\\([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\0$/, "");
-}
-
-/** What the calls of printf of `main` print. */
-function printed(ir: string, where: string): string[] {
-  const strings = new Map<string, string>();
-  for (const match of ir.matchAll(/^(@[\w.]+) = private unnamed_addr constant \[\d+ x i8\] c"((?:[^"\\]|\\[0-9A-Fa-f]{2})*)"/gm)) strings.set(match[1], decode(match[2]));
-  const lines: string[] = [];
-  for (const match of ir.matchAll(/call i32 \(ptr, \.\.\.\) @printf\(ptr noundef (@[\w.]+)(?:, ([^)]*))?\)/g)) {
-    const format = strings.get(match[1]);
-    if (format === undefined) throw new Error(`${where}: a call of printf with a format that is no constant`);
-    const conversions = format.match(/%(zu|lld)/g) ?? [];
-    if (conversions.length === 0) {
-      lines.push(format);
-      continue;
-    }
-    const value = /^i64 noundef (-?\d+)$/.exec(match[2] ?? "");
-    if (conversions.length !== 1) throw new Error(`${where}: ${format.trim()} has ${conversions.length} conversions`);
-    // Not a number that the compiler knows: the macro names a variable or calls a function.
-    lines.push(value ? format.replace(/%(zu|lld)/, () => value[1]) : format.replace(/%(zu|lld)/, () => JSON.stringify("not a constant for the compiler")));
-  }
-  return lines.join("").split("\n").filter(Boolean);
-}
+const target = targetOfMacos(arch);
+const translate = (part: number, skip: string[]) => evaluate({ llvm, sdk, target, source, flags: ["-w", ...skip, `-DPART=${part}`] });
 
 const facts: string[] = [];
 const leftOut: string[] = [];
@@ -93,7 +59,7 @@ for (const { part, what } of parts) {
     doNotCompile.push(`${what}: ${(/error: .*/.exec(attempt.messages)?.[0] ?? attempt.messages.trim().split("\n")[0]).slice(0, 200)}`);
     continue;
   }
-  facts.push(...printed(attempt.text, `part ${part} (${what})`));
+  facts.push(...attempt.lines);
 }
 const out = option("--out");
 if (out) writeFileSync(resolve(out), facts.join("\n") + "\n");

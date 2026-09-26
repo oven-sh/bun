@@ -119,12 +119,9 @@ for (const [name, command] of [["direct", [image, directory]], ["hosted", [host,
 }
 // What the kernel of Linux answers in another way than the one of macOS, to a request that shared code
 // sends through the C library of the image: the line that is expected of a Mac, and the line of Linux.
-const kernelOfLinux: [string, string][] = [
-  [
-    '{"step":"unlink, directory","path":"a/side","ok":false,"error":"EPERM","errno":1}',
-    '{"step":"unlink, directory","path":"a/side","ok":false,"error":"EISDIR","errno":21}',
-  ],
-];
+const kernelOfLinux: [string, string][] = (JSON.parse(readFileSync(join(here, "expected/kernel-of-linux.json"), "utf8")).lines as { of_macos: string; of_linux: string }[]).map(
+  line => [line.of_macos, line.of_linux],
+);
 const expectedOfMacos = readFileSync(join(here, "expected/darwin.jsonl"), "utf8");
 for (const [mode, way] of [["libsystem", "clonefile"], ["libsystem-noclone", "copyfile"]]) {
   check(`as darwin, with a stand-in for libSystem (${mode}): what is expected of a Mac`, () => {

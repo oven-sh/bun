@@ -13,6 +13,7 @@
 //   verify/parts.txt           what each part of darwin_layout.c is about
 //   verify/image-layout-<arch>.jsonl   the same facts from each image, as it printed them here
 //   expected/darwin.jsonl      what the slice prints on macOS (expected.ts)
+//   expected/darwin-hfs.jsonl  and on a volume of HFS+, which run-on-mac.sh makes for its step 5
 //
 // The images are run here for that, the one of the other processor under qemu (user mode).
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -48,7 +49,7 @@ function signed(image: Buffer): Buffer {
   return Buffer.concat([code, blob, trailer]);
 }
 
-for (const generated of [["bun", join(tree, "bindings/darwin.ts"), "--check"], ["bun", join(here, "expected.ts"), "darwin"]]) run(generated);
+for (const generated of [["bun", join(tree, "bindings/darwin.ts"), "--check"], ["bun", join(here, "expected.ts"), "darwin"], ["bun", join(here, "expected.ts"), "darwin-hfs"]]) run(generated);
 rmSync(out, { recursive: true, force: true });
 for (const dir of ["image", "host", "verify", "expected"]) mkdirSync(join(out, dir), { recursive: true });
 
@@ -75,7 +76,7 @@ for (const name of ["host_posix.c", "linux_abi.h", "memory.h"]) copyFileSync(joi
 copyFileSync(join(tree, "bindings/darwin_layout.c"), join(out, "verify/darwin_layout.c"));
 const parts: { part: number; what: string }[] = JSON.parse(readFileSync(join(tree, "bindings/darwin.json"), "utf8")).parts_of_darwin_layout_c;
 writeFileSync(join(out, "verify/parts.txt"), parts.map(part => `${part.part} ${part.what}`).join("\n") + "\n");
-copyFileSync(join(here, "expected/darwin.jsonl"), join(out, "expected/darwin.jsonl"));
+for (const name of ["darwin.jsonl", "darwin-hfs.jsonl"]) copyFileSync(join(here, "expected", name), join(out, "expected", name));
 copyFileSync(join(here, "run-on-mac.sh"), join(out, "run-on-mac.sh"));
 chmodSync(join(out, "run-on-mac.sh"), 0o755);
 writeFileSync(join(out, "package.txt"), lines.join("\n") + "\n");

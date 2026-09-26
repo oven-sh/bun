@@ -15,18 +15,27 @@
    such a number is what this is for.
 
    BUN_HOST_TEST=libsystem-noclone is the same on a file system that does not clone (one that is
-   not APFS): clonefile, clonefileat and fclonefileat fail with ENOTSUP.
+   not APFS): clonefile, clonefileat and fclonefileat fail with ENOTSUP. With
+   BUN_HOST_TEST_NOCLONE_UNDER=<directory> they fail so for a copy that is to be made under
+   that directory, which stands for a volume of such a file system.
+
+   A function of macOS that the image binds and that has no stand-in here has an address all the
+   same, so that the image can bind every function it names (--imports): darwin_exports_<processor>.h
+   has the names, from the list of what libSystem exports. Calling one stops the host.
 
    This is a test double and not macOS. It shows that the image hands macOS what macOS expects,
    and that it reads what macOS hands back where macOS puts it. What macOS answers is for a Mac
    to say. */
 #if defined(__x86_64__)
+#include "darwin_exports_x86_64.h"
 #include "darwin_facts_x86_64.h"
 #else
+#include "darwin_exports_aarch64.h"
 #include "darwin_facts_aarch64.h"
 #endif
 
 static int test_libsystem, test_libsystem_noclone;
+static char noclone_under[4096];
 
 /* A function that the image calls. On the arm64 test host x18 is the register that the image
    reads its thread pointer through, and the code of this host may overwrite it (see "x18" in
@@ -77,6 +86,8 @@ static long d_fail(int error_of_macos) {
   return -1;
 }
 D_FUNCTION int *d_error(void) { return &d_errno; }
+
+D_FUNCTION void d_no_stand_in(void) { d_not_macos("the image called a function of macOS that has no stand-in here (BUN_HOST_TRACE=2 shows which it bound last)"); }
 
 /* ---- what has nothing to translate ---- */
 D_FUNCTION size_t d_strlen(const char *text) { return strlen(text); }
@@ -296,13 +307,34 @@ static long copy_bytes(int from, int to) {
     }
   }
 }
+/* Whether the file is to be made on what stands for a volume that does not clone. */
+static int on_a_volume_that_does_not_clone(int dirfd, const char *path) {
+  char whole[8192], directory[4096];
+  if (test_libsystem_noclone) return 1;
+  if (!*noclone_under) return 0;
+  if (*path == '/') snprintf(whole, sizeof whole, "%s", path);
+  else {
+    ssize_t length;
+    if (dirfd == AT_FDCWD) length = getcwd(directory, sizeof directory) ? (ssize_t)strlen(directory) : -1;
+    else {
+      char link[64];
+      snprintf(link, sizeof link, "/proc/self/fd/%d", dirfd);
+      length = readlink(link, directory, sizeof directory - 1);
+    }
+    if (length < 0) return 0;
+    directory[length] = 0;
+    snprintf(whole, sizeof whole, "%s/%s", directory, path);
+  }
+  size_t prefix = strlen(noclone_under);
+  return !strncmp(whole, noclone_under, prefix) && (whole[prefix] == '/' || !whole[prefix]);
+}
 /* A clone of the open file `from`. The file system of Linux may not clone (ioctl FICLONE): then the
    bytes are copied, which gives a file that reads the same. */
 static int d_clone_to(int from, int to_dirfd, const char *to, unsigned flags, const char *function) {
   if (flags & ~7u) d_not_macos("%s: the flags %#x", function, flags);
   struct stat s;
   if (fstat(from, &s)) return (int)d_ret(-1);
-  if (test_libsystem_noclone) return (int)d_fail(D_ENOTSUP);
+  if (on_a_volume_that_does_not_clone(to_dirfd, to)) return (int)d_fail(D_ENOTSUP);
   if (!S_ISREG(s.st_mode)) return (int)d_fail(D_ENOTSUP);
   int out = openat(to_dirfd, to, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, s.st_mode & 07777);
   if (out < 0) return (int)d_ret(-1);
@@ -388,7 +420,7 @@ D_FUNCTION ssize_t d_getdirentries64(int fd, void *buffer, size_t size, int64_t 
 }
 
 #define D_FUNCTIONS(F) \
-  F(d_strlen) F(d_getpid) F(d_memset_pattern4) F(d_memset_pattern8) F(d_memset_pattern16) \
+  F(d_no_stand_in) F(d_strlen) F(d_getpid) F(d_memset_pattern4) F(d_memset_pattern8) F(d_memset_pattern16) \
   F(d_error) F(d_open) F(d_openat) F(d_fcntl) F(d_read) F(d_write) F(d_pread) F(d_pwrite) F(d_readv) \
   F(d_writev) F(d_close) F(d_fsync) F(d_ftruncate) F(d_truncate) F(d_fchmod) F(d_lchmod) F(d_stat) \
   F(d_lstat) F(d_fstat) F(d_fstatat) F(d_mkdirat) F(d_unlinkat) F(d_faccessat) F(d_renameatx_np) \
@@ -425,5 +457,7 @@ static void *libsystem_on_linux(const char *symbol) {
   };
   for (size_t i = 0; i < sizeof functions / sizeof *functions; i++)
     if (!strcmp(symbol, functions[i].name)) return functions[i].address;
+  for (size_t i = 0; i < sizeof d_exported / sizeof *d_exported; i++)
+    if (!strcmp(symbol, d_exported[i])) return D(d_no_stand_in);
   return 0;
 }

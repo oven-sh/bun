@@ -2272,6 +2272,7 @@ int main(int argc, char **argv) {
 #ifdef D_FUNCTION
   test_libsystem = !strcmp(test, "libsystem") || !strcmp(test, "libsystem-noclone");
   test_libsystem_noclone = !strcmp(test, "libsystem-noclone");
+  if (getenv("BUN_HOST_TEST_NOCLONE_UNDER")) snprintf(noclone_under, sizeof noclone_under, "%s", getenv("BUN_HOST_TEST_NOCLONE_UNDER"));
 #endif
 #endif
 #if X18_HOST

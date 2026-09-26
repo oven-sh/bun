@@ -908,6 +908,20 @@ test("b", () => {
 `,
   };
 
+  // --rerun-each loads only the test file again for every run, so the test file is the subject.
+  // https://github.com/oven-sh/bun/issues/43318
+  const rerunFiles = {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = false\n`,
+    "rerun.test.ts": `import { expect, test } from "bun:test";
+${esm}
+const run = (globalThis.runs = (globalThis.runs ?? 0) + 1);
+
+test("covered", () => {
+  expect(run === 1 ? covered(10) : covered(1)).toBe(run === 1 ? 20 : 2);
+});
+`,
+  };
+
   type Row = { functions: string; lines: string; uncovered: string };
   async function run(fixture: Record<string, string>, args: string[], env: Record<string, string> = {}) {
     using dir = tempDir("cov-loaded-twice", fixture);
@@ -938,11 +952,13 @@ test("b", () => {
   let loaded: Awaited<ReturnType<typeof run>>;
   let oneLoad: Awaited<ReturnType<typeof run>>;
   let pluginUnderIsolate: Awaited<ReturnType<typeof run>>;
+  let rerun: Awaited<ReturnType<typeof run>>;
   beforeAll(async () => {
-    [loaded, oneLoad, pluginUnderIsolate] = await Promise.all([
+    [loaded, oneLoad, pluginUnderIsolate, rerun] = await Promise.all([
       run(files, ["./loads.test.ts"]),
       run(files, ["./loads.test.ts"], { ONE_LOAD: "1" }),
       run(pluginFiles, ["--isolate", "./a.test.ts", "./b.test.ts"]),
+      run(rerunFiles, ["--rerun-each=2", "./rerun.test.ts"]),
     ]);
   });
 
@@ -963,6 +979,11 @@ test("b", () => {
 
   test("from a plugin's onLoad, by two test files under --isolate", () => {
     expect(pluginUnderIsolate.rows["plugin-loaded.ts"]).toEqual(fullyCovered);
+  });
+
+  test("a test file, by two runs under --rerun-each", () => {
+    expect(rerun.rows["rerun.test.ts"]).toEqual(fullyCovered);
+    expect(rerun.lcov["rerun.test.ts"]).toMatch(/\nLF:(\d+)\nLH:\1\n/);
   });
 
   test("lcov has the functions and the lines of both loads (#35345)", () => {

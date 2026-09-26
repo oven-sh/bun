@@ -339,12 +339,19 @@ impl Parser<'_> {
                     }
 
                     if delim_cursor < resolved.len() && resolved[delim_cursor].pos == i {
+                        let d = &resolved[delim_cursor];
+                        let run_end = d.pos + d.count;
+
+                        // An unpaired run stays in the pending text: an e-mail autolink scans back over `_` and must not start before `text_start`.
+                        if d.open_count + d.close_count == 0 {
+                            delim_cursor += 1;
+                            i = run_end;
+                            continue;
+                        }
+
                         if i > text_start {
                             self.emit_text(TextType::Normal, &content[text_start..i])?;
                         }
-
-                        let d = &resolved[delim_cursor];
-                        let run_end = d.pos + d.count;
 
                         // Emit closing tags first (innermost to outermost)
                         if d.emph_char == b'~' {
@@ -486,6 +493,7 @@ impl Parser<'_> {
                         }
                     }
                     if let Some(a) = al {
+                        debug_assert!(a.beg >= text_start);
                         if a.beg > text_start {
                             self.emit_text(TextType::Normal, &content[text_start..a.beg])?;
                         }

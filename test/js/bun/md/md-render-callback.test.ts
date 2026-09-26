@@ -375,6 +375,23 @@ describe("Bun.markdown.render", () => {
     expect(result).toContain("[www.example.com]");
   });
 
+  test("email autolink with underscore in the local part reaches the callbacks once", () => {
+    const texts: string[] = [];
+    const result = Markdown.render(
+      "mail first_last@company.com now\n",
+      {
+        text: (text: string) => {
+          texts.push(text);
+          return text;
+        },
+        link: (children: string) => `[${children}]`,
+      },
+      { autolinks: true },
+    );
+    expect(result).toBe("mail [first_last@company.com] now");
+    expect(texts).toEqual(["mail ", "first_last@company.com", " now"]);
+  });
+
   test("headings option provides id in heading meta", () => {
     const result = Markdown.render(
       "## Hello World\n",

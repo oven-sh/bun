@@ -1044,14 +1044,19 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub(crate) fn deinit_and_delete_package(&mut self) {
+        let delete = self.scripts.cwd_is_created_by_bun();
         if self.manager().options.log_level.is_verbose() {
             bun_core::warn!(
-                "deleting optional dependency '{}' due to failed '{}' script",
+                "{} optional dependency '{}' due to failed '{}' script",
+                if delete { "deleting" } else { "skipping" },
                 bstr::BStr::new(&self.package_name),
                 bstr::BStr::new(self.script_name()),
             );
         }
         'try_delete_dir: {
+            if !delete {
+                break 'try_delete_dir;
+            }
             let Some(dirname) = bun_core::dirname(self.scripts.cwd.as_bytes()) else {
                 break 'try_delete_dir;
             };

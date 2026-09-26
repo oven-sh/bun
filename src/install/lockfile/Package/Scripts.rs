@@ -242,6 +242,7 @@ impl Scripts {
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
+                resolution_tag,
             });
         }
 
@@ -417,9 +418,16 @@ pub struct List {
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
+    pub(crate) resolution_tag: ResolutionTag,
 }
 
 impl List {
+    /// The cwd is a copy bun made (cache or `file:` folder), not the user's own directory.
+    pub(crate) fn cwd_is_created_by_bun(&self) -> bool {
+        self.resolution_tag.can_enqueue_install_task()
+            || self.resolution_tag == ResolutionTag::Folder
+    }
+
     pub fn print_scripts(
         &self,
         resolution: &Resolution,

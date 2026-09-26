@@ -85,6 +85,8 @@ pub struct MySQLConnection {
     tls_config: SSLConfig,
     tls_status: TLSStatus,
     ssl_mode: SSLMode,
+    /// `tls.checkServerIdentity` is set: it replaces the native name check, and runs after the handshake.
+    has_check_server_identity: bool,
     allow_public_key_retrieval: bool,
     flags: ConnectionFlags,
 }
@@ -117,6 +119,7 @@ impl Default for MySQLConnection {
             tls_config: SSLConfig::default(),
             tls_status: TLSStatus::None,
             ssl_mode: SSLMode::Disable,
+            has_check_server_identity: false,
             allow_public_key_retrieval: false,
             flags: ConnectionFlags::default(),
         }
@@ -135,6 +138,7 @@ impl MySQLConnection {
         tls_config: SSLConfig,
         secure: Option<OwnedSslCtx>,
         ssl_mode: SSLMode,
+        has_check_server_identity: bool,
         allow_public_key_retrieval: bool,
     ) -> Self {
         Self {
@@ -147,6 +151,7 @@ impl MySQLConnection {
             tls_config,
             secure,
             ssl_mode,
+            has_check_server_identity,
             allow_public_key_retrieval,
             tls_status: if ssl_mode != SSLMode::Disable {
                 TLSStatus::Pending
@@ -396,8 +401,22 @@ impl MySQLConnection {
 
     /// The name verify-full matches, in and after the handshake. Empty (none configured) matches no certificate.
     fn native_identity_hostname(&self) -> Option<&[u8]> {
-        (self.tls_config.reject_unauthorized() != 0 && self.ssl_mode == SSLMode::VerifyFull)
+        (self.tls_config.reject_unauthorized() != 0
+            && self.ssl_mode == SSLMode::VerifyFull
+            && !self.has_check_server_identity)
             .then(|| self.tls_config.server_name_bytes())
+    }
+
+    /// The name `tls.checkServerIdentity` is asked about, when it decides: it is set and the ssl mode verifies the peer.
+    pub(crate) fn callback_identity_hostname(&self) -> Option<&[u8]> {
+        (self.has_check_server_identity
+            && self.tls_config.reject_unauthorized() != 0
+            && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull))
+        .then(|| self.tls_config.server_name_bytes())
+    }
+
+    pub(crate) fn reject_server_identity(&mut self) {
+        self.tls_status = TLSStatus::SslFailed;
     }
 
     pub(crate) fn do_handshake(

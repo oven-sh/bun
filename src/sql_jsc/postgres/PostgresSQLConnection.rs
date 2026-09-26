@@ -1,5 +1,6 @@
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
+use bun_jsc::tls_server_identity;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -886,13 +887,24 @@ impl PostgresSQLConnection {
 
     /// verify-full's name check, asked inside the handshake.
     pub fn server_identity(&self, ssl: &mut bun_boringssl_sys::SSL) -> BoringSSL::ServerIdentity {
-        BoringSSL::server_identity(ssl, self.native_identity_hostname())
+        let hostname = self
+            .native_identity_hostname()
+            .filter(|_| self.check_server_identity_callback().is_none());
+        BoringSSL::server_identity(ssl, hostname)
     }
 
     /// The name verify-full matches, in and after the handshake. Empty (none configured) matches no certificate.
     fn native_identity_hostname(&self) -> Option<&[u8]> {
         (self.tls_config.reject_unauthorized() != 0 && self.ssl_mode == SSLMode::VerifyFull)
             .then(|| self.tls_config.server_name_bytes())
+    }
+
+    /// `tls.checkServerIdentity`: replaces the native name check, and runs after the handshake.
+    fn check_server_identity_callback(&self) -> Option<JSValue> {
+        self.js_value
+            .get()
+            .try_get()
+            .and_then(js::check_server_identity_get_cached)
     }
 
     pub(crate) fn on_handshake(&self, success: i32, ssl_error: uws::us_bun_verify_error_t) {
@@ -910,7 +922,19 @@ impl PostgresSQLConnection {
                             return;
                         }
 
-                        if let Some(hostname) = self.native_identity_hostname() {
+                        if let Some(callback) = self.check_server_identity_callback() {
+                            // User JS: it can close this connection.
+                            let _guard = self.ref_guard();
+                            let verdict = tls_server_identity::check_with_callback(
+                                self.global(),
+                                callback,
+                                self.socket.get().ssl_mut(),
+                                self.tls_config.server_name_bytes(),
+                            );
+                            if let Err(err) = verdict {
+                                self.fail_with_js_value(err);
+                            }
+                        } else if let Some(hostname) = self.native_identity_hostname() {
                             // SAFETY: native handle of a connected TLS socket is `SSL*`.
                             let ssl_ptr: *mut BoringSSL::c::SSL = self
                                 .socket
@@ -1288,6 +1312,9 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
+    if args.check_server_identity.is_callable() {
+        js::check_server_identity_set_cached(js_value, global_object, args.check_server_identity);
+    }
     bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }

@@ -30,6 +30,7 @@ use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 use super::my_sql_connection::{self as my_sql_connection};
 use super::my_sql_statement::MySQLStatement;
 use super::protocol::result_set::{self as ResultSet};
+use bun_jsc::tls_server_identity;
 
 bun_core::declare_scope!(MySQLConnection, visible);
 
@@ -104,6 +105,13 @@ impl JSMySQLConnection {
         ssl: &mut bun_boringssl_sys::SSL,
     ) -> bun_boringssl::ServerIdentity {
         self.connection.get().server_identity(ssl)
+    }
+
+    fn check_server_identity_callback(&self) -> Option<JSValue> {
+        self.js_value
+            .get()
+            .try_get()
+            .and_then(js::check_server_identity_get_cached)
     }
 
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
@@ -484,6 +492,7 @@ impl JSMySQLConnection {
                 tls_config,
                 secure,
                 args.ssl_mode,
+                args.check_server_identity.is_callable(),
                 allow_public_key_retrieval,
             )),
             auto_flusher: JsCell::new(AutoFlusher::default()),
@@ -553,6 +562,13 @@ impl JSMySQLConnection {
             .with_mut(|r| r.set_strong(js_value, global_object));
         js::onconnect_set_cached(js_value, global_object, on_connect);
         js::onclose_set_cached(js_value, global_object, on_close);
+        if args.check_server_identity.is_callable() {
+            js::check_server_identity_set_cached(
+                js_value,
+                global_object,
+                args.check_server_identity,
+            );
+        }
 
         Ok(js_value)
     }
@@ -894,10 +910,36 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     fn on_handshake(
         this: &JSMySQLConnection,
-        _: NewSocketHandler<SSL>,
+        socket: NewSocketHandler<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) {
+        let callback_hostname = this
+            .connection
+            .get()
+            .callback_identity_hostname()
+            .map(<[u8]>::to_vec);
+        if success == 1
+            && ssl_error.error_no == 0
+            && let Some(hostname) = callback_hostname
+            && let Some(callback) = this.check_server_identity_callback()
+        {
+            // User JS: it can close this connection.
+            let _guard = this.ref_guard();
+            let verdict = tls_server_identity::check_with_callback(
+                &this.global_object,
+                callback,
+                socket.ssl_mut(),
+                &hostname,
+            );
+            if let Err(err) = verdict {
+                this.connection_mut().reject_server_identity();
+                return this.fail_with_js_value(err);
+            }
+            if !this.connection.get().is_active() {
+                return;
+            }
+        }
         let handshake_was_successful = match this.connection_mut().do_handshake(success, ssl_error)
         {
             Ok(v) => v,

@@ -8,7 +8,7 @@ use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell,
-    JsRef, JsResult,
+    JsRef, JsResult, tls_server_identity,
 };
 use bun_ptr::{AsCtxPtr, BackRef, RefPtr};
 use bun_uws as uws;
@@ -439,6 +439,13 @@ impl JSValkeyClient {
         // SAFETY: `self` is the live heap allocation.
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
+    /// `tls.checkServerIdentity`: replaces the native name check, and runs after the handshake.
+    pub(crate) fn check_server_identity_callback(&self) -> Option<JSValue> {
+        self.this_value
+            .get()
+            .try_get()
+            .and_then(Js::check_server_identity_get_cached)
+    }
     #[inline]
     pub(crate) fn new(init: JSValkeyClient) -> *mut JSValkeyClient {
         // bun.TrivialNew(@This()) → heap::alloc(Box::new(init))
@@ -488,13 +495,13 @@ impl JSValkeyClient {
         )
     }
 
-    /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
+    /// Create a client with no JS object and no SubscriptionCtx; also returns `tls.checkServerIdentity` for the JS object.
     ///
     /// This whole client needs a refactor.
     pub(crate) fn create_no_js_no_pubsub(
         cx: &bun_jsc::JsThread<'_>,
         arguments: &[JSValue],
-    ) -> JsResult<*mut JSValkeyClient> {
+    ) -> JsResult<(*mut JSValkeyClient, JSValue)> {
         let vm: &'static VirtualMachine = cx.global().bun_vm();
         let vm_ref = vm;
 
@@ -698,8 +705,9 @@ impl JSValkeyClient {
 
         bun_core::analytics::Features::VALKEY.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
+        let check_server_identity = options.check_server_identity;
         // `_subscription_ctx` is a placeholder here; properly initialized later by `create()`.
-        Ok(JSValkeyClient::new(JSValkeyClient {
+        let client = JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
@@ -753,7 +761,8 @@ impl JSValkeyClient {
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
             context: cx.context().id(),
-        }))
+        });
+        Ok((client, check_server_identity))
     }
 
     pub(crate) fn create(
@@ -761,12 +770,16 @@ impl JSValkeyClient {
         arguments: &[JSValue],
         js_this: JSValue,
     ) -> JsResult<*mut JSValkeyClient> {
-        let new_client_ptr = JSValkeyClient::create_no_js_no_pubsub(cx, arguments)?;
+        let (new_client_ptr, check_server_identity) =
+            JSValkeyClient::create_no_js_no_pubsub(cx, arguments)?;
         // SAFETY: just allocated above
         let new_client = unsafe { &*new_client_ptr };
 
         // Initially, we only need to hold a weak reference to the JS object.
         new_client.this_value.set(JsRef::init_weak(js_this));
+        if check_server_identity.is_callable() {
+            Js::check_server_identity_set_cached(js_this, cx.global(), check_server_identity);
+        }
 
         // Need to associate the subscription context, after the JS ref has been populated.
         new_client
@@ -1749,6 +1762,14 @@ impl<const SSL: bool> SocketHandler<SSL> {
             if client.tls.reject_unauthorized(client.vm) {
                 socket.set_inline_reject();
             }
+            // RFC 6066: an IP literal is never sent as SNI.
+            let sni = Self::configured_hostname(this);
+            if !sni.is_empty()
+                && !bun_core::ip_address::is_ip_address(sni)
+                && let Some(ssl) = socket.ssl_mut()
+            {
+                ssl.set_servername(bun_core::ZBox::from_bytes(sni).as_cstr());
+            }
         }
         this.client_mut().socket = Self::socket(socket);
         this.client_mut().on_open(Self::socket(socket))
@@ -1760,12 +1781,24 @@ impl<const SSL: bool> SocketHandler<SSL> {
         ssl: &mut boringssl::c::SSL,
     ) -> boringssl::ServerIdentity {
         let client = this.client.get();
-        let rejects = client.tls.reject_unauthorized(client.vm);
-        let hostname = rejects.then(|| Self::identity_hostname(this, ssl));
+        let native = client.tls.reject_unauthorized(client.vm)
+            && this.check_server_identity_callback().is_none();
+        let hostname = native.then(|| Self::identity_hostname(this, ssl));
         boringssl::server_identity(ssl, hostname.as_deref())
     }
 
-    /// The name to match: the SNI servername, else the URL host. Empty for a unix socket, which has none.
+    /// `tls.serverName`, else the URL host without the brackets of an IPv6 literal. Empty for a unix socket with neither.
+    fn configured_hostname(this: &JSValkeyClient) -> &[u8] {
+        let client = this.client.get();
+        let hostname = match (client.tls.server_name(), &client.address) {
+            (Some(server_name), _) => server_name,
+            (None, valkey::Address::Host { host, .. }) => &host[..],
+            (None, valkey::Address::Unix(_)) => b"",
+        };
+        bun_core::ip_address::strip_ipv6_brackets(hostname)
+    }
+
+    /// The name to match: the SNI servername, else the configured one. Empty for a unix socket, which has none.
     fn identity_hostname(
         this: &JSValkeyClient,
         ssl_ptr: *mut boringssl::c::SSL,
@@ -1785,12 +1818,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 .to_vec()
                 .into()
         } else {
-            match &this.client.get().address {
-                valkey::Address::Host { host, .. } => {
-                    bun_core::ip_address::strip_ipv6_brackets(&host[..]).into()
-                }
-                valkey::Address::Unix(_) => (&b""[..]).into(),
-            }
+            Self::configured_hostname(this).into()
         }
     }
 
@@ -1849,6 +1877,26 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 // Certificate chain is valid; verify the hostname matches the
                 // certificate.
                 let hostname = Self::identity_hostname(this, ssl_ptr);
+                if let Some(callback) = this.check_server_identity_callback() {
+                    let verdict = tls_server_identity::check_with_callback(
+                        &this.global_object,
+                        callback,
+                        socket.ssl_mut(),
+                        &hostname,
+                    );
+                    // User JS ran: the verdict is for `socket`, and the client may have closed it or dialed again.
+                    let client = this.client.get();
+                    if client.status != valkey::Status::Connecting
+                        || socket.is_closed()
+                        || *client.socket.socket() != socket.socket
+                    {
+                        return Ok(());
+                    }
+                    return match verdict {
+                        Ok(()) => this.client_mut().start(),
+                        Err(err) => Self::fail_handshake(this, vm, err),
+                    };
+                }
                 // With no `SSL*` there is no certificate to match: fail closed.
                 let identity_ok = hostname.is_empty()
                     || (!ssl_ptr.is_null()
@@ -2039,14 +2087,23 @@ impl Options {
                     valkey::TLS::None
                 };
             } else if tls.is_object() {
-                // SAFETY: `bun_vm()` returns the live per-global VM pointer.
-                if let Some(ssl_config) =
-                    SSLConfig::from_js(global_object.bun_vm(), global_object, tls)?
+                if let Some(callback) = tls.get(global_object, "checkServerIdentity")?
+                    && !callback.is_undefined()
                 {
-                    this.tls = valkey::TLS::Custom(Box::new(ssl_config));
-                } else {
-                    return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
+                    if !callback.is_callable() {
+                        return Err(global_object.throw_invalid_argument_type(
+                            "tls",
+                            "tls.checkServerIdentity",
+                            "function",
+                        ));
+                    }
+                    this.check_server_identity = callback;
                 }
+                // An object with no recognized option still enables TLS, with defaults (as `tls: true`).
+                this.tls = match SSLConfig::from_js(global_object.bun_vm(), global_object, tls)? {
+                    Some(ssl_config) => valkey::TLS::Custom(Box::new(ssl_config)),
+                    None => valkey::TLS::Enabled,
+                };
             } else {
                 return Err(global_object.throw_invalid_argument_type(
                     "tls",

@@ -123,6 +123,11 @@ declare function $resolvePromise<T>(promise: Promise<T>, value: NoInfer<T>): voi
  * Reject a promise with a value
  */
 declare function $rejectPromise(promise: Promise<unknown>, value: unknown): void;
+/** A new pending promise. `$resolvePromise` / `$rejectPromise` require it to still be pending. */
+declare function $newPromise<T = unknown>(): Promise<T>;
+/** Like the resolving functions of a Promise executor: calls after the first one are ignored. */
+declare function $resolvePromiseWithFirstResolvingFunctionCallCheck<T>(promise: Promise<T>, value: NoInfer<T>): void;
+declare function $rejectPromiseWithFirstResolvingFunctionCallCheck(promise: Promise<unknown>, value: unknown): void;
 
 declare function $loadEsmIntoCjs(...args: any[]): TODO;
 declare function $getProxyInternalField(): TODO;
@@ -296,7 +301,6 @@ declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 declare function $toLength(length: number): number;
 declare function $isTypedArrayView(obj: unknown): obj is ArrayBufferView | DataView | Uint8Array;
 declare function $setStateToMax(target: any, state: number): void;
-declare function $newPromiseCapability(C: PromiseConstructor): TODO;
 /** @deprecated, use new TypeError instead */
 declare function $makeTypeError(message: string): TypeError;
 

@@ -265,6 +265,178 @@ test("handles cyclic dependencies", async () => {
   });
 });
 
+test("a package reached through a dependency cycle dedupes into one store entry", async () => {
+  // Two workspaces with different dependency sets both pull in the
+  // `dedupe-cycle-a` <-> `dedupe-cycle-b` cycle. `dedupe-cycle-peer` leaks a
+  // peer (`no-deps`) that no ancestor provides, so the store builder cannot
+  // resolve it from either workspace's chain. The unresolved name is part of
+  // the early-dedupe key, so both positions must collapse into a single
+  // store entry per package. The tree builder used to skip early dedupe at
+  // every position with an unresolved leaking peer, which duplicated the
+  // `dedupe-cycle-a` entry (identical contents under two store names) and
+  // made `bun install` re-expand the shared subtree once per workspace
+  // (#40445).
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "dedupe-cycle-ws",
+        workspaces: {
+          packages: ["ws-one", "ws-two"],
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "ws-one", "package.json"),
+      JSON.stringify({
+        name: "ws-one",
+        version: "1.0.0",
+        dependencies: {
+          "dedupe-cycle-a": "1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "ws-two", "package.json"),
+      JSON.stringify({
+        name: "ws-two",
+        version: "1.0.0",
+        dependencies: {
+          "dedupe-cycle-b": "1.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const storeEntries = await readdirSorted(join(packageDir, "node_modules", ".bun"));
+  const aEntries = storeEntries.filter(e => e.startsWith("dedupe-cycle-a@1.0.0"));
+  const bEntries = storeEntries.filter(e => e.startsWith("dedupe-cycle-b@1.0.0"));
+  const peerEntries = storeEntries.filter(e => e.startsWith("dedupe-cycle-peer@1.0.0"));
+  expect(aEntries).toHaveLength(1);
+  expect(bEntries).toHaveLength(1);
+  expect(peerEntries).toHaveLength(1);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+
+  // both sides of the cycle link to the single entry of the other side
+  expect(withoutEntryHash(readlinkSync(join(bunDir, aEntries[0], "node_modules", "dedupe-cycle-b")))).toBe(
+    join("..", "..", bEntries[0], "node_modules", "dedupe-cycle-b"),
+  );
+  expect(withoutEntryHash(readlinkSync(join(bunDir, bEntries[0], "node_modules", "dedupe-cycle-a")))).toBe(
+    join("..", "..", aEntries[0], "node_modules", "dedupe-cycle-a"),
+  );
+
+  // the unprovided peer auto-installs the same no-deps version for both
+  // workspaces
+  expect(await file(join(bunDir, peerEntries[0], "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+
+  // both workspaces resolve their entry point of the cycle
+  expect(await file(join(packageDir, "ws-one", "node_modules", "dedupe-cycle-a", "package.json")).json()).toMatchObject(
+    {
+      name: "dedupe-cycle-a",
+      version: "1.0.0",
+    },
+  );
+  expect(await file(join(packageDir, "ws-two", "node_modules", "dedupe-cycle-b", "package.json")).json()).toMatchObject(
+    {
+      name: "dedupe-cycle-b",
+      version: "1.0.0",
+    },
+  );
+});
+
+test("early dedupe keeps declarer-specific resolutions of an unprovided peer", async () => {
+  // `dedupe-divergent-peers` pulls in two declarers of the peer name
+  // `no-deps` with divergent ranges: `dedupe-cycle-peer` wants 1.0.0 and
+  // `dedupe-divergent-strict` wants ^2.0.0. Neither workspace chain provides
+  // `no-deps`, so the shared subtree dedupes on the unresolved name and each
+  // declarer must still auto-install its own best version. `ws-three` seeds
+  // both no-deps versions into the lockfile under aliases (a different
+  // dependency name, so they provide nothing to the peer).
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "dedupe-divergent-ws",
+        workspaces: {
+          packages: ["ws-one", "ws-two", "ws-three"],
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "ws-one", "package.json"),
+      JSON.stringify({
+        name: "ws-one",
+        version: "1.0.0",
+        dependencies: {
+          "dedupe-divergent-peers": "1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "ws-two", "package.json"),
+      JSON.stringify({
+        name: "ws-two",
+        version: "1.0.0",
+        dependencies: {
+          "dedupe-divergent-peers": "1.0.0",
+          "a-dep": "1.0.1",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "ws-three", "package.json"),
+      JSON.stringify({
+        name: "ws-three",
+        version: "1.0.0",
+        dependencies: {
+          "aliased-no-deps-1": "npm:no-deps@1.0.0",
+          "aliased-no-deps-2": "npm:no-deps@2.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const storeEntries = await readdirSorted(bunDir);
+  expect(storeEntries.filter(e => e.startsWith("dedupe-divergent-peers@1.0.0"))).toHaveLength(1);
+  const peerEntries = storeEntries.filter(e => e.startsWith("dedupe-cycle-peer@1.0.0"));
+  const strictEntries = storeEntries.filter(e => e.startsWith("dedupe-divergent-strict@1.0.0"));
+  expect(peerEntries).toHaveLength(1);
+  expect(strictEntries).toHaveLength(1);
+
+  // each declarer auto-installs its own best version of the unprovided peer
+  expect(await file(join(bunDir, peerEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+  expect(await file(join(bunDir, strictEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "2.0.0",
+  });
+
+  // both workspaces resolve the shared package
+  for (const ws of ["ws-one", "ws-two"]) {
+    expect(
+      await file(join(packageDir, ws, "node_modules", "dedupe-divergent-peers", "package.json")).json(),
+    ).toMatchObject({
+      name: "dedupe-divergent-peers",
+      version: "1.0.0",
+    });
+  }
+});
+
 test("package with dependency on previous self works", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
@@ -1937,24 +2109,15 @@ test("runs lifecycle scripts correctly", async () => {
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });
 
-// When an auto-installed peer dependency has its OWN peer deps, those
-// transitive peers get re-queued during peer processing. If all manifest
-// loads are synchronous (cached with valid max-age) AND the transitive peer's
-// version constraint doesn't match what's already in the lockfile,
-// pendingTaskCount() stays at 0 and waitForPeers was skipped — leaving
-// the transitive peer's resolution unset (= invalid_package_id → filtered
-// from the install).
-test("transitive peer deps are resolved when resolution is fully synchronous", async () => {
+// Self-contained HTTP server that serves package manifests & tarballs
+// directly from the Verdaccio fixtures, with Cache-Control: max-age=300
+// to replicate npmjs.org behavior (fully synchronous on warm cache).
+function serveFixtures() {
   const packagesDir = join(import.meta.dir, "registry", "packages");
-
-  // Self-contained HTTP server that serves package manifests & tarballs
-  // directly from the Verdaccio fixtures, with Cache-Control: max-age=300
-  // to replicate npmjs.org behavior (fully synchronous on warm cache).
-  using server = Bun.serve({
+  const server = Bun.serve({
     port: 0,
     async fetch(req) {
-      const url = new URL(req.url);
-      const pathname = url.pathname;
+      const pathname = new URL(req.url).pathname;
 
       // Tarball: /<name>/-/<name>-<version>.tgz
       if (pathname.endsWith(".tgz")) {
@@ -1979,10 +2142,9 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
 
       // Rewrite tarball URLs to point at this server
       const meta = await metaFile.json();
-      const port = server.port;
       for (const [ver, info] of Object.entries(meta.versions ?? {}) as [string, any][]) {
         if (info?.dist?.tarball) {
-          info.dist.tarball = `http://localhost:${port}/${packageName}/-/${packageName}-${ver}.tgz`;
+          info.dist.tarball = `http://localhost:${server.port}/${packageName}/-/${packageName}-${ver}.tgz`;
         }
       }
 
@@ -1994,6 +2156,18 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
       });
     },
   });
+  return server;
+}
+
+// When an auto-installed peer dependency has its OWN peer deps, those
+// transitive peers get re-queued during peer processing. If all manifest
+// loads are synchronous (cached with valid max-age) AND the transitive peer's
+// version constraint doesn't match what's already in the lockfile,
+// pendingTaskCount() stays at 0 and waitForPeers was skipped — leaving
+// the transitive peer's resolution unset (= invalid_package_id → filtered
+// from the install).
+test("transitive peer deps are resolved when resolution is fully synchronous", async () => {
+  using server = serveFixtures();
 
   using packageDir = tempDir("transitive-peer-test-", {});
   const packageJson = join(String(packageDir), "package.json");
@@ -2047,6 +2221,55 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   expect(existsSync(join(bunDir, strictPeerEntry!, "node_modules", "no-deps"))).toBe(true);
 
   // Verify the chain is intact
+  expect(withoutEntryHash(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep")))).toBe(
+    join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),
+  );
+});
+
+// https://github.com/oven-sh/bun/issues/40466
+// Two registry URLs sharing one install cache. The extracted-tarball cache key
+// has no port, so the warmup's strict-peer-dep tarball is reused by the second
+// registry, while the manifest cache is keyed by registry URL hash and is not.
+// The cold install then fetches strict-peer-dep's manifest as its last pending
+// task, resolves the package with no new task (tarball already extracted), and
+// defers its peer `no-deps@^2.0.0`. Without the fix nothing wakes the wait
+// loop again and `bun install` hangs in "Resolving dependencies" forever.
+test("transitive peer resolves when its tarball is cached from another registry", async () => {
+  using serverA = serveFixtures();
+  using serverB = serveFixtures();
+
+  using root = tempDir("transitive-peer-two-registries-", {
+    "warmup/package.json": JSON.stringify({
+      name: "warmup",
+      dependencies: { "strict-peer-dep": "1.0.0" },
+    }),
+    "cold/package.json": JSON.stringify({
+      name: "cold",
+      dependencies: { "no-deps": "1.0.0", "uses-strict-peer": "1.0.0" },
+    }),
+  });
+  const cacheDir = join(String(root), "cache").replaceAll("\\", "\\\\");
+  const bunfig = (port: number) =>
+    `[install]\ncache = "${cacheDir}"\nregistry = "http://localhost:${port}/"\nlinker = "isolated"\n`;
+  await write(join(String(root), "warmup", "bunfig.toml"), bunfig(serverA.port));
+  await write(join(String(root), "cold", "bunfig.toml"), bunfig(serverB.port));
+
+  // Caches strict-peer-dep's manifest (registry A's URL hash) and extracts its
+  // tarball (shared across registries).
+  await runBunInstall(bunEnv, join(String(root), "warmup"), { allowWarnings: true });
+
+  // Hangs forever without the fix.
+  await runBunInstall(bunEnv, join(String(root), "cold"), { allowWarnings: true });
+
+  const bunDir = join(String(root), "cold", "node_modules", ".bun");
+  const entries = await readdirSorted(bunDir);
+  const strictPeerEntry = entries.find(e => e.startsWith("strict-peer-dep@1.0.0"));
+  const usesStrictEntry = entries.find(e => e.startsWith("uses-strict-peer@1.0.0"));
+  expect(strictPeerEntry).toBeDefined();
+  expect(usesStrictEntry).toBeDefined();
+
+  // The deferred transitive peer must end up resolved and linked.
+  expect(existsSync(join(bunDir, strictPeerEntry!, "node_modules", "no-deps"))).toBe(true);
   expect(withoutEntryHash(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep")))).toBe(
     join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),
   );

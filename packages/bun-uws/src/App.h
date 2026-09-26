@@ -51,6 +51,7 @@ namespace uWS {
 
 #include "HttpContext.h"
 #include "HttpResponse.h"
+#include "Http2Context.h"
 #include "WebSocketContext.h"
 #include "WebSocket.h"
 #include "PerMessageDeflate.h"
@@ -150,6 +151,9 @@ public:
              * one. */
             if (applyClientCertPolicy) {
                 us_ssl_ctx_set_sni_policy(domainCtx, options.request_cert, options.reject_unauthorized);
+            }
+            if (httpContext->getSocketContextData()->http2Context) {
+                us_ssl_ctx_enable_http2_alpn(domainCtx, httpContext->getSocketContextData()->allowHttp1);
             }
             auto *domainRouter = new HttpRouter<typename HttpContextData<SSL>::RouterData>();
             int result = 0;
@@ -274,6 +278,9 @@ public:
     ~TemplatedApp() {
         /* Let's just put everything here */
         if (httpContext) {
+            if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
+                h2->detach(httpContext->getSocketContextData());
+            }
             httpContext->free();
 
             /* Free all our webSocketContexts in a type less way */
@@ -385,8 +392,26 @@ public:
         for (us_socket_group_t *g : webSocketGroups) {
             us_socket_group_close_all(g);
         }
+        if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
+            h2->closeAll();
+        }
 
         return std::move(*this);
+    }
+
+    /* Route h2-negotiated (or prior-knowledge) connections to `ctx`. With
+     * allowHttp1 == false, ALPN offers only "h2" and cleartext connections
+     * that don't open with the preface get a 505. */
+    void attachHttp2(Http2Context *ctx, bool allowHttp1) {
+        ctx->attach(httpContext->getSocketContextData(), allowHttp1);
+        if constexpr (SSL) {
+            us_ssl_ctx_enable_http2_alpn(sslCtx, allowHttp1);
+            /* Bun attaches before addServerName(), which enables ALPN itself;
+             * this covers embedders that add names first. */
+            for (auto &p : pendingServerNames) {
+                us_ssl_ctx_enable_http2_alpn(p.ctx, allowHttp1);
+            }
+        }
     }
 
     /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket.
@@ -409,6 +434,9 @@ public:
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
             }
             s = next;
+        }
+        if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
+            closed += h2->closeIdle(closeWhenIdle);
         }
         return closed;
     }
@@ -780,5 +808,6 @@ public:
 
 typedef TemplatedApp<false> App;
 typedef TemplatedApp<true> SSLApp;
+
 
 }

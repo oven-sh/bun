@@ -117,6 +117,20 @@ test.concurrent("_errorHandler terminates when the domain is active via the proc
   expect(r.exitCode).toBe(0);
 });
 
+test.concurrent("a synchronous throw right after the process.domain setter is not routed to the domain", async () => {
+  // Matches node: the setter pairs later async work with d but does not put d
+  // on the stack, so the entry module's own throw stays uncaught (exit 1).
+  const r = await run(`
+    const d = require("domain").create();
+    d.on("error", e => console.log("handled", e.message));
+    process.domain = d;
+    throw new Error("x");
+  `);
+  expect(r.stdout.trim()).toBe("");
+  expect(r.stderr).toContain("x");
+  expect(r.exitCode).toBe(1);
+});
+
 test.concurrent(
   "child domain added to a parent routes error to the parent's listener without falling through to uncaughtException",
   async () => {

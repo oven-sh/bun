@@ -307,6 +307,16 @@ test("#12894", () => {
   expect(new File([bunFile], "bar.txt").name).toBe("bar.txt");
 });
 
+test("new File([file], name) does not rename the source", () => {
+  const a = new File(["x"], "a.txt");
+  const b = new File([a], "b.txt");
+  expect([a.name, b.name]).toEqual(["a.txt", "b.txt"]);
+  const c = new Blob(["y"]);
+  const d = new File([c], "d.txt");
+  const e = new File([c], "e.txt");
+  expect([d.name, e.name]).toEqual(["d.txt", "e.txt"]);
+});
+
 test("dupeWithContentType does not alias the source's allocated content_type", async () => {
   // Regression: #23015 refactored Blob to be ref-counted and moved
   // `setNotHeapAllocated()` before the `isHeapAllocated()` guard in

@@ -210,6 +210,13 @@ impl ReadableStream {
                 let blobby = self.ptr.file().expect("matched File");
                 if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
                     let blob = Blob::init_with_store(store.clone(), global_this);
+                    // The window `from_blob_copy_ref` moved onto the reader.
+                    if let Some(offset) = blobby.start_offset {
+                        blob.offset.set(offset as webcore::blob::SizeType);
+                    }
+                    if let Some(size) = blobby.max_size {
+                        blob.size.set(size as webcore::blob::SizeType);
+                    }
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started.get());
                     self.done();
@@ -595,6 +602,29 @@ impl ReadableStream {
         }
 
         Ok(stream)
+    }
+
+    /// A stream that delivers `bytes`, then errors with `err`.
+    pub fn from_bytes_then_error(
+        global_this: &JSGlobalObject,
+        bytes: Vec<u8>,
+        err: syscall::Error,
+    ) -> JsResult<JSValue> {
+        let source = NewSource::<FileReader>::new_mut(NewSource {
+            global_this: Some(bun_ptr::BackRef::new(global_this)),
+            context: FileReader {
+                event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
+                    global_this.bun_vm().as_mut().event_loop().cast(),
+                )),
+                buffered: bun_jsc::JsCell::new(bytes),
+                read_error: bun_jsc::JsCell::new(Some(err)),
+                // The reader never starts: a sink attached later ends with the error.
+                done: Cell::new(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        source.to_readable_stream(global_this)
     }
 
     pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1140,14 +1170,20 @@ impl<C: SourceContext> NewSource<C> {
         // `on_js_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
         if !self.wrapper_unrooted.get() {
-            self.upgrade_wrapper();
+            // SAFETY: `self` is live for the call.
+            unsafe { Self::upgrade_wrapper(self) };
         }
     }
 
-    fn upgrade_wrapper(&mut self) {
-        if let Some(global) = self.global_this.as_deref() {
-            if self.this_jsvalue.is_not_empty() {
-                self.this_jsvalue.upgrade(global);
+    /// # Safety
+    /// `this` points at a live `NewSource<C>`.
+    unsafe fn upgrade_wrapper(this: *mut Self) {
+        // SAFETY: fn contract; field places only, see `unroot_wrapper`.
+        unsafe {
+            if let Some(global) = (*this).global_this.as_deref() {
+                if (*this).this_jsvalue.is_not_empty() {
+                    (*this).this_jsvalue.upgrade(global);
+                }
             }
         }
     }
@@ -1155,18 +1191,32 @@ impl<C: SourceContext> NewSource<C> {
     /// The producer keeps its native ref but stops rooting the wrapper: nothing
     /// is reading, so the stream should be collectable. [`SourceContext::wrapper_finalized`]
     /// tells the producer if that happens.
-    /// Same access pattern as [`Self::increment_count`]: reached through the
-    /// producer's raw pointer while the context may be borrowed.
-    pub fn unroot_wrapper(&mut self) {
-        self.wrapper_unrooted.set(true);
-        self.this_jsvalue.downgrade();
+    ///
+    /// Takes a raw pointer: the producer reaches this while it holds a `&C` into
+    /// `this` (the chunk it is delivering to), so only the fields written here
+    /// are touched, never a `&mut Self` that would cover the context too.
+    ///
+    /// # Safety
+    /// `this` points at a live `NewSource<C>`.
+    pub unsafe fn unroot_wrapper(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).wrapper_unrooted.set(true);
+            (*this).this_jsvalue.downgrade();
+        }
     }
 
     /// Undo [`Self::unroot_wrapper`]: a consumer is reading again.
-    pub fn root_wrapper(&mut self) {
-        self.wrapper_unrooted.set(false);
-        if self.ref_count > 1 {
-            self.upgrade_wrapper();
+    ///
+    /// # Safety
+    /// As [`Self::unroot_wrapper`].
+    pub unsafe fn root_wrapper(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).wrapper_unrooted.set(false);
+            if (*this).ref_count > 1 {
+                Self::upgrade_wrapper(this);
+            }
         }
     }
 

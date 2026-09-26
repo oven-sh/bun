@@ -698,7 +698,11 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     } while (IS_EINTR(ret));
     return ret;
 #else
-    return kqueue_change(loop->fd, p->state.fd, 0, events, p, 0);
+    /* A socket that starts without read interest (LIBUS_SOCKET_OPEN_PAUSED) takes the same
+     * transition as one that pauses, so it too keeps the read knote that reports the peer's
+     * FIN or RST while it is paused (see kqueue_change). */
+    int starts_paused = kqueue_is_socket_poll(p) && !(events & LIBUS_SOCKET_READABLE);
+    return kqueue_change(loop->fd, p->state.fd, starts_paused ? LIBUS_SOCKET_READABLE : 0, events, p, starts_paused);
 #endif
 }
 

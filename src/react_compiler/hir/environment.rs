@@ -246,6 +246,21 @@ impl Environment {
         id
     }
 
+    /// Name the temporary `#t<declaration id>` so it survives as a variable.
+    pub fn promote_temporary(&mut self, identifier_id: IdentifierId) {
+        self.promote_temporary_with_kind(identifier_id, b't');
+    }
+
+    /// `#T<declaration id>`: a JSX tag must start with a capital letter.
+    pub fn promote_temporary_jsx_tag(&mut self, identifier_id: IdentifierId) {
+        self.promote_temporary_with_kind(identifier_id, b'T');
+    }
+
+    fn promote_temporary_with_kind(&mut self, identifier_id: IdentifierId, kind: u8) {
+        let identifier = &mut self.identifiers[identifier_id.0 as usize];
+        identifier.name = Some(IdentifierName::promoted(kind, identifier.declaration_id.0));
+    }
+
     /// Allocate a new ReactiveScope in the arena, returns its ScopeId.
     pub fn next_scope_id(&mut self) -> ScopeId {
         let id = ScopeId(self.next_scope_id_counter);

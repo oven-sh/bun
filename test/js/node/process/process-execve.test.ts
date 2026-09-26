@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 describe.concurrent("process.execve", () => {
   test("is a function", () => {
@@ -165,6 +166,54 @@ describe.concurrent("process.execve", () => {
 
     expect(stderr).not.toContain("second execve returned unexpectedly");
     expect(stdout.trim()).toBe("REPLACED_AFTER:ENOENT");
+    expect(exitCode).toBe(0);
+  });
+
+  // While a thread is inside execve(2), Linux fails every clone(CLONE_FS) in
+  // the process with EAGAIN until the exec has killed the other threads or has
+  // failed (fs/exec.c check_unsafe_exec, kernel/fork.c copy_fs). An exec of a
+  // file that is executable but not a valid binary opens that window and then
+  // fails with ENOEXEC, so the fixture can open it thousands of times while
+  // background threads keep calling pthread_create. The threads are spawning
+  // before the first exec (the call returns once they run) and record both a
+  // failed spawn and running out of iterations, so an empty file means they
+  // spawned without failure for the whole exec loop.
+  test.skipIf(!isLinux)("does not make pthread_create fail on other threads while the exec runs", async () => {
+    using dir = tempDir("process-execve-pthread-create", {
+      "index.js": `
+        import { spawnThreadsForTesting } from "bun:internal-for-testing";
+        import { openSync, writeFileSync } from "node:fs";
+        writeFileSync("not-a-binary", "not an ELF file\\n", { mode: 0o755 });
+        const fd = openSync("failures.txt", "a");
+        const rc = spawnThreadsForTesting(1_000_000, fd, 2, true);
+        if (rc !== 0) throw new Error("could not start the spinner threads: errno " + rc);
+        let attempts = 0;
+        for (; attempts < 3000; attempts++) {
+          try {
+            process.execve("./not-a-binary", ["not-a-binary"], {});
+            throw new Error("execve returned without an error");
+          } catch (e) {
+            if (e.code !== "ENOEXEC") throw e;
+          }
+        }
+        console.log("attempts:" + attempts);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(await Bun.file(join(String(dir), "failures.txt")).text()).toBe("");
+    // stderr carries the ExperimentalWarning for process.execve.
+    expect(stderr).not.toContain("error");
+    expect(stdout.trim()).toBe("attempts:3000");
     expect(exitCode).toBe(0);
   });
 

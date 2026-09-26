@@ -8,11 +8,12 @@ use core::sync::atomic::Ordering;
 use crate::Error;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::strings;
+use bun_ptr::RefPtr;
 
 use super::stream::{State as StreamState, Stream};
 use super::{dispatch, encode};
 use crate::h2_frame_parser as wire;
-use crate::http_context::HTTPSocket;
+use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
 use crate::lshpack;
@@ -57,11 +58,10 @@ pub struct ClientSession {
     pub(crate) port: u16,
     pub(crate) ssl_config: Option<ssl_config::SharedPtr>,
     pub(crate) did_have_handshaking_error: bool,
-    /// True if the TLS handshake ran with `rejectUnauthorized=true`. Carried
-    /// into the keepalive pool so a strict caller never reuses a session whose
-    /// hostname was never validated.
-    pub(crate) established_with_reject_unauthorized: bool,
-    pub(crate) host_header_hash: u64,
+    /// How the TLS peer was authenticated; carried into the keepalive pool and
+    /// checked by the coalescing path so a caller only multiplexes onto a
+    /// session verified the way it would verify a fresh one.
+    pub(crate) verification: PeerVerification,
 
     /// Queued bytes for the socket; whole frames are written here and
     /// `flush()` drains as much as the socket accepts.
@@ -146,7 +146,7 @@ pub struct ClientSession {
 /// `&mut self` and goes through [`ClientSession::enter`], so the releases
 /// happen through the holder's pointer after the body's `&mut` borrow has
 /// ended. Callers that need the session alive across two entry points hold a
-/// [`bun_ptr::ThisPtr::ref_guard`] of their own across both.
+/// [`RefPtr::from_this`] guard of their own across both.
 pub(crate) type SessionPtr = bun_ptr::ThisPtr<ClientSession>;
 
 /// Upgrade a `*mut Stream` from `self.streams` to `&mut Stream`.
@@ -235,13 +235,13 @@ impl ClientSession {
     /// own ref, both through `this`. When the body tore the session down that
     /// second release frees it, with no reference to it live anywhere.
     fn enter(this: SessionPtr, body: impl FnOnce(&mut ClientSession)) {
-        let _keep_alive = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         // SAFETY: `this` is live (see `this_ptr`; the guard above holds it for
         // the rest of this call) and HTTP-thread-only, so this is the only
         // borrow of the session for the duration of `body`.
         body(unsafe { &mut *this.as_ptr() });
         if this.socket_ref_owed.take() {
-            // SAFETY: the body gave up the socket ext's ref; `_keep_alive`
+            // SAFETY: the body gave up the socket ext's ref; `_guard`
             // still holds one, so the session is live and this release is not
             // the last. No borrow of the session is live: the body's ended.
             unsafe { ClientSession::deref(this.as_ptr()) };
@@ -344,8 +344,7 @@ impl ClientSession {
             port: client.connected_url.get_port_auto(),
             ssl_config: client.tls_props.clone(),
             did_have_handshaking_error: client.flags.did_have_handshaking_error,
-            established_with_reject_unauthorized: client.flags.reject_unauthorized,
-            host_header_hash: client.proxy_auth_hash(),
+            verification: client.socket_verification(),
             write_buffer: bun_io::StreamBuffer::default(),
             read_buffer: Vec::new(),
             streams: ArrayHashMap::default(),
@@ -393,16 +392,12 @@ impl ClientSession {
         hostname: &[u8],
         port: u16,
         ssl_config: Option<*const ssl_config::SSLConfig>,
-        host_header_hash: u64,
     ) -> bool {
         let mine: Option<*const ssl_config::SSLConfig> = self
             .ssl_config
             .as_ref()
             .map(|p| std::ptr::from_ref(p.get()));
-        self.port == port
-            && mine == ssl_config
-            && self.host_header_hash == host_header_hash
-            && strings::eql_long(&self.hostname, hostname, true)
+        self.port == port && mine == ssl_config && strings::eql_long(&self.hostname, hostname, true)
     }
 
     fn adopt_client(&mut self, client: &mut HTTPClient) {
@@ -594,7 +589,7 @@ impl ClientSession {
         };
         client.state.response_stage = HTTPStage::Headers;
 
-        if let Err(err) = self.flush() {
+        if let Err(err) = self.pump_send_bodies() {
             self.fail_all(err);
             return;
         }
@@ -683,8 +678,8 @@ impl ClientSession {
         self.by_http_id.get(&async_http_id).copied()
     }
 
-    /// JS just enabled `response_body_streaming` on the request, so flush any
-    /// body bytes that arrived between metadata delivery and `getReader()`.
+    /// A body consumer attached on the JS side: flush any body bytes that arrived between
+    /// metadata delivery and `getReader()`.
     fn drain_response_body(&mut self, async_http_id: u32) {
         let Some(stream) = self.stream_for_http_id(async_http_id) else {
             return;
@@ -723,7 +718,7 @@ impl ClientSession {
         }
         self.rearm_timeout();
         encode::drain_send_body(self, stream_mut(stream), usize::MAX);
-        if let Err(err) = self.flush() {
+        if let Err(err) = self.pump_send_bodies() {
             self.fail_all(err);
         }
     }
@@ -830,8 +825,7 @@ impl ClientSession {
         if self.fatal_error.is_some() {
             return;
         }
-        encode::drain_send_bodies(self);
-        if let Err(err) = self.flush() {
+        if let Err(err) = self.pump_send_bodies() {
             return self.fail_all(err);
         }
 
@@ -887,12 +881,19 @@ impl ClientSession {
         self.maybe_release();
     }
 
-    fn handle_writable(&mut self) {
-        if let Err(err) = self.flush() {
-            return self.fail_all(err);
+    /// Drain and flush until backpressure or nothing is left: a full flush raises no onWritable.
+    fn pump_send_bodies(&mut self) -> Result<(), Error> {
+        loop {
+            let more = encode::drain_send_bodies(self);
+            let backpressured = self.flush()?;
+            if !more || backpressured {
+                return Ok(());
+            }
         }
-        encode::drain_send_bodies(self);
-        if let Err(err) = self.flush() {
+    }
+
+    fn handle_writable(&mut self) {
+        if let Err(err) = self.pump_send_bodies() {
             return self.fail_all(err);
         }
         self.reap_aborted();
@@ -1040,9 +1041,9 @@ impl ClientSession {
         unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
         if self.can_pool() && !self.socket.is_closed_or_has_error() {
             // Pool stores the live *ClientSession so a later fetch can resume
-            // the multiplexed connection. SAFETY: `self` is heap-owned and
-            // outlives the pool entry (release_socket takes the strong ref).
-            let self_ptr = NonNull::from(&mut *self);
+            // the multiplexed connection; the socket ext's ref moves to it.
+            // SAFETY: `self` is heap-owned and that ref is outstanding.
+            let self_ref = unsafe { RefPtr::from_raw(core::ptr::from_mut(self)) };
             // ctx back-ref is valid for the session's lifetime. Unlike
             // `unregister_h2_raw` above, this branch is *not* reachable on the
             // re-entrant `connect()` → `adopt()` path: every adopt-side entry
@@ -1055,15 +1056,16 @@ impl ClientSession {
             HTTPClient::ssl_ctx_mut(self.ctx).release_socket(
                 self.socket,
                 self.did_have_handshaking_error,
-                self.established_with_reject_unauthorized,
+                self.verification,
                 &self.hostname,
                 self.port,
                 self.ssl_config.as_ref(),
                 None,
                 b"",
                 0,
-                self.host_header_hash,
-                Some(self_ptr),
+                0,
+                Some(self_ref),
+                b"",
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);

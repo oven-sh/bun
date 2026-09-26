@@ -2624,36 +2624,71 @@ pub fn to_utf16_alloc(
 
 /// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.
 pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
-    first_non_ascii(bytes)?;
+    let first_non_ascii = first_non_ascii_usize(bytes)?;
+    let mut out: Vec<u16> = Vec::with_capacity(bytes.len());
+    // SAFETY: `bytes.len()` u16 of capacity is the bound `write_wtf8_as_utf16le` requires.
+    unsafe {
+        let n = write_wtf8_as_utf16le(bytes, first_non_ascii, out.as_mut_ptr().cast::<u8>());
+        out.set_len(n / 2);
+    }
+    Some(out)
+}
 
-    let out_length = simdutf::length::utf16::from::utf8(bytes);
-    let mut out: Vec<u16> = Vec::with_capacity(out_length.max(1));
-    // SAFETY: `out` has ≥ `out_length` u16 of capacity; simdutf writes at most that many.
+/// Writes `bytes` (WTF-8) as little-endian UTF-16 code units starting at `dst` and returns the
+/// number of bytes written. `first_non_ascii` is the caller's `strings::first_non_ascii(bytes)`:
+/// that prefix is widened directly and only the rest goes through simdutf; a lone surrogate or an
+/// invalid byte there falls to a scalar loop (invalid byte → U+FFFD, lone surrogate kept).
+///
+/// # Safety
+/// `dst` must be 2-byte aligned and valid for `2 * bytes.len()` bytes of writes (every input byte yields at
+/// most one unit); `first_non_ascii <= bytes.len()` and `bytes[..first_non_ascii]` is ASCII.
+pub unsafe fn write_wtf8_as_utf16le(bytes: &[u8], first_non_ascii: usize, dst: *mut u8) -> usize {
+    debug_assert!(dst.addr().is_multiple_of(2) && is_all_ascii(&bytes[..first_non_ascii]));
+    for (i, &b) in bytes[..first_non_ascii].iter().enumerate() {
+        // SAFETY: `2 * i + 1 < 2 * bytes.len()`.
+        unsafe {
+            dst.add(2 * i)
+                .cast::<[u8; 2]>()
+                .write_unaligned(u16::from(b).to_le_bytes())
+        };
+    }
+    let mut written = 2 * first_non_ascii;
+    let bytes = &bytes[first_non_ascii..];
+    #[expect(
+        clippy::cast_ptr_alignment,
+        reason = "caller contract: dst is 2-byte aligned"
+    )]
+    // SAFETY: caller contract; simdutf writes at most `utf16_length_from_utf8(bytes) <= bytes.len()` units.
     let res = unsafe {
         simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
             bytes.as_ptr(),
             bytes.len(),
-            out.as_mut_ptr(),
+            dst.add(written).cast::<u16>(),
         )
     };
-    if res.is_successful() && out_length > 0 {
-        // SAFETY: on success simdutf initialised exactly `out_length` u16s.
-        unsafe { out.set_len(out_length) };
-        return Some(out);
+    if res.is_successful() {
+        return written + res.count * 2;
     }
-
-    out.reserve(bytes.len());
+    let mut put = |unit: u16| {
+        // SAFETY: at most one unit per input byte consumed, within the caller's `2 * bytes.len()`.
+        unsafe {
+            dst.add(written)
+                .cast::<[u8; 2]>()
+                .write_unaligned(unit.to_le_bytes())
+        };
+        written += 2;
+    };
     let mut i = 0usize;
     while i < bytes.len() {
         let b = bytes[i];
         if b < 0x80 {
-            out.push(u16::from(b));
+            put(u16::from(b));
             i += 1;
             continue;
         }
         let width = wtf8_byte_sequence_length_with_invalid(b);
         if width == 1 {
-            out.push(UNICODE_REPLACEMENT as u16);
+            put(UNICODE_REPLACEMENT as u16);
             i += 1;
             continue;
         }
@@ -2662,14 +2697,21 @@ pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
         buf[..take].copy_from_slice(&bytes[i..i + take]);
         let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
         if cp < 0 {
-            out.push(UNICODE_REPLACEMENT as u16);
+            put(UNICODE_REPLACEMENT as u16);
             i += 1;
             continue;
         }
-        push_codepoint_utf16(&mut out, cp as u32);
+        let cp = cp as u32;
+        if cp < 0x10000 {
+            put(cp as u16);
+        } else {
+            let c = cp - 0x10000;
+            put(0xD800 + (c >> 10) as u16);
+            put(0xDC00 + (c & 0x3FF) as u16);
+        }
         i += take;
     }
-    Some(out)
+    written
 }
 
 /// `PATTERN_KEY_COMPARE` from the Node.js ESM resolution spec — the comparator

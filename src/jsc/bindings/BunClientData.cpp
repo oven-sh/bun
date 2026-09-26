@@ -13,6 +13,7 @@
 #include <JavaScriptCore/SimpleMarkingConstraint.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/VM.h>
+#include <JavaScriptCore/CachedTypes.h>
 #include <wtf/MainThread.h>
 
 #include "JSDOMConstructorBase.h"
@@ -52,7 +53,8 @@ JSHeapData::~JSHeapData() = default;
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
 
 JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
-    : m_builtinNames(vm)
+    : commonStrings(vm)
+    , m_builtinNames(vm)
     , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
@@ -172,6 +174,15 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
         })),
         JSC::ConstraintVolatility::GreyedByExecution));
 
+    // The common string cache: slots filled by the JS thread, read here with the world stopped (as above).
+    vm->heap.addMarkingConstraint(makeUnique<JSC::SimpleMarkingConstraint>(
+        "Bcs", "Bun CommonStrings",
+        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([clientData](auto& visitor) {
+            JSC::SetRootMarkReasonScope rootScope(visitor, JSC::RootMarkReason::StrongHandles);
+            clientData->commonStrings.visit(visitor);
+        })),
+        JSC::ConstraintVolatility::GreyedByExecution));
+
     vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
     clientData->builtinFunctions().exportNames();
 }
@@ -262,6 +273,11 @@ DOMIsoSubspaces::~DOMIsoSubspaces()
 DOMClientIsoSubspaces::~DOMClientIsoSubspaces()
 {
     deleteSubspaceTable<JSC::GCClient::IsoSubspace>(this);
+}
+
+void JSVMClientData::setDecoderStringTable(std::span<const uint8_t> bytes)
+{
+    m_decoderStringTable = makeUnique<JSC::DecoderStringTable>(bytes);
 }
 
 } // namespace WebCore

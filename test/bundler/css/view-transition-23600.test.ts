@@ -70,4 +70,64 @@ describe("css", () => {
       `);
     },
   });
+
+  // Outside CSS modules the view transition names are printed as written.
+  itBundled("css/view-transition-declarations", {
+    files: {
+      "index.css": /* css */ `
+        .card {
+          view-transition-name: hero;
+          view-transition-class: slide fade;
+          view-transition-group: hero;
+        }
+
+        .page {
+          view-transition-name: NONE;
+          view-transition-class: none;
+          view-transition-group: NEAREST;
+        }
+
+        .root {
+          view-transition-name: match-element;
+          view-transition-group: contain;
+        }
+
+        .invalid {
+          view-transition-name: 1px;
+          view-transition-class: slide none;
+          view-transition-group: var(--group);
+        }
+      `,
+    },
+    outdir: "/out",
+    entryPoints: ["/index.css"],
+    onAfterBundle(api) {
+      api.expectFile("/out/index.css").toMatchInlineSnapshot(`
+        "/* index.css */
+        .card {
+          view-transition-name: hero;
+          view-transition-class: slide fade;
+          view-transition-group: hero;
+        }
+
+        .page {
+          view-transition-name: none;
+          view-transition-class: none;
+          view-transition-group: nearest;
+        }
+
+        .root {
+          view-transition-name: match-element;
+          view-transition-group: contain;
+        }
+
+        .invalid {
+          view-transition-name: 1px;
+          view-transition-class: slide none;
+          view-transition-group: var(--group);
+        }
+        "
+      `);
+    },
+  });
 });

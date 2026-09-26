@@ -29,6 +29,7 @@ pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: core::ffi::c_int = 2;
 pub const LIBUS_LISTEN_REUSE_PORT: core::ffi::c_int = 4;
 pub const LIBUS_SOCKET_IPV6_ONLY: core::ffi::c_int = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: core::ffi::c_int = 16;
+pub const LIBUS_SOCKET_OPEN_PAUSED: core::ffi::c_int = 256;
 
 /// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
 pub type SslCtx = bun_boringssl_sys::SSL_CTX;
@@ -85,7 +86,7 @@ impl us_bun_verify_error_t {
     }
 
     /// `code` as a byte slice (no NUL), or `b""` if null. Convenience for the
-    /// dominant `BunString::clone_utf8(..)` / `ZigString::from_utf8(..)` shape.
+    /// dominant `BunString::clone_utf8(..)` / `EncodedSlice::utf8(..)` shape.
     #[inline]
     pub fn code_bytes(&self) -> &[u8] {
         self.code().map_or(b"", core::ffi::CStr::to_bytes)
@@ -383,6 +384,8 @@ pub mod app;
 pub mod body_reader_mixin;
 #[path = "ConnectingSocket.rs"]
 pub mod connecting_socket;
+#[path = "h2.rs"]
+pub mod h2;
 #[path = "h3.rs"]
 pub mod h3;
 #[path = "InternalLoopData.rs"]

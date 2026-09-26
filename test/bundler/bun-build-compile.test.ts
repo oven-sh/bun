@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import { bunEnv, bunExe, isArm64, isDebug, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -34,6 +34,152 @@ describe("Bun.build compile", () => {
     expect(result.outputs[0].path.replaceAll("\\", "/")).toStartWith(outdir.replaceAll("\\", "/"));
     expect(exists).toBe(true);
   });
+
+  // The executable's embedded bytecode is mapped for the life of the process, so decoded instruction streams alias it
+  // instead of being copied into private memory. Same binary with the aliasing switched off is the control.
+  test.skipIf(!isLinux)(
+    "bytecode from a compiled executable is not copied into private memory",
+    async () => {
+      const body = Array.from(
+        { length: 24 },
+        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << j % 20}) s = s - ${j} | 0; o.p${j} = s;`,
+      ).join(" ");
+      const functions = Array.from(
+        { length: 4000 },
+        (_, i) => `export function f${i}(a, b) { let s = ${i}; const o = {}; ${body} return [s, ${i}, o]; }`,
+      ).join("\n");
+      using dir = tempDir("build-compile-bytecode-rss", {
+        "funcs.js": functions,
+        "app.js": `import * as m from "./funcs.js";
+let n = 0;
+for (const k in m) n += m[k](2, 3)[1] & 1;
+const smaps = require("fs").readFileSync("/proc/self/smaps_rollup", "utf8");
+const anon = Number(/Anonymous: +([0-9]+) kB/.exec(smaps)[1]);
+console.log(JSON.stringify({ n, anonKB: anon }));`,
+      });
+      const outfile = join(dir + "", "app");
+      const result = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        compile: { outfile },
+        bytecode: true,
+        format: "esm",
+        target: "bun",
+      });
+      expect(result.success).toBe(true);
+
+      const run = async (extraEnv: Record<string, string>) => {
+        await using proc = Bun.spawn({
+          cmd: [outfile],
+          env: { ...bunEnv, ...extraEnv },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toContain("anonKB");
+        expect(exitCode).toBe(0);
+        return JSON.parse(stdout.trim()) as { n: number; anonKB: number };
+      };
+      const aliased = await run({});
+      const copied = await run({ BUN_JSC_useBorrowedBytecodeFromCache: "0" });
+      expect(aliased.n).toBe(2000);
+      expect(copied.n).toBe(2000);
+      // 4000 decoded functions carry ~11 MB of instruction stream + expression info; copied, that is anonymous memory the aliasing run never allocates.
+      expect(copied.anonKB - aliased.anonKB).toBeGreaterThan(4096);
+    },
+    60_000,
+  );
+
+  // --bytecode into an executable for another os/arch/libc embeds bytecode written by this platform's JavaScriptCore for
+  // another's; such executables say so in crash reports (Features: cross_compiled_bytecode). The "other platform" build
+  // here is the same OS with the other CPU, and reuses this bun as the target executable, so it still runs here.
+  const otherPlatform = `bun-${isLinux ? "linux" : isMacOS ? "darwin" : "windows"}-${isArm64 ? "x64" : "aarch64"}${isMusl ? "-musl" : ""}`;
+  test.each([
+    ["this platform", undefined as string | undefined, false],
+    [otherPlatform, otherPlatform, true],
+  ])("--compile --bytecode for %s", async (_label, target, expected) => {
+    using dir = tempDir("build-compile-cross-bytecode", {
+      "app.js": `require("bun:internal-for-testing").crash_handler.panic();`,
+    });
+    const outfile = join(dir + "", isWindows ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        ...(target ? [`--target=${target}`, `--compile-executable-path=${process.execPath}`] : []),
+        join(dir + "", "app.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExit).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // (stdout is not asserted: ASAN builds print the symbolized crash trace there.)
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("panic");
+    expect(stderr.includes("cross_compiled_bytecode")).toBe(expected);
+    expect(exitCode).not.toBe(0);
+  });
+
+  // "cross": the target is not the host, so the internal modules' sources, ids and stamp are read out of the target
+  // executable's builtins section (here: this same bun under a different version, so the result still runs locally).
+  test.each([false, true, "cross" as const])(
+    "--bytecode=%p: internal modules the app imports come from embedded bytecode",
+    async mode => {
+      const bytecode = mode !== false;
+      const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
+      const cross =
+        mode === "cross"
+          ? {
+              target: `bun-${os}-${isArm64 ? "aarch64" : "x64"}${isMusl ? "-musl" : ""}-v1.0.0` as any,
+              executablePath: process.execPath,
+            }
+          : {};
+      using dir = tempDir("build-compile-builtin-bytecode", {
+        "app.js": `import { join } from "node:path";
+import http from "node:http";
+import { internalModulesLoadedFromBytecode } from "bun:internal-for-testing";
+const server = http.createServer(() => {});
+console.log(JSON.stringify({ joined: join("a", "b"), fromBytecode: internalModulesLoadedFromBytecode() }));
+server.close();`,
+      });
+      const outfile = join(dir + "", "app");
+      const result = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        compile: { outfile, ...cross },
+        bytecode,
+        format: "esm",
+        target: "bun",
+      });
+      expect(result.success).toBe(true);
+      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { joined, fromBytecode } = JSON.parse(stdout.trim());
+      expect(joined).toBe(join("a", "b"));
+      if (bytecode) {
+        // node:path, node:http and what they require at load (node:net, node:events, the stream internals, ...).
+        expect(fromBytecode).toBeGreaterThan(10);
+      } else {
+        expect(fromBytecode).toBe(0);
+      }
+      expect(exitCode).toBe(0);
+    },
+    // A --compile build plus (for "cross") bytecode for ~45 internal modules: ~10s under debug+ASAN.
+    60_000,
+  );
 
   test("compile with invalid target fails gracefully", async () => {
     using dir = tempDir("build-compile-invalid", {
@@ -71,6 +217,49 @@ describe("Bun.build compile", () => {
       expect(await Bun.file(result.outputs[0].path).exists()).toBe(true);
     },
   );
+
+  test("compile without outfile writes the executable to the working directory", async () => {
+    using dir = tempDir("build-compile-default-outfile", {
+      "proj/sub/myapp.ts": `console.log("default outfile");`,
+      "cwd/build.ts": `
+        const result = await Bun.build({
+          entrypoints: [process.argv[2]],
+          compile: true,
+        });
+        console.log(JSON.stringify(result.outputs.map(output => output.path)));
+      `,
+    });
+    const cwd = join(String(dir), "cwd");
+    const entrypoint = join(String(dir), "proj", "sub", "myapp.ts");
+    const name = isWindows ? "myapp.exe" : "myapp";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts", entrypoint],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The name comes from the entrypoint. The directory is the working directory, like `bun build --compile`.
+    expect(JSON.parse(stdout)).toEqual([join(cwd, name)]);
+    expect(exitCode).toBe(0);
+
+    expect(await Bun.file(join(cwd, name)).exists()).toBe(true);
+    expect(await Bun.file(join(String(dir), "proj", "sub", name)).exists()).toBe(false);
+
+    await using app = Bun.spawn({
+      cmd: [join(cwd, name)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [appStdout, appStderr, appExitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+    expect(appStdout).toBe("default outfile\n");
+    expect(appStderr).toBe("");
+    expect(appExitCode).toBe(0);
+  });
 
   test("compile with embedded resources uses correct module prefix", async () => {
     using dir = tempDir("build-compile-embedded-resources", {
@@ -764,6 +953,70 @@ describe("compiled binary in a deleted cwd", () => {
     },
     60_000,
   );
+});
+
+// Every region of the embedded module graph (file contents, names, bytecode, the
+// module table) is addressed by a 32-bit offset and length. `to_bytes` used to cast
+// every offset with `as u32`, so a graph past 4 GiB was written with wrapped
+// offsets: the build succeeded and the executable failed at startup
+// (`Module not found ''`) or read the wrong bytes. The build has to fail instead.
+//
+// Debug builds lower the limit through BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES
+// so the test does not need a 4 GiB input. The message still names the real limit.
+describe.concurrent("embedded module graph size limit", () => {
+  const asset = Buffer.alloc(8 * 1024 * 1024, "x");
+  const files = {
+    "app.js": `import big from "./big.bin" with { type: "file" };
+console.log(require("fs").statSync(big).size);`,
+    "big.bin": asset,
+  };
+
+  test.skipIf(!isDebug)("build --compile fails when the graph is larger than the offsets can address", async () => {
+    using dir = tempDir("build-compile-graph-too-large", files);
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "app.js", "--outfile", "app"],
+      env: { ...bunEnv, BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: String(4 * 1024 * 1024) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+
+    expect(stderr).toContain(
+      "failed to generate module graph bytes: embedded module graph would exceed 4 GiB (its offsets are 32-bit)",
+    );
+    expect(exitCode).toBe(1);
+    // No executable, not even a partial one.
+    expect(readdirSync(String(dir)).sort()).toEqual(["app.js", "big.bin"]);
+  });
+
+  test.skipIf(!isDebug)("build --compile still succeeds when the graph fits under the limit", async () => {
+    using dir = tempDir("build-compile-graph-fits", files);
+    const outfile = join(String(dir), isWindows ? "app.exe" : "app");
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "app.js", "--outfile", outfile],
+      env: { ...bunEnv, BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: String(256 * 1024 * 1024) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExit).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`${asset.byteLength}\n`);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // file command test works well

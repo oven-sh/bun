@@ -753,6 +753,68 @@ describe("bundler", () => {
     },
   });
 
+  // A compiled component that needs zero memo slots must not import the
+  // runtime. The import is registered from codegen next to the `_c(N)` call,
+  // so a body with nothing to memoize leaves `react/compiler-runtime` out.
+  // `.jsx`, not `.tsx`: the TypeScript path elides unused imports and would
+  // hide a spurious one.
+  itBundled("react-compiler/ZeroMemoSlotsNoRuntimeImport", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function Counter() {
+          const [count] = useState(0);
+          const step = 1;
+          const twice = step + step;
+          return count + twice;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      // Constant propagation folded `twice` into the return, so the compiler
+      // did run on this component.
+      expect(out).toContain("return count + 2;");
+      // It found nothing to memoize: no cache, and so no runtime import.
+      expect(out).not.toMatch(/\b_c\(\d+\)/);
+      expect(out).not.toContain("react/compiler-runtime");
+    },
+  });
+
+  itBundled("react-compiler/ZeroMemoSlotsBeforeMemoizedComponent", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function Counter() {
+          const [count] = useState(0);
+          const step = 1;
+          const twice = step + step;
+          return count + twice;
+        }
+        export function Hello({ name }) {
+          return <div>Hello {name}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      expect(out).toContain("return count + 2;");
+      // `Counter` compiled first with no slots. `Hello` memoizes its JSX, so
+      // its codegen registers the runtime import: present exactly once, and
+      // `_c` resolves to it.
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out.match(/from "react\/compiler-runtime"/g)).toHaveLength(1);
+    },
+  });
+
   itBundled("react-compiler/SuppressionInsideTSNamespaceDoesNotLeak", {
     files: {
       "/entry.tsx": /* tsx */ `
@@ -1063,6 +1125,68 @@ describe("bundler", () => {
       expect(m).not.toBeNull();
       expect(m![1]).toBe("1");
       expect(out).toMatch(/__MEMO_CACHE_SENTINEL\)\s*\{[^}]*globalFn\(\)/);
+    },
+  });
+
+  // A temporary that has to survive as a variable is "promoted": the compiler
+  // names it `#t<n>` (or `#T<n>` for a JSX tag, which has to be capitalised to
+  // read as a component) after its declaration id, and the printer drops the
+  // `#`. Several passes promote: the early return value of a reactive scope,
+  // the result of an inlined IIFE with more than one return, and every
+  // temporary read across scopes, all through `Environment::promote_temporary`
+  // (src/react_compiler/hir/environment.rs). The early return, the IIFE and
+  // the namespace-loaded tag below each take a different one of those paths.
+  itBundled("react-compiler/PromotedTemporariesAreNamedAfterTheirDeclaration", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as Lib from "ext";
+        import { makeArray } from "ext";
+
+        export function Component({ cond, a, num }) {
+          let x = [];
+          if (cond) {
+            x.push(a);
+            return x;
+          }
+          const arr = (() => {
+            if (num > 1) {
+              return [];
+            }
+            return makeArray(num);
+          })();
+          return <Lib.Stringify value={arr.push(num)} />;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime", "ext"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      // The props object is the component's first temporary.
+      expect(out).toMatch(/function Component\(t0\)/);
+      // The early return of the first scope is stored in a promoted temporary
+      // and compared against the sentinel after the scope.
+      expect(out).toMatch(/\bt1 = __EARLY_RETURN_SENTINEL;\s*bb0: \{/);
+      expect(out).toMatch(/\bt1 = x;\s*break bb0;/);
+      expect(out).toMatch(/if \(t1 !== __EARLY_RETURN_SENTINEL\)\s*return t1;/);
+      // The IIFE is inlined into a labeled block. Its two returns assign the
+      // promoted temporary that then feeds the `arr` local.
+      expect(out).not.toContain("=> {");
+      expect(out).toMatch(
+        /\blet t3;\s*bb1: \{\s*if \(num > 1\) \{\s*t3 = \[\];\s*break bb1;\s*\}\s*t3 = makeArray\(num\);\s*\}\s*let arr = t3;/,
+      );
+      // The tag is loaded in one scope and used in another, so it is promoted
+      // with the JSX tag spelling.
+      expect(out).toMatch(/\blet T0, t2;/);
+      expect(out).toContain("T0 = Lib.Stringify;");
+      expect(out).toMatch(/\bjsx(?:DEV)?\(T0, \{/);
+      // Every promoted name that is read has a `let` (t0 is the parameter).
+      const declared = new Set([...out.matchAll(/\blet ([tT]\d+(?:, [tT]\d+)*);/g)].flatMap(m => m[1].split(", ")));
+      expect([...declared].sort()).toEqual(["T0", "t1", "t2", "t3"]);
+      const used = new Set([...out.matchAll(/\b([tT]\d+)\b/g)].map(m => m[1]));
+      expect([...used].sort()).toEqual(["T0", "t0", "t1", "t2", "t3"]);
     },
   });
 });

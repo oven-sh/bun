@@ -35,15 +35,6 @@
 
 // clang-format off
 
-/* Forward-declared so this file does not depend on OpenSSL headers. */
-/* Opaque SSL_CTX ref helpers — defined in crypto/openssl.c so this file
- * stays free of OpenSSL headers. */
-
-int us_internal_raw_root_certs(struct us_cert_string_t** out);
-int us_raw_root_certs(struct us_cert_string_t**out){
-    return us_internal_raw_root_certs(out);
-}
-
 /* ── Group lifecycle ────────────────────────────────────────────────────── */
 
 void us_socket_group_init(struct us_socket_group_t *group, struct us_loop_t *loop,
@@ -378,6 +369,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->on_server_name = NULL;
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
+    ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
 
     /* Link into the group so close_all() / test-isolation can find it. */
     ls->next = group->head_listen_sockets;

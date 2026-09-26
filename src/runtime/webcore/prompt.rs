@@ -2,9 +2,9 @@
 
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_collections::VecExt as _;
+use bun_core::EncodedSlice;
 use bun_core::Output;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
+use bun_jsc::EncodedSliceJsc as _;
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]
@@ -15,7 +15,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
     if has_message {
-        let message = arguments[0].to_slice(global)?;
+        let message = arguments[0].to_utf8(global)?;
 
         if !message.slice().is_empty() {
             // 3. Set message to the result of normalizing newlines given message.
@@ -75,7 +75,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
         // 3. Set message to the result of optionally truncating message.
         // *  Not necessary so we won't do it.
-        let message = arguments[0].to_slice(global)?;
+        let message = arguments[0].to_utf8(global)?;
 
         if output.write_all(message.slice()).is_err() {
             // 1. If we cannot show simple dialogs for this, then return false.
@@ -248,7 +248,7 @@ pub mod prompt {
 
             // 3. Set message to the result of optionally truncating message.
             // *  Not necessary so we won't do it.
-            let message = arguments[0].to_slice(global)?;
+            let message = arguments[0].to_utf8(global)?;
 
             if output.write_all(message.slice()).is_err() {
                 // 1. If we cannot show simple dialogs for this, then return null.
@@ -275,7 +275,7 @@ pub mod prompt {
         }
 
         if has_default {
-            let default_string = arguments[1].to_slice(global)?;
+            let default_string = arguments[1].to_utf8(global)?;
 
             if output
                 .print(format_args!(
@@ -385,8 +385,7 @@ pub mod prompt {
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        let mut result = ZigString::init(&input);
-        result.mark_utf8();
+        let result = EncodedSlice::utf8(&input);
 
         // 9. Invoke WebDriver BiDi user prompt closed with this, false if
         //    result is null or true otherwise, and result.

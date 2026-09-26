@@ -120,6 +120,19 @@ fn apply_barrel_optimization_impl(
     if !is_explicit && !is_side_effects_false {
         return Ok(());
     }
+    // An entry point's exports are the public interface of the build. No file
+    // imports an entry point, so nothing seeds `requested_exports` for it and a
+    // deferred record would never be un-deferred. The linked output would then
+    // emit the export clause with the re-exported bindings shaken away.
+    if this
+        .graph
+        .entry_points
+        .iter()
+        .any(|ep| ep.get() == source_index)
+    {
+        return Ok(());
+    }
+
     let ast = &mut result.ast;
     if ast.import_records.len() == 0 {
         return Ok(());
@@ -307,6 +320,35 @@ fn record_target(
     map?.get_path(&rec.path)
 }
 
+/// The export names the result of `import()` / `require()` record `idx` can
+/// be read by, when the parser accounted for every use of it: the names read
+/// off it, and the one the call itself reads (`await` reads `then`; `require()`
+/// of an ES module returns its `module.exports` export). `None`: every export.
+fn call_reads(
+    uses: &bun_ast::ast_result::DynamicImportAliases,
+    dev_server: bool,
+    idx: usize,
+    kind: ImportKind,
+) -> Option<impl Iterator<Item = &'static [u8]>> {
+    if dev_server {
+        return None;
+    }
+    let dynamic_use = uses.get(&(idx as u32))?;
+    let implicit: &'static [u8] = if kind == ImportKind::Require {
+        b"module.exports"
+    } else {
+        b"then"
+    };
+    Some(
+        dynamic_use
+            .aliases
+            .slice()
+            .iter()
+            .map(|alias| alias.slice())
+            .chain(core::iter::once(implicit)),
+    )
+}
+
 /// BFS work queue item: un-defer an export from a barrel.
 // `'a` borrows arena-backed AST alias strings.
 struct BarrelWorkItem<'a> {
@@ -388,6 +430,10 @@ pub(crate) fn schedule_barrel_deferred_imports(
         bun_ptr::BackRef::new(&this.graph.ast.items_import_records()[result_source_index as usize]);
     let file_named_imports: bun_ptr::BackRef<JSAst::NamedImports> =
         bun_ptr::BackRef::new(&this.graph.ast.items_named_imports()[result_source_index as usize]);
+    let file_dynamic_uses: bun_ptr::BackRef<bun_ast::ast_result::DynamicImportAliases> =
+        bun_ptr::BackRef::new(
+            &this.graph.ast.items_dynamic_import_aliases()[result_source_index as usize],
+        );
 
     // `DevServerHandle` copied out so `&mut this.*` field borrows
     // don't conflict with the `&self` accessor.
@@ -459,8 +505,13 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if ni.import_record_index as usize >= file_import_records.len() {
             continue;
         }
-        named_ir_indices.set(ni.import_record_index as usize);
         let ir = &file_import_records.as_slice()[ni.import_record_index as usize];
+        // A name destructured from `import()` / `require()` is a named import
+        // too, but the call needs every export (see below).
+        if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
+            continue;
+        }
+        named_ir_indices.set(ni.import_record_index as usize);
         // In dev server mode, source_index may not be patched — resolve via
         // path map as a read-only fallback. Do NOT write back to the import
         // record — the dev server intentionally leaves source_indices unset
@@ -529,9 +580,19 @@ pub(crate) fn schedule_barrel_deferred_imports(
             continue;
         }
         if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
-            // require() and import() expose the full module namespace — preserve all exports.
+            // require() and import() expose the full module namespace: preserve
+            // every export, unless the parser saw each name the result is read by.
             let (_, value) = RequestedExports::entry(&mut this.requested_exports, target);
-            *value = RequestedExports::All;
+            match call_reads(&file_dynamic_uses, dev_handle.is_some(), idx, ir.kind) {
+                Some(names) => {
+                    if let RequestedExports::Partial(p) = value {
+                        for name in names {
+                            p.put(name, ())?;
+                        }
+                    }
+                }
+                None => *value = RequestedExports::All,
+            }
         }
     }
 
@@ -548,6 +609,9 @@ pub(crate) fn schedule_barrel_deferred_imports(
             continue;
         }
         let ir = &file_import_records.as_slice()[ni.import_record_index as usize];
+        if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
+            continue;
+        }
         let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
             dedup_fallback
                 .get(ir.path.text)
@@ -602,11 +666,22 @@ pub(crate) fn schedule_barrel_deferred_imports(
         }
         let should_add = ir.kind == ImportKind::Require || ir.kind == ImportKind::Dynamic;
         if should_add {
-            queue.push(BarrelWorkItem {
-                barrel_source_index: target,
-                alias: b"",
-                is_star: true,
-            });
+            match call_reads(&file_dynamic_uses, dev_handle.is_some(), idx, ir.kind) {
+                Some(names) => {
+                    for alias in names {
+                        queue.push(BarrelWorkItem {
+                            barrel_source_index: target,
+                            alias,
+                            is_star: false,
+                        });
+                    }
+                }
+                None => queue.push(BarrelWorkItem {
+                    barrel_source_index: target,
+                    alias: b"",
+                    is_star: true,
+                }),
+            }
         }
     }
 
@@ -851,7 +926,8 @@ pub(crate) fn schedule_barrel_deferred_imports(
         };
 
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
-        if un_defer_record(barrel_ir, resolution.import_record_index as usize) {
+        let went_live = un_defer_record(barrel_ir, resolution.import_record_index as usize);
+        if went_live {
             // Resolve now: propagation below needs the source index.
             newly_scheduled +=
                 resolve_barrel_records(this, barrel_idx, &[resolution.import_record_index]);
@@ -875,6 +951,36 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 alias: propagate_alias,
                 is_star: resolution.alias_is_star,
             });
+
+            // The record just went from deferred to live. Propagate every
+            // other alias this barrel imports through it, exactly as Phase 1
+            // seeding does for a record that is live when the barrel finishes
+            // parsing. Propagating only the alias that triggered the un-defer
+            // makes a downstream barrel's deferral set (and with it the
+            // symbol binding the linker produces) depend on parse completion
+            // order (#40657).
+            if went_live {
+                let named_imports = &this.graph.ast.items_named_imports()[barrel_idx as usize];
+                for ni in named_imports.values() {
+                    if ni.import_record_index != resolution.import_record_index {
+                        continue;
+                    }
+                    if ni.alias_is_star {
+                        queue.push(BarrelWorkItem {
+                            barrel_source_index: rec_si.get(),
+                            alias: b"",
+                            is_star: true,
+                        });
+                    } else if let Some(alias_ptr) = ni.alias {
+                        // Arena-backed `StoreStr`, valid for the bundler-arena lifetime.
+                        queue.push(BarrelWorkItem {
+                            barrel_source_index: rec_si.get(),
+                            alias: alias_ptr.slice(),
+                            is_star: false,
+                        });
+                    }
+                }
+            }
         }
 
         qi += 1;

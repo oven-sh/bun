@@ -381,9 +381,6 @@ impl fmt::Display for RequestCurlFormatter<'_> {
 
         if !self.body.is_empty() && Self::is_printable_body(content_type) {
             f.write_str(" --data-raw ")?;
-            // bun_core re-exports the tier-0 minimal impl as
-            // `js_printer::write_json_string`; the full encoding-aware printer
-            // in bun_js_printer overrides at link time.
             bun_core::js_printer::write_json_string(
                 self.body,
                 f,

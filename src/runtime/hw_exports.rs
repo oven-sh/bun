@@ -23,7 +23,9 @@
 use core::ffi::c_void;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame,
+};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
 //
@@ -136,11 +138,8 @@ pub fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue
 pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
     if let Some(eval_source) = this.module_loader.eval_source.as_ref() {
         let global = this.global();
-        // `bun_core::String` is
-        // `Copy` with NO `Drop`; `OwnedString` is the RAII wrapper that derefs.
-        let specifier_str = bun_core::OwnedString::new(
-            bun_jsc::bun_string_jsc::from_js(specifier, global).expect("unexpected exception"),
-        );
+        let specifier_str =
+            bun_core::String::from_js(specifier, global).expect("unexpected exception");
         return specifier_str.eql_utf8(eval_source.path.text);
     }
     false
@@ -156,10 +155,9 @@ pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
     let global = this.global();
     // A failed conversion just skips the note; must never panic at an FFI
     // boundary.
-    let Ok(specifier_str) = bun_jsc::bun_string_jsc::from_js(specifier, global) else {
+    let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
         return;
     };
-    let specifier_str = bun_core::OwnedString::new(specifier_str);
     if specifier_str.eql_utf8(this.main()) {
         this.entry_point_result.evaluated_as_cjs = true;
     }
@@ -229,12 +227,10 @@ mod sql_hooks {
         cache: *mut c_void,
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> *mut bun_uws::SslCtx {
+    ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
         // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
         let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
-        cache
-            .get_or_create_opts(opts, err)
-            .unwrap_or(core::ptr::null_mut())
+        cache.get_or_create_opts(opts, err)
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         use crate::socket::SSLConfigFromJs;
@@ -359,16 +355,14 @@ pub fn on_reject_entry_point_result(
 /// `NodeModuleModule._stat(path) -> i32` (0=file, 1=dir, -ENOENT otherwise).
 ///
 /// # Safety
-/// `arg_str` and `out` must be valid C++ stack locals.
+/// `out` must be a valid C++ stack local.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
     _global: *mut JSGlobalObject,
-    arg_str: *const bun_core::String,
+    arg_str: &bun_core::String,
     out: *mut i32,
 ) -> bool {
-    // SAFETY: `arg_str` is a live `bun.String` (C++ stack local); `out` is a
-    // valid out-param.
-    let s = unsafe { (*arg_str).to_utf8() };
+    let s = arg_str.to_utf8();
     // SAFETY: `out` is a valid C++ stack out-param.
     unsafe { *out = bun_jsc::node_module_module::stat(s.slice()) };
     true
@@ -377,21 +371,15 @@ unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
 /// `BunObject.braces(input, options) -> JSValue`.
 ///
 /// # Safety
-/// `arg_input` and `arg_options` must be valid C++ stack locals.
+/// `arg_options` must be a valid C++ stack local.
 // HOST_EXPORT(bindgen_BunObject_dispatchBraces1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn bindgen_bunobject_dispatch_braces(
     global: &JSGlobalObject,
-    arg_input: *const bun_core::String,
+    input: &bun_core::String,
     arg_options: *const crate::api::bun_object::r#gen::BracesOptions,
 ) -> JSValue {
-    // SAFETY: `arg_input`/`arg_options` are valid C++ stack locals.
-    // The C++ caller retains ownership of the ref-counted handle — we take a
-    // bitwise copy with **no** refcount bump. `bun_core::String` is `Copy`
-    // with no `Drop`, so a plain deref does exactly that; `braces` only
-    // borrows the bytes via `to_utf8()` and never derefs the handle.
-    let input = unsafe { *arg_input };
     // SAFETY: `arg_options` points to a `BracesOptions` on the C++ caller's stack.
     let opts = unsafe { *arg_options };
     bun_jsc::host_fn::to_js_host_call(global, || {
@@ -424,38 +412,24 @@ pub fn bindgen_bunobject_dispatch_gc(
 /// (highlighter.test.ts internal).
 ///
 /// # Safety
-/// `arg_code`, `arg_formatter`, and `out` must be valid C++ stack locals.
+/// `arg_formatter` and `out` must be valid C++ stack locals.
 // HOST_EXPORT(bindgen_Fmt_jsc_dispatchFmtString1, c)
 // Called only from the generated `extern "C"` thunk; C++ guarantees non-null stack locals.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn bindgen_fmt_jsc_dispatch_fmt_string(
     global: &JSGlobalObject,
-    arg_code: *const bun_core::String,
+    arg_code: &bun_core::String,
     arg_formatter: *const bun_jsc::fmt_jsc::js_bindings::Formatter,
     out: *mut bun_core::String,
 ) -> bool {
-    // SAFETY: `arg_code`/`arg_formatter`/`out` are valid C++ stack locals
-    // (see GeneratedBindings.cpp call site).
-    let code = unsafe { (*arg_code).to_utf8() };
+    let code = arg_code.to_utf8();
     // SAFETY: `arg_formatter` points to a `Formatter` on the C++ caller's stack.
     let formatter = unsafe { *arg_formatter };
-    match bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter) {
-        Ok(s) => {
-            // SAFETY: `out` is a valid C++ stack out-param.
-            unsafe { *out = s };
-            true
-        }
-        // OOM is the one `JsError` variant that does **not** leave a pending
-        // exception on the VM; throw it explicitly before signalling failure.
-        Err(bun_jsc::JsError::OutOfMemory) => {
-            let _ = global.throw_out_of_memory();
-            false
-        }
-        // `JSError` already set (or cleared) the pending
-        // exception on `global`; the bindgen ABI signals "exception pending"
-        // via `false`.
-        Err(_) => false,
-    }
+    bindgen_out(
+        global,
+        out,
+        bun_jsc::fmt_jsc::js_bindings::fmt_string(global, code.slice(), formatter),
+    )
 }
 
 /// `DevServer.getDeinitCountForTesting() -> usize`.
@@ -660,9 +634,10 @@ pub fn bindgen_node_os_dispatch_user_info(
     arg_options: *const crate::node::os::gen_::UserInfoOptions,
 ) -> JSValue {
     // SAFETY: `arg_options` is a valid C++ stack local; `UserInfoOptions` is
-    // `#[repr(C)]` matching the bindgen `extern struct`.
-    let options = unsafe { core::ptr::read(arg_options) };
-    bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, &options))
+    // `#[repr(C)]` matching the bindgen `extern struct`. Borrowed: its strings
+    // are `Bun::toString` views owned by the C++ frame.
+    let options = unsafe { &*arg_options };
+    bun_jsc::host_fn::to_js_host_call(global, || node_os::user_info(global, options))
 }
 
 // HOST_EXPORT(bindgen_Node_os_dispatchVersion1, c)
@@ -731,7 +706,7 @@ bun_jsc::jsc_abi_extern! {
 
 // HOST_EXPORT(js2native_bindgen_fmt_jsc_fmtString, jsc)
 pub fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue {
-    let name = bun_core::ZigString::init_utf8(b"fmtString");
+    let name = bun_core::EncodedSlice::latin1(b"fmtString");
     bun_jsc::host_fn::new_runtime_function(
         global,
         Some(&name),
@@ -744,7 +719,7 @@ pub fn js2native_bindgen_fmt_jsc_fmt_string(global: &JSGlobalObject) -> JSValue 
 
 // HOST_EXPORT(js2native_bindgen_DevServer_getDeinitCountForTesting, jsc)
 pub fn js2native_bindgen_dev_server_get_deinit_count(global: &JSGlobalObject) -> JSValue {
-    let name = bun_core::ZigString::init_utf8(b"getDeinitCountForTesting");
+    let name = bun_core::EncodedSlice::latin1(b"getDeinitCountForTesting");
     bun_jsc::host_fn::new_runtime_function(
         global,
         Some(&name),

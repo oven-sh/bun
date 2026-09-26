@@ -63,12 +63,6 @@ pub struct InternalStateFlags {
     pub(crate) is_redirect_pending: bool,
     pub(crate) is_libdeflate_fast_path_disabled: bool,
     pub(crate) resend_request_body_on_redirect: bool,
-    /// Cross-origin redirect: the per-request Host override must be dropped so
-    /// the follow-up connection re-derives SNI/Host from the redirect target.
-    /// The actual clear is deferred to `do_redirect`, after the old socket's
-    /// pool/close decision — that decision needs `hostname` still set to know
-    /// the handshake was verified against an override.
-    pub(crate) clear_hostname_on_redirect: bool,
     /// Set when the TLS handshake completed but the user-supplied JS
     /// `checkServerIdentity` callback has not yet approved the peer
     /// certificate. While set, `on_writable` must not write any HTTP
@@ -96,7 +90,6 @@ impl InternalStateFlags {
             is_redirect_pending: false,
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
-            clear_hostname_on_redirect: false,
             is_waiting_for_cert_check: false,
             receive_paused: false,
             body_compressed: false,

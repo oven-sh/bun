@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -39,10 +39,15 @@ const fixtures = {
   `,
 };
 
-async function runTests(dir: string, extraArgs: string[], files = ["./a-leaker.test.ts", "./b-observer.test.ts"]) {
+async function runTests(
+  dir: string,
+  extraArgs: string[],
+  files = ["./a-leaker.test.ts", "./b-observer.test.ts"],
+  env: Record<string, string | undefined> = bunEnv,
+) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...extraArgs, ...files],
-    env: bunEnv,
+    env,
     cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
@@ -98,6 +103,129 @@ describe.concurrent("bun test --isolate", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=2", ...files],
       env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  // TZ, NODE_TLS_REJECT_UNAUTHORIZED, BUN_CONFIG_VERBOSE_FETCH and the proxy
+  // keys have process.env setters with a native side effect outside the global
+  // (the WTF time zone override, per-VM caches, the env map the next
+  // process.env is seeded from). The next file reads the original values, so
+  // the side effects must be rolled back with the global.
+  test("with --isolate, a file's process.env writes with native side effects are undone before the next file", async () => {
+    const envFixtures = {
+      "a-env.test.ts": `
+        import { test, expect } from "bun:test";
+        process.env.TZ = "America/New_York";
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+        process.env.BUN_CONFIG_VERBOSE_FETCH = "curl";
+        process.env.HTTP_PROXY = "http://127.0.0.1:9/";
+        test("the writes apply to this file", () => {
+          expect(new Date(0).getTimezoneOffset()).toBe(300);
+          expect(process.env.HTTP_PROXY).toBe("http://127.0.0.1:9/");
+        });
+      `,
+      "b-env.test.ts": `
+        import { test, expect } from "bun:test";
+        const tls = ${JSON.stringify(tls)};
+        test("Date is back on the runner's TZ", () => {
+          expect(process.env.TZ).toBe("Etc/UTC");
+          expect(new Date(0).getTimezoneOffset()).toBe(0);
+        });
+        test("fetch() verifies certificates again", async () => {
+          expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBeUndefined();
+          using server = Bun.serve({ port: 0, tls, fetch: () => new Response("ok") });
+          // Self-signed and not in any CA store: only a lax fetch() can connect.
+          await expect(fetch(\`https://localhost:\${server.port}/\`, { keepalive: false })).rejects.toMatchObject({
+            code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+          });
+        });
+        test("fetch() no longer goes through the previous file's proxy", async () => {
+          expect(process.env.HTTP_PROXY).toBeUndefined();
+          using server = Bun.serve({ port: 0, fetch: () => new Response("direct") });
+          expect(await fetch(\`http://127.0.0.1:\${server.port}/\`, { keepalive: false }).then(r => r.text())).toBe("direct");
+        });
+      `,
+    };
+    const files = ["./a-env.test.ts", "./b-env.test.ts"];
+    // The second file expects the proxy key to be unset, so the runner must
+    // start without one even on a machine that routes through a proxy.
+    const env = {
+      ...bunEnv,
+      HTTP_PROXY: undefined,
+      http_proxy: undefined,
+      HTTPS_PROXY: undefined,
+      https_proxy: undefined,
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+    };
+
+    using isolated = tempDir("isolate-env", envFixtures);
+    const serial = await runTests(String(isolated), ["--isolate"], files, env);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("4 pass");
+    // Verbose fetch logging was left on by the first file: the second file's
+    // fetch() must not print its curl transcript.
+    expect(serial.stderr).not.toContain("curl --http1.1");
+    expect(serial.exitCode).toBe(0);
+
+    using parallel = tempDir("isolate-env-parallel", envFixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", ...files],
+      env: { ...env, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("4 pass");
+    expect(stderr).not.toContain("curl --http1.1");
+    expect(exitCode).toBe(0);
+  });
+
+  // The synthetic allocation limit is process-wide. A file that lowers it and
+  // does not put it back (or dies before its restore runs) must not make every
+  // later file in the same process fail to build strings.
+  test("with --isolate, a file's lowered synthetic allocation limit is undone before the next file", async () => {
+    const MiB = 1024 * 1024;
+    const limitFixtures = {
+      "a-limit.test.ts": `
+        import { test, expect } from "bun:test";
+        import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+        test("lower the limit and leave it lowered", async () => {
+          setSyntheticAllocationLimitForTesting(${MiB});
+          await expect(new Response(Buffer.alloc(${2 * MiB}, 97)).text()).rejects.toMatchObject({
+            code: "ERR_STRING_TOO_LONG",
+          });
+        });
+      `,
+      "b-limit.test.ts": `
+        import { test, expect } from "bun:test";
+        test("strings over the previous file's limit can be built again", async () => {
+          const text = await new Response(Buffer.alloc(${8 * MiB}, 97)).text();
+          expect(text.length).toBe(${8 * MiB});
+          expect(Buffer.alloc(${8 * MiB}, 97).toString().length).toBe(${8 * MiB});
+        });
+      `,
+    };
+    const files = ["./a-limit.test.ts", "./b-limit.test.ts"];
+    // The second file builds 8 MiB strings, so the runner must start at the
+    // default limit even on a machine that lowers it through the environment.
+    const env = { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: undefined };
+
+    using isolated = tempDir("isolate-alloc-limit", limitFixtures);
+    const serial = await runTests(String(isolated), ["--isolate"], files, env);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+    expect(serial.exitCode).toBe(0);
+
+    using parallel = tempDir("isolate-alloc-limit-parallel", limitFixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", ...files],
+      env: { ...env, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
       cwd: String(parallel),
       stderr: "pipe",
       stdout: "pipe",
@@ -192,6 +320,35 @@ describe.concurrent("bun test --isolate", () => {
     });
     const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"]);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  // The cached module record carries each name as Latin-1 or UTF-16; the second file links from that record.
+  test("with --isolate, cached module records keep short, Latin-1 and UTF-16 names", async () => {
+    using dir = tempDir("isolate-module-names", {
+      "names.ts": `export const a = 1, ab = 2, abc = 3, abcd = 4, café = 5, слово = 6; export { a as é, ab as ф };`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { a, ab, abc, abcd, café, слово, é, ф } from "./names";
+        test("first", () => {
+          (globalThis as any).__a_ran = true;
+          expect([a, ab, abc, abcd, café, слово, é, ф].join()).toBe("1,2,3,4,5,6,1,2");
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+        import { a, ab, abc, abcd, café, слово, é, ф } from "./names";
+        test("from cache", () => {
+          expect((globalThis as any).__a_ran).toBeUndefined();
+          expect(isolatedModuleCacheSourceType(require.resolve("./names"))).toBe("BunTranspiledModule");
+          expect([a, ab, abc, abcd, café, слово, é, ф].join()).toBe("1,2,3,4,5,6,1,2");
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
 
@@ -787,20 +944,22 @@ test.concurrent("--isolate: cached SourceProvider's module_info rebuilds correct
   // export entries. Under --isolate, file b hits the SourceProvider cache and
   // rebuilds JSModuleRecord from the cached module_info (Bun__analyzeTranspiledModule)
   // instead of re-parsing. If the record is wrong, named imports would be
-  // undefined or the count would mismatch.
+  // undefined or the count would mismatch. The names are long enough that the
+  // record's string table passes 64 KB and stores its offsets as u32.
   const N = 2000;
+  const P = Buffer.alloc(40, "p").toString();
   let big = "";
-  for (let i = 0; i < N; i++) big += `export function f${i}(x){return x+${i};}\n`;
+  for (let i = 0; i < N; i++) big += `export function f${i}${P}(x){return x+${i};}\n`;
   big += `export const COUNT = ${N};\n`;
 
   const tBody = (name: string) => `
     import { test, expect } from "bun:test";
-    import { f0, f1, f${N - 1}, COUNT } from "./big";
+    import { f0${P}, f1${P}, f${N - 1}${P}, COUNT } from "./big";
     import * as all from "./big";
     test("${name}", () => {
-      expect(f0(1)).toBe(1);
-      expect(f1(1)).toBe(2);
-      expect(f${N - 1}(1)).toBe(${N});
+      expect(f0${P}(1)).toBe(1);
+      expect(f1${P}(1)).toBe(2);
+      expect(f${N - 1}${P}(1)).toBe(${N});
       expect(COUNT).toBe(${N});
       expect(Object.keys(all).length).toBe(${N + 1});
     });

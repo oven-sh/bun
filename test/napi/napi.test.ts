@@ -339,6 +339,30 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("allows creating a handle scope in the finalizer", async () => {
       await checkSameOutput("test_napi_handle_scope_finalizer", []);
     });
+    it("napi_delete_reference cancels the finalizer the GC already queued", async () => {
+      // Modules built against a released Node-API version get their finalizers
+      // run from the event loop, after the GC. An addon that deletes the
+      // reference in between has usually freed the native object too, so the
+      // finalizer must not run any more (Node dequeues it). Bun used to run it.
+      const output = await checkSameOutput("test_delete_ref_after_collect", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "napi_wrap: collected before delete: true, finalized after delete: 0",
+        "napi_add_finalizer: collected before delete: true, finalized after delete: 0",
+        "resolved to undefined",
+      ]);
+    });
+    it("a parent's queued finalizer can delete the references of children collected by the same GC", async () => {
+      // Whether the children's finalizers are queued before or after the
+      // parent's depends on the order the runtime finds the dead wrappers in,
+      // so the fixture tries both orders. In either, no child's finalizer may
+      // run after the parent deleted the child's reference.
+      const output = await checkSameOutput("test_delete_ref_after_collect_parent_and_children", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "parent created before children: parent collected: true, parent finalized: true, children finalized after delete: 0",
+        "parent created after children: parent collected: true, parent finalized: true, children finalized after delete: 0",
+        "resolved to undefined",
+      ]);
+    });
     it("prevents underflow when unref called on zero refcount", async () => {
       // This tests the fix for napi_reference_unref underflow protection
       await checkSameOutput("test_ref_unref_underflow", []);
@@ -701,6 +725,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toBe("success!");
     });
 
+    it("runs the finalizer before freeing the function, so the finalizer can still use the handle", async () => {
+      // napi_ok = 0, napi_invalid_arg = 1 (no thread reference is left to release).
+      const result = await checkSameOutput("test_threadsafe_function_finalizer_uses_handle", []);
+      expect(result).toContain(
+        "finalizer saw: context: status=0 matches=1, hint is context=1, data matches=1, unref status=0, release status=1",
+      );
+    });
+
     it.each([0, 3])(
       "runs the finalizer and exits when the last reference is released after abort (%d queued items)",
       async queued => {
@@ -712,6 +744,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("wakes blocked producers, runs the finalizer and exits when aborted with a bounded queue", async () => {
       const result = await checkSameOutput("test_threadsafe_function_abort_blocked_producers", []);
       expect(result).toContain("finalized: true");
+    });
+
+    // An abort finalizes from its own dispatch, like Node: it does not wait for
+    // the references other threads still hold (they are told to make no further
+    // calls, so they may never release). The late release of such a reference
+    // reports napi_ok (0) and frees the function.
+    it("runs the finalizer on abort while another thread still holds a reference", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_with_outstanding_ref", []);
+      expect(result).toContain("finalized: true\nreleased after finalize: true status: 0");
     });
 
     // A full bounded queue must not hide that the function is closing: the call

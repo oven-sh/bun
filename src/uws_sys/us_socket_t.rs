@@ -152,11 +152,9 @@ impl us_socket_t {
             c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
-            let errno = bun_errno::get_errno(length);
-            debug_assert!(errno != bun_errno::E::SUCCESS);
-            return Err(crate::Error::Sys(
-                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
-            ));
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
+                bun_errno::last_error() as u16,
+            )));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])
@@ -170,11 +168,9 @@ impl us_socket_t {
             c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
         }
         if length < 0 {
-            let errno = bun_errno::get_errno(length);
-            debug_assert!(errno != bun_errno::E::SUCCESS);
-            return Err(crate::Error::Sys(
-                bun_errno::SystemErrno::init(errno as i64).unwrap_or(bun_errno::SystemErrno::EIO),
-            ));
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
+                bun_errno::last_error() as u16,
+            )));
         }
         debug_assert!(buf.len() >= length as usize);
         Ok(&buf[..usize::try_from(length).expect("int cast")])

@@ -155,6 +155,7 @@ static void pipeToLoopStep(JSGlobalObject* globalObject, JSStreamPipeToOperation
     auto* runtime = JSStreamsRuntime::from(globalObject);
     if (*desiredSize <= 0) {
         registerPipeReaction(globalObject, writer->readyPromise(globalObject), runtime->onPipeWriterReadyFulfilled(), nullptr, op);
+        RETURN_IF_EXCEPTION(scope, );
         return;
     }
     auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::PipeTo, op);
@@ -587,6 +588,7 @@ void startPipeToOperation(JSGlobalObject* globalObject, JSStreamPipeToOperation*
         auto* boundAlgorithm = JSBoundFunction::create(vm, globalObject, runtime->boundPipeAbortAlgorithm(), jsUndefined(), ArgList(boundArguments), 1, nullptr, sourceCode);
         RETURN_IF_EXCEPTION(scope, );
         op->m_abortAlgorithmId = WebCore::AbortSignal::addAbortAlgorithmToSignal(signal, WebCore::JSAbortAlgorithm::create(vm, boundAlgorithm));
+        RETURN_IF_EXCEPTION(scope, );
     }
 
     const auto* reader = op->m_reader.get();

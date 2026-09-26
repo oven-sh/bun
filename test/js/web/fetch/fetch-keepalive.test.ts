@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tls } from "harness";
+import { once } from "node:events";
+import { createServer } from "node:net";
 
 test("keepalive", async () => {
   using server = Bun.serve({
@@ -36,7 +38,7 @@ test("keepalive", async () => {
   }
 });
 
-test("fetch does not reuse a pooled TLS connection for a request with a different Host header", async () => {
+test("fetch reuses a pooled TLS connection across requests with different Host headers", async () => {
   using server = Bun.serve({
     port: 0,
     tls,
@@ -58,19 +60,14 @@ test("fetch does not reuse a pooled TLS connection for a request with a differen
     return await res.text();
   };
 
-  // Two requests whose TLS handshake used the Host-header override
-  // "wrong.example" for SNI/certificate verification share one pooled
-  // connection (legitimate keep-alive still works).
-  const overrideA = await get({ Host: "wrong.example" });
-  const overrideB = await get({ Host: "wrong.example" });
-  expect(overrideB).toBe(overrideA);
-
-  // A request without the override expects the server identity to match
-  // url.hostname ("localhost"), so it must not be handed the connection
-  // that was only ever negotiated as "wrong.example". It has to open a new
-  // connection, which cannot have the same client port.
-  const plain = await get();
-  expect(plain).not.toBe(overrideA);
+  // The TLS handshake is keyed to the URL host (SNI and certificate
+  // verification both use url.hostname). A request-level Host header is only
+  // an HTTP field, so three requests with differing Host headers share one
+  // pooled connection.
+  const first = await get({ Host: "wrong.example" });
+  const second = await get({ Host: "another.example" });
+  const third = await get();
+  expect({ second, third }).toEqual({ second: first, third: first });
 });
 
 // Whether a completed response leaves its connection in the keep-alive pool is
@@ -702,3 +699,37 @@ for (const [label, earlyReply, body, first, onWindows] of earlyReplyCases) {
     });
   });
 }
+
+test.skipIf(isWindows)("a full keep-alive pool evicts the longest-idle connection", async () => {
+  function makeServer() {
+    let connections = 0;
+    const srv = createServer(sock => {
+      connections++;
+      let buf = "";
+      sock.on("error", () => {});
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        let i: number;
+        while ((i = buf.indexOf("\r\n\r\n")) >= 0) {
+          buf = buf.slice(i + 4);
+          sock.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        }
+      });
+    });
+    return { srv, connections: () => connections };
+  }
+  // One more distinct origin than the pool holds (64). Without eviction the
+  // last connection is closed instead of parked and its second request
+  // opens a new one.
+  const servers = Array.from({ length: 65 }, () => makeServer());
+  for (const s of servers) s.srv.listen(0, "127.0.0.1");
+  await Promise.all(servers.map(s => once(s.srv, "listening")));
+  try {
+    const urls = servers.map(s => `http://127.0.0.1:${(s.srv.address() as import("net").AddressInfo).port}/x`);
+    for (const url of urls) expect(await (await fetch(url)).text()).toBe("ok");
+    expect(await (await fetch(urls[64])).text()).toBe("ok");
+    expect(servers[64].connections()).toBe(1);
+  } finally {
+    for (const s of servers) s.srv.close();
+  }
+});

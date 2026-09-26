@@ -1,9 +1,10 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
 use bun_core::StackCheck;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
-    RangeErrorOptions,
+    CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer,
+    RangeErrorOptions, StringJsc as _,
 };
 // Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
@@ -11,13 +12,6 @@ use bun_jsc::{
 use crate::node::StringOrBuffer;
 use bun_md::parser::{MAX_INPUT_LEN, ParserError};
 use bun_md::root as md;
-
-// `bun_core::String::create_utf8_for_js` lives in `bun_jsc::bun_string_jsc`
-// (tier-6), not on `bun_core::String` itself.
-#[inline]
-fn create_utf8_for_js(global: &JSGlobalObject, utf8: &[u8]) -> JsResult<JSValue> {
-    bun_jsc::bun_string_jsc::create_utf8_for_js(global, utf8)
-}
 
 #[inline]
 fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResult<()> {
@@ -70,28 +64,14 @@ fn parser_err_to_js(
     }
 }
 
-struct PinnedView(ArrayBuffer);
-
-impl PinnedView {
-    fn pin(global: &JSGlobalObject, buffer: &StringOrBuffer) -> JsResult<Option<Self>> {
-        let Some(b) = buffer.buffer() else {
-            return Ok(None);
-        };
-        match b.buffer.value.as_pinned_arraybuffer(global) {
-            Some(pinned) => Ok(Some(Self(pinned))),
-            None => Err(global.throw_out_of_memory()),
-        }
-    }
-
-    #[inline]
-    fn slice(&self) -> &[u8] {
-        self.0.byte_slice()
-    }
-}
-
-impl Drop for PinnedView {
-    fn drop(&mut self) {
-        self.0.unpin();
+/// Pins a buffer input for the render, which can re-enter JS; `None` for a string.
+fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<PinnedArrayBuffer>> {
+    let StringOrBuffer::Buffer(buffer) = input else {
+        return Ok(None);
+    };
+    match PinnedArrayBuffer::pin(global, buffer.buffer.value) {
+        Some(pinned) => Ok(Some(pinned)),
+        None => Err(global.throw_out_of_memory()),
     }
 }
 
@@ -148,7 +128,7 @@ pub(crate) fn render_to_ansi(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -199,7 +179,7 @@ pub(crate) fn render_to_ansi(
         Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
 
-    create_utf8_for_js(global_this, &result)
+    bun_string_jsc::create_utf8_for_js(global_this, &result)
 }
 
 #[bun_jsc::host_fn]
@@ -216,7 +196,7 @@ fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -229,7 +209,7 @@ fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
         Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
     };
 
-    create_utf8_for_js(global_this, &result)
+    bun_string_jsc::create_utf8_for_js(global_this, &result)
 }
 
 fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<md::Options> {
@@ -319,7 +299,7 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -348,7 +328,7 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
     // Return accumulated result
     let result = js_renderer.get_result();
-    create_utf8_for_js(global_this, result)
+    bun_string_jsc::create_utf8_for_js(global_this, result)
 }
 
 /// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
@@ -412,7 +392,7 @@ fn render_ast(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let pinned = pin(global_this, &buffer)?;
     let input: &[u8] = match &pinned {
         Some(p) => p.slice(),
         None => buffer.slice(),
@@ -803,7 +783,7 @@ impl<'a> ParseRenderer<'a> {
         match block_type {
             md::BlockType::H => {
                 if let Some(s) = slug {
-                    props.put(g, b"id", create_utf8_for_js(g, &s)?);
+                    props.put(g, b"id", bun_string_jsc::create_utf8_for_js(g, &s)?);
                 }
             }
             md::BlockType::Ol => {
@@ -823,14 +803,14 @@ impl<'a> ParseRenderer<'a> {
                 if entry.flags & md::BLOCK_FENCED_CODE != 0 {
                     let lang = extract_language(self.src_text, entry.data);
                     if !lang.is_empty() {
-                        props.put(g, b"language", create_utf8_for_js(g, lang)?);
+                        props.put(g, b"language", bun_string_jsc::create_utf8_for_js(g, lang)?);
                     }
                 }
             }
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(entry.data);
                 if let Some(align_str) = md::types::alignment_name(alignment) {
-                    props.put(g, b"align", create_utf8_for_js(g, align_str)?);
+                    props.put(g, b"align", bun_core::String::static_(align_str).to_js(g)?);
                 }
             }
             _ => {}
@@ -921,19 +901,39 @@ impl<'a> ParseRenderer<'a> {
         // Set metadata props
         match span_type {
             md::SpanType::A => {
-                props.put(g, b"href", create_utf8_for_js(g, &entry.href)?);
+                props.put(
+                    g,
+                    b"href",
+                    bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
                 if !entry.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, &entry.title)?);
+                    props.put(
+                        g,
+                        b"title",
+                        bun_string_jsc::create_utf8_for_js(g, &entry.title)?,
+                    );
                 }
             }
             md::SpanType::Img => {
-                props.put(g, b"src", create_utf8_for_js(g, &entry.href)?);
+                props.put(
+                    g,
+                    b"src",
+                    bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
                 if !entry.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, &entry.title)?);
+                    props.put(
+                        g,
+                        b"title",
+                        bun_string_jsc::create_utf8_for_js(g, &entry.title)?,
+                    );
                 }
             }
             md::SpanType::Wikilink => {
-                props.put(g, b"target", create_utf8_for_js(g, &entry.href)?);
+                props.put(
+                    g,
+                    b"target",
+                    bun_string_jsc::create_utf8_for_js(g, &entry.href)?,
+                );
             }
             md::SpanType::LatexmathDisplay => {
                 props.put(g, b"display", JSValue::TRUE);
@@ -955,12 +955,12 @@ impl<'a> ParseRenderer<'a> {
                 for i in 0..len {
                     let child = entry.children.get_index(g, i as u32)?;
                     if child.is_string() {
-                        let str = child.to_slice(g)?;
+                        let str = child.to_utf8(g)?;
                         let _ = alt_buf.extend_from_slice(str.slice());
                     }
                 }
                 if !alt_buf.is_empty() {
-                    props.put(g, b"alt", create_utf8_for_js(g, &alt_buf)?);
+                    props.put(g, b"alt", bun_string_jsc::create_utf8_for_js(g, &alt_buf)?);
                 }
             }
         } else {
@@ -1010,12 +1010,12 @@ impl<'a> ParseRenderer<'a> {
                 js_array_push(parent_children, g, obj)?;
             }
             md::TextType::Softbr => {
-                let str = create_utf8_for_js(g, b"\n")?;
+                let str = bun_core::String::static_("\n").to_js(g)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
             md::TextType::NullChar => {
-                let str = create_utf8_for_js(g, b"\xEF\xBF\xBD")?;
+                let str = bun_string_jsc::create_utf8_for_js(g, b"\xEF\xBF\xBD")?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
@@ -1023,12 +1023,12 @@ impl<'a> ParseRenderer<'a> {
                 let mut buf = [0u8; 8];
                 let decoded =
                     md::helpers::decode_entity_to_utf8(content, &mut buf).unwrap_or(content);
-                let str = create_utf8_for_js(g, decoded)?;
+                let str = bun_string_jsc::create_utf8_for_js(g, decoded)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
             _ => {
-                let str = create_utf8_for_js(g, content)?;
+                let str = bun_string_jsc::create_utf8_for_js(g, content)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
@@ -1231,7 +1231,7 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         // Convert children to JS string
-        let children_js = create_utf8_for_js(self.global_object, children)?;
+        let children_js = bun_string_jsc::create_utf8_for_js(self.global_object, children)?;
 
         // Call the JS callback
         let result = if let Some(m) = meta {
@@ -1243,7 +1243,7 @@ impl<'a> JsCallbackRenderer<'a> {
         if result.is_undefined_or_null() {
             return Ok(()); // callback returned null/undefined → omit element
         }
-        let slice = result.to_slice(self.global_object)?;
+        let slice = result.to_utf8(self.global_object)?;
         self.append_to_top(slice.slice())?;
         Ok(())
     }
@@ -1385,13 +1385,13 @@ impl<'a> JsCallbackRenderer<'a> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(self.global_object.throw_stack_overflow());
         }
-        let text_js = create_utf8_for_js(self.global_object, content)?;
+        let text_js = bun_string_jsc::create_utf8_for_js(self.global_object, content)?;
         let result =
             self.callbacks
                 .text
                 .call(self.global_object, JSValue::UNDEFINED, &[text_js])?;
         if !result.is_undefined_or_null() {
-            let slice = result.to_slice(self.global_object)?;
+            let slice = result.to_utf8(self.global_object)?;
             self.append_to_top(slice.slice())?;
         }
         Ok(())
@@ -1503,7 +1503,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 let obj = JSValue::create_empty_object(g, field_count);
                 obj.put(g, b"level", JSValue::js_number(data as f64));
                 if let Some(s) = slug {
-                    obj.put(g, b"id", create_utf8_for_js(g, s)?);
+                    obj.put(g, b"id", bun_string_jsc::create_utf8_for_js(g, s)?);
                 }
                 Ok(Some(obj))
             }
@@ -1530,7 +1530,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     let lang = extract_language(self.src_text, data);
                     if !lang.is_empty() {
                         let obj = JSValue::create_empty_object(g, 1);
-                        obj.put(g, b"language", create_utf8_for_js(g, lang)?);
+                        obj.put(g, b"language", bun_string_jsc::create_utf8_for_js(g, lang)?);
                         return Ok(Some(obj));
                     }
                 }
@@ -1539,7 +1539,7 @@ impl<'a> JsCallbackRenderer<'a> {
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(data);
                 let align_js = if let Some(align_str) = md::types::alignment_name(alignment) {
-                    create_utf8_for_js(g, align_str)?
+                    bun_core::String::static_(align_str).to_js(g)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1592,9 +1592,9 @@ impl<'a> JsCallbackRenderer<'a> {
         let g = self.global_object;
         match span_type {
             md::SpanType::A => {
-                let href = create_utf8_for_js(g, href)?;
+                let href = bun_string_jsc::create_utf8_for_js(g, href)?;
                 let title = if !title.is_empty() {
-                    create_utf8_for_js(g, title)?
+                    bun_string_jsc::create_utf8_for_js(g, title)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1607,9 +1607,9 @@ impl<'a> JsCallbackRenderer<'a> {
                 // second slot, so just fall back to the generic path here —
                 // images are rare enough that it doesn't matter.
                 let obj = JSValue::create_empty_object(g, 2);
-                obj.put(g, b"src", create_utf8_for_js(g, href)?);
+                obj.put(g, b"src", bun_string_jsc::create_utf8_for_js(g, href)?);
                 if !title.is_empty() {
-                    obj.put(g, b"title", create_utf8_for_js(g, title)?);
+                    obj.put(g, b"title", bun_string_jsc::create_utf8_for_js(g, title)?);
                 }
                 Ok(Some(obj))
             }

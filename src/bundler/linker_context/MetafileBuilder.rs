@@ -228,6 +228,14 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
             }
         }
     }
+    // ...and live files that contribute no code to any chunk (every part
+    // tree-shaken), which esbuild lists too.
+    for source_index in c.graph.reachable_files.slice() {
+        let i = source_index.get() as usize;
+        if i < sources.len() && i != 0 && c.graph.files_live.is_set(i) {
+            seen_sources.set(i);
+        }
+    }
 
     // Write inputs
     let mut source_index: u32 = 0;

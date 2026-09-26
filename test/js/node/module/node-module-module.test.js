@@ -1,3 +1,4 @@
+import "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
@@ -832,6 +833,25 @@ console.log("survived", require("./late.js"));`,
       delete require.cache["util/types"];
     }
   });
+  // https://github.com/oven-sh/bun/issues/40551
+  test("require.cache does not expose builtins from the ESM registry", () => {
+    // `fs` and `bun:sqlite` are ESM-imported at the top of this file, so the
+    // ESM registry holds "node:fs" and "bun:sqlite". Node.js never puts
+    // builtins in require.cache; serving the frozen module namespace object
+    // here breaks require-in-the-middle consumers (dd-trace, OpenTelemetry)
+    // that patch cached exports.
+    expect(require.cache["node:fs"]).toBeUndefined();
+    expect("node:fs" in require.cache).toBe(false);
+    expect(Object.getOwnPropertyDescriptor(require.cache, "node:fs")).toBeUndefined();
+    expect(Object.keys(require.cache).filter(k => k.startsWith("node:"))).toEqual([]);
+    // bun:* builtins have the same frozen-namespace hazard. Other bun: keys
+    // can legitimately be in require.cache via require() (for example the
+    // harness requires "bun:jsc"), so only assert on the ESM-only import.
+    expect(require.cache["bun:sqlite"]).toBeUndefined();
+    expect("bun:sqlite" in require.cache).toBe(false);
+    expect(Object.getOwnPropertyDescriptor(require.cache, "bun:sqlite")).toBeUndefined();
+    expect(Object.keys(require.cache)).not.toContain("bun:sqlite");
+  });
   test("require a cjs file uses the 'module.exports' export", () => {
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });
@@ -902,5 +922,29 @@ console.log("survived", require("./late.js"));`,
    ./j.cjs (seen)
    ./k.cjs (seen)`);
     expect(await proc.exited).toBe(0);
+  });
+
+  test("new Module().exports survives object spread", async () => {
+    // exports was built with inline capacity 0, so spreading it hit JSC's
+    // tryCreateObjectViaCloning hasInlineStorage() debug assert. Run in a
+    // subprocess so a regressing assert shows up as missing stdout rather than
+    // killing the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const Module = require("node:module");
+         const m = new Module("x");
+         m.exports.a = 1;
+         console.log(JSON.stringify({ ...m.exports }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe('{"a":1}');
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

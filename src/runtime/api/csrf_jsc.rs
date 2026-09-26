@@ -2,7 +2,7 @@
 //! `generate()`/`verify()` halves stay in `src/csrf/`.
 
 use bun_boringssl_sys as boring;
-use bun_core::Utf8Bytes;
+use bun_core::{Utf8Bytes, fmt as bun_fmt};
 use bun_csrf as csrf;
 use bun_jsc::{CallFrame, IntegerRange, JSGlobalObject, JSValue, JsResult};
 
@@ -21,7 +21,7 @@ fn algorithm_from_js_case_insensitive(
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
-/// `expiresIn` / `maxAge`. NaN maps to the default, and `0` would mean "no expiry".
+/// `expiresIn` / `maxAge`. `0` means "no expiry".
 fn get_optional_duration_ms(
     target: JSValue,
     global: &JSGlobalObject,
@@ -30,6 +30,18 @@ fn get_optional_duration_ms(
     let Some(value) = target.get(global, field_name)? else {
         return Ok(None);
     };
+    // validate_integer_range maps NaN to the default. A NaN duration is a
+    // caller-side bug, and the 24h default can be laxer than the intended one.
+    if value.is_number() && value.as_number().is_nan() {
+        return Err(global.throw_range_error(
+            value.as_number(),
+            bun_fmt::OutOfRangeOptions {
+                field_name,
+                msg: b"an integer",
+                ..Default::default()
+            },
+        ));
+    }
     Ok(Some(global.validate_integer_range::<u64>(
         value,
         csrf::DEFAULT_EXPIRATION_MS,

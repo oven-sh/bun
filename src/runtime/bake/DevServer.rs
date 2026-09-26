@@ -2055,7 +2055,11 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                 if !dev.bundling_failures.is_empty() {
                     // Trace the graph to see if there are any failures that are
                     // reachable by this route.
-                    match check_route_failures(dev, route_bundle_index, ctx.to_dev_response())? {
+                    match check_route_failures(
+                        dev,
+                        route_bundle_index,
+                        Some(ctx.to_dev_response()),
+                    )? {
                         CheckResult::Stop => return Ok(()),
                         CheckResult::Ok => {} // Errors were cleared or not in the way.
                         CheckResult::Rebuild => {
@@ -2218,12 +2222,15 @@ enum CheckResult {
     Rebuild,
 }
 
+/// Without a `resp`, a failure that the route reaches always means `Rebuild`.
 fn check_route_failures(
     dev: &mut DevServer,
     route_bundle_index: route_bundle::Index,
-    resp: DevResponse,
+    resp: Option<DevResponse>,
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
+    // The trace collects into this list, which still holds what the last bundle added.
+    dev.incremental_result.failures_added.clear();
     // Note: erase to a raw pointer so the deferred cleanup only fires on
     // scope exit when no other borrow of `dev` is live.
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
@@ -2244,7 +2251,12 @@ fn check_route_failures(
     )?;
     if !dev.incremental_result.failures_added.is_empty() {
         // See comment on this field for information
-        if !dev.assume_perfect_incremental_bundling {
+        let resp = if dev.assume_perfect_incremental_bundling {
+            resp
+        } else {
+            None
+        };
+        let Some(resp) = resp else {
             // Cache bust EVERYTHING reachable
             {
                 let mut it = gts.client_bits.iterator::<true, true>();
@@ -2259,7 +2271,7 @@ fn check_route_failures(
                 }
             }
             return Ok(CheckResult::Rebuild);
-        }
+        };
 
         // SAFETY: `send_serialized_failures` does not mutate
         // `incremental_result.failures_added`; reborrow through raw ptr to
@@ -3800,14 +3812,14 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
     }
 }
 
-fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
-    if !current_bundle.requests.first.is_null() {
+fn abort_deferred_requests(requests: &mut deferred_request::List) {
+    if !requests.first.is_null() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
         bun_core::debug!(
-            "current_bundle.requests.first != null. this leaves pending requests without an error page!",
+            "requests.first != null. this leaves pending requests without an error page!",
         );
     }
-    while let Some(node) = current_bundle.requests.pop_first() {
+    while let Some(node) = requests.pop_first() {
         // SAFETY: pop_first returns a live `*mut Node<T>`; `data` was
         // initialized by `defer_request`.
         let req = unsafe { (*node).data.assume_init_mut() };
@@ -3878,7 +3890,7 @@ pub(super) fn finalize_bundle(
         // SAFETY: see `current_bundle!` SAFETY above; this `defer!` runs
         // before the outer cleanup guard (LIFO), so `current_bundle_ptr` is
         // still live and no borrow of `*current_bundle_ptr` remains.
-        unsafe { drain_current_bundle_requests(&mut *current_bundle_ptr_defer) };
+        unsafe { abort_deferred_requests(&mut (*current_bundle_ptr_defer).requests) };
     };
 
     let _lock = dev.graph_safety_lock.guard();
@@ -4812,11 +4824,27 @@ pub(super) fn finalize_bundle(
     // so the outer unlock guard sees a locked state again.
     scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
 
+    let requests = ::core::mem::take(&mut current_bundle!().requests);
+    let promise = ::core::mem::take(&mut current_bundle!().promise);
+    answer_deferred_requests(dev, requests, promise)
+}
+
+/// Marks the routes of these waiters as loaded, resolves the promise, and replays the requests.
+fn answer_deferred_requests(
+    dev: &mut DevServer,
+    requests: deferred_request::List,
+    mut promise: DeferredPromise,
+) -> JsResult<()> {
+    // An early return aborts the requests that it leaves in the list.
+    let mut requests = scopeguard::guard(requests, |mut requests| {
+        abort_deferred_requests(&mut requests)
+    });
+
     // Set all the deferred routes to the .loaded state up front
     {
-        let mut node = current_bundle!().requests.first;
+        let mut node = requests.first;
         while !node.is_null() {
-            // SAFETY: node is an intrusive list node valid while current_bundle.requests holds it;
+            // SAFETY: node is an intrusive list node valid while `requests` holds it;
             // `data` was initialized by `defer_request`.
             let n = unsafe { &*node };
             // SAFETY: `data` was initialized by `defer_request` before being linked.
@@ -4826,27 +4854,14 @@ pub(super) fn finalize_bundle(
         }
     }
 
-    if current_bundle!().promise.strong.has_value() {
-        // SAFETY: see `current_bundle!` SAFETY; guard runs before the outer `finalize_bundle_cleanup` defer.
-        // Note: copy the raw ptr so `defer!`'s by-ref capture does not
-        // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
-        let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
-        scopeguard::defer! {
-            // SAFETY: `cb_ptr_defer` points into `dev.current_bundle`, live until the outer `finalize_bundle_cleanup` defer runs.
-            unsafe { (*cb_ptr_defer).promise.deinit_idempotently() }
-        };
-        current_bundle!()
-            .promise
-            .set_route_bundle_state(dev, route_bundle::State::Loaded);
+    if promise.strong.has_value() {
+        promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
         let vm = dev.vm();
         let _exit = vm.enter_event_loop_scope();
-        current_bundle!()
-            .promise
-            .strong
-            .resolve(vm.global(), JSValue::TRUE)?;
+        promise.strong.resolve(vm.global(), JSValue::TRUE)?;
     }
 
-    while let Some(node) = current_bundle!().requests.pop_first() {
+    while let Some(node) = requests.pop_first() {
         // SAFETY: `pop_first` hands back ownership of the intrusive node;
         // `data` was initialized by `defer_request`.
         let req = unsafe { (*node).data.assume_init_mut() };
@@ -4970,18 +4985,46 @@ impl DevServer {
             // conflicting with the `keys()` iterator borrow.
             for i in 0..self.next_bundle.route_queue.len() {
                 let route_bundle_index = self.next_bundle.route_queue.keys()[i];
-                let rb = self.route_bundle_ptr(route_bundle_index);
-                rb.server_state = route_bundle::State::Bundling;
+                let entry_point_count = entry_points.set.len();
                 self.append_route_entry_points_if_not_stale(&mut entry_points, route_bundle_index)
                     .expect("oom");
+
+                // No entry point is stale, like in the `Unqueued` arm of `ensure_route_is_bundled`.
+                if entry_points.set.len() == entry_point_count
+                    && !self.bundling_failures.is_empty()
+                    && matches!(
+                        check_route_failures(self, route_bundle_index, None).expect("oom"),
+                        CheckResult::Rebuild
+                    )
+                {
+                    self.append_route_entry_points_if_not_stale(
+                        &mut entry_points,
+                        route_bundle_index,
+                    )
+                    .expect("oom");
+                }
             }
+
+            let state = if entry_points.set.is_empty() {
+                route_bundle::State::Loaded
+            } else {
+                route_bundle::State::Bundling
+            };
+            for i in 0..self.next_bundle.route_queue.len() {
+                let route_bundle_index = self.next_bundle.route_queue.keys()[i];
+                self.route_bundle_ptr(route_bundle_index).server_state = state;
+            }
+            self.next_bundle.route_queue.clear_retaining_capacity();
 
             if !entry_points.set.is_empty() {
                 self.start_async_bundle(entry_points, is_reload, timer)
                     .expect("oom");
+            } else {
+                // No bundle starts, so nothing else answers the requests that waited for it.
+                let requests = ::core::mem::take(&mut self.next_bundle.requests);
+                let promise = ::core::mem::take(&mut self.next_bundle.promise);
+                crate::dispatch::fold(answer_deferred_requests(self, requests, promise));
             }
-
-            self.next_bundle.route_queue.clear_retaining_capacity();
         }
     }
 

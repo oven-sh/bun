@@ -27,26 +27,12 @@ unsafe extern "C" {
 }
 
 /// Local extension surface for `JSValue` methods not yet on `bun_jsc::JSValue`.
-/// (`with_async_context_if_needed` graduated to an inherent method upstream.)
+/// (`with_async_context_if_needed` and `is_safe_integer` graduated to inherent methods upstream.)
 trait JSValueCryptoExt {
-    fn is_safe_integer(self) -> bool;
     fn call_next_tick_2(self, global: &JSGlobalObject, a: JSValue, b: JSValue) -> JsResult<()>;
 }
 
 impl JSValueCryptoExt for JSValue {
-    /// `Number.isSafeInteger` semantics.
-    #[inline]
-    fn is_safe_integer(self) -> bool {
-        if self.is_int32() {
-            return true;
-        }
-        if !self.is_double() {
-            return false;
-        }
-        let d = self.as_double();
-        d.trunc() == d && d.abs() <= jsc::MAX_SAFE_INTEGER as f64
-    }
-
     #[inline]
     fn call_next_tick_2(self, global: &JSGlobalObject, a: JSValue, b: JSValue) -> JsResult<()> {
         jsc::from_js_host_call_generic(global, || Bun__Process__queueNextTick2(global, self, a, b))

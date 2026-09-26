@@ -96,7 +96,7 @@ export const locations = {
  * written into that tool's section of the generated scripts, which is
  * how it renames the images. It means nothing else.
  */
-const prefetchTriggerVersion = 2;
+const prefetchTriggerVersion = 3;
 
 export const pins = {
   nodejs: { version: "26.3.0", nodeGypInstallVersion: "11" },

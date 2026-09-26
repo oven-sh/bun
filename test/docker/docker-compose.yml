@@ -182,8 +182,8 @@ services:
       - redis-data:/data
 
   # MinIO (S3) Service
-  # The image is built from source and starts with the `buntest` bucket
-  # (see Dockerfile.minio).
+  # The image has Alpine's package of MinIO and starts with the `buntest`
+  # bucket (see Dockerfile.minio).
   minio:
     build:
       context: .

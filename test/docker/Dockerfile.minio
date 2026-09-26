@@ -1,18 +1,12 @@
 # MinIO distributes the community edition as source only. It has removed its
-# images from Docker Hub and quay.io, and its binaries from dl.min.io. The Go
-# module proxy keeps the source of the last release, RELEASE.2025-10-15T17-29-55Z
-# (commit 9e49d5e7a648), and the checksum database verifies it.
+# images from Docker Hub and quay.io, and its binaries from dl.min.io. Alpine
+# 3.23 packages the last release, RELEASE.2025-10-15T17-29-55Z, for x86_64 and
+# aarch64.
 #
-# The base images are pinned by digest. A tag that moves misses the build
-# cache, and then every test machine compiles MinIO before it starts the service.
-FROM golang:1.24.13-alpine3.23@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191 AS build
-# The module and build caches are 2 GB. Keep them out of the cached layer.
-RUN CGO_ENABLED=0 go install -trimpath -ldflags "-s -w" \
-        github.com/minio/minio@v0.0.0-20251015172955-9e49d5e7a648 \
-    && go clean -cache -modcache
-
+# The base image is pinned by digest. A tag that moves misses the build cache,
+# and then every test machine installs the package before it starts the service.
 FROM alpine:3.23.6@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
-COPY --from=build /go/bin/minio /usr/local/bin/minio
+RUN apk add --no-cache minio
 
 # A directory in the root of the drive is a bucket. /data is a tmpfs
 # (docker-compose.yml), so the bucket the tests use is made at every start.

@@ -513,9 +513,8 @@ class DockerComposeHelper {
   async buildServices(): Promise<void> {
     // `compose build <service>` does nothing for a service with no `build:`
     // section, so there's no hardcoded list to keep in sync as services are
-    // converted. One service at a time: a bake machine has 2 CPUs, the MinIO
-    // image compiles for minutes, and the database images give their server
-    // 180 seconds to start while they build.
+    // converted. One service at a time: a bake machine has 2 CPUs, and the
+    // database images give their server 180 seconds to start while they build.
     console.log("Building all services with a build section...");
     const services = await this.exec(["config", "--services"]);
     if (services.exitCode !== 0) {
@@ -530,11 +529,35 @@ class DockerComposeHelper {
   }
 
   /**
+   * Throw unless every image the compose file names is on the machine.
+   */
+  async verifyImages(): Promise<void> {
+    const images = await this.exec(["config", "--images"]);
+    if (images.exitCode !== 0) {
+      throw new Error(`Failed to list images: ${images.stderr}`);
+    }
+    const missing: string[] = [];
+    for (const image of images.stdout.split(/\r?\n/).filter(name => name !== "")) {
+      const inspect = spawn({ cmd: ["docker", "image", "inspect", image], stdout: "ignore", stderr: "ignore" });
+      if ((await inspect.exited) !== 0) {
+        missing.push(image);
+      }
+    }
+    if (missing.length > 0) {
+      throw new Error(`Images missing after the pull and the build: ${missing.join(", ")}`);
+    }
+  }
+
+  /**
    * Prepare all images (pull and build) - useful for CI
+   *
+   * A pull or a build can pass and leave an image out (`pull_policy: never`
+   * with no `build:` section does), so what a bake publishes is checked.
    */
   async prepareImages(): Promise<void> {
     await this.pullImages();
     await this.buildServices();
+    await this.verifyImages();
   }
 }
 

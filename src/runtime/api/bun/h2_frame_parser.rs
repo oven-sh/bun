@@ -6317,7 +6317,16 @@ impl H2FrameParser {
         let stream_id = stream_id_arg.to_u32();
         if context_arg.is_empty_or_undefined_or_null() {
             // Release: a pushed stream torn down before its PUSH_PROMISE left has no reset
-            // dispatch coming, so the JS layer drops the context root explicitly.
+            // dispatch coming, so the JS layer drops the context root explicitly. Close the
+            // legacy entry as well: the peer never learned of the id, and a later frame on it
+            // (RST_STREAM, a zero WINDOW_UPDATE, DATA) must not reach the destroyed JS stream
+            // through the entry's own context and release the session's slot a second time.
+            if let Some(stream) = this.streams.get().get(&stream_id).copied() {
+                // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+                let stream = unsafe { &mut *stream };
+                stream.state = StreamState::CLOSED;
+                stream.free_resources::<false>(this);
+            }
             this.sctx.with_mut(|m| {
                 m.remove(&stream_id);
             });

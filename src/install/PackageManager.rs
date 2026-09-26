@@ -2128,7 +2128,10 @@ pub fn init(
         wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());
         wr!(integrity_pinned_packages, ArrayHashMap::default());
-        wr!(displaced_cache_trees, bun_threading::Guarded::init(Vec::new()));
+        wr!(
+            displaced_cache_trees,
+            bun_threading::Guarded::init(Vec::new())
+        );
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);
@@ -2592,7 +2595,10 @@ fn init_with_runtime_once(
         wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());
         wr!(integrity_pinned_packages, ArrayHashMap::default());
-        wr!(displaced_cache_trees, bun_threading::Guarded::init(Vec::new()));
+        wr!(
+            displaced_cache_trees,
+            bun_threading::Guarded::init(Vec::new())
+        );
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);

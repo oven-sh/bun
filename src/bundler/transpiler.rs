@@ -83,8 +83,7 @@ impl PluginRunner {
         &specifier[..colon]
     }
 
-    /// Cheap pre-filter that rules
-    /// out `./` / `../` / absolute paths before hitting the resolve hook.
+    /// Cheap pre-filter for extension, namespace, and bare-package plugin candidates.
     pub fn could_be_plugin(specifier: &[u8]) -> bool {
         if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
             let ext = &specifier[last_dot + 1..];
@@ -98,7 +97,8 @@ impl PluginRunner {
             }
         }
         !bun_paths::is_absolute(specifier)
-            && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
+            && (bun_core::strings::index_of_char_usize(specifier, b':').is_some()
+                || (!specifier.starts_with(b"./") && !specifier.starts_with(b"../")))
     }
 }
 

@@ -787,6 +787,43 @@ describe("bun", () => {
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
   });
+
+  test("absolute workspace path without glob syntax", async () => {
+    await using dir = tempDir("filter-absolute-ws", {
+      packages: {
+        app: {
+          "package.json": JSON.stringify({ name: "app", scripts: { build: "echo BUILD-app" } }),
+        },
+        legacy: {
+          "package.json": JSON.stringify({ name: "legacy", scripts: { build: "echo BUILD-legacy" } }),
+        },
+      },
+    });
+    // The absolute path is only known once the directory exists.
+    await Bun.write(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/app", join(dir, "packages", "legacy"), join(dir, "packages", "missing")],
+      }),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--workspaces", "build"],
+      cwd: dir,
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    // The missing absolute entry is skipped, like a missing relative entry.
+    expect({ app: stdout.includes("BUILD-app"), legacy: stdout.includes("BUILD-legacy"), exitCode }).toEqual({
+      app: true,
+      legacy: true,
+      exitCode: 0,
+    });
+  });
 });
 
 describe("selectors", () => {

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -578,5 +578,199 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     expect(outputDepth2.split("\n").length).toBeLessThan(outputNoDepth.split("\n").length);
 
     expect(outputDepth2).toContain("mime-db@");
+  });
+
+  describe("packages reachable through more than one path", () => {
+    // Workspace packages that only depend on each other, so `bun install` never
+    // contacts a registry. The root sorts before the `pkg-*`/`w*` names.
+    function workspaceFixture(name: string, dependencies: Record<string, string[]>) {
+      const files: Record<string, string> = {
+        "package.json": JSON.stringify({ name: "monorepo", private: true, workspaces: ["p/*"] }),
+      };
+      for (const [pkg, deps] of Object.entries(dependencies)) {
+        files[`p/${pkg}/package.json`] = JSON.stringify({
+          name: pkg,
+          version: "1.0.0",
+          dependencies: Object.fromEntries(deps.map(dep => [dep, "workspace:*"])),
+        });
+      }
+      return tempDir(name, files);
+    }
+
+    async function installAndWhy(cwd: string, args: string[]) {
+      await using install = spawn({
+        cmd: [bunExe(), "install", "--lockfile-only"],
+        cwd,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, installStderr, installExitCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
+      expect(installStderr).toContain("Saved lockfile");
+      expect(installExitCode).toBe(0);
+
+      await using why = spawn({
+        cmd: [bunExe(), ...cmd.split(" "), ...args],
+        cwd,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([why.stdout.text(), why.stderr.text(), why.exited]);
+      return {
+        // The tree prints spacer lines that are only a trailing prefix.
+        stdout: normalizeBunSnapshot(stdout)
+          .split("\n")
+          .map(line => line.trimEnd())
+          .join("\n"),
+        stderr,
+        exitCode,
+      };
+    }
+
+    // pkg-c is listed under pkg-x twice: it depends on pkg-x directly and on
+    // pkg-a, which depends on pkg-x.
+    const diamond = {
+      "pkg-x": [],
+      "pkg-a": ["pkg-x"],
+      "pkg-c": ["pkg-x", "pkg-a"],
+      "pkg-d": ["pkg-c"],
+      "pkg-f": ["pkg-d"],
+    };
+
+    it("prints the dependents of a package once and marks later occurrences as deduped", async () => {
+      using dir = workspaceFixture("why-deduped", diamond);
+
+      const { stdout, stderr, exitCode } = await installAndWhy(String(dir), ["pkg-x"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "pkg-x@workspace:p/pkg-x
+          ├─ monorepo
+          ├─ pkg-a@workspace (requires workspace:*)
+          │  └─ pkg-c@workspace (requires workspace:*)
+          │     └─ pkg-d@workspace (requires workspace:*)
+          │        └─ pkg-f@workspace (requires workspace:*)
+          │
+          └─ pkg-c@workspace (requires workspace:*)
+             └─ *deduped"
+      `);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    });
+
+    it("expands a deduped package again when --depth cut it off at a deeper occurrence", async () => {
+      using dir = workspaceFixture("why-deduped-depth", diamond);
+
+      const { stdout, stderr, exitCode } = await installAndWhy(String(dir), ["pkg-x", "--depth", "3"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "pkg-x@workspace:p/pkg-x
+          ├─ monorepo
+          ├─ pkg-a@workspace (requires workspace:*)
+          │  └─ pkg-c@workspace (requires workspace:*)
+          │     └─ pkg-d@workspace (requires workspace:*)
+          │        └─ (deeper dependencies hidden)
+          │
+          └─ pkg-c@workspace (requires workspace:*)
+             └─ pkg-d@workspace (requires workspace:*)
+                └─ pkg-f@workspace (requires workspace:*)"
+      `);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    });
+
+    // pkg-a and pkg-p depend on each other. Walking up from pkg-x, the cycle is
+    // first reached through pkg-l1 -> pkg-l2 -> pkg-a, where pkg-p's only
+    // dependent (pkg-a) is cut off as circular, and again through pkg-p itself,
+    // three levels closer to pkg-x.
+    const cycle = {
+      "pkg-x": [],
+      "pkg-l1": ["pkg-x"],
+      "pkg-l2": ["pkg-l1"],
+      "pkg-a": ["pkg-l2", "pkg-p"],
+      "pkg-p": ["pkg-a", "pkg-x"],
+      "pkg-q1": ["pkg-a"],
+      "pkg-q2": ["pkg-q1"],
+      "pkg-q3": ["pkg-q2"],
+    };
+
+    it("does not dedupe a package whose circular branch hides what --depth would show closer to the root", async () => {
+      using dir = workspaceFixture("why-deduped-cycle-depth", cycle);
+
+      // pkg-q3 only fits within the depth limit under the shorter chain.
+      const { stdout, stderr, exitCode } = await installAndWhy(String(dir), ["pkg-x", "--depth", "5"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "pkg-x@workspace:p/pkg-x
+          ├─ monorepo
+          ├─ pkg-l1@workspace (requires workspace:*)
+          │  └─ pkg-l2@workspace (requires workspace:*)
+          │     └─ pkg-a@workspace (requires workspace:*)
+          │        ├─ pkg-p@workspace (requires workspace:*)
+          │        │  └─ pkg-a@workspace (requires workspace:*)
+          │        │     └─ *circular
+          │        └─ pkg-q1@workspace (requires workspace:*)
+          │           └─ pkg-q2@workspace (requires workspace:*)
+          │              └─ (deeper dependencies hidden)
+          │
+          └─ pkg-p@workspace (requires workspace:*)
+             └─ pkg-a@workspace (requires workspace:*)
+                ├─ pkg-p@workspace (requires workspace:*)
+                │  └─ *circular
+                └─ pkg-q1@workspace (requires workspace:*)
+                   └─ pkg-q2@workspace (requires workspace:*)
+                      └─ pkg-q3@workspace (requires workspace:*)"
+      `);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    });
+
+    it("dedupes a package inside a cycle once its dependents were printed in full", async () => {
+      using dir = workspaceFixture("why-deduped-cycle", cycle);
+
+      const { stdout, stderr, exitCode } = await installAndWhy(String(dir), ["pkg-x"]);
+      expect(stdout).toMatchInlineSnapshot(`
+        "pkg-x@workspace:p/pkg-x
+          ├─ monorepo
+          ├─ pkg-l1@workspace (requires workspace:*)
+          │  └─ pkg-l2@workspace (requires workspace:*)
+          │     └─ pkg-a@workspace (requires workspace:*)
+          │        ├─ pkg-p@workspace (requires workspace:*)
+          │        │  └─ pkg-a@workspace (requires workspace:*)
+          │        │     └─ *circular
+          │        └─ pkg-q1@workspace (requires workspace:*)
+          │           └─ pkg-q2@workspace (requires workspace:*)
+          │              └─ pkg-q3@workspace (requires workspace:*)
+          │
+          └─ pkg-p@workspace (requires workspace:*)
+             └─ *deduped"
+      `);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    });
+
+    it("keeps the output linear when every package depends on the next two", async () => {
+      // w00 depends on w01 and w02, w01 on w02 and w03, and so on, so the
+      // number of dependency paths between w15 and any one package grows like
+      // the Fibonacci sequence.
+      const count = 16;
+      const name = (i: number) => `w${String(i).padStart(2, "0")}`;
+      const ladder: Record<string, string[]> = {};
+      for (let i = 0; i < count; i++) {
+        ladder[name(i)] = [i + 1, i + 2].filter(j => j < count).map(name);
+      }
+      using dir = workspaceFixture("why-ladder", ladder);
+
+      const { stdout, stderr, exitCode } = await installAndWhy(String(dir), [name(count - 1)]);
+      const lines = stdout.split("\n");
+      expect({
+        // w08 depends on w09 and w10, so it is listed under each of them, and
+        // each of those is expanded exactly once.
+        w08: lines.filter(line => line.includes("w08@workspace")).length,
+        // One marker each for w02 through w13. w00 and w01 have at most one line
+        // below them, so they are repeated instead, and w14 is only listed once
+        // because it only depends on w15.
+        deduped: lines.filter(line => line.endsWith("*deduped")).length,
+        stderr,
+        exitCode,
+      }).toEqual({ w08: 2, deduped: count - 4, stderr: "", exitCode: 0 });
+    });
   });
 });

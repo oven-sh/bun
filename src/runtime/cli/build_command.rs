@@ -1399,9 +1399,12 @@ pub(crate) fn expand_compile_includes(includes: &[Box<[u8]>]) -> Result<Vec<Box<
         #[cfg(not(windows))]
         let to_check: &[u8] = trimmed;
 
-        // Reject absolute patterns before stripping `./` or scanning.
-        // Absolute on all platforms: starts with `/`. Absolute on Windows: drive path like `C:\`.
-        let is_absolute = to_check.starts_with(b"/") || (to_check.len() > 1 && to_check[1] == b':');
+        // Patterns are relative to the cwd. `:` only makes a drive path on Windows.
+        #[cfg(windows)]
+        let is_absolute = to_check.starts_with(b"/")
+            || (to_check.len() > 1 && to_check[0].is_ascii_alphabetic() && to_check[1] == b':');
+        #[cfg(not(windows))]
+        let is_absolute = to_check.starts_with(b"/");
         if is_absolute {
             return Err(format!(
                 "--include pattern {} must be relative to cwd",

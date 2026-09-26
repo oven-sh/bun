@@ -16,7 +16,7 @@ To configure Bun's package manager globally, you can also create a `.bunfig.toml
 - `$HOME/.bunfig.toml`
 - `$XDG_CONFIG_HOME/.bunfig.toml`
 
-Only package manager commands (`bun install`, `bun add`, `bun remove`, `bun update`, `bun pm`, `bunx`, and so on) read the global file. If Bun finds both a global and a local `bunfig`, it loads both; keys set in the local file override the same keys in the global file. CLI flags override `bunfig` settings where applicable.
+Only package manager commands (`bun install`, `bun add`, `bun remove`, `bun update`, `bun pm`, `bunx`, and so on) read the global file. If Bun finds both a global and a local `bunfig`, it loads both; keys set in the local file override the same keys in the global file. CLI flags override `bunfig` settings where applicable. The exception is [`install.forceRegistry`](#install-forceregistry), which Bun reads from the global file only and which also overrides the `--registry` flag.
 
 ## Runtime
 
@@ -578,6 +578,38 @@ registry = { url = "https://registry.npmjs.org", token = "123456" }
 # set a username/password
 registry = "https://username:password@registry.npmjs.org"
 ```
+
+### `install.forceRegistry`
+
+Send **every** registry request of `bun install` to one registry. This setting overrides all other registry configuration: `install.registry`, `install.scopes`, `.npmrc`, `NPM_CONFIG_REGISTRY`, and the `--registry` flag.
+
+It is for centrally managed machines, where an administrator wants installs to use a company registry whatever a project configures. Set it in the `BUN_CONFIG_FORCE_REGISTRY` environment variable, or in your own `~/.bunfig.toml`:
+
+```toml title="~/.bunfig.toml" icon="settings"
+[install]
+forceRegistry = "https://npm.corp.example.com/"
+# or with auth
+forceRegistry = { url = "https://npm.corp.example.com/", token = "$CORP_NPM_TOKEN" }
+```
+
+Bun accepts `forceRegistry` only from `$XDG_CONFIG_HOME/.bunfig.toml` or `$HOME/.bunfig.toml`. It ignores the key in a project's `bunfig.toml` and prints a warning, so a repository cannot redirect the installs of the people who clone it. Bun reads `BUN_CONFIG_FORCE_REGISTRY` from the process environment only, not from a project's `.env` file. The environment variable wins over the bunfig value.
+
+When the forced registry overrides a registry that a project, an `.npmrc`, or `--registry` configures, `bun install` prints a note that names the forced registry and the setting that forces it.
+
+Bun takes the credentials for the forced registry from the first of these that is set:
+
+1. The `forceRegistry` value itself: `token`, `username` and `password`, or `user:pass@` in the URL.
+2. `--token`, then `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN`.
+3. An `.npmrc` entry for its host, for example `//npm.corp.example.com/:_authToken=...`.
+4. The credentials of a registry it replaces: the default registry, if it is on the same host and the forced registry does not change `https` to `http`, or a scoped registry with the same URL.
+
+Bun does not send a token that is configured for a different host to the forced registry.
+
+Prefer the environment variable on managed machines. `bun run` and `bun <file>` do not read `~/.bunfig.toml` (see [`bun run`](#bun-run) below), so the runtime auto-installer, which runs when a script imports a package that is not on disk, sees only the environment variable.
+
+The value of `BUN_CONFIG_FORCE_REGISTRY` must start with `http://` or `https://`. If it does not, Bun exits with an error. It does not fall back to the project configuration.
+
+`forceRegistry` is a configuration override, not a sandbox. It controls where Bun resolves package manifests and the tarballs of new resolutions. It does not rewrite dependency specifiers that name no registry (`git:`, `github:`, direct URLs). It also does not rewrite a full tarball URL that an existing `bun.lock` records for a package from a non-default registry. Delete the lockfile to resolve those packages again through the forced registry.
 
 ### `install.linkWorkspacePackages`
 

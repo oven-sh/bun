@@ -1379,6 +1379,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     let Api::BunInstall {
         default_registry,
         scoped,
+        force_registry,
         lockfile_path,
         save_lockfile_path,
         cache_directory,
@@ -1434,6 +1435,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         };
     }
     overlay!(
+        force_registry,
         lockfile_path,
         save_lockfile_path,
         cache_directory,
@@ -1917,7 +1919,7 @@ pub fn init(
 
     initialize_store();
 
-    {
+    let npmrc_auth = {
         // npmrc < bunfig < CLI
         let mut bunfig_install = ctx
             .install
@@ -1962,7 +1964,8 @@ pub fn init(
         ini::apply_registry_auth(&mut bunfig_install, &registry_auth);
         overlay_bunfig_install(&mut install, bunfig_install);
         ctx.install = Some(Box::new(install));
-    }
+        registry_auth
+    };
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     // Captured before `cli` is moved into `options.load(Some(cli), ...)` below.
     let cli_network_concurrency = cli.network_concurrency;
@@ -2243,6 +2246,7 @@ pub fn init(
             env,
             Some(cli),
             ctx.install.as_deref(),
+            &npmrc_auth,
             subcommand,
         )?;
 
@@ -2649,7 +2653,7 @@ fn init_with_runtime_once(
 
     match manager
         .options
-        .load(log, env, Some(cli), bun_install, Subcommand::Install)
+        .load(log, env, Some(cli), bun_install, &[], Subcommand::Install)
     {
         Ok(()) => {}
         Err(e) => {

@@ -1,7 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::JSValueTestExt;
-use super::FormatterTestExt;
-use bun_jsc::console_object::Formatter;
+use super::make_formatter;
 use bun_jsc::JsClass;
 use bun_core::strings;
 
@@ -32,7 +31,7 @@ pub(crate) fn to_throw(
             break 'brk JSValue::ZERO;
         }
         if value.is_undefined_or_null() || (!value.is_object() && !value.is_string()) {
-            let mut fmt = Formatter::new(global).with_quote_strings(true);
+            let mut fmt = make_formatter(global);
             return Err(global.throw(format_args!(
                 "Expected value must be string or Error: {}",
                 value.to_fmt(&mut fmt),
@@ -74,7 +73,7 @@ pub(crate) fn to_throw(
         }
 
         let result: JSValue = result_.unwrap();
-        let mut formatter = Formatter::new(global).with_quote_strings(true);
+        let mut formatter = make_formatter(global);
 
         if expected_value.is_empty() || expected_value.is_undefined() {
             let signature_no_args: &'static str = get_signature("toThrow", "", true);
@@ -231,7 +230,7 @@ pub(crate) fn to_throw(
             }
 
             // error: message from received error does not match expected string
-            let mut formatter = Formatter::new(global).with_quote_strings(true);
+            let mut formatter = make_formatter(global);
 
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
 
@@ -269,7 +268,7 @@ pub(crate) fn to_throw(
             }
 
             // error: message from received error does not match expected pattern
-            let mut formatter = Formatter::new(global).with_quote_strings(true);
+            let mut formatter = make_formatter(global);
 
             let mut formatter2 = super::make_formatter(global);
             if let Some(received_message) = received_message_opt {
@@ -303,7 +302,7 @@ pub(crate) fn to_throw(
                 return Ok(JSValue::UNDEFINED);
             }
 
-            let mut formatter = Formatter::new(global).with_quote_strings(true);
+            let mut formatter = make_formatter(global);
             let mut formatter2 = super::make_formatter(global);
             return throw!(
                 this,
@@ -328,7 +327,7 @@ pub(crate) fn to_throw(
             }
 
             // error: message from received error does not match expected error message.
-            let mut formatter = Formatter::new(global).with_quote_strings(true);
+            let mut formatter = make_formatter(global);
             let mut formatter2 = super::make_formatter(global);
 
             if let Some(received_message) = received_message_opt {
@@ -357,7 +356,7 @@ pub(crate) fn to_throw(
         }
 
         // error: received error not instance of received error constructor
-        let mut formatter = Formatter::new(global).with_quote_strings(true);
+        let mut formatter = make_formatter(global);
         let expected_class = expected_value.get_class_name(global)?;
         let received_class = result.get_class_name(global)?;
         let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
@@ -387,7 +386,7 @@ pub(crate) fn to_throw(
 
     // did not throw
     let result = return_value_from_function;
-    let mut formatter = Formatter::new(global).with_quote_strings(true);
+    let mut formatter = make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
     // `format_args!` only accepts literal fmt strings, so `received_line` is inlined at each site.
     // received_line = "Received function did not throw\nReceived value: <red>{f}<r>\n"

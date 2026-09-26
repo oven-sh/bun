@@ -212,6 +212,7 @@ CPP_DECL BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, J
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__getPrototype(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL BunString JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC::EncodedJSValue JSValue0);
+CPP_DECL uint8_t JSC__JSValue__hasErrorPrototype(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAggregateError(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAnyInt(JSC::EncodedJSValue JSValue0);

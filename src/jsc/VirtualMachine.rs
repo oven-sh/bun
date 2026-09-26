@@ -6729,7 +6729,7 @@ impl VirtualMachine {
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
-        use crate::console_object::{self, Tag, TagPayload};
+        use crate::console_object::{self, Tag, TagPayload, TagResult};
 
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
@@ -7179,11 +7179,21 @@ impl VirtualMachine {
             }
         } else if error_instance != JSValue::ZERO {
             // If you do `reportError([1,2,3])` we should still show something.
-            let tag = Tag::get_advanced(
+            // An object that arrives inside the `JSC::Exception` it was thrown with is shown too.
+            let error_instance =
+                Self::thrown_object_to_show(error_instance).unwrap_or(error_instance);
+            let tag = match Tag::get_advanced(
                 error_instance,
                 global_ref,
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
-            )?;
+            ) {
+                Ok(tag) => tag,
+                Err(_) if allow_side_effects => TagResult {
+                    tag: TagPayload::NativeCode,
+                    ..Default::default()
+                },
+                Err(err) => return Err(err.into()),
+            };
             if !matches!(tag.tag, TagPayload::NativeCode) {
                 let _ = if allow_ansi_color {
                     formatter.format::<true>(tag, writer, error_instance, global_ref)
@@ -7191,6 +7201,10 @@ impl VirtualMachine {
                     formatter.format::<false>(tag, writer, error_instance, global_ref)
                 };
                 writer.write_all(b"\n")?;
+            }
+            // What the value throws while it is shown is not the error being reported.
+            if allow_side_effects && global_ref.has_exception() {
+                global_ref.clear_exception();
             }
         }
 
@@ -7245,6 +7259,23 @@ impl VirtualMachine {
         }
 
         Ok(())
+    }
+
+    /// The object in a `JSC::Exception`, unless the message line already says all of it.
+    fn thrown_object_to_show(exception: JSValue) -> Option<JSValue> {
+        let thrown = exception.to_error()?;
+        // A primitive is the message line. An `Error` is printed from the exception itself.
+        if !thrown.is_object() || thrown.is_error() {
+            return None;
+        }
+        // A `BuildMessage` keeps its file, line and excerpt in the value, not in the message line.
+        let is_build_message = thrown.js_type() == jsc::JSType::DOMWrapper
+            && thrown.as_class_ref::<crate::BuildMessage>().is_some();
+        // Not shown: `instanceof Error` (util.inherits, DOMException, ResolveMessage), or a chain too long to tell.
+        if thrown.has_error_prototype() != Some(false) && !is_build_message {
+            return None;
+        }
+        Some(thrown)
     }
 
     fn print_error_name_and_message(

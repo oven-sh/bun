@@ -5458,3 +5458,88 @@ describe("requests pipelined in one read", () => {
     });
   });
 });
+
+describe.concurrent("a handler that throws the parsed request body", () => {
+  // The default error path prints the thrown value with the native formatter.
+  // The client controls the shape of that value, so the formatter's depth cap
+  // is what keeps one request from taking the server process down.
+  const serverSource = `
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  development: false,
+  async fetch(req) {
+    const { pathname } = new URL(req.url);
+    if (pathname === "/ping") return new Response("pong");
+    if (pathname === "/stop") {
+      server.stop();
+      return new Response("bye");
+    }
+    throw await req.json();
+  },
+});
+console.log(server.port);
+`;
+
+  async function readPort(stdout: ReadableStream<Uint8Array>) {
+    const reader = stdout.getReader();
+    const decoder = new TextDecoder();
+    let line = "";
+    while (!line.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`the server closed stdout before it printed a port: ${JSON.stringify(line)}`);
+      line += decoder.decode(value, { stream: true });
+    }
+    reader.releaseLock();
+    return Number(line.trim());
+  }
+
+  function nestedArray(depth: number) {
+    return Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString();
+  }
+
+  it("bounds what the default error printer writes", async () => {
+    // A file, not a pipe: with no depth cap this one request writes about 8 MB.
+    using dir = tempDir("serve-throw-deep-array", {});
+    const errPath = join(String(dir), "stderr.log");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", serverSource],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: Bun.file(errPath),
+    });
+    const port = await readPort(proc.stdout);
+
+    const res = await fetch(`http://127.0.0.1:${port}/api`, { method: "POST", body: nestedArray(2000) });
+    expect(res.status).toBe(500);
+
+    const ping = await fetch(`http://127.0.0.1:${port}/ping`);
+    expect(await ping.text()).toBe("pong");
+
+    const printed = readFileSync(errPath, "utf8");
+    expect(printed.length).toBeLessThan(64 * 1024);
+    expect(printed).toContain("[Array ...]");
+  });
+
+  it("keeps serving when the body is too deep for the printer to walk", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", serverSource],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const port = await readPort(proc.stdout);
+
+    const res = await fetch(`http://127.0.0.1:${port}/api`, { method: "POST", body: nestedArray(50_000) });
+    expect(res.status).toBe(500);
+
+    const ping = await fetch(`http://127.0.0.1:${port}/ping`);
+    expect(await ping.text()).toBe("pong");
+
+    const stop = await fetch(`http://127.0.0.1:${port}/stop`);
+    expect(await stop.text()).toBe("bye");
+    // 1, not 0: an error that reached the default handler sets the exit code.
+    expect(await proc.exited).toBe(1);
+    expect(proc.signalCode).toBeNull();
+  });
+});

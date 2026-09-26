@@ -920,6 +920,27 @@ impl<const SSL: bool> NewSocket<SSL> {
         called
     }
 
+    /// Fails the write with `internal_flush`'s fatal errno, then closes. Caller holds the scope.
+    #[cfg(not(windows))]
+    fn fail_fatal_flush(
+        &self,
+        handlers: &Handlers,
+        this_value: JSValue,
+        fatal_send_errno: i32,
+    ) -> JsResult<()> {
+        let global = handlers.global_object;
+        let err_value = <sys::Error as jsc::SysErrorJsc>::to_js(
+            &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
+            &global,
+        );
+        handlers.call_error_handler(this_value, &[this_value, err_value])?;
+        // Close unless the error handler already detached; on_close then reports 'close' to JS.
+        if !self.socket.get().is_detached() {
+            self.socket.get().close(uws::CloseCode::Normal);
+        }
+        Ok(())
+    }
+
     /// Takes `ThisPtr<Self>`, not `&mut self`: `callback.call(...)` re-enters
     /// JS which can call `socket.write()`/`end()`/`reload()` on this same
     /// wrapper via the JS object's `m_ptr`, re-deriving a borrow and mutating
@@ -963,35 +984,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Windows, keep the legacy contract there (the close path still fails
         // the pending write callback when the socket is torn down).
         let fatal_send_errno = this.internal_flush();
-        // On POSIX the fatal signal is trustworthy: us_socket_write_check_error
-        // only reports an errno that is either known peer-gone or persisted
-        // across its bounded unclassified-errno retry window. internal_flush
-        // already dropped the undeliverable buffer and the writable poll is no
-        // longer re-armed, so this dispatch is the last place the errno is
-        // visible - swallowing it here acknowledged the bytes to JS, sent a
-        // clean FIN, and the peer saw a silently truncated stream. Deliver it
-        // like a failed write (syscall "write", same shape as net.ts
-        // failWrite) and close the socket so 'error' is followed by 'close'.
         #[cfg(not(windows))]
         if fatal_send_errno != 0 {
-            let global = handlers.global_object;
             let _scope = ScopeExit {
                 socket: this,
                 scope: Some(handlers.enter()),
             };
-            let this_value = this.get_this_value(&global);
-            let err_value = <sys::Error as jsc::SysErrorJsc>::to_js(
-                &sys::Error::from_code_int(fatal_send_errno, sys::Tag::write),
-                &global,
-            );
-            handlers.call_error_handler(this_value, &[this_value, err_value])?;
-            // The error handler can destroy the socket itself; only close a
-            // still-attached socket. Close without detaching so on_close runs
-            // and JS observes 'close' (mirrors h2's dead-transport close).
-            if !this.socket.get().is_detached() {
-                this.socket.get().close(uws::CloseCode::Normal);
-            }
-            return Ok(());
+            let this_value = this.get_this_value(&handlers.global_object);
+            return this.fail_fatal_flush(&handlers, this_value, fatal_send_errno);
         }
         #[cfg(windows)]
         let _ = fatal_send_errno;
@@ -1636,7 +1636,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             // pending JS write the same way on_writable's tail does, otherwise
             // the do_socket_write backpressure arms the normal writable
             // subscription.
-            let _ = this.internal_flush();
+            let fatal_send_errno = this.internal_flush();
+            // A fatal flush empties the buffer too, so the drain below would report success.
+            #[cfg(not(windows))]
+            if fatal_send_errno != 0 {
+                return this.fail_fatal_flush(&handlers, this_value, fatal_send_errno);
+            }
+            #[cfg(windows)]
+            let _ = fatal_send_errno;
             if this.buffered_data_for_node_net.get().len() == 0 {
                 let drain_callback = handlers.on_writable();
                 if !drain_callback.is_empty() {
@@ -2211,7 +2218,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         // Reached by a nested dispatch (a close from on_open's error branch,
-        // on_writable's fatal close, a rejected handshake) while the handler
+        // fail_fatal_flush's close, a rejected handshake) while the handler
         // above is unwinding with a termination pending: it belongs to that
         // frame, so this dispatch neither enters JS over it nor claims it.
         if handlers.global_object.has_exception() {
@@ -3061,7 +3068,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         log!("writeOrEnd {}", bytes.len());
         let wrote = self.write_maybe_corked(bytes);
         let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
-        if buffer_unwritten_data {
+        // JS fails a fatal send (`wrote < -1`): do not queue its bytes.
+        if buffer_unwritten_data && wrote >= -1 {
             let remaining = &bytes[uwrote..];
             if !remaining.is_empty() {
                 let _ = self
@@ -3101,7 +3109,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Flushes the node:net buffered tail. Returns 0, or the positive errno of
     /// a fatal send error (buffer dropped, writable not re-armed).
-    /// On POSIX, `on_writable` consumes the errno: it dispatches the error
+    /// On POSIX, `fail_fatal_flush` consumes the errno: it dispatches the error
     /// handler and closes the socket. On Windows the errno is still ignored
     /// (the drain callback is dispatched regardless) - skipping the drain on
     /// fatal made Windows servers reset FIN-terminated responses (see

@@ -1,5 +1,5 @@
-import { realpathSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync, realpathSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -576,6 +576,77 @@ describe("net.createServer events", () => {
       }).catch(closeAndFail);
     });
   });
+
+  // The 'connection' listener runs under the native open dispatch. A short send
+  // made there is flushed when that dispatch ends. When the peer reset the
+  // connection in between, that flush gets ECONNRESET/EPIPE from send() and the
+  // write must fail. It was reported as drained instead: the write callback
+  // succeeded and 'finish' fired for a response the peer never received.
+  // Windows keeps the legacy drain contract for fatal flushes (see on_writable).
+  it.skipIf(isWindows)(
+    "fails a write whose flush at the end of the 'connection' listener hits a peer reset",
+    async () => {
+      using dir = tempDir("net-open-flush-reset", {
+        "client.js": `
+          const net = require("node:net");
+          const fs = require("node:fs");
+          const s = net.connect(Number(process.env.RESET_PORT), "127.0.0.1");
+          s.on("error", () => {});
+          s.once("data", () => {
+            // The server's first send happened and its listener is still running.
+            s.resetAndDestroy();
+            fs.writeFileSync(process.env.RESET_MARKER, "");
+          });
+        `,
+      });
+      const marker = join(String(dir), "reset");
+
+      let sawReset = false;
+      let writeFailed: boolean | undefined;
+      let finished = false;
+      const socketErrors: NodeJS.ErrnoException[] = [];
+      const closed = Promise.withResolvers<boolean>();
+      const server = createServer(c => {
+        c.on("error", err => socketErrors.push(err));
+        c.on("finish", () => (finished = true));
+        c.on("close", hadError => closed.resolve(hadError));
+        // More than the socket send buffer takes: a real short send.
+        c.write(Buffer.alloc(16 * 1024 * 1024, "x"), err => (writeFailed = err != null));
+        c.end();
+        // Stay in the listener until the peer has reset the connection.
+        const deadline = performance.now() + 10_000;
+        while (!(sawReset = existsSync(marker)) && performance.now() < deadline) {}
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+
+      try {
+        await using client = Bun.spawn({
+          cmd: [bunExe(), join(String(dir), "client.js")],
+          env: { ...bunEnv, RESET_PORT: String((server.address() as AddressInfo).port), RESET_MARKER: marker },
+          stdio: ["ignore", "inherit", "inherit"],
+        });
+
+        expect({
+          closeHadError: await closed.promise,
+          sawReset,
+          writeFailed,
+          finished,
+          errors: socketErrors.length,
+        }).toEqual({
+          closeHadError: true,
+          sawReset: true,
+          writeFailed: true,
+          finished: false,
+          errors: 1,
+        });
+        expect(["ECONNRESET", "EPIPE"]).toContain(socketErrors[0].code);
+        expect(await client.exited).toBe(0);
+      } finally {
+        server.close();
+      }
+    },
+  );
 
   it("#8374", async () => {
     const server = createServer();

@@ -813,10 +813,11 @@ pub fn dirname(path: &[u8]) -> Option<&[u8]> {
 // Full method set (close, makeLibUVOwned, …) stays in bun_sys which re-exports
 // `pub use bun_core::Fd as FD;` and adds inherent impls there.
 
-// Backing int: c_int on posix, u64 on Windows.
-#[cfg(not(windows))]
+// Backing int: c_int on posix, u64 on Windows. The portable image runs on both and has the u64 on every
+// host: a file descriptor of a POSIX host is the `int` kind there (see `fd_portable`).
+#[cfg(not(any(windows, bun_portable)))]
 type FdBacking = i32;
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 type FdBacking = u64;
 
 #[repr(transparent)]
@@ -825,17 +826,29 @@ pub struct Fd(pub FdBacking);
 
 // Packed u64 { value: u63, kind: u1 } — fields are LSB-first, so
 // `value` is bits 0..63, `kind` is bit 63. (.system=0, .uv=1)
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 const FD_KIND_BIT: u64 = 1u64 << 63;
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 const FD_VALUE_MASK: u64 = FD_KIND_BIT - 1;
 
 impl Fd {
     /// posix: minInt(c_int); windows: minInt(u63) = 0, kind=0 → all-zero u64.
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, bun_portable)))]
     pub const INVALID: Fd = Fd(i32::MIN);
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub const INVALID: Fd = Fd(0);
+
+    /// The file descriptor of POSIX code.
+    #[cfg(not(any(windows, bun_portable)))]
+    #[inline]
+    pub(crate) const fn int(self) -> i32 {
+        self.0
+    }
+    #[cfg(bun_portable)]
+    #[inline]
+    pub(crate) const fn int(self) -> i32 {
+        (self.0 & FD_VALUE_MASK) as u32 as i32
+    }
 
     /// Function form of [`Fd::INVALID`]
     /// for call sites that read better as a constructor (`Fd::invalid()`).
@@ -844,6 +857,7 @@ impl Fd {
         Fd::INVALID
     }
 
+    #[cfg(not(bun_portable))]
     #[inline]
     pub const fn from_native(v: FdBacking) -> Fd {
         Fd(v)
@@ -851,17 +865,17 @@ impl Fd {
     /// libuv fd (== posix fd on non-windows; uv-tagged on windows).
     #[inline]
     pub const fn from_uv(v: i32) -> Fd {
-        #[cfg(windows)]
+        #[cfg(any(windows, bun_portable))]
         // kind=.uv (bit 63 = 1); uv_file is i32, store sign-extended into low 63.
         {
             Fd(FD_KIND_BIT | ((v as i64 as u64) & FD_VALUE_MASK))
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, bun_portable)))]
         {
             Fd(v)
         }
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     #[inline]
     pub fn from_system(h: *mut core::ffi::c_void) -> Fd {
         // kind=.system (bit 63 = 0); WindowsHandleNumber is u63.
@@ -873,13 +887,15 @@ impl Fd {
     /// obtain the underlying HANDLE — so the returned value may not be safely
     /// closed via libc; use `FdExt::close()` instead.
     #[cfg(not(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn native(self) -> FdNative {
-        self.0
+        self.int()
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows))]
     #[inline]
-    pub fn native(self) -> FdNative {
+    pub fn native(self) -> *mut core::ffi::c_void {
         match self.decode_windows() {
             DecodeWindows::Windows(handle) => handle,
             DecodeWindows::Uv(file_number) => fd::uv_get_osfhandle(file_number),
@@ -897,7 +913,7 @@ impl Fd {
     #[cfg(unix)]
     #[inline]
     pub fn as_borrowed_fd(&self) -> std::os::fd::BorrowedFd<'_> {
-        let raw = self.native();
+        let raw: std::os::fd::RawFd = self.native();
         // `BorrowedFd`'s niche is `-1`; constructing one with that value is
         // immediate UB regardless of later use. `Fd::INVALID` (i32::MIN) and
         // `Fd::cwd()` (AT_FDCWD, -100) are both ≠ -1, so the only way to hit
@@ -917,11 +933,13 @@ impl Fd {
     /// arbitrary HANDLE to a uv fd makes closing impossible. The supplier
     /// should call `make_lib_uv_owned()` near where `open()` was called.
     #[cfg(not(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn uv(self) -> i32 {
-        self.0
+        self.int()
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, dispatch(posix, windows)))]
     pub fn uv(self) -> i32 {
         match self.decode_windows() {
             DecodeWindows::Uv(v) => v,
@@ -961,27 +979,32 @@ impl Fd {
     }
 
     #[cfg(not(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn stdin() -> Fd {
-        Fd(0)
+        Fd::from_uv(0)
     }
     #[cfg(not(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn stdout() -> Fd {
-        Fd(1)
+        Fd::from_uv(1)
     }
     #[cfg(not(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn stderr() -> Fd {
-        Fd(2)
+        Fd::from_uv(2)
     }
     #[cfg(not(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub fn cwd() -> Fd {
-        Fd(libc::AT_FDCWD)
+        Fd::from_uv(libc::AT_FDCWD)
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, associated, dispatch(posix, windows)))]
     #[inline]
     pub fn stdin() -> Fd {
         fd::WINDOWS_CACHED_STDIN
@@ -989,7 +1012,8 @@ impl Fd {
             .copied()
             .unwrap_or(Fd::INVALID)
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, associated, dispatch(posix, windows)))]
     #[inline]
     pub fn stdout() -> Fd {
         fd::WINDOWS_CACHED_STDOUT
@@ -997,7 +1021,8 @@ impl Fd {
             .copied()
             .unwrap_or(Fd::INVALID)
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, associated, dispatch(posix, windows)))]
     #[inline]
     pub fn stderr() -> Fd {
         fd::WINDOWS_CACHED_STDERR
@@ -1009,10 +1034,11 @@ impl Fd {
     /// current directory handle. Handles fit in 32 bits, bit 63 is the uv tag
     /// and `INVALID_HANDLE_VALUE` masks to all of bits 0..63, so bit 62 alone
     /// is out of band.
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     const WINDOWS_CWD: u64 = 1 << 62;
 
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, associated, dispatch(posix, windows)))]
     #[inline]
     pub fn cwd() -> Fd {
         Fd(Self::WINDOWS_CWD)
@@ -1020,11 +1046,13 @@ impl Fd {
 
     /// Whether this is the process's stdin/stdout/stderr.
     #[cfg(not(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
     #[inline]
     pub const fn is_stdio(self) -> bool {
-        matches!(self.0, 0..=2)
+        matches!(self.int(), 0..=2)
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, dispatch(posix, windows)))]
     pub fn is_stdio(self) -> bool {
         // Cache check first (matches `to_uv_index`): the cache reflects what the
         // process saw at startup, even after `SetStdHandle`/`AllocConsole`.
@@ -1039,12 +1067,12 @@ impl Fd {
     }
 
     // ── Kind tag (Windows: bit 63 = uv/system) ───────────────────────────
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, bun_portable)))]
     #[inline]
     pub const fn kind(self) -> FdKind {
         FdKind::System
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     #[inline]
     pub const fn kind(self) -> FdKind {
         if self.0 & FD_KIND_BIT == 0 {
@@ -1054,14 +1082,14 @@ impl Fd {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     #[inline]
     const fn value_as_system(self) -> u64 {
         self.0 & FD_VALUE_MASK
     }
 
     /// Perform different logic for each kind of windows file descriptor.
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     #[inline]
     pub fn decode_windows(self) -> DecodeWindows {
         match self.kind() {
@@ -1090,31 +1118,33 @@ impl Fd {
     #[inline]
     pub fn make_libuv_owned(self) -> Result<Fd, ()> {
         debug_assert!(self.is_valid());
-        #[cfg(not(windows))]
-        {
-            Ok(self)
-        }
-        #[cfg(windows)]
-        match self.kind() {
-            FdKind::Uv => Ok(self),
-            FdKind::System => {
-                let crt_fd = fd::uv_open_osfhandle(self.native());
-                if crt_fd == -1 {
-                    Err(())
-                } else {
-                    Ok(Fd::from_uv(crt_fd))
+        crate::host_select! {
+            windows => {
+                match self.kind() {
+                    FdKind::Uv => Ok(self),
+                    FdKind::System => {
+                        let crt_fd = fd::uv_open_osfhandle(self.native());
+                        if crt_fd == -1 {
+                            Err(())
+                        } else {
+                            Ok(Fd::from_uv(crt_fd))
+                        }
+                    }
                 }
+            }
+            posix => {
+                Ok(self)
             }
         }
     }
 
     #[inline]
     pub fn is_valid(self) -> bool {
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, bun_portable)))]
         {
             self.0 != Fd::INVALID.0
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, bun_portable))]
         {
             match self.kind() {
                 FdKind::System => self.value_as_system() != 0, // INVALID_VALUE = minInt(u63) = 0
@@ -1135,36 +1165,36 @@ impl Fd {
     }
 
     pub fn stdio_tag(self) -> Option<Stdio> {
-        #[cfg(not(windows))]
-        {
-            match self.0 {
-                0 => Some(Stdio::StdIn),
-                1 => Some(Stdio::StdOut),
-                2 => Some(Stdio::StdErr),
-                _ => None,
-            }
-        }
-        #[cfg(windows)]
-        {
-            match self.decode_windows() {
-                DecodeWindows::Windows(handle) => {
-                    let p = fd::windows_process_parameters();
-                    if handle == p.hStdInput {
-                        Some(Stdio::StdIn)
-                    } else if handle == p.hStdOutput {
-                        Some(Stdio::StdOut)
-                    } else if handle == p.hStdError {
-                        Some(Stdio::StdErr)
-                    } else {
-                        None
+        crate::host_select! {
+            windows => {
+                match self.decode_windows() {
+                    DecodeWindows::Windows(handle) => {
+                        let p = fd::windows_process_parameters();
+                        if handle == p.hStdInput {
+                            Some(Stdio::StdIn)
+                        } else if handle == p.hStdOutput {
+                            Some(Stdio::StdOut)
+                        } else if handle == p.hStdError {
+                            Some(Stdio::StdErr)
+                        } else {
+                            None
+                        }
                     }
+                    DecodeWindows::Uv(n) => match n {
+                        0 => Some(Stdio::StdIn),
+                        1 => Some(Stdio::StdOut),
+                        2 => Some(Stdio::StdErr),
+                        _ => None,
+                    },
                 }
-                DecodeWindows::Uv(n) => match n {
+            }
+            posix => {
+                match self.int() {
                     0 => Some(Stdio::StdIn),
                     1 => Some(Stdio::StdOut),
                     2 => Some(Stdio::StdErr),
                     _ => None,
-                },
+                }
             }
         }
     }
@@ -1177,13 +1207,13 @@ pub type FdNative = i32;
 pub type FdNative = *mut core::ffi::c_void;
 
 /// Fd kind — tag in bit 63 on Windows; single-variant on POSIX.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, bun_portable)))]
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FdKind {
     System = 0,
 }
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FdKind {
@@ -1191,7 +1221,7 @@ pub enum FdKind {
     Uv = 1,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub enum DecodeWindows {
     Windows(*mut core::ffi::c_void),
     Uv(i32),
@@ -1237,7 +1267,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         let mut proc = [0u8; 32];
         use std::io::Write as _;
         let mut c = std::io::Cursor::new(&mut proc[..]);
-        let _ = write!(c, "/proc/self/fd/{}\0", fd.0);
+        let _ = write!(c, "/proc/self/fd/{}\0", fd.int());
         // SAFETY: proc is NUL-terminated above; buf has cap bytes.
         let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.cast(), cap) };
         if n < 0 {
@@ -1314,71 +1344,72 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
 ///
 /// SAFETY: `buf` must be valid for `cap` writable `u16` units.
 pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
-    #[cfg(windows)]
-    {
-        unsafe extern "system" {
-            fn GetFinalPathNameByHandleW(
-                hFile: *mut core::ffi::c_void,
-                lpszFilePath: *mut u16,
-                cchFilePath: u32,
-                dwFlags: u32,
-            ) -> u32;
-        }
-        // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
-        // SAFETY: buf has `cap` u16 units; handle from Fd::native().
-        let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
-        // The size check below is `>=` because a return
-        // value equal to `cap` is the buffer-too-small sentinel (required size
-        // including NUL), not a successful write of `cap` chars.
-        if n == 0 {
-            // Lookup failure.
-            return -1;
-        }
-        if n >= cap {
-            // Buffer too small.
-            return -2;
-        }
-        // Strip the `\\?\` prefix if present so callers see a plain DOS path
-        // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
-        // Work entirely through raw-pointer reads/writes — never form a `&[u16]`
-        // or `&mut [u16]` over `buf` while the memmove runs, or the write through
-        // `buf` would invalidate that borrow's tag under Stacked Borrows.
-        // SAFETY: kernel32 wrote `n` u16s into `buf`; every `.add(i)` below is
-        // bounds-checked against `n` first.
-        let at = |i: usize| -> u16 { unsafe { *buf.add(i) } };
-        let bs = b'\\' as u16;
-        let off: usize =
-            if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
-                if n >= 8
-                    && (at(4) == b'U' as u16 || at(4) == b'u' as u16)
-                    && (at(5) == b'N' as u16 || at(5) == b'n' as u16)
-                    && (at(6) == b'C' as u16 || at(6) == b'c' as u16)
-                    && at(7) == bs
-                {
-                    // `\\?\UNC\server\share` → `\\server\share`
-                    // SAFETY: index 6 < n (checked above).
-                    unsafe { *buf.add(6) = bs };
-                    6
+    crate::host_select! {
+        windows => {
+            #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
+            unsafe extern "system" {
+                fn GetFinalPathNameByHandleW(
+                    hFile: *mut core::ffi::c_void,
+                    lpszFilePath: *mut u16,
+                    cchFilePath: u32,
+                    dwFlags: u32,
+                ) -> u32;
+            }
+            // VOLUME_NAME_DOS (0) — matches `bun_sys::windows::GetFinalPathNameByHandle` default.
+            // SAFETY: buf has `cap` u16 units; handle from Fd::native().
+            let n = unsafe { GetFinalPathNameByHandleW(fd.native(), buf, cap as u32, 0) } as usize;
+            // The size check below is `>=` because a return
+            // value equal to `cap` is the buffer-too-small sentinel (required size
+            // including NUL), not a successful write of `cap` chars.
+            if n == 0 {
+                // Lookup failure.
+                return -1;
+            }
+            if n >= cap {
+                // Buffer too small.
+                return -2;
+            }
+            // Strip the `\\?\` prefix if present so callers see a plain DOS path
+            // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
+            // Work entirely through raw-pointer reads/writes — never form a `&[u16]`
+            // or `&mut [u16]` over `buf` while the memmove runs, or the write through
+            // `buf` would invalidate that borrow's tag under Stacked Borrows.
+            // SAFETY: kernel32 wrote `n` u16s into `buf`; every `.add(i)` below is
+            // bounds-checked against `n` first.
+            let at = |i: usize| -> u16 { unsafe { *buf.add(i) } };
+            let bs = b'\\' as u16;
+            let off: usize =
+                if n >= 4 && at(0) == bs && at(1) == bs && at(2) == b'?' as u16 && at(3) == bs {
+                    if n >= 8
+                        && (at(4) == b'U' as u16 || at(4) == b'u' as u16)
+                        && (at(5) == b'N' as u16 || at(5) == b'n' as u16)
+                        && (at(6) == b'C' as u16 || at(6) == b'c' as u16)
+                        && at(7) == bs
+                    {
+                        // `\\?\UNC\server\share` → `\\server\share`
+                        // SAFETY: index 6 < n (checked above).
+                        unsafe { *buf.add(6) = bs };
+                        6
+                    } else {
+                        // `\\?\C:\...` → `C:\...`
+                        4
+                    }
                 } else {
-                    // `\\?\C:\...` → `C:\...`
-                    4
-                }
-            } else {
-                0
-            };
-        let out_len = n - off;
-        if off != 0 {
-            // SAFETY: src = buf+off and dst = buf both derive from the same
-            // raw `*mut u16` provenance (no intervening reference), src > dst,
-            // and `out_len` units fit within the `n` initialized units.
-            unsafe { core::ptr::copy(buf.add(off), buf, out_len) };
+                    0
+                };
+            let out_len = n - off;
+            if off != 0 {
+                // SAFETY: src = buf+off and dst = buf both derive from the same
+                // raw `*mut u16` provenance (no intervening reference), src > dst,
+                // and `out_len` units fit within the `n` initialized units.
+                unsafe { core::ptr::copy(buf.add(off), buf, out_len) };
+            }
+            return out_len as isize;
         }
-        return out_len as isize;
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (fd, buf, cap);
-        0
+        posix => {
+            let _ = (fd, buf, cap);
+            0
+        }
     }
 }
 
@@ -1388,30 +1419,30 @@ impl core::fmt::Display for Fd {
         if !fd.is_valid() {
             return w.write_str("[invalid_fd]");
         }
-        #[cfg(not(windows))]
-        {
-            write!(w, "{}", fd.0)?;
-            #[cfg(debug_assertions)]
-            if fd.0 >= 3 {
-                let mut buf = [0u8; 1024];
-                // SAFETY: buf is 1024 bytes, passed with matching cap.
-                let n = unsafe { fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
-                if n > 0 {
-                    write!(w, "[{}]", bstr::BStr::new(&buf[..n as usize]))?;
-                } else if n == -1 {
-                    w.write_str("[BADF]")?;
+        crate::host_select! {
+            windows => {
+                if fd == Fd::cwd() {
+                    return w.write_str("[cwd]");
+                }
+                match fd.decode_windows() {
+                    DecodeWindows::Windows(_) => write!(w, "{}[handle]", fd.value_as_system()),
+                    DecodeWindows::Uv(n) => write!(w, "{}[libuv]", n),
                 }
             }
-            Ok(())
-        }
-        #[cfg(windows)]
-        {
-            if fd == Fd::cwd() {
-                return w.write_str("[cwd]");
-            }
-            match fd.decode_windows() {
-                DecodeWindows::Windows(_) => write!(w, "{}[handle]", fd.value_as_system()),
-                DecodeWindows::Uv(n) => write!(w, "{}[libuv]", n),
+            posix => {
+                write!(w, "{}", fd.int())?;
+                #[cfg(debug_assertions)]
+                if fd.int() >= 3 {
+                    let mut buf = [0u8; 1024];
+                    // SAFETY: buf is 1024 bytes, passed with matching cap.
+                    let n = unsafe { fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
+                    if n > 0 {
+                        write!(w, "[{}]", bstr::BStr::new(&buf[..n as usize]))?;
+                    } else if n == -1 {
+                        w.write_str("[BADF]")?;
+                    }
+                }
+                Ok(())
             }
         }
     }
@@ -1420,25 +1451,26 @@ impl core::fmt::Display for Fd {
 /// Fd module-level statics + Windows libuv/PEB FFI shims (T0 → no
 /// crate dep, just `extern` symbols; libuv is linked into the final binary).
 pub mod fd {
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     use super::Fd;
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     use core::ffi::{c_int, c_void};
 
     // Written once in windows_stdio::init() during single-threaded startup
     // (S015: write-once → `Once`; readers fall back to `Fd::INVALID`).
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(crate) static WINDOWS_CACHED_STDIN: crate::Once<Fd> = crate::Once::new();
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(crate) static WINDOWS_CACHED_STDOUT: crate::Once<Fd> = crate::Once::new();
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(crate) static WINDOWS_CACHED_STDERR: crate::Once<Fd> = crate::Once::new();
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     #[cfg(debug_assertions)]
     pub(crate) static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "libuv"))]
     unsafe extern "C" {
         /// libuv: convert C-runtime fd → OS HANDLE. By-value `c_int` in, opaque
         /// HANDLE out — wraps `_get_osfhandle`, which validates the fd and
@@ -1452,9 +1484,9 @@ pub mod fd {
         /// memory-safety preconditions.
         pub safe fn uv_open_osfhandle(os_fd: *mut c_void) -> c_int;
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub use crate::windows_sys::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(crate) fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
         // The `GetStdHandle` wrapper maps both NULL and
         // INVALID_HANDLE_VALUE to `None`, so use the Option-returning
@@ -1471,14 +1503,14 @@ pub mod fd {
     /// PEB ProcessParameters subset for stdio/cwd handle lookup.
     /// Full struct lives in `bun_windows_sys::PEB`; only the handle fields are
     /// read here, so a minimal view is exposed via accessor fns.
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     #[repr(C)]
     pub(crate) struct ProcessParametersStdio {
         pub(crate) hStdInput: *mut c_void,
         pub(crate) hStdOutput: *mut c_void,
         pub(crate) hStdError: *mut c_void,
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(crate) fn windows_process_parameters() -> ProcessParametersStdio {
         // PEB → ProcessParameters → {hStdInput,hStdOutput,hStdError}. Snapshot
         // the three handles by value (raw-pointer reads — no `&` formed over
@@ -1495,7 +1527,7 @@ pub mod fd {
             }
         }
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(crate) fn windows_current_directory_handle() -> *mut c_void {
         // Reads `peb().ProcessParameters.CurrentDirectory.Handle`. Offset 0x48 on
         // x64, asserted in `bun_core::windows_sys`. The OS updates this handle

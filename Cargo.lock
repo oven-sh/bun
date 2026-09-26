@@ -387,6 +387,7 @@ dependencies = [
  "bun_highway",
  "bun_opaque",
  "bun_output_tags",
+ "bun_portable_macros",
  "bun_simdutf_sys",
  "bun_windows_sys",
  "bun_wyhash",
@@ -965,6 +966,7 @@ name = "bun_libuv_sys"
 version = "0.0.0"
 dependencies = [
  "bun_core",
+ "bun_portable_macros",
  "bun_windows_sys",
  "bun_wyhash",
  "libc",
@@ -1123,6 +1125,15 @@ version = "0.0.0"
 dependencies = [
  "bun_core",
  "libc",
+]
+
+[[package]]
+name = "bun_portable_macros"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -1720,6 +1731,9 @@ dependencies = [
 [[package]]
 name = "bun_windows_sys"
 version = "0.0.0"
+dependencies = [
+ "bun_portable_macros",
+]
 
 [[package]]
 name = "bun_wyhash"

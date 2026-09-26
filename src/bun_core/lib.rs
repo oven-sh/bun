@@ -40,7 +40,15 @@ pub mod heap;
 
 pub mod debug;
 pub mod env;
-#[cfg(windows)]
+pub mod host;
+pub mod host_dispatch;
+#[cfg(bun_portable)]
+extern crate self as bun_core;
+#[cfg(bun_portable)]
+mod fd_portable;
+#[cfg(bun_portable)]
+pub use fd_portable::FdNativeRepr;
+#[cfg(any(windows, bun_portable))]
 pub mod windows_sys;
 pub mod wtf;
 

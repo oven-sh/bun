@@ -460,7 +460,7 @@ impl Source {
 
 // ── Source::WindowsStdio ──────────────────────────────────────────────────
 
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub mod windows_stdio {
     use super::*;
     // MOVE_DOWN: bun_sys::windows → crate::windows_sys (T0 leaf shim).
@@ -473,6 +473,7 @@ pub mod windows_stdio {
     // precondition, so `safe fn` discharges the link-time proof. (`c::Get/Set
     // ConsoleMode` from `bun_windows_sys` still take `*mut DWORD`; redeclared
     // locally so the startup/restore paths below are plain calls.)
+    #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "kernel32"))]
     #[link(name = "kernel32")]
     unsafe extern "system" {
         safe fn GetConsoleMode(hConsoleHandle: w::HANDLE, lpMode: &mut w::DWORD) -> w::BOOL;
@@ -648,8 +649,10 @@ pub mod stdio {
     pub fn init() {
         bun_initialize_process();
 
-        #[cfg(windows)]
-        super::windows_stdio::init();
+        #[cfg(any(windows, bun_portable))]
+        if crate::host::is_windows() {
+            super::windows_stdio::init();
+        }
 
         let stdout = File::from(Fd::stdout());
         let stderr = File::from(Fd::stderr());
@@ -666,13 +669,13 @@ pub mod stdio {
     }
 
     pub(crate) fn restore() {
-        #[cfg(windows)]
-        {
-            super::windows_stdio::restore();
-        }
-        #[cfg(not(windows))]
-        {
-            bun_restore_stdio();
+        crate::host_select! {
+            windows => {
+                super::windows_stdio::restore();
+            }
+            posix => {
+                bun_restore_stdio();
+            }
         }
     }
 }
@@ -2612,7 +2615,7 @@ static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> = crate::RacyCell::new(Buf
         }
         #[cfg(not(windows))]
         {
-            Fd::stdin()
+            Fd::from_uv(0)
         }
     },
     buf: [0; 4096],

@@ -389,18 +389,27 @@ __attribute__((used)) static void host_thread_exit(void *base, unsigned long siz
 /* ---- threads that the image did not create ----
    A thread of this host, or of a library of the OS, that runs code of the image: the image gives
    it a thread pointer when it enters (BUN_SYS_adopt_thread) and takes it back when the thread
-   ends, which the destructor of a key tells. The key of the slot has no destructor, so the slot
-   is there while this one runs, in whatever order the keys are taken. */
+   ends, which the destructor of a key tells. The slot has to be there while the destructor runs.
+   On macOS it is a key without a destructor, which keeps its value. On Linux it is in a block
+   that this host made and a key names, and a C library may empty every key before it calls the
+   destructor of one (musl does): the block is kept here, next to the thread pointer. */
 struct adopted_thread {
   void *tp;
   ImageThreadFn leave;
+  void *block;
 };
 static void adopted_thread_ends(void *p) {
   struct adopted_thread *a = p;
   if (trace) fprintf(stderr, "[host] an adopted thread ends, thread pointer %p\n", a->tp);
+#if defined(__APPLE__)
+  call_image(a->leave, a->tp, 0);
+  slot_set(0);
+#else
+  pthread_setspecific(tp_key, a->block);
   call_image(a->leave, a->tp, thread_x18());
   slot_set(0);
   slot_release();
+#endif
   free(a);
 }
 static long host_adopt_thread(void *tp, ImageThreadFn leave, unsigned long *stack) {
@@ -410,6 +419,7 @@ static long host_adopt_thread(void *tp, ImageThreadFn leave, unsigned long *stac
   a->leave = leave;
   if (pthread_setspecific(adopted_key, a)) { free(a); return -L_ENOMEM; }
   slot_set(tp);
+  a->block = pthread_getspecific(tp_key);
   if (stack) {
 #if defined(__APPLE__)
     size_t size = pthread_get_stacksize_np(pthread_self());

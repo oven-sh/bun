@@ -260,7 +260,6 @@ describe("node:test", () => {
   });
 
   test("should reset the module-level mock tracker between --rerun-each iterations", async () => {
-    // ESM entry: --rerun-each currently only re-evaluates ESM entry files.
     const { exitCode, stderr } = await runTests(["17-rerun-mock-reset.mjs"], {}, ["--rerun-each=3"]);
     expect(stderr).toContain("3 pass");
     expect({ exitCode, stderr }).toMatchObject({

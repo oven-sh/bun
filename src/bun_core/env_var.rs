@@ -745,10 +745,15 @@ macro_rules! platform_specific_new {
 
             /// Retrieve the key of the environment variable for the current platform, if any.
             pub(crate) fn platform_key() -> Option<&'static ZStr> {
-                // The portable image: the name that the host has for the variable.
+                // The portable image: the name that the host has for the variable. Most variables
+                // have one name, and for them the host is not asked.
                 #[cfg(bun_portable)]
                 {
-                    return if $crate::host::is_windows() {
+                    const ONE_NAME: bool = $crate::env_var::__same_text(
+                        stringify!($posix),
+                        stringify!($windows),
+                    );
+                    return if !ONE_NAME && $crate::host::is_windows() {
                         $crate::env_var::__key_opt!($windows)
                     } else {
                         $crate::env_var::__key_opt!($posix)
@@ -855,6 +860,24 @@ macro_rules! platform_specific_new {
     };
 }
 pub(crate) use platform_specific_new;
+
+/// Whether two names of a variable, as they are written in this file, are the same name.
+#[cfg(bun_portable)]
+#[doc(hidden)]
+pub const fn __same_text(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
 
 // ─── helper macros for platform_specific_new! ───
 

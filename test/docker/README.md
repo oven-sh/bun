@@ -114,7 +114,7 @@ test("database test", async () => {
 | **Redis/Valkey** | | | |
 | `redis_unified` | Redis with all features | 6379 (TCP), 6380 (TLS) | Persistence, Unix sockets, ACLs |
 | **S3/MinIO** | | | |
-| `minio` | S3-compatible storage | 9000 (API), 9001 (Console) | AWS S3 API testing |
+| `minio` | S3-compatible storage | 9000 (API), 9001 (Console) | Built from source, starts with the `buntest` bucket |
 | **WebSocket** | | | |
 | `autobahn` | WebSocket test suite | 9002 | 517 conformance tests |
 
@@ -177,6 +177,7 @@ test/docker/
 ├── Dockerfile.mysql-native-password # mysql_native_password image (baked data dir, legacy auth)
 ├── Dockerfile.autobahn       # autobahn image (fuzzingserver.json)
 ├── Dockerfile.squid          # squid image (squid.conf)
+├── Dockerfile.minio          # minio image (built from source, `buntest` bucket)
 ├── index.ts                # TypeScript API
 ├── prepare-ci.ts          # CI/CD setup script
 ├── README.md              # This file
@@ -287,6 +288,9 @@ A: Add it to docker-compose.yml and create a PR.
 
 **Q: How do I update a service version?**
 A: Edit docker-compose.yml and run `docker-compose pull`.
+
+**Q: What else does a change to a Dockerfile need?**
+A: Raise `prefetchTriggerVersion` in `scripts/build/ci-images/spec.ts`, so that the CI machine images bake again. Until then, each CI test machine builds the changed image before it starts the service. For `Dockerfile.minio` that is a compile of several minutes.
 
 **Q: Can I run tests in parallel?**
 A: Yes! Each service can handle multiple connections.

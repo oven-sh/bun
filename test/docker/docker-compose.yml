@@ -182,13 +182,17 @@ services:
       - redis-data:/data
 
   # MinIO (S3) Service
+  # The image is built from source and starts with the `buntest` bucket
+  # (see Dockerfile.minio).
   minio:
-    image: quay.io/minio/minio:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.minio
+    image: bun-minio:local
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
       MINIO_DOMAIN: localhost
-    command: server /data --console-address :9001
     ports:
       - target: 9000
         published: 0
@@ -201,7 +205,8 @@ services:
     tmpfs:
       - /data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # The endpoint `mc ready` asks: 503 until the server can serve requests.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/cluster"]
       interval: 5s
       timeout: 5s
       retries: 30

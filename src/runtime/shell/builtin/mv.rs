@@ -612,6 +612,16 @@ impl ShellMvBatchedTask {
             let _ = bun_sys::unlinkat(dst_dir, dst);
             return Err(e);
         }
+        // The source can hold fewer bytes than `st_size` said (it shrank, or it
+        // is a sysfs file). The copy advanced the source position by the bytes
+        // it copied; FICLONE does not move it, so fall back to the source size.
+        let copied = match bun_sys::lseek(in_.fd(), 0, libc::SEEK_CUR) {
+            Ok(pos) if pos > 0 => pos,
+            _ => bun_sys::fstat(in_.fd()).map_or(st.st_size as i64, |s| s.st_size as i64),
+        };
+        if copied < st.st_size as i64 {
+            let _ = bun_sys::ftruncate(out.fd(), copied);
+        }
         #[cfg(unix)]
         {
             // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.

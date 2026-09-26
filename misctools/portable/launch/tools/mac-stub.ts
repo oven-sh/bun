@@ -10,9 +10,7 @@ const D = "$"; // a literal dollar, so that sh parameter expansions survive Stri
 export const MAC_SCRIPT = String.raw`#!/bin/sh
 # Builds the macOS loader stub of the portable image and tests a packed file.
 # Run it on the Mac in a directory that holds
-#   host_posix.c, linux_abi.h, memory.h   from misctools/portable/host, with
-#                                         the patch of this job applied to
-#                                         host_posix.c (host/host_posix.c.diff)
+#   host_posix.c, linux_abi.h, memory.h   from misctools/portable/host
 #   <packed file>                         named as the first argument
 #
 #     sh run-mac.sh threads-aarch64.com

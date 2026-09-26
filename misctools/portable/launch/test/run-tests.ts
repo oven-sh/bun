@@ -1,7 +1,14 @@
-import { join } from "node:path";
 // Every test of the packed portable image that this Linux machine can run.
 //
-//   bun test/run-tests.ts [--runs 3] [--json out/test-results.json] [--only substring]
+//   bun test/run-tests.ts [--runs 3] [--json FILE] [--only substring]
+//                         [--out DIR] [--images DIR] [--shells DIR]
+//
+//   --out      what tools/build.ts built, with the same option of it
+//   --images   the output directories of misctools/portable/build.ts, as for tools/build.ts
+//   --shells   shells that the machine does not have: <shells>/bbin with the applets of a
+//              busybox (sh, ash, uname, dd ...), <shells>/zsh-x86_64/bin/zsh. Default:
+//              $PORTABLE_TEST_SHELLS, or build/portable/inputs/shells in the repository.
+//              A shell that is not there fails its test.
 //
 // A run of a test image passes with exit code 42 and the expected line of
 // output. What runs where:
@@ -11,34 +18,36 @@ import { join } from "node:path";
 //   static   the checking tools: the format, the PE dumps, the signature
 //   not run  Windows and macOS: there is no Windows machine and no Mac here.
 //            The Windows host is an input file, the packed PE is only checked
-//            statically (tools/pe-compare.ts). See NOTES.md.
+//            statically (tools/pe-compare.ts).
 import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { REPOSITORY, llvmBin } from "../../flags.ts";
 import { inspect } from "../tools/inspect.ts";
 import { checkSignature } from "../tools/check_signature.ts";
-import { pack, partKey, stripImageSignature } from "../tools/pack.ts";
+import { pack, stripImageSignature } from "../tools/pack.ts";
 import { decodeToc } from "../tools/format.ts";
 import { movePe } from "../tools/pe.ts";
 import { comparePe } from "../tools/pe-compare.ts";
-import { buildLinuxStub } from "../tools/build.ts";
-
-const here = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const out = `${here}/out`;
-const cache = `${here}/cache`;
-const BUSYBOX = `${cache}/bbin`;
-const ZSH = `${cache}/zsh-x86_64/bin/zsh`;
-const QEMU = "/usr/bin/qemu-aarch64";
-const LLVM = process.env.LLVM_BIN ?? "/usr/lib/llvm-current/bin";
-const WIN_HOSTS = process.env.PORTABLE_WIN_HOSTS ?? join(import.meta.dir, "../../../../build/portable/inputs/windows");
-const WIN_HOST: Record<string, string> = { x86_64: `${WIN_HOSTS}/host-x64.exe`, aarch64: `${WIN_HOSTS}/host-arm64.exe` };
-const M2 = /^m2: threads=8 total=204263652 thread_locals_ok=8\/8 main_tls=unset file_roundtrip=1 wall_year_ok=1 pid_ok=1 /m;
-const BIGBSS = /^bigbss: bss=4 MiB zero_at_start=4194304 written=4194304 data_ok=1 data_writable=1$/m;
+import { DEFAULT_IMAGES, DEFAULT_OUT, WIN_HOSTS, buildLinuxStub } from "../tools/build.ts";
 
 const args = process.argv.slice(2);
 const opt = (name: string, fallback?: string) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : fallback;
 };
+const here = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const out = resolve(opt("out", DEFAULT_OUT)!);
+const images = resolve(opt("images", DEFAULT_IMAGES)!);
+const shells = resolve(opt("shells", process.env.PORTABLE_TEST_SHELLS ?? join(REPOSITORY, "build", "portable", "inputs", "shells"))!);
+const BUSYBOX = `${shells}/bbin`;
+const ZSH = `${shells}/zsh-x86_64/bin/zsh`;
+const QEMU = "/usr/bin/qemu-aarch64";
+const LLVM = llvmBin();
+const WIN_HOST: Record<string, string> = { x86_64: `${WIN_HOSTS}/host-x64.exe`, aarch64: `${WIN_HOSTS}/host-arm64.exe` };
+const M2 = /^m2: threads=8 total=204263652 thread_locals_ok=8\/8 main_tls=unset file_roundtrip=1 wall_year_ok=1 pid_ok=1 /m;
+const BIGBSS = /^bigbss: bss=4 MiB zero_at_start=4194304 written=4194304 data_ok=1 data_writable=1$/m;
+
 const RUNS = Number(opt("runs", "3"));
 const ONLY = opt("only");
 
@@ -145,7 +154,7 @@ for (const [arch, path] of [
   check(`${arch}: packing is a pure function of its inputs`, "static", () => {
     const inputs = {
       arch: arch as "x86_64" | "aarch64",
-      image: readFileSync(`${out}/${arch}/threads.img`),
+      image: readFileSync(`${images}/${arch}/threads.img`),
       winHost: readFileSync(WIN_HOST[arch]),
       linuxStub: readFileSync(`${out}/stub/linux-stub-${arch}`),
       sign: arch === "aarch64",
@@ -168,7 +177,7 @@ for (const [arch, path] of [
 check("the signature of the aarch64 container covers the image at its final offsets", "static", () => {
   const file = readFileSync(a64);
   const toc = decodeToc(file)!;
-  const image = stripImageSignature(readFileSync(`${out}/aarch64/threads.img`));
+  const image = stripImageSignature(readFileSync(`${images}/aarch64/threads.img`));
   if (!file.subarray(toc.imageOff, toc.imageOff + toc.imageLen).equals(image)) throw new Error("the image in the container is not the input image");
   const bad = failures(checkSignature(file).checks);
   if (bad.length) throw new Error(bad.join(", "));
@@ -183,18 +192,18 @@ check("the signature check notices one changed byte in the image", "static", () 
   if (!bad.some(s => s.includes("hash of every one"))) throw new Error(`the changed byte went unnoticed: ${bad.join(", ") || "no failure"}`);
   return bad.find(s => s.includes("hash of every one"))!;
 });
-check("the same image signed by apple_sign.py and by the packer give the same hashes", "static", () => {
-  // The bare aarch64 image from misctools/portable/build.sh is signed by the
-  // Python tool at offset 0; the container signs the same bytes at 0x30000.
+check("the same image signed by tools/apple_sign.ts and by the packer give the same hashes", "static", () => {
+  // The bare aarch64 image from misctools/portable/build.ts is signed by
+  // ../../tools/apple_sign.ts at offset 0; the container signs the same bytes at 0x30000.
   // Both cover the same pages, so the hash tables have to be equal.
-  const bare = readFileSync(`${out}/aarch64/threads.img`);
+  const bare = readFileSync(`${images}/aarch64/threads.img`);
   const bareWhere = checkSignature(bare);
   const container = readFileSync(a64);
   const tocC = decodeToc(container)!;
   const blobBare = bare.subarray(bareWhere.where!.sigOff, bareWhere.where!.sigOff + bareWhere.where!.sigLen);
   const blobPacked = container.subarray(tocC.sigOff, tocC.sigOff + tocC.sigLen);
   if (!blobBare.equals(blobPacked)) throw new Error("the two signatures differ");
-  return `${blobBare.length} bytes, identical: the packer is a port of tools/apple_sign.py`;
+  return `${blobBare.length} bytes, identical: the packer and misctools/portable/tools/apple_sign.ts write the same signature`;
 });
 
 check("the image can grow: re-packing puts it at the same offset", "static", () => {
@@ -206,7 +215,7 @@ check("the image can grow: re-packing puts it at the same offset", "static", () 
   const blob = `${out}/graph.bin`;
   rmSync(grown, { force: true });
   writeFileSync(blob, Buffer.alloc(700 * 1024, 0x42));
-  const p = Bun.spawnSync({ cmd: [`${LLVM}/llvm-objcopy`, `--add-section=.bun=${blob}`, `${out}/x86_64/threads.img`, grown], stderr: "pipe" });
+  const p = Bun.spawnSync({ cmd: [`${LLVM}/llvm-objcopy`, `--add-section=.bun=${blob}`, `${images}/x86_64/threads.img`, grown], stderr: "pipe" });
   if (!p.success) throw new Error(p.stderr.toString());
   const result = pack({
     arch: "x86_64",
@@ -224,12 +233,12 @@ check("the image can grow: re-packing puts it at the same offset", "static", () 
   if (bad.length) throw new Error(bad.join(", "));
   const run = once(["/bin/sh", packed, `${out}/probe-grown.tmp`], { BUN_PORTABLE_CACHE: `${out}/cache-run` }, { code: 42, stdout: M2 });
   if (!run.pass) throw new Error(run.why);
-  return `image ${statSync(`${out}/x86_64/threads.img`).size} -> ${statSync(grown).size} bytes, still at 0x${toc64.imageOff.toString(16)}, and it runs`;
+  return `image ${statSync(`${images}/x86_64/threads.img`).size} -> ${statSync(grown).size} bytes, still at 0x${toc64.imageOff.toString(16)}, and it runs`;
 });
 check("the signed aarch64 container can grow too, and the signature follows", "static", () => {
   const grown = `${out}/grown-a64.img`;
   const blob = `${out}/graph.bin`;
-  const p = Bun.spawnSync({ cmd: [`${LLVM}/llvm-objcopy`, `--add-section=.bun=${blob}`, `${out}/aarch64/threads.img`, grown], stderr: "pipe" });
+  const p = Bun.spawnSync({ cmd: [`${LLVM}/llvm-objcopy`, `--add-section=.bun=${blob}`, `${images}/aarch64/threads.img`, grown], stderr: "pipe" });
   if (!p.success) throw new Error(p.stderr.toString());
   const result = pack({
     arch: "aarch64",
@@ -264,7 +273,7 @@ check("the packer refuses a Windows host of the other architecture", "static", (
   try {
     pack({
       arch: "aarch64",
-      image: readFileSync(`${out}/aarch64/threads.img`),
+      image: readFileSync(`${images}/aarch64/threads.img`),
       winHost: readFileSync(WIN_HOST.x86_64),
       linuxStub: readFileSync(`${out}/stub/linux-stub-aarch64`),
       sign: true,
@@ -302,7 +311,7 @@ check("a host that was linked with a PE checksum comes out with 0", "static", ()
   host.writeUInt32LE(0x12345678, lfanew + 4 + 20 + 64);
   const result = pack({
     arch: "x86_64",
-    image: readFileSync(`${out}/x86_64/threads.img`),
+    image: readFileSync(`${images}/x86_64/threads.img`),
     winHost: host,
     linuxStub: readFileSync(`${out}/stub/linux-stub-x86_64`),
     sign: false,
@@ -507,7 +516,7 @@ many("a cache directory that cannot be written gives a clear message", "native",
   code: 1,
   stderr: /cannot write the linux loader stub|mkdir/,
 });
-many("the Linux stub refuses a file without a table of contents", "native", 1, [`${out}/stub/linux-stub-x86_64`, `${out}/x86_64/threads.img`], {}, {
+many("the Linux stub refuses a file without a table of contents", "native", 1, [`${out}/stub/linux-stub-x86_64`, `${images}/x86_64/threads.img`], {}, {
   code: 127,
   stderr: /has no table of contents/,
 });
@@ -525,7 +534,7 @@ check("the macOS branch of the header script extracts the macOS stub", "native",
   const container = `${out}/pack/standin-macstub-aarch64.com`;
   const result = pack({
     arch: "aarch64",
-    image: readFileSync(`${out}/aarch64/threads.img`),
+    image: readFileSync(`${images}/aarch64/threads.img`),
     winHost: readFileSync(WIN_HOST.aarch64),
     linuxStub: readFileSync(`${out}/stub/linux-stub-aarch64`),
     macosStub: readFileSync(standin),
@@ -619,7 +628,7 @@ many(
   {},
   { code: 42, stdout: M2 },
 );
-many("the POSIX host still starts a bare image file (x86_64)", "native", RUNS, [`${out}/host-linux-x86_64`, `${out}/x86_64/threads.img`, `${out}/probe-host2.tmp`], {}, {
+many("the POSIX host still starts a bare image file (x86_64)", "native", RUNS, [`${out}/host-linux-x86_64`, `${images}/x86_64/threads.img`, `${out}/probe-host2.tmp`], {}, {
   code: 42,
   stdout: M2,
 });
@@ -638,7 +647,7 @@ many(
   {},
   { code: 42, stdout: M2 },
 );
-many("the POSIX host still starts a bare image file (aarch64)", "qemu", RUNS, [QEMU, `${out}/host-linux-aarch64`, `${out}/aarch64/threads.img`, `${out}/probe-host4.tmp`], {}, {
+many("the POSIX host still starts a bare image file (aarch64)", "qemu", RUNS, [QEMU, `${out}/host-linux-aarch64`, `${images}/aarch64/threads.img`, `${out}/probe-host4.tmp`], {}, {
   code: 42,
   stdout: M2,
 });

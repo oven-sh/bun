@@ -1,8 +1,8 @@
 // The ad-hoc Apple code signature of the image inside the packed file.
 //
-// A port of misctools/portable/tools/apple_sign.py with one change: the signed
-// range does not start at offset 0 of a file of its own, it starts where the
-// image lies in the packed file.
+// The signature of misctools/portable/tools/apple_sign.ts with one change: the
+// signed range does not start at offset 0 of a file of its own, it starts
+// where the image lies in the packed file.
 //
 // Apple Silicon maps file pages executable only under a code signature. The
 // macOS stub (host/host_posix.c) registers this one with

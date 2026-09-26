@@ -1,7 +1,6 @@
 // Prints what a person runs ON REAL WINDOWS to build the Windows host and to
 // test a packed file. Nothing here runs on Linux: the Windows host is an
 // INPUT FILE of the packer, built natively with clang for the MSVC target.
-
 //
 //   bun tools/windows-host.ts             print the script
 //   bun tools/windows-host.ts --out FILE  write it to FILE
@@ -12,9 +11,7 @@ export const WINDOWS_SCRIPT = String.raw`# PowerShell 7 on Windows. Run it in a 
 #     Enter-VsDevShell -VsInstallPath "$env:ProgramFiles\Microsoft Visual Studio\2022\Community" -Arch amd64 -HostArch amd64
 #
 # The three files this needs, from misctools/portable: host\host_win.c,
-# host\linux_abi.h, host\memory.h, with the patch of this job applied to
-# host_win.c (host/host_win.c.diff: how the host finds the image inside its
-# own file).
+# host\linux_abi.h, host\memory.h.
 
 # 1. Build the host for both architectures. -O2 only; the host is one file.
 #    /Brepro makes lld write a fixed TimeDateStamp, so that two builds of the

@@ -1,11 +1,11 @@
 // The packer: {ELF image, Windows host, loader stubs} -> ONE file per CPU
 // architecture that starts by itself on Windows, Linux and macOS.
 //
-//   bun tools/pack.ts --arch x86_64 --image out/x86_64/threads.img \
+//   bun tools/pack.ts --arch x86_64 --image build/portable/x86_64/threads.img \
 //       --win-host build/portable/inputs/windows/host-x64.exe \
-//       --linux-stub out/stub/linux-stub-x86_64 \
-//       [--macos-stub out/macstub/macos-stub-x86_64] [--sign|--no-sign] \
-//       -o out/pack/threads-x86_64.com [--json out/pack/threads-x86_64.json]
+//       --linux-stub build/portable/launch/stub/linux-stub-x86_64 \
+//       [--macos-stub macos-stub-x86_64] [--sign|--no-sign] \
+//       -o threads-x86_64.com [--json threads-x86_64.json]
 //
 // --macos-stub may be left out: a Mach-O stub can only be linked on a Mac.
 // The shell header of the packed file then says so on macOS and exits 1.
@@ -69,8 +69,8 @@ export function partKey(b: Buffer): string {
 }
 
 /**
- * misctools/portable/build.sh signs an aarch64 image on its own
- * (tools/apple_sign.py: padding, blob and a BUNSIG01 trailer). That signature
+ * misctools/portable/build.ts signs an aarch64 image on its own
+ * (../../tools/apple_sign.ts: padding, blob and a BUNSIG01 trailer). That signature
  * is for the image as a file of its own; the container signs the image again
  * at its offsets in the container, so the old one comes off here.
  */

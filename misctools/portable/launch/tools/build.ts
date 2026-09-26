@@ -1,8 +1,15 @@
-import { join } from "node:path";
 // Builds the parts this Linux machine can build and packs both architectures.
 //
-//   bun tools/build.ts [--arch x86_64|aarch64] [--out DIR] [--image PATH]
+//   bun tools/build.ts [--arch x86_64|aarch64] [--out DIR] [--images DIR] [--image PATH]
 //                      [--win-host-dir DIR] [--macos-stub-dir DIR]
+//
+//   --out      where everything goes that is built here. Default: build/portable/launch
+//              in the repository.
+//   --images   the directory that holds the output directories of
+//              misctools/portable/build.ts, one for each architecture:
+//              <images>/<arch>/threads.img and <images>/<arch>/sysroot. Default:
+//              build/portable in the repository, where
+//              `bun misctools/portable/build.ts test-image --arch <arch>` builds.
 //
 // Parts, per architecture:
 //   linux stub    stub/linux_stub.c, freestanding, no libc, clang + ld.lld.
@@ -15,23 +22,29 @@ import { join } from "node:path";
 //                 cc (bun tools/mac-stub.ts prints that script). Without
 //                 --macos-stub-dir the packed file has no macOS stub and its
 //                 shell header says so on macOS.
-//   macos check   host/host_posix.c compiled to a Mach-O object with the musl
+//   macos check   ../host/host_posix.c compiled to a Mach-O object with the musl
 //                 headers of the sysroot and test/mac_shim.h in place of the
 //                 Apple SDK. A compile check, nothing is linked or run.
-//   image         out/<arch>/threads.img from misctools/portable/build.sh, and
-//                 out/<arch>/bigbss.img, built here from test/bigbss.c.
+//   image         <images>/<arch>/threads.img from misctools/portable/build.ts, and
+//                 <out>/<arch>/bigbss.img, built here from test/bigbss.c.
 //
 // The stub is linked without a build id and stripped, and the packer adds
 // nothing of this machine, so the bytes depend on the sources and the
 // compiler only: two builds give the same file.
-import { mkdir } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { IMAGE_LINK_FLAGS, REPOSITORY, TREE, abiFlags, llvmBin, sysrootAt, targetOf } from "../../flags.ts";
 import { ELF_MACHINE, type Arch } from "./format.ts";
 
 const here = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const LLVM = process.env.LLVM_BIN ?? "/usr/lib/llvm-current/bin";
-const WIN_HOSTS = process.env.PORTABLE_WIN_HOSTS ?? join(import.meta.dir, "../../../../build/portable/inputs/windows");
+const LLVM = llvmBin();
+/** The sources of the two hosts. */
+const HOSTS = join(TREE, "host");
+export const DEFAULT_OUT = join(REPOSITORY, "build", "portable", "launch");
+export const DEFAULT_IMAGES = join(REPOSITORY, "build", "portable");
+export const WIN_HOSTS = process.env.PORTABLE_WIN_HOSTS ?? join(REPOSITORY, "build", "portable", "inputs", "windows");
 /** The name of the Windows host input file, per architecture. */
 const WIN_HOST_NAME: Record<Arch, string> = { x86_64: "host-x64.exe", aarch64: "host-arm64.exe" };
 
@@ -42,13 +55,11 @@ function run(cmd: string[], what: string) {
   if (warnings) console.log(`  ${what}: ${warnings.split("\n").length} line(s) on stderr:\n${warnings}`);
 }
 
-const output = (cmd: string[]) => Bun.spawnSync({ cmd }).stdout.toString().trim();
-
 /**
  * The Linux loader stub: freestanding, not linked against any libc.
  *   - It has to run on any Linux machine, so it cannot need a libc of the
  *     system; it is written against the kernel, nothing else.
- *   - The patched musl in out/<arch>/sysroot is the libc OF THE IMAGE: it
+ *   - The patched musl in <images>/<arch>/sysroot is the libc OF THE IMAGE: it
  *     knows the host table (AT_BUN_HOST). The stub is not the image and has
  *     no business carrying that libc.
  *   - It needs the start stack as the kernel hands it over (argc, argv, envp
@@ -98,37 +109,38 @@ export function buildLinuxStub(arch: Arch, out: string): string {
   return exe;
 }
 
+/** The sysroot that misctools/portable/build.ts made for an architecture. */
+function sysrootOf(arch: Arch, images: string) {
+  const sysroot = sysrootAt(`${images}/${arch}/sysroot`, arch);
+  if (!existsSync(`${sysroot.lib}/libc.a`) || !existsSync(sysroot.builtins)) {
+    throw new Error(`no sysroot at ${sysroot.root}: run bun misctools/portable/build.ts test-image --arch ${arch} --out ${images}/${arch} first`);
+  }
+  return sysroot;
+}
+
 /**
- * A second test image, built the way misctools/portable/build.sh builds one:
- * static-pie against the patched musl sysroot, segments 64 KiB apart. Its
+ * A second test image, built the way misctools/portable/build.ts builds one
+ * (steps/images.ts): static-pie against the patched musl sysroot, with the
+ * flags of the image, segments 64 KiB apart. Its
  * .bss is several pages, which the threaded test image does not have, so it
  * reaches the part of the loader stub that maps anonymous zero pages after
  * the file pages of a writable segment.
  */
-export function buildBigBssImage(arch: Arch, out: string): string {
-  const sysroot = `${out}/${arch}/sysroot`;
+export function buildBigBssImage(arch: Arch, out: string, images: string): string {
+  const sysroot = sysrootOf(arch, images);
+  mkdirSync(`${out}/${arch}`, { recursive: true });
   const img = `${out}/${arch}/bigbss.img`;
-  if (!existsSync(`${sysroot}/lib/libc.a`)) {
-    throw new Error(`no sysroot at ${sysroot}: run misctools/portable/build.sh ${arch} ${out}/${arch} first`);
-  }
-  const resource = output([`${LLVM}/clang`, "-print-resource-dir"]);
-  const flags = arch === "x86_64" ? ["-mno-red-zone", "-fno-stack-protector", "-fPIE"] : ["-ffixed-x18", "-fno-stack-protector", "-fPIE"];
-  const rt =
-    arch === "x86_64"
-      ? output([`${LLVM}/clang`, "--print-libgcc-file-name", "--rtlib=compiler-rt"])
-      : `${out}/${arch}/builtins/lib/linux/libclang_rt.builtins-aarch64.a`;
   run(
     [
       `${LLVM}/clang`,
-      `--target=${arch}-linux-musl`,
+      `--target=${targetOf(arch)}`,
       "-O2",
       "-nostdinc",
       "-isystem",
-      `${sysroot}/include`,
+      sysroot.include,
       "-isystem",
-      `${resource}/include`,
-      "-femulated-tls",
-      ...flags,
+      `${sysroot.resourceDir}/include`,
+      ...abiFlags(arch),
       "-c",
       "-o",
       `${out}/${arch}/bigbss.o`,
@@ -144,20 +156,17 @@ export function buildBigBssImage(arch: Arch, out: string): string {
       "--no-dynamic-linker",
       "-z",
       "noexecstack",
-      "-z",
-      "max-page-size=65536",
-      "-z",
-      "separate-loadable-segments",
+      ...IMAGE_LINK_FLAGS,
       "-o",
       img,
-      `${sysroot}/lib/rcrt1.o`,
-      `${sysroot}/lib/crti.o`,
+      `${sysroot.lib}/rcrt1.o`,
+      `${sysroot.lib}/crti.o`,
       `${out}/${arch}/bigbss.o`,
-      `-L${sysroot}/lib`,
+      `-L${sysroot.lib}`,
       "-lc",
-      rt,
+      sysroot.builtins,
       "-lc",
-      `${sysroot}/lib/crtn.o`,
+      `${sysroot.lib}/crtn.o`,
     ],
     `link bigbss ${arch}`,
   );
@@ -165,15 +174,15 @@ export function buildBigBssImage(arch: Arch, out: string): string {
 }
 
 /**
- * The macOS branches of host/host_posix.c, compiled to a Mach-O object for the
+ * The macOS branches of ../host/host_posix.c, compiled to a Mach-O object for the
  * architecture of the image. There is no Apple SDK on this machine, so the
  * musl headers of the sysroot and test/mac_shim.h stand in for it and nothing
  * is linked. A real macOS stub is an input file built on a Mac.
  */
-export function buildMacObject(arch: Arch, out: string): string {
+export function buildMacObject(arch: Arch, out: string, images: string): string {
   const apple = arch === "aarch64" ? "arm64" : "x86_64";
   const o = `${out}/mac/host_posix.${apple}.o`;
-  const resource = output([`${LLVM}/clang`, "-print-resource-dir"]);
+  const sysroot = sysrootOf(arch, images);
   run(
     [
       `${LLVM}/clang`,
@@ -185,17 +194,15 @@ export function buildMacObject(arch: Arch, out: string): string {
       "-Wno-missing-field-initializers",
       "-nostdinc",
       "-isystem",
-      `${out}/${arch}/sysroot/include`,
+      sysroot.include,
       "-isystem",
-      `${resource}/include`,
-      "-I",
-      `${here}/host/base`,
+      `${sysroot.resourceDir}/include`,
       "-include",
       `${here}/test/mac_shim.h`,
       "-c",
       "-o",
       o,
-      `${here}/host/host_posix.c`,
+      `${HOSTS}/host_posix.c`,
     ],
     `host_posix.c for ${apple} macOS`,
   );
@@ -203,19 +210,15 @@ export function buildMacObject(arch: Arch, out: string): string {
 }
 
 /** The POSIX host as a Linux program, to test the host path of the container. */
-export function buildLinuxHost(arch: Arch, out: string): string {
+export function buildLinuxHost(arch: Arch, out: string, images: string): string {
   const exe = `${out}/host-linux-${arch}`;
-  const sysroot = `${out}/${arch}/sysroot`;
-  const resource = output([`${LLVM}/clang`, "-print-resource-dir"]);
   if (arch === "x86_64") {
-    run(
-      [`${LLVM}/clang`, "-O2", "-Wall", "-Wno-unused-function", "-I", `${here}/host/base`, "-o", exe, `${here}/host/host_posix.c`, "-lpthread"],
-      "linux host x86_64",
-    );
+    run([`${LLVM}/clang`, "-O2", "-Wall", "-Wno-unused-function", "-o", exe, `${HOSTS}/host_posix.c`, "-lpthread"], "linux host x86_64");
     return exe;
   }
   // aarch64: a static program whose libc is the sysroot of the image, built
-  // without -ffixed-x18, the way misctools/portable/build.sh builds it.
+  // without -ffixed-x18, the way misctools/portable/build.ts builds it.
+  const sysroot = sysrootOf(arch, images);
   run(
     [
       `${LLVM}/clang`,
@@ -223,16 +226,14 @@ export function buildLinuxHost(arch: Arch, out: string): string {
       "-O2",
       "-nostdinc",
       "-isystem",
-      `${sysroot}/include`,
+      sysroot.include,
       "-isystem",
-      `${resource}/include`,
-      "-I",
-      `${here}/host/base`,
+      `${sysroot.resourceDir}/include`,
       "-fno-stack-protector",
       "-c",
       "-o",
       `${out}/host-posix-aarch64.o`,
-      `${here}/host/host_posix.c`,
+      `${HOSTS}/host_posix.c`,
     ],
     "linux host aarch64 (compile)",
   );
@@ -244,14 +245,14 @@ export function buildLinuxHost(arch: Arch, out: string): string {
       "noexecstack",
       "-o",
       exe,
-      `${sysroot}/lib/crt1.o`,
-      `${sysroot}/lib/crti.o`,
+      `${sysroot.lib}/crt1.o`,
+      `${sysroot.lib}/crti.o`,
       `${out}/host-posix-aarch64.o`,
-      `-L${sysroot}/lib`,
+      `-L${sysroot.lib}`,
       "-lc",
-      `${out}/aarch64/builtins/lib/linux/libclang_rt.builtins-aarch64.a`,
+      sysroot.builtins,
       "-lc",
-      `${sysroot}/lib/crtn.o`,
+      `${sysroot.lib}/crtn.o`,
     ],
     "linux host aarch64 (link)",
   );
@@ -262,7 +263,8 @@ if (import.meta.main) {
   const args = process.argv.slice(2);
   const opt: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) opt[args[i].replace(/^--/, "")] = args[++i];
-  const out = opt.out ?? `${here}/out`;
+  const out = opt.out ?? DEFAULT_OUT;
+  const images = opt.images ?? DEFAULT_IMAGES;
   const arches: Arch[] = opt.arch ? [opt.arch as Arch] : ["x86_64", "aarch64"];
   const winDir = opt["win-host-dir"] ?? WIN_HOSTS;
   for (const dir of ["stub", "pack", "mac", "macstub"]) await mkdir(`${out}/${dir}`, { recursive: true });
@@ -279,12 +281,12 @@ if (import.meta.main) {
     const macosStub = opt["macos-stub-dir"] ? `${opt["macos-stub-dir"]}/macos-stub-${arch}` : "";
     const haveMacos = !!macosStub && existsSync(macosStub);
     console.log(`  macos stub   ${haveMacos ? `${macosStub} ${Bun.file(macosStub).size} bytes (${key(macosStub)})` : "absent, packing without it"}`);
-    const macObject = buildMacObject(arch, out);
+    const macObject = buildMacObject(arch, out, images);
     console.log(`  macos check  ${macObject} ${Bun.file(macObject).size} bytes (compiled, not linked: no Apple SDK here)`);
-    const host = buildLinuxHost(arch, out);
+    const host = buildLinuxHost(arch, out, images);
     console.log(`  linux host   ${host} ${Bun.file(host).size} bytes (the POSIX host, to test the host path)`);
-    const images = opt.image ? [opt.image] : [`${out}/${arch}/threads.img`, buildBigBssImage(arch, out)];
-    for (const image of images) {
+    const toPack = opt.image ? [opt.image] : [`${images}/${arch}/threads.img`, buildBigBssImage(arch, out, images)];
+    for (const image of toPack) {
       const name = image.replace(/.*\//, "").replace(/\.img$/, "");
       const packed = `${out}/pack/${name}-${arch}.com`;
       const cmd = [

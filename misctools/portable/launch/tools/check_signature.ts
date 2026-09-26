@@ -2,14 +2,15 @@
 //
 //   bun tools/check_signature.ts <file>       a packed container or a bare image
 //
-// A port of misctools/portable/test/check_signature.py. It reads the file the
+// What misctools/portable/test/check_signature.ts checks, for a bare image and
+// for a packed container. It reads the file the
 // way the macOS stub does, then the signature field by field (xnu
 // osfmk/kern/cs_blobs.h), and hashes every page itself. It does not use the
 // code that wrote the signature. It cannot tell whether macOS accepts the
 // signature: that needs a Mac.
 //
 // Two forms are read, the two the macOS stub reads:
-//   - a bare image signed by misctools/portable/tools/apple_sign.py: the last
+//   - a bare image signed by misctools/portable/tools/apple_sign.ts: the last
 //     40 bytes are 5 x u64, code_off (0), code_len, sig_off, sig_len,
 //     "BUNSIG01", and the image is the file.
 //   - a packed container (tools/pack.ts): the last 128 bytes are the BUNPACK1

@@ -1587,10 +1587,12 @@ impl<'a> Resolver<'a> {
             if let Some(tsconfig) = dir.enclosing_tsconfig_json {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
-                    result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
+                    result.flags.emit_decorator_metadata()
+                        || tsconfig.emit_decorator_metadata == Some(true),
                 );
                 result.flags.set_experimental_decorators(
-                    result.flags.experimental_decorators() || tsconfig.experimental_decorators,
+                    result.flags.experimental_decorators()
+                        || tsconfig.experimental_decorators == Some(true),
                 );
                 if let Some(v) = tsconfig.use_define_for_class_fields {
                     result.flags.set_use_define_for_class_fields(v);
@@ -6553,8 +6555,12 @@ impl<'a> Resolver<'a> {
                         let parent_config = unsafe { &mut *parent_config_ptr };
                         // SAFETY: see loop-wide note above.
                         let mc = unsafe { &mut *merged_config };
-                        mc.emit_decorator_metadata =
-                            mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
+                        if let Some(v) = parent_config.emit_decorator_metadata {
+                            mc.emit_decorator_metadata = Some(v);
+                        }
+                        if let Some(v) = parent_config.experimental_decorators {
+                            mc.experimental_decorators = Some(v);
+                        }
                         if let Some(v) = parent_config.use_define_for_class_fields {
                             mc.use_define_for_class_fields = Some(v);
                         }

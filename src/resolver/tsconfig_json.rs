@@ -159,8 +159,10 @@ pub struct TSConfigJSON {
 
     pub(crate) preserve_imports_not_used_as_values: Option<bool>,
 
-    pub emit_decorator_metadata: bool,
-    pub experimental_decorators: bool,
+    /// `None` = unset, so a config further down an extends chain can set it.
+    pub emit_decorator_metadata: Option<bool>,
+    /// `None` = unset, so a config further down an extends chain can set it.
+    pub experimental_decorators: Option<bool>,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
 }
@@ -176,8 +178,8 @@ impl Default for TSConfigJSON {
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
             preserve_imports_not_used_as_values: Some(false),
-            emit_decorator_metadata: false,
-            experimental_decorators: false,
+            emit_decorator_metadata: None,
+            experimental_decorators: None,
             use_define_for_class_fields: None,
         }
     }
@@ -434,12 +436,12 @@ impl TSConfigJSON {
 
             // Parse "emitDecoratorMetadata"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = emit_decorator_metadata_v {
-                result.emit_decorator_metadata = val;
+                result.emit_decorator_metadata = Some(val);
             }
 
             // Parse "experimentalDecorators"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = experimental_decorators_v {
-                result.experimental_decorators = val;
+                result.experimental_decorators = Some(val);
             }
 
             // Parse "useDefineForClassFields"

@@ -2446,7 +2446,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut has_static_route_for_star_path = false;
 
         for entry in &self.config.static_routes {
-            if &*entry.path == b"/*" {
+            // A framework router entry registers no handler. Step 8 counts the DevServer catch-all.
+            let registers_handler = !matches!(entry.route, AnyRoute::FrameworkRouter(_));
+            if registers_handler && &*entry.path == b"/*" {
                 has_static_route_for_star_path = true;
                 match &entry.method {
                     server_config::MethodOptional::Any => {

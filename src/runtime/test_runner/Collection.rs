@@ -258,7 +258,10 @@ impl Collection {
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
 
-        self.active_scope_mut().failed = true;
+        let scope = self.active_scope_mut();
+        scope.failed = true;
+        // What it would have declared is unknown, so the `.only` around it keeps the file focused.
+        scope.base.mark_focus();
 
         HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe // unhandled because it needs to exit with code 1
     }

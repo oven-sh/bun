@@ -191,6 +191,8 @@ The following command runs only tests #2 and #3.
 bun test --only
 ```
 
+`.only` has no effect when it selects no test that can run. For example, Bun skips a `test.only()` inside `describe.skip()`, and the other tests in the file still run. Unlike in Jest, a `describe.only()` inside `describe.skip()` also stays skipped.
+
 ### test.if
 
 To run a test conditionally, use `test.if()`. The test runs if the condition is truthy. Use it for tests that should only run on a specific architecture or operating system.

@@ -407,10 +407,6 @@ impl ScopeFunctions {
                     }
                 }
 
-                if !matches_filter {
-                    base.self_mode = SelfMode::FilteredOut;
-                }
-
                 debug_assert!(!bun_test.collection.locked);
                 group_log::log(format_args!(
                     "enqueueTestCallback / {} / in scope: {}",
@@ -420,12 +416,13 @@ impl ScopeFunctions {
 
                 let _ = bun_test.collection.active_scope_mut().append_test(
                     description,
-                    if matches_filter { callback } else { None },
+                    callback,
                     bun_test::ExecutionEntryCfg {
                         has_done_parameter,
                         timeout: options.timeout,
                         retry_count: options.retry.unwrap_or(0),
                         repeat_count: options.repeats,
+                        filtered_out: !matches_filter,
                     },
                     base,
                     bun_test::AddedInPhase::Collection,

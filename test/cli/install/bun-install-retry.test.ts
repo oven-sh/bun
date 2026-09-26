@@ -1,7 +1,17 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { access, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
+import * as net from "node:net";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -38,6 +48,113 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await dummyAfterEach();
+});
+
+// An endpoint that accepts the TCP connection but never writes a byte back
+// must print a `warn:` on each retry so the (default ~30 min) wait isn't
+// silent; previously only `--verbose` surfaced these.
+describe("warns on each retry after an idle-timeout", () => {
+  async function silentServer() {
+    const state = { connects: 0 };
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer(socket => {
+      state.connects++;
+      sockets.add(socket);
+      socket.on("data", () => {});
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return {
+      state,
+      port: (server.address() as net.AddressInfo).port,
+      [Symbol.asyncDispose]: async () => {
+        for (const s of sockets) s.destroy();
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      },
+    };
+  }
+
+  const installEnv = {
+    ...env,
+    // Trip the idle timer in seconds instead of the 5-minute default so
+    // the full retry cycle finishes inside the test timeout.
+    BUN_CONFIG_HTTP_IDLE_TIMEOUT: "2",
+    BUN_CONFIG_HTTP_RETRY_COUNT: "1",
+  };
+
+  it("against a silent registry (manifest path)", async () => {
+    await using silent = await silentServer();
+    using dir = tempDir("install-silent-registry", {
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { "any-pkg": "1.0.0" } }),
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${silent.port}/"\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-progress"],
+      env: installEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const warnLines = stderr.split("\n").filter(l => l.includes("warn:"));
+    expect({ connects: silent.state.connects, warnLines, stderr, exitCode }).toEqual({
+      connects: 2,
+      warnLines: [expect.stringContaining("Timeout downloading package manifest any-pkg. Retrying 1/1")],
+      stderr: expect.stringContaining("error: Timeout downloading package manifest any-pkg"),
+      exitCode: 1,
+    });
+    expect(stdout).not.toContain("installed");
+  }, 60_000);
+
+  it("against a silent tarball host (extract path)", async () => {
+    await using silent = await silentServer();
+    // The registry serves a valid manifest whose `dist.tarball` points at the
+    // silent TCP listener, so the idle-timeout fires on the tarball download.
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/BaR") {
+          return Response.json({
+            name: "BaR",
+            "dist-tags": { latest: "0.0.2" },
+            versions: {
+              "0.0.2": {
+                name: "BaR",
+                version: "0.0.2",
+                dist: { tarball: `http://127.0.0.1:${silent.port}/BaR-0.0.2.tgz` },
+              },
+            },
+          });
+        }
+        return new Response("unexpected", { status: 404 });
+      },
+    });
+    using dir = tempDir("install-silent-tarball", {
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { BaR: "0.0.2" } }),
+      "bunfig.toml": `[install]\ncache = false\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-progress"],
+      env: installEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const warnLines = stderr.split("\n").filter(l => l.includes("warn:"));
+    expect({ warnLines, stderr, exitCode }).toEqual({
+      warnLines: [expect.stringContaining("Timeout downloading tarball BaR@0.0.2. Retrying 1/1")],
+      stderr: expect.stringContaining("error: Timeout downloading tarball BaR@0.0.2"),
+      exitCode: 1,
+    });
+    expect(silent.state.connects).toBeGreaterThanOrEqual(2);
+    expect(stdout).not.toContain("installed");
+  }, 60_000);
 });
 
 // Manifest request 302-redirects and the redirect target answers a retryable

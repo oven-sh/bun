@@ -335,11 +335,11 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
             return false;
         (void)scope.tryClearException();
 
-        // On error, remove the module from the require map/
+        // On error, remove the module from the require map
         // so that it can be re-evaluated on the next require.
-        bool wasRemoved = requireMapOf(globalObject, moduleGraph())->remove(globalObject, this->filename());
+        // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
+        requireMapOf(globalObject, moduleGraph())->remove(globalObject, this->filename());
         RETURN_IF_EXCEPTION(scope, false);
-        ASSERT_UNUSED(wasRemoved, wasRemoved || (moduleGraph() && moduleGraph()->disposed())); // dispose() empties a graph's cache under running code
 
         scope.throwException(globalObject, exception);
         return false;
@@ -1393,17 +1393,16 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
     JSC::JSValue exception = throwScope.exception();
     ASSERT(exception);
     // tryClearException() cannot clear a termination, and JSMap::remove with
-    // it still pending returns false, tripping ASSERT(wasRemoved).
+    // it still pending does nothing.
     if (vm.hasPendingTerminationException()) [[unlikely]]
         RELEASE_AND_RETURN(throwScope, {});
     (void)throwScope.tryClearException();
 
-    // On error, remove the module from the require map/
+    // On error, remove the module from the require map
     // so that it can be re-evaluated on the next require.
-    JSModuleGraph* graph = referrerModule->moduleGraph();
-    bool wasRemoved = requireMapOf(globalObject, graph)->remove(globalObject, specifierValue);
+    // The entry can already be gone: `delete require.cache[__filename]; throw ...`, or a graph's dispose().
+    requireMapOf(globalObject, referrerModule->moduleGraph())->remove(globalObject, specifierValue);
     RETURN_IF_EXCEPTION(throwScope, {});
-    ASSERT_UNUSED(wasRemoved, wasRemoved || (graph && graph->disposed())); // dispose() empties a graph's cache under running code
 
     throwScope.throwException(globalObject, exception);
     RELEASE_AND_RETURN(throwScope, {});

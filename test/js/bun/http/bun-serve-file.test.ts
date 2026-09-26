@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, constants, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1352,6 +1352,66 @@ parked.destroy();
     expect(exitCode).toBe(0);
   },
 );
+
+// A body over an fd that the response does not own (Bun.stdin, Bun.file(fd))
+// leaves the fd open when the response ends. The stream was freed with its
+// poll still registered on that fd, so the next event on the fd reached the
+// freed reader: heap-use-after-free in PosixBufferedReader::begin_read.
+for (const [source, fd] of [
+  ["Bun.stdin", 0],
+  ["Bun.file(3)", 3],
+] as const) {
+  test.concurrent.skipIf(isWindows)(
+    `${source} response over a pipe leaves no poll on the fd when the body ends`,
+    async () => {
+      using dir = tempDir("serve-pipe-eof-poll", {});
+      const fifoPath = join(String(dir), "body.fifo");
+      mkfifo(fifoPath);
+
+      // Like `printf hello | bun`: the pipe holds the body and is at EOF behind
+      // it before the child starts. The read end opens first (non-blocking, so
+      // the open does not wait for a writer), then a writer writes and closes.
+      const pipe = openSync(fifoPath, constants.O_RDONLY | constants.O_NONBLOCK);
+      try {
+        const writer = openSync(fifoPath, constants.O_WRONLY);
+        writeSync(writer, "hello");
+        closeSync(writer);
+
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch: req => (new URL(req.url).pathname === "/alive" ? new Response("alive") : new Response(${source})),
+});
+const body = await (await fetch(server.url)).text();
+// The fd stays open after the response, and the pipe stays at EOF. These
+// requests make the event loop poll again, so a poll that the freed stream
+// left on the fd fires.
+const after = [];
+for (let i = 0; i < 3; i++) after.push(await (await fetch(server.url + "alive")).text());
+console.log(JSON.stringify({ body, after }));
+server.stop(true);
+`,
+          ],
+          env: bunEnv,
+          stdio: fd === 0 ? [pipe, "pipe", "pipe"] : ["ignore", "pipe", "pipe", pipe],
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe(JSON.stringify({ body: "hello", after: ["alive", "alive", "alive"] }));
+        expect(exitCode).toBe(0);
+      } finally {
+        closeSync(pipe);
+      }
+    },
+  );
+}
 
 // A FIFO's stat size is 0, but the body length is unknown until EOF. Writing
 // Content-Length from the stat size and then streaming the pipe to EOF puts

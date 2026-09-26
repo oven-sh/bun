@@ -2304,7 +2304,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_NOT_RUNNING, "Server is not running."_s));
     case ErrorCode::ERR_IPC_CHANNEL_CLOSED:
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed."_s));
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_CHANNEL_CLOSED, "Channel closed"_s));
     case ErrorCode::ERR_SOCKET_BAD_TYPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6"_s));
     case ErrorCode::ERR_ZLIB_INITIALIZATION_FAILED:
@@ -2433,7 +2433,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
     case ErrorCode::ERR_HTTP_TRAILER_INVALID:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_TRAILER_INVALID, "Trailers are invalid with this transfer encoding"_s));
     case ErrorCode::ERR_HTTP_SOCKET_ASSIGNED:
-        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "ServerResponse has an already assigned socket"_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_RELEASE_LOCK, "Stream reader cancelled via releaseLock()"_s));
     case ErrorCode::ERR_SOCKET_CONNECTION_TIMEOUT:

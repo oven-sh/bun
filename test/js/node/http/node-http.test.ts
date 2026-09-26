@@ -1549,7 +1549,7 @@ describe("server.address should be valid IP", () => {
 
       expect(res.socket).toBe(socket);
       expect(socket._httpMessage).toBe(res);
-      expect(() => res.assignSocket(socket)).toThrow("Socket already assigned");
+      expect(() => res.assignSocket(socket)).toThrow("ServerResponse has an already assigned socket");
       socket.emit("close");
       doneSocket();
     } catch (err) {

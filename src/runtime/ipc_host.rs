@@ -116,7 +116,8 @@ pub(crate) fn do_send(
     let connected = ipc.as_ref().is_some_and(|i| i.is_connected());
     if !connected {
         let msg = match from {
-            FromEnum::Process => "process.send() can only be used if the IPC channel is open.",
+            // `process.send()` is Node's API, so this is Node's text.
+            FromEnum::Process => "Channel closed",
             FromEnum::Subprocess => "Subprocess.send() can only be used if an IPC channel is open.",
             FromEnum::SubprocessExited => {
                 "Subprocess.send() cannot be used after the process has exited."

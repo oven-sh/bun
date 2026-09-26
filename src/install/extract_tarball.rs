@@ -193,12 +193,7 @@ impl ExtractTarball {
         let name: &[u8] = if !self.name.slice().is_empty() {
             self.name.slice()
         } else {
-            // Not sure where this case hits yet.
-            // BUN-2WQ
-            bun_core::warn!(
-                "Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.",
-            );
-            debug_assert!(false);
+            // A tarball package with no package.json `name`, or a dependency under an empty key.
             b"unnamed-package"
         };
         let basename: &[u8] = 'brk: {

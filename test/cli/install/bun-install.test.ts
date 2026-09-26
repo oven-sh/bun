@@ -6924,6 +6924,50 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("should handle tarball URL of a package without a name with existing lockfile", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const tarball = await new Bun.Archive(
+        { "package/package.json": JSON.stringify({ version: "0.1.0" }) },
+        { compress: "gzip" },
+      ).bytes();
+      const urls: string[] = [];
+      setContextHandler(ctx, request => {
+        urls.push(request.url);
+        return new Response(tarball);
+      });
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { "no-name": `${ctx.registry_url}no-name-0.1.0.tgz` },
+        }),
+      );
+      const install = async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { logged: err.split(/\r?\n/).filter(line => /^(error|warn): /.test(line)), exitCode };
+      };
+
+      expect(await install()).toEqual({ logged: [], exitCode: 0 });
+      await access(join(ctx.package_dir, "bun.lockb"));
+      // The cache is in node_modules. The second install extracts the tarball again, and the lockfile
+      // has no name for the package.
+      await rm(join(ctx.package_dir, "node_modules"), { force: true, recursive: true });
+      expect(await install()).toEqual({ logged: [], exitCode: 0 });
+      expect(urls).toEqual([`${ctx.registry_url}no-name-0.1.0.tgz`, `${ctx.registry_url}no-name-0.1.0.tgz`]);
+      expect(await file(join(ctx.package_dir, "node_modules", "no-name", "package.json")).json()).toEqual({
+        version: "0.1.0",
+      });
+    });
+  });
+
   it("should handle tarball path with existing lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
@@ -11922,6 +11966,70 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
       ]);
       expect(installed).toEqual(["bar", "baz"]);
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // The manifest URL of a package with an empty name is `<registry>/`, the registry root. This registry
+  // answers it with a packument, so a request for it resolves to a package with no name.
+  async function installBarWithEmptyName(ctx: TestContext, fields: object) {
+    const { err, ...rest } = await installFrom(ctx, {
+      bar: manifestOf(ctx, "bar", "0.0.2", fields),
+      "": manifestOf(ctx, "", "0.0.3", { dist: { tarball: `${ctx.registry_url}baz-0.0.3.tgz` } }),
+    });
+    return { logged: err.split(/\r?\n/).filter(line => /^(error|warn): /.test(line)), ...rest };
+  }
+
+  it.each(["0.0.3", "^0.0.3", "latest"])(
+    "fails on a dependency with an empty name and the version %j, without a request for it",
+    async version => {
+      await withContext(defaultOpts, async ctx => {
+        expect(await installBarWithEmptyName(ctx, { dependencies: { "": version } })).toEqual({
+          logged: [
+            `error: bar@0.0.2 has a dependency with an empty name: "": ${JSON.stringify(version)}`,
+            `error: ${version} failed to resolve`,
+          ],
+          urls: [`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`],
+          installed: [],
+          exitCode: 1,
+        });
+      });
+    },
+  );
+
+  it.each(["0.0.3", "latest", ""])(
+    "skips an optional dependency with an empty name and the version %j, without a request for it",
+    async version => {
+      await withContext(defaultOpts, async ctx => {
+        expect(await installBarWithEmptyName(ctx, { optionalDependencies: { "": version } })).toEqual({
+          logged: [],
+          urls: [`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`],
+          installed: ["bar"],
+          exitCode: 0,
+        });
+      });
+    },
+  );
+
+  it("warns about a peer dependency with an empty name, without a request for it", async () => {
+    await withContext(defaultOpts, async ctx => {
+      expect(await installBarWithEmptyName(ctx, { peerDependencies: { "": "0.0.3" } })).toEqual({
+        logged: [`warn: bar@0.0.2 has a dependency with an empty name: "": "0.0.3"`],
+        urls: [`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`],
+        installed: ["bar"],
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The package.json in the tarball names the package, as it does for npm.
+  it("installs a tarball dependency with an empty name under the name in its package.json", async () => {
+    await withContext(defaultOpts, async ctx => {
+      expect(await installBarWithEmptyName(ctx, { dependencies: { "": `${ctx.registry_url}baz-0.0.3.tgz` } })).toEqual({
+        logged: [],
+        urls: [`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`, `${ctx.registry_url}baz-0.0.3.tgz`],
+        installed: [".bin", "bar", "baz"],
+        exitCode: 0,
+      });
     });
   });
 });

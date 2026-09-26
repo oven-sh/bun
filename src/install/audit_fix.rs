@@ -332,7 +332,7 @@ fn importer_file(lockfile: &Lockfile, parent: PackageID) -> Option<Box<[u8]>> {
     }
 }
 
-fn dependent_label(lockfile: &Lockfile, parent: PackageID) -> Box<[u8]> {
+pub(crate) fn dependent_label(lockfile: &Lockfile, parent: PackageID) -> Box<[u8]> {
     if parent == invalid_package_id {
         return Box::from(&b"package.json"[..]);
     }

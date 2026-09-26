@@ -18,6 +18,7 @@
 // clang-format off
 
 
+#include <cerrno>
 #include <string>
 #include <charconv>
 #include <string_view>
@@ -758,6 +759,16 @@ public:
     TemplatedApp &&listen(int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string_view path) {
         handler(httpContext ? trackListenSocket(httpContext->listen_unix(sslCtxOrNull(), path.data(), path.length(), options)) : nullptr);
         return std::move(*this);
+    }
+
+    /* A descriptor that the caller already bound. Returns the listen socket, or nullptr
+     * with the errno in *error. */
+    us_listen_socket_t *listen_fd(LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int *error) {
+        if (!httpContext) {
+            *error = EINVAL;
+            return nullptr;
+        }
+        return trackListenSocket(httpContext->listen_fd(sslCtxOrNull(), fd, backlog, options, error));
     }
 
     void setOnSocketClosed(HttpContextData<SSL>::OnSocketClosedCallback onClose) {

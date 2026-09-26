@@ -332,6 +332,32 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
+    /// Listen on a descriptor that the caller bound. On failure the caller keeps `fd` and gets the errno.
+    pub fn listen_fd(
+        &mut self,
+        fd: crate::LIBUS_SOCKET_DESCRIPTOR,
+        backlog: c_int,
+        options: c_int,
+    ) -> Result<*mut ListenSocket<SSL>, c_int> {
+        let mut error: c_int = 0;
+        // SAFETY: self is a valid app; `error` outlives the call.
+        let socket = unsafe {
+            c::uws_app_listen_fd(
+                Self::SSL_FLAG,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
+                fd,
+                backlog,
+                options,
+                &raw mut error,
+            )
+        };
+        if socket.is_null() {
+            Err(error)
+        } else {
+            Ok(socket.cast::<ListenSocket<SSL>>())
+        }
+    }
+
     pub fn num_subscribers(&mut self, topic: &[u8]) -> u32 {
         // SAFETY: self is a valid app; topic valid for the call.
         unsafe {
@@ -653,6 +679,15 @@ pub mod c {
             handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
             user_data: *mut c_void,
         );
+
+        pub(crate) fn uws_app_listen_fd(
+            ssl_flag: c_int,
+            app: *mut uws_app_t,
+            fd: crate::LIBUS_SOCKET_DESCRIPTOR,
+            backlog: c_int,
+            options: c_int,
+            error: *mut c_int,
+        ) -> *mut UwsListenSocket;
 
         pub(crate) safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);
     }

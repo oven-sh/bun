@@ -882,7 +882,11 @@ function arrayIndexOf(arr, val, byteOffset, encoding, dir) {
     if (indexSize === 1) {
       return buf[i];
     } else {
-      return buf.readUInt16BE(i * indexSize);
+      // Read the 2-byte unit big-endian by hand instead of via readUInt16BE:
+      // `val` may be a plain Uint8Array, which has no such method. Buffer and
+      // Uint8Array both index to the same byte, so this matches Node exactly.
+      const o = i * indexSize;
+      return (buf[o] << 8) | buf[o + 1];
     }
   }
 

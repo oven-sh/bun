@@ -11,16 +11,16 @@
 
 // `bun_str` is a historical namespace name; keep a public alias to
 // `bun_core` so any external `bun_sys::bun_core::…` paths continue to resolve.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub extern crate bun_core as bun_str;
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub extern crate bun_libuv_sys;
 pub mod fd;
 pub use fd::{ErrorCase, FdExt, MakeLibUvOwnedError, RawFd};
 #[path = "Error.rs"]
 mod error;
 pub use error::Error;
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub use error::ReturnCodeExt;
 impl From<Error> for bun_errno::SystemErrno {
     #[inline]
@@ -54,8 +54,10 @@ impl SystemError {
         // On Windows `self.errno` is a libuv code (e.g. UV_EBUSY = -4082);
         // canonicalize to the small `E` discriminant so Rust-side callers that
         // compare against `E::BUSY`/`E::BADF` keep matching.
-        #[cfg(windows)]
-        if let Some(d) = crate::windows::libuv::uv_err_to_e_discriminant(self.errno) {
+        #[cfg(any(windows, bun_portable))]
+        if bun_core::host::is_windows()
+            && let Some(d) = crate::windows::libuv::uv_err_to_e_discriminant(self.errno)
+        {
             if let Some(e) = E::try_from_raw(d) {
                 return e;
             }
@@ -178,6 +180,7 @@ pub mod dir_iterator {
     /// the install hot loop is POSIX-only) so `slice_u8()` can hand out a
     /// borrowed `&[u8]` on every platform.
     #[cfg(not(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(posix, Name))]
     #[derive(Copy, Clone)]
     pub struct Name {
         /// Points at `d_name[0]` inside the iterator's `buf`; `ptr[len] == 0`.
@@ -185,6 +188,7 @@ pub mod dir_iterator {
         len: usize,
     }
     #[cfg(not(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(posix, Name))]
     // SAFETY: `Name` is a lifetime-erased `&[u8]`; the borrowed bytes are
     // immutable kernel-filled data and the iterator is not shared across
     // threads while a `Name` is outstanding.
@@ -192,14 +196,17 @@ pub mod dir_iterator {
     // SAFETY: see `Send` above — `Name` only exposes shared reads of
     // immutable kernel-filled bytes, so `&Name` is safe to share.
     #[cfg(not(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(posix, Name))]
     unsafe impl Sync for Name {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, Name))]
     pub struct Name {
-        native: Vec<OSPathChar>,
+        native: Vec<u16>,
         utf8: Vec<u8>,
     }
+    #[cfg(not(windows))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(posix, Name))]
     impl Name {
-        #[cfg(not(windows))]
         #[inline]
         fn borrow(s: &[u8]) -> Name {
             // SAFETY: `s` is a slice into a kernel-written dirent record; the
@@ -211,9 +218,30 @@ pub mod dir_iterator {
                 len: s.len(),
             }
         }
-        #[cfg(windows)]
+        /// Borrow the name as `&[OSPathChar]` (no NUL).
         #[inline]
-        fn from_slice(s: &[OSPathChar]) -> Name {
+        pub fn slice(&self) -> &[u8] {
+            // SAFETY: `borrow()` was given a live slice into the iterator's
+            // `buf`; caller honours the streaming-iterator contract.
+            unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        }
+        /// Borrow the entry name as UTF-8 bytes (no NUL): the native slice.
+        #[inline]
+        pub fn slice_u8(&self) -> &[u8] {
+            self.slice()
+        }
+        #[inline]
+        pub fn as_zstr(&self) -> &bun_core::ZStr {
+            // SAFETY: `ptr[len] == 0` (kernel NUL-terminates `d_name`); see
+            // `borrow()` debug_assert.
+            unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
+        }
+    }
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, Name))]
+    impl Name {
+        #[inline]
+        fn from_slice(s: &[u16]) -> Name {
             let mut v = Vec::with_capacity(s.len() + 1);
             v.extend_from_slice(s);
             v.push(0);
@@ -222,40 +250,70 @@ pub mod dir_iterator {
             Name { native: v, utf8 }
         }
         /// Borrow the name as `&[OSPathChar]` (no NUL).
-        #[cfg(not(windows))]
         #[inline]
-        pub fn slice(&self) -> &[OSPathChar] {
-            // SAFETY: `borrow()` was given a live slice into the iterator's
-            // `buf`; caller honours the streaming-iterator contract.
-            unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
-        }
-        #[cfg(windows)]
-        #[inline]
-        pub fn slice(&self) -> &[OSPathChar] {
+        pub fn slice(&self) -> &[u16] {
             &self.native[..self.native.len() - 1]
         }
-        #[inline]
-        pub(crate) fn as_slice(&self) -> &[OSPathChar] {
-            self.slice()
-        }
-        /// Borrow the entry name as UTF-8 bytes (no NUL). On POSIX this is the
-        /// native slice; on Windows it is the cached `fromWPath` transcode.
-        #[cfg(not(windows))]
-        #[inline]
-        pub fn slice_u8(&self) -> &[u8] {
-            self.slice()
-        }
-        #[cfg(windows)]
+        /// Borrow the entry name as UTF-8 bytes (no NUL): the cached
+        /// `fromWPath` transcode.
         #[inline]
         pub fn slice_u8(&self) -> &[u8] {
             &self.utf8
         }
-        #[cfg(not(windows))]
+    }
+    /// The name of an entry in the portable image: the one of the host's iterator. The native
+    /// encoding of its callers is the one of the image, bytes, so for an entry of Windows
+    /// `slice` is the transcoded name too.
+    #[cfg(bun_portable)]
+    pub enum Name {
+        Posix(Name__posix),
+        Windows { name: Name__windows, utf8_z: Vec<u8> },
+    }
+    #[cfg(bun_portable)]
+    impl Name {
+        #[inline]
+        fn borrow(s: &[u8]) -> Name {
+            Name::Posix(Name__posix::borrow(s))
+        }
+        fn from_slice(s: &[u16]) -> Name {
+            let name = Name__windows::from_slice(s);
+            let mut utf8_z = name.slice_u8().to_vec();
+            utf8_z.push(0);
+            Name::Windows { name, utf8_z }
+        }
+        #[inline]
+        pub fn slice(&self) -> &[OSPathChar] {
+            self.slice_u8()
+        }
+        /// The name as Windows gave it. `None` on another host.
+        #[inline]
+        pub fn slice_u16(&self) -> Option<&[u16]> {
+            match self {
+                Name::Posix(_) => None,
+                Name::Windows { name, .. } => Some(name.slice()),
+            }
+        }
+        #[inline]
+        pub fn slice_u8(&self) -> &[u8] {
+            match self {
+                Name::Posix(name) => name.slice_u8(),
+                Name::Windows { name, .. } => name.slice_u8(),
+            }
+        }
         #[inline]
         pub fn as_zstr(&self) -> &bun_core::ZStr {
-            // SAFETY: `ptr[len] == 0` (kernel NUL-terminates `d_name`); see
-            // `borrow()` debug_assert.
-            unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
+            match self {
+                Name::Posix(name) => name.as_zstr(),
+                Name::Windows { utf8_z, .. } => {
+                    bun_core::ZStr::from_buf(utf8_z, utf8_z.len() - 1)
+                }
+            }
+        }
+    }
+    impl Name {
+        #[inline]
+        pub(crate) fn as_slice(&self) -> &[OSPathChar] {
+            self.slice()
         }
     }
 
@@ -318,12 +376,14 @@ pub mod dir_iterator {
     // Same `getdents64(2)` walk for both — Android is the same kernel, and
     // `linux_syscall::getdents64` is a raw syscall (no libc wrapper involved).
     #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(posix, State))]
     struct State {
         buf: AlignedBuf,
         index: usize,
         end_index: usize,
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(posix, State))]
     impl State {
         #[inline]
         fn new() -> State {
@@ -557,7 +617,8 @@ pub mod dir_iterator {
 
     // ── Windows ──────────────────────────────────────────────────────────
     // `NtQueryDirectoryFile` + `FILE_DIRECTORY_INFORMATION` walk.
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, State))]
     struct State {
         // > This structure must be aligned on a LONGLONG (8-byte) boundary. If
         // > a buffer contains two or more of these structures, the
@@ -574,7 +635,8 @@ pub mod dir_iterator {
         /// sticky for the handle lifetime.
         name_filter: Option<Vec<u16>>,
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
+    #[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, State))]
     impl State {
         #[inline]
         fn new() -> State {
@@ -738,6 +800,31 @@ pub mod dir_iterator {
         }
     }
 
+    /// The iterator of the host, in the portable image.
+    #[cfg(bun_portable)]
+    enum State {
+        Posix(State__posix),
+        Windows(State__windows),
+    }
+    #[cfg(bun_portable)]
+    impl State {
+        #[inline]
+        fn new() -> State {
+            if bun_core::host::is_windows() {
+                State::Windows(State__windows::new())
+            } else {
+                State::Posix(State__posix::new())
+            }
+        }
+        #[inline]
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+            match self {
+                State::Posix(state) => state.next(dir),
+                State::Windows(state) => state.next(dir),
+            }
+        }
+    }
+
     /// `DirIterator.NewWrappedIterator(if windows .u16 else .u8)`
     pub struct WrappedIterator {
         dir: Fd,
@@ -760,6 +847,11 @@ pub mod dir_iterator {
             #[cfg(windows)]
             {
                 self.state.name_filter = filter.map(|f| f.to_vec());
+            }
+            #[cfg(bun_portable)]
+            if let State::Windows(state) = &mut self.state {
+                state.name_filter = filter.map(|f| f.to_vec());
+                return;
             }
             #[cfg(not(windows))]
             {
@@ -839,8 +931,11 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
         } else {
             libc::AT_FDCWD
         };
-        linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
-            .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()))
+        let stat = linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
+            .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
+        #[cfg(bun_portable)]
+        let stat = stat.map(Stat::from);
+        stat
     }
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     {
@@ -964,7 +1059,7 @@ mod linux_syscall;
 pub fn is_regular_file(mode: Mode) -> bool {
     kind_from_mode(mode) == FileKind::File
 }
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub use bun_errno::Win32ErrorExt;
 pub use bun_errno::{E, S, SystemErrno, e_from_negated, last_error};
 #[cfg(not(windows))]
@@ -1036,7 +1131,7 @@ pub trait MaybeExt: Sized {
     fn errno<C: error::IntoErrnoInt>(e: C, tag: Tag) -> Self;
     /// `Maybe(T).errnoSys(rc, syscall)` — `Some(Err(..))` if `rc` maps to an
     /// errno (NTSTATUS ≠ SUCCESS on Windows; rc == -1 / errno on POSIX).
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     fn errno_sys(rc: bun_windows_sys::NTSTATUS, tag: Tag) -> Option<Self>;
 }
 impl<T> MaybeExt for Result<T> {
@@ -1052,7 +1147,7 @@ impl<T> MaybeExt for Result<T> {
     fn errno<C: error::IntoErrnoInt>(e: C, tag: Tag) -> Self {
         Err(Error::new(e, tag))
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     #[inline]
     fn errno_sys(rc: bun_windows_sys::NTSTATUS, tag: Tag) -> Option<Self> {
         if rc == bun_windows_sys::NTSTATUS::SUCCESS {
@@ -1061,7 +1156,7 @@ impl<T> MaybeExt for Result<T> {
         Some(Err(Error::new(rc, tag)))
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     #[inline]
     fn into_errno_int(self) -> error::Int {
@@ -1220,7 +1315,7 @@ pub mod O {
     pub const NOCTTY: i32 = libc::O_NOCTTY;
     #[cfg(windows)]
     pub const NOCTTY: i32 = 0;
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub const ACCMODE: i32 = 3;
     #[cfg(target_os = "macos")]
     pub const SYMLINK: i32 = libc::O_SYMLINK;
@@ -1245,11 +1340,42 @@ pub use file::{File, ReadToEndResult};
 pub mod dir;
 pub use dir::*;
 
-#[cfg(unix)]
+#[cfg(all(unix, not(bun_portable)))]
 pub type Stat = libc::stat;
 /// On Windows `bun.Stat` is libuv's `uv_stat_t`.
 #[cfg(windows)]
 pub type Stat = bun_libuv_sys::uv_stat_t;
+#[cfg(bun_portable)]
+mod portable_stat;
+#[cfg(bun_portable)]
+pub use portable_stat::Stat;
+
+/// The names of this crate whose meaning depends on the OS, as the code for one OS has them. The
+/// portable image has the code for every OS: a module of code for Windows imports `flavor::windows`,
+/// and what it calls `Stat` is the `uv_stat_t` it fills.
+#[cfg(bun_portable)]
+pub(crate) mod flavor {
+    pub(crate) mod posix {
+        pub(crate) use libc::stat as Stat;
+    }
+    pub(crate) mod windows {
+        pub(crate) use crate::PlatformIoVecConst__windows as PlatformIOVecConst;
+        pub(crate) use crate::platform_iovec_const_create__windows as platform_iovec_const_create;
+        pub(crate) use bun_libuv_sys::uv_buf_t as PlatformIOVec;
+        pub(crate) use bun_libuv_sys::uv_stat_t as Stat;
+        pub(crate) use bun_libuv_sys::uv_statfs_t as StatFS;
+
+        pub(crate) const MAX_COUNT: usize = u32::MAX as usize;
+
+        #[inline]
+        pub(crate) fn platform_iovec_create(buf: &mut [u8]) -> PlatformIOVec {
+            PlatformIOVec {
+                len: buf.len() as _,
+                base: buf.as_mut_ptr(),
+            }
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Syscall surface — real posix libc FFI. Windows path lives in
@@ -1384,13 +1510,13 @@ impl Tag {
     pub const uv_os_homedir: Tag = Tag(93);
     pub const WriteFile: Tag = Tag(94);
     pub const NtQueryDirectoryFile: Tag = Tag(95);
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(crate) const NtSetInformationFile: Tag = Tag(96);
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(crate) const GetFinalPathNameByHandle: Tag = Tag(97);
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(crate) const CloseHandle: Tag = Tag(98);
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     pub(crate) const SetFilePointerEx: Tag = Tag(99);
     pub const SetEndOfFile: Tag = Tag(100);
     // ── later additions — appended above the frozen range so existing
@@ -1700,8 +1826,13 @@ mod nocancel {
     }
 }
 
+// In the portable image the functions that `windows_impl` has too are reached through the function
+// that picks by host, not by their own names.
 #[cfg(unix)]
+#[cfg_attr(bun_portable, allow(unreachable_pub, dead_code))]
 mod posix_impl {
+    #[cfg(bun_portable)]
+    use super::flavor::posix::Stat;
     use super::*;
     // Per-platform raw syscall dispatch — macOS uses `$NOCANCEL`; Linux goes
     // through rustix's linux_raw backend (no libc trampoline);
@@ -2280,9 +2411,23 @@ mod posix_impl {
             } else {
                 stat(p)
             };
-            r.map(|s| PosixStat::init(&s))
+            r.map(|s| posix_stat(&s))
         } else {
-            fstat(fd).map(|s| PosixStat::init(&s))
+            fstat(fd).map(|s| posix_stat(&s))
+        }
+    }
+
+    /// `PosixStat` of what `stat` of this module returns.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[inline]
+    fn posix_stat(stat: &Stat) -> PosixStat {
+        #[cfg(not(bun_portable))]
+        {
+            PosixStat::init(stat)
+        }
+        #[cfg(bun_portable)]
+        {
+            PosixStat::init(&crate::Stat::from(*stat))
         }
     }
 
@@ -3540,17 +3685,68 @@ pub mod sys_uv;
 
 /// On non-Windows, `sys_uv` is just an alias for the regular syscall surface so
 /// callers (e.g. `pack_command`) can write `bun_sys::sys_uv::fstat(fd)` portably.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(bun_portable)))]
 pub mod sys_uv {
     pub use super::{
         close, fstat, lstat, mkdir, open, pread, pwrite, read, rename, stat, unlink, write,
     };
 }
 
-#[cfg(windows)]
+/// The portable image has both: the module for Windows, and under the name `sys_uv` what a caller
+/// of either build finds there. On a Windows host that is libuv.
+#[cfg(bun_portable)]
+#[path = "sys_uv.rs"]
+#[allow(unreachable_pub, dead_code)]
+pub mod sys_uv_windows;
+#[cfg(bun_portable)]
+pub mod sys_uv {
+    pub use super::sys_uv_windows::*;
+    use super::{Fd, Maybe, Mode, Stat, ZStr};
+
+    bun_core::host_dispatch! {
+        windows = super::sys_uv_windows, posix = super;
+        pub fn mkdir(file_path: &ZStr, flags: Mode) -> Maybe<()>;
+        pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Maybe<Fd>;
+        pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Maybe<usize>;
+        pub fn pwrite(fd: Fd, buf: &[u8], position: i64) -> Maybe<usize>;
+        pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize>;
+        pub fn rename(from: &ZStr, to: &ZStr) -> Maybe<()>;
+        pub fn unlink(file_path: &ZStr) -> Maybe<()>;
+        pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize>;
+    }
+
+    pub fn fstat(fd: Fd) -> Maybe<Stat> {
+        if bun_core::host::is_windows() {
+            super::sys_uv_windows::fstat(fd).map(Stat::from)
+        } else {
+            super::fstat(fd)
+        }
+    }
+    pub fn lstat(path: &ZStr) -> Maybe<Stat> {
+        if bun_core::host::is_windows() {
+            super::sys_uv_windows::lstat(path).map(Stat::from)
+        } else {
+            super::lstat(path)
+        }
+    }
+    pub fn stat(path: &ZStr) -> Maybe<Stat> {
+        if bun_core::host::is_windows() {
+            super::sys_uv_windows::stat(path).map(Stat::from)
+        } else {
+            super::stat(path)
+        }
+    }
+}
+
+#[cfg(any(windows, bun_portable))]
+#[cfg_attr(bun_portable, allow(unreachable_pub, dead_code))]
 mod windows_impl {
     // NT/kernel32/libuv triad. The libuv-backed ops
     // delegate to `crate::sys_uv`; the rest call NT/kernel32 directly.
+    #[cfg(bun_portable)]
+    use super::flavor::windows::{MAX_COUNT, Stat};
+    #[cfg(bun_portable)]
+    use super::sys_uv_windows as sys_uv;
     use super::windows as w;
     use super::windows::libuv as uv;
     use super::*;
@@ -3912,7 +4108,7 @@ mod windows_impl {
         let out = unsafe {
             w::kernel32::DuplicateHandle(
                 process,
-                fd.native() as w::HANDLE,
+                fd.native(),
                 process,
                 &mut target,
                 0,
@@ -3923,7 +4119,7 @@ mod windows_impl {
         if out == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::dup).with_fd(fd));
         }
-        Ok(Fd::from_native(target as _))
+        Ok(Fd::from_native(target as u64))
     }
     pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd> {
         // No POSIX dup2 on Windows.
@@ -4271,7 +4467,7 @@ mod windows_impl {
     pub fn get_file_size(fd: Fd) -> Maybe<u64> {
         // GetFileSizeEx.
         let mut size: i64 = 0;
-        let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native() as w::HANDLE, &mut size) };
+        let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native(), &mut size) };
         if ok == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::fstat).with_fd(fd));
         }
@@ -4311,7 +4507,7 @@ mod windows_impl {
         // SetFilePointerEx.
         let mut new: i64 = 0;
         let ok = unsafe {
-            w::SetFilePointerEx(fd.native() as w::HANDLE, offset, &mut new, whence as u32)
+            w::SetFilePointerEx(fd.native(), offset, &mut new, whence as u32)
         };
         if ok == 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
@@ -4323,7 +4519,7 @@ mod windows_impl {
     pub fn set_file_offset_to_end_windows(fd: Fd) -> Maybe<usize> {
         let mut new: i64 = 0;
         // SAFETY: `fd` is a valid kernel handle (caller invariant).
-        let ok = unsafe { w::SetFilePointerEx(fd.native() as w::HANDLE, 0, &mut new, w::FILE_END) };
+        let ok = unsafe { w::SetFilePointerEx(fd.native(), 0, &mut new, w::FILE_END) };
         if ok == w::FALSE {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
         }
@@ -4352,6 +4548,7 @@ mod windows_impl {
         chdir(ZStr::from_buf(&zb.0[..], p.len()))
     }
     pub fn umask(mode: Mode) -> Mode {
+        #[cfg_attr(bun_portable, bun_portable_macros::imports(library = "ucrtbase"))]
         unsafe extern "C" {
             safe fn _umask(m: core::ffi::c_int) -> core::ffi::c_int;
         }
@@ -4363,8 +4560,10 @@ mod windows_impl {
         // before the `usize → i32` cast — otherwise ≥2 GiB buffers wrap to a
         // negative length and Winsock fails with WSAEFAULT.
         let len = buf.len().min(i32::MAX as usize) as i32;
-        let rc =
-            unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
+        let socket: w::HANDLE = fd.native();
+        let rc = unsafe {
+            w::ws2_32::recv(socket as usize, buf.as_mut_ptr().cast::<_>(), len, flags)
+        };
         if rc < 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::recv).with_fd(fd));
         }
@@ -4374,7 +4573,8 @@ mod windows_impl {
         // Winsock `send`. Clamp to `i32::MAX` so the
         // `usize → i32` cast can't wrap to a negative length on huge buffers.
         let len = buf.len().min(i32::MAX as usize) as i32;
-        let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
+        let socket: w::HANDLE = fd.native();
+        let rc = unsafe { w::ws2_32::send(socket as usize, buf.as_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
             return Err(Error::from_win32(w::Win32Error::get(), Tag::send).with_fd(fd));
         }
@@ -4403,6 +4603,96 @@ mod windows_impl {
 }
 #[cfg(windows)]
 pub use windows_impl::*;
+
+// The portable image has `posix_impl` and `windows_impl`. What only one of them defines is that
+// module's; what both define is the function below that calls the one for the host. A name of both
+// that is not below is ambiguous, and its first use does not compile.
+#[cfg(bun_portable)]
+pub use posix_impl::FcntlInt;
+#[cfg(bun_portable)]
+pub use windows_impl::*;
+#[cfg(bun_portable)]
+bun_core::host_dispatch! {
+    windows = windows_impl, posix = posix_impl;
+    pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd>;
+    pub fn close(fd: Fd) -> Maybe<()>;
+    pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize>;
+    pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize>;
+    pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize>;
+    pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize>;
+    pub fn mkdir(path: &ZStr, mode: Mode) -> Maybe<()>;
+    pub fn unlink(path: &ZStr) -> Maybe<()>;
+    pub fn rename(from: &ZStr, to: &ZStr) -> Maybe<()>;
+    pub fn symlink(target: &ZStr, link: &ZStr) -> Maybe<()>;
+    pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize>;
+    pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()>;
+    pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()>;
+    pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd>;
+    pub fn dup(fd: Fd) -> Maybe<Fd>;
+    pub fn dup2(old: Fd, new: Fd) -> Maybe<Fd>;
+    pub fn getcwd(buf: &mut [u8]) -> Maybe<usize>;
+    pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()>;
+    pub fn renameat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()>;
+    pub fn renameat2(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr, flags: Renameat2Flags) -> Maybe<()>;
+    pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()>;
+    pub fn unlinkat(dir: impl AsFd, path: &ZStr) -> Maybe<()>;
+    pub(crate) fn mkdir_recursive_at(dir: impl AsFd, sub: &[u8]) -> Maybe<()>;
+    pub fn mkdir_recursive_at_mode(dir: Fd, sub: &[u8], mode: Mode) -> Maybe<()>;
+    pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()>;
+    pub fn readlinkat(fd: impl AsFd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize>;
+    pub fn access(path: &ZStr, mode: i32) -> Maybe<()>;
+    pub fn faccessat(dir: impl AsFd, sub: &ZStr) -> Maybe<bool>;
+    pub fn utimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()>;
+    pub fn exists_z(path: &ZStr) -> bool;
+    pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool;
+    pub fn is_executable_file_path(path: &ZStr) -> bool;
+    pub fn get_file_size(fd: Fd) -> Maybe<u64>;
+    pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]>;
+    pub fn pipe() -> Maybe<[Fd; 2]>;
+    pub fn isatty(fd: Fd) -> bool;
+    pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64>;
+    pub fn chdir(path: &ZStr) -> Maybe<()>;
+    pub fn fchdir(fd: Fd) -> Maybe<()>;
+    pub fn umask(mode: Mode) -> Mode;
+    pub(crate) fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize>;
+    pub(crate) fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize>;
+    pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize>;
+    pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize>;
+    pub fn mmap(_addr: *mut u8, _len: usize, _prot: i32, _flags: i32, _fd: Fd, _off: i64) -> Maybe<*mut u8>;
+    pub fn munmap(_ptr: *mut u8, _len: usize) -> Maybe<()>;
+}
+#[cfg(bun_portable)]
+pub fn stat(path: &ZStr) -> Maybe<Stat> {
+    if bun_core::host::is_windows() {
+        windows_impl::stat(path).map(Stat::from)
+    } else {
+        posix_impl::stat(path).map(Stat::from)
+    }
+}
+#[cfg(bun_portable)]
+pub fn fstat(fd: Fd) -> Maybe<Stat> {
+    if bun_core::host::is_windows() {
+        windows_impl::fstat(fd).map(Stat::from)
+    } else {
+        posix_impl::fstat(fd).map(Stat::from)
+    }
+}
+#[cfg(bun_portable)]
+pub fn lstat(path: &ZStr) -> Maybe<Stat> {
+    if bun_core::host::is_windows() {
+        windows_impl::lstat(path).map(Stat::from)
+    } else {
+        posix_impl::lstat(path).map(Stat::from)
+    }
+}
+#[cfg(bun_portable)]
+pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
+    if bun_core::host::is_windows() {
+        windows_impl::fstatat(fd, path).map(Stat::from)
+    } else {
+        posix_impl::fstatat(fd, path).map(Stat::from)
+    }
+}
 
 /// Shared inner loop for `read_to_end_into` / `read_to_end_with_array_list`:
 /// repeatedly reserve `grow_by` when full, hand the spare capacity to
@@ -4541,7 +4831,8 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(unix)]
 pub type PlatformIoVec = libc::iovec;
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
+#[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, PlatformIoVec))]
 pub type PlatformIoVec = bun_libuv_sys::uv_buf_t;
 // Both casings of `PlatformIOVec` / `PlatformIOVecConst` are provided so
 // existing call sites (`sys_uv.rs`) compile without churn.
@@ -4583,7 +4874,8 @@ pub const fn platform_iovec_len(iov: &PlatformIoVec) -> usize {
 /// Windows `PlatformIOVecConst` — same `uv_buf_t` layout (libuv has no
 /// const-buf type), with `base` typed `*const u8` so callers can build it
 /// from `&[u8]` without casts.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
+#[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, PlatformIoVecConst))]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PlatformIoVecConst {
@@ -4591,15 +4883,21 @@ pub struct PlatformIoVecConst {
     pub(crate) base: *const u8,
 }
 // SAFETY: `{ ULONG, *const u8 }` — `(0, null)` is a valid empty `uv_buf_t` (S021).
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
+#[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, PlatformIoVecConst, PlatformIoVec))]
 unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
+#[cfg_attr(bun_portable, bun_portable_macros::flavor(windows, PlatformIoVecConst, PlatformIoVec))]
 const _: () = assert!(
     core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<bun_libuv_sys::uv_buf_t>()
         && core::mem::align_of::<PlatformIoVecConst>()
             == core::mem::align_of::<bun_libuv_sys::uv_buf_t>()
 );
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
+#[cfg_attr(
+    bun_portable,
+    bun_portable_macros::flavor(windows, PlatformIoVecConst, platform_iovec_const_create)
+)]
 #[inline]
 pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
     PlatformIoVecConst {
@@ -6217,7 +6515,7 @@ pub fn open_dir_absolute_not_for_deleting_or_renaming(path: &[u8]) -> Maybe<Fd> 
 }
 /// `openDirNoRenamingOrDeletingWindows` — open `path` relative to
 /// `dir` for iteration only (no `DELETE` access). Windows-only; callers gate.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub fn open_dir_no_renaming_or_deleting_windows(dir: Fd, path: &[u8]) -> Maybe<Fd> {
     open_dir_at_windows_a(
         dir,
@@ -6235,12 +6533,12 @@ pub fn open_dir_no_renaming_or_deleting_windows(dir: Fd, path: &[u8]) -> Maybe<F
 // set). The surface is gated to Windows.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 const FILE_SHARE: u32 = bun_windows_sys::FILE_SHARE_READ
     | bun_windows_sys::FILE_SHARE_WRITE
     | bun_windows_sys::FILE_SHARE_DELETE;
 
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 #[derive(Clone, Copy, Default)]
 pub struct WindowsOpenDirOptions {
     pub iterable: bool,
@@ -6248,7 +6546,7 @@ pub struct WindowsOpenDirOptions {
     pub can_rename_or_delete: bool,
     pub op: WindowsOpenDirOp,
 }
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum WindowsOpenDirOp {
     #[default]
@@ -6257,7 +6555,7 @@ pub enum WindowsOpenDirOp {
     OpenOrCreate,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 #[derive(Clone, Copy)]
 pub struct NtCreateFileOptions {
     pub access_mask: u32,
@@ -6266,7 +6564,7 @@ pub struct NtCreateFileOptions {
     pub attributes: u32,
     pub sharing_mode: u32,
 }
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 impl Default for NtCreateFileOptions {
     fn default() -> Self {
         Self {
@@ -6280,7 +6578,7 @@ impl Default for NtCreateFileOptions {
 }
 
 /// `normalizePathWindows` options.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 #[derive(Copy, Clone)]
 pub struct NormalizePathWindowsOpts {
     /// `false` emits Win32-consumable paths for kernel32 APIs: plain (no
@@ -6288,7 +6586,7 @@ pub struct NormalizePathWindowsOpts {
     /// multi-component relatives. Bare names still pass through verbatim.
     pub add_nt_prefix: bool,
 }
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 impl Default for NormalizePathWindowsOpts {
     fn default() -> Self {
         Self {
@@ -6300,7 +6598,7 @@ impl Default for NormalizePathWindowsOpts {
 /// `..`-clamp boundary from the kernel's own two answers (full NT object name
 /// minus volume-relative name), plus whether the device is an allowlisted
 /// share-rooted redirector. `None` when the names don't compose (rename race).
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 fn nt_clamp_prefix_len(nt: &[u16], vol_rel: &[u16]) -> Option<(usize, bool)> {
     const SEP: u16 = b'\\' as u16;
     const DEVICE: &[u8] = b"\\Device\\";
@@ -6355,7 +6653,7 @@ fn nt_clamp_prefix_len(nt: &[u16], vol_rel: &[u16]) -> Option<(usize, bool)> {
 /// `normalizePathWindows` — convert a (possibly relative) path into an NT
 /// object name for `NtCreateFile` against `dir_fd`: absolute inputs become
 /// `\??\C:\…`, dirfd-relative inputs resolve to absolute `\Device\…` names.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub fn normalize_path_windows<'a>(
     dir_fd: Fd,
     path: &[u16],
@@ -6368,7 +6666,7 @@ pub fn normalize_path_windows<'a>(
 /// output Win32-consumable: absolute inputs lose `\??\`, dotted or
 /// multi-component relatives become `\\?\GLOBALROOT\Device\…`, and bare names
 /// pass through verbatim (Win32 resolves those against the cwd).
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub fn normalize_path_windows_opts<'a>(
     dir_fd: Fd,
     path: &[u16],
@@ -6643,7 +6941,7 @@ pub fn normalize_path_windows_opts<'a>(
 
 /// Open a `\\.\…` device path via kernel32 `CreateFileW`
 /// (NtCreateFile cannot open device paths).
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 fn open_windows_device_path(
     path: &bun_core::WStr,
     desired_access: u32,
@@ -6672,7 +6970,7 @@ fn open_windows_device_path(
 /// Absolute NT object names our producers emit: `\??\…` or `\Device\…`. Only
 /// these get `RootDirectory = null`; any other rooted string stays
 /// dirfd-relative so `NtCreateFile` rejects it (`OBJECT_PATH_SYNTAX_BAD`).
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 fn is_nt_object_name(p: &[u16]) -> bool {
     bun_core::strings::has_prefix_comptime_utf16(p, &windows::NT_OBJECT_PREFIX_U8)
         || bun_core::strings::has_prefix_comptime_utf16(p, b"\\Device\\")
@@ -6680,7 +6978,7 @@ fn is_nt_object_name(p: &[u16]) -> bool {
 
 /// `openDirAtWindowsNtPath` — `NtCreateFile` with
 /// `FILE_DIRECTORY_FILE`.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub(crate) fn open_dir_at_windows_nt_path(
     dir_fd: Fd,
     path: &bun_core::WStr,
@@ -6793,7 +7091,7 @@ pub(crate) fn open_dir_at_windows_nt_path(
 /// Absolute paths (`\??\…`, `\Device\…`) must be full NT object names and
 /// open with no `RootDirectory`; relative paths resolve against `dir` (or the
 /// cwd when `dir` is the "invalid_fd" sentinel).
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub(crate) fn open_file_at_windows_nt_path(
     dir: Fd,
     path: &bun_core::WStr,
@@ -6899,7 +7197,7 @@ pub(crate) fn open_file_at_windows_nt_path(
 /// length, so use `path.len()` as a cheap upper bound; on overflow compute
 /// the exact post-conversion length to avoid over-rejecting multi-byte
 /// inputs whose UTF-16 representation fits.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 #[inline]
 fn convert_path_u8_to_u16<'a>(buf: &'a mut [u16], path: &[u8]) -> Maybe<&'a mut [u16]> {
     if path.len() > buf.len() && bun_core::strings::element_length_utf8_into_utf16(path) > buf.len()
@@ -6909,13 +7207,13 @@ fn convert_path_u8_to_u16<'a>(buf: &'a mut [u16], path: &[u8]) -> Maybe<&'a mut 
     Ok(bun_core::convert_utf8_to_utf16_in_buffer(buf, path))
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub fn open_dir_at_windows(dir_fd: Fd, path: &[u16], options: WindowsOpenDirOptions) -> Maybe<Fd> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let norm = normalize_path_windows(dir_fd, path, &mut wbuf.0[..])?;
     open_dir_at_windows_nt_path(dir_fd, norm, options)
 }
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 #[inline(never)]
 pub fn open_dir_at_windows_a(
     dir_fd: impl AsFd,
@@ -6934,7 +7232,7 @@ pub fn open_dir_at_windows_a(
     let norm = normalize_path_windows(dir_fd, wide, &mut buf2.0[..])?;
     open_dir_at_windows_nt_path(dir_fd, norm, options)
 }
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions) -> Maybe<Fd> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let norm = normalize_path_windows(dir_fd, path, &mut wbuf.0[..])?;
@@ -6943,7 +7241,7 @@ pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions)
 
 /// POSIX-flag → NtCreateFile
 /// translation.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -> Maybe<Fd> {
     use bun_windows_sys::externs as w;
     if (flags & O::DIRECTORY) != 0 {
@@ -7024,14 +7322,14 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
 }
 
 /// `openatWindows` — UTF-16 input.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub fn openat_windows(dir: Fd, path: &[u16], flags: i32, perm: Mode) -> Maybe<Fd> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let norm = normalize_path_windows(dir, path, &mut wbuf.0[..])?;
     openat_windows_impl(dir, norm, flags, perm)
 }
 /// `openatWindowsA` — UTF-8 input.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 #[inline(never)]
 pub fn openat_windows_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
     let dir = dir.as_fd();
@@ -7051,7 +7349,7 @@ pub fn openat_windows_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> 
 /// by `GetFileAttributesW`. Only the two bits the resolver inspects are
 /// surfaced as fields so callers
 /// can write `attrs.is_directory` / `attrs.is_reparse_point`.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 #[derive(Clone, Copy)]
 pub struct WindowsFileAttributes {
     pub is_directory: bool,
@@ -7062,7 +7360,7 @@ pub struct WindowsFileAttributes {
 /// resolver only ever calls it with one); the wide-path arm is the
 /// `GetFileAttributesW` body inlined. Returns `None` on
 /// `INVALID_FILE_ATTRIBUTES`.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
@@ -7151,7 +7449,7 @@ pub enum ExistsAtType {
 /// UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`) entry points so the
 /// width dispatch does not
 /// duplicate the syscall body.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     use bun_windows_sys::externs as w;
     // Trim leading `.\` — NtQueryAttributesFile expects relative paths
@@ -7222,7 +7520,7 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
 /// Wide-path arm of `exists_at_type`. Takes an already-wide path (Windows
 /// `OSPathSliceZ`) and routes through
 /// `toNTPath16` instead of re-widening from UTF-8.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub(crate) fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
@@ -7240,7 +7538,7 @@ pub fn directory_exists_at(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
 /// `directoryExistsAt` — wide-path (`u16`) overload for Windows
 /// `OSPathSliceZ` callers (mkdir-recursive, cpSync auto-detect). Avoids
 /// a UTF-16 → UTF-8 → UTF-16 round-trip.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub fn directory_exists_at_w(dir: Fd, sub: &[u16]) -> Maybe<bool> {
     match exists_at_type_w(dir, sub) {
         Ok(t) => Ok(t == ExistsAtType::Directory),
@@ -7615,7 +7913,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
 /// (`bun.getFdPathW`) re-export this. A libc/kernel32-only sibling lives at
 /// `bun_core::fd_path_raw_w` for T0/T1 callers that cannot depend on this
 /// crate.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
     crate::windows::GetFinalPathNameByHandle(fd.native(), Default::default(), out).map_err(|e| {
         use crate::windows::GetFinalPathNameByHandleError as GE;
@@ -7720,7 +8018,8 @@ pub fn move_file_z_with_handle(
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // Preallocation is best-effort.
-                let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
+                #[allow(clippy::unnecessary_cast)]
+                let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size as i64);
             }
             // Seek input to 0 — caller may have left offset at EOF after writing.
             let _ = lseek(from_handle, 0, libc::SEEK_SET);
@@ -7729,8 +8028,14 @@ pub fn move_file_z_with_handle(
             // the partially-written dest keeps its openat() defaults.
             #[cfg(unix)]
             if r.is_ok() {
-                let _ = safe_libc::fchmod(dst.native(), st.st_mode);
-                let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
+                #[allow(clippy::unnecessary_cast)]
+                let _ = safe_libc::fchmod(dst.native(), st.st_mode as libc::mode_t);
+                #[allow(clippy::unnecessary_cast)]
+                let _ = safe_libc::fchown(
+                    dst.native(),
+                    st.st_uid as libc::uid_t,
+                    st.st_gid as libc::gid_t,
+                );
             }
             let _ = close(dst);
             r?;
@@ -7745,10 +8050,12 @@ pub fn move_file_z_with_handle(
 /// fast path (ioctl_ficlone / copy_file_range / sendfile / read-write loop).
 #[inline]
 #[cfg(not(windows))]
+#[cfg_attr(bun_portable, bun_portable_macros::host_os(posix))]
 pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     copy_file::copy_file(in_, out)
 }
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
+#[cfg_attr(bun_portable, bun_portable_macros::host_os(windows, dispatch(posix, windows)))]
 pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     // Windows `bun.copyFile` takes paths, not fds; fd-based callers (e.g.
     // `move_file_z_with_handle`'s EXDEV fallback) get the read/write loop.
@@ -8972,7 +9279,8 @@ pub(crate) fn copy_file_z_slow_with_handle(
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Preallocation is best-effort.
-        let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
+        #[allow(clippy::unnecessary_cast)]
+                let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size as i64);
     }
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
     let r = copy_file(in_handle, dst);
@@ -8980,8 +9288,14 @@ pub(crate) fn copy_file_z_slow_with_handle(
     // partially-written dest keeps its openat() defaults.
     #[cfg(unix)]
     if r.is_ok() {
-        let _ = safe_libc::fchmod(dst.native(), st.st_mode);
-        let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
+        #[allow(clippy::unnecessary_cast)]
+                let _ = safe_libc::fchmod(dst.native(), st.st_mode as libc::mode_t);
+        #[allow(clippy::unnecessary_cast)]
+                let _ = safe_libc::fchown(
+                    dst.native(),
+                    st.st_uid as libc::uid_t,
+                    st.st_gid as libc::gid_t,
+                );
     }
     let _ = close(dst);
     r

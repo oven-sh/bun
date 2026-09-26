@@ -14,10 +14,9 @@ fn fd_unwrap_valid(fd: Fd) -> Option<Fd> {
     if fd == Fd::INVALID { None } else { Some(fd) }
 }
 
-#[cfg(windows)]
-const RETRY_ERRNO: Int = E::EINTR as Int;
-#[cfg(not(windows))]
-const RETRY_ERRNO: Int = E::EAGAIN as Int;
+bun_core::host_const! {
+    const RETRY_ERRNO: Int, fn retry_errno = { windows => E::EINTR as Int, posix => E::EAGAIN as Int };
+}
 
 const TODO_ERRNO: Int = Int::MAX - 1;
 
@@ -83,7 +82,7 @@ impl Error {
 
     /// The error for a Win32 call that returned its failure value; `code` is
     /// its `GetLastError()` (see `Win32ErrorExt::to_e` for the mapping).
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     #[inline]
     pub fn from_win32(code: crate::windows::Win32Error, syscall_tag: Tag) -> Error {
         use crate::windows::Win32ErrorExt as _;
@@ -136,7 +135,7 @@ impl Error {
     #[inline]
     pub fn retry() -> Error {
         Error {
-            errno: RETRY_ERRNO,
+            errno: retry_errno(),
             syscall: Tag::read,
             ..Default::default()
         }
@@ -178,7 +177,7 @@ impl Error {
 
     /// Unlike `with_path`/`with_path_dest` (which reset `fd`), this only
     /// overlays `dest`.
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     #[inline]
     pub(crate) fn with_dest(&self, dest: &[u8]) -> Error {
         Error {
@@ -269,14 +268,23 @@ impl Error {
         // Node reports libuv's codes in `err.errno` on every platform. On POSIX
         // that is just the negated host errno; on Windows the discriminant maps
         // back to its `UV_E*` value.
-        #[cfg(windows)]
-        let js_errno = crate::windows::libuv::e_discriminant_to_uv(self.errno)
-            .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg());
-        #[cfg(all(not(windows), not(bun_portable)))]
-        let js_errno = c_int::from(self.errno).wrapping_neg();
-        // The portable image has the errno of Linux inside; JavaScript sees the one of the host.
-        #[cfg(bun_portable)]
-        let js_errno = bun_errno::host::js_errno(self.errno);
+        let js_errno = bun_core::host_select! {
+            windows => {
+                crate::windows::libuv::e_discriminant_to_uv(self.errno)
+                    .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg())
+            }
+            posix => {
+                #[cfg(not(bun_portable))]
+                {
+                    c_int::from(self.errno).wrapping_neg()
+                }
+                // The portable image has the errno of Linux inside; JavaScript sees the one of the host.
+                #[cfg(bun_portable)]
+                {
+                    bun_errno::host::js_errno(self.errno)
+                }
+            }
+        };
 
         let mut err = SystemError {
             errno: js_errno,
@@ -300,13 +308,15 @@ impl Error {
 
         if let Some(valid) = fd_unwrap_valid(self.fd) {
             // When the FD is a windows handle, there is no sane way to report this.
-            #[cfg(windows)]
-            if valid.kind() == crate::FdKind::Uv {
-                err.fd = Some(valid.uv());
-            }
-            #[cfg(not(windows))]
-            {
-                err.fd = Some(valid.uv());
+            bun_core::host_select! {
+                windows => {
+                    if valid.kind() == crate::FdKind::Uv {
+                        err.fd = Some(valid.uv());
+                    }
+                }
+                posix => {
+                    err.fd = Some(valid.uv());
+                }
             }
         }
 
@@ -452,7 +462,7 @@ impl bun_core::output::ErrName for &Error {
 // `ReturnCodeExt` — `ReturnCode::to_error(tag) -> Option<Error>` lives here (not
 // in `bun_libuv_sys`) because `Error`/`Tag` are higher-tier types.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub trait ReturnCodeExt: Sized {
     /// `Some(errno)` when the return code is negative; `None` on success.
     fn errno(self) -> Option<crate::E>;
@@ -468,14 +478,14 @@ pub trait ReturnCodeExt: Sized {
         }
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
     #[inline]
     fn errno(self) -> Option<crate::E> {
         (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int()))
     }
 }
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
     #[inline]
     fn errno(self) -> Option<crate::E> {

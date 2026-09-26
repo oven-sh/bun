@@ -1,6 +1,6 @@
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, bun_portable))]
 use core::ffi::c_int;
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 use core::ffi::c_void;
 
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
@@ -9,7 +9,7 @@ pub use bun_core::{Fd, FdKind, FdNative, Stdio, fd};
 /// Platform-native fd integer (`c_int` on POSIX, `HANDLE` on Windows). Alias
 /// for callers that want the `bun.FD.native()` shape.
 pub type RawFd = FdNative;
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub use bun_core::DecodeWindows;
 
 use crate as sys;
@@ -102,82 +102,80 @@ impl FdExt for Fd {
         };
 
         let result: Option<sys::Error> = {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            {
-                debug_assert!(self.posix() >= 0);
-                // Raw `SYS_close` via rustix — no glibc wrapper (which is a
-                // pthread cancellation point). Never retry on EINTR.
-                match sys::linux_syscall::close(self.native()) {
-                    Err(e) if e == libc::EBADF => Some(sys::Error {
-                        errno: sys::E::EBADF as _,
-                        syscall: sys::Tag::close,
-                        fd: self,
-                        ..Default::default()
-                    }),
-                    _ => None,
-                }
-            }
-            #[cfg(target_os = "freebsd")]
-            {
-                debug_assert!(self.posix() >= 0);
-                match sys::get_errno(sys::safe_libc::close(self.native())) {
-                    sys::E::EBADF => Some(sys::Error {
-                        errno: sys::E::EBADF as _,
-                        syscall: sys::Tag::close,
-                        fd: self,
-                        ..Default::default()
-                    }),
-                    _ => None,
-                }
-            }
-            #[cfg(target_os = "macos")]
-            {
-                debug_assert!(self.posix() >= 0);
-                match sys::get_errno(close_nocancel(self.native())) {
-                    sys::E::EBADF => Some(sys::Error {
-                        errno: sys::E::EBADF as _,
-                        syscall: sys::Tag::close,
-                        fd: self,
-                        ..Default::default()
-                    }),
-                    _ => None,
-                }
-            }
-            #[cfg(windows)]
-            {
-                use sys::ReturnCodeExt as _;
-                use sys::windows::{NTSTATUS, libuv as uv};
-                match self.decode_windows() {
-                    // It decodes to ntdll's handle; `close(AT_FDCWD)` is EBADF too.
-                    _ if self == Fd::cwd() => Some(sys::Error {
-                        errno: sys::E::EBADF as _,
-                        syscall: sys::Tag::CloseHandle,
-                        fd: self,
-                        ..Default::default()
-                    }),
-                    DecodeWindows::Uv(file_number) => {
-                        let mut req = uv::fs_t::uninitialized();
-                        // SAFETY: synchronous libuv fs call (cb = None); req lives on the
-                        // stack for the duration of the call.
-                        let rc = unsafe {
-                            uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
-                        };
-                        // fs_t has no Drop impl, so cleanup
-                        // must be explicit (uv_fs_req_cleanup).
-                        req.deinit();
-                        rc.to_error(sys::Tag::close).map(|e| e.with_fd(self))
+            bun_core::host_select! {
+                linux => {
+                    debug_assert!(self.posix() >= 0);
+                    // Raw `SYS_close` via rustix — no glibc wrapper (which is a
+                    // pthread cancellation point). Never retry on EINTR.
+                    match sys::linux_syscall::close(self.native()) {
+                        Err(e) if e == libc::EBADF => Some(sys::Error {
+                            errno: sys::E::EBADF as _,
+                            syscall: sys::Tag::close,
+                            fd: self,
+                            ..Default::default()
+                        }),
+                        _ => None,
                     }
-                    DecodeWindows::Windows(handle) => {
-                        unsafe extern "system" {
-                            // safe: by-value `HANDLE` only; bad/stale handle →
-                            // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX
-                            // `close(fd)` → `EBADF`, which is `safe fn` in
-                            // `safe_libc`).
-                            safe fn NtClose(Handle: bun_windows_sys::HANDLE) -> NTSTATUS;
+                }
+                freebsd => {
+                    debug_assert!(self.posix() >= 0);
+                    match sys::get_errno(sys::safe_libc::close(self.native())) {
+                        sys::E::EBADF => Some(sys::Error {
+                            errno: sys::E::EBADF as _,
+                            syscall: sys::Tag::close,
+                            fd: self,
+                            ..Default::default()
+                        }),
+                        _ => None,
+                    }
+                }
+                macos => {
+                    debug_assert!(self.posix() >= 0);
+                    match sys::get_errno(close_nocancel(self.native())) {
+                        sys::E::EBADF => Some(sys::Error {
+                            errno: sys::E::EBADF as _,
+                            syscall: sys::Tag::close,
+                            fd: self,
+                            ..Default::default()
+                        }),
+                        _ => None,
+                    }
+                }
+                windows => {
+                    use sys::ReturnCodeExt as _;
+                    use sys::windows::{NTSTATUS, libuv as uv};
+                    match self.decode_windows() {
+                        // It decodes to ntdll's handle; `close(AT_FDCWD)` is EBADF too.
+                        _ if self == Fd::cwd() => Some(sys::Error {
+                            errno: sys::E::EBADF as _,
+                            syscall: sys::Tag::CloseHandle,
+                            fd: self,
+                            ..Default::default()
+                        }),
+                        DecodeWindows::Uv(file_number) => {
+                            let mut req = uv::fs_t::uninitialized();
+                            // SAFETY: synchronous libuv fs call (cb = None); req lives on the
+                            // stack for the duration of the call.
+                            let rc = unsafe {
+                                uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
+                            };
+                            // fs_t has no Drop impl, so cleanup
+                            // must be explicit (uv_fs_req_cleanup).
+                            req.deinit();
+                            rc.to_error(sys::Tag::close).map(|e| e.with_fd(self))
                         }
-                        match NtClose(handle) {
-                            NTSTATUS::SUCCESS => None,
-                            rc => Some(sys::Error::new(rc, sys::Tag::CloseHandle).with_fd(self)),
+                        DecodeWindows::Windows(handle) => {
+                            unsafe extern "system" {
+                                // safe: by-value `HANDLE` only; bad/stale handle →
+                                // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX
+                                // `close(fd)` → `EBADF`, which is `safe fn` in
+                                // `safe_libc`).
+                                safe fn NtClose(Handle: bun_windows_sys::HANDLE) -> NTSTATUS;
+                            }
+                            match NtClose(handle) {
+                                NTSTATUS::SUCCESS => None,
+                                rc => Some(sys::Error::new(rc, sys::Tag::CloseHandle).with_fd(self)),
+                            }
                         }
                     }
                 }
@@ -216,18 +214,18 @@ impl FdExt for Fd {
 
     fn make_lib_uv_owned(self) -> Result<Fd, MakeLibUvOwnedError> {
         debug_assert!(self.is_valid());
-        #[cfg(not(windows))]
-        {
-            Ok(self)
-        }
-        #[cfg(windows)]
-        {
-            match self.kind() {
-                FdKind::System => {
-                    let n = uv_open_osfhandle(self.native())?;
-                    Ok(Fd::from_uv(n))
+        bun_core::host_select! {
+            posix => {
+                Ok(self)
+            }
+            windows => {
+                match self.kind() {
+                    FdKind::System => {
+                        let n = uv_open_osfhandle(self.native())?;
+                        Ok(Fd::from_uv(n))
+                    }
+                    FdKind::Uv => Ok(self),
                 }
-                FdKind::Uv => Ok(self),
             }
         }
     }
@@ -237,24 +235,24 @@ impl FdExt for Fd {
         syscall_tag: sys::Tag,
         error_case: ErrorCase,
     ) -> sys::Result<Fd> {
-        #[cfg(not(windows))]
-        {
-            let _ = (syscall_tag, error_case);
-            Ok(self)
-        }
-        #[cfg(windows)]
-        {
-            match self.make_lib_uv_owned() {
-                Ok(fd) => Ok(fd),
-                Err(MakeLibUvOwnedError::SystemFdQuotaExceeded) => {
-                    if matches!(error_case, ErrorCase::CloseOnFail) {
-                        self.close();
+        bun_core::host_select! {
+            posix => {
+                let _ = (syscall_tag, error_case);
+                Ok(self)
+            }
+            windows => {
+                match self.make_lib_uv_owned() {
+                    Ok(fd) => Ok(fd),
+                    Err(MakeLibUvOwnedError::SystemFdQuotaExceeded) => {
+                        if matches!(error_case, ErrorCase::CloseOnFail) {
+                            self.close();
+                        }
+                        Err(sys::Error {
+                            errno: sys::E::EMFILE as _,
+                            syscall: syscall_tag,
+                            ..Default::default()
+                        })
                     }
-                    Err(sys::Error {
-                        errno: sys::E::EMFILE as _,
-                        syscall: syscall_tag,
-                        ..Default::default()
-                    })
                 }
             }
         }
@@ -303,7 +301,7 @@ unsafe extern "C" {
     safe fn close_nocancel(fd: c_int) -> c_int;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
     let out = bun_core::fd::uv_open_osfhandle(in_);
     debug_assert!(out >= -1);

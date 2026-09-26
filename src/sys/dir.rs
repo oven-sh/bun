@@ -434,24 +434,24 @@ impl Dir {
     /// helpers.
     #[inline]
     pub fn open_dir(&self, sub_path: &[u8], opts: OpenDirOptions) -> Maybe<Dir> {
-        #[cfg(windows)]
-        {
-            return open_dir_at_windows_a(
-                self.fd,
-                sub_path,
-                WindowsOpenDirOptions {
-                    iterable: opts.iterate,
-                    no_follow: opts.no_follow,
-                    ..Default::default()
-                },
-            )
-            .map(Dir::from_fd)
-            .map_err(Into::into);
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = opts;
-            open_dir_at(self.fd, sub_path).map(Dir::from_fd)
+        bun_core::host_select! {
+            windows => {
+                return open_dir_at_windows_a(
+                    self.fd,
+                    sub_path,
+                    WindowsOpenDirOptions {
+                        iterable: opts.iterate,
+                        no_follow: opts.no_follow,
+                        ..Default::default()
+                    },
+                )
+                .map(Dir::from_fd)
+                .map_err(Into::into);
+            }
+            posix => {
+                let _ = opts;
+                open_dir_at(self.fd, sub_path).map(Dir::from_fd)
+            }
         }
     }
 }

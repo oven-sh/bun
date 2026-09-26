@@ -211,7 +211,7 @@ unsafe impl<T: Sync> Sync for RawSlice<T> {}
 /// startup path `bun_sys::windows::env::convert_env_to_wtf8` overwrites this
 /// with a WTF-8-encoded envp slice; `getenvZ` then reads it via
 /// `os::environ()`. POSIX builds leave it empty and use libc's `environ`.
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub mod os {
     use core::ffi::c_char;
 
@@ -2719,47 +2719,47 @@ pub mod ffi {
     // Windows POD — `bun_windows_sys` `#[repr(C)]` out-param structs that are
     // zero-init before the kernel fills them. All fields are integers / raw
     // pointers / nested POD; audited against the Win32 SDK headers (S016).
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::IO_STATUS_BLOCK {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_BASIC_INFORMATION {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_ALL_INFORMATION {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_DEVICE_INFORMATION {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_VOLUME_INFORMATION {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FILE_ATTRIBUTE_DATA {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FIND_DATAW {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::OBJECT_ATTRIBUTES {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::UNICODE_STRING {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::SECURITY_ATTRIBUTES {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::FILETIME {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_storage {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in6 {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::addrinfo {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::IO_COUNTERS {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_BASIC_LIMIT_INFORMATION {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::JOBOBJECT_EXTENDED_LIMIT_INFORMATION {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::OVERLAPPED {}
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     unsafe impl Zeroable for bun_windows_sys::externs::PROCESS_INFORMATION {}
 
     /// Conjure a value of a zero-sized type without `unsafe` at the call site.

@@ -1,30 +1,30 @@
-use core::ffi::{c_int, c_uint, c_void};
+use core::ffi::{c_int, c_uint};
 use core::ptr::NonNull;
 
 use crate::InternalLoopData;
 use crate::Timespec;
 
-#[cfg(windows)]
-use bun_libuv_sys as uv;
-
 bun_core::declare_scope!(Loop, visible);
 
-/// A `now_ns` the caller has no reading to share for. The JS park hook takes its own only if
+/// A `now_ns` the caller has no reading to share for. The tick takes its own only if
 /// it reaches the idle sweep, so passing this costs nothing on the paths that never park.
 pub const NOW_NS_UNKNOWN: u64 = 0;
 
-// ───────────────────────────── PosixLoop ─────────────────────────────
-
 // Mirrors C `struct us_loop_t` (packages/bun-usockets/src/internal/eventing/
-// epoll_kqueue.h). The C struct has `alignas(LIBUS_EXT_ALIGNMENT /* 16 */)` on
-// both `data` and `ready_polls`; Rust cannot align individual fields, so the
+// epoll_kqueue.h, and iocp.h on Windows, which keeps the same leading fields
+// in the same order). The C struct has `alignas(LIBUS_EXT_ALIGNMENT /* 16 */)`
+// on both `data` and `ready_polls`; Rust cannot align individual fields, so the
 // struct head gets `#[repr(C, align(16))]` and `ready_polls` is preceded by a
 // zero-sized align(16) field that forces the same offset rounding the C
 // `alignas` performs (`libc::epoll_event` is `packed`/align(1) on x86-64
 // Linux, so the element type alone would not pad). Layout is verified by the
 // static assertions below the struct.
+//
+// The loop is allocated and freed by C and only ever used behind a pointer.
+// On Windows the mirror stops after the fields Rust reads; the C struct goes
+// on (AFD helper handles, the wait timer, the dequeued completion packets).
 #[repr(C, align(16))]
-pub struct PosixLoop {
+pub struct Loop {
     pub internal_loop_data: InternalLoopData,
 
     /// Number of non-fallthrough polls in the loop
@@ -37,20 +37,36 @@ pub struct PosixLoop {
     pub(crate) current_ready_poll: i32,
 
     /// Loop's own file descriptor
+    #[cfg(not(windows))]
     pub fd: i32,
+
+    /// The loop's I/O completion port
+    #[cfg(windows)]
+    pub iocp: *mut core::ffi::c_void,
 
     /// Number of polls owned by Bun
     pub active: u32,
 
-    /// Incremented atomically by wakeup(), swapped to 0 before epoll/kqueue.
+    /// Incremented atomically by wakeup(), swapped to 0 before the loop waits.
     /// If non-zero, the event loop will return immediately so we can skip the GC safepoint.
+    #[cfg(not(windows))]
     pub pending_wakeups: u32,
+
+    /// Readiness of the Bun-owned socket poll being dispatched.
+    #[cfg(windows)]
+    current_ready_events: c_int,
+    #[cfg(windows)]
+    current_ready_error: c_int,
+    #[cfg(windows)]
+    current_ready_eof: c_int,
 
     /// Forces `ready_polls` to the next 16-byte boundary, matching the C
     /// `alignas(LIBUS_EXT_ALIGNMENT)` on `us_loop_t::ready_polls`.
+    #[cfg(not(windows))]
     _ready_polls_align: ReadyPollsAlign,
 
     /// The list of ready polls
+    #[cfg(not(windows))]
     pub(crate) ready_polls: [EventType; 1024],
 }
 
@@ -58,6 +74,7 @@ pub struct PosixLoop {
 /// The zero-length array member keeps `improper_ctypes` satisfied (a
 /// field-less struct is rejected in `extern` signatures) without changing
 /// size (still 0) or alignment.
+#[cfg(not(windows))]
 #[repr(C, align(16))]
 struct ReadyPollsAlign {
     _unused: [u8; 0],
@@ -69,21 +86,20 @@ struct ReadyPollsAlign {
 #[cfg(not(windows))]
 const _: () = {
     use core::mem::{align_of, offset_of, size_of};
-    assert!(align_of::<PosixLoop>() == 16);
-    assert!(offset_of!(PosixLoop, num_polls) == size_of::<InternalLoopData>());
-    assert!(offset_of!(PosixLoop, num_ready_polls) == offset_of!(PosixLoop, num_polls) + 4);
-    assert!(offset_of!(PosixLoop, current_ready_poll) == offset_of!(PosixLoop, num_polls) + 8);
-    assert!(offset_of!(PosixLoop, fd) == offset_of!(PosixLoop, num_polls) + 12);
-    assert!(offset_of!(PosixLoop, active) == offset_of!(PosixLoop, num_polls) + 16);
-    assert!(offset_of!(PosixLoop, pending_wakeups) == offset_of!(PosixLoop, num_polls) + 20);
+    assert!(align_of::<Loop>() == 16);
+    assert!(offset_of!(Loop, num_polls) == size_of::<InternalLoopData>());
+    assert!(offset_of!(Loop, num_ready_polls) == offset_of!(Loop, num_polls) + 4);
+    assert!(offset_of!(Loop, current_ready_poll) == offset_of!(Loop, num_polls) + 8);
+    assert!(offset_of!(Loop, fd) == offset_of!(Loop, num_polls) + 12);
+    assert!(offset_of!(Loop, active) == offset_of!(Loop, num_polls) + 16);
+    assert!(offset_of!(Loop, pending_wakeups) == offset_of!(Loop, num_polls) + 20);
     assert!(
-        offset_of!(PosixLoop, ready_polls)
-            == (offset_of!(PosixLoop, pending_wakeups) + 4).next_multiple_of(16)
+        offset_of!(Loop, ready_polls)
+            == (offset_of!(Loop, pending_wakeups) + 4).next_multiple_of(16)
     );
     assert!(
-        size_of::<PosixLoop>()
-            == (offset_of!(PosixLoop, ready_polls) + 1024 * size_of::<EventType>())
-                .next_multiple_of(16)
+        size_of::<Loop>()
+            == (offset_of!(Loop, ready_polls) + 1024 * size_of::<EventType>()).next_multiple_of(16)
     );
 };
 
@@ -97,9 +113,24 @@ pub type EventType = libc::kevent64_s;
 // so ready_polls is `struct kevent[1024]` there.
 #[cfg(target_os = "freebsd")]
 pub type EventType = libc::kevent;
-// TODO:
+/// What a Bun-owned socket poll is told when it is dispatched: `LIBUS_SOCKET_*`
+/// readiness bits, whether the poll failed, and whether the peer sent FIN.
 #[cfg(windows)]
-pub type EventType = *mut c_void;
+#[derive(Clone, Copy)]
+pub struct EventType {
+    pub events: c_int,
+    pub error: bool,
+    pub eof: bool,
+}
+
+#[cfg(windows)]
+const _: () = {
+    use core::mem::offset_of;
+    // `HANDLE iocp` is pointer-aligned, so it sits 4 bytes later than `int fd`.
+    assert!(offset_of!(Loop, iocp) == offset_of!(Loop, num_polls) + 16);
+    assert!(offset_of!(Loop, active) == offset_of!(Loop, num_polls) + 24);
+    assert!(offset_of!(Loop, current_ready_events) == offset_of!(Loop, num_polls) + 28);
+};
 
 /// Loop handler trait with optional `pre`/`post` hooks. Implementors override
 /// `PRE`/`POST` if they have them.
@@ -109,12 +140,7 @@ pub trait LoopHandler {
     const POST: Option<unsafe extern "C" fn(*mut Loop)> = None;
 }
 
-// `impl PosixLoop` is posix-only: every method calls into `c::*` whose
-// signatures are typed `*mut Loop`, and on Windows `Loop = WindowsLoop` so
-// `&mut PosixLoop` does not coerce. Windows callers go through the
-// `impl WindowsLoop` block below (same surface, different routing).
-#[cfg(not(windows))]
-impl PosixLoop {
+impl Loop {
     pub fn update_date(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::uws_loop_date_header_timer_update(self) };
@@ -132,10 +158,21 @@ impl PosixLoop {
     /// / `kevent64_s` / `kevent` — all `Copy` in `libc`), so the by-value
     /// return is a stack copy the caller may borrow across re-entrant handler
     /// dispatch without aliasing the loop.
+    #[cfg(not(windows))]
     #[inline]
     pub fn current_ready_event(&self) -> EventType {
         let idx = usize::try_from(self.current_ready_poll).expect("int cast");
         self.ready_polls[idx]
+    }
+
+    #[cfg(windows)]
+    #[inline]
+    pub fn current_ready_event(&self) -> EventType {
+        EventType {
+            events: self.current_ready_events,
+            error: self.current_ready_error != 0,
+            eof: self.current_ready_eof != 0,
+        }
     }
 
     pub fn inc(&mut self) {
@@ -230,12 +267,10 @@ impl PosixLoop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    /// `None` if epoll/kqueue cannot be created (EMFILE).
+    /// `None` if the loop's kernel objects cannot be created (e.g. EMFILE).
     pub fn create<H: LoopHandler>() -> Option<NonNull<Loop>> {
-        // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
-        let p = unsafe {
-            c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
-        };
+        // SAFETY: us_create_loop allocates and returns a new loop
+        let p = unsafe { c::us_create_loop(Some(H::WAKEUP), H::PRE, H::POST, 0) };
         NonNull::new(p)
     }
 
@@ -255,9 +290,10 @@ impl PosixLoop {
         unsafe { c::us_loop_run_bun_tick(self, &raw const timespec, NOW_NS_UNKNOWN) };
     }
 
-    /// `now_ns` is the CLOCK_MONOTONIC reading the caller took to pick `timespec` (see
-    /// `timer::All::get_timeout`), reused by the JS park hook's idle-sweep rate limit rather
-    /// than read again. `NOW_NS_UNKNOWN` if the caller has none to share.
+    /// `now_ns` is the monotonic-clock reading the caller took to pick `timespec` (see
+    /// `timer::All::get_timeout`), reused by the tick's idle-sweep rate limit rather
+    /// than read again; on Windows `timespec` also counts from it when the wait
+    /// timer is armed. `NOW_NS_UNKNOWN` if the caller has none to share.
     pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>, now_ns: u64) {
         // SAFETY: self is a valid loop pointer
         unsafe {
@@ -298,187 +334,11 @@ impl PosixLoop {
     /// # Safety
     /// `this` must have been returned by `us_create_loop`/`uws_get_loop` and not
     /// yet freed.
-    pub unsafe fn destroy(this: *mut PosixLoop) {
+    pub unsafe fn destroy(this: *mut Loop) {
         // SAFETY: `this` was returned by us_create_loop/uws_get_loop and not yet freed
         unsafe { c::us_loop_free(this) };
     }
 }
-
-// ───────────────────────────── WindowsLoop ─────────────────────────────
-
-#[cfg(windows)]
-#[repr(C, align(16))]
-pub struct WindowsLoop {
-    pub internal_loop_data: InternalLoopData,
-
-    pub uv_loop: *mut uv::Loop,
-    pub is_default: c_int,
-    pub pre: *mut uv::uv_prepare_t,
-    pub check: *mut uv::uv_check_t,
-    pub idle_sweep_timer: *mut crate::Timer,
-}
-
-#[cfg(windows)]
-impl WindowsLoop {
-    pub fn should_enable_date_header_timer(&self) -> bool {
-        self.internal_loop_data.should_enable_date_header_timer()
-    }
-
-    pub fn get() -> *mut WindowsLoop {
-        // SAFETY: uv::Loop::get() returns the libuv default loop; uws wraps it
-        unsafe { c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
-    }
-
-    pub fn iteration_number(&self) -> u64 {
-        self.internal_loop_data.iteration_nr
-    }
-
-    /// Shared borrow of the backing libuv loop.
-    ///
-    /// `uv_loop` is a back-reference set once by C `us_create_loop` and never
-    /// reassigned for the `WindowsLoop`'s lifetime, so projecting `&uv::Loop`
-    /// from `&self` is sound. Consolidates the `unsafe { (*self.uv_loop).… }`
-    /// pattern (one `unsafe`, N safe callers).
-    #[inline]
-    pub fn uv(&self) -> &uv::Loop {
-        // SAFETY: `uv_loop` is non-null after `us_create_loop` and remains
-        // valid for the entire lifetime of `*self`; `&self` bounds the
-        // returned borrow so it cannot outlive the wrapper.
-        unsafe { &*self.uv_loop }
-    }
-
-    /// Exclusive borrow of the backing libuv loop. Used only for the
-    /// `active_handles` bookkeeping field (Bun-private; libuv itself only
-    /// reads it inside `uv__loop_alive`). `&mut self` provides exclusivity
-    /// over the wrapper; the `uv_loop_t` is the per-thread singleton so no
-    /// other Rust `&mut` to it is live on this thread.
-    #[inline]
-    fn uv_mut(&mut self) -> &mut uv::Loop {
-        // SAFETY: see `uv()` for liveness; `&mut self` is the sole Rust
-        // borrow path to the wrapper, and the only mutation performed via
-        // this accessor is the `active_handles` counter.
-        unsafe { &mut *self.uv_loop }
-    }
-
-    pub fn add_active(&mut self, val: u32) {
-        self.uv_mut().add_active(val);
-    }
-
-    pub fn sub_active(&mut self, val: u32) {
-        self.uv_mut().sub_active(val);
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.uv().is_active()
-    }
-
-    pub fn wakeup(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_wakeup_loop(self) };
-    }
-
-    #[inline]
-    pub fn wake(&mut self) {
-        self.wakeup();
-    }
-
-    /// Signature matches the POSIX impl so callers need no `cfg`. `now_ns` is unused here: on
-    /// Windows the park hook is driven from `us_loop_run` (libuv.c), which reads libuv's
-    /// already-refreshed clock via `uv_now` rather than taking one of its own.
-    pub fn tick_with_timeout(&mut self, _: Option<&Timespec>, _now_ns: u64) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
-    }
-
-    pub fn tick_without_idle(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_pump(self) };
-    }
-
-    pub fn drain_quic_if_necessary(&mut self) {
-        if !self.internal_loop_data.nq_head.is_null() {
-            // Full pass with close dispatch deferred to the next loop point.
-            // SAFETY: self is a valid loop pointer
-            unsafe { c::us_nq_loop_drain(self) };
-        }
-        if self.internal_loop_data.quic_head.is_null() {
-            return;
-        }
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_quic_loop_flush_if_pending(self) };
-    }
-
-    /// `None` if `uv_loop_init` fails (handle exhaustion).
-    pub fn create<H: LoopHandler>() -> Option<NonNull<WindowsLoop>> {
-        // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
-        let p = unsafe {
-            c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
-        };
-        NonNull::new(p)
-    }
-
-    pub fn run(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
-    }
-
-    // TODO: remove these two aliases
-    #[inline]
-    pub fn tick(&mut self) {
-        self.run();
-    }
-    #[inline]
-    pub fn wait(&mut self) {
-        self.run();
-    }
-
-    pub fn inc(&mut self) {
-        self.uv_mut().inc();
-    }
-
-    pub fn dec(&mut self) {
-        self.uv_mut().dec();
-    }
-
-    #[inline]
-    pub fn ref_(&mut self) {
-        self.inc();
-    }
-    #[inline]
-    pub fn unref(&mut self) {
-        self.dec();
-    }
-
-    pub fn drain_closed_sockets(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_internal_free_closed_sockets(self) };
-    }
-
-    pub fn close_all_groups(&mut self) -> bool {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_close_all_groups(self) != 0 }
-    }
-
-    pub fn update_date(&mut self) {
-        // SAFETY: self is a valid loop pointer
-        unsafe { c::uws_loop_date_header_timer_update(self) };
-    }
-
-    /// # Safety
-    /// `this` must have been returned by `us_create_loop`/`uws_get_loop_with_native`
-    /// and not yet freed.
-    pub unsafe fn destroy(this: *mut WindowsLoop) {
-        // SAFETY: `this` was returned by us_create_loop/uws_get_loop_with_native and not yet freed
-        unsafe { c::us_loop_free(this) };
-    }
-}
-
-// ───────────────────────────── Loop alias ─────────────────────────────
-
-#[cfg(windows)]
-pub type Loop = WindowsLoop;
-#[cfg(not(windows))]
-pub type Loop = PosixLoop;
 
 // ───────────────────────────── extern "C" ─────────────────────────────
 
@@ -488,15 +348,14 @@ type LoopCb = unsafe extern "C" fn(*mut Loop);
 mod c {
     use super::*;
 
-    // `Loop` (= `PosixLoop`/`WindowsLoop`) is a sized `#[repr(C)]` mirror of the
+    // `Loop` is a sized `#[repr(C)]` mirror of the
     // C struct (NOT an opaque ZST with `UnsafeCell`), so the safe-fn-with-`&mut`
     // pattern does not apply: `&mut Loop` at the FFI boundary would emit LLVM
-    // `noalias` over real fields, and the reentrant callees (`us_loop_run`,
+    // `noalias` over real fields, and the reentrant callees (`us_loop_run_bun_tick`,
     // `us_loop_close_all_groups`, …) dispatch Rust callbacks that touch the same
     // loop via `Loop::get()`. Keep all loop-taking decls as raw `*mut Loop`.
     unsafe extern "C" {
         pub(super) fn us_create_loop(
-            hint: *mut c_void,
             wakeup_cb: Option<LoopCb>,
             pre_cb: Option<LoopCb>,
             post_cb: Option<LoopCb>,
@@ -505,43 +364,28 @@ mod c {
         pub(super) fn us_loop_free(loop_: *mut Loop);
         pub(super) fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
         pub(super) fn us_nq_loop_drain(loop_: *mut Loop);
-        pub fn us_loop_run(loop_: *mut Loop);
-        #[cfg(windows)]
-        pub(super) fn us_loop_pump(loop_: *mut Loop);
         pub fn us_wakeup_loop(loop_: *mut Loop);
-        #[cfg(not(windows))]
-        pub(super) fn us_loop_run_bun_tick(
-            loop_: *mut Loop,
-            timeout_ms: *const Timespec,
-            now_ns: u64,
-        );
+        pub(super) fn us_loop_run_bun_tick(loop_: *mut Loop, timeout: *const Timespec, now_ns: u64);
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
-        #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;
-        #[cfg(windows)]
-        pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
     }
 }
-// Re-exported raw externs for cross-thread callers (e.g. bun_http's
-// `HTTPThread::wakeup`, bun_io's `WindowsWaker`) that hold only a `*mut Loop`
-// and MUST NOT form a `&mut Loop` via `Loop::wakeup`/`Loop::run` — see the
-// noalias warning on `mod c` above. `us_loop_run` is included because the
-// event-loop thread parks inside it while worker threads call
-// `us_wakeup_loop` concurrently; routing either through a `&mut self`
-// receiver would create two live `&mut Loop` to the same singleton (UB).
-pub use c::{us_loop_run, us_wakeup_loop};
+// Raw extern for cross-thread callers (e.g. bun_http's `HTTPThread::wakeup`)
+// that hold only a `*mut Loop` and must not form a `&mut Loop` via
+// `Loop::wakeup` while the loop's own thread holds one: see the noalias note
+// on `mod c`.
+pub use c::us_wakeup_loop;
 
 unsafe extern "C" {
     // safe: no args; frees this thread's lazily-created uws loop if it exists.
     safe fn bun_free_loop_at_thread_exit();
 }
 
-/// Frees this thread's uws loop (its socket groups, timers and — where uSockets
-/// created it — the native loop). Call when a thread that ran a uws loop (a
-/// Worker) exits, after everything registered on the loop is gone. On Windows
-/// the loop borrows the thread's libuv loop; close that afterwards.
+/// Frees this thread's uws loop (its socket groups and the native loop). Call
+/// when a thread that ran a uws loop (a Worker) exits, after everything
+/// registered on the loop is gone.
 pub fn free_thread_loop() {
     bun_free_loop_at_thread_exit()
 }

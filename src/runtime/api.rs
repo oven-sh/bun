@@ -79,7 +79,7 @@ pub(crate) mod yaml_object;
 // inline `mod bun { }` below is a re-export façade only — module bodies are
 // declared flat to avoid the non-mod-rs nested-path resolution rules.
 
-// Process struct + posix_spawn/uv_spawn machinery.
+// Process struct + spawn machinery.
 #[path = "api/bun/process.rs"]
 pub(crate) mod bun_process;
 

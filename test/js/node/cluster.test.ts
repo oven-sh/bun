@@ -451,6 +451,114 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("listening workers: 2 distinct ports: 1");
 });
 
+// Each burst leaves several connections waiting while both workers accept from the one socket. Every
+// connection is served by exactly one worker, and a worker that lost the race for the last one is
+// still there to answer afterwards.
+test("SCHED_NONE: workers sharing a handle take a backlog between them", async () => {
+  using dir = tempDir("cluster-shared-backlog", {
+    "main.js": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+if (cluster.isPrimary) {
+  const workers = [cluster.fork(), cluster.fork()];
+  let listening = 0;
+  cluster.on("listening", (w, address) => {
+    if (++listening === workers.length) run(address.port);
+  });
+  const connectOnce = port =>
+    new Promise((resolve, reject) => {
+      const c = net.connect(port, "127.0.0.1");
+      let got = "";
+      c.on("data", d => (got += d));
+      c.on("end", () => resolve(got));
+      c.on("error", reject);
+    });
+  async function run(port) {
+    let served = 0;
+    for (let round = 0; round < 10; round++) {
+      const ids = await Promise.all(Array.from({ length: 32 }, () => connectOnce(port)));
+      served += ids.filter(id => id === "1" || id === "2").length;
+    }
+    const answers = await Promise.all(
+      workers.map(w => new Promise(resolve => (w.once("message", resolve), w.send("ping")))),
+    );
+    console.log(JSON.stringify({ served, answers }));
+    for (const w of workers) w.kill();
+    process.exit(0);
+  }
+} else {
+  const id = String(cluster.worker.id);
+  net.createServer(s => s.end(id)).listen(0, "127.0.0.1");
+  process.on("message", () => process.send("pong"));
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(JSON.stringify({ served: 320, answers: ["pong", "pong"] }));
+  expect(exitCode).toBe(0);
+});
+
+// The worker's copy of the listening socket is its own: a process it spawns does not get it, so once
+// the cluster has let go of the port nobody is listening on it.
+test("SCHED_NONE: a process spawned by a worker does not inherit the shared listening socket", async () => {
+  using dir = tempDir("cluster-shared-not-inherited", {
+    "main.js": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const { spawn } = require("node:child_process");
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  let port, childPid;
+  worker.on("message", m => {
+    ({ port, childPid } = m);
+    worker.kill();
+  });
+  worker.on("exit", () => {
+    const c = net.connect(port, "127.0.0.1");
+    const done = outcome => {
+      console.log(outcome);
+      try {
+        process.kill(childPid);
+      } catch {}
+      process.exit(0);
+    };
+    c.on("connect", () => done("connected"));
+    c.on("error", e => done(e.code));
+  });
+} else {
+  const server = net.createServer(() => {});
+  server.listen(0, "127.0.0.1", () => {
+    // Outlives the worker.
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", detached: true });
+    child.unref();
+    process.send({ port: server.address().port, childPid: child.pid });
+  });
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ECONNREFUSED");
+  expect(exitCode).toBe(0);
+});
+
 test("SCHED_NONE: close() releases the shared handle so the worker can re-listen on the same port", async () => {
   using dir = tempDir("cluster-shared-relisten", {
     "main.ts": `
@@ -1369,6 +1477,67 @@ if (cluster.isPrimary) {
     out: { qCmd: "NODE_CLUSTER", lCmd: "NODE_CLUSTER", qActNow: "queryServer" },
     stderr: expect.any(String),
   });
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// Every worker is told about a connection and one of them gets it. The others have to find nothing
+// to accept, not wait for the next connection with their event loop stopped: a worker stuck like
+// that serves nothing more and never sees the disconnect.
+test("SCHED_NONE: workers sharing a listening socket keep running when another worker takes the connection", async () => {
+  using dir = tempDir("cluster-shared-listener", {
+    "main.js": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+const connections = 300;
+if (cluster.isPrimary) {
+  const workers = Array.from({ length: 4 }, () => cluster.fork());
+  let listening = 0;
+  let started = 0;
+  let served = 0;
+  let exited = 0;
+  let port;
+  for (const worker of workers) {
+    worker.on("listening", address => {
+      port = address.port;
+      if (++listening === workers.length) for (let i = 0; i < 8; i++) connect();
+    });
+  }
+  function connect() {
+    if (started === connections) {
+      if (served === connections) for (const worker of workers) worker.disconnect();
+      return;
+    }
+    started++;
+    const client = net.connect(port, "127.0.0.1");
+    client.on("data", () => {});
+    client.on("error", err => {
+      console.log("client error " + err.code);
+      process.exit(1);
+    });
+    client.on("close", () => {
+      served++;
+      connect();
+    });
+  }
+  cluster.on("exit", (worker, code) => {
+    if (code !== 0) process.exit(1);
+    if (++exited === workers.length) console.log(JSON.stringify({ served }));
+  });
+} else {
+  net.createServer(socket => socket.end("hello")).listen(0, "127.0.0.1");
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe(JSON.stringify({ served: 300 }));
   expect(exitCode).toBe(0);
 }, 30_000);
 

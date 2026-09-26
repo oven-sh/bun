@@ -35,21 +35,7 @@
 #endif
 
 #if defined(_WIN32)
-#include <io.h> // _S_IREAD _S_IWRITE
-#ifndef S_IRUSR
-#define S_IRUSR _S_IREAD
-#endif // S_IRUSR
-#ifndef S_IWUSR
-#define S_IWUSR _S_IWRITE
-#endif // S_IWUSR
-// The UCRT only defines the underscore-prefixed _S_IFIFO; whether the plain
-// spelling is visible here otherwise depends on what happened to be defined
-// earlier in the unified source. Node exposes constants.S_IFIFO (4096) on
-// Windows, so pin it to the CRT value instead of relying on header luck.
-// Keep in sync with ProcessBindingConstants.cpp.
-#if !defined(S_IFIFO) && defined(_S_IFIFO)
-#define S_IFIFO _S_IFIFO
-#endif // S_IFIFO
+#include "BunWindowsPosixConstants.h"
 #else
 #include <dlfcn.h>
 #endif

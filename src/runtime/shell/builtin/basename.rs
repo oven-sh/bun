@@ -40,7 +40,7 @@ impl Basename {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stdout
-                .enqueue(child, &owned, safeguard);
+                .enqueue_owned(child, owned, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         Builtin::done(interp, cmd, 0)

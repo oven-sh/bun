@@ -1,4 +1,5 @@
 import { pathToFileURL } from "bun";
+import { dlopen, ptr } from "bun:ffi";
 import {
   bunEnv,
   bunExe,
@@ -167,6 +168,171 @@ describe("fs.watch", () => {
       fs.rmdirSync(path.join(subfolder, "new-folder.txt"));
     });
   });
+
+  test.each([
+    ["non-recursive first", false],
+    ["recursive first", true],
+  ])(
+    "a recursive and a non-recursive watcher on the same directory are independent (%s)",
+    async (_, recursiveFirst) => {
+      using dir = tempDir("watch-same-dir-twice", { sub: { "file.txt": "hello" } });
+      const root = String(dir);
+      const nested = path.join("sub", "file.txt");
+      const order = recursiveFirst ? [true, false] : [false, true];
+      const watchers = order.map(recursive => fs.watch(root, { recursive }));
+      const deep = watchers[order.indexOf(true)];
+      const flat = watchers[order.indexOf(false)];
+      let interval: ReturnType<typeof repeat> | undefined;
+      try {
+        const sawNested = Promise.withResolvers<void>();
+        const sawTop = Promise.withResolvers<void>();
+        const flatNames = new Set<string>();
+        for (const watcher of watchers) watcher.on("error", sawNested.reject);
+        deep.on("change", (_, filename) => {
+          if (filename === nested) sawNested.resolve();
+        });
+        flat.on("change", (_, filename) => {
+          flatNames.add(String(filename));
+          if (filename === "top.txt") sawTop.resolve();
+        });
+        // The nested write comes first, so by the time the non-recursive watcher reports top.txt it
+        // has already reported everything it is going to say about that write.
+        interval = repeat(() => {
+          fs.writeFileSync(path.join(root, nested), "changed");
+          fs.writeFileSync(path.join(root, "top.txt"), "changed");
+        });
+        await Promise.all([sawNested.promise, sawTop.promise]);
+        // Windows also reports "sub" itself: its last-write time changed.
+        expect([...flatNames].filter(name => name !== "top.txt" && name !== "sub")).toEqual([]);
+      } finally {
+        clearInterval(interval);
+        for (const watcher of watchers) watcher.close();
+      }
+    },
+  );
+
+  test("a burst of new files is reported without losing events", async () => {
+    using dir = tempDir("watch-burst", {});
+    const root = String(dir);
+    // On Windows what happens while no request is with the kernel has to fit the next request's
+    // 4096-byte buffer, as in Node: a name of this length takes 28 bytes per event, and a new file
+    // is a few events. A burst past that is reported as lost, which has a test of its own.
+    const names = Array.from({ length: isWindows ? 20 : 300 }, (_, i) => `f${String(i).padStart(3, "0")}.txt`);
+    const watcher = fs.watch(root);
+    let interval: ReturnType<typeof repeat> | undefined;
+    try {
+      const failed = new Promise<never>((_, reject) => watcher.on("error", reject));
+      const ready = Promise.withResolvers<void>();
+      const settled = Promise.withResolvers<void>();
+      const seen = new Set<string | null>();
+      watcher.on("change", (_, filename) => {
+        seen.add(filename as string | null);
+        if (filename === "ready.txt") ready.resolve();
+        // A null filename is how a watcher reports that events were lost: nothing more to wait for.
+        if (filename === names.at(-1) || filename === null) settled.resolve();
+      });
+      interval = repeat(() => fs.writeFileSync(path.join(root, "ready.txt"), "x"));
+      await Promise.race([ready.promise, failed]);
+      clearInterval(interval);
+
+      // No event loop turn in between: nothing drains the events on this thread meanwhile.
+      for (const name of names) fs.writeFileSync(path.join(root, name), "x");
+      await Promise.race([settled.promise, failed]);
+
+      expect(seen.has(null)).toBe(false);
+      // FSEvents may report kFSEventStreamEventFlagMustScanSubDirs instead of every file.
+      if (!isMacOS) expect(names.filter(name => !seen.has(name))).toEqual([]);
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+  });
+
+  // Elsewhere the sequence differs (Linux: two "rename" events). The watcher stays open everywhere.
+  test.skipIf(!isWindows).each([false, true])(
+    "deleting the watched directory reports a rename and no error (recursive: %p)",
+    async recursive => {
+      using dir = tempDir("watch-deleted-dir", { watched: {} });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const fs = require("fs");
+            const path = require("path");
+            const target = path.join(process.argv[1], "watched");
+            const log = [];
+            // No "error" listener: an error would be an uncaught exception.
+            const watcher = fs.watch(target, { recursive: ${recursive} });
+            watcher.on("change", (event, filename) => {
+              log.push(event + ":" + path.basename(String(filename)));
+              // Whatever else the deletion produced was dequeued with this event.
+              if (log.length === 1) setImmediate(() => watcher.close());
+            });
+            watcher.on("close", () => log.push("close"));
+            process.on("exit", () => console.log(JSON.stringify(log)));
+            fs.rmdirSync(target);
+          `,
+          String(dir),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: JSON.stringify(["rename:watched", "close"]),
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The first watcher is still open, and still the one registered for the path, when the directory
+  // comes back. The second has to watch the new directory, not join the one whose directory is gone.
+  async function watchAgain(afterTheFirstHeard: boolean, how: "deleted" | "moved" = "deleted") {
+    using dir = tempDir("watch-again", { watched: {} });
+    const target = path.join(String(dir), "watched");
+    const first = fs.watch(target);
+    let second: fs.FSWatcher | undefined;
+    let interval: ReturnType<typeof repeat> | undefined;
+    try {
+      const firstFailed = new Promise<never>((_, reject) => first.on("error", reject));
+      const gone = Promise.withResolvers<void>();
+      // inotify reports the directory's deletion and then the end of its watch, each as a rename.
+      let renamesLeft = isLinux ? 2 : 1;
+      first.on("change", event => {
+        if (event === "rename" && --renamesLeft === 0) gone.resolve();
+      });
+      if (how === "moved") fs.renameSync(target, target + "-moved");
+      else fs.rmdirSync(target);
+      // Not awaited on macOS, where the watcher follows the path rather than the directory.
+      if (afterTheFirstHeard && !isMacOS) await Promise.race([gone.promise, firstFailed]);
+
+      fs.mkdirSync(target);
+      second = fs.watch(target);
+      const secondFailed = new Promise<never>((_, reject) => second!.on("error", reject));
+      const sawFile = Promise.withResolvers<void>();
+      second.on("change", (_, filename) => {
+        if (filename === "new.txt") sawFile.resolve();
+      });
+      interval = repeat(() => fs.writeFileSync(path.join(target, "new.txt"), "x"));
+      await Promise.race([sawFile.promise, firstFailed, secondFailed]);
+    } finally {
+      clearInterval(interval);
+      first.close();
+      second?.close();
+    }
+  }
+
+  test("a directory that was deleted and made again can be watched again", () => watchAgain(true));
+  test.skipIf(!isWindows)("a directory made again before its watcher heard of the deletion can be watched again", () =>
+    watchAgain(false),
+  );
+  // Nothing tells the watcher of a directory that the directory itself was renamed.
+  test.skipIf(!isWindows)("a directory that was moved away and made again can be watched again", () =>
+    watchAgain(false, "moved"),
+  );
 
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {
@@ -697,6 +863,53 @@ describe("fs.watch", () => {
     },
     90_000,
   );
+
+  // A change is reported by its path below the watched directory, in a 4096-byte buffer as in Node. A
+  // change whose record is larger than that cannot be reported by name.
+  test.skipIf(!isWindows)("a change too large for the request's buffer is delivered as ('change', null)", async () => {
+    using dir = tempDir("fs-watch-overflow-windows", {});
+    const root = String(dir);
+    let deep = root;
+    for (let i = 0; i < 9; i++) deep = path.join(deep, Buffer.alloc(240, "d").toString());
+    fs.mkdirSync(deep, { recursive: true });
+    // 12 bytes of header and 2 per UTF-16 unit of the name.
+    expect(12 + 2 * path.relative(root, deep).length).toBeGreaterThan(4096);
+    const after = path.join(root, "after.txt");
+
+    const first = Promise.withResolvers<[string, string | null]>();
+    const bufferFirst = Promise.withResolvers<[string, Buffer | null]>();
+    const named = Promise.withResolvers<string>();
+    const pending = [first, bufferFirst, named];
+    for (const p of pending) p.promise.catch(() => {});
+    const fail = (err: unknown) => pending.forEach(p => p.reject(err));
+    const watcher = fs.watch(root, { recursive: true }, (eventType, filename) => {
+      first.resolve([eventType, filename]);
+      // Changes made while a request overflows are dropped with it, and that is reported the same way.
+      if (filename === null) fs.writeFileSync(after, "x");
+      else named.resolve(filename);
+    });
+    const bufferWatcher = fs.watch(root, { recursive: true, encoding: "buffer" }, (eventType, filename) => {
+      bufferFirst.resolve([eventType, filename]);
+    });
+    let closing = false;
+    for (const w of [watcher, bufferWatcher]) {
+      w.once("error", fail);
+      w.once("close", () => {
+        if (!closing) fail(new Error("watcher closed unexpectedly"));
+      });
+    }
+    try {
+      fs.writeFileSync(path.join(deep, "f"), "x");
+      expect(await first.promise).toEqual(["change", null]);
+      expect(await bufferFirst.promise).toEqual(["change", null]);
+      // The watcher keeps working.
+      expect(await named.promise).toBe("after.txt");
+    } finally {
+      closing = true;
+      watcher.close();
+      bufferWatcher.close();
+    }
+  });
 
   // When inotify_add_watch fails for a subdirectory during the recursive walk
   // (ENOSPC at the watch limit, EACCES on an unreadable subdir), bun used to
@@ -1299,18 +1512,16 @@ describe("closed FSWatcher is collectable", () => {
   }
 });
 
-// On Windows, if fs.watch() fails after getOrPut() inserts into the internal path->watcher
-// map (e.g. uv_fs_event_start fails on a dangling junction, an ACL-protected dir, or a
-// directory deleted mid-watch), an errdefer that was silently broken by a !*T -> Maybe(*T)
-// refactor left the entry in place with a dangling key and an uninitialized value. The next
-// fs.watch() on the same path collided with the poisoned entry, returned the garbage value
-// as a *PathWatcher, and segfaulted at 0xFFFFFFFFFFFFFFFF calling .handlers.put() on it.
+// An fs.watch() that fails after its path went into the path->watcher map (starting the
+// watch fails on a dangling junction, an ACL-protected dir, or a directory deleted
+// mid-watch) must take the entry out again, or the next fs.watch() on the same path finds
+// an entry whose watcher is gone.
 //
 // https://github.com/oven-sh/bun/issues/26254
 // https://github.com/oven-sh/bun/issues/20203
 // https://github.com/oven-sh/bun/issues/19635
 //
-// Must run in a subprocess: on an unpatched build this segfaults the whole runtime.
+// In a subprocess so a crash is a test failure.
 test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", async () => {
   using dir = tempDir("fswatch-retry-failed", { "index.js": "" });
   const base = String(dir);
@@ -1327,16 +1538,13 @@ test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", a
     symlinkSync(target, link, "junction"); // junctions need no admin rights on Windows
     rmdirSync(target);                     // junction now dangles
 
-    // Call 1: readlink(link) SUCCEEDS (returns the vanished target path into
-    // a stack-local buffer), then uv_fs_event_start(target) fails ENOENT.
-    // On unpatched builds: map entry left with dangling key + uninit value.
+    // Call 1: readlink(link) succeeds (it returns the vanished target path),
+    // then starting the watch on the target fails with ENOENT.
     try { watch(link); throw new Error("expected first watch to fail"); }
     catch (e) { if (e.code !== "ENOENT") throw e; }
 
-    // Call 2: identical stack frame layout -> identical outbuf address ->
-    // identical key slice -> getOrPut returns found_existing=true ->
-    // returns uninitialized value as a *PathWatcher -> segfault on unpatched builds.
-    // Correct behaviour: throw ENOENT again.
+    // Call 2: the same key. It must not find an entry left by call 1; it
+    // throws ENOENT again.
     try { watch(link); throw new Error("expected second watch to fail"); }
     catch (e) { if (e.code !== "ENOENT") throw e; }
 
@@ -1357,11 +1565,10 @@ test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", a
 
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
-  expect(exitCode).toBe(0); // unpatched: exitCode is 3 (Windows segfault)
+  expect(exitCode).toBe(0);
 });
 
-// libuv signals a ReadDirectoryChangesW buffer overflow (events were lost) by
-// invoking the fs_event callback with a NULL filename; node surfaces it as a
+// Node reports a ReadDirectoryChangesW buffer overflow (events were lost) as a
 // 'change' event with a null filename, for every encoding, so callers can rescan.
 test.skipIf(!isWindows)(
   "fs.watch delivers a null-filename 'change' event when ReadDirectoryChangesW overflows (windows)",
@@ -1369,7 +1576,7 @@ test.skipIf(!isWindows)(
     using dir = tempDir("fswatch-overflow-win", {});
     const watchDir = String(dir);
     // ~100-char names make ~210-byte FILE_NOTIFY_INFORMATION entries, so ~19
-    // fill libuv's 4KB buffer; 100 blocked-loop writes overflow it ~5x over.
+    // fill the watch's 4096-byte ReadDirectoryChangesW buffer.
     const N = 100;
 
     const fixture = /* js */ `
@@ -1409,9 +1616,9 @@ test.skipIf(!isWindows)(
         w.on("close", () => settle(() => reject(new Error("watcher closed before overflow or full delivery"))));
       }
 
-      // The watch is armed synchronously, so sync-writing N files now blocks
-      // the event loop while libuv's 4KB ReadDirectoryChangesW buffer fills
-      // and overflows, forcing the lost-events notification.
+      // The watch is armed synchronously, so it covers every one of the N
+      // sync writes below; a ReadDirectoryChangesW buffer overflow on the way
+      // is reported as the lost-events notification.
       const pad = Buffer.alloc(90, "x").toString();
       for (let i = 0; i < N; i++) {
         fs.writeFileSync(path.join(dir, "f" + pad + String(i).padStart(3, "0") + ".txt"), "");
@@ -1543,15 +1750,10 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
   expect(stdout).toContain("RSS growth:");
 });
 
-// On Windows, fs.watch() registered every watcher into a single process-global
-// PathWatcherManager bound to the first caller's VM/uv_loop. A Worker thread
-// calling fs.watch() reused that manager: it mutated the watcher map and drove
-// the main thread's uv_loop from a foreign thread (debug builds tripped a
-// debug_assert and aborted; release builds raced). The manager is now
-// re-allocated per VM, so a Worker's watcher never aliases the main thread's.
+// The process-wide PathWatcherManager has its own reader thread and a mutex
+// over the watcher map, so fs.watch() works from any thread.
 //
-// Must run in a subprocess: on an unpatched debug build the Worker's
-// fs.watch() call aborts the whole runtime.
+// In a subprocess so a debug_assert abort is a test failure.
 test.skipIf(!isWindows)(
   "fs.watch works from both the main thread and a Worker (windows)",
   async () => {
@@ -1564,7 +1766,6 @@ test.skipIf(!isWindows)(
         import { parentPort } from "node:worker_threads";
 
         const dir = path.join(import.meta.dir, "worker-watched");
-        // Before the fix this call registered into the main thread's manager.
         const watcher = fs.watch(dir, () => {
           clearInterval(interval);
           watcher.close();
@@ -1598,8 +1799,8 @@ test.skipIf(!isWindows)(
           });
         }
 
-        // 1. The main thread registers the first watcher, creating the watcher
-        //    manager bound to the main VM.
+        // 1. The main thread registers the first watcher, creating the
+        //    process-wide watcher manager.
         await watchForOneChange(mainDir);
 
         // 2. A Worker registers its own watcher and must observe a change.
@@ -1630,7 +1831,7 @@ test.skipIf(!isWindows)(
 
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0); // unpatched debug builds abort in the Worker's fs.watch()
+    expect(exitCode).toBe(0);
   },
   30000,
 );
@@ -1792,15 +1993,9 @@ test("fs.watch wrapper reference survives GC across event, abort and close paths
   expect(exitCode).toBe(0);
 }, 30_000);
 
-// Watching a file symlink makes bun hand libuv the readlink() result, which for
-// a relative link target is a bare file name. libuv's uv__split_path() used to
-// _wcsdup() that name from the CRT heap while everything else it owns comes
-// from uv__malloc(), i.e. from mimalloc (uv_replace_allocator in main), so
-// closing the watcher handed a CRT pointer to mi_free. Debug builds report that
-// on stderr every time ("mimalloc: error: mi_free: invalid pointer"); release
-// builds segfault in roughly half of all processes, depending on where ASLR put
-// the CRT heap relative to mimalloc's page map, hence several children.
-// Fixed in oven-sh/libuv#14.
+// Closes a watcher on a file symlink whose readlink() result is relative, i.e.
+// a bare file name. Several children, because whether a bad free crashes
+// depends on ASLR.
 test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target does not crash (windows)", async () => {
   using dir = tempDir("fswatch-relative-symlink", { "target.txt": "hello" });
   const base = String(dir);
@@ -1820,9 +2015,8 @@ test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target d
     Array.from({ length: 6 }, async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
-        // libuv resolves the bare target name against the cwd, so the watch
-        // only reaches the affected code path when started from the link's
-        // directory.
+        // The fixture watches the bare name "link.txt", so it has to be
+        // started from the link's directory.
         cwd: base,
         env: bunEnv,
         stdout: "pipe",
@@ -1835,3 +2029,73 @@ test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target d
 
   expect(runs).toEqual(runs.map(() => ({ stdout: "OK", stderr: "", exitCode: 0 })));
 });
+
+// The last component of `file` as `GetShortPathNameW` gives it: its 8.3 alias, or the name itself on a
+// volume that makes none.
+function shortNameOf(file: string): string {
+  const { GetShortPathNameW } = dlopen("kernel32.dll", {
+    GetShortPathNameW: { args: ["ptr", "ptr", "u32"], returns: "u32" },
+  }).symbols;
+  const wide = Buffer.from(file + "\0", "utf16le");
+  const out = Buffer.alloc(2 * 1024);
+  const length = GetShortPathNameW(ptr(wide), ptr(out), out.length / 2);
+  if (length === 0) throw new Error("GetShortPathNameW failed for " + file);
+  return path.basename(out.toString("utf16le", 0, length * 2));
+}
+
+// A change made through a file's 8.3 alias is recorded under the alias; the event reports the long
+// name. A change made through the long name is reported as it is.
+test.skipIf(!isWindows)("fs.watch reports the long name for a change made through an 8.3 alias", async () => {
+  using dir = tempDir("fs-watch-short-name", { "a rather long file name.txt": "x", "short.txt": "x" });
+  const root = String(dir);
+  const longName = "a rather long file name.txt";
+
+  const alias = shortNameOf(path.join(root, longName));
+  // A volume can have 8.3 name creation switched off; then there is no alias to go through.
+  const names = alias === longName ? ["short.txt"] : [alias, "short.txt"];
+
+  const seen: string[] = [];
+  const done = Promise.withResolvers<void>();
+  const watcher = fs.watch(root, (_event, filename) => {
+    if (filename && !seen.includes(String(filename))) seen.push(String(filename));
+    if (seen.length === names.length) done.resolve();
+  });
+  watcher.on("error", done.reject);
+  try {
+    for (const name of names) fs.appendFileSync(path.join(root, name), "y");
+    await done.promise;
+  } finally {
+    watcher.close();
+  }
+  expect(seen.sort()).toEqual((alias === longName ? ["short.txt"] : [longName, "short.txt"]).sort());
+});
+
+// The alias of every component is resolved in the directory it is in, which is reached from the
+// watched directory itself: the path the watch was started with stops naming it once it is renamed.
+test.skipIf(!isWindows)(
+  "fs.watch resolves 8.3 aliases below the watched directory after that directory is renamed",
+  async () => {
+    const longDir = "a rather long directory name";
+    const longFile = "another quite long name.txt";
+    using dir = tempDir("fs-watch-short-nested", { [`watched/${longDir}/${longFile}`]: "x" });
+    const watched = path.join(String(dir), "watched");
+    const dirAlias = shortNameOf(path.join(watched, longDir));
+    const fileAlias = shortNameOf(path.join(watched, longDir, longFile));
+    // A volume can have 8.3 name creation switched off; then there is no alias to go through.
+    const viaAliases = dirAlias !== longDir && fileAlias !== longFile;
+
+    const seen = Promise.withResolvers<string>();
+    const watcher = fs.watch(watched, { recursive: true }, (_event, filename) => {
+      if (filename && String(filename).toLowerCase().endsWith(".txt")) seen.resolve(String(filename));
+    });
+    watcher.on("error", seen.reject);
+    try {
+      const moved = path.join(String(dir), "moved");
+      fs.renameSync(watched, moved);
+      fs.appendFileSync(path.join(moved, viaAliases ? dirAlias : longDir, viaAliases ? fileAlias : longFile), "y");
+      expect(await seen.promise).toBe(`${longDir}\\${longFile}`);
+    } finally {
+      watcher.close();
+    }
+  },
+);

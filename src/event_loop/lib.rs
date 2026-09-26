@@ -8,9 +8,7 @@ pub mod EventLoopTimer;
 // ────────────────────────────────────────────────────────────────────────────
 // AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.
 // The parent event loop is wired via the lower-tier `set_parent_raw(tag, ptr)`
-// + `EventLoopHandle::into_tag_ptr()`. The Windows-only `uv_loop` projection
-// lives on `EventLoopHandle::uv_loop` (`#[cfg(windows)]`); the POSIX build is
-// gate-free.
+// + `EventLoopHandle::into_tag_ptr()`.
 // ────────────────────────────────────────────────────────────────────────────
 
 #[path = "MiniEventLoop.rs"]

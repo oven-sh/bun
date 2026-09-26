@@ -17,7 +17,20 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { spawn as nodeSpawn } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { connect } from "node:net";
+import type { Writable } from "node:stream";
 import path, { join } from "path";
 
 let tmp: string;
@@ -453,9 +466,7 @@ for (let [gcTick, label] of [
         // Child reads a single byte and exits; the parent queues 16MB on stdin
         // (comfortably larger than kern.ipc.maxsockbuf on macOS and the 64KB
         // named-pipe buffer on Windows) so end() is still draining when the
-        // read end closes. On Windows libuv previously surfaced that as code
-        // "EOF" because uv__process_pipe_write_req used the read-side error
-        // translator.
+        // read end closes. That is EPIPE on Windows too, not EOF.
         await using proc = spawn({
           cmd: [bunExe(), "-e", `const b = Buffer.alloc(1); require("fs").readSync(0, b); process.exit(0);`],
           env: bunEnv,
@@ -936,9 +947,9 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
 });
 
 describe("unref() + .exited with nothing else ref'd (Windows)", () => {
-  // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
-  // body and never dequeue the IOCP exit packet, so these children busy-spun
-  // forever. us_loop_pump now forces one non-blocking iteration (POSIX parity).
+  // Windows: with only an unref'd process-exit wait in flight on the loop's
+  // completion port, a non-blocking tick must still dequeue the exit packet
+  // for `.exited` to settle (POSIX parity).
   for (const [name, body] of [
     ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
     [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],
@@ -1305,13 +1316,11 @@ describe("close handling", () => {
 
     it.if(isWindows)("'pipe' at index >= 3: the handle .stdio exposes is not closed again at GC", async () => {
       // On Windows .stdio[3] is a HANDLE value. net.connect({fd}) adopts it
-      // and closes it with the socket. The getter used to expose the handle
-      // of its own uv_pipe_t and close that handle again when the Subprocess
-      // was GC'd. Windows reuses a closed handle value at once, so the second
-      // close destroyed whatever owned the value by then (a worker thread's
-      // handle, in the crash reports). Here the new owner is an event we put
-      // into the value on purpose: it stays signaled unless something closes
-      // it out from under us.
+      // and closes it with the socket, so the Subprocess must not close it
+      // again at GC: Windows reuses a closed handle value at once, and a
+      // second close destroys whatever owns the value by then. Here the new
+      // owner is an event we put into the value on purpose: it stays signaled
+      // unless something closes it out from under us.
       const fixture = /* js */ `
         import { dlopen } from "bun:ffi";
         import { connect } from "node:net";
@@ -1379,6 +1388,117 @@ describe("close handling", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+    });
+
+    it(".stdio[i] of a file descriptor the caller passed is not a handle value", async () => {
+      using dir = tempDir("spawn-stdio-supplied-fd", {});
+      const fd = openSync(join(String(dir), "out.txt"), "w");
+      try {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hi')"],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", fd],
+        });
+        // POSIX hands the caller's number back; Windows has no number of its own for it.
+        expect(proc.stdio[3]).toBe(isWindows ? null : fd);
+        expect(await proc.exited).toBe(0);
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(join(String(dir), "out.txt"), "utf8")).toBe("hi");
+    });
+
+    // The child reads fd 3 until EOF, which it only sees once every handle to the parent's end is
+    // closed: the one .stdio[3] handed out is the only one there may be.
+    describe.if(isWindows)("'pipe' at index >= 3: closing what .stdio exposes is EOF for the child", () => {
+      const readToEOF = /* js */ `
+        const fs = require("node:fs");
+        const chunk = Buffer.alloc(64);
+        let data = "";
+        for (let n; (n = fs.readSync(3, chunk)) > 0; ) data += chunk.toString("utf8", 0, n);
+        console.log("read " + JSON.stringify(data) + " until EOF");
+      `;
+
+      it("Bun.spawn, .stdio read twice", async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", readToEOF],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe", "pipe"],
+        });
+        const handle = proc.stdio[3];
+        expect(handle).toBeNumber();
+        expect(proc.stdio[3]).toBe(handle);
+        // Adopts the handle and closes it with the socket.
+        connect({ fd: handle as number }).end("hi");
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: 'read "hi" until EOF\n', stderr: "", exitCode: 0 });
+      });
+
+      it("child_process.spawn", async () => {
+        const child = nodeSpawn(bunExe(), ["-e", readToEOF], {
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout!.on("data", chunk => (stdout += chunk));
+        child.stderr!.on("data", chunk => (stderr += chunk));
+        (child.stdio[3] as Writable).end("hi");
+        const { promise, resolve } = Promise.withResolvers<number | null>();
+        child.on("close", resolve);
+        const exitCode = await promise;
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: 'read "hi" until EOF\n', stderr: "", exitCode: 0 });
+      });
+    });
+
+    // The child copies fd 3 to fd 4 until EOF on fd 3.
+    const copy3to4 = /* js */ `
+      const fs = require("node:fs");
+      const chunk = Buffer.alloc(4096);
+      for (let n; (n = fs.readSync(3, chunk)) > 0; ) fs.writeSync(4, chunk.subarray(0, n));
+    `;
+    const lines = Array.from({ length: 32 }, (_, i) => `line ${i}\n`);
+
+    it("child_process.spawn: extra 'pipe' slots carry data both ways, writes queued back to back", async () => {
+      const child = nodeSpawn(bunExe(), ["-e", copy3to4], {
+        env: bunEnv,
+        stdio: ["ignore", "inherit", "inherit", "pipe", "pipe"],
+      });
+      const { promise, resolve, reject } = Promise.withResolvers<number | null>();
+      child.on("error", reject);
+      child.on("close", resolve);
+      let echoed = "";
+      const output = child.stdio[4] as NodeJS.ReadableStream;
+      output.on("data", chunk => (echoed += chunk));
+      const ended = new Promise<void>(resolve => output.on("end", resolve));
+      const input = child.stdio[3] as Writable;
+      for (const line of lines) input.write(line);
+      input.end();
+      const [exitCode] = await Promise.all([promise, ended]);
+      expect({ echoed, exitCode }).toEqual({ echoed: lines.join(""), exitCode: 0 });
+    });
+
+    // The child sees EOF on fd 3 only once the handle .stdio[3] exposed is closed, which is the socket's to do.
+    it.if(isWindows)("'socket-fd' at index >= 3 exposes a handle the caller's socket owns and closes", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", copy3to4],
+        env: bunEnv,
+        stdio: ["ignore", "inherit", "inherit", "socket-fd", "socket-fd"],
+      });
+      const [toChild, fromChild] = [proc.stdio[3], proc.stdio[4]] as number[];
+      expect([toChild, fromChild]).toEqual([expect.any(Number), expect.any(Number)]);
+      const input = connect({ fd: toChild });
+      const output = connect({ fd: fromChild });
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      input.on("error", reject);
+      output.on("error", reject);
+      output.on("close", () => resolve());
+      let echoed = "";
+      output.on("data", chunk => (echoed += chunk));
+      for (const line of lines) input.write(line);
+      input.end();
+      const [exitCode] = await Promise.all([proc.exited, promise]);
+      expect({ echoed, exitCode }).toEqual({ echoed: lines.join(""), exitCode: 0 });
     });
   });
 });
@@ -1575,10 +1695,9 @@ describe.if(isLinux)("a stdio slot that is closed in the parent", () => {
 });
 
 // Bun.file(fd).stream() (like the shell's stdio and cwd handles) works on a
-// dup() of the descriptor. On Windows that duplicate used to be created
-// inheritable, and libuv spawns with bInheritHandles=TRUE, so every child
-// started while one was open got a copy and kept the file open after the
-// parent closed it. POSIX dup() uses F_DUPFD_CLOEXEC; the Windows side must match.
+// dup() of the descriptor. A child started while a duplicate is open must not
+// get a copy of it: the copy keeps the file open after the parent closes it.
+// POSIX dup() uses F_DUPFD_CLOEXEC; the Windows side must match.
 it.if(isWindows)("handles duplicated for Bun.file(fd).stream() are not inherited by children", async () => {
   const N = 64;
   // Bigger than the stream's high-water mark, so each reader parks on its
@@ -1643,12 +1762,127 @@ it.if(isWindows)("handles duplicated for Bun.file(fd).stream() are not inherited
       reportedHandleCount(control),
       reportedHandleCount(withDuplicates),
     ]);
-    // An inheritable dup() hands every one of the N duplicates to the child,
-    // so the difference used to be exactly N.
+    // A child that gets the duplicates starts with N more handles than the control.
     expect(withDuplicatesCount - controlCount).toBeLessThan(N / 2);
   } finally {
     await Promise.all(readers.map(reader => reader.cancel()));
     for (const fd of fds) closeSync(fd);
+  }
+});
+
+// A child must get its own stdio and nothing that another thread is creating for its child at the
+// same moment. The fixture cannot finish if a short-lived child's stdout is also held by a
+// long-lived child of the other thread.
+describe("threads spawning at the same time do not share their children's pipes", () => {
+  for (const [name, mode] of [
+    ["two Workers", "workers"],
+    ["the main thread and a Worker", "main"],
+  ]) {
+    it(name, async () => {
+      const revision = spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.toString();
+      await using proc = spawn({
+        cmd: [bunExe(), join(import.meta.dir, "spawn-concurrent-workers-fixture.ts"), mode],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(Array(2).fill(Array(4).fill(revision)));
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
+describe("Bun.file(path) as stdout and stderr", () => {
+  const kinds = `
+    const fs = require("fs");
+    const kind = fd => (fs.fstatSync(fd).isFile() ? "a file" : "not a file");
+    fs.writeSync(1, "stdout is " + kind(1) + "\\n");
+    fs.writeSync(2, "stderr is " + kind(2) + "\\n");`;
+
+  for (const [name, run] of [
+    ["spawn", (options: any) => spawn(options).exited],
+    ["spawnSync", (options: any) => spawnSync(options).exitCode],
+  ] as const) {
+    it(`${name}: the child's output lands in the files`, async () => {
+      using dir = tempDir("spawn-file-stdio", {});
+      const [out, err] = [join(String(dir), "out.txt"), join(String(dir), "err.txt")];
+      const exitCode = await run({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("fs").writeSync(1, "to stdout\\n"); require("fs").writeSync(2, "to stderr\\n");`,
+        ],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: Bun.file(out),
+        stderr: Bun.file(err),
+      });
+      expect({ out: readFileSync(out, "utf8"), err: readFileSync(err, "utf8") }).toEqual({
+        out: "to stdout\n",
+        err: "to stderr\n",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it(`${name}: the child can fstat the files it was given`, async () => {
+      using dir = tempDir("spawn-file-stdio-fstat", {});
+      const [out, err] = [join(String(dir), "out.txt"), join(String(dir), "err.txt")];
+      const exitCode = await run({
+        cmd: [bunExe(), "-e", kinds],
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: Bun.file(out),
+        stderr: Bun.file(err),
+      });
+      expect({ out: readFileSync(out, "utf8"), err: readFileSync(err, "utf8") }).toEqual({
+        out: "stdout is a file\n",
+        err: "stderr is a file\n",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it(`${name}: a command that is not on PATH throws ENOENT and creates no file`, () => {
+      using dir = tempDir("spawn-file-stdio-enoent", {});
+      const [out, err] = [join(String(dir), "out.txt"), join(String(dir), "err.txt")];
+      expect(() =>
+        run({ cmd: ["definitely-not-a-program-xyz"], env: bunEnv, stdout: Bun.file(out), stderr: Bun.file(err) }),
+      ).toThrow(expect.objectContaining({ code: "ENOENT" }));
+      expect({ out: existsSync(out), err: existsSync(err) }).toEqual({ out: false, err: false });
+    });
+
+    // A path to a program is not looked up on PATH first: it only turns out to be missing once
+    // the child is being created.
+    describe.if(isWindows)("a path to a program that does not exist throws ENOENT and creates no file", () => {
+      for (const [how, program] of [
+        ["absolute", (dir: string) => join(dir, "nope.exe")],
+        ["relative", () => "./nope.exe"],
+      ] as const) {
+        it(`${name}, ${how}, stdout`, () => {
+          using dir = tempDir("spawn-file-stdio-enoent", {});
+          const out = join(String(dir), "out.txt");
+          expect(() =>
+            run({ cmd: [program(String(dir))], cwd: String(dir), env: bunEnv, stdout: Bun.file(out) }),
+          ).toThrow(expect.objectContaining({ code: "ENOENT" }));
+          expect(existsSync(out)).toBe(false);
+        });
+
+        it(`${name}, ${how}, stdout and stderr`, () => {
+          using dir = tempDir("spawn-file-stdio-enoent", {});
+          const [out, err] = [join(String(dir), "out.txt"), join(String(dir), "err.txt")];
+          expect(() =>
+            run({
+              cmd: [program(String(dir))],
+              cwd: String(dir),
+              env: bunEnv,
+              stdout: Bun.file(out),
+              stderr: Bun.file(err),
+            }),
+          ).toThrow(expect.objectContaining({ code: "ENOENT" }));
+          expect({ out: existsSync(out), err: existsSync(err) }).toEqual({ out: false, err: false });
+        });
+      }
+    });
   }
 });
 
@@ -1897,6 +2131,157 @@ it.if(parentThp() === "1")("spawned children keep the system THP policy", async 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(thpEnabled(stdout)).toBe("1");
   expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
+  expect(exitCode).toBe(0);
+});
+
+// Output that nobody streams is accumulated by the pipe's reader, chunk after chunk into one buffer.
+describe("stdout that is buffered", () => {
+  const size = 3 * 1024 * 1024 + 17;
+  const pattern = () => {
+    const bytes = Buffer.alloc(size);
+    for (let i = 0; i < size; i++) bytes[i] = i % 251;
+    return bytes;
+  };
+  const child = `const bytes = Buffer.alloc(${size}); for (let i = 0; i < ${size}; i++) bytes[i] = i % 251;`;
+
+  it.concurrent("arrives whole and in order from spawnSync", () => {
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), "-e", child + "process.stdout.write(bytes);"],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    expect(stdout.length).toBe(size);
+    expect(stdout.equals(pattern())).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("arrives whole and in order when the stream is first asked for between two chunks", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        child +
+          `const half = ${size >> 1};
+          process.stdout.write(bytes.subarray(0, half), () => {
+            process.stderr.write("HALF");
+            process.stdin.once("data", () => process.stdout.write(bytes.subarray(half), () => process.exit(0)));
+          });`,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // The child has written the first half, which the parent may or may not have buffered by now.
+    const stderr = proc.stderr.getReader();
+    expect(new TextDecoder().decode((await stderr.read()).value)).toBe("HALF");
+    const stdout = proc.stdout.bytes();
+    proc.stdin.write("go");
+    await proc.stdin.end();
+    const bytes = Buffer.from(await stdout);
+    expect(bytes.length).toBe(size);
+    expect(bytes.equals(pattern())).toBe(true);
+    expect(await proc.exited).toBe(0);
+  });
+});
+
+// Bun finds out for itself whether an inherited pipe is synchronous or overlapped, from the thread
+// that does the first read and the one that does the first write.
+describe("a child's Bun.stdin.stream() and Bun.stdout.writer()", () => {
+  for (const kind of isWindows ? ["pipe", "overlapped"] : ["pipe"]) {
+    it.concurrent(`echo through ${kind} stdio`, async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const writer = Bun.stdout.writer();
+          for await (const chunk of Bun.stdin.stream()) {
+            writer.write(chunk);
+            await writer.flush();
+          }
+          await writer.end();`,
+        ],
+        env: bunEnv,
+        stdin: kind as "pipe",
+        stdout: kind as "pipe",
+        stderr: "inherit",
+      });
+      const echoed = proc.stdout.text();
+      const chunks = ["first\n", Buffer.alloc(200_000, "m").toString(), "\nlast\n"];
+      for (const chunk of chunks) {
+        proc.stdin.write(chunk);
+        await proc.stdin.flush();
+      }
+      await proc.stdin.end();
+      expect(await echoed).toBe(chunks.join(""));
+      expect(await proc.exited).toBe(0);
+    });
+  }
+});
+
+// The child lets go of its stdin at some point while the buffer is being written, or before the first
+// byte of it is. Either way that ends the writer, not the spawn.
+describe("stdin: a buffer the child never reads", () => {
+  const child = "require('fs').closeSync(0); console.log('closed');";
+  const unread = () => Buffer.alloc(8 * 1024 * 1024, "x");
+
+  it.concurrent("spawn", async () => {
+    await using proc = spawn({ cmd: [bunExe(), "-e", child], env: bunEnv, stdin: unread(), stdout: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("closed\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("spawnSync", () => {
+    const { stdout, exitCode } = spawnSync({ cmd: [bunExe(), "-e", child], env: bunEnv, stdin: unread() });
+    expect(stdout.toString()).toBe("closed\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("$ redirect", async () => {
+    const { stdout, exitCode } = await Bun.$`${bunExe()} -e ${child} < ${unread()}`.env(bunEnv).nothrow().quiet();
+    expect(stdout.toString()).toBe("closed\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// `Bun.file(path)` names a file by Win32's rules: `NUL` is the device. Given as a child's stdio it
+// has to be the device too, not a file called NUL in the working directory.
+it.skipIf(!isWindows)("Bun.file('NUL') as a child's stdio is the NUL device", async () => {
+  using dir = tempDir("spawn-nul-device", {});
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const written = Bun.spawnSync({
+        cmd: [process.execPath, "-e", "console.log('to the device')"],
+        stdout: Bun.file("NUL"),
+        stderr: "inherit",
+      });
+      const reader = Bun.spawn({
+        cmd: [process.execPath, "-e", "process.stdin.on('data', () => console.log('data')).on('end', () => console.log('end'))"],
+        stdin: Bun.file("NUL"),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const read = (await reader.stdout.text()).trim();
+      console.log(JSON.stringify({
+        writerExit: written.exitCode,
+        readerExit: await reader.exited,
+        read,
+        entries: require("node:fs").readdirSync("."),
+      }));
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ writerExit: 0, readerExit: 0, read: "end", entries: [] });
   expect(exitCode).toBe(0);
 });
 

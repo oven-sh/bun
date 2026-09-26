@@ -701,11 +701,10 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
   it("half-open accepted sockets after peer FIN do not busy-poll the event loop (Windows AFD DISCONNECT)", async () => {
     // A write-only connection handler whose peer sends data+FIN leaves the
     // accepted socket half-open with bytes buffered (Node's flowing=null
-    // accept state). On Windows, poll_cb mapped UV_DISCONNECT to READABLE
-    // unconditionally, recv() re-found the same EOF, the half-open EOF path
-    // re-armed WRITABLE+DISCONNECT, and AFD kept reporting DISCONNECT - so
-    // on_end fired once per loop turn per half-open socket. 40 such sockets
-    // made a 2000-setImmediate spin take seconds instead of tens of ms.
+    // accept state). On Windows AFD keeps reporting DISCONNECT for such a
+    // socket; reporting it as READABLE each time makes recv() find the same
+    // EOF and on_end fire once per loop turn per half-open socket. 40 such
+    // sockets make a 2000-setImmediate spin take seconds instead of tens of ms.
     expect(
       await run(`
         const net = require("net");
@@ -743,11 +742,8 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
   });
 });
 
-// The Windows named-pipe listener never stripped libuv's own loop ref from its
-// uv_pipe_t (uv_listen marks the handle active+ref'd), so server.unref()
-// dropped the Listener's KeepAlive but the uv handle still pinned
-// uv_loop_alive and the process never exited. TCP and unix-socket listeners go
-// through usockets, which unrefs its uv handles up front.
+// server.unref() on a Windows named-pipe listener must drop everything that
+// keeps the loop alive, as it does for TCP and unix-socket listeners.
 it("server.unref() on a pipe/unix-socket listener lets the process exit", async () => {
   // The child exits without close() (natural exit is the observable), so the
   // unix socket file must live in a tempDir the parent disposes.
@@ -775,3 +771,98 @@ it("server.unref() on a pipe/unix-socket listener lets the process exit", async 
   expect(exitCode === 0 ? "" : stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+// Every waiting instance of the pipe is taken at once, and the pipe's DACL is
+// emptied before the server gets to replace them, so it cannot: it has no
+// instance left to wait on and no connection that could end. Like Node it
+// reports nothing and keeps trying; once the DACL is back, clients connect.
+it.skipIf(process.platform !== "win32")(
+  "a pipe server that cannot create instances recovers without an 'error'",
+  async () => {
+    using dir = tempDir("pipe-server-starved", {
+      "fixture.js": `
+        const { dlopen, FFIType, ptr } = require("bun:ffi");
+        const net = require("node:net");
+        const { once } = require("node:events");
+
+        const { symbols: k32 } = dlopen("kernel32.dll", {
+          CreateFileW: {
+            args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr],
+            // INVALID_HANDLE_VALUE is -1 this way; as a \`ptr\` it is 2n ** 64n - 1n.
+            returns: FFIType.i64_fast,
+          },
+          CloseHandle: { args: [FFIType.ptr], returns: FFIType.i32 },
+        });
+        const { symbols: advapi } = dlopen("advapi32.dll", {
+          GetSecurityInfo: {
+            args: [FFIType.ptr, FFIType.i32, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+            returns: FFIType.u32,
+          },
+          SetSecurityInfo: {
+            args: [FFIType.ptr, FFIType.i32, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+            returns: FFIType.u32,
+          },
+        });
+        const GENERIC_READ_WRITE = 0xc0000000, READ_CONTROL = 0x20000, WRITE_DAC = 0x40000, OPEN_EXISTING = 3;
+        const SE_KERNEL_OBJECT = 6, DACL_SECURITY_INFORMATION = 4, PROTECTED_DACL_SECURITY_INFORMATION = 0x80000000;
+
+        const name = process.env.PIPE_NAME;
+        const wide = Buffer.from(name + "\\0", "utf16le");
+        const errors = [];
+        let connections = 0;
+        let onConnection;
+        const server = net.createServer(socket => {
+          socket.on("error", () => {});
+          connections++;
+          onConnection?.();
+        });
+        server.on("error", error => errors.push(error.code));
+        server.listen(name);
+        await once(server, "listening");
+
+        // Nothing here returns to the event loop: the server hears of the four
+        // clients only after the DACL is empty.
+        const clients = [];
+        for (let i = 0; i < 4; i++) {
+          const handle = k32.CreateFileW(ptr(wide), (GENERIC_READ_WRITE | READ_CONTROL | WRITE_DAC) >>> 0, 0, null, OPEN_EXISTING, 0, null);
+          if (handle === -1) throw new Error("CreateFileW failed");
+          clients.push(handle);
+        }
+        const dacl = new BigUint64Array(1);
+        const descriptor = new BigUint64Array(1);
+        let rc = advapi.GetSecurityInfo(clients[0], SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, null, null, ptr(dacl), null, ptr(descriptor));
+        if (rc !== 0) throw new Error("GetSecurityInfo: " + rc);
+        // Revision 2, 8 bytes, no entries: nobody may do anything, the owner
+        // may still change it.
+        const empty = new Uint8Array([2, 0, 8, 0, 0, 0, 0, 0]);
+        rc = advapi.SetSecurityInfo(clients[0], SE_KERNEL_OBJECT, (DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION) >>> 0, null, null, ptr(empty), null);
+        if (rc !== 0) throw new Error("SetSecurityInfo(empty): " + rc);
+
+        while (connections < 4) await new Promise(resolve => (onConnection = resolve));
+        console.log("connections", connections, "errors", JSON.stringify(errors));
+
+        rc = advapi.SetSecurityInfo(clients[0], SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, null, null, Number(dacl[0]), null);
+        if (rc !== 0) throw new Error("SetSecurityInfo(restore): " + rc);
+        const client = net.connect(name);
+        await once(client, "connect");
+        while (connections < 5) await new Promise(resolve => (onConnection = resolve));
+        console.log("connections", connections, "errors", JSON.stringify(errors));
+
+        client.destroy();
+        for (const handle of clients) k32.CloseHandle(handle);
+        server.close();
+        process.exit(0);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: { ...bunEnv, PIPE_NAME: "\\\\.\\pipe\\bun-pipe-server-starved-" + process.pid + "-" + Date.now() },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("connections 4 errors []\nconnections 5 errors []\n");
+    expect(exitCode).toBe(0);
+  },
+);

@@ -234,15 +234,13 @@ impl OutputTaskVTable for Mkdir {
                 exec.output_queue.push_back(child);
             }
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
+            return Some(Builtin::of_mut(interp, cmd).stdout.enqueue_owned(
+                childptr,
+                output.take(),
+                safeguard,
+            ));
         }
-        let buf = output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, output.slice());
         None
     }
 
@@ -328,6 +326,7 @@ impl ShellMkdirTask {
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,
+            as_written: false,
         };
 
         if this.opts.parents {

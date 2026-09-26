@@ -97,7 +97,7 @@ pub fn child_died_of_it(status: &Status) -> bool {
     #[cfg(unix)]
     return status.signal_code() == Some(bun_core::SignalCode::SIGINT);
     #[cfg(windows)]
-    return matches!(status, Status::Exited(e) if e.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT);
+    return matches!(status, Status::Exited(e) if e.is_ctrl_c_exit());
 }
 
 /// End this process the way a child killed by Ctrl+C ended.

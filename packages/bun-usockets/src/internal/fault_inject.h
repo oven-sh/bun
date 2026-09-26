@@ -35,16 +35,19 @@ enum us_fault_syscall {
     US_FAULT_RECVMSG,
     US_FAULT_CONNECT,
     US_FAULT_ACCEPT,
-    /* Reserved: no bsd.c hooks yet, so the JS setter does not accept them. */
+    /* Windows: the socket a listener's AcceptEx accepts into, matched against
+     * the listener's fd. Only US_FAULT_ERRNO applies. */
     US_FAULT_SOCKET,
+    /* Reserved: no bsd.c hooks yet, so the JS setter does not accept them. */
     US_FAULT_CLOSE,
     US_FAULT_SHUTDOWN,
     /* Not a syscall: the per-loop TLS plaintext buffer allocated once by
      * us_internal_init_loop_ssl_data. Only US_FAULT_ERRNO applies — there is
      * no byte count to clamp and no zero return to fake. */
     US_FAULT_SSL_LOOP_BUFFER,
-    /* Not a syscall: poll registration in us_poll_start_rc (uv_poll_init_socket
-     * on Windows/libuv, EPOLL_CTL_ADD / kevent on epoll/kqueue). The fd is
+    /* Not a syscall: poll registration in us_poll_start_rc (every hand-over of
+     * an AFD poll to the kernel and a listener's start on Windows,
+     * EPOLL_CTL_ADD / kevent on epoll/kqueue). The fd is
      * always fresh from the kernel here, so the failure path is unreachable
      * without fault injection. Only US_FAULT_ERRNO applies. */
     US_FAULT_POLL_START,
@@ -54,6 +57,15 @@ enum us_fault_syscall {
      * US_FAULT_ERRNO applies, and the errno value is ignored — the simulated
      * failure is a thrown JS out-of-memory error, not an errno. */
     US_FAULT_SESSION_BUFFER,
+    /* Not a syscall: makes afd_poll_create (Windows) poll the socket with the
+     * select() fallback, as for one whose provider chain does not end at AFD
+     * (a non-IFS layered service provider). Only US_FAULT_ERRNO applies, and
+     * the errno value is ignored. */
+    US_FAULT_POLL_SLOW,
+    /* Not a syscall: makes us_iocp_wait_create (Windows) wait with the
+     * thread-pool fallback, as where ntdll has no wait completion packets.
+     * Only US_FAULT_ERRNO applies, and the errno value is ignored. */
+    US_FAULT_WAIT_FALLBACK,
     US_FAULT_COUNT
 };
 

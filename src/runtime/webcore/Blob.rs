@@ -434,52 +434,25 @@ impl BlobExt for Blob {
         let handler =
             bun_core::heap::into_raw(Box::new(Handler::<'_, F>::new(self.dupe(), cx.global())));
 
-        #[cfg(windows)]
-        {
-            // SAFETY: handler was just boxed; sole owner.
-            unsafe { (*handler).promise = jsc::JSPromiseStrong::init(cx.global()) };
-            let promise_value = unsafe { (*handler).promise.value() };
-            promise_value.ensure_still_alive();
+        let file_read = read_file::ReadFile::create(
+            self.store().expect("infallible: store present").clone(),
+            self.offset.get(),
+            self.size.get(),
+        )
+        .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
+        // Create the Promise only after the store has been ref()'d.
+        // SAFETY: handler was just boxed; sole owner.
+        unsafe { (*handler).promise = jsc::JSPromiseStrong::init(cx.global()) };
+        // SAFETY: same `handler` as above; still solely owned here.
+        let promise_value = unsafe { (*handler).promise.value() };
+        promise_value.ensure_still_alive();
 
-            read_file::ReadFileUV::start::<Handler<'_, F>>(
-                // `bun_vm()` returns the live VM for this global; the event
-                // loop outlives any in-flight async fs request.
-                cx.vm().event_loop(),
-                cx.context(),
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-                handler,
-            );
-            return promise_value;
-        }
+        read_file::ReadFile::schedule(file_read, read_file::ReadFileCompletionFns::of(handler), cx);
 
-        #[cfg(not(windows))]
-        {
-            let file_read = read_file::ReadFile::create(
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-            )
-            .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            // Create the Promise only after the store has been ref()'d.
-            // SAFETY: handler was just boxed; sole owner.
-            unsafe { (*handler).promise = jsc::JSPromiseStrong::init(cx.global()) };
-            // SAFETY: same `handler` as above; still solely owned here.
-            let promise_value = unsafe { (*handler).promise.value() };
-            promise_value.ensure_still_alive();
-
-            read_file::ReadFile::schedule(
-                file_read,
-                read_file::ReadFileCompletionFns::of(handler),
-                cx,
-            );
-
-            debug!("doReadFile: read_file_task scheduled");
-            promise_value
-        }
+        debug!("doReadFile: read_file_task scheduled");
+        promise_value
     }
-    /// Read this Blob's bytes — file (`ReadFile`/`ReadFileUV`), S3 (`S3.download`),
+    /// Read this Blob's bytes — file (`ReadFile`), S3 (`S3.download`),
     /// or in-memory — and deliver them to `Handler::on_read_bytes(ctx, result)` on the
     /// JS thread without ever materialising a JSValue. `.ok` bytes are
     /// global-allocator-OWNED by the callback. The point is to give callers
@@ -669,32 +642,17 @@ impl BlobExt for Blob {
         ctx: *mut C,
         cx: &bun_jsc::JsThread<'_>,
     ) {
-        #[cfg(windows)]
-        {
-            return read_file::ReadFileUV::start_with_ctx(
-                // SAFETY: `bun_vm()` returns the live VM for this global.
-                cx.vm().event_loop(),
-                cx.context(),
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-                NewInternalReadFileHandler::<C, F>::completion(ctx),
-            );
-        }
-        #[cfg(not(windows))]
-        {
-            let file_read = read_file::ReadFile::create(
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-            )
-            .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            read_file::ReadFile::schedule(
-                file_read,
-                NewInternalReadFileHandler::<C, F>::completion(ctx),
-                cx,
-            );
-        }
+        let file_read = read_file::ReadFile::create(
+            self.store().expect("infallible: store present").clone(),
+            self.offset.get(),
+            self.size.get(),
+        )
+        .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
+        read_file::ReadFile::schedule(
+            file_read,
+            NewInternalReadFileHandler::<C, F>::completion(ctx),
+            cx,
+        );
     }
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>> {
         let ct = self.content_type_slice();
@@ -1032,12 +990,12 @@ impl BlobExt for Blob {
                         PathOrFileDescriptor::Fd(fd) => {
                             #[cfg(windows)]
                             match fd.decode_windows() {
-                                bun_sys::fd::DecodeWindows::Uv(uv_file) => {
+                                bun_sys::fd::DecodeWindows::Crt(crt_fd) => {
                                     bun_core::write_pretty!(
                                         writer,
                                         ENABLE_ANSI_COLORS,
                                         " (<r>fd<d>:<r> <yellow>{d}<r>)<r>",
-                                        uv_file,
+                                        crt_fd,
                                     )?;
                                 }
                                 bun_sys::fd::DecodeWindows::Windows(handle) => {
@@ -1434,135 +1392,40 @@ impl BlobExt for Blob {
             .to_js());
         }
 
-        let file_sink: RefPtr<webcore::FileSink> = 'brk_sink: {
-            #[cfg(windows)]
-            {
-                let pathlike = &store.data.as_file().pathlike;
-                let fd: Fd = if let PathOrFileDescriptor::Fd(fd) = pathlike {
-                    *fd
-                } else {
-                    let mut file_path = bun_paths::path_buffer_pool::get();
-                    let path = pathlike.path().slice_z(&mut file_path);
-                    let flags = bun_sys::O::WRONLY
-                        | bun_sys::O::CREAT
-                        | bun_sys::O::TRUNC
-                        | bun_sys::O::NONBLOCK;
-                    let mode = options.mode.unwrap_or(WRITE_PERMISSIONS);
-                    let mut result = bun_sys::open(path, flags, mode);
-                    if let bun_sys::Result::Err(err) = &result {
-                        if err.get_errno() == bun_sys::E::ENOENT
-                            && options.mkdirp_if_not_exists.unwrap_or(true)
-                        {
-                            result = match mkdirp_parent(path.as_bytes()) {
-                                Ok(()) => bun_sys::open(path, flags, mode),
-                                Err(err) => Err(err),
-                            };
-                        }
-                    }
-                    match result {
-                        bun_sys::Result::Ok(result) => result,
-                        bun_sys::Result::Err(err) => {
-                            return Ok(JSPromise::rejected_promise(
-                                cx.global(),
-                                err.with_path(path).to_js(cx.global()),
-                            )
-                            .to_js());
-                        }
-                    }
-                };
+        let file_sink: RefPtr<webcore::FileSink> = {
+            let sink = webcore::FileSink::init(
+                Fd::INVALID,
+                jsc::EventLoopHandle::init(
+                    self.global_this()
+                        .expect("Blob.global_this set at construction")
+                        .bun_vm()
+                        .as_mut()
+                        .event_loop()
+                        .cast::<()>(),
+                ),
+            );
 
-                let is_stdout_or_stderr = 'brk: {
-                    if !matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
-                        break 'brk false;
-                    }
+            let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
+                PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
+                PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
+                    bun_core::Utf8Bytes::Owned(p.slice().to_vec()),
+                ),
+            };
 
-                    if let Some(rare) = cx.vm().rare_data.as_ref() {
-                        // `RareData::std{out,err}_store` is `Option<NonNull<c_void>>`
-                        // (type-erased `*Blob.Store`); compare on raw pointer
-                        // identity exactly like the POSIX arm below.
-                        let store_ptr = store.as_ptr().cast::<c_void>();
-                        if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
-                            break 'brk true;
-                        }
-                        if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
-                            break 'brk true;
-                        }
-                    }
+            let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
+                truncate: matches!(input_path, webcore::PathOrFileDescriptor::Path(_)),
+                mkdirp: options.mkdirp_if_not_exists.unwrap_or(true),
+                mode: options.mode.unwrap_or(WRITE_PERMISSIONS),
+                input_path,
+                ..Default::default()
+            });
 
-                    if let Some(tag) = fd.stdio_tag() {
-                        matches!(tag, bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
-                    } else {
-                        false
-                    }
-                };
-                let sink = webcore::FileSink::init(
-                    fd,
-                    jsc::EventLoopHandle::init(
-                        self.global_this()
-                            .expect("Blob.global_this set at construction")
-                            .bun_vm()
-                            .as_mut()
-                            .event_loop() as *mut (),
-                    ),
+            if let bun_sys::Result::Err(err) = sink.start(&stream_start, cx.context()) {
+                return Ok(
+                    JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
                 );
-                sink.writer
-                    .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
-
-                #[cfg(windows)]
-                use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-                let started = sink.writer.with_mut(|w| {
-                    if is_stdout_or_stderr {
-                        w.start_sync(fd, false)
-                    } else {
-                        w.start(fd, true)
-                    }
-                });
-                if let bun_sys::Result::Err(err) = started {
-                    return Ok(
-                        JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
-                    );
-                }
-
-                break 'brk_sink sink;
             }
-
-            #[cfg(not(windows))]
-            {
-                let sink = webcore::FileSink::init(
-                    Fd::INVALID,
-                    jsc::EventLoopHandle::init(
-                        self.global_this()
-                            .expect("Blob.global_this set at construction")
-                            .bun_vm()
-                            .as_mut()
-                            .event_loop()
-                            .cast::<()>(),
-                    ),
-                );
-
-                let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike
-                {
-                    PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
-                    PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
-                        bun_core::Utf8Bytes::Owned(p.slice().to_vec()),
-                    ),
-                };
-
-                let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
-                    truncate: matches!(input_path, webcore::PathOrFileDescriptor::Path(_)),
-                    mkdirp: options.mkdirp_if_not_exists.unwrap_or(true),
-                    mode: options.mode.unwrap_or(WRITE_PERMISSIONS),
-                    input_path,
-                    ..Default::default()
-                });
-
-                if let bun_sys::Result::Err(err) = sink.start(&stream_start, cx.context()) {
-                    return Ok(
-                        JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
-                    );
-                }
-                break 'brk_sink sink;
-            }
+            sink
         };
 
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
@@ -1659,129 +1522,46 @@ impl BlobExt for Blob {
             );
         }
 
-        #[cfg(windows)]
-        {
-            use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-
-            let pathlike = &store.data.as_file().pathlike;
-            // SAFETY: bun_vm() never returns null for a Bun-owned global.
-            let vm = global_this.bun_vm().as_mut();
-            let fd: Fd = match pathlike {
-                PathOrFileDescriptor::Fd(fd) => *fd,
-                PathOrFileDescriptor::Path(p) => {
-                    let mut file_path = bun_paths::path_buffer_pool::get();
-                    match bun_sys::open(
-                        p.slice_z(&mut file_path),
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
-                        WRITE_PERMISSIONS,
-                    ) {
-                        bun_sys::Result::Ok(result) => result,
-                        bun_sys::Result::Err(err) => {
-                            return Err(global_this
-                                .throw_value(err.with_path(p.slice()).to_js(global_this)));
-                        }
-                    }
-                }
-            };
-
-            let is_stdout_or_stderr = 'brk: {
-                if !matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
-                    break 'brk false;
-                }
-                if let Some(rare) = vm.rare_data.as_ref() {
-                    let store_ptr = store.as_ptr().cast::<c_void>();
-                    if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
-                        break 'brk true;
-                    }
-                    if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
-                        break 'brk true;
-                    }
-                }
-                matches!(
-                    fd.stdio_tag(),
-                    Some(bun_core::Stdio::StdOut) | Some(bun_core::Stdio::StdErr)
-                )
-            };
-
-            let sink = webcore::FileSink::init(
-                fd,
-                jsc::EventLoopHandle::init(
-                    self.global_this()
-                        .expect("Blob.global_this set at construction")
-                        .bun_vm()
-                        .as_mut()
-                        .event_loop() as *mut (),
-                ),
-            );
-            // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
-            sink.writer
-                .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
-
-            let start_result = sink.writer.with_mut(|w| {
-                if is_stdout_or_stderr {
-                    w.start_sync(fd, false)
-                } else {
-                    w.start(fd, true)
-                }
-            });
-            if let bun_sys::Result::Err(err) = start_result {
-                return Err(global_this.throw_value(err.to_js(global_this)));
+        let sink = webcore::FileSink::init(
+            bun_sys::Fd::INVALID,
+            jsc::EventLoopHandle::init(
+                self.global_this()
+                    .expect("Blob.global_this set at construction")
+                    .bun_vm()
+                    .as_mut()
+                    .event_loop()
+                    .cast::<()>(),
+            ),
+        );
+        // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
+        let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
+            PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
+            PathOrFileDescriptor::Path(p) => {
+                webcore::PathOrFileDescriptor::Path(bun_core::Utf8Bytes::Owned(p.slice().to_vec()))
             }
-            if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
-                sink.close_with_graph(context);
-            }
+        };
 
-            // SAFETY: `&mut` scoped to the call.
-            let js = unsafe { (*sink.as_ptr()).to_js(global_this) };
-            return Ok(js);
+        // `webcore::PathOrFileDescriptor` is not `Clone`; build user
+        // options first, then move `input_path` in once.
+        let mut stream_start = if has_args && arg0.is_object() {
+            streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(global_this, arg0)?
+        } else {
+            streams::Start::FileSink(streams::FileSinkOptions {
+                input_path: webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
+                ..Default::default()
+            })
+        };
+        if let streams::Start::FileSink(ref mut opts) = stream_start {
+            opts.input_path = input_path;
         }
 
-        #[cfg(not(windows))]
-        {
-            let sink = webcore::FileSink::init(
-                bun_sys::Fd::INVALID,
-                jsc::EventLoopHandle::init(
-                    self.global_this()
-                        .expect("Blob.global_this set at construction")
-                        .bun_vm()
-                        .as_mut()
-                        .event_loop()
-                        .cast::<()>(),
-                ),
-            );
-            // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
-            let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
-                PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
-                PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
-                    bun_core::Utf8Bytes::Owned(p.slice().to_vec()),
-                ),
-            };
-
-            // `webcore::PathOrFileDescriptor` is not `Clone`; build user
-            // options first, then move `input_path` in once.
-            let mut stream_start = if has_args && arg0.is_object() {
-                streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(
-                    global_this,
-                    arg0,
-                )?
-            } else {
-                streams::Start::FileSink(streams::FileSinkOptions {
-                    input_path: webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
-                    ..Default::default()
-                })
-            };
-            if let streams::Start::FileSink(ref mut opts) = stream_start {
-                opts.input_path = input_path;
-            }
-
-            if let bun_sys::Result::Err(err) = sink.start(&stream_start, context) {
-                return Err(global_this.throw_value(err.to_js(global_this)));
-            }
-
-            // SAFETY: `&mut` scoped to the call.
-            let js = unsafe { (*sink.as_ptr()).to_js(global_this) };
-            Ok(js)
+        if let bun_sys::Result::Err(err) = sink.start(&stream_start, context) {
+            return Err(global_this.throw_value(err.to_js(global_this)));
         }
+
+        // SAFETY: `&mut` scoped to the call.
+        let js = unsafe { (*sink.as_ptr()).to_js(global_this) };
+        Ok(js)
     }
     fn get_slice_from(
         &self,
@@ -2037,35 +1817,19 @@ impl BlobExt for Blob {
                     .as_file();
                 match &file.pathlike {
                     PathOrFileDescriptor::Path(path_like) => {
-                        // SAFETY: bun_vm() returns the live VM for this global.
-                        let vm = global_this.bun_vm().as_mut();
-                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe {
-                            &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
-                        };
                         Ok(crate::node::fs::async_::Stat::create(
                             &global_this.js_thread_of_caller(callback),
-                            binding,
-                            crate::node::fs::args::Stat::owned(path_like.slice().to_vec()),
-                            vm,
+                            crate::node::fs::args::Stat::of_bun_file(path_like.slice().to_vec()),
+                            global_this.bun_vm().as_mut(),
                             None,
                         ))
                     }
-                    PathOrFileDescriptor::Fd(fd) => {
-                        // SAFETY: bun_vm() returns the live VM for this global.
-                        let vm = global_this.bun_vm().as_mut();
-                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe {
-                            &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
-                        };
-                        Ok(crate::node::fs::async_::Fstat::create(
-                            &global_this.js_thread_of_caller(callback),
-                            binding,
-                            crate::node::fs::args::Fstat::for_fd(*fd),
-                            vm,
-                            None,
-                        ))
-                    }
+                    PathOrFileDescriptor::Fd(fd) => Ok(crate::node::fs::async_::Fstat::create(
+                        &global_this.js_thread_of_caller(callback),
+                        crate::node::fs::args::Fstat::for_fd(*fd),
+                        global_this.bun_vm().as_mut(),
+                        None,
+                    )),
                 }
             }
             store::DataTag::S3 => crate::webcore::s3_file::get_stat(self, global_this, callback),
@@ -3498,7 +3262,7 @@ impl<C, F> NewInternalReadFileHandler<C, F>
 where
     F: InternalReadFileFn<C>,
 {
-    /// The erased `(ctx, run, cancel)` a `ReadFile`/`ReadFileUV` carries for this handler.
+    /// The erased `(ctx, run, cancel)` a `ReadFile` carries for this handler.
     pub(crate) fn completion(ctx: *mut C) -> read_file::ReadFileCompletionFns {
         fn run<C, F: InternalReadFileFn<C>>(
             ctx: *mut c_void,
@@ -3685,6 +3449,7 @@ impl FormDataContext<'_> {
                             let mut rf_args = crate::node::fs::args::ReadFile::default();
                             rf_args.encoding = crate::node::types::Encoding::Buffer;
                             rf_args.path = file.pathlike.clone();
+                            rf_args.as_written = true;
                             rf_args.offset = blob.offset.get();
                             rf_args.max_size = Some(blob.size.get());
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
@@ -4029,35 +3794,35 @@ pub(crate) fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLOR
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-#[cfg(not(windows))]
 pub(crate) enum Retry {
     Continue,
     Fail,
     No,
 }
 
-/// Create the parent directories of `path`.
+/// Create the parent directories of `path`, a `Bun.file`'s. An error names
+/// `path`, as the write it is for does.
 #[inline(never)]
 pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
     let Some(dirname) = bun_core::dirname(path) else {
-        return Err(bun_sys::Error::from_code(
-            bun_sys::E::ENOENT,
-            bun_sys::Tag::mkdir,
-        ));
+        return Err(
+            bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::mkdir).with_path(path),
+        );
     };
-    node::fs::NodeFS::default()
-        .mkdir_recursive(&node::fs::args::Mkdir {
-            path: PathLike::borrowed(dirname),
-            recursive: true,
-            always_return_none: true,
-            ..Default::default()
-        })
-        .map(|_| ())
+    match node::fs::NodeFS::default().mkdir_recursive(&node::fs::args::Mkdir {
+        path: PathLike::borrowed(dirname),
+        recursive: true,
+        always_return_none: true,
+        as_written: true,
+        ..Default::default()
+    }) {
+        Ok(_) => Ok(()),
+        Err(err) => Err(err.with_path(path)),
+    }
 }
 
 // TODO: move this to bun_sys?
 #[inline(never)]
-#[cfg(not(windows))]
 pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     this: &mut T,
     err: &bun_sys::Error,
@@ -4072,7 +3837,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
             }
             bun_sys::Result::Err(err2) => {
                 this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
-                this.set_system_error(err.with_path(err_path).to_system_error());
+                this.set_system_error(err2.with_path(err_path).to_system_error());
                 this.set_opened_fd_if_present(Fd::INVALID);
                 return Retry::Fail;
             }
@@ -4098,7 +3863,6 @@ fn sys_error_with_path_like(
 
 /// Receiver trait for `mkdir_if_not_exists`; impls optionally
 /// write `errno` / `opened_fd` via the defaulted setters.
-#[cfg(not(windows))]
 pub(crate) trait MkdirpTarget {
     fn mkdirp_if_not_exists(&self) -> bool;
     fn set_mkdirp_if_not_exists(&mut self, v: bool);
@@ -4163,80 +3927,54 @@ fn write_file_with_empty_source_to_destination(
                     path: file.pathlike.clone(),
                     len: 0,
                     flags: bun_sys::O::CREAT,
+                    as_written: true,
                 },
                 node::fs::Flavor::Sync,
             );
 
             if let bun_sys::Result::Err(ref mut err) = result {
-                let errno = err.get_errno();
-                let mut was_eperm = false;
                 'err: {
-                    let mut current = errno;
-                    loop {
-                        match current {
-                            // truncate might return EPERM when the parent directory doesn't exist
-                            // #6336
-                            bun_sys::E::EPERM => {
-                                was_eperm = true;
-                                err.errno = bun_sys::E::ENOENT as _;
-                                current = bun_sys::E::ENOENT;
-                                continue;
-                            }
-                            bun_sys::E::ENOENT => {
-                                if options.mkdirp_if_not_exists == Some(false) {
-                                    break 'err;
-                                }
-                                let dirpath: &[u8] = match &file.pathlike {
-                                    PathOrFileDescriptor::Path(path) => {
-                                        match bun_core::dirname(path.slice()) {
-                                            Some(d) => d,
-                                            None => break 'err,
-                                        }
-                                    }
-                                    PathOrFileDescriptor::Fd(_) => {
-                                        // NOTE: if this is an fd, it means the file
-                                        // exists, so we shouldn't try to mkdir it
-                                        if was_eperm {
-                                            err.errno = bun_sys::E::EPERM as _;
-                                        }
-                                        break 'err;
-                                    }
-                                };
-                                let mkdir_result =
-                                    node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                        path: PathLike::borrowed(dirpath),
-                                        recursive: true,
-                                        always_return_none: true,
-                                        ..Default::default()
-                                    });
-                                if let bun_sys::Result::Err(e) = mkdir_result {
-                                    *err = e;
-                                    break 'err;
-                                }
+                    if err.get_errno() != bun_sys::E::ENOENT
+                        || options.mkdirp_if_not_exists == Some(false)
+                    {
+                        break 'err;
+                    }
+                    // An fd is a file that exists: there is nothing to mkdir.
+                    let PathOrFileDescriptor::Path(path) = &file.pathlike else {
+                        break 'err;
+                    };
+                    let Some(dirpath) = bun_core::dirname(path.slice()) else {
+                        break 'err;
+                    };
+                    let mkdir_result = node_fs.mkdir_recursive(&node::fs::args::Mkdir {
+                        path: PathLike::borrowed(dirpath),
+                        recursive: true,
+                        always_return_none: true,
+                        as_written: true,
+                        ..Default::default()
+                    });
+                    if let bun_sys::Result::Err(e) = mkdir_result {
+                        *err = e;
+                        break 'err;
+                    }
 
-                                // SAFETY: we check if `file.pathlike` is an fd above, returning if it is.
-                                let mut buf = bun_paths::path_buffer_pool::get();
-                                let mode: bun_sys::Mode =
-                                    options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
-                                match bun_sys::File::open(
-                                    file.pathlike.path().slice_z(&mut buf),
-                                    bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                                    mode,
-                                ) {
-                                    bun_sys::Result::Err(e) => {
-                                        *err = e;
-                                        break 'err;
-                                    }
-                                    bun_sys::Result::Ok(f) => {
-                                        let _ = f.close(); // close error is non-actionable
-                                        return Ok(JSPromise::resolved_promise_value(
-                                            cx.global(),
-                                            JSValue::js_number(0.0),
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => break 'err,
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let mode: bun_sys::Mode = options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
+                    match bun_sys::File::open(
+                        path.slice_z_as_written(&mut buf),
+                        bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                        mode,
+                    ) {
+                        bun_sys::Result::Err(e) => {
+                            *err = e;
+                            break 'err;
+                        }
+                        bun_sys::Result::Ok(f) => {
+                            let _ = f.close(); // close error is non-actionable
+                            return Ok(JSPromise::resolved_promise_value(
+                                cx.global(),
+                                JSValue::js_number(0.0),
+                            ));
                         }
                     }
                 }
@@ -4328,6 +4066,7 @@ pub(crate) fn write_file_with_source_destination(
     source_blob: &mut Blob,
     destination_blob: &mut Blob,
     options: &WriteFileOptions,
+    opened_destination: Option<bun_sys::CloseOnDrop>,
 ) -> JsResult<JSValue> {
     let destination_store = destination_blob
         .store
@@ -4355,77 +4094,35 @@ pub(crate) fn write_file_with_source_destination(
 
         // The borrowed views below are +0 on the store ref;
         // `WriteFile::create` takes its own ref.
-        #[cfg(windows)]
-        {
-            let promise = JSPromise::create(cx.global());
-            let promise_value = promise.as_value(cx.global());
-            promise_value.ensure_still_alive();
-            // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
-            unsafe {
-                (*write_file_promise)
-                    .promise
-                    .set(cx.global(), promise_value)
-            };
-            match write_file_mod::WriteFileWindows::create(
-                cx.vm().event_loop(),
-                cx.context(),
-                destination_blob.borrowed_view(),
-                source_blob.borrowed_view(),
-                write_file_promise,
-                WriteFilePromise::run,
-                options.mkdirp_if_not_exists.unwrap_or(true),
-            ) {
-                Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
-                Err(write_file_mod::WriteFileWindowsError::Js(err)) => return Err(err),
-                Ok(_) => {}
-            }
-            return Ok(promise_value);
+        let mut file_copier = write_file_mod::WriteFile::create(
+            destination_blob.borrowed_view(),
+            source_blob.borrowed_view(),
+            options.mkdirp_if_not_exists.unwrap_or(true),
+        )
+        .expect("unreachable");
+        if let Some(opened) = opened_destination {
+            file_copier.opened_fd = opened.into_fd();
         }
-
-        #[cfg(not(windows))]
-        {
-            let file_copier = write_file_mod::WriteFile::create(
-                destination_blob.borrowed_view(),
-                source_blob.borrowed_view(),
-                options.mkdirp_if_not_exists.unwrap_or(true),
-            )
-            .expect("unreachable");
-            // SAFETY: `write_file_promise` was just produced by heap::alloc above; sole owner.
-            let mut write_file_promise = unsafe { bun_core::heap::take(write_file_promise) };
-            // Defer promise creation until we're just about to schedule the task.
-            write_file_promise.promise = jsc::JSPromiseStrong::init(cx.global());
-            let promise_value = write_file_promise.promise.value();
-            promise_value.ensure_still_alive();
-            write_file_mod::WriteFile::schedule(file_copier, write_file_promise, cx);
-            return Ok(promise_value);
-        }
+        // SAFETY: `write_file_promise` was just produced by heap::alloc above; sole owner.
+        let mut write_file_promise = unsafe { bun_core::heap::take(write_file_promise) };
+        // Defer promise creation until we're just about to schedule the task.
+        write_file_promise.promise = jsc::JSPromiseStrong::init(cx.global());
+        let promise_value = write_file_promise.promise.value();
+        promise_value.ensure_still_alive();
+        write_file_mod::WriteFile::schedule(file_copier, write_file_promise, cx);
+        return Ok(promise_value);
     }
     // If this is file <> file, we can just copy the file
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
-        #[cfg(windows)]
-        {
-            return Ok(copy_file::CopyFileWindows::init(
-                destination_store,
-                source_store,
-                cx.vm().event_loop_shared(),
-                cx.context(),
-                options.mkdirp_if_not_exists.unwrap_or(true),
-                destination_blob.size.get(),
-                options.mode,
-            ));
-        }
-        #[cfg(not(windows))]
-        {
-            return Ok(copy_file::CopyFile::create(
-                destination_store,
-                source_store,
-                destination_blob.offset.get(),
-                destination_blob.size.get(),
-                cx,
-                options.mkdirp_if_not_exists.unwrap_or(true),
-                options.mode,
-            ));
-        }
+        return Ok(copy_file::CopyFile::create(
+            destination_store,
+            source_store,
+            destination_blob.offset.get(),
+            destination_blob.size.get(),
+            cx,
+            options.mkdirp_if_not_exists.unwrap_or(true),
+            options.mode,
+        ));
     } else if destination_type == store::DataTag::File && source_type == store::DataTag::S3 {
         let s3 = source_store.data.as_s3();
         if let Some(stream) = ReadableStream::from_js(
@@ -4676,10 +4373,10 @@ pub(crate) fn write_file_internal(
     }
 
     // If you're doing Bun.write(), try to go fast by writing short input on the main thread.
-    // This is a heuristic, but it's a good one.
-    //
-    // except if you're on Windows. Windows I/O is slower. Let's not even try.
-    #[cfg(not(windows))]
+    // This is a heuristic, but it's a good one. It is also what keeps writes that are not awaited
+    // in the order they were made: the ones that go to the work pool have no order among them.
+    // A destination the fast path opened and then left to the work pool.
+    let mut opened_destination: Option<bun_sys::CloseOnDrop> = None;
     {
         let mut needs_async = false;
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
@@ -4709,6 +4406,7 @@ pub(crate) fn write_file_internal(
                             pathlike,
                             &str,
                             &mut needs_async,
+                            &mut opened_destination,
                         )
                     } else {
                         write_string_to_file_fast::<false>(
@@ -4716,6 +4414,7 @@ pub(crate) fn write_file_internal(
                             pathlike,
                             &str,
                             &mut needs_async,
+                            &mut opened_destination,
                         )
                     };
                     if !needs_async {
@@ -4740,6 +4439,7 @@ pub(crate) fn write_file_internal(
                             pathlike,
                             buffer_view.byte_slice(),
                             &mut needs_async,
+                            &mut opened_destination,
                         )
                     } else {
                         write_bytes_to_file_fast::<false>(
@@ -4747,6 +4447,7 @@ pub(crate) fn write_file_internal(
                             pathlike,
                             buffer_view.byte_slice(),
                             &mut needs_async,
+                            &mut opened_destination,
                         )
                     };
                     if !needs_async {
@@ -5017,7 +4718,13 @@ pub(crate) fn write_file_internal(
     // RefPtr<Store> clone+drop keeps the destination store alive across the call.
     let _dest_hold = destination_store;
 
-    write_file_with_source_destination(cx, &mut *source_blob, &mut destination_blob, &options)
+    write_file_with_source_destination(
+        cx,
+        &mut *source_blob,
+        &mut destination_blob,
+        &options,
+        opened_destination,
+    )
 }
 
 fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult<()> {
@@ -5141,22 +4848,38 @@ pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) ->
 
 const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
+/// How the fast path opens a path. POSIX does not truncate on open: the file is
+/// cut to what was written afterwards, which is cheaper there. A Windows open
+/// that does not truncate also opens a directory, and the write is what fails;
+/// truncating on open refuses it, like the write that goes to the work pool.
 #[cfg(not(windows))]
+const FAST_WRITE_OPEN_FLAGS: i32 = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
+#[cfg(windows)]
+const FAST_WRITE_OPEN_FLAGS: i32 = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+/// Whether a path the fast path opened is cut to what was written afterwards.
+const FAST_WRITE_TRUNCATES_AFTER: bool = cfg!(not(windows));
+
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     str: &BunString,
     needs_async: &mut bool,
+    opened_destination: &mut Option<bun_sys::CloseOnDrop>,
 ) -> JSValue {
+    #[cfg(not(windows))]
+    let _ = opened_destination;
     let fd: Fd = if !NEEDS_OPEN {
+        #[cfg(windows)]
+        if !windows_write_returns_promptly(pathlike.fd()) {
+            *needs_async = true;
+            return JSValue::ZERO;
+        }
         pathlike.fd()
     } else {
         let mut file_path = bun_paths::path_buffer_pool::get();
         match bun_sys::open(
-            pathlike.path().slice_z(&mut file_path),
-            // we deliberately don't use O_TRUNC here
-            // it's a perf optimization
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
+            pathlike.path().slice_z_as_written(&mut file_path),
+            FAST_WRITE_OPEN_FLAGS,
             WRITE_PERMISSIONS,
         ) {
             bun_sys::Result::Ok(result) => result,
@@ -5176,11 +4899,21 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
 
     // Declared before the truncate guard so it drops *after* it (close runs last).
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+    #[cfg(windows)]
+    if NEEDS_OPEN && !str.is_empty() && !bun_sys::windows::fs::is_disk_file(fd) {
+        *opened_destination = _close;
+        *needs_async = true;
+        return JSValue::ZERO;
+    }
 
     // scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
     // so the guard and the loop body share `&Cell<_>` (no mutable-borrow conflict).
-    let truncate = core::cell::Cell::new(NEEDS_OPEN || str.is_empty());
+    let truncate = core::cell::Cell::new(if NEEDS_OPEN {
+        FAST_WRITE_TRUNCATES_AFTER
+    } else {
+        str.is_empty()
+    });
     let written = core::cell::Cell::new(0usize);
 
     // we only truncate if it's a path
@@ -5223,32 +4956,45 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written.get() as f64))
 }
 
-#[cfg(not(windows))]
+/// Whether a `write` to `fd` on the calling thread is over once the call
+/// returns and cannot wait on this process: a disk file, or the process's own
+/// stdout or stderr, which `console.log` writes the same way. Any other pipe
+/// may be read by this very thread, and a handle opened for overlapped I/O
+/// returns before the transfer is done.
+#[cfg(windows)]
+fn windows_write_returns_promptly(fd: Fd) -> bool {
+    use bun_sys::windows::fs;
+    let own_stdio = fd.native() == Fd::stdout().native() || fd.native() == Fd::stderr().native();
+    (own_stdio || fs::is_disk_file(fd)) && fs::is_synchronous(fd)
+}
+
 fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
-    _needs_async: &mut bool,
+    needs_async: &mut bool,
+    opened_destination: &mut Option<bun_sys::CloseOnDrop>,
 ) -> JSValue {
+    #[cfg(not(windows))]
+    let _ = opened_destination;
     let fd: Fd = if !NEEDS_OPEN {
+        #[cfg(windows)]
+        if !windows_write_returns_promptly(pathlike.fd()) {
+            *needs_async = true;
+            return JSValue::ZERO;
+        }
         pathlike.fd()
     } else {
         let mut file_path = bun_paths::path_buffer_pool::get();
-        let flags = if cfg!(not(windows)) {
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK
-        } else {
-            bun_sys::O::WRONLY | bun_sys::O::CREAT
-        };
         match bun_sys::open(
-            pathlike.path().slice_z(&mut file_path),
-            flags,
+            pathlike.path().slice_z_as_written(&mut file_path),
+            FAST_WRITE_OPEN_FLAGS,
             WRITE_PERMISSIONS,
         ) {
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
-                #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *_needs_async = true;
+                    *needs_async = true;
                     return JSValue::ZERO;
                 }
                 return JSPromise::rejected_promise(
@@ -5260,11 +5006,19 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    // TODO: on windows this is always synchronous
-
-    let truncate = NEEDS_OPEN || bytes.is_empty();
+    let truncate = if NEEDS_OPEN {
+        FAST_WRITE_TRUNCATES_AFTER
+    } else {
+        bytes.is_empty()
+    };
     let mut written: usize = 0;
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+    #[cfg(windows)]
+    if NEEDS_OPEN && !bytes.is_empty() && !bun_sys::windows::fs::is_disk_file(fd) {
+        *opened_destination = _close;
+        *needs_async = true;
+        return JSValue::ZERO;
+    }
 
     let mut remain = bytes;
     while !remain.is_empty() {
@@ -5277,9 +5031,8 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
                 }
             }
             bun_sys::Result::Err(err) => {
-                #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    *_needs_async = true;
+                    *needs_async = true;
                     return JSValue::ZERO;
                 }
                 let err_js = if !NEEDS_OPEN {
@@ -5293,12 +5046,6 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     }
 
     if truncate {
-        #[cfg(windows)]
-        // SAFETY: fd is a valid open handle on this code path; FFI call.
-        unsafe {
-            bun_sys::windows::kernel32::SetEndOfFile(fd.native())
-        };
-        #[cfg(not(windows))]
         let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
     }
 
@@ -5764,19 +5511,11 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     }
 }
 
-/// `stat.{st_mtime, st_mtime_nsec}` → JS epoch ms. `bun_sys::Stat` is
-/// `libc::stat` on POSIX (fields) and `uv_stat_t` on Windows (`mtim` timespec);
-/// cfg-split here so the call sites stay shared.
+/// The modification time of `stat` in JS epoch ms.
 #[inline]
 fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
-    #[cfg(not(windows))]
-    {
-        jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize)
-    }
-    #[cfg(windows)]
-    {
-        jsc::to_js_time(stat.mtim.sec as isize, stat.mtim.nsec as isize)
-    }
+    let mtime = bun_sys::stat_mtime(stat);
+    jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize)
 }
 
 /// Window clamp shared by the `resolve_size`/`resolved_size` arms: only an
@@ -5800,7 +5539,7 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::path_buffer_pool::get();
-            match bun_sys::stat(path.slice_z(&mut buffer)) {
+            match bun_sys::stat(path.slice_z_as_written(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
                     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
                         ((stat.st_size.max(0)) as u64) as SizeType
@@ -6469,7 +6208,6 @@ pub(crate) trait FileOpener: Sized {
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
     /// straight through to the error branch.
-    #[cfg(not(windows))]
     fn try_mkdirp(
         &mut self,
         _err: bun_sys::Error,
@@ -6478,17 +6216,6 @@ pub(crate) trait FileOpener: Sized {
     ) -> Retry {
         Retry::No
     }
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
-    #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t;
-    /// Stash/retrieve the open completion callback across the libuv async hop.
-    /// Rust can't const-generic over fn
-    /// pointers, so the implementor stores it on `self` (e.g. next to `req`).
-    #[cfg(windows)]
-    fn set_open_callback(&mut self, cb: fn(&mut Self, Fd));
-    #[cfg(windows)]
-    fn open_callback(&self) -> fn(&mut Self, Fd);
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -6496,126 +6223,42 @@ pub(crate) trait FileOpener: Sized {
             PathOrFileDescriptor::Path(p) => p.clone(),
             PathOrFileDescriptor::Fd(_) => unreachable!(),
         };
-        let path = path_string.slice_z(&mut buf);
+        let path = path_string.slice_z_as_written(&mut buf);
 
-        #[cfg(windows)]
-        {
-            use bun_sys::ReturnCodeExt as _;
-            // Monomorphic libuv completion thunk — recovers `*mut Self` from
-            // `req.data`.
-            extern "C" fn wrapped_callback<S: FileOpener>(req: *mut bun_libuv_sys::uv_fs_t) {
-                use bun_sys::ReturnCodeExt as _;
-                // SAFETY: `req.data` was set to `self as *mut Self` below before
-                // `uv_fs_open` was queued; libuv guarantees `req` is valid here.
-                let self_: &mut S = unsafe { bun_ptr::callback_ctx::<S>((*req).data) };
-                {
-                    // SAFETY: req points into self_.req(); cleanup before reuse.
-                    scopeguard::defer! { unsafe { bun_libuv_sys::uv_fs_req_cleanup(req); } }
-                    // SAFETY: req is the live uv_fs_t from the open request.
-                    let result = unsafe { (*req).result };
-                    if let Some(err_enum) = result.errno() {
-                        let path_string_2 = match self_.pathlike() {
-                            PathOrFileDescriptor::Path(p) => p.clone(),
-                            PathOrFileDescriptor::Fd(_) => unreachable!(),
-                        };
-                        self_.set_errno(bun_errno::from_errno(err_enum as i32).into());
-                        self_.set_system_error(
-                            bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
-                                .with_path(path_string_2.slice())
-                                .to_system_error()
-                                .into(),
-                        );
-                        self_.set_opened_fd(bun_sys::Fd::INVALID);
-                    } else {
-                        self_.set_opened_fd(Fd::from_uv(result.to_fd()));
-                    }
+        loop {
+            match bun_sys::open(
+                path,
+                Self::OPEN_FLAGS | Self::OPENER_FLAGS,
+                crate::node::fs::DEFAULT_PERMISSION,
+            ) {
+                bun_sys::Result::Ok(fd) => {
+                    self.set_opened_fd(fd);
+                    break;
                 }
-                let cb = self_.open_callback();
-                cb(self_, self_.opened_fd());
-            }
-
-            self.set_open_callback(callback);
-            let loop_ = self.loop_();
-            let self_ptr: *mut Self = core::ptr::from_mut(self);
-            // Derive `req` THROUGH `self_ptr` rather than via a fresh `self.req()`
-            // reborrow. Under Stacked Borrows, a direct `self.req()` here would
-            // create a sibling `&mut` that pops `self_ptr`'s tag, making the
-            // later deref in `wrapped_callback` (via `req.data`) UB. Going
-            // through the raw pointer keeps the reborrow as a child of
-            // `self_ptr`, so its provenance survives until the callback fires.
-            // SAFETY: `self_ptr` was just derived from a live `&mut self`.
-            let req = unsafe { (*self_ptr).req() };
-            // Stash `self` on the request BEFORE dispatch. libuv never touches
-            // `req.data`, so pre-setting is safe; doing it after `uv_fs_open`
-            // is a UAF when the call fails synchronously and `callback` frees
-            // `self` (ReadFileUV::on_finish → finalize → heap::take).
-            req.data = self_ptr.cast();
-            // SAFETY: loop_/req are live for the duration of the async open;
-            // req.data is consumed by `wrapped_callback::<Self>` above.
-            let rc = unsafe {
-                bun_libuv_sys::uv_fs_open(
-                    loop_,
-                    req,
-                    path.as_ptr(),
-                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                    node::fs::DEFAULT_PERMISSION as i32,
-                    Some(wrapped_callback::<Self>),
-                )
-            };
-            if let Some(errno) = rc.errno() {
-                self.set_errno(bun_errno::from_errno(errno as i32).into());
-                self.set_system_error(
-                    bun_sys::Error::from_code(errno, bun_sys::Tag::open)
-                        .with_path(path_string.slice())
-                        .to_system_error()
-                        .into(),
-                );
-                self.set_opened_fd(bun_sys::Fd::INVALID);
-                // `callback` may free `self` (see comment above) — must be the
-                // last thing we touch on this path.
-                callback(self, bun_sys::Fd::INVALID);
-                return;
-            }
-            return;
-        }
-
-        #[cfg(not(windows))]
-        {
-            loop {
-                match bun_sys::open(
-                    path,
-                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                    crate::node::fs::DEFAULT_PERMISSION,
-                ) {
-                    bun_sys::Result::Ok(fd) => {
-                        self.set_opened_fd(fd);
-                        break;
-                    }
-                    bun_sys::Result::Err(err) => {
-                        if err.get_errno() == bun_sys::E::ENOENT {
-                            match self.try_mkdirp(err.clone(), path, path_string.slice()) {
-                                Retry::Continue => continue,
-                                Retry::Fail => {
-                                    // `mkdir_if_not_exists` already populated
-                                    // `errno`/`system_error` on the impl.
-                                    self.set_opened_fd(Fd::INVALID);
-                                    break;
-                                }
-                                Retry::No => {}
+                bun_sys::Result::Err(err) => {
+                    if err.get_errno() == bun_sys::E::ENOENT {
+                        match self.try_mkdirp(err.clone(), path, path_string.slice()) {
+                            Retry::Continue => continue,
+                            Retry::Fail => {
+                                // `mkdir_if_not_exists` already populated
+                                // `errno`/`system_error` on the impl.
+                                self.set_opened_fd(Fd::INVALID);
+                                break;
                             }
+                            Retry::No => {}
                         }
-                        self.set_errno(bun_errno::from_errno(err.errno as i32).into());
-                        self.set_system_error(jsc::SysErrorJsc::to_system_error(
-                            &err.with_path(path_string.slice()),
-                        ));
-                        self.set_opened_fd(Fd::INVALID);
-                        break;
                     }
+                    self.set_errno(bun_errno::from_errno(err.errno as i32).into());
+                    self.set_system_error(jsc::SysErrorJsc::to_system_error(
+                        &err.with_path(path_string.slice()),
+                    ));
+                    self.set_opened_fd(Fd::INVALID);
+                    break;
                 }
             }
-
-            callback(self, self.opened_fd());
         }
+
+        callback(self, self.opened_fd());
     }
 
     fn get_fd(&mut self, callback: fn(&mut Self, Fd)) {
@@ -6649,8 +6292,6 @@ pub(crate) trait FileCloser: Sized {
     fn io_request(&mut self) -> Option<&mut bun_io::Request>;
     fn io_poll(&mut self) -> &mut bun_io::Poll;
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
     /// Intrusive backref: Rust `offset_of!` cannot name
     /// fields on a trait `Self`, so each concrete impl supplies its own
@@ -6702,13 +6343,8 @@ pub(crate) trait FileCloser: Sized {
             && self.opened_fd() != Fd::INVALID
             && self.opened_fd().stdio_tag().is_none()
         {
-            #[cfg(windows)]
-            bun_io::Closer::close(self.opened_fd(), self.loop_());
-            #[cfg(not(windows))]
-            {
-                use bun_sys::FdExt as _;
-                let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
-            }
+            use bun_sys::FdExt as _;
+            let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
             self.set_opened_fd(Fd::INVALID);
         }
 
@@ -6747,11 +6383,6 @@ macro_rules! impl_file_closer {
             fn task(&mut self) -> &mut ::bun_jsc::WorkPoolTask {
                 &mut self.task
             }
-            #[cfg(windows)]
-            fn loop_(&self) -> *mut ::bun_libuv_sys::uv_loop_t {
-                unreachable!()
-            }
-
             fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
                 use ::bun_io::IntrusiveIoRequest as _;
                 // SAFETY: `request` is `&mut self.io_request` (intrusive); recover parent.

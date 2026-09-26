@@ -8,12 +8,9 @@ use crate::socket::SSLConfig;
 use crate::socket::windows_named_pipe::{Handlers as NamedPipeHandlers, WindowsNamedPipe};
 use crate::socket::{TCPSocket, TLSSocket};
 use bun_boringssl_sys as boringssl;
-use bun_core::ZStr;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, SysErrorJsc};
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
 
@@ -35,14 +32,12 @@ pub(crate) struct WindowsNamedPipeContext {
     // deref'd in `Drop` before the `named_pipe` field drops — teardown order
     // must stay socket.deref() then named_pipe deinit.
     socket: SocketType,
-    /// `pub(super)` so `WindowsNamedPipeListeningContext::on_client_connect`
-    /// (sibling module) can call `get_accepted_by` on the freshly-created
-    /// client.
+    /// `pub(super)` so `WindowsNamedPipeListeningContext::on_connection`
+    /// (sibling module) can call `accepted` on the freshly-created client.
     pub(super) named_pipe: WindowsNamedPipe,
 
     vm: &'static VirtualMachine,
     global_this: GlobalRef,
-    task_event: EventState,
     is_open: bool,
     /// A socket over a Windows named pipe is in no uSockets group: the context
     /// that opened it closes it through this owner when it stops.
@@ -52,34 +47,25 @@ pub(crate) struct WindowsNamedPipeContext {
 bun_jsc::impl_abort_handle_owner!(WindowsNamedPipeContext, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live; `close` re-enters `on_close`,
     // which may free `this`.
-    unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close_or_cancel_connect() }
+    unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close() }
 });
 
 /// Reached from `on_close` → `Self::deref` while `WindowsNamedPipe::on_close`
-/// still holds a live `&mut (*this).named_pipe` and uses it after we return, so
-/// project raw fields only — same constraint as the `on_*` handlers below.
+/// still holds `&(*this).named_pipe`, so project raw fields only, as the `on_*`
+/// handlers below do.
 fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
     // SAFETY: called from `deref()` at count zero; `this` is live until the task fires.
-    // `task_event`/`vm`/`task` are disjoint from the caller's `&mut named_pipe`, and
-    // `vm` is `&'static` (JSC_BORROW) so `enqueue_task`'s `&mut` goes through a raw cast.
+    // `vm` is disjoint from the caller's `&named_pipe`, and is `&'static`
+    // (JSC_BORROW) so `enqueue_task`'s `&mut` goes through a raw cast.
     unsafe {
-        debug_assert!((*this).task_event != EventState::Deinit);
-        (*this).task_event = EventState::Deinit;
         let vm = ptr::from_ref::<VirtualMachine>((*this).vm).cast_mut();
         (*vm).enqueue_task(Task::init(this));
     }
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum EventState {
-    Deinit,
-    None,
-}
-
 /// Intrusive-refcounted self-pointers into the wrapped JS socket (a *different*
 /// allocation from this context, so `ThisPtr`'s `Deref` is sound on them).
-/// `Copy` so matching by value avoids `&self.socket` aliasing `&mut self.named_pipe`.
+/// `Copy`, so the handlers read it by value through a raw place.
 #[derive(Copy, Clone)]
 pub(crate) enum SocketType {
     Tls(bun_ptr::ThisPtr<TLSSocket>),
@@ -87,43 +73,19 @@ pub(crate) enum SocketType {
     None,
 }
 
-/// Build a `uws::NewSocketHandler` from the wrapped named pipe.
-///
-/// Takes a raw `*mut WindowsNamedPipe` (NOT `&mut`) because every caller is a
-/// `NamedPipeHandlers` callback invoked *from* `WindowsNamedPipe::on_*`, which
-/// already holds a live `&mut WindowsNamedPipe` to the same field and touches
-/// it again after the callback returns. Forming a second `&mut` here would
-/// retag the field and invalidate the caller's reference (Stacked Borrows).
-/// The handler only needs the raw address to stuff into `InternalSocket::Pipe`.
+/// Build a `uws::NewSocketHandler` from the wrapped named pipe;
+/// `InternalSocket::Pipe` stores the raw address.
 #[inline]
 fn socket_from_named_pipe<const SSL: bool>(
     pipe: *mut WindowsNamedPipe,
 ) -> uws::NewSocketHandler<SSL> {
-    #[cfg(windows)]
-    {
-        uws::NewSocketHandler {
-            socket: uws::InternalSocket::Pipe(pipe.cast()),
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = pipe;
-        uws::NewSocketHandler {
-            socket: uws::InternalSocket::Pipe,
-        }
+    uws::NewSocketHandler {
+        socket: uws::InternalSocket::Pipe(pipe.cast()),
     }
 }
 
-/// Dispatch a `SocketType` value to a single body written generically over
-/// `NewSocket<SSL>`. Binds the inner `ThisPtr<NewSocket<{true|false}>>` as `$s`
-/// and a per-arm `const $ssl: bool` so the body can call
-/// `NewSocket::on_x($s, socket_from_named_pipe::<$ssl>(..), ..)` once instead
-/// of hand-duplicating the `Tls`/`Tcp` arms. `SocketType::None` is a no-op.
-///
-/// Takes the `SocketType` by *value* (Copy) — not `*mut Self` — so callers
-/// that must snapshot before mutating (`on_close`) or branch and re-match
-/// (`on_error`) pass their saved copy; see the Stacked-Borrows note on the
-/// `on_*` block below.
+/// Run `$body` for the `Tls` or `Tcp` arm of a `SocketType` value, with `$s`
+/// the socket and `$ssl` its `SSL` const. `SocketType::None` is a no-op.
 macro_rules! match_socket {
     ($scrutinee:expr, |$s:ident: NewSocket<$ssl:ident>| $body:expr) => {
         // This context is the named-pipe sockets' trampoline: what a handler
@@ -146,19 +108,9 @@ macro_rules! match_socket {
 
 // ── NamedPipeHandlers callbacks ──────────────────────────────────────────────
 //
-// All eight `on_*` handlers below take `this: *mut Self` (NOT `&mut self`).
-// They are invoked from `WindowsNamedPipe::on_*` via `(self.handlers.on_x)(ctx, ..)`
-// where the caller already holds a live `&mut WindowsNamedPipe` — i.e. a
-// `&mut (*this).named_pipe` — and *uses it again after the handler returns*
-// (e.g. `self.incoming.clear()`, `self.close()`, `self.release_resources()`).
-//
-// Forming `&mut *this` (or `&mut (*this).named_pipe`) here would retag from the
-// allocation-root provenance and pop the caller's Unique tag off the borrow
-// stack → Stacked Borrows UB / LLVM `noalias` violation when control returns.
-//
-// Instead each handler projects only the disjoint fields it needs (`socket`,
-// `is_open`, `global_this`) via raw-pointer place expressions, and passes
-// `addr_of_mut!((*this).named_pipe)` as a raw pointer without retagging.
+// The `on_*` handlers take `this: *mut Self`: `WindowsNamedPipe::on_*` calls
+// them through its `&self`, a live `&(*this).named_pipe`, so none may form
+// `&mut Self`. Each reads and writes the fields it needs through raw places.
 /// Fails the pending connect and releases `create()`'s sole ref, unless
 /// `disarm()` runs first.
 struct FailAndRelease(Option<*mut WindowsNamedPipeContext>);
@@ -185,7 +137,7 @@ impl WindowsNamedPipeContext {
     fn on_open(this: *mut Self) {
         // SAFETY: `this` is the live ctx ptr registered in `create()`; `is_open`,
         // `socket` and the `named_pipe` field *address* are all reachable without
-        // forming a reference that overlaps the caller's `&mut named_pipe`.
+        // forming a reference that overlaps the caller's `&named_pipe`.
         let (socket, pipe) = unsafe {
             (*this).is_open = true;
             ((*this).socket, ptr::addr_of_mut!((*this).named_pipe))
@@ -267,7 +219,7 @@ impl WindowsNamedPipeContext {
         if is_open {
             match_socket!(socket, |s: NewSocket<SSL>| {
                 // SAFETY: `this` is live; `global_this` is disjoint from the caller's
-                // `&mut named_pipe` and the borrow ends before `handle_error` runs JS.
+                // `&named_pipe` and the borrow ends before `handle_error` runs JS.
                 let js_err = err.to_js(unsafe { &(*this).global_this });
                 s.handle_error(js_err)
             });
@@ -326,20 +278,14 @@ impl WindowsNamedPipeContext {
         unsafe { Self::deref(this) };
     }
 
-    #[cfg(windows)]
+    /// The task `schedule_deinit` queued: frees the context.
+    ///
     /// # Safety
-    /// `this` is the live queued pointer; the call may free it.
+    /// `this` is the live queued pointer; the call frees it.
     pub(crate) unsafe fn run_event(this: *mut Self) {
-        // SAFETY: called from the `task_tag::WindowsNamedPipeContext` dispatch
-        // arm; `this` is the live ctx pointer registered in create()
-        match unsafe { (*this).task_event } {
-            EventState::Deinit => {
-                // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
-                // and this deferred task is the sole remaining owner. Drop runs field destructors.
-                drop(unsafe { bun_core::heap::take(this) });
-            }
-            EventState::None => panic!("Invalid event state"),
-        }
+        // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
+        // and this deferred task is the sole remaining owner. Drop runs field destructors.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// Owns the freshly-`create()`d context until `disarm()`: on any early
@@ -368,20 +314,14 @@ impl WindowsNamedPipeContext {
         >::new_uninit())
         .cast();
 
-        // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
         // Non-capturing closures coerce to `fn(*mut c_void, …)`; each casts the
-        // erased ctx ptr back to `*mut Self` and forwards it RAW — the callee
-        // must not form `&mut Self` (see the doc-comment on the `on_*` block
-        // above for the Stacked-Borrows constraint vs the caller's
-        // `&mut WindowsNamedPipe`).
+        // erased ctx ptr back to `*mut Self` and forwards it raw (see the note
+        // above the `on_*` handlers).
         let handlers = NamedPipeHandlers {
             ctx: this.cast::<c_void>(),
             // SAFETY: `p` is the `ctx` set above (`this.cast()`); the
             // WindowsNamedPipe never invokes a handler after `on_close`
             // schedules deinit, so the allocation is live for the call.
-            // `rc_ref` projects `ref_count` via raw place — `(*p).ref_()` would
-            // autoref `&Self` over the whole struct, but `WindowsNamedPipe::r#ref`
-            // holds `&mut (*this).named_pipe` across this callback.
             ref_ctx: |p| unsafe { <Self as bun_ptr::AnyRefCounted>::rc_ref(p.cast::<Self>()) },
             // SAFETY: `p` is the `ctx` set above (`this.cast()`); the allocation is live for the call (see `ref_ctx`).
             deref_ctx: |p| unsafe { Self::deref(p.cast::<Self>()) },
@@ -397,62 +337,48 @@ impl WindowsNamedPipeContext {
             on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
             server_identity: |p, ssl| Self::server_identity(p.cast::<Self>(), ssl),
         };
-        #[cfg(not(windows))]
-        {
-            // On POSIX `crate::socket::WindowsNamedPipeContext` is aliased to `()` (see mod.rs)
-            // so no caller can reach `create()`. This arm exists only so the module
-            // type-checks; matches the sibling `WindowsNamedPipe::open`/`connect` POSIX arms.
-            let _ = (vm, this, handlers, socket);
-            unreachable!("WindowsNamedPipeContext::create is windows-only")
+        let named_pipe = WindowsNamedPipe::init(handlers, vm);
+        // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
+        // every field exactly once before any read.
+        unsafe {
+            ptr::write(
+                this,
+                WindowsNamedPipeContext {
+                    ref_count: Cell::new(1),
+                    socket,
+                    named_pipe,
+                    vm,
+                    global_this,
+                    is_open: false,
+                    abort_handle: bun_jsc::AbortHandle::for_owner::<WindowsNamedPipeContext>(),
+                },
+            );
+            (*ptr::addr_of_mut!((*this).named_pipe))
+                .root
+                .set(ptr::addr_of_mut!((*this).named_pipe));
         }
-        #[cfg(windows)]
-        {
-            let named_pipe = {
-                let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
-                WindowsNamedPipe::from(pipe, handlers, vm)
-            };
-            // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
-            // every field exactly once before any read.
-            unsafe {
-                ptr::write(
-                    this,
-                    WindowsNamedPipeContext {
-                        ref_count: Cell::new(1),
-                        socket,
-                        named_pipe,
-                        vm,
-                        global_this,
-                        task_event: EventState::None,
-                        is_open: false,
-                        abort_handle: bun_jsc::AbortHandle::for_owner::<WindowsNamedPipeContext>(),
-                    },
-                );
-                (*ptr::addr_of_mut!((*this).named_pipe))
-                    .root
-                    .set(ptr::addr_of_mut!((*this).named_pipe));
-            }
-            LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
+        LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
 
-            // Take a +1 intrusive ref so the wrapped JS socket outlives this context.
-            match_socket!(socket, |s: NewSocket<SSL>| {
-                s.ref_();
-                Ok(())
-            });
+        // Take a +1 intrusive ref so the wrapped JS socket outlives this context.
+        match_socket!(socket, |s: NewSocket<SSL>| {
+            s.ref_();
+            Ok(())
+        });
 
-            // SAFETY: non-null, fully initialised above, heap-pinned; disarmed when freed.
-            unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
+        // SAFETY: non-null, fully initialised above, heap-pinned; disarmed when freed.
+        unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
 
-            this
-        }
+        this
     }
 
     /// `owned_ctx` is moved into `named_pipe.open`. Prefer it over `ssl_config` so a
     /// memoised `tls.createSecureContext` reaches this path with its trust store intact —
     /// on this branch `[buntls]` returns `{secureContext}` only, so `ssl_config`
-    /// alone would be empty.
+    /// alone would be empty. `created_here`: see [`WindowsNamedPipe::open`].
     pub(crate) fn open(
         cx: &bun_jsc::JsThread<'_>,
         fd: Fd,
+        created_here: bool,
         ssl_config: Option<SSLConfig>,
         owned_ctx: Option<boringssl::OwnedSslCtx>,
         socket: SocketType,
@@ -465,7 +391,11 @@ impl WindowsNamedPipeContext {
         let mut guard = Self::armed(this);
 
         // SAFETY: `this` is live and exclusively accessed here
-        unsafe { (*guard.get()).named_pipe.open(fd, ssl_config, owned_ctx) }?;
+        unsafe {
+            (*guard.get())
+                .named_pipe
+                .open(fd, created_here, ssl_config, owned_ctx)
+        }?;
 
         let this = guard.disarm();
         // SAFETY: `this` is live; returning interior pointer to heap-allocated field (BACKREF)
@@ -486,24 +416,11 @@ impl WindowsNamedPipeContext {
         let mut guard = Self::armed(this);
 
         // SAFETY: `this` is live and exclusively accessed here
-        let named_pipe = unsafe { &mut (*guard.get()).named_pipe };
-
-        if path[path.len() - 1] == 0 {
-            // is already null terminated
-            // SAFETY: path[path.len()-1] == 0 checked above
-            let slice_z = ZStr::from_slice_with_nul(path);
-            named_pipe.connect(slice_z, ssl_config, owned_ctx)?;
-        } else {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            // we need to null terminate the path
-            let len = path.len().min(path_buf.len() - 1);
-
-            path_buf[..len].copy_from_slice(&path[..len]);
-            path_buf[len] = 0;
-            // SAFETY: path_buf[len] == 0 written above
-            let slice_z = ZStr::from_buf(&path_buf[..], len);
-            named_pipe.connect(slice_z, ssl_config, owned_ctx)?;
-        }
+        unsafe {
+            (*guard.get())
+                .named_pipe
+                .connect(path, ssl_config, owned_ctx)
+        }?;
 
         let this = guard.disarm();
         // SAFETY: `this` is live; returning interior pointer to heap-allocated field (BACKREF)
@@ -528,10 +445,9 @@ impl Drop for WindowsNamedPipeContext {
     }
 }
 
-#[cfg(windows)]
 impl bun_event_loop::Taskable for WindowsNamedPipeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipeContext;
-    /// A `Deinit` hop (refcount already zero) that will not run: `this` is the
+    /// A `schedule_deinit` hop (refcount already zero) that will not run: `this` is the
     /// heap context, freed by nobody else — do what the hop does, script-free.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.

@@ -4,9 +4,9 @@
 //! `bun_runtime` (cycle: `bun_runtime → bun_install`/`bun_jsc`).
 //!
 //! LAYERING: this crate **owns** the spawn implementation (not just data
-//! shapes). `Process`, `Poller`, `WaiterThread`, `spawn_process`, and
-//! `sync::spawn` were MOVED DOWN here from `bun_runtime::api::bun::process`;
-//! `bun_runtime` re-exports them. The only non-leaf dependencies are
+//! shapes): `Process`, `Poller`, `WaiterThread`, `spawn_process`, and
+//! `sync::spawn`. `bun_runtime::api::bun::process` re-exports them. The only
+//! non-leaf dependencies are
 //! `bun_io` (`FilePoll`/`KeepAlive`/`EventLoopCtx`), `bun_ptr`
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
 //! `bun_threading`, and `bun_crash_handler` — none of which depend back on
@@ -16,21 +16,15 @@
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────
 
-/// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4).
-/// MOVE_DOWN: implementation now lives in `bun_spawn_sys`; re-exported here
-/// with the higher-tier `process::*` glue (`Process`/`Status`/`spawn_process`/
-/// `sync`) restored so existing `bun_spawn::posix_spawn::bun_spawn::*` paths
-/// keep resolving.
+/// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4) of
+/// `bun_spawn_sys`, with this crate's `process::*` glue (`Process`/`Status`/
+/// `spawn_process`/`sync`) beside them under `bun_spawn::posix_spawn::bun_spawn`.
 pub mod posix_spawn {
     pub use bun_spawn_sys::posix_spawn::*;
 
     pub mod bun_spawn {
         pub use crate::process;
-        pub use crate::process::{
-            Process, SpawnOptions, SpawnProcessResult, Status, spawn_process, sync,
-        };
-        #[cfg(windows)]
-        pub use crate::process::{WindowsSpawnOptions, WindowsSpawnResult};
+        pub use crate::process::{Process, SpawnOptions, Status, spawn_process, sync};
         pub use bun_spawn_sys::posix_spawn::bun_spawn::*;
     }
 }
@@ -62,8 +56,7 @@ pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
 pub use bun_spawn_sys::RusageFields;
 pub use process::{
     Dup2, Exited, ExtraPipe, PidT, Poller, Process, ProcessHandle, Rusage, SpawnEnv, SpawnOptions,
-    SpawnProcessResult, SpawnResultExt, Status, StdioKind, WaiterThread, spawn_process,
-    spawn_process_cstr,
+    SpawnResult, SpawnResultExt, Status, Stdio, StdioKind, spawn_process, spawn_process_cstr,
 };
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
@@ -83,7 +76,6 @@ bun_dispatch::link_interface! {
         CronRemove,
         ChromeProcess,
         HostProcess,
-        SyncWindows,
     ] {
         fn on_process_exit(process: &mut Process, status: Status, rusage: &Rusage);
     }
@@ -92,57 +84,22 @@ bun_dispatch::link_interface! {
 /// `None` = no handler set (the default for `Process::exit_handler`).
 pub type ProcessExitHandler = Option<ProcessExit>;
 
-// In-crate `link_impl_*!` calls must be textually after the `link_interface!`
-// that emits the macro (`#[macro_export]` is path-addressable from *other*
-// crates only; same-crate use is textual-scope). POSIX `spawn_sync` waits
-// inline and never installs a handler, so the `SyncWindows` arm is genuinely
-// unreachable there — but every variant needs a body or the link fails.
+/// The force-waiter-thread flag; only Linux honours it.
+pub use bun_spawn_sys::waiter_thread_flag;
 #[cfg(windows)]
-link_impl_ProcessExit! {
-    SyncWindows for process::sync::SyncWindowsProcess => |this| {
-        on_process_exit(process, status, rusage) =>
-            process::sync::SyncWindowsProcess::on_process_exit(this, process, status, &*rusage),
-    }
-}
-#[cfg(not(windows))]
-link_impl_ProcessExit! {
-    SyncWindows for process::SyncProcessPosix => |_this| {
-        on_process_exit(_process, _status, _rusage) =>
-            unreachable!("SyncWindows exit handler is Windows-only"),
-    }
-}
+pub use process::WindowsOptions;
 #[cfg(unix)]
-pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
-#[cfg(unix)]
-pub type SpawnResult = process::PosixSpawnResult;
-
-#[cfg(windows)]
-pub use process::{
-    WindowsOptions, WindowsSpawnOptions, WindowsSpawnResult, WindowsStdio as Stdio,
-    WindowsStdioResult as SpawnedStdio,
-};
-#[cfg(windows)]
-pub type SpawnResult = process::WindowsSpawnResult;
-#[cfg(windows)]
-pub mod windows {
-    /// `bun.windows.libuv.Pipe` raw pointer payload of `Stdio::Buffer` /
-    /// `Stdio::Ipc`. Erased so this crate stays libuv-agnostic at the type
-    /// surface; `bun_runtime` casts it back on consumption.
-    pub type UvPipePtr = *mut bun_sys::windows::libuv::Pipe;
-}
+pub use process::{WaitPidResult, WaiterThread};
 
 /// Blocking (synchronous) spawn helpers.
 pub mod sync {
-    #[cfg(windows)]
-    pub use crate::process::WindowsOptions;
     pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn, spawn_with_argv};
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun.jsc.Subprocess` cross-tier shapes — `Source`, `StdioResult`,
-// `StaticPipeWriter<P>`.
+// `bun.jsc.Subprocess` cross-tier shapes — `Source`, `StaticPipeWriter<P>`.
 //
-// MOVE_DOWN from `bun_runtime::api::bun::subprocess`: `bun_install::
+// They live below `bun_runtime::api::bun::subprocess` because `bun_install::
 // security_scanner` constructs a `StaticPipeWriter<SecurityScanSubprocess>` to
 // stream a JSON blob to the scanner's stdin. The `Source` enum here carries a
 // `Box<dyn SourceData>` arm (§Dispatch cold path — vtable travels with the
@@ -150,23 +107,8 @@ pub mod sync {
 // crate naming `bun_jsc`/`bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
-    #[cfg(not(windows))]
-    use bun_sys::Fd;
-
     pub use crate::process::StdioKind;
     pub use crate::static_pipe_writer::{StaticPipeWriter, StaticPipeWriterProcess};
-
-    /// On POSIX this is `Option<Fd>`; on Windows it is the `WindowsStdioResult` union.
-    #[cfg(not(windows))]
-    pub type StdioResult = Option<Fd>;
-    #[cfg(windows)]
-    pub type StdioResult = crate::process::WindowsStdioResult;
-
-    #[cfg(not(windows))]
-    #[inline]
-    pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
-        Some(fd)
-    }
 
     /// The in-memory payload that a
     /// `StaticPipeWriter` drains into the child's stdin/extra-fd.

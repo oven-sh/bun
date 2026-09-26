@@ -2442,6 +2442,24 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
     buf: &'a mut [u16],
     input: &[u8],
 ) -> Option<&'a mut [u16]> {
+    convert_wtf8_to_utf16_in_buffer::<false>(buf, input)
+}
+
+/// As [`try_convert_utf8_to_utf16_in_buffer`], and `None` as well for input
+/// that is not WTF-8: a byte that starts or continues no sequence is refused
+/// instead of becoming U+FFFD (lone surrogates still pass). For names: two
+/// different byte strings must not come out as one name.
+pub fn try_convert_wtf8_to_utf16_in_buffer<'a>(
+    buf: &'a mut [u16],
+    input: &[u8],
+) -> Option<&'a mut [u16]> {
+    convert_wtf8_to_utf16_in_buffer::<true>(buf, input)
+}
+
+fn convert_wtf8_to_utf16_in_buffer<'a, const STRICT: bool>(
+    buf: &'a mut [u16],
+    input: &[u8],
+) -> Option<&'a mut [u16]> {
     if input.is_empty() {
         return Some(&mut buf[..0]);
     }
@@ -2467,6 +2485,10 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
             i += 1;
         } else {
             let (cp, adv) = decode_wtf8_one(&input[i..]);
+            // U+FFFD itself takes three bytes.
+            if STRICT && cp == 0xFFFD && adv == 1 {
+                return None;
+            }
             if cp <= 0xFFFF {
                 if written >= buf.len() {
                     return None;

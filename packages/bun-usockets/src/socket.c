@@ -227,11 +227,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
         // already set (the callback has fired or is about to), in which case
         // after_resolve will see c->closed and finish teardown.
         if (c->addrinfo_req && Bun__addrinfo_cancel(c->addrinfo_req, c)) {
-#ifdef _WIN32
-            group->loop->uv_loop->active_handles--;
-#else
             group->loop->num_polls--;
-#endif
             c->pending_resolve_callback = 0;
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
             c->addrinfo_req = 0;
@@ -243,11 +239,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
              * see c->closed and only push c to the loop's closed list without
              * touching the (possibly freed) group. Balance the keep-alive here
              * for the same reason. */
-#ifdef _WIN32
-            group->loop->uv_loop->active_handles--;
-#else
             group->loop->num_polls--;
-#endif
             us_dispatch_connecting_error(c, c->error);
             us_internal_connecting_socket_detach(c, group->loop);
         }
@@ -397,7 +389,7 @@ struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
 }
 
 struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+#ifdef _WIN32
     return 0;
 #else
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
@@ -417,15 +409,24 @@ static void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+int us_socket_get_error(struct us_socket_t *s) {
+    int error = 0;
+    socklen_t len = sizeof(error);
+    if (getsockopt(us_poll_fd(&s->p), SOL_SOCKET, SO_ERROR, (char *) &error, &len) == -1) {
+        return LIBUS_ERR;
+    }
+    return error;
+}
+
 /* See libusockets.h: whether a zero-progress write on a writable event proves
- * the peer is gone. Only the libuv backend has to ask the kernel. */
+ * the peer is gone. Only Windows has to ask the kernel. */
 int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
-#ifdef LIBUS_USE_LIBUV
+#ifdef _WIN32
     if (us_socket_is_closed(s)) {
         return 1;
     }
     return us_socket_get_error(s) != 0 ||
-           us_internal_libuv_peer_reset_probe(us_poll_fd(&s->p));
+           us_internal_peer_reset_probe(us_poll_fd(&s->p));
 #else
     return 1;
 #endif
@@ -809,13 +810,6 @@ unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, const c
     return length;
 }
 
-void us_socket_ref(struct us_socket_t *s) {
-#ifdef LIBUS_USE_LIBUV
-    uv_ref((uv_handle_t *) s->p.uv_p);
-#endif
-    // do nothing if not using libuv
-}
-
 void us_socket_nodelay(struct us_socket_t *s, int enabled) {
     if (!us_socket_is_shut_down(s)) {
         bsd_socket_nodelay(us_poll_fd((struct us_poll_t *) s), enabled);
@@ -844,21 +838,12 @@ int us_socket_get_tos(struct us_socket_t *s) {
 
 /// Returns 0 on success. Returned error values depend on the platform.
 /// - on posix, returns `errno`
-/// - on windows, when libuv is used, returns a UV err code
-/// - on windows, LIBUS_USE_LIBUV is set, returns `WSAGetLastError()`
-/// - on windows, otherwise returns result of `WSAGetLastError`
+/// - on windows, returns `WSAGetLastError()`
 int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay) {
     if (!us_socket_is_shut_down(s)) {
         return bsd_socket_keepalive(us_poll_fd((struct us_poll_t *) s), enabled, delay);
     }
     return 0;
-}
-
-void us_socket_unref(struct us_socket_t *s) {
-#ifdef LIBUS_USE_LIBUV
-    uv_unref((uv_handle_t *) s->p.uv_p);
-#endif
-    // do nothing if not using libuv
 }
 
 void us_socket_pause(struct us_socket_t *s) {

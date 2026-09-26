@@ -1,12 +1,10 @@
 use core::cell::Cell;
 use core::ffi::c_void;
-#[cfg(not(windows))]
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::Output;
 use bun_core::strings;
-#[cfg(not(windows))]
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
@@ -27,10 +25,7 @@ use crate::webcore::encoding as Encoder;
 
 bun_output::declare_scope!(fs_watch, hidden);
 
-#[cfg(not(windows))]
 use super::path_watcher;
-#[cfg(windows)]
-use super::win_watcher as path_watcher;
 
 // TODO: make this a top-level struct
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -46,12 +41,9 @@ pub(crate) struct FSWatcher {
     /// JS-thread uses only.
     ctx: *mut VirtualMachine,
     /// How the (process-wide) watcher thread delivers event batches to the
-    /// VM while this watcher is attached (POSIX; on Windows libuv delivers fs
-    /// events on the JS thread). Weak: `detach()` — close, the VM's stop
+    /// VM while this watcher is attached. Weak: `detach()` — close, the VM's stop
     /// phase, or finalize — is what ends the thread's access to `self`.
-    #[cfg(not(windows))]
     handle: bun_jsc::VmHandle,
-    #[cfg(not(windows))]
     loop_kind: bun_jsc::LoopKind,
     verbose: bool,
 
@@ -65,8 +57,7 @@ pub(crate) struct FSWatcher {
     /// `has_pending_activity()` while the watcher is open; a strong ref here
     /// would self-pin it forever. Cleared by `detach()`.
     js_this: JsCell<JsRef>,
-    // pub(super): read directly by `win_watcher::PathWatcher::emit`.
-    pub(super) encoding: Encoding,
+    encoding: Encoding,
 
     /// User can call close and pre-detach so we need to track this
     closed: Cell<bool>,
@@ -95,15 +86,6 @@ pub(crate) mod js {
 }
 
 impl FSWatcher {
-    /// JS thread only (Windows delivers fs events on the loop thread).
-    #[cfg(windows)]
-    #[inline]
-    fn vm(&self) -> &mut VirtualMachine {
-        // SAFETY: `ctx` is the live per-thread VM (set in `init`); every caller
-        // is on its JS thread.
-        unsafe { &mut *self.ctx }
-    }
-
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
         // SAFETY: `self.ctx` is the live per-thread VM singleton backref.
@@ -113,7 +95,6 @@ impl FSWatcher {
     /// Watcher thread → JS thread. `task` is the intrusive node of a heap batch
     /// task; the queue takes ownership unless the VM has been torn down, in
     /// which case the caller gets it back.
-    #[cfg(not(windows))]
     pub(crate) fn post(
         &self,
         task: core::ptr::NonNull<ConcurrentTask>,
@@ -138,16 +119,7 @@ impl FSWatcher {
     }
 }
 
-#[cfg(windows)]
-pub(crate) type FSWatchTask = FSWatchTaskWindows;
-#[cfg(not(windows))]
-pub(crate) type FSWatchTask = FSWatchTaskPosix;
-
-// `Event::Rename`/`Change` carry `StringOrBytesToDecode` on Windows, which
-// does not coerce to the `&[u8]` `emit()` expects — gate the whole posix task
-// to keep the Windows build sound.
-#[cfg(not(windows))]
-pub(crate) struct FSWatchTaskPosix {
+pub(crate) struct FSWatchTask {
     /// `None` only during `FSWatcher::init` two-phase construction (the task is
     /// embedded as `current_task` before the boxed `FSWatcher` address is
     /// known); patched to `Some` immediately after.
@@ -158,8 +130,7 @@ pub(crate) struct FSWatchTaskPosix {
     concurrent_task: ConcurrentTask,
 }
 
-#[cfg(not(windows))]
-impl Taskable for FSWatchTaskPosix {
+impl Taskable for FSWatchTask {
     const TAG: TaskTag = task_tag::FSWatchTask;
     /// A batch of events the watcher thread posted that nobody will emit:
     /// free it (its entries own their paths) and drop the activity unit it
@@ -179,14 +150,12 @@ impl Taskable for FSWatchTaskPosix {
     }
 }
 
-#[cfg(not(windows))]
 pub(crate) struct Entry {
     event: Event,
     needs_free: bool,
 }
 
-#[cfg(not(windows))]
-impl FSWatchTaskPosix {
+impl FSWatchTask {
     fn ctx(&self) -> &FSWatcher {
         // BACKREF — `ctx` is the live owning FSWatcher (set right after
         // boxing in `init`); FSWatcher outlives all its tasks.
@@ -256,7 +225,7 @@ impl FSWatchTaskPosix {
         // if false is closed or detached (can still contain valid refs but will not create a new one)
         if self.ctx().ref_task() {
             // Reshaped for borrowck — clone self into a heap task, then reset.
-            let that = bun_core::heap::into_raw(Box::new(FSWatchTaskPosix {
+            let that = bun_core::heap::into_raw(Box::new(FSWatchTask {
                 ctx: self.ctx,
                 count: self.count,
                 entries: core::mem::replace(
@@ -302,9 +271,8 @@ impl FSWatchTaskPosix {
     }
 }
 
-#[cfg(not(windows))]
-impl FSWatchTaskPosix {
-    /// `FSWatchTaskPosix.deinit`. **Not** `impl Drop`:
+impl FSWatchTask {
+    /// **Not** `impl Drop`:
     /// this is only ever called on heap clones produced by `enqueue()` (via the
     /// task dispatcher), never on the embedded `FSWatcher.current_task` field —
     /// the assert below enforces that. A `Drop` impl would also fire on
@@ -326,9 +294,6 @@ impl FSWatchTaskPosix {
     }
 }
 
-#[cfg(windows)]
-pub(crate) type EventPathString = StringOrBytesToDecode;
-#[cfg(not(windows))]
 pub(crate) type EventPathString = Box<[u8]>;
 
 /// The kind of change a watcher backend reports for a path, before it becomes a JS event.
@@ -359,8 +324,7 @@ pub(crate) enum Event {
         close: bool,
     },
     /// An event with no filename, surfaced to JS with `null`, matching node:
-    /// `Change` when the OS event queue overflowed and changes were lost,
-    /// `Rename` when libuv could not convert a name to UTF-8 (Windows).
+    /// the OS event queue overflowed and changes were lost.
     #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     NoFilename(WatchEventKind),
     Abort,
@@ -385,172 +349,12 @@ unsafe extern "C" {
     safe fn Bun__domEventNameToJS(global: &JSGlobalObject, event_type: EventType) -> JSValue;
 }
 
-#[cfg(windows)]
-pub(crate) struct FSWatchTaskWindows {
-    event: Event,
-    ctx: Option<bun_ptr::ParentRef<FSWatcher>>,
-}
-
-#[cfg(windows)]
-impl Taskable for FSWatchTaskWindows {
-    const TAG: TaskTag = task_tag::FSWatchTask;
-    /// As the POSIX task: free the batch, drop the activity unit.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; the FSWatcher outlives its tasks.
-        unsafe {
-            let ctx = (*this).ctx;
-            Self::deinit(this);
-            ctx.expect("FSWatchTask.ctx unset").get().unref_task();
-        }
-    }
-    /// As `FSWatchTaskPosix`.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
-    }
-}
-
-#[cfg(windows)]
-impl Default for FSWatchTaskWindows {
-    fn default() -> Self {
-        Self {
-            event: Event::Error {
-                err: bun_sys::Error {
-                    errno: SystemErrno::EINVAL as _,
-                    syscall: bun_sys::Tag::watch,
-                    ..Default::default()
-                },
-                close: true,
-            },
-            ctx: None,
-        }
-    }
-}
-
-#[cfg(windows)]
-pub(crate) enum StringOrBytesToDecode {
-    String(bun_core::String),
-    BytesToFree(Box<[u8]>),
-}
-
-// `PathWatcher::emit` and `Event::dupe` take a borrowed `&[u8]` rel-path and box
-// it into the owned `bytes_to_free` arm so the Windows task can carry it across
-// the thread hop.
-#[cfg(windows)]
-impl From<&[u8]> for StringOrBytesToDecode {
-    #[inline]
-    fn from(bytes: &[u8]) -> Self {
-        StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(bytes))
-    }
-}
-
-#[cfg(windows)]
-impl core::fmt::Display for StringOrBytesToDecode {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            StringOrBytesToDecode::String(s) => write!(f, "{}", s),
-            StringOrBytesToDecode::BytesToFree(utf8) => {
-                write!(f, "{}", bstr::BStr::new(utf8))
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-impl FSWatchTaskWindows {
-    pub(crate) fn append_abort(&mut self) {
-        let ctx = self.ctx;
-        // Balance the `ctx.unrefTask()` at the end of `run()` (matches
-        // `onPathUpdateWindows` and the posix `enqueue()` path).
-        // SAFETY: ParentRef — `ctx` is the live owning FSWatcher set at
-        // construction; FSWatcher outlives every task it enqueues.
-        // R-2: `ref_task` takes `&self`; ParentRef Derefs to `&FSWatcher`.
-        if !ctx.expect("FSWatchTask.ctx unset").ref_task() {
-            return;
-        }
-        let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
-            ctx,
-            event: Event::Abort,
-        }));
-
-        // `ctx` is the live owning `ParentRef<FSWatcher>` (BACKREF); `vm()` →
-        // `event_loop_mut()` is the audited safe `&mut EventLoop` accessor.
-        // Ownership of `task` transfers to the queue (drained on the same thread).
-        ctx.expect("FSWatchTask.ctx unset")
-            .vm()
-            .event_loop_mut()
-            .enqueue_task(Task::init(task));
-    }
-
-    /// this runs on JS Context Thread
-    pub(crate) fn run(&mut self) -> JsResult<()> {
-        // BACKREF — `self.ctx` is the live owning FSWatcher (set at
-        // construction), outliving every task it enqueues. R-2: all FSWatcher
-        // methods below take `&self`, so a single `&FSWatcher` held across the
-        // match is sound (aliased shared borrows are fine; the old `*mut Self`
-        // re-derive dance is no longer needed). `ParentRef` Derefs to `&T`.
-        let ctx: &FSWatcher = &self.ctx.expect("FSWatchTask.ctx unset");
-        let _unref = scopeguard::guard((), |()| ctx.unref_task());
-        match &mut self.event {
-            Event::Rename(path) => Self::run_path::<{ EventType::Rename }>(ctx, path),
-            Event::Change(path) => Self::run_path::<{ EventType::Change }>(ctx, path),
-            Event::Error { err, close } => {
-                ctx.emit_error(err, *close);
-                Ok(())
-            }
-            Event::NoFilename(event_type) => {
-                ctx.emit_null_filename(*event_type);
-                Ok(())
-            }
-            Event::Abort => {
-                ctx.emit_if_aborted();
-                Ok(())
-            }
-        }
-    }
-
-    fn run_path<const EVENT_TYPE: EventType>(
-        ctx: &FSWatcher,
-        path: &mut StringOrBytesToDecode,
-    ) -> JsResult<()> {
-        use bun_jsc::StringJsc;
-        if ctx.encoding == Encoding::Utf8 {
-            let StringOrBytesToDecode::String(s) = path else {
-                // Producer invariant (win_watcher::on_path_update_windows): when
-                // `ctx.encoding == Utf8` the payload is always the `String`
-                // variant, and `encoding` is immutable after init.
-                unreachable!()
-            };
-            let js = core::mem::take(s).into_js(&ctx.global_this)?;
-            ctx.emit_with_filename::<EVENT_TYPE>(js);
-            Ok(())
-        } else {
-            let StringOrBytesToDecode::BytesToFree(bytes_ref) = path else {
-                unreachable!()
-            };
-            let bytes = core::mem::take(bytes_ref);
-            ctx.emit::<EVENT_TYPE>(&bytes)
-        }
-    }
-
-    /// `FSWatchTaskWindows.deinit`. Explicit, not
-    /// `impl Drop`, to mirror `FSWatchTaskPosix::deinit` so the dispatcher can
-    /// call `FSWatchTask::deinit` uniformly.
-    ///
-    /// # Safety
-    /// `this` must be the unique `heap::alloc` pointer produced by
-    /// `append_abort()` / `on_path_update_windows()`.
-    pub(crate) unsafe fn deinit(this: *mut Self) {
-        // SAFETY: paired with `heap::alloc` at the enqueue site.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-}
-
 impl FSWatcher {
     /// Recover `&FSWatcher` from the `*mut c_void` userdata stashed in `init`.
     ///
     /// Centralises the set-once `Option<*mut c_void> → &FSWatcher` deref so the
-    /// three watcher-backend callbacks (`on_path_update_*`, `on_update_end`)
-    /// stay safe at the call site. R-2: deref as shared — all `FSWatcher`
+    /// two watcher-backend callbacks (`on_path_update`, `on_update_end`)
+    /// stay safe at the call site. Deref as shared: all `FSWatcher`
     /// mutation goes through `Cell`/`JsCell`.
     #[inline]
     fn from_ctx<'a>(ctx: Option<*mut c_void>) -> &'a FSWatcher {
@@ -561,8 +365,7 @@ impl FSWatcher {
         unsafe { &*ctx.unwrap().cast::<FSWatcher>() }
     }
 
-    #[cfg(not(windows))]
-    pub(crate) fn on_path_update_posix(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
+    pub(crate) fn on_path_update(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
         let this = Self::from_ctx(ctx);
 
         if this.verbose {
@@ -587,57 +390,13 @@ impl FSWatcher {
         this.current_task.with_mut(|t| t.append(event, true));
     }
 
-    #[cfg(windows)]
-    pub(crate) fn on_path_update_windows(ctx: Option<*mut c_void>, event: Event, is_file: bool) {
-        let this = Self::from_ctx(ctx);
-
-        if this.verbose {
-            match &event {
-                Event::Rename(value) | Event::Change(value) => {
-                    if is_file {
-                        bun_core::pretty_errorln!("<r> <d>File changed: {}<r>", value);
-                    } else {
-                        bun_core::pretty_errorln!("<r> <d>Dir changed: {}<r>", value);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if !this.ref_task() {
-            return;
-        }
-
-        let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
-            // SAFETY: `this` is the live owning `&FSWatcher` (BACKREF) recovered
-            // from the registered userdata; outlives every task it enqueues.
-            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw(this.as_ctx_ptr()) }),
-            event,
-        }));
-        // `vm()` is the BACKREF accessor; `event_loop_mut()` is the audited
-        // safe `&mut EventLoop` accessor. Ownership of `task` transfers to the
-        // queue.
-        this.vm().event_loop_mut().enqueue_task(Task::init(task));
-        let _ = is_file;
-    }
-
-    #[cfg(windows)]
-    pub(crate) const ON_PATH_UPDATE: fn(Option<*mut c_void>, Event, bool) =
-        Self::on_path_update_windows;
-    #[cfg(not(windows))]
-    pub(crate) const ON_PATH_UPDATE: fn(Option<*mut c_void>, Event, bool) =
-        Self::on_path_update_posix;
-
     pub(crate) fn on_update_end(ctx: Option<*mut c_void>) {
         let this = Self::from_ctx(ctx);
         if this.verbose {
             Output::flush();
         }
-        #[cfg(unix)]
-        {
-            // we only enqueue after all events are processed
-            this.current_task.with_mut(|t| t.enqueue());
-        }
+        // we only enqueue after all events are processed
+        this.current_task.with_mut(|t| t.enqueue());
     }
 }
 
@@ -1102,7 +861,7 @@ impl FSWatcher {
         self.abort_handle.leave();
 
         if let Some(watcher) = self.path_watcher.take() {
-            // Both backends expose `detach` as an associated fn over `*mut PathWatcher`
+            // `detach` is an associated fn over `*mut PathWatcher`
             // (it self-destroys via `heap::take` on the last handler, so it cannot
             // soundly take `&mut self`). `watcher` is the live pointer returned by
             // `path_watcher::watch`.
@@ -1168,9 +927,7 @@ impl FSWatcher {
 
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
-            #[cfg(not(windows))]
             handle: vm_ref.handle(),
-            #[cfg(not(windows))]
             loop_kind: vm_ref.current_loop_kind(),
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,
@@ -1199,20 +956,7 @@ impl FSWatcher {
         ctx_ref
             .path_watcher
             .set(if args.signal.is_none_or(|s| !s.aborted()) {
-                // The two backends take different arities (the Windows
-                // backend dropped the callback parameters — only one valid
-                // value each), so the call is cfg-split.
-                #[cfg(windows)]
-                let r = path_watcher::watch(vm_ref, file_path, args.recursive, ctx as *mut c_void);
-                #[cfg(not(windows))]
-                let r = path_watcher::watch(
-                    vm_ref,
-                    file_path,
-                    args.recursive,
-                    FSWatcher::ON_PATH_UPDATE,
-                    FSWatcher::on_update_end,
-                    ctx.cast::<c_void>(),
-                );
+                let r = path_watcher::watch(file_path, args.recursive, ctx.cast::<c_void>());
                 match r {
                     Ok(r) => Some(r),
                     Err(err) => {
@@ -1244,8 +988,7 @@ impl FSWatcher {
     }
 }
 
-#[cfg(not(windows))]
-impl Default for FSWatchTaskPosix {
+impl Default for FSWatchTask {
     fn default() -> Self {
         Self {
             ctx: None,

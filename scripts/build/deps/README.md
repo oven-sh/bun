@@ -50,7 +50,7 @@ which is the cue to diff the upstream `CMakeLists.txt`.
 
 ## Iterating on a dep from a local checkout
 
-To hack on a vendored dep (e.g. chase a bug in the mimalloc or libuv fork)
+To hack on a vendored dep (e.g. chase a bug in the mimalloc fork)
 without cutting a commit and bumping the pin each round, point the build at
 a git clone:
 
@@ -149,9 +149,9 @@ export const mydep: Dependency = {
 - **tinycc.ts** — direct build with a build-time codegen tool
 - **zlib.ts** — direct build with per-source SIMD `-m` flags + `.h.in` substitution
 - **libarchive.ts** / **cares.ts** — direct build with hand-written per-target config.h
-- **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest; `forbidUndefined` (with libuv.ts) keeps a dep that bun points at mimalloc from calling libc's allocator behind its back
+- **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest; `forbidUndefined` keeps a dep that bun points at mimalloc from calling libc's allocator behind its back
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
-- **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
+- **tinycc.ts** / **sqlite.ts** — `enabled: cfg => …` for a dep that only some configurations build
 - **lolhtml.ts** — cargo build with rustflags
 - **webkit.ts** — `nested-cmake` (`sourceSubdir`, `preBuild`) and `prebuilt`
 

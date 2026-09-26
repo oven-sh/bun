@@ -250,7 +250,6 @@ impl DirectoryRoute {
             resp,
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type: FileType::File,
-            pollable: false,
             offset: body_offset,
             length: Some(body_len),
             idle_timeout: server.config().idle_timeout,
@@ -298,24 +297,13 @@ impl DirectoryRoute {
     fn open_beneath(&self, rel: &[u8]) -> Option<File> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let zrel = resolve_path::z(rel, &mut *buf);
-        // NONBLOCK so opening a FIFO without a writer cannot block the event
-        // loop on POSIX. Not on Windows: there `openat` maps it to omitting
-        // FILE_SYNCHRONOUS_IO_NONALERT, which breaks the synchronous reads
-        // FileResponseStream issues.
-        #[cfg(not(windows))]
+        // NONBLOCK so opening a FIFO without a writer cannot block the event loop.
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
-        #[cfg(windows)]
-        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let fd = bun_sys::openat2_in_root(self.root_fd.get(), zrel, flags, 0).ok()?;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let fd = bun_sys::openat(self.root_fd.get(), zrel, flags, 0).ok()?;
-        // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
-        // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
-        use bun_sys::FdExt;
-        fd.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
-            .ok()
-            .map(File::from_fd)
+        Some(File::from_fd(fd))
     }
 
     fn stat_cache_lookup(&self, rel: &[u8], stat: &bun_sys::Stat) -> (u64, [u8; 32], usize) {

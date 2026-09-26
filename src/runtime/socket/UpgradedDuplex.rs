@@ -83,6 +83,62 @@ pub(crate) struct CertError {
 }
 // `Box<CStr>` drops automatically — no explicit Drop needed.
 
+impl CertError {
+    /// An owned copy of what a handshake reported; `code` and `reason` only
+    /// when there is an error.
+    pub(crate) fn from_verify_error(ssl_error: &us_bun_verify_error_t) -> CertError {
+        CertError {
+            error_no: ssl_error.error_no,
+            code: ssl_error
+                .code()
+                .filter(|_| ssl_error.error_no != 0)
+                .map(Into::into),
+            reason: ssl_error
+                .reason()
+                .filter(|_| ssl_error.error_no != 0)
+                .map(Into::into),
+        }
+    }
+
+    /// The C view, borrowing `self`'s strings (`""` when absent).
+    pub(crate) fn as_verify_error(&self) -> us_bun_verify_error_t {
+        us_bun_verify_error_t {
+            error_no: self.error_no,
+            code: self.code.as_deref().map_or(c"".as_ptr(), |c| c.as_ptr()),
+            reason: self.reason.as_deref().map_or(c"".as_ptr(), |c| c.as_ptr()),
+        }
+    }
+}
+
+/// Re-arm (`ms > 0`) or stop (`ms == 0`) the idle timer of a software socket
+/// and remember `ms` for the next reset.
+pub(crate) fn set_socket_timeout(
+    event_loop_timer: &JsCell<EventLoopTimer>,
+    current_timeout: &Cell<u32>,
+    ms: c_uint,
+) {
+    if event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
+        timer_all().remove(event_loop_timer.as_ptr());
+    }
+    current_timeout.set(ms);
+
+    // if the interval is 0 means that we stop the timer
+    if ms == 0 {
+        return;
+    }
+
+    // reschedule the timer
+    let next =
+        bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
+    event_loop_timer.with_mut(|t| {
+        t.next = ElTimespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        };
+    });
+    timer_all().insert(event_loop_timer.as_ptr());
+}
+
 type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
 
 /// Server-side peer-certificate policy for a duplex TLS upgrade, resolved in
@@ -193,17 +249,7 @@ impl UpgradedDuplex {
         bun_output::scoped_log!(UpgradedDuplex, "onHandshake");
         // SAFETY: see handler note above.
         let this = unsafe { &*this };
-        this.ssl_error.set(CertError {
-            error_no: ssl_error.error_no,
-            code: ssl_error
-                .code()
-                .filter(|_| ssl_error.error_no != 0)
-                .map(Into::into),
-            reason: ssl_error
-                .reason()
-                .filter(|_| ssl_error.error_no != 0)
-                .map(Into::into),
-        });
+        this.ssl_error.set(CertError::from_verify_error(&ssl_error));
         (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
         // Retry writes parked during the handshake, like openssl.c's `ssl_write_wants_read`.
         if handshake_success && !this.is_shutdown() {
@@ -605,14 +651,7 @@ impl UpgradedDuplex {
 
     #[uws_callback(export = "UpgradedDuplex__ssl_error", no_catch)]
     pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {
-        let err = self.ssl_error.get();
-        us_bun_verify_error_t {
-            error_no: err.error_no,
-            code: err.code.as_deref().map_or(c"".as_ptr(), |c| c.as_ptr()),
-            reason: err.reason.as_deref().map_or(c"".as_ptr(), |c| c.as_ptr()),
-            // `struct us_bun_verify_error_t` (libusockets.h) has exactly these
-            // three fields: { int error; const char* code; const char* reason }.
-        }
+        self.ssl_error.get().as_verify_error()
     }
 
     fn reset_timeout(&self) {
@@ -620,32 +659,7 @@ impl UpgradedDuplex {
     }
 
     fn set_timeout_in_milliseconds(&self, ms: c_uint) {
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
-        }
-        self.current_timeout.set(ms);
-
-        // if the interval is 0 means that we stop the timer
-        if ms == 0 {
-            return;
-        }
-
-        // reschedule the timer
-        // Note: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
-        // bridge from `bun_core::Timespec` until the lower tier switches.
-        let next =
-            bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
-        self.event_loop_timer.with_mut(|t| {
-            t.next = ElTimespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            };
-        });
-        timer_all().insert(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-        );
+        set_socket_timeout(&self.event_loop_timer, &self.current_timeout, ms);
     }
 
     #[uws_callback(export = "UpgradedDuplex__set_timeout")]

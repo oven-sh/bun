@@ -836,13 +836,7 @@ impl ExtractTarball {
                                 &[name, dest_name],
                             );
 
-                            if sys::sys_uv::symlink_uv(
-                                final_path,
-                                dest_path,
-                                bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
-                            )
-                            .is_err()
-                            {
+                            if sys::junction(final_path, dest_path).is_err() {
                                 break 'create_index;
                             }
                         }

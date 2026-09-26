@@ -1,23 +1,23 @@
-//! `bun_spawn_sys` — raw OS process-spawn layer split out of `bun_spawn`.
+//! `bun_spawn_sys` — the raw OS process-spawn layer under `bun_spawn`.
 //!
-//! This crate owns everything that talks directly to the kernel/libuv to
-//! create a child process and read its exit status, with **no** event-loop
+//! This crate owns everything that talks directly to the kernel to create a
+//! child process and read its exit status, with **no** event-loop
 //! integration:
 //!
 //!   - `posix_spawn(2)` libc wrappers (`Actions`/`Attr`/`spawn_z`/`wait4`)
 //!   - the `posix_spawn_bun` repr(C) request structs and FFI decl
 //!   - `spawn_process_posix` (fd plumbing + `posix_spawn` call)
-//!   - `PosixSpawnOptions`/`PosixStdio`/`PosixSpawnResult`/`ExtraPipe`/
+//!   - `spawn_process_windows` (`CreateProcessW`: image search, command line,
+//!     environment block, stdio handles and pipes, job) and `windows::kill`
+//!   - `SpawnOptions`/`Stdio`/`SpawnResult`/`ExtraPipe`/
 //!     `StdioKind`/`Dup2`/`Rusage`
 //!   - signal-forwarding / no-orphans `extern "C"` decls
 //!
 //! Dependencies are deliberately leaf-only: `libc`, `bun_sys`, `bun_core`,
-//! `bun_analytics`, and (Windows-only) `bun_libuv_sys`. There is **no**
-//! `bun_event_loop`/`bun_io`/`bun_io`/`bun_threading` dependency — `Process`,
+//! `bun_windows_sys` and `bun_analytics`. There is **no**
+//! `bun_event_loop`/`bun_io`/`bun_threading` dependency — `Process`,
 //! `Poller`, `WaiterThread`, and the `sync` runner stay in `bun_spawn` and
 //! depend on this crate.
-//!
-//! See `docs/SPAWN_SYS_PROPOSAL.md` for the full crate-graph rationale.
 
 use core::ffi::c_char;
 
@@ -33,9 +33,12 @@ pub use error::{Error, Result};
 pub mod posix_spawn;
 
 /// `spawn_process_posix` + option/result structs + `Rusage`.
-/// Split out of `src/spawn/process.rs`.
 #[path = "spawn_process.rs"]
 pub mod spawn_process;
+
+/// `spawn_process_windows`, `kill`, and their parts.
+#[cfg(windows)]
+pub mod windows;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Canonical FFI type aliases for nullable C-string pointers (`*const c_char`)
@@ -74,9 +77,8 @@ const _: () = assert!(
 );
 
 // ──────────────────────────────────────────────────────────────────────────
-// Signal-forwarding / no-orphans FFI surface — moved down from
-// `bun_spawn::process::sync` so the decls live next to `posix_spawn_bun`.
-// `bun_spawn::sync` consumes these via `bun_spawn_sys::ffi::*`.
+// Signal-forwarding / no-orphans FFI surface, declared next to
+// `posix_spawn_bun`; `bun_spawn::sync` consumes it as `bun_spawn_sys::ffi::*`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ffi {
     use core::ffi::c_int;
@@ -113,7 +115,7 @@ pub mod ffi {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Waiter-thread fallback flag — owned here so `spawn_process_posix` /
-// `PosixSpawnResult::pifd_from_pid` can flip it without depending on
+// `SpawnResult::pifd_from_pid` can flip it without depending on
 // `bun_threading`. `bun_spawn::WaiterThread` reads/writes through these.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod waiter_thread_flag {
@@ -138,7 +140,7 @@ pub mod waiter_thread_flag {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `PR_SET_PDEATHSIG` default — `spawn_process_posix` consults this when
-// `PosixSpawnOptions::linux_pdeathsig` is `None`. Storage lives here (lowest
+// `SpawnOptions::linux_pdeathsig` is `None`. Storage lives here (lowest
 // tier that reads it); `bun_io::ParentDeathWatchdog::enable()` flips it on
 // from the main thread. `PR_SET_PDEATHSIG` is *thread*-scoped in the kernel,
 // so the default only applies when spawning from the same thread that armed
@@ -184,11 +186,13 @@ pub mod pdeathsig {
 // Public surface — flat re-exports so `bun_spawn` can `pub use bun_spawn_sys::*`.
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(windows)]
+pub use spawn_process::process_rusage;
 #[cfg(unix)]
 pub use spawn_process::spawn_process_posix;
-#[cfg(windows)]
-pub use spawn_process::uv_getrusage;
 pub use spawn_process::{
-    Dup2, ExtraPipe, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio, Rusage,
-    RusageFields, StdioKind, rusage_zeroed,
+    Dup2, ExtraPipe, PidFdType, PidT, Rusage, RusageFields, SpawnOptions, SpawnResult, Stdio,
+    StdioKind, rusage_zeroed,
 };
+#[cfg(windows)]
+pub use windows::{WindowsOptions, spawn_process_windows};

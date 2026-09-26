@@ -416,6 +416,8 @@ pub mod h2;
 pub mod h3;
 #[path = "InternalLoopData.rs"]
 pub mod internal_loop_data;
+#[cfg(windows)]
+pub mod iocp;
 #[path = "ListenSocket.rs"]
 pub mod listen_socket;
 #[path = "Loop.rs"]
@@ -434,10 +436,6 @@ pub mod socket_group;
 pub mod socket_kind;
 #[path = "thunk.rs"]
 pub mod thunk;
-// libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.
-#[cfg(windows)]
-#[path = "Timer.rs"]
-pub mod timer;
 #[path = "udp.rs"]
 pub mod udp;
 #[path = "us_socket_t.rs"]
@@ -461,17 +459,25 @@ pub mod fault_inject {
     pub const RECVMSG: c_int = 4;
     pub const CONNECT: c_int = 5;
     pub const ACCEPT: c_int = 6;
+    /// Windows: the socket a listener's `AcceptEx` accepts into.
+    pub const SOCKET: c_int = 7;
     pub const SHUTDOWN: c_int = 9;
     /// Not a syscall: the per-loop TLS plaintext buffer allocation in
     /// `us_internal_init_loop_ssl_data`.
     pub const SSL_LOOP_BUFFER: c_int = 10;
     /// Not a syscall: poll registration in `us_poll_start_rc`
-    /// (`uv_poll_init_socket` on Windows, `EPOLL_CTL_ADD` / `kevent` on
+    /// (`afd_poll_create` on Windows, `EPOLL_CTL_ADD` / `kevent` on
     /// epoll/kqueue).
     pub const POLL_START: c_int = 11;
     /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
     /// payload in the `on_session`/`on_keylog` dispatch.
     pub const SESSION_BUFFER: c_int = 12;
+    /// Not a syscall: `afd_poll_create` (Windows) takes the `select()`
+    /// fallback for the socket.
+    pub const POLL_SLOW: c_int = 13;
+    /// Not a syscall: `us_iocp_wait_create` (Windows) waits with the
+    /// thread-pool fallback instead of a wait completion packet.
+    pub const WAIT_FALLBACK: c_int = 14;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;
@@ -501,23 +507,18 @@ pub use socket::{
 
 // ───────────────────────────── re-exports ────────────────────────────────────
 
-pub use internal_loop_data::InternalLoopData;
-#[cfg(windows)]
-pub use loop_::WindowsLoop;
-pub use loop_::{Loop, NOW_NS_UNKNOWN};
-pub use socket_kind::SocketKind;
-#[cfg(windows)]
-pub use timer::Timer;
-
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
+pub use internal_loop_data::InternalLoopData;
 pub use listen_socket::ListenSocket;
+pub use loop_::{Loop, NOW_NS_UNKNOWN};
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
 pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;
+pub use socket_kind::SocketKind;
 pub use us_socket::{CloseCode, QueuedInput, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
 pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 

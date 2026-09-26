@@ -23,9 +23,11 @@
 #include <mach-o/loader.h>
 #endif
 #else
-#include <uv.h>
 #include <windows.h>
 #include <corecrt_io.h>
+#include <crtdbg.h>
+#include <fcntl.h>
+#include "BunWindowsProcess.h"
 #include <atomic>
 #include <new>
 #include <wtf/Threading.h>
@@ -38,7 +40,7 @@ extern "C" int32_t get_process_priority(int32_t pid)
 {
 #if OS(WINDOWS)
     int priority = 0;
-    if (uv_os_getpriority(pid, &priority))
+    if (Bun::getProcessPriority(pid, &priority))
         return std::numeric_limits<int32_t>::max();
     return priority;
 #else
@@ -53,7 +55,7 @@ extern "C" int32_t get_process_priority(int32_t pid)
 extern "C" int32_t set_process_priority(int32_t pid, int32_t priority)
 {
 #if OS(WINDOWS)
-    return uv_os_setpriority(pid, priority);
+    return Bun::setProcessPriority(pid, priority);
 #else
     return setpriority(PRIO_PROCESS, pid, priority);
 #endif // OS(WINDOWS)
@@ -642,22 +644,7 @@ extern "C" void onExitSignal(int sig)
 #endif
 
 #if OS(WINDOWS)
-extern "C" void Bun__restoreWindowsStdio();
-BOOL WINAPI Ctrlhandler(DWORD signal)
-{
-
-    if (signal == CTRL_C_EVENT) {
-        Bun__restoreWindowsStdio();
-        SetConsoleCtrlHandler(Ctrlhandler, FALSE);
-    }
-
-    return FALSE;
-}
-
-extern "C" void Bun__setCTRLHandler(BOOL add)
-{
-    SetConsoleCtrlHandler(Ctrlhandler, add);
-}
+extern "C" void Bun__installWindowsSignalHandler();
 
 // Held, never released, across ExitProcess: a WTF suspender it kills between
 // SuspendThread and ResumeThread of this thread would leave it suspended forever.
@@ -686,8 +673,40 @@ extern "C" int __cxa_atexit(void (*)(void*), void*, void*);
 extern "C" struct mach_header __dso_handle;
 #endif
 
+#if OS(WINDOWS)
+#if defined(_DEBUG)
+// The debug CRT asserts on an invalid fd before it calls the invalid-parameter
+// handler. Those asserts come from the CRT's lowio sources, e.g.
+// "minkernel\crts\ucrt\src\appcrt\lowio\osfinfo.cpp(260) : Assertion failed: ...".
+static int crtDebugReportHook(int reportType, char* message, int* returnValue)
+{
+    if (reportType != _CRT_ASSERT || !message || !strstr(message, "\\lowio\\"))
+        return FALSE;
+    if (returnValue)
+        *returnValue = 0;
+    return TRUE;
+}
+#endif
+
+static void crtInvalidParameterHandler(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t)
+{
+}
+#endif
+
 extern "C" void bun_initialize_process()
 {
+#if OS(WINDOWS)
+    // Inherited by child processes.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+
+    // Without a handler, any CRT call on a bad fd (_get_osfhandle, _close, ...)
+    // terminates the process with STATUS_STACK_BUFFER_OVERRUN instead of failing with EBADF.
+    _set_invalid_parameter_handler(crtInvalidParameterHandler);
+#if defined(_DEBUG)
+    _CrtSetReportHook(crtDebugReportHook);
+#endif
+#endif
+
     // Disable printf() buffering. We buffer it ourselves.
     setvbuf(stdout, nullptr, _IONBF, 0);
     setvbuf(stderr, nullptr, _IONBF, 0);
@@ -771,7 +790,7 @@ extern "C" void bun_initialize_process()
     }
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {
-        auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));
+        auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
         if (handle == INVALID_HANDLE_VALUE || GetFileType(handle) == FILE_TYPE_UNKNOWN) {
             // Ignore _close result. If it fails or not depends on used Windows
             // version. We will just check _open result.
@@ -780,32 +799,15 @@ extern "C" void bun_initialize_process()
             if (fd != _open("nul", O_RDWR)) {
                 RELEASE_ASSERT_NOT_REACHED();
             } else {
-                switch (fd) {
-                case 0: {
-                    SetStdHandle(STD_INPUT_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_INPUT_HANDLE) == uv_get_osfhandle(fd));
-                    break;
-                }
-                case 1: {
-                    SetStdHandle(STD_OUTPUT_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_OUTPUT_HANDLE) == uv_get_osfhandle(fd));
-                    break;
-                }
-                case 2: {
-                    SetStdHandle(STD_ERROR_HANDLE, uv_get_osfhandle(fd));
-                    ASSERT(GetStdHandle(STD_ERROR_HANDLE) == uv_get_osfhandle(fd));
-                    break;
-                }
-                default: {
-                    ASSERT_NOT_REACHED();
-                }
-                }
+                static constexpr DWORD stdHandles[3] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };
+                handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+                SetStdHandle(stdHandles[fd], handle);
+                ASSERT(GetStdHandle(stdHandles[fd]) == handle);
             }
         }
     }
 
-    // add ctrl+c handler on windows
-    Bun__setCTRLHandler(1);
+    Bun__installWindowsSignalHandler();
 #endif
 
 #if OS(DARWIN)

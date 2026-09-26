@@ -343,10 +343,7 @@ impl GetAddrInfoResult {
         }
         Some(GetAddrInfoResult {
             // SAFETY: `ai_addr` is non-null and points to a valid sockaddr per
-            // getaddrinfo's contract. `.cast()` erases the nominal-type
-            // mismatch on Windows (ws2_32::sockaddr ↔ the libuv-sys mirror
-            // `bun_sys::posix::sockaddr` routes to) — both are the 16-byte
-            // ws2def.h `SOCKADDR`.
+            // getaddrinfo's contract.
             address: unsafe { Address::init_posix(sockaddr.cast()) },
             // no TTL in POSIX getaddrinfo()
             ttl: 0,
@@ -485,7 +482,7 @@ pub fn is_valid_hostname(name: &[u8]) -> bool {
 }
 
 /// The process-wide DNS
-/// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
+/// cache lives in `bun_runtime` (it owns the resolver backends + JSC
 /// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
 /// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
 /// rather than a `bun_runtime` crate dep, which would cycle.

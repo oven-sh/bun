@@ -8,7 +8,7 @@ use bun_sys as syscall;
 // impl in `Sink.rs` (see `array_buffer_sink_abi`).
 
 #[derive(Default)]
-pub struct ArrayBufferSink {
+pub(crate) struct ArrayBufferSink {
     pub(crate) bytes: Vec<u8>,
     // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
     pub(crate) done: bool,
@@ -43,7 +43,7 @@ impl ArrayBufferSink {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
+    pub(crate) fn flush(&mut self) -> bun_sys::Result<()> {
         Ok(())
     }
 
@@ -78,7 +78,7 @@ impl ArrayBufferSink {
         });
     }
 
-    pub fn write(&mut self, data: &streams::Result) -> streams::result::Writable {
+    pub(crate) fn write(&mut self, data: &streams::Result) -> streams::result::Writable {
         let len = match self.bytes.write(data.slice()) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),

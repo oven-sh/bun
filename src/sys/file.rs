@@ -264,9 +264,7 @@ impl File {
     pub fn get_pos(&self) -> Maybe<u64> {
         lseek(self.handle, 0, libc::SEEK_CUR).map(|p| p as u64)
     }
-    /// The file's size in bytes.
-    /// On Windows that's `GetFileSizeEx` directly on the HANDLE (NOT via
-    /// libuv `fstat`, which would require a uv-kind fd).
+    /// The file's size in bytes (`GetFileSizeEx` on Windows).
     pub fn get_end_pos(&self) -> Maybe<usize> {
         get_file_size(self.handle).map(|n| n as usize)
     }

@@ -24,7 +24,7 @@ use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_which::which;
 
 use crate::cli;
@@ -404,17 +404,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             stdout: sync::SyncStdio::Inherit,
             stdin: sync::SyncStdio::Inherit,
             ipc: ipc_fd,
-            #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: `env` outlives the mini event loop.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                        None,
-                    ),
-                ),
-                ..Default::default()
-            },
             ..Default::default()
         }) {
             Err(err) => {
@@ -468,7 +457,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
                 // cmd.exe exits 0 after abandoning a line whose command was Ctrl+C'd.
                 #[cfg(windows)]
-                if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT
+                if exit_code.is_ctrl_c_exit()
                     || (bun_spawn::ctrl_c::take_received() && exit_code.raw == 0)
                 {
                     bun_spawn::ctrl_c::exit_like_child();
@@ -1574,7 +1563,7 @@ impl Run<'_> {
         }
 
         // These create undefined references to externally-defined C symbols
-        // (uv_* posix stubs, v8:: shims) so the linker pulls those archive
+        // (uv_* stubs, v8:: shims) so the linker pulls those archive
         // members from libbun.a in CI's split link-only mode and keeps them
         // through `--gc-sections`. Without them, dlopen'd NAPI modules see
         // `undefined symbol: uv_*` instead of the friendly crash message.
@@ -2098,17 +2087,6 @@ impl RunCommand {
             stdout: sync::SyncStdio::Inherit,
             stdin: sync::SyncStdio::Inherit,
             use_execve_on_macos: silent,
-            #[cfg(windows)]
-            windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: env loader is process-lifetime.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                        None,
-                    ),
-                ),
-                ..Default::default()
-            },
             ..Default::default()
         }) {
             Ok(r) => r,
@@ -2213,8 +2191,7 @@ impl RunCommand {
                             ));
                         }
 
-                        #[cfg(windows)]
-                        if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                        if exit_code.is_ctrl_c_exit() {
                             bun_spawn::ctrl_c::exit_like_child();
                         }
 
@@ -2590,17 +2567,23 @@ impl RunCommand {
                 )
             } as usize;
             'try_bunx_file: {
-                if cwd_len == 0 {
+                let prefix = bun_core::w!("\\node_modules\\.bin\\");
+                let ext = bun_core::w!(".bunx");
+                // 0 is failure, and a directory that did not fit is reported as
+                // the length it needs. `target_name` is at most one UTF-16 unit
+                // per byte; the last unit is for the terminator.
+                if cwd_len == 0
+                    || root.len() + cwd_len + prefix.len() + target_name.len() + ext.len()
+                        >= buf.len()
+                {
                     break 'try_bunx_file;
                 }
                 let mut ptr = root.len() + cwd_len;
-                let prefix = bun_core::w!("\\node_modules\\.bin\\");
                 buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);
                 ptr += prefix.len();
                 let encoded =
                     strings::convert_utf8_to_utf16_in_buffer(&mut buf[ptr..], target_name);
                 ptr += encoded.len();
-                let ext = bun_core::w!(".bunx");
                 buf[ptr..ptr + ext.len()].copy_from_slice(ext);
                 ptr += ext.len();
                 buf[ptr] = 0;
@@ -2768,12 +2751,6 @@ impl RunCommand {
 
         // Open read-only.
         let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
-            return false;
-        };
-        // `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` — hands the
-        // HANDLE off to libuv ownership on Windows; pass-through on POSIX.
-        let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        else {
             return false;
         };
 
@@ -2947,8 +2924,8 @@ impl RunCommand {
         if ctx.positionals.is_empty() {
             // Node: bare `node` on a TTY starts the REPL. Only in emulation
             // mode; bun's own `bun` with no args stays the help text. Use
-            // Output's cached stdio flag (set at startup via libuv's handle
-            // probe), which is the same check `bun update --interactive` uses.
+            // Output's cached stdio flag (set at startup), which is the same
+            // check `bun update --interactive` uses.
             if Output::is_stdin_tty() {
                 return Self::exec_node_repl(ctx);
             }

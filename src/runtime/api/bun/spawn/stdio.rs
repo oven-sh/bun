@@ -1,8 +1,6 @@
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::VecExt;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
@@ -14,14 +12,6 @@ use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 // `bun.jsc.Subprocess.StdioKind` is owned by `process.rs` (defined there to
 // keep `process` leaf; `subprocess` re-exports it).
 use crate::api::bun_process::{self as process, Dup2 as ProcessDup2, StdioKind};
-
-// `SpawnOptions.Stdio` is platform-dependent: process.rs exposes `PosixStdio` /
-// `WindowsStdio`; alias the active one as `SpawnOptionsStdio` so the body stays
-// platform-neutral.
-#[cfg(not(windows))]
-pub(crate) type SpawnOptionsStdio = process::PosixStdio;
-#[cfg(windows)]
-pub(crate) type SpawnOptionsStdio = process::WindowsStdio;
 
 // `bun.FD.Stdio` (the StdIn/StdOut/StdErr tag enum) is `bun_core::Stdio`,
 // re-exported through `bun_sys`.
@@ -61,12 +51,13 @@ pub(crate) enum Stdio {
     #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
     Memfd(Fd),
     Pipe,
-    /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
-    /// stored as `ExtraPipe::UnownedFd` so `Subprocess::finalize_streams`
-    /// never closes it; the caller reads the fd from `.stdio[i]` and is
-    /// responsible for closing it. Used by `node:child_process` which wraps
-    /// extra `"pipe"` slots in `net.connect({fd})` (usockets then owns the
-    /// fd). Only valid at indices >= 3.
+    /// Like `Pipe` at indices >= 3, but the parent end of the socketpair (a
+    /// duplex pipe on Windows) is stored as `ExtraPipe::UnownedFd` so
+    /// `Subprocess::finalize_streams` never closes it; the caller reads the fd
+    /// from `.stdio[i]` and is responsible for closing it. Used by
+    /// `node:child_process` which wraps extra `"pipe"` slots in
+    /// `net.connect({fd})` (the socket then owns the fd). Only valid at
+    /// indices >= 3.
     SocketFd,
     Ipc,
     ReadableStream(webcore::ReadableStream),
@@ -79,7 +70,7 @@ pub(crate) enum ResultT<T> {
     Err(ToSpawnOptsError),
 }
 
-pub(crate) type Result = ResultT<SpawnOptionsStdio>;
+pub(crate) type Result = ResultT<process::Stdio>;
 
 pub(crate) enum ToSpawnOptsError {
     StdinUsedAsOut,
@@ -208,30 +199,7 @@ impl Stdio {
         }
     }
 
-    /// On windows this function allocates a `*mut uv::Pipe` (via `heap::alloc`);
-    /// the caller must transfer ownership (e.g. into `WindowsStdioResult::Buffer`
-    /// via `heap::take`) or free it with `close_and_destroy`.
     pub(crate) fn as_spawn_option(&mut self, i: i32) -> Result {
-        // `SpawnOptionsStdio` is already a cfg-gated alias to PosixStdio /
-        // WindowsStdio; only three variant *constructors* differ in arity
-        // between targets, so spell those per-cfg and share the rest.
-        #[cfg(not(windows))]
-        fn buffer() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Buffer
-        }
-        #[cfg(windows)]
-        fn buffer() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Buffer(create_zeroed_pipe())
-        }
-        #[cfg(not(windows))]
-        fn ipc() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Ipc
-        }
-        #[cfg(windows)]
-        fn ipc() -> SpawnOptionsStdio {
-            SpawnOptionsStdio::Ipc(create_zeroed_pipe())
-        }
-
         let result = match self {
             Self::Blob(blob) => 'brk: {
                 let fd = FdStdio::from_int(i).map(FdStdio::fd);
@@ -241,7 +209,7 @@ impl Stdio {
                             match file.pathlike {
                                 PathOrFileDescriptor::Fd(store_fd) => {
                                     if Some(store_fd) == fd {
-                                        break 'brk SpawnOptionsStdio::Inherit;
+                                        break 'brk process::Stdio::Inherit;
                                     }
 
                                     if let Some(tag) = store_fd.stdio_tag() {
@@ -263,10 +231,10 @@ impl Stdio {
                                         }
                                     }
 
-                                    break 'brk SpawnOptionsStdio::Pipe(store_fd);
+                                    break 'brk process::Stdio::Pipe(store_fd);
                                 }
                                 PathOrFileDescriptor::Path(ref path) => {
-                                    break 'brk SpawnOptionsStdio::Path(
+                                    break 'brk process::Stdio::Path(
                                         path.slice().to_vec().into_boxed_slice(),
                                     );
                                 }
@@ -279,43 +247,33 @@ impl Stdio {
                     return ResultT::Err(ToSpawnOptsError::BlobUsedAsOut);
                 }
 
-                buffer()
+                process::Stdio::Buffer
             }
-            Self::Dup2(d) => SpawnOptionsStdio::Dup2(ProcessDup2 {
+            Self::Dup2(d) => process::Stdio::Dup2(ProcessDup2 {
                 out: d.out,
                 to: d.to,
             }),
-            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => buffer(),
-            #[cfg(not(windows))]
-            Self::SocketFd => SpawnOptionsStdio::SocketFd,
-            // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
-            // to transfer), so `socket-fd` behaves identically to `pipe` there.
-            #[cfg(windows)]
-            Self::SocketFd => buffer(),
-            Self::Ipc => ipc(),
-            Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
-            #[cfg(not(windows))]
-            Self::Memfd(fd) => SpawnOptionsStdio::Pipe(*fd),
-            #[cfg(windows)]
-            Self::Memfd(_) => panic!("This should never happen"),
+            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => process::Stdio::Buffer,
+            Self::SocketFd => process::Stdio::SocketFd,
+            Self::Ipc => process::Stdio::Ipc,
+            Self::Fd(fd) => process::Stdio::Pipe(*fd),
+            Self::Memfd(fd) => process::Stdio::Pipe(*fd),
             Self::Path(pathlike) => {
-                SpawnOptionsStdio::Path(pathlike.slice().to_vec().into_boxed_slice())
+                process::Stdio::Path(pathlike.slice().to_vec().into_boxed_slice())
             }
-            Self::Inherit => SpawnOptionsStdio::Inherit,
-            Self::Ignore => SpawnOptionsStdio::Ignore,
+            Self::Inherit => process::Stdio::Inherit,
+            Self::Ignore => process::Stdio::Ignore,
         };
         ResultT::Result(result)
     }
 
     pub(crate) fn is_piped(&self) -> bool {
-        match self {
-            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
-            Self::Ipc => cfg!(windows),
-            _ => false,
-        }
+        matches!(
+            self,
+            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_)
+        )
     }
 
-    #[cfg(not(windows))]
     pub(crate) fn borrows_caller_fd(&self) -> bool {
         matches!(self, Self::Fd(_))
     }
@@ -413,6 +371,9 @@ impl Stdio {
         i: i32,
         value: JSValue,
         is_sync: bool,
+        // Set for 'overlapped': a pipe whose child end is opened for
+        // overlapped I/O on Windows, and a plain pipe elsewhere.
+        overlapped: &mut bool,
     ) -> JsResult<()> {
         if value.is_empty() {
             return Ok(());
@@ -431,8 +392,11 @@ impl Stdio {
                 *out_stdio = Stdio::Inherit;
             } else if str.eq_ascii(b"ignore") {
                 *out_stdio = Stdio::Ignore;
-            } else if str.eq_ascii(b"pipe") || str.eq_ascii(b"overlapped") {
+            } else if str.eq_ascii(b"pipe") {
                 *out_stdio = Stdio::Pipe;
+            } else if str.eq_ascii(b"overlapped") {
+                *out_stdio = Stdio::Pipe;
+                *overlapped = true;
             } else if str.eq_ascii(b"socket-fd") {
                 if i < 3 {
                     return Err(cx.global().throw_invalid_arguments(format_args!(
@@ -456,10 +420,8 @@ impl Stdio {
             }
             return Ok(());
         } else if value.is_number() {
-            // `bun.FD.fromUV(this.toInt32())` inlined here since the
-            // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
-            let fd = Fd::from_uv(value.to_int32());
-            let file_fd = fd.uv();
+            let fd = Fd::from_crt(value.to_int32());
+            let file_fd = fd.crt();
             if file_fd < 0 {
                 return Err(cx.global().throw_invalid_arguments(format_args!(
                     "file descriptor must be a positive integer"
@@ -683,16 +645,4 @@ impl Drop for Stdio {
             _ => {}
         }
     }
-}
-
-/// Allocate a zero-initialized uv.Pipe. Zero-init ensures `pipe.loop` is null
-/// for pipes that never reach `uv_pipe_init`, so `closeAndDestroy` can tell
-/// whether `uv_close` is needed.
-#[cfg(windows)]
-fn create_zeroed_pipe() -> *mut uv::Pipe {
-    // `bun.new` → heap::alloc(Box::new(..)). WindowsSpawnOptions.Stdio.{buffer,ipc}
-    // store the pipe as a raw FFI-owned `*mut uv::Pipe` so `spawn_process_windows`
-    // can transfer sole ownership into `WindowsStdioResult::Buffer` via
-    // `heap::take` without aliasing a live `Box` (which would double-free).
-    bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()))
 }

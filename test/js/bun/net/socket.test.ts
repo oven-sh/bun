@@ -1770,8 +1770,8 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
     });
   });
 
-  // libuv reports a missing pipe from the connect callback, not from
-  // uv_pipe_connect itself. On that path the pipe was never handed to the
+  // A missing pipe is reported from the connect callback, not from
+  // `Pipe::connect` itself. On that path the pipe was never handed to the
   // writer, so closing the writer reported no close, and the native context
   // (which holds a ref on the TCPSocket/TLSSocket, and for TLS the SSL_CTX)
   // stayed alive once per failed attempt.
@@ -1868,7 +1868,7 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
 // that is queued when the socket closes. A handler can close the socket and
 // then spin the event loop before it returns (`expect().resolves` blocks on
 // the promise and runs queued tasks), so the context is gone by the time the
-// libuv read callback that invoked the handler gets control back. The
+// pipe read callback that invoked the handler gets control back. The
 // callback must keep the context alive until it is done with it.
 describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop spun inside a read callback", () => {
   // `trigger` is the server handler that tears the socket down: "end" runs
@@ -1940,6 +1940,132 @@ describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop 
       exitCode: 0,
       signalCode: null,
     });
+  });
+});
+
+describe.concurrent.skipIf(!isWindows)("named-pipe listener and socket", () => {
+  const pipeName = () => `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}`;
+
+  // The name stays taken while any server instance handle is open, so stop()
+  // has to close them itself rather than when their aborted accepts complete.
+  it("stop() frees the name for a listen() in the same tick", () => {
+    const unix = pipeName();
+    const first = Bun.listen({ unix, socket: { data() {} } });
+    first.stop();
+    using second = Bun.listen({ unix, socket: { data() {} } });
+    expect(second.unix).toBe(unix);
+  });
+
+  it("stop() makes a connect() in the same tick fail with ENOENT", async () => {
+    const unix = pipeName();
+    const open = jest.fn();
+    const listener = Bun.listen({ unix, socket: { open, data() {} } });
+    listener.stop();
+    expect(await Bun.connect({ unix, socket: { data() {} } }).catch(err => err.code)).toBe("ENOENT");
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("pause() holds the peer's bytes back until resume(), every time", async () => {
+    const unix = pipeName();
+    const accepted = Promise.withResolvers<Socket>();
+    let firstConnection = true;
+    using listener = Bun.listen({
+      unix,
+      socket: {
+        open(socket) {
+          if (firstConnection) accepted.resolve(socket);
+          firstConnection = false;
+        },
+        data(socket, chunk) {
+          socket.write(chunk);
+        },
+      },
+    });
+
+    // The bytes for the paused client were written before this round trip over a
+    // second connection started, so a client that was still reading has them by now.
+    async function roundTrip() {
+      const echoed = Promise.withResolvers<string>();
+      const socket = await Bun.connect({ unix, socket: { data: (_, chunk) => echoed.resolve(chunk.toString()) } });
+      socket.write("ping");
+      expect(await echoed.promise).toBe("ping");
+      socket.end();
+    }
+
+    let received = "";
+    let gotData = Promise.withResolvers<void>();
+    const client = await Bun.connect({
+      unix,
+      socket: {
+        open(socket) {
+          socket.pause();
+        },
+        data(_, chunk) {
+          received += chunk.toString();
+          gotData.resolve();
+        },
+      },
+    });
+    try {
+      const peer = await accepted.promise;
+      for (const bytes of ["first", "second"]) {
+        peer.write(bytes);
+        await roundTrip();
+        expect(received).toBe("");
+        client.resume();
+        await gotData.promise;
+        expect(received).toBe(bytes);
+
+        received = "";
+        gotData = Promise.withResolvers<void>();
+        // The second pause() is a no-op and must not undo the first.
+        client.pause();
+        client.pause();
+      }
+    } finally {
+      client.end();
+    }
+  });
+});
+
+// A handler that waits on a promise synchronously runs a nested event loop tick
+// while the rest of the events dequeued with its own are still undelivered.
+it.concurrent("a data handler that re-enters the event loop does not lose the other sockets' events", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "socket-reentrant-tick-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // If the child died before reporting, the diff shows its raw output.
+  const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+  expect({ result, stderr, exitCode }).toEqual({
+    result: { echoedBeforeHandlerReturned: "ping", received: Array(16).fill("ab"), readFile: true },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// A reply to something written during a tick cannot have been ready when that tick looked for
+// events, so it belongs to a later tick. Code that awaits between a write and the state its reply
+// needs relies on that whenever the ticks come from a synchronous wait, which runs microtasks only
+// between ticks.
+it.concurrent("a tick delivers only what was ready when it began, also when a socket's poll is replaced", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "socket-one-look-per-tick-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+  expect({ result, stderr, exitCode }).toEqual({
+    result: { rounds: 40, repliesBeforeCheckpoint: 0 },
+    stderr: "",
+    exitCode: 0,
   });
 });
 
@@ -4515,10 +4641,10 @@ describe.concurrent("connect() failure promise settlement", () => {
 describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
   // The full victim matrix (Bun.listen/Bun.serve/node:http(s)/fetch, plain and
   // TLS) runs as test/js/bun/test/parallel/test-net-half-open-peer-reset-*.mjs;
-  // this covers the shared usockets core in bun:test form. Unfixed, epoll
-  // re-delivered end on every writable rearm, kqueue spun the writable
-  // dispatch forever, and the libuv backend stranded (the FIN consumed the
-  // only AFD event the reset could ride).
+  // this covers the shared usockets core in bun:test form. The hazards per
+  // backend: epoll re-delivers end on every writable rearm, kqueue spins the
+  // writable dispatch, and on Windows the FIN consumes the only AFD event the
+  // reset could ride.
   it("delivers end exactly once and closes after the reset", async () => {
     const issued = Promise.withResolvers<void>();
     const ended = Promise.withResolvers<void>();
@@ -5027,3 +5153,91 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
+
+// The listener takes every connection that is waiting when it is told of one, on every platform.
+it("connections that queued up while the loop was busy are all accepted in one turn of the loop", async () => {
+  using dir = tempDir("accept-backlog", {
+    "server.js": `
+      const fs = require("node:fs");
+      let accepted = 0;
+      const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open() { accepted++; }, data() {} } });
+      const clients = Bun.spawn({
+        cmd: [process.execPath, "clients.js", String(server.port), process.argv[2]],
+        stdin: "pipe",
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      // Without a turn of the loop: the clients connect, and nothing here accepts them.
+      const deadline = Date.now() + 60_000;
+      while (!fs.existsSync(process.argv[2])) {
+        if (Date.now() > deadline) {
+          console.error("gave up waiting for " + process.argv[2]);
+          process.exit(3);
+        }
+        Bun.sleepSync(1);
+      }
+      const before = accepted;
+      while (accepted === 0) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify({ before, firstSeen: accepted }));
+      clients.stdin.end();
+      await clients.exited;
+      server.stop(true);
+    `,
+    "clients.js": `
+      const net = require("node:net");
+      const fs = require("node:fs");
+      const [port, flag] = [Number(process.argv[2]), process.argv[3]];
+      const sockets = [];
+      let connected = 0;
+      for (let i = 0; i < 20; i++) {
+        const socket = net.connect(port, "127.0.0.1", () => {
+          if (++connected === 20) fs.writeFileSync(flag, "");
+        });
+        socket.on("error", () => {});
+        sockets.push(socket);
+      }
+      process.stdin.on("data", () => {});
+      process.stdin.on("end", () => process.exit(0));
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "server.js", join(String(dir), "connected")],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({
+    stdout: JSON.stringify({ before: 0, firstSeen: 20 }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(!isWindows)(
+  "pause() and end() in one tick on a socket over an inherited pipe leave the loop's count right",
+  async () => {
+    // The child's stdin is a synchronous pipe that stays silent, so its read is parked on the reader thread.
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const socket = await Bun.connect({ fd: 0, socket: { data() {}, open() {} } });
+        socket.pause();
+        socket.end();
+        // Kept alive by the loop's count alone.
+        const child = Bun.spawn({ cmd: [process.execPath, "-e", "0"], stdout: "ignore" });
+        console.log("exited", await child.exited);
+      `,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "exited 0\n", stderr: "", exitCode: 0 });
+  },
+);

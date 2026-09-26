@@ -137,16 +137,16 @@ pub mod uv_e {
     // Darwin lacks (ECHARSET / ENONET / EREMOTEIO / EUNATCH).
     macro_rules! __v {
         (CHARSET,  $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -$crate::uv_codes::$uv
         };
         (NONET,    $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -$crate::uv_codes::$uv
         };
         (REMOTEIO, $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -$crate::uv_codes::$uv
         };
         (UNATCH,   $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -$crate::uv_codes::$uv
         };
         ($i:tt,    $e:tt, $uv:tt) => {
             super::SystemErrno::$e as i32

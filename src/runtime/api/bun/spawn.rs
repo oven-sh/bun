@@ -1,12 +1,10 @@
-//! MOVE_DOWN: the `posix_spawn`(2) FFI wrappers (`Actions`, `Attr`, `spawn_z`,
-//! `wait4`) and the `bun_spawn` `Action`/`Attr` structs now live in the
-//! `bun_spawn` workspace crate (`src/spawn/posix_spawn.rs`). They were moved
-//! out of `bun_runtime` so that `bun_spawn::process` (which `bun_install` /
-//! `bun_jsc` depend on) can call them without a `bun_runtime` dependency.
+//! The `posix_spawn`(2) FFI wrappers (`Actions`, `Attr`, `spawn_z`, `wait4`)
+//! and the `bun_spawn` `Action`/`Attr` structs belong to `bun_spawn_sys`
+//! (`src/spawn_sys/posix_spawn.rs`), below `bun_spawn::process`, which
+//! `bun_install` / `bun_jsc` use without depending on `bun_runtime`.
 //!
-//! This file re-exports them for existing `crate::api::bun_spawn::*` paths and
-//! keeps the `stdio` submodule (which depends on the JSC-tier `Subprocess`
-//! type and so must stay in `bun_runtime`).
+//! This file re-exports them as `crate::api::bun_spawn::*` and holds the
+//! `stdio` submodule, which needs the JSC-tier `Subprocess` type.
 
 #![warn(unused_must_use)]
 

@@ -222,8 +222,8 @@ impl<'a> Coordinator<'a> {
                 terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
-                    // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
-                    // other than SIGQUIT/SIGTERM/SIGKILL/SIGINT.
+                    // SIGKILL → TerminateProcess; Windows has no signals other
+                    // than SIGQUIT/SIGTERM/SIGKILL/SIGINT to send (ENOSYS).
                     let _ = p.kill(9);
                 }
             }
@@ -834,8 +834,8 @@ impl<'a> Coordinator<'a> {
                 terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
-                    // SIGKILL → TerminateProcess (libuv-win ENOSYSes most
-                    // signals, so e.g. kill(1) would leave the sibling running
+                    // SIGKILL → TerminateProcess (most signals are ENOSYS on
+                    // Windows, so e.g. kill(1) would leave the sibling running
                     // past the banner); it reaps as Signaled(9) →
                     // "aborted: sibling worker panicked".
                     let _ = p.kill(9);
@@ -899,7 +899,7 @@ impl<'a> Coordinator<'a> {
         use bun_sys::windows;
         // SAFETY: Win32 FFI calls.
         unsafe {
-            let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null_mut());
+            let job = windows::CreateJobObjectW(core::ptr::null_mut(), core::ptr::null_mut());
             if job.is_null() {
                 return None;
             }

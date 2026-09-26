@@ -355,7 +355,7 @@ impl Entry {
                 let mut total: usize = 0;
                 for v in vecs {
                     debug_assert!(v.len > 0);
-                    // `uv_buf_t::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
+                    // `PlatformIoVec::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
                     total += v.len as usize;
                 }
                 debug_assert!(file_len == total);
@@ -742,12 +742,8 @@ impl RuntimeTranspilerCache {
         input_stat_size: u64,
     ) -> crate::CrateResult<Entry> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
-        // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
-        #[cfg(unix)]
-        let open_flags = sys::O::RDONLY | sys::O::NONBLOCK;
-        #[cfg(not(unix))]
-        let open_flags = sys::O::RDONLY;
-        let cache_fd = sys::open(cache_file_path, open_flags, 0)?;
+        // NONBLOCK: a FIFO must not block the open.
+        let cache_fd = sys::open(cache_file_path, sys::O::RDONLY | sys::O::NONBLOCK, 0)?;
         let file = sys::File::from_fd(cache_fd);
         // On any error, delete the cache file.
         let unlink_guard = scopeguard::guard(cache_file_path, |p| {
@@ -815,14 +811,7 @@ impl RuntimeTranspilerCache {
             if !dirname.is_empty() {
                 let dir =
                     sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
-                let dfd = dir.into_raw();
-                break 'brk match dfd.make_lib_uv_owned() {
-                    Ok(f) => f,
-                    Err(e) => {
-                        dfd.close();
-                        return Err(e.into());
-                    }
-                };
+                break 'brk dir.into_raw();
             }
 
             break 'brk Fd::cwd();

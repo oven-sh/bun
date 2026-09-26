@@ -35,6 +35,8 @@
 #pragma comment(lib, "ws2_32.lib")
 #define SETSOCKOPT_PTR_TYPE const char *
 #define LIBUS_SOCKET_ERROR INVALID_SOCKET
+/* WSAStartup, once. Anything that reaches ws2_32 without going through bsd.c calls it first. */
+void us_internal_winsock_ensure(void);
 #else /* POSIX */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE

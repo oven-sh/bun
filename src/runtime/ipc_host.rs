@@ -21,6 +21,9 @@ bun_core::define_scoped_log!(log, IPC, visible);
 // `node_cluster_binding.rs`.
 unsafe extern "C" {
     safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
+    /// `BunWindowsProcess.cpp`; negative when the parent cannot be determined.
+    #[cfg(windows)]
+    safe fn Bun__getParentProcessId() -> i32;
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -91,7 +94,8 @@ pub(crate) fn do_send(
     global_object: &JSGlobalObject,
     call_frame: &CallFrame,
     from: FromEnum,
-    peer_pid: u32,
+    // Windows: only a message that carries a handle asks who is on the other end.
+    peer_pid: impl FnOnce() -> u32,
 ) -> JsResult<JSValue> {
     let [mut message, mut handle, options_, mut callback] = call_frame.arguments_as_array::<4>();
     #[cfg(not(windows))]
@@ -262,6 +266,7 @@ pub(crate) fn do_send(
 
     #[cfg(windows)]
     if let Some(h) = &mut zig_handle {
+        let peer_pid = peer_pid();
         match attach_windows_socket_payload(global_object, message, h.fd, peer_pid)? {
             Some(hex) => {
                 h.win_export_hex = Some(hex);
@@ -369,17 +374,16 @@ fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     // `None`); the instance is heap-allocated, not embedded in `vm`.
     let ipc = get_ipc_instance(vm).map(|i| unsafe { (*i).data() });
     #[cfg(windows)]
-    let peer_pid = {
+    let peer_pid = || {
         let from_pipe = ipc.as_ref().map(|i| i.ipc_peer_pid()).unwrap_or(0);
         if from_pipe != 0 {
             from_pipe
         } else {
-            // SAFETY: trivial libuv accessor, no preconditions.
-            unsafe { bun_libuv_sys::uv_os_getppid() as u32 }
+            u32::try_from(Bun__getParentProcessId()).unwrap_or(0)
         }
     };
     #[cfg(not(windows))]
-    let peer_pid = 0;
+    let peer_pid = || 0;
     do_send(ipc, global, frame, FromEnum::Process, peer_pid)
 }
 
@@ -495,25 +499,24 @@ pub(crate) fn get_ipc_instance(
 
     vm.event_loop_mut().ensure_waker();
 
+    let instance = IPCInstance::new(IPCInstance {
+        data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
+    });
+    // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
+    let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
+    // SAFETY: as above.
+    unsafe {
+        (*send_queue).set_owner(IPC::SendQueueOwner::Instance(
+            core::ptr::NonNull::new_unchecked(instance),
+        ))
+    };
+    // SAFETY: `instance` was just boxed above and is non-null.
+    CHANNEL.set(Some(unsafe { core::ptr::NonNull::new_unchecked(instance) }));
+
     #[cfg(not(windows))]
-    let instance: *mut IPCInstance = {
+    let opened = {
         let loop_ = vm.uws_loop();
         let group: *mut bun_uws::SocketGroup = vm.rare_data().spawn_ipc_group(loop_);
-
-        let instance = IPCInstance::new(IPCInstance {
-            data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
-        });
-        // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
-        let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
-        // SAFETY: as above.
-        unsafe {
-            (*send_queue).set_owner(IPC::SendQueueOwner::Instance(
-                core::ptr::NonNull::new_unchecked(instance),
-            ))
-        };
-        // SAFETY: `instance` was just boxed above and is non-null.
-        CHANNEL.set(Some(unsafe { core::ptr::NonNull::new_unchecked(instance) }));
-
         // SAFETY: `group` is the live per-VM SocketGroup; `send_queue` is
         // the freshly-allocated SendQueue (root raw pointer, stored in the
         // socket ext slot for the socket's lifetime).
@@ -526,53 +529,38 @@ pub(crate) fn get_ipc_instance(
                 true,
             )
         };
-        let Some(socket) = socket else {
-            // SAFETY: `instance` was produced by `IPCInstance::new`
-            // (heap::alloc) above and is not yet aliased.
-            unsafe { IPCInstance::deinit(instance) };
-            CHANNEL.set(None);
-            bun_core::warn!("Unable to start IPC socket");
-            return None;
-        };
-        socket.set_timeout(0);
-
-        // SAFETY: `send_queue` is live (owned by `instance`).
-        unsafe { (*send_queue).socket.set(IPC::SocketUnion::Open(socket)) };
-
-        instance
-    };
-
-    #[cfg(windows)]
-    let instance: *mut IPCInstance = {
-        let instance = IPCInstance::new(IPCInstance {
-            data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
-        });
-        // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
-        let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
-        // SAFETY: as above.
-        unsafe {
-            (*send_queue).set_owner(IPC::SendQueueOwner::Instance(
-                core::ptr::NonNull::new_unchecked(instance),
-            ))
-        };
-        // SAFETY: `instance` was just boxed above and is non-null.
-        CHANNEL.set(Some(unsafe { core::ptr::NonNull::new_unchecked(instance) }));
-
-        // `windows_configure_client` STORES the `*mut SendQueue` in
-        // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
-        // allocation's root raw pointer.
-        // SAFETY: `send_queue` is the live SendQueue owned by `instance`.
-        if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
-            // SAFETY: `instance` was produced by `IPCInstance::new`
-            // (heap::alloc) above and is not yet aliased.
-            unsafe { IPCInstance::deinit(instance) };
-            CHANNEL.set(None);
-            bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
-            return None;
+        if let Some(socket) = socket {
+            socket.set_timeout(0);
+            // SAFETY: `send_queue` is live (owned by `instance`).
+            unsafe { (*send_queue).socket.set(IPC::SocketUnion::Open(socket)) };
         }
-
-        instance
+        socket.is_some()
     };
+    // The inherited end is whatever the parent made it.
+    // SAFETY: `send_queue` is the root pointer of the live SendQueue owned by
+    // `instance`.
+    #[cfg(windows)]
+    let opened = unsafe {
+        SendQueue::open_pipe(
+            send_queue,
+            vm.uws_loop(),
+            fd,
+            bun_io::windows::PipeOrigin::InheritedUnshared,
+        )
+    }
+    .is_ok();
+
+    if !opened {
+        // SAFETY: `instance` was produced by `IPCInstance::new` (heap::alloc)
+        // above and is not yet aliased.
+        unsafe { IPCInstance::deinit(instance) };
+        CHANNEL.set(None);
+        #[cfg(not(windows))]
+        bun_core::warn!("Unable to start IPC socket");
+        #[cfg(windows)]
+        bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
+        return None;
+    }
 
     // SAFETY: `instance` is the live boxed IPCInstance.
     unsafe { (*instance).data().write_version_packet(vm.global()) };

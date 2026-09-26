@@ -3,7 +3,8 @@
  *
  * Downloaded from nodejs.org releases. Headers-only (no libs). After
  * extraction we delete `openssl/` and `uv/` subdirs — bun uses BoringSSL
- * (not OpenSSL) and its own libuv, and the bundled headers conflict.
+ * (not OpenSSL) and its own uv headers (src/jsc/bindings/libuv), and the
+ * bundled headers conflict.
  */
 
 import { resolve } from "node:path";
@@ -24,6 +25,9 @@ export const NODEJS_ABI_VERSION = "147";
 /** V8 version reported by process.versions.v8 — must match the pinned Node.js version's. */
 export const NODEJS_V8_VERSION = "14.6.202.34-node.20";
 
+/** libuv version reported by process.versions.uv — the pinned Node.js version's deps/uv/include/uv/version.h. */
+export const NODEJS_UV_VERSION = "1.52.1";
+
 export const nodejsHeaders: Dependency = {
   name: "nodejs",
 
@@ -31,7 +35,7 @@ export const nodejsHeaders: Dependency = {
     kind: "prebuilt",
     url: `https://nodejs.org/dist/v${cfg.nodejsVersion}/node-v${cfg.nodejsVersion}-headers.tar.gz`,
     identity: cfg.nodejsVersion,
-    // Delete headers that conflict with BoringSSL / our libuv.
+    // Delete headers that conflict with BoringSSL / our uv headers.
     // Tarball top-level is `node-v<version>/` (hoisted), inside is `include/node/`.
     rmAfterExtract: ["include/node/openssl", "include/node/uv", "include/node/uv.h"],
     destDir: resolve(cfg.cacheDir, `nodejs-headers-${cfg.nodejsVersion}`),

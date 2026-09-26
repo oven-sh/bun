@@ -144,7 +144,7 @@ export type Source =
        * Paths to delete (relative to destDir) after extraction. WebKit
        * deletes `include/unicode` on macOS (conflicts with system ICU
        * headers); nodejs-headers deletes openssl/uv (conflict with
-       * BoringSSL/our libuv). Most deps won't need it.
+       * BoringSSL/our uv headers). Most deps won't need it.
        *
        * Paths, not a shell command — cross-platform via fs.rm, no quoting
        * through ninja.
@@ -255,19 +255,13 @@ export interface DirectBuild {
   codegen?: DirectCodegen;
   /**
    * Fail the build if any object of this dep still has an undefined
-   * reference to one of `symbols` (llvm-nm over the objects, once they
-   * exist). `except` lists sources, as spelled in `sources`, that may
-   * reference them. Names are matched with and without the Mach-O leading
+   * reference to one of these symbols (llvm-nm over the objects, once they
+   * exist). Names are matched with and without the Mach-O leading
    * underscore. The use so far: deps whose allocations bun routes to
    * mimalloc must not reach the C library's allocator behind its back, see
    * LIBC_ALLOCATION_SYMBOLS. Skipped when llvm-nm was not found (cfg.nm).
    */
-  forbidUndefined?: ForbidUndefined;
-}
-
-export interface ForbidUndefined {
-  symbols: readonly string[];
-  except?: readonly string[];
+  forbidUndefined?: readonly string[];
 }
 
 /**
@@ -452,7 +446,6 @@ export type DepName =
   | "libdeflate"
   | "libjpeg-turbo"
   | "libspng"
-  | "libuv"
   | "libwebp"
   | "lolhtml"
   | "lshpack"
@@ -511,7 +504,7 @@ export interface Dependency {
 
   /**
    * Whether this dep participates in the build at all. Defaults to always-on.
-   * E.g. libuv is windows-only, tinycc is disabled on Android/FreeBSD.
+   * E.g. tinycc is disabled on Android/FreeBSD.
    */
   enabled?: (cfg: Config) => boolean;
 
@@ -1699,10 +1692,8 @@ function emitDirect(
 }
 
 /**
- * The `forbidUndefined` edge: every object except the `except` sources' goes
- * in, the stamp comes out. Returns the stamp, or nothing when llvm-nm is
- * unavailable. The objects are in `spec.sources` order, which is how the
- * exceptions are mapped onto them.
+ * The `forbidUndefined` edge: every object goes in, the stamp comes out.
+ * Returns the stamp, or nothing when llvm-nm is unavailable.
  */
 function emitForbidUndefined(
   n: Ninja,
@@ -1712,17 +1703,8 @@ function emitForbidUndefined(
   objects: string[],
   buildDir: string,
 ): string[] {
-  const { symbols, except = [] } = spec.forbidUndefined!;
-  assert(symbols.length > 0, `${name}: forbidUndefined.symbols is empty`);
-  const sourcePaths = spec.sources.map(src => (typeof src === "string" ? src : src.path));
-  for (const exception of except) {
-    assert(
-      sourcePaths.includes(exception),
-      `${name}: forbidUndefined.except lists ${exception}, which is not one of its sources`,
-    );
-  }
-  const checked = objects.filter((_, i) => !except.includes(sourcePaths[i]!));
-  assert(checked.length > 0, `${name}: forbidUndefined excepts every source`);
+  const symbols = spec.forbidUndefined!;
+  assert(symbols.length > 0, `${name}: forbidUndefined is empty`);
   if (cfg.nm === undefined) return [];
 
   mkdirSync(buildDir, { recursive: true });
@@ -1730,7 +1712,7 @@ function emitForbidUndefined(
   n.build({
     outputs: [stamp],
     rule: "dep_check_undefined",
-    inputs: checked,
+    inputs: objects,
     implicitInputs: [fetchCliPath],
     vars: { name, nm: quote(cfg.nm, cfg.host.os === "windows"), symbols: symbols.join(",") },
   });

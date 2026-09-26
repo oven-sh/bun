@@ -314,9 +314,6 @@ private:
 
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
-        // ref the socket to make sure we process it entirely before it is closed
-        us_socket_ref(s);
-
         // total overhead is about 210k down to 180k
         // ~210k req/sec is the original perf with write in data
         // ~200k req/sec is with cork and formatting
@@ -330,9 +327,6 @@ private:
         bool isHalfOpenTunnel = false;
         if constexpr (IsNodeHttp) isHalfOpenTunnel = httpResponseData->isConnectRequest;
         if (us_socket_is_shut_down((us_socket_t *) s) && !isHalfOpenTunnel) {
-            /* Balance the us_socket_ref above — every other return path
-             * reaches the unref via returnedData. */
-            us_socket_unref(s);
             return s;
         }
 
@@ -349,17 +343,14 @@ private:
                 unsigned int n = (unsigned int) length < 24u - matched ? (unsigned int) length : 24u - matched;
                 bool isPrefix = memcmp(data, preface + matched, n) == 0;
                 if (isPrefix && matched + n >= 4) {
-                    us_socket_unref(s);
                     return httpContextData->onHttp2(httpContextData->http2Context, s, data, length, matched);
                 }
                 if (isPrefix) {
                     httpResponseData->h2PrefaceMatched = (unsigned char) (matched + n);
-                    us_socket_unref(s);
                     return s;
                 }
                 httpResponseData->h2PrefaceMatched = HttpResponseData<SSL>::PROTOCOL_DECIDED;
                 if (!httpContextData->allowHttp1) {
-                    us_socket_unref(s);
                     return rejectHttp1(s);
                 }
                 if (matched) {
@@ -378,7 +369,6 @@ private:
             if (httpContextData->onHttp2 && httpResponseData->h2PrefaceMatched != HttpResponseData<SSL>::PROTOCOL_DECIDED) {
                 httpResponseData->h2PrefaceMatched = HttpResponseData<SSL>::PROTOCOL_DECIDED;
                 if (!httpContextData->allowHttp1) {
-                    us_socket_unref(s);
                     return rejectHttp1(s);
                 }
             }
@@ -390,13 +380,11 @@ private:
          * parsed as HTTP and keep flowing below. */
         if constexpr (IsNodeHttp) {
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) && !httpResponseData->isConnectRequest) {
-                us_socket_unref(s);
                 return s;
             }
             /* Same for bytes that arrive behind a finished response that closes the
              * connection while its body is still draining (onWritable closes then). */
             if (httpResponseData->isDrainingBeforeClose() && !httpResponseData->isConnectRequest) [[unlikely]] {
-                us_socket_unref(s);
                 return s;
             }
         }
@@ -442,7 +430,6 @@ private:
                 if constexpr (!IsNodeHttp) {
                     httpResponseData->sawConnectionClose = true;
                 }
-                us_socket_unref((us_socket_t *) s);
                 ((AsyncSocket<SSL> *) s)->uncork();
                 ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
                 return nullptr;
@@ -728,15 +715,10 @@ private:
             if (IsNodeHttp && httpContextData->onClientError) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
-                if (!us_socket_is_closed(s)) {
-                    /* Balance the parsing ref taken at the top of onData (the
-                     * success path does this through returnedData). */
-                    us_socket_unref(s);
-                    /* JavaScript destroyed the socket earlier in this read: run the deferred close now. */
-                    if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE) {
-                        closeDestroyedNodeHttpSocket(s, httpResponseData);
-                        return s;
-                    }
+                /* JavaScript destroyed the socket earlier in this read: run the deferred close now. */
+                if (!us_socket_is_closed(s) && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE)) {
+                    closeDestroyedNodeHttpSocket(s, httpResponseData);
+                    return s;
                 }
                 /* Flush anything the 'clientError' handler wrote (uncorking a
                  * closed socket is a no-op). */
@@ -774,9 +756,6 @@ private:
 
         /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
         if (returnedData != nullptr) {
-            /* We don't want open sockets to keep the event loop alive between HTTP requests */
-            us_socket_unref((us_socket_t *) returnedData);
-
             if constexpr (IsNodeHttp) {
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED) {
                     httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
@@ -888,7 +867,7 @@ private:
                 /* onEnd deferred close for these bytes; a writable event that
                  * moves nothing (EPIPE) means the peer is gone and this would
                  * otherwise spin the writable dispatch until idle timeout.
-                 * Except on libuv, where a stale SEND completion can move
+                 * Except on Windows, where a stale SEND completion can move
                  * nothing on a healthy socket; there the kernel is asked. */
                 if (flushed == 0
                     && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
@@ -934,7 +913,7 @@ private:
                 /* Bun.serve: onEnd deferred close for a tryEnd tail (offset < total,
                  * nothing in AsyncSocketData::buffer). A retry that moves zero bytes
                  * after the peer's FIN is EPIPE; close instead of spinning. Except
-                 * on libuv, where the retry can stall while the TLS layer's spill
+                 * on Windows, where the retry can stall while the TLS layer's spill
                  * is still blocked on a healthy socket; there the kernel is asked. */
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
                     && (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
@@ -1264,24 +1243,16 @@ public:
         return options | LIBUS_LISTEN_DEFER_ACCEPT;
     }
 
-    static us_listen_socket_t *unrefListenSocket(us_listen_socket_t *socket) {
-        // we dont depend on libuv ref for keeping it alive
-        if (socket) {
-            us_socket_unref(&socket->s);
-        }
-        return socket;
-    }
-
     /* Listen to port using this HttpContext. ssl_ctx may be nullptr for plain HTTP. */
     us_listen_socket_t *listen(struct ssl_ctx_st *sslCtx, const char *host, int port, int options) {
         int error = 0;
-        return unrefListenSocket(us_socket_group_listen(&group, socketKind(), sslCtx, host, port, tcpListenOptions(options), socketExtSize(), &error));
+        return us_socket_group_listen(&group, socketKind(), sslCtx, host, port, tcpListenOptions(options), socketExtSize(), &error);
     }
 
     /* Listen to unix domain socket using this HttpContext */
     us_listen_socket_t *listen_unix(struct ssl_ctx_st *sslCtx, const char *path, size_t pathlen, int options) {
         int error = 0;
-        return unrefListenSocket(us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, options, socketExtSize(), &error));
+        return us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, options, socketExtSize(), &error);
     }
 };
 

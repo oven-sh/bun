@@ -41,10 +41,8 @@ mod darwin_spawn_np {
     }
 }
 
-// `bun_sys::posix` currently exposes only `mode_t`/`S`/`E`/`errno()` (the
-// MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
-// is self-contained; delete in favour of `bun_sys::posix::*` once that module
-// widens.
+// `bun_sys::posix` exposes only `mode_t`/`S`/`E`/`errno()`; the rest of what
+// this file needs is shimmed locally.
 use self::posix_compat::pid_t;
 #[cfg(unix)]
 use self::posix_compat::{Errno, errno};
@@ -119,10 +117,6 @@ mod posix_compat {
     }
 }
 
-// MOVE_DOWN: this file was `src/runtime/api/bun/spawn.rs`; the `stdio`
-// submodule (which depends on the JSC-tier `Subprocess`) stays in
-// `bun_runtime::api::bun_spawn` and is not declared here.
-
 pub mod bun_spawn {
     #[cfg(unix)]
     use super::*;
@@ -135,8 +129,8 @@ pub mod bun_spawn {
     pub use bun_core::spawn_ffi::{Action, FileActionType};
 
     // `Fd::native()` returns `*mut c_void` on Windows, which can't fill the
-    // `c_int` action slot. posix_spawn never runs on Windows (libuv handles
-    // spawn there), so trap instead of inventing a HANDLE→int cast.
+    // `c_int` action slot. posix_spawn never runs on Windows, so trap
+    // instead of inventing a HANDLE→int cast.
     #[cfg(unix)]
     #[inline(always)]
     fn fd_int(fd: Fd) -> fd_t {
@@ -473,7 +467,7 @@ pub mod posix_spawn {
     #[cfg(unix)]
     pub(crate) type Attr = bun_spawn::Attr;
     // No not(unix) Actions/Attr aliases: Windows goes through
-    // `process.rs::spawn_process_windows` (libuv) and never reaches these.
+    // `windows::spawn_process_windows` and never reaches these.
 
     // The #[repr(C)] request mirrors + extern decl live in `bun_core::spawn_ffi`
     // (single source of truth for bun-spawn.cpp's `bun_spawn_request_t`). The
@@ -805,7 +799,7 @@ pub mod posix_spawn {
     // Higher-tier re-exports (`Process`/`Status`/`spawn_process`/`sync`/
     // `Windows*`) live in `bun_spawn::posix_spawn::bun_spawn`, which augments
     // this module — they need event-loop types this `-sys` crate cannot name.
-    pub use crate::spawn_process::{PosixSpawnResult, Rusage};
+    pub use crate::spawn_process::{Rusage, SpawnResult};
 }
 
 #[cfg(unix)]

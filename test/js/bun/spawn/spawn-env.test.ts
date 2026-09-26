@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 test("spawn env", async () => {
   const env = {};
@@ -34,5 +34,33 @@ test("spawn env skips Symbol keys", async () => {
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe('[null,"1"]\n');
+  expect(exitCode).toBe(0);
+});
+
+// On Windows the child still gets the variables the system cannot do without
+// (spawn copies them from this process) and the ones `cmd.exe` makes up.
+test("spawn with an empty env passes nothing else on", async () => {
+  const allowed = isWindows
+    ? [
+        ...["HOMEDRIVE", "HOMEPATH", "LOGONSERVER", "PATH", "SYSTEMDRIVE", "SYSTEMROOT"],
+        ...["TEMP", "USERDOMAIN", "USERNAME", "USERPROFILE", "WINDIR"],
+        ...["COMSPEC", "PATHEXT", "PROMPT"],
+        // Windows on ARM64 adds this one.
+        "PROCESSOR_ARCHITECTURE",
+      ]
+    : [];
+  await using proc = spawn({
+    cmd: isWindows ? [process.env.COMSPEC ?? "cmd.exe", "/d", "/c", "set"] : [Bun.which("env")!],
+    env: {},
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const names = stdout
+    .split(/\r?\n/)
+    .filter(line => line.includes("="))
+    .map(line => line.slice(0, line.indexOf("=", 1)).toUpperCase());
+  expect(names.filter(name => !allowed.includes(name))).toEqual([]);
+  if (isWindows) expect(names).toContain("SYSTEMROOT");
   expect(exitCode).toBe(0);
 });

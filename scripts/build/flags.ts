@@ -13,6 +13,7 @@
 
 import { join } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
+import { NODEJS_UV_VERSION } from "./deps/nodejs-headers.ts";
 import { quote, slash } from "./shell.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
@@ -452,7 +453,6 @@ export const globalFlags: Flag[] = [
   {
     // libuv stubs use C23 anonymous parameters
     flag: "-Wno-c23-extensions",
-    when: c => c.unix,
     desc: "Allow C23 extensions (libuv stubs use anonymous parameters)",
   },
 
@@ -793,6 +793,10 @@ export const defines: Flag[] = [
   {
     flag: c => `REPORTED_NODEJS_V8_VERSION=\\"${c.nodejsV8Version}\\"`,
     desc: "V8 version string (process.versions.v8)",
+  },
+  {
+    flag: `REPORTED_NODEJS_UV_VERSION=\\"${NODEJS_UV_VERSION}\\"`,
+    desc: "libuv version string (process.versions.uv)",
   },
   {
     // Hardcoded ON — experimental flag not exposed in config
@@ -1747,10 +1751,9 @@ export function bunIncludes(cfg: Config): string[] {
 
   if (cfg.windows) {
     includes.push(join(cwd, "src/jsc/bindings/windows"));
-  } else {
-    // libuv stubs for unix (real libuv used on windows)
-    includes.push(join(cwd, "src/jsc/bindings/libuv"));
   }
+  // libuv's headers: the UV_E* numbers, and the types of the uv_* stubs and polyfills.
+  includes.push(join(cwd, "src/jsc/bindings/libuv"));
 
   // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles
   // a compat copy for this case.

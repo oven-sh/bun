@@ -317,7 +317,7 @@ for (;;) {
 // writes go through the same fd via us_socket_write. Socketpair not two
 // pipes because usockets' bsd_recv calls recv() which fails ENOTSOCK on a
 // pipe — the error was misread as EOF and onClose fired before any data.
-// Windows has no inheritable sockets: ChromeProcess.rs drives two libuv pipes instead and everything from onData on is shared.
+// Windows has no inheritable sockets: ChromeProcess.rs drives two pipes instead and everything from onData on is shared.
 //
 // pending maps CDP id → {methodTag, slot selector, weak view}. Promises
 // live in the WriteBarrier slots on JSWebView (visitChildren marks them);

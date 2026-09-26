@@ -378,6 +378,50 @@ describe("spawn()", () => {
     expect(result.trim()).toBe(tmpdir);
   });
 
+  describe.each([
+    ["does not exist", "missing"],
+    // CreateProcessW reports both cases with the same error and Node reports both as ENOENT;
+    // elsewhere this one is ENOTDIR, which spawn() throws instead of emitting.
+    ...(isWindows ? [["is a file", "file.txt"]] : []),
+  ])("a cwd that %s", (_, name) => {
+    it("fails spawn() with an 'error' event and no 'exit'", async () => {
+      using dir = tempDir("child-process-bad-cwd", { "file.txt": "x" });
+      const child = spawn(bunExe(), ["-e", "1"], { cwd: path.join(String(dir), name), env: bunEnv });
+      const events: string[] = [];
+      let error: any;
+      child.on("exit", () => events.push("exit"));
+      child.on("error", e => {
+        events.push("error");
+        error = e;
+      });
+      // Not once(): it rejects when the emitter emits 'error'.
+      await new Promise(resolve => child.on("close", resolve));
+      expect({ pid: child.pid, events, code: error?.code, syscall: error?.syscall }).toEqual({
+        pid: undefined,
+        events: ["error"],
+        code: "ENOENT",
+        syscall: "spawn " + bunExe(),
+      });
+    });
+
+    it("fails spawnSync() with result.error", () => {
+      using dir = tempDir("child-process-bad-cwd-sync", { "file.txt": "x" });
+      const result = spawnSync(bunExe(), ["-e", "1"], { cwd: path.join(String(dir), name), env: bunEnv });
+      const error: any = result.error;
+      expect({ code: error?.code, syscall: error?.syscall }).toEqual({
+        code: "ENOENT",
+        syscall: "spawnSync " + bunExe(),
+      });
+    });
+
+    it("makes Bun.spawn() and Bun.spawnSync() throw", () => {
+      using dir = tempDir("bun-spawn-bad-cwd", { "file.txt": "x" });
+      const options = { cmd: [bunExe(), "-e", "1"], cwd: path.join(String(dir), name), env: bunEnv };
+      expect(() => Bun.spawn(options)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+      expect(() => Bun.spawnSync(options)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    });
+  });
+
   it("should allow us to write to stdin", async () => {
     const result: string = await new Promise(resolve => {
       const child = spawn(bunExe(), ["-e", "process.stdin.pipe(process.stdout)"], { env: bunEnv });
@@ -652,6 +696,58 @@ describe("spawn()", () => {
       expect(status).toBe(0);
     });
 
+    // 'overlapped' is 'pipe' whose child end is opened with FILE_FLAG_OVERLAPPED.
+    describe.skipIf(!isWindows)("the child's ends of 'pipe' and 'overlapped' stdio", () => {
+      // Whether each of the child's standard handles is a synchronous file
+      // object: FileModeInformation has FILE_SYNCHRONOUS_IO_ALERT (0x10) or
+      // FILE_SYNCHRONOUS_IO_NONALERT (0x20) set for one.
+      const reportStdHandles = /* js */ `
+        const { dlopen } = require("bun:ffi");
+        const k32 = dlopen("kernel32.dll", { GetStdHandle: { args: ["u32"], returns: "ptr" } }).symbols;
+        const nt = dlopen("ntdll.dll", {
+          NtQueryInformationFile: { args: ["ptr", "ptr", "ptr", "u32", "i32"], returns: "i32" },
+        }).symbols;
+        const FileModeInformation = 16;
+        const report = [0xfffffff6, 0xfffffff5, 0xfffffff4].map(which => {
+          const mode = new Uint32Array(1);
+          const status = nt.NtQueryInformationFile(
+            k32.GetStdHandle(which),
+            new BigUint64Array(2),
+            mode,
+            mode.byteLength,
+            FileModeInformation,
+          );
+          return { status, synchronous: (mode[0] & 0x30) !== 0 };
+        });
+        console.log(JSON.stringify(report));
+      `;
+      const kinds = [
+        ["pipe", { status: 0, synchronous: true }],
+        ["overlapped", { status: 0, synchronous: false }],
+      ] as const;
+
+      it.each(kinds)("%s", async (kind, expected) => {
+        const child = spawn(bunExe(), ["-e", reportStdHandles], { env: bunEnv, stdio: kind });
+        child.stderr!.resume();
+        let out = "";
+        child.stdout!.setEncoding("utf8").on("data", chunk => (out += chunk));
+        const [code] = await once(child, "close");
+        expect(JSON.parse(out)).toEqual([expected, expected, expected]);
+        expect(code).toBe(0);
+      });
+
+      // An unfed stdin pipe of a synchronous spawn is not a pipe at all.
+      it.each(kinds)("%s with spawnSync", (kind, expected) => {
+        const { stdout, status } = spawnSync(bunExe(), ["-e", reportStdHandles], {
+          env: bunEnv,
+          stdio: kind,
+          encoding: "utf8",
+        });
+        expect(JSON.parse(stdout).slice(1)).toEqual([expected, expected]);
+        expect(status).toBe(0);
+      });
+    });
+
     describe("a socket as a stdio entry", () => {
       // Both ends of an established loopback connection: the socket `connect` returns and the one `server`
       // accepts for it.
@@ -891,7 +987,7 @@ describe("execFileSync()", () => {
 
   // chcp.com is a PE executable with a .com extension and no .exe sibling.
   // child_process always passes an env object, so the lookup runs in Bun's
-  // which, not libuv's, and it has to accept the extension as spelled. A PE
+  // which, not spawn's, and it has to accept the extension as spelled. A PE
   // named by path runs whatever its extension, as CreateProcessW only reads
   // the file header.
   it.if(isWindows)("runs a .com executable by absolute path or bare name", () => {
@@ -1217,13 +1313,12 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
 });
 
 // Windows: the extra "pipe" slots are HANDLE values that child_process wraps
-// in net.Sockets (net.connect({fd})); each socket closes its handle. The
-// Subprocess used to keep its own uv_pipe_t on the same HANDLE and close the
-// value again when it was GC'd. Windows reuses a closed handle value at once,
-// so that second close destroyed whatever owned the value by then (here the
-// files opened right after the sockets closed, in the crash reports a worker
-// thread's handle). test/js/bun/spawn/spawn.test.ts pins the exact handle
-// value down; this checks the child_process wiring on top of it.
+// in net.Sockets (net.connect({fd})); each socket closes its handle, so the
+// Subprocess must not close the value again at GC. Windows reuses a closed
+// handle value at once, and a second close destroys whatever owns the value by
+// then (here the files opened right after the sockets closed).
+// test/js/bun/spawn/spawn.test.ts pins the exact handle value down; this
+// checks the child_process wiring on top of it.
 it.if(isWindows)("extra stdio 'pipe' sockets deliver data and GC of the ChildProcess closes nothing else", async () => {
   const fixture = /* js */ `
     const { spawn } = require("node:child_process");
@@ -1472,11 +1567,8 @@ describe.skipIf(!isPosix)("stdout pipe backpressure", () => {
   });
 });
 
-// child.stdout.pause() must stop the native reader so the kernel pipe fills
-// and the child blocks on write. Previously, once the stream had flowed even
-// once the native FileReader kept the poll armed (or uv_read_start active on
-// Windows) regardless of JS state, so the child wrote its entire output into
-// the parent's heap and 'data' kept firing after #handleOnExit resumed it.
+// child.stdout.pause() must stop the native reader, also after the stream has
+// flowed, so the kernel pipe fills and the child blocks on write.
 it("child.stdout.pause() after flowing stops native reads and blocks the child", async () => {
   // 20 MB: well above any kernel socket buffer, small enough to drain fast
   // once resumed on ASAN.

@@ -13,16 +13,13 @@ use core::cell::Cell;
 #[cfg(not(windows))]
 use core::ffi::c_int;
 use core::ffi::c_void;
-#[cfg(windows)]
-use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
 use bun_core::EncodedSlice;
 use bun_core::SignalCode;
-use bun_io::Loop as AsyncLoop;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
-use bun_io::pipe_reader::PosixFlags;
+use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{
@@ -31,8 +28,6 @@ use bun_jsc::{
 };
 use bun_sys::{self as sys, Fd, FdExt};
 
-#[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 #[cfg(windows)]
 use bun_sys::windows;
 
@@ -119,8 +114,8 @@ pub(crate) struct Terminal {
     /// The slave side of the PTY (used by child processes). Unused on Windows.
     slave_fd: Cell<Fd>,
 
-    /// Windows ConPTY handle. Used for resize and passed to uv_spawn via
-    /// uv_process_options_t.pseudoconsole.
+    /// Windows ConPTY handle. Used for resize and passed to spawn as
+    /// `SpawnOptions.pseudoconsole`.
     #[cfg(windows)]
     hpcon: Cell<Option<windows::HPCON>>,
 
@@ -500,7 +495,7 @@ impl Terminal {
                         if let Some(poll) = r.handle.get_poll() {
                             // PTY behaves like a pipe, not a socket
                             r.flags
-                                .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
+                                .insert(ReaderFlags::NONBLOCKING | ReaderFlags::POLLABLE);
                             poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                         }
                     });
@@ -642,8 +637,8 @@ impl Terminal {
         self.close_internal();
     }
 
-    /// Windows: get the ConPTY handle to pass to uv_spawn via
-    /// uv_process_options_t.pseudoconsole.
+    /// Windows: get the ConPTY handle to pass to spawn as
+    /// `SpawnOptions.pseudoconsole`.
     #[cfg(windows)]
     pub(crate) fn get_pseudoconsole(&self) -> Option<windows::HPCON> {
         self.hpcon.get()
@@ -767,12 +762,10 @@ impl Terminal {
                 // detached: JoinHandle dropped without join → thread runs to completion.
             }
             Err(_) => {
-                // CreateThread failed — the process is in a bad state. Close the
-                // reader so onReaderDone fires next loop tick (releasing the reader
-                // ref) instead of hanging on an EOF that will never come. Leak hpcon;
-                // calling ClosePseudoConsole here would deadlock since reader.close()
-                // is async (uv_close) and the pipe HANDLE is still open. Conhost sees
-                // broken-pipe once libuv's deferred close runs.
+                // CreateThread failed. Close the reader so onReaderDone fires
+                // instead of waiting for an EOF that never comes. Leak hpcon:
+                // ClosePseudoConsole would block on the pipe the cancelled read
+                // still holds open.
                 let flags = self.flags.get();
                 if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
                     self.reader.with_mut(|r| r.close());
@@ -1065,12 +1058,6 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     })
 }
 
-#[cfg(windows)]
-struct PipePair {
-    pub server: windows::HANDLE,
-    pub client: windows::HANDLE,
-}
-
 /// Inbox kernel32's HPCON layout. Stable ABI since build 17763: documented as
 /// "part of an ABI shared with the rest of the operating system" in
 /// microsoft/terminal `src/winconpty/winconpty.h`.
@@ -1082,219 +1069,66 @@ struct PseudoConsole {
     h_conpty_process: windows::HANDLE,
 }
 
-/// Create one end of a pipe pair as an overlapped named pipe (server) and the
-/// other as a synchronous client. Returns both raw HANDLEs. Caller closes
-/// both on error. The "server" end is suitable for libuv (uv_pipe_open) and
-/// the "client" end is suitable for ConPTY (which uses synchronous I/O).
-#[cfg(windows)]
-fn create_overlapped_pipe_pair(
-    // PIPE_ACCESS_INBOUND: server reads, client writes.
-    // PIPE_ACCESS_OUTBOUND: server writes, client reads.
-    server_access: u32,
-) -> Result<PipePair, CreatePtyError> {
-    use windows::kernel32 as k32;
-    const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
-
-    let pid: u32 = windows::GetCurrentProcessId();
-    let counter = PIPE_SERIAL.fetch_add(1, Ordering::Relaxed);
-    let mut name_utf8_buf = [0u8; 96];
-    let name = {
-        use std::io::Write;
-        let mut cursor = &mut name_utf8_buf[..];
-        // An AppContainer may only create server pipes under `\\.\pipe\LOCAL\`;
-        // insert the segment only then so the name is unchanged outside one
-        // (matches libuv's uv__unique_pipe_name).
-        let local = if windows::is_app_container() {
-            r"LOCAL\"
-        } else {
-            ""
-        };
-        if write!(cursor, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}").is_err() {
-            return Err(CreatePtyError::OpenPtyFailed);
-        }
-        let written = 96 - cursor.len();
-        &name_utf8_buf[..written]
-    };
-    let mut name_w_buf = [0u16; 97]; // [96:0]u16
-    let name_w_len = bun_core::convert_utf8_to_utf16_in_buffer(&mut name_w_buf, name).len();
-    name_w_buf[name_w_len] = 0;
-    // SAFETY: name_w_buf[name_w_len] == 0 written above.
-    let name_w = bun_core::WStr::from_buf(&name_w_buf[..], name_w_len);
-
-    // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
-    let server = unsafe {
-        k32::CreateNamedPipeW(
-            name_w.as_ptr(),
-            server_access | windows::FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
-            windows::PIPE_TYPE_BYTE | windows::PIPE_READMODE_BYTE | windows::PIPE_WAIT,
-            1,
-            65536,
-            65536,
-            0,
-            core::ptr::null_mut(),
-        )
-    };
-    if server == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
-    let server_guard = scopeguard::guard(server, |h| unsafe {
-        // SAFETY: h is a valid open HANDLE on the error path.
-        let _ = windows::CloseHandle(h);
-    });
-
-    let client_access: u32 = if server_access == windows::PIPE_ACCESS_INBOUND {
-        windows::GENERIC_WRITE
-    } else {
-        windows::GENERIC_READ
-    };
-
-    // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
-    let client = unsafe {
-        k32::CreateFileW(
-            name_w.as_ptr(),
-            client_access,
-            0,
-            core::ptr::null_mut(),
-            windows::OPEN_EXISTING,
-            0,
-            core::ptr::null_mut(),
-        )
-    };
-    if client == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
-
-    let server = scopeguard::ScopeGuard::into_inner(server_guard);
-    Ok(PipePair { server, client })
-}
-
-#[cfg(windows)]
-static PIPE_SERIAL: AtomicU32 = AtomicU32::new(0);
-
 #[cfg(windows)]
 fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
-    // Track ownership explicitly: handles are nulled out as they are closed or
-    // transferred so the errdefer cleanup never double-closes.
-    let mut out_server: Option<windows::HANDLE> = None;
-    let mut out_client: Option<windows::HANDLE> = None;
-    let mut in_server: Option<windows::HANDLE> = None;
-    let mut in_client: Option<windows::HANDLE> = None;
-    let mut hpcon: Option<windows::HPCON> = None;
+    use bun_spawn_sys::windows::InheritableHandles;
+    use bun_spawn_sys::windows::stdio::{ChildPipe, create_pipe_pair};
 
-    // errdefer block: scopeguard captures &mut to all of the above.
-    // Cleanup is inlined at each early-return point (a single drop-time
-    // closure reading the Option cells would require interior mutability);
-    // it must run on every `return Err`.
-    macro_rules! cleanup {
-        () => {
-            // SAFETY: every Some(h) is a valid open Win32 handle still owned by
-            // this fn (not yet transferred); ClosePseudoConsole/CloseHandle are
-            // safe on those values.
-            unsafe {
-                if let Some(h) = hpcon {
-                    windows::ClosePseudoConsole(h);
-                }
-                if let Some(h) = out_server {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = out_client {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = in_server {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = in_client {
-                    let _ = windows::CloseHandle(h);
-                }
-            }
-        };
-    }
+    let close = |handles: [windows::HANDLE; 2]| {
+        for handle in handles {
+            // SAFETY: both are open handles this function still owns.
+            let _ = unsafe { windows::CloseHandle(handle) };
+        }
+    };
 
-    // Output pipe: ConPTY writes (client), we read (overlapped server).
-    {
-        let pair = match create_overlapped_pipe_pair(windows::PIPE_ACCESS_INBOUND) {
-            Ok(p) => p,
-            Err(e) => {
-                cleanup!();
-                return Err(e);
-            }
-        };
-        out_server = Some(pair.server);
-        out_client = Some(pair.client);
-    }
-
-    // Input pipe: we write (overlapped server), ConPTY reads (client).
-    {
-        let pair = match create_overlapped_pipe_pair(windows::PIPE_ACCESS_OUTBOUND) {
-            Ok(p) => p,
-            Err(e) => {
-                cleanup!();
-                return Err(e);
-            }
-        };
-        in_server = Some(pair.server);
-        in_client = Some(pair.client);
-    }
+    // The pseudoconsole's ends are synchronous, ours are overlapped.
+    // Output: the pseudoconsole writes, we read.
+    let out = create_pipe_pair(ChildPipe {
+        readable: false,
+        writable: true,
+        overlapped: false,
+    })
+    .map_err(|_| CreatePtyError::OpenPtyFailed)?;
+    // Input: we write, the pseudoconsole reads.
+    let input = match create_pipe_pair(ChildPipe {
+        readable: true,
+        writable: false,
+        overlapped: false,
+    }) {
+        Ok(pair) => pair,
+        Err(_) => {
+            close([out.parent, out.child]);
+            return Err(CreatePtyError::OpenPtyFailed);
+        }
+    };
 
     let size = windows::COORD {
         X: clamp_to_coord(cols),
         Y: clamp_to_coord(rows),
     };
-    {
-        let mut pc: windows::HPCON = core::ptr::null_mut();
-        // SAFETY: in_client/out_client are valid open HANDLEs; pc is a valid out-ptr.
-        if unsafe {
-            windows::CreatePseudoConsole(size, in_client.unwrap(), out_client.unwrap(), 0, &mut pc)
-        } < 0
-        {
-            cleanup!();
-            return Err(CreatePtyError::OpenPtyFailed);
-        }
-        hpcon = Some(pc);
-    }
-
-    // ConPTY duplicated the client handles internally; close our copies.
-    // SAFETY: in_client/out_client are valid open HANDLEs.
-    unsafe {
-        let _ = windows::CloseHandle(in_client.take().unwrap());
-        let _ = windows::CloseHandle(out_client.take().unwrap());
-    }
-
-    // Wrap server (overlapped) ends as libuv-owned FDs so they can be passed
-    // to BufferedReader/StreamingWriter.start() which calls uv_pipe_open.
-    // Do not .take() until after success — on Err the cleanup! must still see
-    // Some(h) so the HANDLE isn't leaked; clear `out_server` only after the
-    // fallible call succeeds.
-    let read_fd = match Fd::from_system(out_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => {
-            out_server = None;
-            fd
-        }
-        Err(_) => {
-            cleanup!();
-            return Err(CreatePtyError::DupFailed);
-        }
+    let mut hpcon: windows::HPCON = core::ptr::null_mut();
+    let created = {
+        // `CreatePseudoConsole` hands conhost the pipes through inheritable
+        // handles, which exist in this process for the length of the call.
+        let _inheritable = InheritableHandles::lock();
+        // SAFETY: both ends are valid open HANDLEs; `hpcon` is a valid out-ptr.
+        let result =
+            unsafe { windows::CreatePseudoConsole(size, input.child, out.child, 0, &mut hpcon) };
+        result >= 0
     };
-    // errdefer read_fd.close()
-    let read_fd_guard = scopeguard::guard(read_fd, |fd| fd.close());
-
-    let write_fd = match Fd::from_system(in_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => fd,
-        Err(_) => {
-            cleanup!();
-            return Err(CreatePtyError::DupFailed);
-        }
-    };
-
-    let result_hpcon = hpcon.take().unwrap();
-    let read_fd = scopeguard::ScopeGuard::into_inner(read_fd_guard);
+    // The pseudoconsole has its own duplicates.
+    close([input.child, out.child]);
+    if !created {
+        close([input.parent, out.parent]);
+        return Err(CreatePtyError::OpenPtyFailed);
+    }
 
     Ok(PtyResult {
         master: Fd::INVALID,
-        read_fd,
-        write_fd,
+        read_fd: Fd::from_system(out.parent),
+        write_fd: Fd::from_system(input.parent),
         slave: Fd::INVALID,
-        hpcon: result_hpcon,
+        hpcon,
     })
 }
 
@@ -1984,17 +1818,6 @@ impl Terminal {
         true // Continue reading
     }
 
-    fn loop_(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            self.event_loop_handle.uv_loop()
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop_handle.r#loop().cast()
-        }
-    }
-
     pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
@@ -2038,10 +1861,7 @@ impl BufferedReaderParent for Terminal {
         Self::from_parent_ptr(this).on_reader_error(&err);
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
-        // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
-        // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper.
-        Self::from_parent_ptr(this).loop_().cast()
+        Self::from_parent_ptr(this).event_loop_handle.r#loop()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         Self::from_parent_ptr(this)
@@ -2080,9 +1900,9 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
-        unsafe { (*this).event_loop_handle.uv_loop() }
+        unsafe { (*this).event_loop_handle.r#loop() }
     }
     unsafe fn ref_(this: *mut Self) {
         // SAFETY: see loop_. Intrusive refcount bump via raw pointer — do NOT

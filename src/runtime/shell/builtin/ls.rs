@@ -319,15 +319,13 @@ impl OutputTaskVTable for Ls {
                 exec.output_queue.push_back(child);
             }
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
+            return Some(Builtin::of_mut(interp, cmd).stdout.enqueue_owned(
+                childptr,
+                output.take(),
+                safeguard,
+            ));
         }
-        let buf = output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, output.slice());
         None
     }
     fn on_write_out(interp: &Interpreter, cmd: NodeId) {

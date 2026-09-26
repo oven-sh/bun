@@ -1,7 +1,5 @@
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(target_os = "macos")]
 use core::ffi::c_int;
-#[cfg(windows)]
-use core::ffi::c_void;
 
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
 // bun_core. This file adds the syscall-touching surface as an extension trait.
@@ -20,12 +18,6 @@ bun_core::define_scoped_log!(log, SYS, visible);
 pub enum ErrorCase {
     CloseOnFail,
     LeakFdOnFail,
-}
-
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum MakeLibUvOwnedError {
-    #[error("SystemFdQuotaExceeded")]
-    SystemFdQuotaExceeded,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -56,9 +48,10 @@ pub trait FdExt: Copy + Sized {
     /// Use fd API to implement `node:fs` close: stdio must actually close and
     /// EBADF must surface to the caller. Consider fd the raw close method.
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error>;
-    /// Assumes given a valid file descriptor. If error, the handle has not been closed.
-    fn make_lib_uv_owned(self) -> Result<Fd, MakeLibUvOwnedError>;
-    fn make_lib_uv_owned_for_syscall(
+    /// Give a HANDLE a slot in the C runtime's fd table, for an fd that JS
+    /// gets to see. `EMFILE` when the table is full; `error_case` says whether
+    /// the HANDLE is closed then.
+    fn make_crt_owned_for_syscall(
         self,
         syscall_tag: sys::Tag,
         error_case: ErrorCase,
@@ -145,8 +138,7 @@ impl FdExt for Fd {
             }
             #[cfg(windows)]
             {
-                use sys::ReturnCodeExt as _;
-                use sys::windows::{NTSTATUS, libuv as uv};
+                use sys::windows::NTSTATUS;
                 match self.decode_windows() {
                     // It decodes to ntdll's handle; `close(AT_FDCWD)` is EBADF too.
                     _ if self == Fd::cwd() => Some(sys::Error {
@@ -155,31 +147,24 @@ impl FdExt for Fd {
                         fd: self,
                         ..Default::default()
                     }),
-                    DecodeWindows::Uv(file_number) => {
-                        let mut req = uv::fs_t::uninitialized();
-                        // SAFETY: synchronous libuv fs call (cb = None); req lives on the
-                        // stack for the duration of the call.
-                        let rc = unsafe {
-                            uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
-                        };
-                        // fs_t has no Drop impl, so cleanup
-                        // must be explicit (uv_fs_req_cleanup).
-                        req.deinit();
-                        rc.to_error(sys::Tag::close).map(|e| e.with_fd(self))
-                    }
-                    DecodeWindows::Windows(handle) => {
-                        unsafe extern "system" {
-                            // safe: by-value `HANDLE` only; bad/stale handle →
-                            // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX
-                            // `close(fd)` → `EBADF`, which is `safe fn` in
-                            // `safe_libc`).
-                            safe fn NtClose(Handle: bun_windows_sys::HANDLE) -> NTSTATUS;
-                        }
-                        match NtClose(handle) {
-                            NTSTATUS::SUCCESS => None,
-                            rc => Some(sys::Error::new(rc, sys::Tag::CloseHandle).with_fd(self)),
+                    // `_close` also closes the HANDLE the CRT fd owns. The
+                    // CRT's fds 0-2 stay open (and report success), as in Node.
+                    DecodeWindows::Crt(file_number) => {
+                        if file_number > 2 && bun_core::fd::crt_close(file_number) == -1 {
+                            Some(sys::Error {
+                                errno: sys::E::EBADF as _,
+                                syscall: sys::Tag::close,
+                                fd: self,
+                                ..Default::default()
+                            })
+                        } else {
+                            None
                         }
                     }
+                    DecodeWindows::Windows(handle) => match bun_windows_sys::NtClose(handle) {
+                        NTSTATUS::SUCCESS => None,
+                        rc => Some(sys::Error::new(rc, sys::Tag::CloseHandle).with_fd(self)),
+                    },
                 }
             }
         };
@@ -214,25 +199,7 @@ impl FdExt for Fd {
         result
     }
 
-    fn make_lib_uv_owned(self) -> Result<Fd, MakeLibUvOwnedError> {
-        debug_assert!(self.is_valid());
-        #[cfg(not(windows))]
-        {
-            Ok(self)
-        }
-        #[cfg(windows)]
-        {
-            match self.kind() {
-                FdKind::System => {
-                    let n = uv_open_osfhandle(self.native())?;
-                    Ok(Fd::from_uv(n))
-                }
-                FdKind::Uv => Ok(self),
-            }
-        }
-    }
-
-    fn make_lib_uv_owned_for_syscall(
+    fn make_crt_owned_for_syscall(
         self,
         syscall_tag: sys::Tag,
         error_case: ErrorCase,
@@ -244,9 +211,15 @@ impl FdExt for Fd {
         }
         #[cfg(windows)]
         {
-            match self.make_lib_uv_owned() {
-                Ok(fd) => Ok(fd),
-                Err(MakeLibUvOwnedError::SystemFdQuotaExceeded) => {
+            debug_assert!(self.is_valid());
+            match self.kind() {
+                FdKind::Crt => Ok(self),
+                FdKind::System => {
+                    let n = bun_core::fd::crt_open_osfhandle(self.native());
+                    debug_assert!(n >= -1);
+                    if n != -1 {
+                        return Ok(Fd::from_crt(n));
+                    }
                     if matches!(error_case, ErrorCase::CloseOnFail) {
                         self.close();
                     }
@@ -271,7 +244,7 @@ impl FdExt for Fd {
     }
 }
 
-// `fromJS` / `fromJSValidated` / `toJS` / `toJSWithoutMakingLibUVOwned` are
+// `fromJS` / `fromJSValidated` / `toJS` / `toJSWithoutMakingCrtOwned` are
 // `*_jsc` aliases — deleted per PORTING.md; they live as extension-trait
 // methods in `bun_sys_jsc`.
 
@@ -293,7 +266,7 @@ impl FdExt for Fd {
 // bun.sys.File.
 
 // ──────────────────────────────────────────────────────────────────────────
-// Platform helpers (Windows libuv / macOS close_nocancel).
+// Platform helpers (macOS close_nocancel).
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
@@ -301,16 +274,6 @@ unsafe extern "C" {
     // By-value `c_int` only; bad fd → `EBADF`, no UB.
     #[link_name = "close$NOCANCEL"]
     safe fn close_nocancel(fd: c_int) -> c_int;
-}
-
-#[cfg(windows)]
-fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
-    let out = bun_core::fd::uv_open_osfhandle(in_);
-    debug_assert!(out >= -1);
-    if out == -1 {
-        return Err(MakeLibUvOwnedError::SystemFdQuotaExceeded);
-    }
-    Ok(out)
 }
 
 // fd → path bodies moved down to `bun_core::fd_path_raw[_w]` (libc/kernel32-

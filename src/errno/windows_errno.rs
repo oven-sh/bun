@@ -6,11 +6,11 @@
 
 use core::ffi::c_int;
 
-// `uv::UV_E*` constants come from `bun_libuv_sys` (leaf);
+// `uv::UV_E*` constants come from `crate::uv_codes`;
 // `Win32Error` / `NTSTATUS` / the NTSTATUS→errno mapper live locally in this
 // module (their only external use is via `SystemErrno::init`, defined here).
 pub use self::windows::{NTSTATUS, Win32Error, Win32ErrorExt};
-use bun_libuv_sys as uv;
+use crate::uv_codes as uv;
 
 // ──────────────────────────────────────────────────────────────────────────
 // UV_* errno X-macro
@@ -18,7 +18,7 @@ use bun_libuv_sys as uv;
 // Single source of truth for the 86 UV_* variants that form the tail of BOTH
 // `enum E` and `enum SystemErrno`. Both enum tails are
 // driven from this one list so they cannot drift. (The UV_*→E* fold-down
-// lives in `bun_libuv_sys::uv_err_to_e_discriminant`.)
+// lives in `uv_codes::uv_err_to_e_discriminant`.)
 //
 // Entry shape:
 //   [UV_X => EX]   — UV_X has a non-UV_ counterpart `SystemErrno::EX`
@@ -541,8 +541,8 @@ pub enum SystemErrno {
 /// Type-dispatch shim for `SystemErrno::init`.
 /// Covers every concrete type the codebase actually passes — `i64`
 /// (POSIX-shaped shared call sites), `u32`/`DWORD` (a Win32/WSA code carried
-/// as an integer), and `c_int` (`Bun__errnoName`, which may receive a libuv
-/// code). A typed `Win32Error` uses `Win32ErrorExt` instead.
+/// as an integer), and `c_int` (`Bun__errnoName`, which may receive a negative
+/// `UV_E*` number). A typed `Win32Error` uses `Win32ErrorExt` instead.
 pub trait SystemErrnoInit {
     fn into_system_errno(self) -> Option<SystemErrno>;
 }
@@ -647,7 +647,7 @@ impl SystemErrno {
     pub(crate) fn init_win32_error(code: Win32Error) -> Option<SystemErrno> {
         use Win32Error as W;
         Some(match code {
-            W::NOACCESS => SystemErrno::EACCES,
+            W::NOACCESS => SystemErrno::EFAULT,
             W::WSAEACCES => SystemErrno::EACCES,
             W::ELEVATION_REQUIRED => SystemErrno::EACCES,
             W::CANT_ACCESS_FILE => SystemErrno::EACCES,
@@ -660,6 +660,7 @@ impl SystemErrno {
             W::INVALID_FLAGS => SystemErrno::EBADF,
             W::INVALID_HANDLE => SystemErrno::EBADF,
             W::LOCK_VIOLATION => SystemErrno::EBUSY,
+            W::DELETE_PENDING => SystemErrno::EBUSY,
             W::PIPE_BUSY => SystemErrno::EBUSY,
             W::SHARING_VIOLATION => SystemErrno::EBUSY,
             W::OPERATION_ABORTED => SystemErrno::ECANCELED,
@@ -673,7 +674,7 @@ impl SystemErrno {
             W::WSAECONNRESET => SystemErrno::ECONNRESET,
             W::ALREADY_EXISTS => SystemErrno::EEXIST,
             W::FILE_EXISTS => SystemErrno::EEXIST,
-            W::BUFFER_OVERFLOW => SystemErrno::EFAULT,
+            W::BUFFER_OVERFLOW => SystemErrno::ENAMETOOLONG,
             W::WSAEFAULT => SystemErrno::EFAULT,
             W::HOST_UNREACHABLE => SystemErrno::EHOSTUNREACH,
             W::WSAEHOSTUNREACH => SystemErrno::EHOSTUNREACH,
@@ -709,7 +710,7 @@ impl SystemErrno {
             W::WSAENETUNREACH => SystemErrno::ENETUNREACH,
             W::WSAENOBUFS => SystemErrno::ENOBUFS,
             W::BAD_PATHNAME => SystemErrno::ENOENT,
-            W::DIRECTORY => SystemErrno::ENOTDIR,
+            W::DIRECTORY => SystemErrno::ENOENT,
             W::ENVVAR_NOT_FOUND => SystemErrno::ENOENT,
             W::FILE_NOT_FOUND => SystemErrno::ENOENT,
             W::INVALID_NAME => SystemErrno::ENOENT,
@@ -732,11 +733,11 @@ impl SystemErrno {
             W::WSAENOTSOCK => SystemErrno::ENOTSOCK,
             W::NOT_SUPPORTED => SystemErrno::ENOTSUP,
             W::WSAEOPNOTSUPP => SystemErrno::ENOTSUP,
-            W::BROKEN_PIPE => SystemErrno::EPIPE,
+            W::BROKEN_PIPE => SystemErrno::EOF,
             W::ACCESS_DENIED => SystemErrno::EPERM,
             W::PRIVILEGE_NOT_HELD => SystemErrno::EPERM,
             W::BAD_PIPE => SystemErrno::EPIPE,
-            W::NO_DATA => SystemErrno::EPIPE,
+            W::NO_DATA => SystemErrno::EAGAIN,
             W::PIPE_NOT_CONNECTED => SystemErrno::EPIPE,
             W::WSAESHUTDOWN => SystemErrno::EPIPE,
             W::WSAEPROTONOSUPPORT => SystemErrno::EPROTONOSUPPORT,
@@ -747,21 +748,35 @@ impl SystemErrno {
             W::INVALID_FUNCTION => SystemErrno::EISDIR,
             W::META_EXPANSION_TOO_LONG => SystemErrno::E2BIG,
             W::WSAESOCKTNOSUPPORT => SystemErrno::ESOCKTNOSUPPORT,
-            W::DELETE_PENDING => SystemErrno::EBUSY,
             W::BAD_EXE_FORMAT => SystemErrno::EFTYPE,
             _ => return None,
         })
     }
 }
 
-/// A negative libuv return code → `E`; a code libuv does not define is `UNKNOWN`.
+/// A Win32 error code → the negative `UV_E*` number Node reports for it
+/// (`UV_UNKNOWN` when the table has no row). A value that is already `<= 0`
+/// is returned as is.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__translateWin32ErrorToUV(code: u32) -> c_int {
+    if code as c_int <= 0 {
+        return code as c_int;
+    }
+    let Ok(code) = u16::try_from(code) else {
+        return uv::UV_UNKNOWN;
+    };
+    let errno = Win32Error(code).to_system_errno();
+    uv::e_discriminant_to_uv(errno as u16).unwrap_or(uv::UV_UNKNOWN)
+}
+
+/// A negative `UV_E*` number → `E`; an unlisted number is `UNKNOWN`.
 pub fn translate_uv_error_to_e(code: c_int) -> E {
     uv::uv_err_to_e_discriminant(code)
         .and_then(E::try_from_raw)
         .unwrap_or(E::UNKNOWN)
 }
 
-// Thin adapter over the canonical row table in `bun_libuv_sys::uv_err_to_e_discriminant`.
+// Thin adapter over the canonical row table in `uv_codes::uv_err_to_e_discriminant`.
 #[inline]
 fn uv_code_to_system_errno(mag: u16) -> Option<SystemErrno> {
     let d = uv::uv_err_to_e_discriminant(-c_int::from(mag))?;
@@ -781,17 +796,14 @@ pub mod uv_e {
     // libuv-synthetic `-UV_E*` constant.
     macro_rules! __v {
         ($i:tt, $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -$crate::uv_codes::$uv
         };
     }
     crate::__uv_e_rows!(__v);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `windows` — Win32Error / NTSTATUS / kernel32 surface moved DOWN from
-// `bun_sys::windows` (cycle-break per PORTING.md §Dep-cycle fixes). Only the
-// subset referenced by `SystemErrno::init` / `last_error` is mirrored; the full
-// 1100-variant table stays in `bun_sys::windows` and re-exports this newtype.
+// `windows` — `Win32Error` / `NTSTATUS` mappings that need `SystemErrno`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
     use super::{E, SystemErrno};

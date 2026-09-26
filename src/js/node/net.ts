@@ -2109,6 +2109,7 @@ Socket.prototype.connect = function connect(...args) {
         data: this,
         fd: fd,
         ...(options.fdIsRawSocket === true ? { fdIsRawSocket: true } : {}),
+        ...(options.fdIsSpawnedPipe === true ? { fdIsSpawnedPipe: true } : {}),
         socket: SocketHandlers,
         // Always half-open natively; see kConnect.
         allowHalfOpen: true,

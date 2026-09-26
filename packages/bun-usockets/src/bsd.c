@@ -58,6 +58,7 @@ static void init_debug_logging() {
 #include <fcntl.h>
 #include <errno.h>
 #else /* _WIN32 */
+#include <mswsock.h>
 #include <mstcpip.h>
 #endif
 
@@ -66,10 +67,25 @@ extern int Bun__doesMacOSVersionSupportSendRecvMsgX();
 #endif
 
 #if defined(_WIN32)
-/* libuv initializes Winsock on first use; every entry point below that creates
+/* Winsock is initialized on first use (WSAStartup costs about a millisecond,
+ * and not every process opens a socket); every entry point below that creates
  * a socket or resolves an address makes sure that has happened first. */
-extern void uv__winsock_ensure(void);
-#define bsd_winsock_ensure() uv__winsock_ensure()
+static BOOL CALLBACK bsd_winsock_init(PINIT_ONCE once, PVOID param, PVOID *context) {
+    (void) once;
+    (void) param;
+    (void) context;
+    WSADATA wsa_data;
+    /* Tried once: where it fails (safe mode without networking), every Winsock
+     * call reports WSANOTINITIALISED, which is the error to show. */
+    WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    return TRUE;
+}
+
+void us_internal_winsock_ensure(void) {
+    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+    InitOnceExecuteOnce(&once, bsd_winsock_init, NULL, NULL);
+}
+#define bsd_winsock_ensure() us_internal_winsock_ensure()
 #else
 #define bsd_winsock_ensure() ((void)0)
 #endif
@@ -327,7 +343,7 @@ LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd) {
 static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
 #if _WIN32
     if (fd != LIBUS_SOCKET_ERROR) {
-        // libuv will set non-blocking, but only on poll init!
+        // us_poll_start_rc sets non-blocking, but only on poll init!
         // we need it to be set on connect as well
         DWORD yes = 1;
         ioctlsocket(fd, FIONBIO, &yes);
@@ -339,7 +355,7 @@ static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd)
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
-/* Libuv will set windows sockets as non-blocking */
+/* us_poll_start_rc sets windows sockets as non-blocking */
 #ifndef _WIN32
     if (LIKELY(fd != LIBUS_SOCKET_ERROR)) {
         int flags = fcntl(fd, F_GETFL, 0);
@@ -1239,11 +1255,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err) {
     bsd_winsock_ensure();
 #ifdef _WIN32
     SOCKET s = WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO,
-                          (WSAPROTOCOL_INFOW *) info, 0, WSA_FLAG_OVERLAPPED);
+                          (WSAPROTOCOL_INFOW *) info, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
     if (s == INVALID_SOCKET) {
         *err = WSAGetLastError();
         return LIBUS_SOCKET_ERROR;
     }
+    /* The handle was put into this process by the sender's WSADuplicateSocketW,
+     * inheritable, and the flag above does not change one that exists. */
+    SetHandleInformation((HANDLE) s, HANDLE_FLAG_INHERIT, 0);
     return s;
 #else
     (void) info;

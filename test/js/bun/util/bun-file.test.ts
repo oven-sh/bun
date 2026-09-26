@@ -155,3 +155,58 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   });
   expect(exitCode).toBe(0);
 });
+
+// A read that is still pending when the module has finished evaluating is all that holds the
+// process open: `main()` without a top-level await, the usual shape of a CLI entry point.
+test("a pending Bun.file() read that rejects keeps the process alive until it settles", async () => {
+  using dir = tempDir("bun-file-pending-rejection", {
+    "main.js": `(async () => { try { await Bun.file("missing.txt").text(); } catch (e) { console.log("caught", e.code); } console.log("DONE"); })();`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "caught ENOENT\nDONE\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+test.each(["pipe", "file"] as const)(
+  "a pending Bun.stdin.text() keeps the process alive until its %s ends",
+  async kind => {
+    using dir = tempDir("bun-stdin-pending-read", {
+      "main.js": `(async () => { console.log("read:", JSON.stringify(await Bun.stdin.text())); })(); console.error("evaluated");`,
+      "in.txt": "from a file\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: kind === "pipe" ? "pipe" : Bun.file(join(String(dir), "in.txt")),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderrReader = proc.stderr.getReader();
+    let stderr = "";
+    const decoder = new TextDecoder();
+    // The module has been evaluated: from here the read is the only thing the child is waiting for.
+    while (!stderr.includes("evaluated")) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+    if (kind === "pipe") {
+      proc.stdin!.write("from a pipe\n");
+      await proc.stdin!.end();
+    }
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: `read: ${JSON.stringify(`from a ${kind}\n`)}\n`,
+      stderr: "evaluated\n",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

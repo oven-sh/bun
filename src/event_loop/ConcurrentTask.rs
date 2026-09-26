@@ -72,11 +72,8 @@ pub mod task_tag {
         BundleV2PluginLoadDeferred, // bun.bundle_v2.Load (`.defer()` notice to the bundle's loop)
         BundleV2ParseTaskResult,  // bun.bundle_v2.ParseTask.Result
         ChromePipeEvent,
-        CopyFileWindowsMkdirp,
-        WriteFileWindowsMkdirp,
         DnsErrorDeferred,
         ShellYesTask,             // shell.Interpreter.Builtin.Yes.YesTask
-        Close,
         CppTask,
         DuplexUpgradeContext,
         FetchTasklet,
@@ -84,7 +81,6 @@ pub mod task_tag {
         FetchTaskletPromiseSettle,
         FetchTaskletRequestDrain,
         FSWatchTask,
-        GetAddrInfoLibuvComplete,
         GraphContextStopAgain,
         GraphContextStopAndFree,
         DeadContextStopAgain,
@@ -100,13 +96,10 @@ pub mod task_tag {
         NativeBrotli,
         NativeZlib,
         NativeZstd,
-        Open,
         PollPendingModulesTask,
         PosixSignalTask,
         MemoryPressureTask,
         ProcessWaiterThreadTask,
-        Read,
-        Readv,
         FlushPendingFileSinkTask,
         RunTestsTask,
         RuntimeTranspilerStore,
@@ -132,7 +125,6 @@ pub mod task_tag {
         ShellRmDirTask,
         ShellRmTask,
         ShellTouchTask,
-        StatFS,
         StatWatcherTimerUpdate,
         StatWatcherHop,
         AsyncCpTask,
@@ -142,8 +134,6 @@ pub mod task_tag {
         ValkeyDeferredClose,
         ValkeyDeferredFailure,
         WindowsNamedPipeContext,
-        Write,
-        Writev,
     }
 }
 

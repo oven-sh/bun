@@ -8,17 +8,14 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::{ArrayHashMap, HiveArray};
-#[cfg(not(windows))]
 use bun_core::Output;
 use bun_core::{self as bun, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
-#[cfg(not(windows))]
 use bun_dns::ResultList as GetAddrInfoResultList;
 use bun_dns::{
     self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
     Options as GetAddrInfoOptions, ResultAny as GetAddrInfoResultAny,
 };
-#[cfg(not(windows))]
 use bun_io::FilePoll;
 use bun_io::{self as Async, KeepAlive};
 use bun_jsc::bun_string_jsc;
@@ -28,9 +25,6 @@ use bun_jsc::{
     SystemError, host_fn,
 };
 use bun_ptr::RefPtr;
-#[cfg(windows)]
-use bun_sys::windows::libuv;
-#[cfg(not(windows))]
 use bun_sys::{self as sys};
 use bun_uws::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
@@ -42,8 +36,8 @@ use bun_cares_sys::c_ares_draft as c_ares;
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
 // the MSVC target; route through a single `netc` shim so call sites stay
-// target-agnostic. Windows values come from ws2def.h via the libuv-sys mirror
-// (layout-identical: `ADDRINFOA`, 128-byte 8-aligned `sockaddr_storage`).
+// target-agnostic. Windows values come from ws2def.h (`ADDRINFOA`, 128-byte
+// 8-aligned `sockaddr_storage`).
 #[cfg(not(windows))]
 pub(crate) mod netc {
     pub(crate) use bun_dns::AI_ADDRCONFIG;
@@ -54,12 +48,12 @@ pub(crate) mod netc {
 }
 #[cfg(windows)]
 pub(crate) mod netc {
-    pub(crate) use bun_libuv_sys::{
-        addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
+    pub(crate) use bun_sys::windows::ws2_32::{
+        AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM, addrinfo, sockaddr, sockaddr_in, sockaddr_in6,
+        sockaddr_storage,
     };
-    pub(crate) use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM};
-    /// The libuv spelling: `c_ares::Error::init_eai` reads UV_EAI_* codes on Windows.
-    pub(crate) const EAI_NONAME: core::ffi::c_int = bun_libuv_sys::UV_EAI_NONAME;
+    /// `c_ares::Error::init_eai` reads `UV_EAI_*` codes on Windows.
+    pub(crate) const EAI_NONAME: core::ffi::c_int = bun_errno::uv_codes::UV_EAI_NONAME;
 }
 type SockaddrStorage = netc::sockaddr_storage;
 type AddrInfo = netc::addrinfo;
@@ -96,10 +90,9 @@ unsafe impl<T> Send for SendPtr<T> {}
 /// loop, so the global `Js` ctx is the correct erasure here.
 #[inline]
 fn js_event_loop_ctx() -> Async::EventLoopCtx {
-    Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
+    Async::get_vm_ctx(Async::AllocatorType::Js)
 }
 
-bun_output::declare_scope!(LibUVBackend, visible);
 bun_output::declare_scope!(ResolveInfoRequest, hidden);
 bun_output::declare_scope!(GetHostByAddrInfoRequest, visible);
 bun_output::declare_scope!(CAresNameInfo, hidden);
@@ -126,10 +119,9 @@ const IANA_DNS_PORT: i32 = 53;
 pub(crate) mod dns_sd;
 
 // ──────────────────────────────────────────────────────────────────────────
-// LibC (blocking getaddrinfo on a worker thread; non-Windows)
+// LibC (blocking getaddrinfo on a worker thread)
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(not(windows))]
 mod lib_c {
     use super::*;
 
@@ -177,147 +169,6 @@ mod lib_c {
         this.request_sent(this.vm());
 
         promise_value
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// LibUVBackend (Windows uv_getaddrinfo)
-// ──────────────────────────────────────────────────────────────────────────
-
-/// The windows implementation borrows the struct used for libc getaddrinfo
-#[cfg(windows)]
-pub(crate) mod lib_uv_backend {
-    use super::*;
-
-    pub(crate) struct LibuvCompleteHolder {
-        uv_info: *mut libuv::uv_getaddrinfo_t,
-    }
-
-    impl LibuvCompleteHolder {
-        pub(crate) fn run(self: Box<Self>) {
-            GetAddrInfoRequest::on_libuv_complete(self.uv_info);
-        }
-    }
-    impl bun_event_loop::Taskable for LibuvCompleteHolder {
-        const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GetAddrInfoLibuvComplete;
-        /// A uv_getaddrinfo the stop phase cancelled and drained into the queue:
-        /// its completion is what frees the request and its cache slot, and it
-        /// only settles promises (no callback runs; script is forbidden), so run it.
-        unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract — the box `on_raw_libuv_complete` queued.
-            unsafe { bun_core::heap::take(this) }.run();
-        }
-        /// A lookup is shared by the realm; each promise waiting on it is settled for its own context.
-        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-            bun_event_loop::ContextId::NONE
-        }
-    }
-
-    extern "C" fn on_raw_libuv_complete(
-        uv_info: *mut libuv::uv_getaddrinfo_t,
-        _status: c_int,
-        _res: *mut libuv::addrinfo,
-    ) {
-        // TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
-        // SAFETY: data was set to the GetAddrInfoRequest pointer before uv_getaddrinfo
-        let this: *mut GetAddrInfoRequest = unsafe { (*uv_info).data.cast() };
-
-        let task = jsc::Task::from_boxed(Box::new(LibuvCompleteHolder { uv_info }));
-        // SAFETY: `this` is the live GetAddrInfoRequest set as uv data.
-        unsafe {
-            (*this)
-                .head
-                .global_this()
-                .bun_vm()
-                .as_mut()
-                .enqueue_task(task);
-        }
-    }
-
-    pub(crate) fn lookup(
-        this: &Resolver,
-        query: GetAddrInfo,
-        global_this: &JSGlobalObject,
-        context: bun_jsc::ContextId,
-    ) -> JsResult<JSValue> {
-        let key = get_addr_info_request::PendingCacheKey::init(&query);
-
-        let cache =
-            this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
-        if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
-            unsafe { (*inflight).append(dns_lookup) };
-            return Ok(unsafe { (*dns_lookup).promise.value() });
-        }
-
-        let request = GetAddrInfoRequest::init(
-            cache,
-            get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::uv_uninit()),
-            Some(this.as_ctx_ptr()),
-            global_this,
-            context,
-            PendingCacheField::PendingHostCacheNative,
-        );
-
-        let hints = query.options.to_libc();
-        let mut port_buf = [0u8; 128];
-        let port_len = bun_fmt::print_int(&mut port_buf, query.port);
-        port_buf[port_len] = 0;
-        // SAFETY: port_buf[port_len] == 0 written above
-        let port_z = ZStr::from_buf(&port_buf[..], port_len);
-
-        let mut hostname = bun_paths::path_buffer_pool::get();
-        // Reserve the last byte for the NUL terminator so the index below can never
-        // exceed the buffer even if the upstream length guard in `doLookup` is bypassed.
-        let cap = hostname.len() - 1;
-        // `strings::copy` returns a slice borrowing `hostname`; take only its length
-        // so the mutable borrow ends immediately and `hostname` can be indexed again.
-        let copied_len = strings::copy(&mut hostname[..cap], query.name.as_ref()).len();
-        hostname[copied_len] = 0;
-        // SAFETY: hostname[copied_len] == 0 written above
-        let host = ZStr::from_buf(&hostname[..], copied_len);
-
-        // SAFETY: request lives until completion; backend.libc.uv is the embedded uv_getaddrinfo_t
-        let promise = unsafe {
-            (*request).backend.as_libc_uv_mut().data = request.cast::<c_void>();
-            let promise = (*request).head.promise.value();
-            let rc = libuv::uv_getaddrinfo(
-                this.vm().uv_loop(),
-                (*request).backend.as_libc_uv_mut(),
-                Some(on_raw_libuv_complete),
-                host.as_ptr().cast::<c_char>(),
-                port_z.as_ptr().cast::<c_char>(),
-                hints
-                    .as_ref()
-                    .map_or(ptr::null(), |h| (h as *const AddrInfo).cast()),
-            );
-            if rc.int() < 0 {
-                // uv_getaddrinfo can fail synchronously before it queues any work
-                // (e.g. UV_EINVAL from the 256-byte IDNA buffer for long hostnames,
-                // or UV_ENOMEM). Route the error through the same path the async
-                // completion would have taken so the pending-cache slot is released
-                // and the promise is rejected with a DNSException.
-                if let Some(resolver) = (*request).resolver_for_caching {
-                    if let Some(pos) = (*request).pending_slot {
-                        (*resolver).drain_pending_host_native(
-                            pos,
-                            (*request).head.global_this(),
-                            rc.int(),
-                            &GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
-                        );
-                        return Ok(promise);
-                    }
-                }
-                // Consume the request and move `head` out by value; `ptr::read`
-                // + `heap::take` would double-Drop `DNSLookup` (impls Drop).
-                let owned = *bun_core::heap::take(request);
-                let mut head = owned.head;
-                DNSLookup::process_get_addr_info_native(&mut head, rc.int(), ptr::null_mut());
-                return Ok(promise);
-            }
-            promise
-        };
-        Ok(promise)
     }
 }
 
@@ -946,7 +797,6 @@ pub(crate) mod get_addr_info_request {
     use super::*;
 
     /// The blocking `getaddrinfo` of one libc-backend lookup, run on the pool.
-    #[cfg(not(windows))]
     pub(crate) struct LibcLookup {
         pub(crate) backend: LibcBackend,
     }
@@ -956,12 +806,9 @@ pub(crate) mod get_addr_info_request {
     /// cache points at. Consumed by the completion; dropped unconsumed only
     /// when the VM tears down first, in which case everything is freed and
     /// nothing is settled.
-    #[cfg(not(windows))]
     pub(crate) struct LibcRequest(pub(crate) NonNull<super::GetAddrInfoRequest>);
     // SAFETY: only the JS thread touches the request (see type doc).
-    #[cfg(not(windows))]
     unsafe impl bun_jsc::job::JsAffine for LibcRequest {}
-    #[cfg(not(windows))]
     impl Drop for LibcRequest {
         fn drop(&mut self) {
             let req = self.0.as_ptr();
@@ -986,7 +833,6 @@ pub(crate) mod get_addr_info_request {
         }
     }
 
-    #[cfg(not(windows))]
     impl bun_jsc::JobContext for LibcLookup {
         type OffThread = Self;
         type Js = LibcRequest;
@@ -1053,15 +899,15 @@ pub(crate) mod get_addr_info_request {
         }
     }
 
-    /// Non-Windows libc backend (worker-thread blocking getaddrinfo).
-    #[cfg(not(windows))]
+    /// The libc backend (worker-thread blocking getaddrinfo).
     pub(crate) enum LibcBackend {
         Success(GetAddrInfoResultList),
+        /// An `EAI_*` code; on Windows the `UV_EAI_*` spelling, which is what
+        /// `c_ares::Error::init_eai` reads there.
         Err(i32),
         Query(GetAddrInfo),
     }
 
-    #[cfg(not(windows))]
     impl LibcBackend {
         pub(crate) fn run(&mut self) {
             let LibcBackend::Query(query) = self else {
@@ -1075,32 +921,41 @@ pub(crate) mod get_addr_info_request {
             // SAFETY: NUL written at port_buf[port_len]
             let port_z = ZStr::from_buf(&port_buf[..], port_len);
 
-            let mut hostname = bun_paths::path_buffer_pool::get();
-            // Reserve the last byte for the NUL terminator so the index below
-            // can never exceed the buffer even if the upstream length guard in
-            // `doLookup` is bypassed.
-            let cap = hostname.len() - 1;
-            let copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
-            hostname[copied_len] = 0;
             let mut addrinfo: *mut AddrInfo = ptr::null_mut();
-            // SAFETY: hostname[copied_len] == 0
-            let host = ZStr::from_buf(&hostname[..], copied_len);
             let debug_timer = Output::DebugTimer::start();
-            // SAFETY: FFI; all pointers valid for the call duration
-            let err = unsafe {
-                libc::getaddrinfo(
-                    host.as_ptr().cast::<c_char>(),
-                    if port_len > 0 {
-                        port_z.as_ptr().cast::<c_char>()
-                    } else {
-                        ptr::null()
-                    },
-                    hints
-                        .as_ref()
-                        .map(std::ptr::from_ref)
-                        .unwrap_or(ptr::null()),
-                    &raw mut addrinfo,
-                )
+            #[cfg(windows)]
+            let err = windows_get_addr_info(
+                &query_name,
+                port_z.as_bytes(),
+                hints.as_ref(),
+                &raw mut addrinfo,
+            );
+            #[cfg(not(windows))]
+            let err = {
+                let mut hostname = bun_paths::path_buffer_pool::get();
+                // Reserve the last byte for the NUL terminator so the index below
+                // can never exceed the buffer even if the upstream length guard in
+                // `doLookup` is bypassed.
+                let cap = hostname.len() - 1;
+                let copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
+                hostname[copied_len] = 0;
+                let host = ZStr::from_buf(&hostname[..], copied_len);
+                // SAFETY: FFI; all pointers valid for the call duration
+                unsafe {
+                    libc::getaddrinfo(
+                        host.as_ptr().cast::<c_char>(),
+                        if port_len > 0 {
+                            port_z.as_ptr().cast::<c_char>()
+                        } else {
+                            ptr::null()
+                        },
+                        hints
+                            .as_ref()
+                            .map(std::ptr::from_ref)
+                            .unwrap_or(ptr::null()),
+                        &raw mut addrinfo,
+                    )
+                }
             };
             sys::syslog!(
                 "getaddrinfo({}, {}) = {} ({})",
@@ -1117,8 +972,16 @@ pub(crate) mod get_addr_info_request {
             // do not free addrinfo when err != 0: getaddrinfo only allocates the
             // result list on success, so the out-pointer is unspecified on error.
             let _free = scopeguard::guard(addrinfo, |a| {
-                // SAFETY: `a` was returned by libc::getaddrinfo (non-null per the check above).
-                unsafe { bun_dns::freeaddrinfo(a) }
+                // SAFETY: `a` was returned by the call above (non-null per the check above).
+                #[cfg(windows)]
+                unsafe {
+                    FreeAddrInfoW(a)
+                };
+                // SAFETY: as above.
+                #[cfg(not(windows))]
+                unsafe {
+                    bun_dns::freeaddrinfo(a)
+                }
             });
 
             // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
@@ -1126,19 +989,113 @@ pub(crate) mod get_addr_info_request {
         }
     }
 
-    /// Windows libc backend wraps a uv_getaddrinfo_t.
     #[cfg(windows)]
-    pub(crate) struct LibcBackend {
-        pub(crate) uv: libuv::uv_getaddrinfo_t,
+    #[link(name = "ws2_32")]
+    unsafe extern "system" {
+        /// `ADDRINFOW` has `ADDRINFOA`'s layout; only `ai_canonname`'s pointee
+        /// differs, and nothing here reads it.
+        fn GetAddrInfoW(
+            node: *const u16,
+            service: *const u16,
+            hints: *const AddrInfo,
+            result: *mut *mut AddrInfo,
+        ) -> c_int;
+        fn FreeAddrInfoW(info: *mut AddrInfo);
     }
+
+    /// `GetAddrInfoW` (it resolves Unicode host names, which `getaddrinfo`
+    /// would read in the ANSI code page), returning the `UV_EAI_*` code libuv's
+    /// `uv__getaddrinfo_translate_error` gives for its result, which is what
+    /// `c_ares::Error::init_eai` reads on Windows.
     #[cfg(windows)]
-    impl LibcBackend {
-        pub(crate) fn uv_uninit() -> Self {
-            Self {
-                uv: bun_core::ffi::zeroed(),
+    fn windows_get_addr_info(
+        host: &[u8],
+        service: &[u8],
+        hints: Option<&AddrInfo>,
+        result: *mut *mut AddrInfo,
+    ) -> c_int {
+        use bun_errno::uv_codes as uv;
+        use bun_sys::windows::Win32Error as W;
+        const WSAEINVAL: c_int = W::WSAEINVAL.0 as c_int;
+        const WSAEAFNOSUPPORT: c_int = W::WSAEAFNOSUPPORT.0 as c_int;
+        const WSAESOCKTNOSUPPORT: c_int = W::WSAESOCKTNOSUPPORT.0 as c_int;
+        const WSATYPE_NOT_FOUND: c_int = W::WSATYPE_NOT_FOUND.0 as c_int;
+        const WSAHOST_NOT_FOUND: c_int = W::WSAHOST_NOT_FOUND.0 as c_int;
+        const WSATRY_AGAIN: c_int = W::WSATRY_AGAIN.0 as c_int;
+        const WSANO_RECOVERY: c_int = W::WSANO_RECOVERY.0 as c_int;
+        const WSA_NOT_ENOUGH_MEMORY: c_int = W::NOT_ENOUGH_MEMORY.0 as c_int;
+
+        bun_uws_sys::iocp::us_internal_winsock_ensure();
+
+        let mut host_buf = bun_paths::w_path_buffer_pool::get();
+        let mut service_buf = [0u16; 8];
+        let host_cap = host_buf.len() - 1;
+        let Some(host_len) =
+            strings::try_convert_utf8_to_utf16_in_buffer(&mut host_buf[..host_cap], host)
+                .map(|w| w.len())
+        else {
+            return uv::UV_EAI_NONAME;
+        };
+        // The resolver would encode a name that is not ASCII by its own rules,
+        // which are not the ones URLs and Node go by.
+        let mut ascii_buf = [0u16; 256];
+        let host_ptr = if host.is_ascii() {
+            host_buf[host_len] = 0;
+            host_buf.as_ptr()
+        } else {
+            unsafe extern "C" {
+                fn Bun__domainToASCII16(
+                    name: *const u16,
+                    length: i32,
+                    out: *mut u16,
+                    capacity: i32,
+                ) -> i32;
             }
+            // SAFETY: `host_buf[..host_len]` is initialized; `ascii_buf` has
+            // room for the capacity passed, less one for the terminator.
+            let len = unsafe {
+                Bun__domainToASCII16(
+                    host_buf.as_ptr(),
+                    host_len as i32,
+                    ascii_buf.as_mut_ptr(),
+                    (ascii_buf.len() - 1) as i32,
+                )
+            };
+            let Ok(len) = usize::try_from(len) else {
+                return uv::UV_EAI_NONAME;
+            };
+            ascii_buf[len] = 0;
+            ascii_buf.as_ptr()
+        };
+        // The service is the decimal port.
+        for (dst, src) in service_buf.iter_mut().zip(service) {
+            *dst = u16::from(*src);
+        }
+
+        // SAFETY: both strings are NUL-terminated; `hints` is null or valid;
+        // `result` is a valid out-pointer.
+        let err = unsafe {
+            GetAddrInfoW(
+                host_ptr,
+                service_buf.as_ptr(),
+                hints.map_or(ptr::null(), std::ptr::from_ref),
+                result,
+            )
+        };
+        match err {
+            0 => 0,
+            WSATRY_AGAIN => uv::UV_EAI_AGAIN,
+            WSAEINVAL => uv::UV_EAI_BADFLAGS,
+            WSANO_RECOVERY => uv::UV_EAI_FAIL,
+            WSAEAFNOSUPPORT => uv::UV_EAI_FAMILY,
+            WSA_NOT_ENOUGH_MEMORY => uv::UV_EAI_MEMORY,
+            WSAHOST_NOT_FOUND => uv::UV_EAI_NONAME,
+            WSATYPE_NOT_FOUND => uv::UV_EAI_SERVICE,
+            WSAESOCKTNOSUPPORT => uv::UV_EAI_SOCKTYPE,
+            other => bun_errno::Bun__translateWin32ErrorToUV(other as u32),
         }
     }
+
     pub(crate) enum Backend {
         CAres,
         #[cfg(target_os = "macos")]
@@ -1151,13 +1108,6 @@ pub(crate) mod get_addr_info_request {
         pub(crate) fn as_dns_sd_mut(&mut self) -> &mut BackendDnsSd {
             match self {
                 Backend::DnsSd(l) => l,
-                _ => unreachable!(),
-            }
-        }
-        #[cfg(windows)]
-        pub(crate) fn as_libc_uv_mut(&mut self) -> &mut libuv::uv_getaddrinfo_t {
-            match self {
-                Backend::Libc(l) => &mut l.uv,
                 _ => unreachable!(),
             }
         }
@@ -1284,7 +1234,6 @@ impl GetAddrInfoRequest {
         }
     }
 
-    #[cfg(not(windows))]
     /// # Safety
     /// `this` must be the live heap `GetAddrInfoRequest` whose `run` already
     /// completed; consumed (freed) on every path.
@@ -1379,59 +1328,6 @@ impl GetAddrInfoRequest {
             let owned = *bun_core::heap::take(this);
             let mut head = owned.head;
             DNSLookup::process_get_addr_info(&raw mut head, err_, timeout, result);
-        }
-    }
-
-    #[cfg(windows)]
-    pub(crate) fn on_libuv_complete(uv_info: *mut libuv::uv_getaddrinfo_t) {
-        unsafe {
-            let retcode = (*uv_info).retcode.int();
-            bun_output::scoped_log!(GetAddrInfoRequest, "onLibUVComplete: status={}", retcode);
-            let this: *mut Self = (*uv_info).data.cast();
-            #[cfg(windows)]
-            debug_assert!(uv_info == core::ptr::from_mut((*this).backend.as_libc_uv_mut()));
-
-            // On Windows, libuv's `uv_getaddrinfo` calls `GetAddrInfoW` then
-            // re-packs the wide result into a single ANSI block allocated via
-            // `uv__malloc`; that block must be released with `uv_freeaddrinfo`
-            // (== `uv__free`). `GetAddrInfoResultAny::Addrinfo`'s `Drop` calls
-            // `ws2_32!freeaddrinfo`, which is the wrong allocator here and
-            // would corrupt the heap. Convert to an owned `List` immediately, free the libuv
-            // buffer with the correct deallocator, and pass `List` downstream
-            // so `ResultAny::Drop` never sees libuv-owned memory.
-            let addrinfo = (*uv_info).addrinfo;
-            let result_any = if addrinfo.is_null() {
-                GetAddrInfoResultAny::Addrinfo(ptr::null_mut())
-            } else {
-                let list = GetAddrInfoResult::to_list(&*addrinfo);
-                libuv::uv_freeaddrinfo(addrinfo.cast());
-                GetAddrInfoResultAny::List(list)
-            };
-
-            if let Some(resolver) = (*this).resolver_for_caching {
-                if let Some(pos) = (*this).pending_slot {
-                    (*resolver).drain_pending_host_native(
-                        pos,
-                        (*this).head.global_this(),
-                        retcode,
-                        &result_any,
-                    );
-                    return;
-                }
-            }
-
-            // Consume the request and move `head` out by value; `ptr::read`
-            // + `heap::take` would double-Drop `DNSLookup` (impls Drop).
-            let owned = *bun_core::heap::take(this);
-            let mut head = owned.head;
-            // Inline `process_get_addr_info_native` so the success path can
-            // reuse the owned `List` instead of re-wrapping the (now-freed)
-            // raw `addrinfo` pointer.
-            if c_ares::Error::init_eai(retcode).is_some() {
-                DNSLookup::process_get_addr_info_native(&raw mut head, retcode, ptr::null_mut());
-            } else {
-                DNSLookup::on_complete_native(&raw mut head, &result_any);
-            }
         }
     }
 }
@@ -1926,7 +1822,7 @@ impl Outcome {
     }
 
     /// The resolver backends' completion callbacks (c-ares poll, libinfo,
-    /// libuv) land here to settle the lookup's promise with a value built by
+    /// the work pool) land here to settle the lookup's promise with a value built by
     /// the resolver: this is their fold for what settling leaves pending
     /// (allocation failure, a terminating VM).
     fn settle(
@@ -1957,9 +1853,8 @@ impl Drop for DNSLookup {
         let _ = self.global_this();
         // DNSLookup is always created on the JS event loop (it holds a JSGlobalObject),
         // so the Js-arm vtable is the correct EventLoopCtx for KeepAlive::unref.
-        self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
-            Async::AllocatorType::Js,
-        ));
+        self.poll_ref
+            .unref(Async::get_vm_ctx(Async::AllocatorType::Js));
     }
 }
 
@@ -1989,32 +1884,7 @@ impl Resolver {
     /// `DNSLookup::global_this` (to enqueue the rejection task) and the hive
     /// `FilePoll` (to unregister it from the loop). Running this after either
     /// is freed is a UAF (Node `test-worker-dns-terminate.js`).
-    /// Windows: `uv_getaddrinfo` requests are uv *requests* on this thread's
-    /// loop, which the teardown drains before closing the loop; cancel the ones
-    /// still in flight so that drain is prompt (each completes through its
-    /// callback with UV_ECANCELED against the still-live VM).
-    #[cfg(windows)]
-    pub(crate) fn cancel_pending_uv_requests_for_teardown(&self) {
-        // SAFETY: JS thread; no other borrow of the cache is live during the
-        // stop phase (completions run later, from the loop drain).
-        let cache = unsafe { self.pending_host_cache_native.get_mut() };
-        let mut set = cache.used.iter_set();
-        while let Some(index) = set.next() {
-            // SAFETY: a set slot is an initialised `PendingCacheKey`; JS thread.
-            let lookup = unsafe { (*cache.ptr_at(index)).lookup };
-            if lookup.is_null() {
-                continue;
-            }
-            // SAFETY: `lookup` is the live boxed request until its completion
-            // callback removes it from the cache.
-            unsafe {
-                if let get_addr_info_request::Backend::Libc(l) = &mut (*lookup).backend {
-                    let _ = libuv::uv_cancel(core::ptr::from_mut(&mut l.uv).cast());
-                }
-            }
-        }
-    }
-
+    ///
     /// `Stopped` if a channel was open (its pending queries just failed with
     /// `ARES_EDESTRUCTION` into their callbacks).
     ///
@@ -2664,11 +2534,8 @@ pub(crate) mod internal {
     fn after_result(req: *mut Request, info: *mut AddrInfo, err: c_int) {
         let results: Option<Box<[ResultEntry]>> = if !info.is_null() {
             let res = process_results(info);
-            // ws2_32!getaddrinfo-allocated on Windows — free via the matching
-            // ws2_32!freeaddrinfo (NOT uv_freeaddrinfo: different allocator).
-            // `.cast()` is identity on POSIX, libuv_sys→ws2_32 addrinfo on Windows.
             // SAFETY: `info` is non-null (checked above) and owned by getaddrinfo.
-            unsafe { bun_dns::freeaddrinfo(info.cast()) };
+            unsafe { bun_dns::freeaddrinfo(info) };
             Some(res)
         } else {
             None
@@ -2714,9 +2581,11 @@ pub(crate) mod internal {
         };
 
         #[cfg(windows)]
+        // SAFETY: FFI getaddrinfo; `req.key.host` is the owned NUL-terminated host
+        // set at construction, `wsa_hints`/`addrinfo` are stack locals.
         unsafe {
             use bun_sys::windows::ws2_32 as wsa;
-            libuv::uv__winsock_ensure();
+            bun_uws_sys::iocp::us_internal_winsock_ensure();
             let mut wsa_hints: wsa::addrinfo = bun_core::ffi::zeroed();
             wsa_hints.ai_family = wsa::AF_UNSPEC;
             wsa_hints.ai_socktype = wsa::SOCK_STREAM;
@@ -2733,7 +2602,7 @@ pub(crate) mod internal {
                 &wsa_hints,
                 &mut addrinfo,
             );
-            after_result(req, addrinfo.cast(), err);
+            after_result(req, addrinfo, err);
         }
         #[cfg(not(windows))]
         // SAFETY: FFI getaddrinfo; `req.key.host` is the owned NUL-terminated host
@@ -3714,12 +3583,7 @@ type AnyPendingCache =
 type AddrPendingCache = HiveArray<get_host_by_addr_info_request::PendingCacheKey, 32>;
 type NameInfoPendingCache = HiveArray<get_name_info_request::PendingCacheKey, 32>;
 
-#[cfg(windows)]
-type PollType = UvDnsPoll;
-#[cfg(not(windows))]
-type PollType = FilePoll;
-
-type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
+type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut FilePoll>;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). c-ares
@@ -3777,35 +3641,6 @@ bun_jsc::impl_abort_handle_owner!(Resolver, abort_handle, |this, _cause| {
 impl Drop for Resolver {
     fn drop(&mut self) {
         self.destroy_channel();
-    }
-}
-
-#[cfg(windows)]
-pub(crate) struct UvDnsPoll {
-    // BACKREF — stored mut because the poll callback hands it to
-    // `Resolver::deref`, which may write/free `*this`.
-    pub parent: *mut Resolver,
-    pub socket: c_ares::ares_socket_t,
-    pub poll: libuv::uv_poll_t,
-}
-
-#[cfg(windows)]
-impl UvDnsPoll {
-    fn new(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(Self {
-            parent,
-            socket,
-            poll: bun_core::ffi::zeroed(),
-        }))
-    }
-
-    fn destroy(this: *mut Self) {
-        unsafe { drop(bun_core::heap::take(this)) };
-    }
-
-    fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
-        // SAFETY: poll points to UvDnsPoll.poll
-        unsafe { bun_core::from_field_ptr!(UvDnsPoll, poll, poll) }
     }
 }
 
@@ -4791,58 +4626,7 @@ impl Resolver {
 
     // ───────────── poll callbacks ─────────────
 
-    #[cfg(windows)]
-    pub(crate) extern "C" fn on_dns_poll_uv(
-        watcher: *mut libuv::uv_poll_t,
-        status: c_int,
-        events: c_int,
-    ) {
-        let poll = UvDnsPoll::from_poll(watcher);
-        // SAFETY: `poll` is the live `UvDnsPoll` recovered from libuv's `watcher`
-        // via `from_poll` (libuv guarantees the handle outlives this callback).
-        // `parent` is the heap-allocated Resolver back-ptr (set in
-        // `on_dns_socket_state`); it is kept alive across `Channel::process` by the
-        // `_guard` below. `channel` is non-null because c-ares
-        // must have been initialized for this poll callback to fire.
-        unsafe {
-            let parent: *mut Resolver = (*poll).parent;
-            let vm = (*parent).vm.get();
-            let _exit = vm.enter_event_loop_scope();
-            // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
-            let _guard = RefPtr::init_ref(parent);
-            // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
-            let channel = (*parent).channel.get().unwrap();
-            if status < 0 {
-                // an error occurred. just pretend that the socket is both readable and writable.
-                // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
-                (*channel).process((*poll).socket, true, true);
-            } else {
-                (*channel).process(
-                    (*poll).socket,
-                    events & libuv::UV_READABLE != 0,
-                    events & libuv::UV_WRITABLE != 0,
-                );
-            }
-
-            // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
-            if !(*parent).any_requests_pending() {
-                (*parent).remove_timer();
-            }
-        }
-    }
-
-    #[cfg(windows)]
-    pub(crate) unsafe extern "C" fn on_close_uv(watcher: *mut libuv::uv_handle_t) {
-        // SAFETY: libuv invokes the close cb with the same handle pointer passed
-        // to `uv_close`, which was `&mut UvDnsPoll::poll` (a `uv_poll_t` whose
-        // header is `uv_handle_t`); `from_poll` recovers the containing struct.
-        let poll = UvDnsPoll::from_poll(watcher.cast());
-        UvDnsPoll::destroy(poll);
-    }
-
-    /// POSIX `FilePoll` callback (kqueue/epoll). Windows drives c-ares via
-    /// libuv (`on_dns_poll_uv`) instead, and the only caller
-    /// (`dispatch::__bun_run_file_poll`) is itself `#[cfg(not(windows))]`.
+    /// `FilePoll` callback for a c-ares socket.
     ///
     /// R-2: `&self` (no `noalias`). `Channel::process` (== `ares_process_fd`)
     /// synchronously fires c-ares completion callbacks which re-enter this
@@ -4851,13 +4635,13 @@ impl Resolver {
     /// UnsafeCell-backed, LLVM cannot cache `ref_count` across the FFI call —
     /// the structural fix for the previously ASM-verified PROVEN_CACHED
     /// miscompile that needed `black_box` laundering under `&mut self`.
-    #[cfg(not(windows))]
     pub(crate) fn on_dns_poll(&self, poll: &mut FilePoll) {
         let vm = self.vm();
         let _exit = vm.enter_event_loop_scope();
+        let socket = poll.fd.native() as c_ares::ares_socket_t;
         let Some(channel) = self.channel.get() else {
             self.polls.with_mut(|p| {
-                let _ = p.remove(&poll.fd.native());
+                let _ = p.remove(&socket);
             });
             poll.deinit();
             return;
@@ -4865,11 +4649,18 @@ impl Resolver {
 
         let _guard = self.ref_guard();
 
+        // A poll that failed or hung up reports no direction; give c-ares both, like Node:
+        // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+        let failed =
+            poll.flags.contains(Async::PollFlag::Eof) || poll.flags.contains(Async::PollFlag::Hup);
+        let readable = poll.is_readable() || failed;
+        let writable = poll.is_writable() || failed;
+
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are
         // UnsafeCell-backed).
         unsafe {
-            (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
+            (*channel).process(socket, readable, writable);
         }
 
         // c-ares detaches a query only *after* its callback returns, so
@@ -4885,139 +4676,63 @@ impl Resolver {
         readable: bool,
         writable: bool,
     ) {
-        #[cfg(windows)]
-        {
-            use libuv as uv;
-            if !readable && !writable {
-                // cleanup — `remove` is the ordered, value-returning variant.
-                if let Some(entry) = self.polls.with_mut(|p| p.remove(&fd)) {
-                    // SAFETY: `entry` is the heap `UvDnsPoll` we inserted below;
-                    // libuv takes ownership of the handle until `on_close_uv`
-                    // frees the allocation.
-                    unsafe {
-                        uv::uv_close(
-                            core::ptr::from_mut(&mut (*entry).poll).cast(),
-                            Some(Self::on_close_uv),
-                        )
-                    };
-                }
-                return;
-            }
+        let ctx = js_event_loop_ctx();
 
-            // Capture `self` as a raw backref for `UvDnsPoll::parent`.
-            let this_ptr: *mut Self = self.as_ctx_ptr();
-            // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
-            // any re-entrant call (libuv `uv_poll_*` below do not call back into
-            // this resolver synchronously).
-            let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = bun_core::handle_oom(polls.get_or_put(fd));
-            let poll: *mut UvDnsPoll = if poll_entry.found_existing {
-                *poll_entry.value_ptr
-            } else {
-                let new_poll = UvDnsPoll::new(this_ptr, fd);
-                // Publish into the map first so the `GetOrPutResult` borrow can
-                // end (NLL) before we may need to `swap_remove` on init failure.
-                *poll_entry.value_ptr = new_poll;
-                // SAFETY: `Loop::get()` is the live per-thread uws loop;
-                // `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
-                if unsafe {
-                    uv::uv_poll_init_socket((*Loop::get()).uv_loop, &mut (*new_poll).poll, fd as _)
-                } < 0
-                {
-                    UvDnsPoll::destroy(new_poll);
-                    let _ = polls.swap_remove(&fd);
-                    return;
-                }
-                new_poll
-            };
-
-            let uv_events = (if readable { uv::UV_READABLE } else { 0 })
-                | (if writable { uv::UV_WRITABLE } else { 0 });
-            // SAFETY: `poll` is the live entry just inserted/looked up above.
-            if unsafe {
-                uv::uv_poll_start(&mut (*poll).poll, uv_events, Some(Self::on_dns_poll_uv))
-            } < 0
-            {
-                let _ = polls.swap_remove(&fd);
-                // SAFETY: handle was successfully `uv_poll_init_socket`-ed, so
-                // `uv_close` is the required teardown path; `on_close_uv` frees
-                // the `UvDnsPoll` box.
-                unsafe {
-                    uv::uv_close(
-                        core::ptr::from_mut(&mut (*poll).poll).cast(),
-                        Some(Self::on_close_uv),
-                    )
-                };
+        if !readable && !writable {
+            // read == 0 and write == 0 this is c-ares's way of notifying us that
+            // the socket is now closed. We must free the data associated with
+            // socket.
+            if let Some(value) = self.polls.with_mut(|p| p.remove(&fd)) {
+                // SAFETY: `value` is the heap-allocated FilePoll for this fd.
+                unsafe { (*value).deinit_with_vm(ctx) };
             }
+            return;
         }
-        #[cfg(not(windows))]
-        {
-            let ctx = js_event_loop_ctx();
 
-            if !readable && !writable {
-                // read == 0 and write == 0 this is c-ares's way of notifying us that
-                // the socket is now closed. We must free the data associated with
-                // socket.
-                if let Some(value) = self.polls.with_mut(|p| p.remove(&fd)) {
-                    // SAFETY: `value` is the heap-allocated FilePoll for this fd.
-                    unsafe { (*value).deinit_with_vm(ctx) };
-                }
-                return;
+        let owner = Async::Owner::new(Async::PollTag::DnsResolver, self.as_ctx_ptr().cast::<()>());
+        // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
+        let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
+        // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
+        // any re-entrant call (`FilePoll::register` is a syscall wrapper).
+        let polls = unsafe { self.polls.get_mut() };
+        let poll_entry = polls.get_or_put(fd).expect("unreachable");
+
+        if !poll_entry.found_existing {
+            // A c-ares socket is a SOCKET on Windows and an fd elsewhere.
+            #[cfg(windows)]
+            let socket_fd = sys::Fd::from_system(fd as *mut c_void);
+            #[cfg(not(windows))]
+            let socket_fd = sys::Fd::from_native(fd);
+            *poll_entry.value_ptr = FilePoll::init(ctx, socket_fd, Default::default(), owner);
+        }
+
+        // SAFETY: `value_ptr` points at a slot just initialized above (or a
+        // previously-initialized live FilePoll hive slot); JS-thread exclusive.
+        let poll = unsafe { &mut **poll_entry.value_ptr };
+
+        // c-ares reports the full desired (readable, writable) set for this
+        // fd; sync the poll's registration to match.
+        let have_readable = poll.flags.contains(Async::PollFlag::PollReadable);
+        let have_writable = poll.flags.contains(Async::PollFlag::PollWritable);
+
+        if (have_readable && !readable) || (have_writable && !writable) {
+            // Dropping a direction. FilePoll has no per-direction unregister,
+            // and a stale writable registration busy-loops once the socket
+            // connects, so resync.
+            let _ = poll.unregister(loop_, false);
+            if readable {
+                let _ = poll.register(loop_, Async::PollKind::Readable, false);
             }
-
-            let owner = Async::Owner::new(
-                Async::posix_event_loop::poll_tag::DNS_RESOLVER,
-                self.as_ctx_ptr().cast::<()>(),
-            );
-            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
-            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
-            // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
-            // any re-entrant call (`FilePoll::register` is a syscall wrapper).
-            let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = polls.get_or_put(fd).expect("unreachable");
-
-            if !poll_entry.found_existing {
-                *poll_entry.value_ptr =
-                    FilePoll::init(ctx, sys::Fd::from_native(fd), Default::default(), owner);
+            if writable {
+                let _ = poll.register(loop_, Async::PollKind::Writable, false);
             }
-
-            // SAFETY: `value_ptr` points at a slot just initialized above (or a
-            // previously-initialized live FilePoll hive slot); JS-thread exclusive.
-            let poll = unsafe { &mut **poll_entry.value_ptr };
-
-            // c-ares reports the full desired (readable, writable) set for this
-            // fd; sync the poll's registration to match. FilePoll now supports
-            // both directions on one poll (epoll: combined mask via CTL_MOD;
-            // kqueue: two filters on the same ident, both EV_DELETEd on
-            // unregister).
-            let have_readable = poll.flags.contains(Async::PollFlag::PollReadable);
-            let have_writable = poll.flags.contains(Async::PollFlag::PollWritable);
-
-            if (have_readable && !readable) || (have_writable && !writable) {
-                // Dropping a direction. FilePoll has no per-direction
-                // unregister (epoll CTL_DEL removes both; a targeted kqueue
-                // EV_DELETE would need a new API), and leaving the unwanted
-                // direction armed would busy-loop on level-triggered writable
-                // once the socket connects. Full resync is the simplest
-                // correct path and c-ares DNS fds are short-lived.
-                let _ = poll.unregister(loop_, false);
-                if readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
-                }
-                if writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
-                }
-            } else {
-                // Only adding directions (or no change). register() issues a
-                // single CTL_MOD on epoll that preserves the other direction;
-                // on kqueue EV_ADD creates a separate (ident, filter) knote
-                // without disturbing the existing one.
-                if readable && !have_readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
-                }
-                if writable && !have_writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
-                }
+        } else {
+            // Only adding directions (or no change).
+            if readable && !have_readable {
+                let _ = poll.register(loop_, Async::PollKind::Readable, false);
+            }
+            if writable && !have_writable {
+                let _ = poll.register(loop_, Async::PollKind::Writable, false);
             }
         }
     }
@@ -5327,26 +5042,13 @@ impl Resolver {
             GetAddrInfoBackend::CAres => {
                 self.c_ares_lookup_with_normalized_name(&query, global_this, context)?
             }
-            GetAddrInfoBackend::Libc => {
-                #[cfg(windows)]
-                {
-                    lib_uv_backend::lookup(self, query, global_this, context)?
-                }
-                #[cfg(not(windows))]
-                {
-                    lib_c::lookup(self, &query, global_this, context)
-                }
-            }
+            GetAddrInfoBackend::Libc => lib_c::lookup(self, &query, global_this, context),
             GetAddrInfoBackend::System => {
                 #[cfg(target_os = "macos")]
                 {
                     dns_sd::lookup(self, &query, global_this, context)
                 }
-                #[cfg(windows)]
-                {
-                    lib_uv_backend::lookup(self, query, global_this, context)?
-                }
-                #[cfg(all(not(target_os = "macos"), not(windows)))]
+                #[cfg(not(target_os = "macos"))]
                 {
                     lib_c::lookup(self, &query, global_this, context)
                 }

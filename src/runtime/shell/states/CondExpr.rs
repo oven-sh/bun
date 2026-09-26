@@ -301,7 +301,7 @@ impl CondExpr {
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::CondExpr);
             // `OutKind::Fd` guaranteed by `needs_io()`.
             if let OutKind::Fd(fd) = &interp.as_condexpr(this).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
+                return fd.writer.enqueue_owned(child, fd.captured, buf);
             }
             unreachable!()
         }

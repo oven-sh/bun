@@ -1,7 +1,6 @@
 use core::ffi::c_void;
 
 use bun_sys::Fd;
-#[cfg(not(windows))]
 use bun_sys::FdExt;
 
 #[cfg(target_os = "macos")]
@@ -44,6 +43,7 @@ impl PollOrFd {
         }
     }
 
+    #[cfg(unix)]
     pub(crate) fn get_poll_mut(&mut self) -> Option<FilePollRef> {
         match self {
             PollOrFd::Poll(poll) => Some(*poll),
@@ -62,7 +62,7 @@ impl PollOrFd {
         let fd = self.get_fd();
         #[cfg(target_os = "macos")]
         let mut close_async = true;
-        #[cfg(all(not(target_os = "macos"), not(windows)))]
+        #[cfg(not(target_os = "macos"))]
         let close_async = true;
         if matches!(self, PollOrFd::Poll(_)) {
             // workaround kqueue bug.
@@ -95,22 +95,10 @@ impl PollOrFd {
         if fd != Fd::INVALID {
             *self = PollOrFd::Closed;
 
-            // TODO: We should make this call compatible using bun.FD
-            #[cfg(windows)]
-            {
-                if close_fd {
-                    crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                if close_async && close_fd {
-                    crate::closer::Closer::close(fd, ());
-                } else {
-                    if close_fd {
-                        let _ = fd.close_allowing_bad_file_descriptor(None);
-                    }
-                }
+            if close_async && close_fd {
+                crate::closer::Closer::close(fd, ());
+            } else if close_fd {
+                let _ = fd.close_allowing_bad_file_descriptor(None);
             }
             if let Some(f) = on_close_fn {
                 // SAFETY: caller guarantees ctx is Some and properly aligned

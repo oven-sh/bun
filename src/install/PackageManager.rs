@@ -30,12 +30,6 @@ use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler as transpiler;
 use bun_url::URL;
 
-// `bun.spawn.process.WaiterThread` — the force-waiter-thread flag was moved
-// down into `bun_spawn::process` (MOVE_DOWN b0); install just flips it during
-// init. The full waiter-thread machinery (queue, signalfd, loop) lives in
-// `bun_runtime::api::bun::process` and *reads* the same flag.
-use bun_spawn::process::WaiterThread;
-
 use crate::RunCommand;
 
 /// `Command::Context` shim — the option-carrying `ContextData` shape was lifted
@@ -1980,7 +1974,7 @@ pub fn init(
     }
 
     if env.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
-        WaiterThread::set_should_use_waiter_thread();
+        bun_spawn::waiter_thread_flag::set();
     }
 
     if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS
@@ -2201,17 +2195,12 @@ pub fn init(
         let evl = unsafe { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
             let mini_ptr: *mut MiniEventLoop = &raw mut **mini;
-            // Set ONLY `MiniEventLoop.global`,
-            // NOT `globalInitialized`. The distinction is load-bearing: a later
-            // `initGlobal(env, top_level_dir)` (e.g. from `bun pm pack` /
-            // `pm version` lifecycle scripts → RunCommand::run_package_script_*)
-            // checks `globalInitialized` and, when false, allocates a FRESH mini
-            // with env/top_level_dir/uv-loop fully wired, then that becomes the
-            // global. If we flip `GLOBAL_INITIALIZED` here, that call returns
-            // *this* embedded mini instead — which was constructed without env,
-            // without top_level_dir, and (on Windows) without going through
-            // `init_global`'s uv-loop setup. The shell's IOWriter then opens
-            // stdout/stderr against an under-initialised loop → EBADF (exit 9).
+            // Set only `GLOBAL`, not `GLOBAL_INITIALIZED`: a later
+            // `init_global(env, top_level_dir)` (the lifecycle scripts of
+            // `bun pm pack` / `pm version`) must still allocate a fresh mini
+            // with env, cwd and loop wired up. This embedded one has none of
+            // them, and the shell's IOWriter would open stdout/stderr against
+            // it → EBADF (exit 9).
             mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
         }
     }

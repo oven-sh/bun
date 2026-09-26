@@ -445,7 +445,7 @@ impl us_socket_t {
         let raw = c::us_socket_get_fd(self);
         // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`) on
         // Windows. Tag kind=system explicitly — `from_native` would store raw
-        // bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
+        // bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=crt.
         #[cfg(windows)]
         {
             Fd::from_system(raw as *mut core::ffi::c_void)

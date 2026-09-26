@@ -59,8 +59,8 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #include "internal/eventing/epoll_kqueue.h"
 #endif
 
-#ifdef LIBUS_USE_LIBUV
-#include "internal/eventing/libuv.h"
+#ifdef LIBUS_USE_IOCP
+#include "internal/eventing/iocp.h"
 #endif
 
 #ifndef LIKELY
@@ -171,16 +171,24 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 #define LIBUS_POLL_EOF 1
 #define LIBUS_POLL_HANGUP 2
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
+/* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
+#define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
+#define CLEAR_POINTER_TAG(p) ((void *) ((uintptr_t) (p) & UNSET_BITS_49_UNTIL_64))
+/* Dispatch of a ready poll that Bun owns (`poll` is tagged). */
+void Bun__internal_dispatch_ready_poll(void *loop, void *poll);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
-#ifndef LIBUS_USE_LIBUV
-/* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
- * against, so anything comparing against one must read it and not another. */
+/* Monotonic clock in ns (CLOCK_MONOTONIC, QueryPerformanceCounter on Windows).
+ * The clock every deadline on the loop is measured against, so anything
+ * comparing against one must read it and not another. */
 uint64_t us_internal_monotonic_ns(void);
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
-#endif
+/* What a tick about to park does when mimalloc has no scavenger to hand this thread's heaps
+ * to: sweeps them here, at most once per 100ms. `now_ns` as for us_loop_run_bun_tick; nothing
+ * measures a deadline against it. */
+void us_internal_idle_sweep(uint64_t now_ns);
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);
@@ -218,6 +226,16 @@ void us_internal_async_wakeup(struct us_internal_async *a);
 
 /* Eventing related */
 size_t us_internal_accept_poll_event(struct us_poll_t *p);
+/* Start reporting the connections of the listening socket `p` as readable
+ * events; us_internal_accept takes them. Returns like us_poll_start_rc. */
+int us_internal_poll_start_accepting(struct us_poll_t *p, struct us_loop_t *loop);
+/* The next connection of the listening socket `p`, or LIBUS_SOCKET_ERROR when
+ * there is none right now. */
+LIBUS_SOCKET_DESCRIPTOR us_internal_accept(struct us_poll_t *p, struct bsd_addr_t *addr);
+#ifdef _WIN32
+/* Nonzero once the peer reset the connection, observed with a zero-byte send. */
+int us_internal_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd);
+#endif
 int us_internal_poll_type(struct us_poll_t *p);
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
 
@@ -445,7 +463,6 @@ struct us_udp_socket_t {
 struct us_internal_callback_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
   struct us_loop_t *loop;
-  int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
   mach_port_t port;
@@ -457,11 +474,15 @@ struct us_internal_callback_t {
 struct us_internal_callback_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
   struct us_loop_t *loop;
-  int cb_expects_the_loop;
   int leave_poll_ready;
   void (*cb)(struct us_internal_callback_t *cb);
-#ifdef LIBUS_USE_LIBUV
-  unsigned has_added_timer_to_event_loop;
+#ifdef LIBUS_USE_IOCP
+  /* The wakeup packet posted to the completion port. `posted` keeps it to one
+   * in flight; a close while it is in flight frees from its completion. */
+  struct us_iocp_op op;
+  volatile long posted;
+  unsigned char closed;
+  unsigned char fallthrough;
 #endif
 };
 

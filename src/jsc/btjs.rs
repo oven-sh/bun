@@ -47,13 +47,7 @@ mod tty {
             // CRT keeps its own narrow-string env cache that is not updated by
             // `SetEnvironmentVariableW`, which is how Bun mutates env vars at
             // runtime — so `libc::getenv` would silently miss those.
-            unsafe extern "system" {
-                fn GetEnvironmentVariableW(
-                    lpName: *const u16,
-                    lpBuffer: *mut u16,
-                    nSize: u32,
-                ) -> u32;
-            }
+            use bun_sys::windows::kernel32::GetEnvironmentVariableW;
             // `name` is a compile-time ASCII C string (c"NO_COLOR" / c"CLICOLOR_FORCE");
             // widen byte-by-byte into a NUL-terminated WCHAR buffer on the stack.
             let bytes = name.to_bytes();

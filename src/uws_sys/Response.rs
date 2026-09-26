@@ -360,7 +360,7 @@ impl<const SSL: bool> Response<SSL> {
         {
             // on windows uSockets exposes SOCKET (uintptr-sized) as a pointer
             // value; tag kind=system via `from_system` (masks bit 63) so
-            // `INVALID_SOCKET` (~0) doesn't decode as kind=uv.
+            // `INVALID_SOCKET` (~0) doesn't decode as kind=crt.
             return Fd::from_system(
                 c::uws_res_get_native_handle(Self::ssl_flag(), self.as_raw())
                     as *mut core::ffi::c_void,

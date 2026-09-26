@@ -16,6 +16,7 @@ pub trait OpenForWritingInput {
     ) -> bun_sys::Result<Fd>;
 }
 
+#[cfg(unix)]
 impl OpenForWritingInput for crate::PathOrFileDescriptor<'_> {
     fn open_for_writing_result(
         &self,
@@ -98,19 +99,7 @@ pub fn open_for_writing_impl<P, C>(
 where
     P: OpenForWritingInput,
 {
-    #[cfg(windows)]
-    {
-        let _ = (
-            is_socket,
-            out_nonblocking,
-            ctx,
-            on_force_sync_or_isa_tty,
-            is_pollable,
-        );
-    }
     // TODO: this should be concurrent.
-    #[cfg(unix)]
-    let mut isatty = false;
     let mut is_nonblocking = false;
     let result =
         input_path.open_for_writing_result(dir, input_flags, mode, &mut is_nonblocking, &openat);
@@ -118,6 +107,7 @@ where
 
     #[cfg(unix)]
     {
+        let mut isatty = false;
         match bun_sys::fstat(fd) {
             Err(err) => {
                 fd.close();
@@ -173,9 +163,19 @@ where
 
     #[cfg(windows)]
     {
-        *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
-            != 0
-            && !force_sync;
+        // `pollable` tells a Windows writer that the HANDLE is an overlapped
+        // pipe end Bun created, which one opened by path never is: the writer
+        // classifies it on its own.
+        let _ = (
+            is_socket,
+            force_sync,
+            out_nonblocking,
+            ctx,
+            on_force_sync_or_isa_tty,
+            is_pollable,
+            is_nonblocking,
+        );
+        *pollable = false;
         return Ok(fd);
     }
 }

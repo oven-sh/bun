@@ -732,7 +732,7 @@ export const getEventLoopStats: () => {
   numPolls: number;
   loopActive: boolean;
   eventLoopAlive: boolean;
-  /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
+  /** usockets loop iterations so far (us_internal_loop_pre count). */
   iteration: number;
 } = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 

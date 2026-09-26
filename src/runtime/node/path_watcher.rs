@@ -1,21 +1,18 @@
-//! POSIX backend for `fs.watch()`.
+//! Backend for `fs.watch()`.
 //!
 //! This is deliberately independent of `bun.Watcher` (the bundler/--watch/--hot
 //! watcher). `bun.Watcher` is shaped around a module graph — its WatchItem carries
 //! `options.Loader`, `*PackageJSON`, a filesystem handle, and on Windows is pinned
-//! to `top_level_dir`. None of that applies to `fs.watch()`, and routing `fs.watch()`
-//! through it required a 1k-line shim (the old version of this file) full of
-//! lock-ordering workarounds, a WorkPool directory crawler, and a bolted-on FSEvents
-//! side-channel.
+//! to `top_level_dir`. None of that applies to `fs.watch()`.
 //!
-//! The Windows backend (`win_watcher.rs`, libuv `uv_fs_event`) never went through
-//! `bun.Watcher` and is a quarter of the size; this file gives Linux/macOS/FreeBSD
-//! the same shape:
+//! Every platform has the same shape:
 //!
 //!   PathWatcherManager        process-global, lazy, owns the OS resource
 //!     ├─ Linux:   one inotify fd + one reader thread, wd → PathWatcher map
 //!     ├─ macOS:   delegates to fs_events.rs (one CFRunLoop thread, one FSEventStream)
-//!     └─ FreeBSD: one kqueue fd + one reader thread, fd → PathWatcher map
+//!     ├─ FreeBSD: one kqueue fd + one reader thread, fd → PathWatcher map
+//!     └─ Windows: one completion port + one reader thread, one
+//!                 `ReadDirectoryChangesW` request per PathWatcher
 //!
 //!   PathWatcher               one per unique (realpath, recursive) — deduped
 //!     └─ handlers[]           the JS FSWatcher contexts sharing this watch
@@ -26,17 +23,16 @@
 
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[cfg(not(target_os = "macos"))]
 use core::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::HashMap;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-#[cfg(not(windows))]
 use bun_core::ZBox;
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "linux", target_os = "android", windows))]
 use bun_core::strings;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[cfg(not(target_os = "macos"))]
 use bun_core::{Output, zstr};
 use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
@@ -44,14 +40,11 @@ use bun_paths as path;
 use bun_paths::platform;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_paths::resolve_path::join_z_buf_spill;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[cfg(not(target_os = "macos"))]
 use bun_sys::FdExt;
 use bun_sys::{self as sys, E, Fd, Tag};
 use bun_threading::Mutex;
-#[cfg(not(windows))]
 use bun_wyhash::hash;
-
-use bun_jsc::VirtualMachineRef as VirtualMachine;
 
 use crate::node::node_fs_watcher::{Event, FSWatcher, WatchEventKind};
 
@@ -61,7 +54,7 @@ use crate::node::fs_events as fsevents;
 bun_output::define_scoped_log!(log, fs_watch, hidden);
 
 /// Process-global manager. Created on first `fs.watch()`, never destroyed (matches
-/// the FSEvents loop and Windows libuv loop lifetimes).
+/// the FSEvents loop lifetime).
 // PORTING.md §Global mutable state: init-once-then-read-only → `OnceLock`.
 // `DEFAULT_MANAGER_MUTEX` still serializes the *fallible* init path so a failed
 // `Platform::init` can be retried on a later `get()` without two threads
@@ -78,8 +71,7 @@ static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 pub(crate) struct PathWatcherManager {
     /// Guards `watchers` and all per-platform dispatch maps. The reader thread holds
     /// this while dispatching, so `detach()` on the JS thread cannot free a PathWatcher
-    /// mid-emit. A single lock here replaces the three interacting mutexes of the old
-    /// design.
+    /// mid-emit.
     mutex: Mutex,
 
     /// Dedup map: dedup key → PathWatcher. The key is the resolved path with a one-byte
@@ -97,15 +89,16 @@ pub(crate) struct PathWatcherManager {
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     platform: UnsafeCell<Platform>,
 
-    /// inotify/kqueue fd. Set once in `Platform::init` *before* the reader thread
+    /// inotify/kqueue fd, or the completion port on Windows. Set once in
+    /// `Platform::init` *before* the reader thread
     /// spawns, never reassigned (process-lifetime singleton, no teardown). Hoisted
     /// out of `UnsafeCell<Platform>` so reads are safe `Cell::get()` instead of
     /// raw deref; thread-spawn happens-before makes the cross-thread read sound.
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    #[cfg(not(target_os = "macos"))]
     platform_fd: Cell<Fd>,
 
     /// Reader-thread loop flag. Initialized `true`, never cleared (no teardown).
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    #[cfg(not(target_os = "macos"))]
     running: AtomicBool,
 
     /// Monotonic kevent generation counter (FreeBSD). Bumped under `mutex`.
@@ -133,9 +126,9 @@ impl Default for PathWatcherManager {
             watchers: UnsafeCell::new(StringArrayHashMap::default()),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
             platform: UnsafeCell::new(Platform::default()),
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+            #[cfg(not(target_os = "macos"))]
             platform_fd: Cell::new(Fd::INVALID),
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+            #[cfg(not(target_os = "macos"))]
             running: AtomicBool::new(true),
             #[cfg(target_os = "freebsd")]
             next_gen: Cell::new(1),
@@ -191,22 +184,20 @@ pub(crate) struct PathWatcher {
     manager: Option<&'static PathWatcherManager>,
 
     /// Canonical absolute path (realpath of the user-supplied path). Owned.
-    #[cfg(not(windows))]
     path: ZBox,
-    #[cfg(not(windows))]
     recursive: bool,
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    #[cfg(not(target_os = "macos"))]
     is_file: bool,
 
     /// JS `FSWatcher` contexts sharing this OS watch. Each gets its own ChangeEvent
-    /// for per-handler duplicate suppression (same as `win_watcher.rs`). Guarded by
-    /// `manager.mutex` on all platforms — every emit path (inotify/kqueue reader
+    /// for per-handler duplicate suppression. Guarded by
+    /// `manager.mutex` on all platforms — every emit path (the reader
     /// threads and the Darwin FSEvents callback) holds it while iterating, so
     /// attach/detach can never race with dispatch.
     handlers: ArrayHashMap<*mut c_void, ChangeEvent>,
 
-    /// Per-platform per-watch state (inotify wds, kqueue fds, or the FSEventsWatcher).
-    #[cfg(not(windows))]
+    /// Per-platform per-watch state (inotify wds, kqueue fds, the
+    /// FSEventsWatcher, or the directory handle's change request).
     platform: PlatformWatch,
 }
 
@@ -215,22 +206,17 @@ pub(crate) struct PathWatcher {
 /// Suppresses only exact duplicates: same path hash *and* same event type
 /// within a 1ms window. Distinct files changed in the same millisecond must
 /// each emit — node delivers both (see test/js/node/test/parallel
-/// fs-watch tests that write two files back-to-back). Kept identical to
-/// `win_watcher.rs` so POSIX and Windows agree on which bursts are coalesced.
+/// fs-watch tests that write two files back-to-back).
 ///
 /// Fields are `Cell` so `should_emit` takes `&self` — the emit paths then only
 /// ever need shared access to a `PathWatcher`.
 #[derive(Default)]
 pub(crate) struct ChangeEvent {
-    #[cfg(not(windows))]
     hash: Cell<u64>,
-    #[cfg(not(windows))]
     event_type: Cell<WatchEventKind>,
-    #[cfg(not(windows))]
     timestamp: Cell<i64>,
 }
 
-#[cfg(not(windows))]
 impl ChangeEvent {
     fn should_emit(&self, hash: u64, timestamp: i64, event_type: WatchEventKind) -> bool {
         let time_diff = timestamp - self.timestamp.get();
@@ -248,9 +234,6 @@ impl ChangeEvent {
     }
 }
 
-pub(crate) type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
-pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
-
 impl PathWatcher {
     /// Heap-allocate and return a raw pointer.
     fn new(init: PathWatcher) -> *mut PathWatcher {
@@ -258,20 +241,17 @@ impl PathWatcher {
     }
 
     /// Called from the platform reader thread with `manager.mutex` held.
-    /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
+    /// `rel_path` is borrowed — `to_event` dupes it before enqueuing.
     /// `&self`: per-handler state is `Cell`-based, so the emit paths never
     /// need an exclusive `PathWatcher` borrow.
-    #[cfg(not(windows))]
     fn emit(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
-        let timestamp = bun_core::time::milli_timestamp();
+        // Monotonic: a wall clock set back would hold back every repeat of the
+        // last event for as long as the step.
+        let timestamp = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ms();
         let h = hash(rel_path);
         for (&ctx, ev) in self.handlers.iter() {
             if ev.should_emit(h, timestamp, event_type) {
-                (FSWatcher::ON_PATH_UPDATE)(
-                    Some(ctx),
-                    event_type.to_event(rel_path.into()),
-                    is_file,
-                );
+                FSWatcher::on_path_update(Some(ctx), event_type.to_event(rel_path.into()), is_file);
             }
         }
     }
@@ -284,28 +264,24 @@ impl PathWatcher {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn emit_unsuppressed(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
         for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), event_type.to_event(rel_path.into()), is_file);
+            FSWatcher::on_path_update(Some(ctx), event_type.to_event(rel_path.into()), is_file);
         }
     }
 
-    /// The shared inotify queue overflowed and events were lost; every handler
-    /// gets `('change', null)`. No duplicate suppression — a loss signal must
-    /// always be delivered. Caller holds `manager.mutex`.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    /// The OS event queue (the shared inotify queue, this watch's
+    /// `ReadDirectoryChangesW` buffer) overflowed and events were lost; every
+    /// handler gets `('change', null)`. No duplicate suppression — a loss signal
+    /// must always be delivered. Caller holds `manager.mutex`.
+    #[cfg(any(target_os = "linux", target_os = "android", windows))]
     fn emit_overflow(&self) {
         for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(
-                Some(ctx),
-                Event::NoFilename(WatchEventKind::Change),
-                false,
-            );
+            FSWatcher::on_path_update(Some(ctx), Event::NoFilename(WatchEventKind::Change), false);
         }
     }
 
-    #[cfg(not(windows))]
     fn emit_error(&self, err: &sys::Error, close: bool) {
         for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(
+            FSWatcher::on_path_update(
                 Some(ctx),
                 Event::Error {
                     err: err.clone(),
@@ -318,7 +294,6 @@ impl PathWatcher {
 
     /// Signals end-of-batch so `FSWatcher` can flush its queued events to the JS thread.
     /// Caller holds `manager.mutex`.
-    #[cfg(not(windows))]
     fn flush(&self) {
         for &ctx in self.handlers.keys() {
             FSWatcher::on_update_end(Some(ctx));
@@ -419,57 +394,14 @@ impl PathWatcher {
 // ────────────────────────────────────────────────────────────────────────────────
 
 pub(crate) fn watch(
-    vm: &VirtualMachine,
     path: &ZStr,
     recursive: bool,
-    callback: Callback,
-    update_end: UpdateEndCallback,
     ctx: *mut c_void,
 ) -> sys::Result<*mut PathWatcher> {
-    // Assert the callback/updateEnd are what node_fs_watcher passes.
-    // Compare against the *exact* fn pointers `FSWatcher` passes (not local wrappers,
-    // which would be distinct fn items with distinct addresses).
-    debug_assert!(callback as usize == FSWatcher::ON_PATH_UPDATE as usize);
-    debug_assert!(update_end as usize == (FSWatcher::on_update_end as UpdateEndCallback) as usize);
-    let _ = vm;
-
     let manager = PathWatcherManager::get()?;
 
-    // Resolve to a canonical path so `fs.watch("./x")` and `fs.watch("/abs/x")` dedup;
-    // FSEvents reports events by realpath so macOS needs this for prefix matching too.
-    //
-    // Open with O_PATH|O_DIRECTORY first and retry without O_DIRECTORY on ENOTDIR —
-    // that tells us file-vs-dir without a separate stat, follows symlinks, and the
-    // resulting fd feeds `getFdPath` for the realpath. One or two syscalls instead
-    // of lstat + open + (stat) in the old code. `O.PATH` is 0 on macOS (degrades to
-    // O_RDONLY, which is what F_GETPATH needs anyway).
     let mut resolve_buf = path::path_buffer_pool::get();
-    let mut is_file = false;
-    let probe_fd: Fd = match sys::open(path, sys::O::PATH | sys::O::DIRECTORY | sys::O::CLOEXEC, 0)
-    {
-        Ok(f) => f,
-        Err(e) => {
-            if e.get_errno() == E::ENOTDIR {
-                is_file = true;
-                match sys::open(path, sys::O::PATH | sys::O::CLOEXEC, 0) {
-                    Ok(f) => f,
-                    Err(e2) => return Err(e2.without_path()),
-                }
-            } else {
-                return Err(e.without_path());
-            }
-        }
-    };
-    let _close_probe = sys::CloseOnDrop::new(probe_fd);
-    let resolved: &ZStr = match sys::get_fd_path(probe_fd, &mut resolve_buf) {
-        Err(_) => path, // fall back to the caller's path; best effort
-        Ok(r) => {
-            let len = r.len();
-            resolve_buf[len] = 0;
-            // SAFETY: resolve_buf[len] == 0 written above; buf lives for the rest of this fn.
-            ZStr::from_buf(&resolve_buf[..], len)
-        }
-    };
+    let (resolved, is_file) = resolve(path, &mut resolve_buf)?;
 
     let mut key_buf = path::path_buffer_pool::get();
     let key = PathWatcherManager::make_key(key_buf.as_mut_slice(), resolved.as_bytes(), recursive);
@@ -480,24 +412,29 @@ pub(crate) fn watch(
     // scoped to this lookup.
     if let Some(&existing) = unsafe { (*manager.watchers.get()).get(key) } {
         // SAFETY: existing is a live PathWatcher under manager.mutex.
-        unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
-        manager.mutex.unlock();
-        return Ok(existing);
+        #[cfg(windows)]
+        let reusable = unsafe { Platform::watches_its_path(&*existing) };
+        #[cfg(not(windows))]
+        let reusable = true;
+        if reusable {
+            // SAFETY: existing is a live PathWatcher under manager.mutex.
+            unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
+            manager.mutex.unlock();
+            return Ok(existing);
+        }
+        manager.unlink_watcher_locked(existing);
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+    #[cfg(target_os = "macos")]
     let _ = is_file;
     // New watcher: own the key and path.
     let watcher = PathWatcher::new(PathWatcher {
         manager: Some(manager),
-        #[cfg(not(windows))]
         path: ZBox::from_bytes(resolved.as_bytes()),
-        #[cfg(not(windows))]
         recursive,
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        #[cfg(not(target_os = "macos"))]
         is_file,
         handlers: ArrayHashMap::default(),
-        #[cfg(not(windows))]
         platform: PlatformWatch::default(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.
@@ -575,6 +512,42 @@ pub(crate) fn watch(
         }
         return Ok(watcher);
     }
+}
+
+/// Resolve to a canonical path so `fs.watch("./x")` and `fs.watch("/abs/x")` dedup;
+/// FSEvents reports events by realpath so macOS needs this for prefix matching too.
+/// Also reports whether the path is a file.
+///
+/// Open with O_PATH|O_DIRECTORY first and retry without O_DIRECTORY on ENOTDIR —
+/// that tells us file-vs-dir without a separate stat, follows symlinks, and the
+/// resulting fd feeds `getFdPath` for the realpath. One or two syscalls instead
+/// of lstat + open + (stat). `O.PATH` is 0 on macOS (degrades to
+/// O_RDONLY, which is what F_GETPATH needs anyway).
+#[cfg(not(windows))]
+fn resolve<'a>(
+    path: &'a ZStr,
+    resolve_buf: &'a mut path::PathBuffer,
+) -> sys::Result<(&'a ZStr, bool)> {
+    let mut is_file = false;
+    let probe_fd: Fd = match sys::open(path, sys::O::PATH | sys::O::DIRECTORY | sys::O::CLOEXEC, 0)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            if e.get_errno() == E::ENOTDIR {
+                is_file = true;
+                match sys::open(path, sys::O::PATH | sys::O::CLOEXEC, 0) {
+                    Ok(f) => f,
+                    Err(e2) => return Err(e2.without_path()),
+                }
+            } else {
+                return Err(e.without_path());
+            }
+        }
+    };
+    let _close_probe = sys::CloseOnDrop::new(probe_fd);
+    // Best effort: the caller's path when the OS cannot name the descriptor.
+    let resolved = sys::get_fd_path_z(probe_fd, resolve_buf).unwrap_or(path);
+    Ok((resolved, is_file))
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
@@ -658,6 +631,11 @@ type PlatformWatch = DarwinWatch;
 type Platform = Kqueue;
 #[cfg(target_os = "freebsd")]
 type PlatformWatch = KqueueWatch;
+
+#[cfg(windows)]
+type Platform = Windows;
+#[cfg(windows)]
+type PlatformWatch = WindowsWatch;
 
 #[cfg(target_arch = "wasm32")]
 compile_error!("path_watcher: unsupported target");
@@ -980,6 +958,11 @@ impl Linux {
                             // SAFETY: o.watcher live under manager.mutex; shared
                             // access only — `emit_unsuppressed` takes `&self`.
                             let w = unsafe { &*o.watcher };
+                            if o.subpath.as_bytes().is_empty() {
+                                // The path names nothing this watcher watches any more:
+                                // the next `watch()` of it has to start a new one.
+                                manager.unlink_watcher_locked(o.watcher);
+                            }
                             if o.subpath.as_bytes().is_empty() && (w.is_file || !w.recursive) {
                                 w.emit_unsuppressed(
                                     WatchEventKind::Rename,
@@ -1209,8 +1192,7 @@ use bun_watcher::inotify_watcher::Event as InotifyEvent;
 /// FSEventsWatcher's opaque ctx — `fs_events.rs` calls back via `onFSEvent` below,
 /// and we fan out to the JS handlers.
 ///
-/// Unlike the old design, FSEvents is used for both files and directories (same as
-/// libuv), so `fs.watch()` no longer spins up a second kqueue thread.
+/// FSEvents is used for both files and directories (same as libuv).
 #[cfg(target_os = "macos")]
 #[derive(Default)]
 pub(crate) struct Darwin {
@@ -1618,6 +1600,11 @@ impl Kqueue {
 
                 watcher.emit(event_type, rel, entry.is_file);
                 let _ = handle_oom(touched.get_or_put(entry.watcher));
+                if entry.subpath.is_empty() && kev.fflags & (NOTE::DELETE | NOTE::REVOKE) != 0 {
+                    // The path names nothing this watcher watches any more:
+                    // the next `watch()` of it has to start a new one.
+                    manager.unlink_watcher_locked(entry.watcher);
+                }
             }
 
             for &w in touched.keys() {
@@ -1630,5 +1617,837 @@ impl Kqueue {
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
-// Windows stub
+// Windows
 // ────────────────────────────────────────────────────────────────────────────────
+
+/// Windows: one completion port, one blocking reader thread, and per PathWatcher a
+/// directory handle with one outstanding `ReadDirectoryChangesW` request.
+/// `recursive` is the request's `bWatchSubtree`. A file is watched through its
+/// parent directory, keeping only the records that name it.
+#[cfg(windows)]
+#[derive(Default)]
+pub(crate) struct Windows {}
+
+#[cfg(windows)]
+pub(crate) struct WindowsWatch {
+    /// Null until `add_watch` succeeds and after `remove_watch`.
+    request: *mut windows_impl::DirRequest,
+}
+
+#[cfg(windows)]
+impl Default for WindowsWatch {
+    fn default() -> Self {
+        Self {
+            request: core::ptr::null_mut(),
+        }
+    }
+}
+
+#[cfg(windows)]
+fn resolve<'a>(
+    path: &'a ZStr,
+    resolve_buf: &'a mut path::PathBuffer,
+) -> sys::Result<(&'a ZStr, bool)> {
+    use bun_sys::windows as w;
+    let mut wbuf = path::w_path_buffer_pool::get();
+    let wpath = path::string_paths::to_kernel32_path(&mut wbuf[..], path.as_bytes());
+    // SAFETY: `wpath` is NUL-terminated.
+    let attributes = unsafe { sys::c::GetFileAttributesW(wpath.as_ptr()) };
+    if attributes == w::INVALID_FILE_ATTRIBUTES {
+        return Err(sys::Error::from_win32(w::Win32Error::get(), Tag::watch));
+    }
+    let is_file = attributes & w::FILE_ATTRIBUTE_DIRECTORY == 0;
+    // No access rights: only the name is wanted, and links are followed.
+    // SAFETY: `wpath` is NUL-terminated; the other pointers are null.
+    let handle = unsafe {
+        w::CreateFileW(
+            wpath.as_ptr(),
+            0,
+            w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+            core::ptr::null_mut(),
+            w::OPEN_EXISTING,
+            w::FILE_FLAG_BACKUP_SEMANTICS,
+            core::ptr::null_mut(),
+        )
+    };
+    if handle == w::INVALID_HANDLE_VALUE {
+        return Err(sys::Error::from_win32(w::Win32Error::get(), Tag::watch));
+    }
+    let _close = sys::CloseOnDrop::new(Fd::from_system(handle));
+    // Best effort: the caller's path when the OS cannot name the handle.
+    let resolved = sys::get_fd_path_z(Fd::from_system(handle), resolve_buf).unwrap_or(path);
+    Ok((resolved, is_file))
+}
+
+#[cfg(windows)]
+mod windows_impl {
+    use super::*;
+    use bun_sys::windows as w;
+    use bun_sys::windows::kernel32::{CompareStringOrdinal, GetShortPathNameW};
+    use bun_sys::windows::{BOOL, CSTR_EQUAL, DWORD, HANDLE, OVERLAPPED};
+
+    /// libuv's `uv_directory_watcher_buffer_size`, so a burst of changes
+    /// overflows into `('change', null)` where it does in Node.
+    const BUFFER_SIZE: usize = 4096;
+
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    struct FILE_STANDARD_INFO {
+        AllocationSize: i64,
+        EndOfFile: i64,
+        NumberOfLinks: DWORD,
+        DeletePending: u8,
+        Directory: u8,
+    }
+    /// `FILE_INFO_BY_HANDLE_CLASS::FileStandardInfo`
+    const FILE_STANDARD_INFO_CLASS: u32 = 1;
+
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    #[derive(PartialEq, Eq)]
+    struct FILE_ID_INFO {
+        VolumeSerialNumber: u64,
+        FileId: [u8; 16],
+    }
+    /// `FILE_INFO_BY_HANDLE_CLASS::FileIdInfo`
+    const FILE_ID_INFO_CLASS: u32 = 18;
+
+    /// `None` where the file system has no ids to give.
+    fn file_id(file: HANDLE) -> Option<FILE_ID_INFO> {
+        let mut info = FILE_ID_INFO {
+            VolumeSerialNumber: 0,
+            FileId: [0; 16],
+        };
+        // SAFETY: `file` is the caller's live handle; `info` is a valid out-buffer of the given size.
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                file,
+                FILE_ID_INFO_CLASS,
+                core::ptr::from_mut(&mut info).cast(),
+                core::mem::size_of::<FILE_ID_INFO>() as DWORD,
+            )
+        } != 0;
+        ok.then_some(info)
+    }
+
+    /// `dir_path` as `CreateFileW` takes it. A drive root keeps its separator
+    /// (`C:` alone is the drive's current directory).
+    fn dir_path_z(dir_path: &[u16]) -> Vec<u16> {
+        let mut dir_z: Vec<u16> = Vec::with_capacity(dir_path.len() + 2);
+        dir_z.extend_from_slice(dir_path);
+        if dir_path.last() == Some(&u16::from(b':')) {
+            dir_z.push(u16::from(b'\\'));
+        }
+        dir_z.push(0);
+        dir_z
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetFileInformationByHandleEx(
+            file: HANDLE,
+            class: u32,
+            info: *mut c_void,
+            size: DWORD,
+        ) -> BOOL;
+    }
+
+    /// One directory handle and its `ReadDirectoryChangesW` request.
+    ///
+    /// Its own allocation rather than part of the `PathWatcher`: the kernel
+    /// writes `overlapped` and `buffer` until the reader thread dequeues the
+    /// request's completion, which can be after the `PathWatcher` is gone. The
+    /// reader thread frees it then.
+    #[repr(C)]
+    pub(super) struct DirRequest {
+        /// First field: the completion's `OVERLAPPED*` is the `DirRequest*`.
+        overlapped: OVERLAPPED,
+        /// At offset 32, so `FILE_NOTIFY_INFORMATION` (DWORD-aligned) records
+        /// can be read in place. Only what a completion reports written is
+        /// initialized.
+        buffer: [core::mem::MaybeUninit<u8>; BUFFER_SIZE],
+        dir: HANDLE,
+        /// Null once the owner detached. Guarded by `manager.mutex`.
+        watcher: *mut PathWatcher,
+        /// A request was issued whose completion the reader thread has not
+        /// handled yet. Guarded by `manager.mutex`.
+        pending: bool,
+        recursive: bool,
+        /// The watched directory, without a trailing separator or NUL.
+        /// Long-form: it comes from the watcher's resolved path.
+        dir_path: Box<[u16]>,
+        /// File watch only: the names the file's records can carry.
+        file_name: Option<FileName>,
+    }
+
+    struct FileName {
+        long: Box<[u16]>,
+        /// The 8.3 alias; a change made through it is reported under it.
+        short: Option<Box<[u16]>>,
+    }
+
+    const _: () = assert!(
+        core::mem::offset_of!(DirRequest, buffer)
+            % core::mem::align_of::<w::FILE_NOTIFY_INFORMATION>()
+            == 0
+    );
+
+    #[inline]
+    fn is_separator(c: u16) -> bool {
+        c == u16::from(b'\\') || c == u16::from(b'/')
+    }
+
+    fn last_separator(path: &[u16]) -> Option<usize> {
+        let mut i = path.len();
+        while i > 0 {
+            i -= 1;
+            if is_separator(path[i]) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    fn eql_ignore_case(a: &[u16], b: &[u16]) -> bool {
+        // SAFETY: both slices are valid for their lengths.
+        a.len() == b.len()
+            && unsafe {
+                CompareStringOrdinal(a.as_ptr(), a.len() as i32, b.as_ptr(), b.len() as i32, 1)
+            } == CSTR_EQUAL
+    }
+
+    impl PathWatcherManager {
+        #[inline]
+        fn port(&self) -> HANDLE {
+            self.platform_fd.get().native()
+        }
+    }
+
+    impl Windows {
+        pub(super) fn init() -> sys::Result<&'static PathWatcherManager> {
+            let port = w::kernel32::CreateIoCompletionPort(
+                w::INVALID_HANDLE_VALUE,
+                core::ptr::null_mut(),
+                0,
+                1,
+            );
+            if port.is_null() {
+                return Err(sys::Error::from_win32(w::Win32Error::get(), Tag::watch));
+            }
+            let manager_ptr = bun_core::heap::into_raw(Box::new(PathWatcherManager::default()));
+            // SAFETY: just allocated and exclusively owned; published only on Ok.
+            let manager: &'static PathWatcherManager = unsafe { &*manager_ptr };
+            manager.platform_fd.set(Fd::from_system(port));
+            // The manager is process-global and never torn down, so the reader thread is
+            // a daemon — detach it instead of stashing a handle we'd never join.
+            match std::thread::Builder::new().spawn(move || Windows::thread_main(manager)) {
+                Ok(handle) => drop(handle),
+                Err(_) => {
+                    manager.platform_fd.get().close();
+                    // SAFETY: the thread never started and the manager was never published.
+                    drop(unsafe { bun_core::heap::take(manager_ptr) });
+                    return Err(sys::Error::from_code(E::ENOMEM, Tag::watch));
+                }
+            }
+            Ok(manager)
+        }
+
+        /// Whether the directory `watcher` reads changes from is still the one
+        /// its path names: not once that directory was deleted or moved away,
+        /// whether or not the reader thread has heard of it yet. Caller holds
+        /// `manager.mutex`.
+        pub(super) fn watches_its_path(watcher: &PathWatcher) -> bool {
+            let request = watcher.platform.request;
+            // SAFETY: a watcher's request is live under `manager.mutex`.
+            let (dir, dir_z) = unsafe {
+                if request.is_null() || (*request).dir == w::INVALID_HANDLE_VALUE {
+                    return false;
+                }
+                ((*request).dir, dir_path_z(&(*request).dir_path))
+            };
+            // No access rights: only the id is wanted.
+            // SAFETY: `dir_z` is NUL-terminated; the other pointers are null.
+            let named = unsafe {
+                w::CreateFileW(
+                    dir_z.as_ptr(),
+                    0,
+                    w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                    core::ptr::null_mut(),
+                    w::OPEN_EXISTING,
+                    w::FILE_FLAG_BACKUP_SEMANTICS,
+                    core::ptr::null_mut(),
+                )
+            };
+            if named == w::INVALID_HANDLE_VALUE {
+                return false;
+            }
+            let same = matches!((file_id(dir), file_id(named)), (Some(a), Some(b)) if a == b);
+            // SAFETY: `named` is the live handle opened above.
+            unsafe { w::CloseHandle(named) };
+            same
+        }
+
+        /// Caller holds `manager.mutex`.
+        pub(super) fn add_watch(
+            manager: &'static PathWatcherManager,
+            watcher: &mut PathWatcher,
+        ) -> sys::Result<()> {
+            let win32_err = |e: w::Win32Error| sys::Error::from_win32(e, Tag::watch);
+
+            let mut wbuf = path::w_path_buffer_pool::get();
+            // NUL-terminated in `wbuf`.
+            let wpath: &[u16] =
+                path::string_paths::to_kernel32_path(&mut wbuf[..], watcher.path.as_bytes());
+            let (dir_path, file_name): (&[u16], Option<FileName>) = if watcher.is_file {
+                let sep = last_separator(wpath)
+                    .ok_or_else(|| sys::Error::from_code(E::EINVAL, Tag::watch))?;
+                let mut short_buf = path::w_path_buffer_pool::get();
+                // SAFETY: `wpath` is NUL-terminated; `short_buf` is writable for its length.
+                let short_len = unsafe {
+                    GetShortPathNameW(
+                        wpath.as_ptr(),
+                        short_buf.as_mut_ptr(),
+                        short_buf.len() as DWORD,
+                    )
+                } as usize;
+                let short = if short_len > 0 && short_len < short_buf.len() {
+                    let short_path = &short_buf[..short_len];
+                    last_separator(short_path).map(|i| Box::<[u16]>::from(&short_path[i + 1..]))
+                } else {
+                    None
+                };
+                (
+                    &wpath[..sep],
+                    Some(FileName {
+                        long: Box::from(&wpath[sep + 1..]),
+                        short,
+                    }),
+                )
+            } else {
+                (wpath, None)
+            };
+            let dir_path = match dir_path.split_last() {
+                Some((&last, rest)) if is_separator(last) => rest,
+                _ => dir_path,
+            };
+
+            let dir_z = dir_path_z(dir_path);
+
+            // SAFETY: `dir_z` is NUL-terminated; the other pointers are null.
+            let dir = unsafe {
+                w::CreateFileW(
+                    dir_z.as_ptr(),
+                    w::FILE_LIST_DIRECTORY,
+                    w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                    core::ptr::null_mut(),
+                    w::OPEN_EXISTING,
+                    w::FILE_FLAG_BACKUP_SEMANTICS | w::FILE_FLAG_OVERLAPPED,
+                    core::ptr::null_mut(),
+                )
+            };
+            if dir == w::INVALID_HANDLE_VALUE {
+                return Err(win32_err(w::Win32Error::get()));
+            }
+            if w::kernel32::CreateIoCompletionPort(dir, manager.port(), 0, 0).is_null() {
+                let err = w::Win32Error::get();
+                // SAFETY: `dir` is the live handle opened above.
+                unsafe { w::CloseHandle(dir) };
+                return Err(win32_err(err));
+            }
+
+            let request: *mut DirRequest = {
+                let mut uninit = Box::<DirRequest>::new_uninit();
+                let p = uninit.as_mut_ptr();
+                // SAFETY: every field but `buffer`, which is `MaybeUninit`, is
+                // written in place before `assume_init`.
+                unsafe {
+                    core::ptr::addr_of_mut!((*p).overlapped).write(bun_core::ffi::zeroed());
+                    core::ptr::addr_of_mut!((*p).dir).write(dir);
+                    core::ptr::addr_of_mut!((*p).watcher).write(watcher);
+                    core::ptr::addr_of_mut!((*p).pending).write(false);
+                    core::ptr::addr_of_mut!((*p).recursive).write(watcher.recursive);
+                    core::ptr::addr_of_mut!((*p).dir_path).write(Box::from(dir_path));
+                    core::ptr::addr_of_mut!((*p).file_name).write(file_name);
+                    bun_core::heap::into_raw(uninit.assume_init())
+                }
+            };
+            // SAFETY: `request` is live and not yet shared with the reader thread.
+            if let Err(err) = unsafe { DirRequest::issue(request) } {
+                // SAFETY: no request is outstanding, so nothing else refers to it.
+                unsafe { DirRequest::destroy(request) };
+                return Err(win32_err(err));
+            }
+            watcher.platform.request = request;
+            Ok(())
+        }
+
+        /// Caller holds `manager.mutex`.
+        pub(super) fn remove_watch(_: &'static PathWatcherManager, watcher: &mut PathWatcher) {
+            let request = core::mem::replace(&mut watcher.platform.request, core::ptr::null_mut());
+            if request.is_null() {
+                return;
+            }
+            // SAFETY: `request` is live: only this function and the reader thread
+            // (for a request whose `watcher` is already null) free one, both
+            // under `manager.mutex`.
+            unsafe {
+                (*request).watcher = core::ptr::null_mut();
+                if (*request).pending {
+                    // Closing the handle completes the request; the reader
+                    // thread frees it when it dequeues that completion.
+                    w::CloseHandle((*request).dir);
+                    (*request).dir = w::INVALID_HANDLE_VALUE;
+                } else {
+                    DirRequest::destroy(request);
+                }
+            }
+        }
+
+        fn thread_main(manager: &'static PathWatcherManager) {
+            Output::Source::configure_named_thread(zstr!("fs.watch"));
+            let port = manager.port();
+            let mut name_buf = path::path_buffer_pool::get();
+            let mut long_buf = path::w_path_buffer_pool::get();
+
+            while manager.running.load(Ordering::Acquire) {
+                let mut bytes: DWORD = 0;
+                let mut key: w::ULONG_PTR = 0;
+                let mut overlapped: *mut OVERLAPPED = core::ptr::null_mut();
+                // SAFETY: `port` is the live completion port; the out-pointers are locals.
+                let ok = unsafe {
+                    w::kernel32::GetQueuedCompletionStatus(
+                        port,
+                        &mut bytes,
+                        &mut key,
+                        &mut overlapped,
+                        w::INFINITE,
+                    )
+                } != 0;
+                let error = if ok { None } else { Some(w::Win32Error::get()) };
+
+                if overlapped.is_null() {
+                    let Some(error) = error else { continue };
+                    // The completion port itself failed: surface to every watcher, then exit the thread.
+                    let err = sys::Error::from_win32(error, Tag::watch);
+                    manager.mutex.lock();
+                    // SAFETY: holding manager.mutex.
+                    let watchers = unsafe { &*manager.watchers.get() };
+                    for &watcher in watchers.values() {
+                        // SAFETY: holding manager.mutex; `watcher` is live.
+                        unsafe {
+                            (*watcher).emit_error(&err, true);
+                            (*watcher).flush();
+                        }
+                    }
+                    manager.mutex.unlock();
+                    return;
+                }
+
+                let request = overlapped.cast::<DirRequest>();
+                manager.mutex.lock();
+                // SAFETY: a dequeued completion's request is live until this
+                // thread frees it; its fields are guarded by `manager.mutex`.
+                unsafe {
+                    let watcher = (*request).watcher;
+                    if watcher.is_null() {
+                        DirRequest::destroy(request);
+                        manager.mutex.unlock();
+                        continue;
+                    }
+                    (*request).pending = false;
+                    let watcher = &*watcher;
+                    DirRequest::on_completion(
+                        request,
+                        watcher,
+                        bytes as usize,
+                        error,
+                        &mut name_buf,
+                        &mut long_buf[..],
+                    );
+                    watcher.flush();
+                }
+                manager.mutex.unlock();
+            }
+        }
+    }
+
+    /// Whether `component` has the shape of an 8.3 name: at most eight
+    /// characters, then at most one dot with at most three after it. Only such
+    /// a component can be a short alias of a longer name.
+    fn is_short_shaped(component: &[u16]) -> bool {
+        let mut parts = component.split(|&unit| unit == u16::from(b'.'));
+        let base = parts.next().unwrap_or(&[]);
+        let extension = parts.next();
+        parts.next().is_none()
+            && (1..=8).contains(&base.len())
+            && extension.is_none_or(|extension| extension.len() <= 3)
+    }
+
+    fn may_hold_short_name(name: &[u16]) -> bool {
+        name.split(|&unit| is_separator(unit)).any(is_short_shaped)
+    }
+
+    /// `FileNamesInformation`: an entry's name and nothing else.
+    const FILE_NAMES_INFORMATION_CLASS: w::FILE_INFORMATION_CLASS = w::FILE_INFORMATION_CLASS(12);
+    const OBJ_CASE_INSENSITIVE: u32 = 0x40;
+
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    struct FILE_NAMES_INFORMATION {
+        NextEntryOffset: u32,
+        FileIndex: u32,
+        FileNameLength: u32,
+        FileName: [u16; 1],
+    }
+
+    /// Room for one `FILE_NAMES_INFORMATION` with a 255-character name.
+    type NameEntry = [u64; 80];
+
+    fn unicode_string(name: &[u16]) -> Option<w::UNICODE_STRING> {
+        let bytes = u16::try_from(name.len() * 2).ok()?;
+        Some(w::UNICODE_STRING {
+            Length: bytes,
+            MaximumLength: bytes,
+            Buffer: name.as_ptr().cast_mut(),
+        })
+    }
+
+    /// A synchronous handle to the directory `name` of `parent`, for
+    /// [`query_long_name`]. An empty `name` is `parent` itself, which need not be
+    /// synchronous.
+    fn open_for_queries(parent: HANDLE, name: &[u16]) -> Option<HANDLE> {
+        let mut object_name = unicode_string(name)?;
+        let mut attributes = w::OBJECT_ATTRIBUTES {
+            Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: parent,
+            ObjectName: &mut object_name,
+            Attributes: OBJ_CASE_INSENSITIVE,
+            SecurityDescriptor: core::ptr::null_mut(),
+            SecurityQualityOfService: core::ptr::null_mut(),
+        };
+        let mut handle: HANDLE = w::INVALID_HANDLE_VALUE;
+        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+        // SAFETY: every pointer is to a live local; `parent` is an open directory.
+        let status = unsafe {
+            w::ntdll::NtCreateFile(
+                &mut handle,
+                w::FILE_LIST_DIRECTORY | w::SYNCHRONIZE,
+                &mut attributes,
+                &mut io,
+                core::ptr::null_mut(),
+                0,
+                w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                w::FILE_OPEN,
+                w::FILE_DIRECTORY_FILE
+                    | w::FILE_SYNCHRONOUS_IO_NONALERT
+                    | w::FILE_OPEN_FOR_BACKUP_INTENT,
+                core::ptr::null_mut(),
+                0,
+            )
+        };
+        (status == w::NTSTATUS::SUCCESS).then_some(handle)
+    }
+
+    /// The long name of the entry of `parent` that `component` names. A name
+    /// without wildcards matches the one entry that has it as its long or its
+    /// short name, whatever the case.
+    fn query_long_name<'a>(
+        parent: HANDLE,
+        component: &[u16],
+        entry: &'a mut NameEntry,
+    ) -> Option<&'a [u16]> {
+        let mut pattern = unicode_string(component)?;
+        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+        // SAFETY: `parent` is a synchronous directory handle; `entry` is writable
+        // for its size and 8-byte aligned; the other pointers are to live locals.
+        let status = unsafe {
+            w::ntdll::NtQueryDirectoryFile(
+                parent,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                &mut io,
+                entry.as_mut_ptr().cast(),
+                core::mem::size_of::<NameEntry>() as u32,
+                FILE_NAMES_INFORMATION_CLASS,
+                1,
+                &mut pattern,
+                1,
+            )
+        };
+        if status != w::NTSTATUS::SUCCESS {
+            return None;
+        }
+        let info = entry.as_ptr().cast::<FILE_NAMES_INFORMATION>();
+        // SAFETY: the call filled one entry; its name follows the header inside `entry`.
+        unsafe {
+            let units = (*info).FileNameLength as usize / 2;
+            let name = core::ptr::addr_of!((*info).FileName).cast::<u16>();
+            let offset = core::mem::offset_of!(FILE_NAMES_INFORMATION, FileName);
+            if offset + units * 2 > core::mem::size_of::<NameEntry>() {
+                return None;
+            }
+            Some(core::slice::from_raw_parts(name, units))
+        }
+    }
+
+    impl DirRequest {
+        /// # Safety
+        /// `this` is live with no request outstanding; the caller holds
+        /// `manager.mutex` or has not shared `this` yet.
+        unsafe fn issue(this: *mut DirRequest) -> Result<(), w::Win32Error> {
+            use w::FileNotifyChangeFilter as Filter;
+            // SAFETY: caller contract. `overlapped` and `buffer` stay valid until
+            // the completion is dequeued because `this` is only freed then.
+            unsafe {
+                (*this).overlapped = bun_core::ffi::zeroed();
+                if w::kernel32::ReadDirectoryChangesW(
+                    (*this).dir,
+                    core::ptr::addr_of_mut!((*this).buffer).cast(),
+                    BUFFER_SIZE as DWORD,
+                    BOOL::from((*this).recursive),
+                    Filter::FILE_NAME
+                        | Filter::DIR_NAME
+                        | Filter::ATTRIBUTES
+                        | Filter::SIZE
+                        | Filter::LAST_WRITE
+                        | Filter::LAST_ACCESS
+                        | Filter::CREATION
+                        | Filter::SECURITY,
+                    core::ptr::null_mut(),
+                    core::ptr::addr_of_mut!((*this).overlapped),
+                    None,
+                ) == 0
+                {
+                    return Err(w::Win32Error::get());
+                }
+                (*this).pending = true;
+            }
+            Ok(())
+        }
+
+        /// # Safety
+        /// `this` came from `add_watch` and no request is outstanding.
+        pub(super) unsafe fn destroy(this: *mut DirRequest) {
+            // SAFETY: caller contract.
+            let this = unsafe { bun_core::heap::take(this) };
+            if this.dir != w::INVALID_HANDLE_VALUE {
+                // SAFETY: `dir` is the live handle this request owns.
+                unsafe { w::CloseHandle(this.dir) };
+            }
+        }
+
+        /// Reader thread, `manager.mutex` held, the owner still attached.
+        ///
+        /// # Safety
+        /// `this` is live and its request's completion was just dequeued.
+        unsafe fn on_completion(
+            this: *mut DirRequest,
+            watcher: &PathWatcher,
+            bytes: usize,
+            error: Option<w::Win32Error>,
+            name_buf: &mut path::PathBuffer,
+            long_buf: &mut [u16],
+        ) {
+            // SAFETY: caller contract; the kernel is done with `buffer`.
+            let request = unsafe { &*this };
+            match error {
+                None if bytes > 0 => request.emit_records(watcher, bytes, name_buf, long_buf),
+                // More changed than `buffer` holds.
+                None => watcher.emit_overflow(),
+                Some(error) => {
+                    if !(error == w::Win32Error::ACCESS_DENIED && request.is_deleted_directory()) {
+                        watcher.emit_error(&sys::Error::from_win32(error, Tag::watch), true);
+                        return;
+                    }
+                    // The watched directory was deleted: a rename of its full
+                    // path, and nothing is left to ask for. Where deletes do
+                    // not have POSIX semantics the name stays taken while a
+                    // handle to the directory is open.
+                    watcher.emit(WatchEventKind::Rename, watcher.path.as_bytes(), false);
+                    // SAFETY: caller contract; no request is outstanding on `dir`.
+                    unsafe {
+                        w::CloseHandle((*this).dir);
+                        (*this).dir = w::INVALID_HANDLE_VALUE;
+                    }
+                    // The next `watch()` of this path has to start a new one.
+                    if let Some(manager) = watcher.manager {
+                        manager.unlink_watcher_locked(core::ptr::from_ref(watcher).cast_mut());
+                    }
+                    return;
+                }
+            }
+            // SAFETY: caller contract; no request is outstanding.
+            if let Err(error) = unsafe { DirRequest::issue(this) } {
+                watcher.emit_error(&sys::Error::from_win32(error, Tag::watch), true);
+            }
+        }
+
+        fn is_deleted_directory(&self) -> bool {
+            if self.file_name.is_some() {
+                return false;
+            }
+            let mut info = FILE_STANDARD_INFO {
+                AllocationSize: 0,
+                EndOfFile: 0,
+                NumberOfLinks: 0,
+                DeletePending: 0,
+                Directory: 0,
+            };
+            // SAFETY: `dir` is live; `info` is a valid out-buffer of the given size.
+            let ok = unsafe {
+                GetFileInformationByHandleEx(
+                    self.dir,
+                    FILE_STANDARD_INFO_CLASS,
+                    core::ptr::from_mut(&mut info).cast(),
+                    core::mem::size_of::<FILE_STANDARD_INFO>() as DWORD,
+                )
+            } != 0;
+            ok && info.Directory != 0 && info.DeletePending != 0
+        }
+
+        fn emit_records(
+            &self,
+            watcher: &PathWatcher,
+            bytes: usize,
+            name_buf: &mut path::PathBuffer,
+            long_buf: &mut [u16],
+        ) {
+            let name_offset = core::mem::offset_of!(w::FILE_NOTIFY_INFORMATION, FileName);
+            let mut offset: usize = 0;
+            loop {
+                if offset + name_offset > bytes {
+                    break;
+                }
+                // SAFETY: the kernel wrote `bytes` bytes of DWORD-aligned records;
+                // `offset` only advances by its `NextEntryOffset` values, and the
+                // header was bounds-checked above.
+                let (action, next, name_len) = unsafe {
+                    let info = self
+                        .buffer
+                        .as_ptr()
+                        .add(offset)
+                        .cast::<w::FILE_NOTIFY_INFORMATION>();
+                    (
+                        (*info).Action,
+                        (*info).NextEntryOffset as usize,
+                        (*info).FileNameLength as usize,
+                    )
+                };
+                let name_start = offset + name_offset;
+                if name_start + name_len > bytes {
+                    break;
+                }
+                // SAFETY: within the `bytes` the kernel wrote (checked above), and
+                // `FileName` is at a DWORD-aligned offset of a DWORD-aligned record.
+                let name: &[u16] = unsafe {
+                    core::slice::from_raw_parts(
+                        self.buffer.as_ptr().add(name_start).cast::<u16>(),
+                        name_len / 2,
+                    )
+                };
+
+                let event_type = match action {
+                    w::FILE_ACTION_MODIFIED => Some(WatchEventKind::Change),
+                    w::FILE_ACTION_ADDED
+                    | w::FILE_ACTION_REMOVED
+                    | w::FILE_ACTION_RENAMED_OLD_NAME
+                    | w::FILE_ACTION_RENAMED_NEW_NAME => Some(WatchEventKind::Rename),
+                    _ => None,
+                };
+                if let Some(event_type) = event_type {
+                    let reported: Option<&[u16]> = match &self.file_name {
+                        Some(file_name) => (eql_ignore_case(name, &file_name.long)
+                            || file_name
+                                .short
+                                .as_deref()
+                                .is_some_and(|short| eql_ignore_case(name, short)))
+                        .then_some(&file_name.long[..]),
+                        // A record can carry an 8.3 alias. For a name that may
+                        // still exist, report its long form like libuv. While
+                        // this thread is busy the changes pile up in the 4 KiB
+                        // the system keeps for the directory, so it only asks
+                        // about a name that can be an alias.
+                        None if action != w::FILE_ACTION_REMOVED
+                            && action != w::FILE_ACTION_RENAMED_OLD_NAME
+                            && may_hold_short_name(name) =>
+                        {
+                            Some(self.long_name(name, long_buf).unwrap_or(name))
+                        }
+                        None => Some(name),
+                    };
+                    if let Some(reported) = reported {
+                        let n = strings::copy_utf16_into_utf8(&mut name_buf[..], reported).written
+                            as usize;
+                        watcher.emit(event_type, &name_buf[..n], watcher.is_file);
+                    }
+                }
+
+                if next == 0 {
+                    break;
+                }
+                offset += next;
+            }
+        }
+
+        /// `name` (relative to the watched directory) with every component in
+        /// its long form, or `None` when the path no longer resolves. Only a
+        /// component that can be an alias is looked up, in its own directory,
+        /// which is reached from the watched one by handle: neither the path to
+        /// the watched directory nor what it is called now matters.
+        fn long_name<'a>(&self, name: &[u16], long_buf: &'a mut [u16]) -> Option<&'a [u16]> {
+            let last_lookup = name
+                .split(|&unit| is_separator(unit))
+                .enumerate()
+                .filter(|(_, component)| is_short_shaped(component))
+                .last()?
+                .0;
+            if self.dir == w::INVALID_HANDLE_VALUE {
+                return None;
+            }
+            // Every directory of the walk is opened for it and asked about one
+            // name: a file system may keep the first name a handle was asked
+            // about and answer every later query with it. `dir` itself is not
+            // asked: a query on it would complete through the port.
+            let mut directory: HANDLE = open_for_queries(self.dir, &[])?;
+            let mut entry: NameEntry = [0; 80];
+            let mut len = 0usize;
+            let mut resolved_all = true;
+            for (index, component) in name.split(|&unit| is_separator(unit)).enumerate() {
+                let long: &[u16] = if index <= last_lookup && is_short_shaped(component) {
+                    match query_long_name(directory, component, &mut entry) {
+                        Some(long) => long,
+                        None => {
+                            resolved_all = false;
+                            break;
+                        }
+                    }
+                } else {
+                    component
+                };
+                let separator = usize::from(index > 0);
+                if len + separator + long.len() > long_buf.len() {
+                    resolved_all = false;
+                    break;
+                }
+                if index > 0 {
+                    long_buf[len] = u16::from(b'\\');
+                }
+                long_buf[len + separator..len + separator + long.len()].copy_from_slice(long);
+                len += separator + long.len();
+                if index < last_lookup {
+                    let Some(child) = open_for_queries(directory, component) else {
+                        resolved_all = false;
+                        break;
+                    };
+                    // SAFETY: opened by this walk.
+                    unsafe { w::CloseHandle(directory) };
+                    directory = child;
+                }
+            }
+            // SAFETY: opened by this walk.
+            unsafe { w::CloseHandle(directory) };
+            resolved_all.then_some(&long_buf[..len])
+        }
+    }
+}

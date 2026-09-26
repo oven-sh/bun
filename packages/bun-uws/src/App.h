@@ -777,11 +777,6 @@ public:
         httpContext->enableNodeHttpCompat();
     }
 
-    TemplatedApp &&run() {
-        uWS::run();
-        return std::move(*this);
-    }
-
     TemplatedApp &&setUsingCustomExpectHandler(bool value) {
         httpContext->getSocketContextData()->flags.usingCustomExpectHandler = value;
         return std::move(*this);

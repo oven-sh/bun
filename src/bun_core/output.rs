@@ -466,18 +466,7 @@ pub mod windows_stdio {
     // MOVE_DOWN: bun_sys::windows → crate::windows_sys (T0 leaf shim).
     use crate::windows_sys as w;
     use crate::windows_sys::kernel32 as c;
-
-    // `HANDLE` is an opaque kernel handle (kernel32 validates and returns 0 on
-    // a non-console handle); `&mut DWORD` is ABI-identical to `LPDWORD` (thin
-    // non-null pointer). The reference type encodes the only pointer-validity
-    // precondition, so `safe fn` discharges the link-time proof. (`c::Get/Set
-    // ConsoleMode` from `bun_windows_sys` still take `*mut DWORD`; redeclared
-    // locally so the startup/restore paths below are plain calls.)
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        safe fn GetConsoleMode(hConsoleHandle: w::HANDLE, lpMode: &mut w::DWORD) -> w::BOOL;
-        safe fn SetConsoleMode(hConsoleHandle: w::HANDLE, dwMode: w::DWORD) -> w::BOOL;
-    }
+    use crate::windows_sys::kernel32::{GetConsoleMode, SetConsoleMode};
 
     /// At program start, we snapshot the console modes of standard in, out, and err
     /// so that we can restore them at program exit if they change. Restoration is
@@ -490,11 +479,6 @@ pub mod windows_stdio {
     static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
-
-    #[unsafe(no_mangle)]
-    extern "C" fn Bun__restoreWindowsStdio() {
-        restore();
-    }
 
     pub(crate) fn restore() {
         // SAFETY: PEB access is sound on Windows; handles are valid for process
@@ -525,7 +509,7 @@ pub mod windows_stdio {
     }
 
     pub(crate) fn init() {
-        w::libuv::uv_disable_stdio_inheritance();
+        w::disable_stdio_inheritance();
 
         let stdin = w::GetStdHandle(w::STD_INPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
         let stdout = w::GetStdHandle(w::STD_OUTPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
@@ -2536,7 +2520,6 @@ fn init_scoped_debug_writer_at_startup() {
                 let _ = output_sink().make_path(Fd::cwd(), dir);
             }
 
-            // do not use libuv through this code path, since it might not be initialized yet.
             use std::io::Write as _;
             let mut pid = Vec::new();
             write!(&mut pid, "{}", getpid()).expect("failed to allocate path");

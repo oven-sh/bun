@@ -1233,8 +1233,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                 BunString::static_("ECONNREFUSED")
             };
             #[cfg(windows)]
-            let errno_ = -sys::windows::libuv::e_discriminant_to_uv(errno_ as u16)
-                .unwrap_or(sys::windows::libuv::UV_ECONNREFUSED);
+            let errno_ = -bun_errno::uv_codes::e_discriminant_to_uv(errno_ as u16)
+                .unwrap_or(bun_errno::uv_codes::UV_ECONNREFUSED);
             SystemError {
                 errno: -errno_,
                 message: BunString::static_("Failed to connect"),
@@ -3405,10 +3405,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
         // On Windows the fd is a system-kind SOCKET handle; routing it through
-        // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
-        // kind (system→u64, uv→i32, posix→i32).
+        // `.crt()` panics for anything but stdio. The sys_jsc helper branches on
+        // kind (system→u64, crt→i32, posix→i32).
         use bun_sys_jsc::FdJsc as _;
-        this.socket.get().fd().to_js_without_making_lib_uv_owned()
+        this.socket.get().fd().to_js_without_making_crt_owned()
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -5192,11 +5192,19 @@ pub(crate) mod testing_apis {
                 fi::POLL_START
             } else if syscall_str.eq_ascii(b"session_buffer") {
                 fi::SESSION_BUFFER
+            } else if cfg!(windows) && syscall_str.eq_ascii(b"poll_slow") {
+                fi::POLL_SLOW
+            } else if cfg!(windows) && syscall_str.eq_ascii(b"socket") {
+                fi::SOCKET
+            } else if cfg!(windows) && syscall_str.eq_ascii(b"wait_fallback") {
+                fi::WAIT_FALLBACK
             } else {
-                // socket/close/shutdown have enum slots but no bsd.c hooks;
+                // close/shutdown have enum slots but no hooks, and poll_slow,
+                // socket and wait_fallback have theirs in the Windows backend only;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer{}",
+                    if cfg!(windows) { ", poll_slow, socket, wait_fallback" } else { "" }
                 )));
             };
 

@@ -15,7 +15,7 @@
 // With BUN_FUNCTRACE_TTY set, the debuggee is started on a pseudo console
 // rather than our stdio, as ptyrun.c starts its child on a pty: our stdin is
 // typed into it and whatever it writes is forwarded to our stdout. Console
-// stdio is a different path through bun (libuv's tty layer, console modes,
+// stdio is a different path through bun (its tty layer, console modes,
 // WriteConsole) than a pipe, and the only way to reach it is to be a console.
 //
 // Function starts arrive as link-time addresses (a PE carries no symbol table;

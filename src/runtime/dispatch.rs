@@ -27,10 +27,6 @@ pub(crate) mod js2native;
 
 use bun_event_loop::{Task, task_tag};
 
-// `FilePoll::on_update` dispatch is POSIX-only (the symbol is declared
-// `extern "Rust"` in `aio::posix_event_loop` and never referenced on Windows,
-// where libuv drives I/O readiness directly).
-#[cfg(not(windows))]
 use bun_io::posix_event_loop::{FilePoll, Flags as PollFlag, poll_tag};
 
 use bun_event_loop::EventLoopTimer::{
@@ -41,25 +37,6 @@ use bun_jsc::event_loop::{EventLoop, Stopped};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JsResult};
-
-/// X-macro: the `node:fs` ops that are libuv requests on Windows
-/// (`UVFSRequest`); they complete on the JS thread and re-enter through the
-/// task queue under a per-op tag. Every other async fs op is a `bun_jsc::Job`.
-/// Row shape: `$tag $ty;` (`task_tag::*` const, `fs_async::*` alias).
-#[cfg(windows)]
-macro_rules! for_each_fs_uv_op {
-    ($m:ident) => {
-        $m! {
-            Open Open; Close Close; Read Read; Write Write; Readv Readv;
-            Writev Writev; StatFS Statfs;
-        }
-    };
-}
-/// Expand the fs-op table to an or-pattern over `task_tag::*` (pattern position).
-#[cfg(windows)]
-macro_rules! __fs_pat {
-    ($($tag:ident $ty:ident;)*) => { $(task_tag::$tag)|* };
-}
 
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)
@@ -108,8 +85,6 @@ use crate::bake::dev_server::DevServer;
 use crate::bake::dev_server::HotReloadEvent as BakeHotReloadEvent;
 use crate::bake::dev_server::source_map_store::SourceMapStore;
 
-#[cfg(windows)]
-use crate::node::fs::async_ as fs_async;
 use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
 use crate::node::node_fs_watcher::FSWatchTask;
 use crate::node::node_zlib_binding;
@@ -270,11 +245,6 @@ pub(crate) fn run_task(
                 ))
             };
         }
-        #[cfg(windows)]
-        task_tag::GetAddrInfoLibuvComplete => {
-            // SAFETY: boxed in `on_raw_libuv_complete`; the arm consumes it.
-            unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvCompleteHolder)) }.run();
-        }
         task_tag::ValkeyDeferredClose => {
             // SAFETY: boxed at the enqueue site; the arm consumes it.
             unsafe {
@@ -425,24 +395,6 @@ pub(crate) fn run_task(
             };
         }
         #[cfg(windows)]
-        task_tag::CopyFileWindowsMkdirp => {
-            // SAFETY: the live copy `on_mkdirp_complete_concurrent` posted.
-            unsafe {
-                crate::webcore::blob::copy_file::CopyFileWindowsMkdirp::run(cast_ptr!(
-                    crate::webcore::blob::copy_file::CopyFileWindowsMkdirp<'_>
-                ))
-            };
-        }
-        #[cfg(windows)]
-        task_tag::WriteFileWindowsMkdirp => {
-            // SAFETY: the live write `on_mkdirp_complete_concurrent` posted.
-            unsafe {
-                crate::webcore::blob::write_file::WriteFileWindowsMkdirp::run(cast_ptr!(
-                    crate::webcore::blob::write_file::WriteFileWindowsMkdirp
-                ))
-            };
-        }
-        #[cfg(windows)]
         task_tag::ChromePipeEvent => {
             // SAFETY: boxed in `PipeEvent::post`; the arm consumes it.
             unsafe { bun_core::heap::take(cast_ptr!(crate::webview::chrome_process::QueuedEvent)) }
@@ -545,20 +497,6 @@ pub(crate) fn run_task(
             // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
             unsafe { FSWatchTask::deinit(t) };
             ran?;
-        }
-
-        // ── node:fs libuv-request ops (Windows) ──────────────────────────
-        #[cfg(windows)]
-        for_each_fs_uv_op!(__fs_pat) => {
-            macro_rules! __fs_run {
-                ($($tag:ident $ty:ident;)*) => { match task.tag {
-                    // SAFETY: §Dispatch — tag identifies pointee. The task frees itself, so it takes the raw pointer.
-                    $(task_tag::$tag => unsafe { fs_async::$ty::run_from_js_thread(cast_ptr!(fs_async::$ty)) }?,)*
-                    // SAFETY: outer arm guard proves one of the table tags matched.
-                    _ => unsafe { core::hint::unreachable_unchecked() },
-                }};
-            }
-            for_each_fs_uv_op!(__fs_run);
         }
 
         // ── compression streams ──────────────────────────────────────────
@@ -727,7 +665,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 73,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -797,10 +735,13 @@ pub(crate) fn tick_queue_with_count(
 /// calls this directly (link-time resolved) so it never names `Subprocess` /
 /// `FileSink` / `DNSResolver` / etc.
 ///
+/// On Windows a `FilePoll` only ever watches a socket (pipes, consoles and
+/// process exits complete through the loop's port instead), so only the owners
+/// that poll sockets are dispatched there.
+///
 /// # Safety
 /// `poll` must point at a live [`FilePoll`] for the duration of the call
 /// (guaranteed by `FilePoll::on_update`, the only caller).
-#[cfg(not(windows))]
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     // SAFETY: contract above.
@@ -811,6 +752,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
     debug_assert!(!owner.is_null());
 
     /// `ptr.as(T)` — recover the typed owner.
+    #[cfg(not(windows))]
     macro_rules! owner_as {
         ($ty:ty) => {{
             // SAFETY: tag set with this pointee type at `FilePoll::init`.
@@ -822,6 +764,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
     /// pick their own deref mode without aliasing UB) then runs `$body`. The
     /// 1-arg form is the plain `on_poll(size_or_offset, hup)` call that
     /// covers most tags.
+    #[cfg(not(windows))]
     macro_rules! poll_arm {
         ($Ty:ty) => {
             poll_arm!($Ty, |h| {
@@ -838,6 +781,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
     }
 
     match owner.tag() {
+        #[cfg(not(windows))]
         poll_tag::BUFFERED_READER => poll_arm!(bun_io::BufferedReader, |h| {
             // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
             // set at `FilePoll::init`. Passed raw: `on_poll`'s read loops run
@@ -845,6 +789,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             // dispatch.
             unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
         }),
+        #[cfg(not(windows))]
         poll_tag::PROCESS => {
             // Bypass `owner_as!` (which yields `&mut`) — `Process` may be freed
             // by the trailing `deref`, so keep raw provenance end-to-end.
@@ -852,10 +797,12 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             // SAFETY: `proc` carries the +1 ref taken at queue time; this drops it.
             unsafe { Process::on_wait_pid_from_event_loop_task(proc) };
         }
+        #[cfg(not(windows))]
         poll_tag::MEMORY_PRESSURE => {
             // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract.
             crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
         }
+        #[cfg(not(windows))]
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
             // Mac-only — debug-assert elsewhere (Linux uses prctl(PR_SET_PDEATHSIG)).
@@ -868,15 +815,20 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             }
         }
 
+        #[cfg(not(windows))]
         poll_tag::FILE_SINK => poll_arm!(FileSinkPoll),
+        #[cfg(not(windows))]
         poll_tag::STATIC_PIPE_WRITER => poll_arm!(StaticPipeWriterPoll<Subprocess<'_>>),
+        #[cfg(not(windows))]
         poll_tag::SHELL_STATIC_PIPE_WRITER => {
             poll_arm!(StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>)
         }
+        #[cfg(not(windows))]
         poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
             poll_arm!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>)
         }
         // `bun.shell.Interpreter.IOWriter.Poll`
+        #[cfg(not(windows))]
         poll_tag::SHELL_BUFFERED_WRITER => poll_arm!(ShellBufferedWriterPoll, |h| {
             // SAFETY: tag matched, so `owner.ptr` is a live `*mut ShellBufferedWriterPoll`
             // set at `FilePoll::init`; exclusive for this dispatch.
@@ -890,6 +842,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             // SAFETY: `poll` outlives this call (caller contract).
             resolver.on_dns_poll(unsafe { &mut *poll });
         }
+        #[cfg(not(windows))]
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
@@ -901,8 +854,10 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
                 debug_assert!(false, "dns_sd SharedConnection poll on non-mac");
             }
         }
+        #[cfg(not(windows))]
         poll_tag::TERMINAL_POLL => poll_arm!(TerminalPoll),
         // `OutputReader = BufferedReader` in install crate — separate tag for ownership.
+        #[cfg(not(windows))]
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
             poll_arm!(bun_io::BufferedReader, |h| {
                 // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
@@ -916,6 +871,8 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             // when it was null; here we just no-op the unknown tag.
             let _ = (size_or_offset, hup);
         }
+        #[cfg(windows)]
+        _ => debug_assert!(false, "FilePoll owner that does not poll a socket"),
     }
 }
 
@@ -1190,6 +1147,22 @@ pub(crate) unsafe fn __bun_fire_timer(
                 let container = owner!(WindowsNamedPipe, event_loop_timer);
                 // SAFETY: per fn contract.
                 unsafe { (*container).on_timeout() };
+                Ok(())
+            }
+            #[cfg(not(windows))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!("WindowsNamedPipe timer on non-Windows");
+                }
+                Ok(())
+            }
+        }
+        EventLoopTimerTag::WindowsNamedPipeEndOfWrite => {
+            #[cfg(windows)]
+            {
+                let container = owner!(WindowsNamedPipe, end_of_write_timer);
+                // SAFETY: per fn contract.
+                unsafe { (*container).on_end_of_write_idle() };
                 Ok(())
             }
             #[cfg(not(windows))]
@@ -1485,27 +1458,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose)
         }
         // ── Windows-only producers ───────────────────────────────────────
-        task_tag::GetAddrInfoLibuvComplete => {
-            #[cfg(windows)]
-            release!(crate::dns_jsc::LibuvCompleteHolder);
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag");
-        }
         task_tag::WindowsNamedPipeContext => {
             #[cfg(windows)]
             release!(crate::socket::WindowsNamedPipeContext);
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag");
-        }
-        task_tag::CopyFileWindowsMkdirp => {
-            #[cfg(windows)]
-            release!(crate::webcore::blob::copy_file::CopyFileWindowsMkdirp<'_>);
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag");
-        }
-        task_tag::WriteFileWindowsMkdirp => {
-            #[cfg(windows)]
-            release!(crate::webcore::blob::write_file::WriteFileWindowsMkdirp);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
@@ -1514,27 +1469,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release!(crate::webview::chrome_process::QueuedEvent);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
-        }
-        task_tag::Open
-        | task_tag::Close
-        | task_tag::Read
-        | task_tag::Readv
-        | task_tag::Write
-        | task_tag::Writev
-        | task_tag::StatFS => {
-            #[cfg(windows)]
-            {
-                macro_rules! __fs_release {
-                    ($($tag:ident $ty:ident;)*) => { match task.tag {
-                        $(task_tag::$tag => release!(fs_async::$ty),)*
-                        // SAFETY: the outer arm proves one of the table tags matched.
-                        _ => unsafe { core::hint::unreachable_unchecked() },
-                    }};
-                }
-                for_each_fs_uv_op!(__fs_release);
-            }
-            #[cfg(not(windows))]
-            unreachable!("windows-only tag (libuv fs request)");
         }
         // Every tag has an arm above (`task_tag::COUNT` is asserted); a value
         // outside the range is a producer bug.

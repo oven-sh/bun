@@ -6,10 +6,12 @@ use bun_collections::VecExt;
 use bun_io as aio;
 #[cfg(not(windows))]
 use bun_io::FileType;
-use bun_io::{BufferedReader, Chunk, ReadState};
+use bun_io::{BufferedReader, Chunk, ReadState, ReaderFlags};
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, RefPtr};
-use bun_sys::{self as sys, Fd, FdExt};
+#[cfg(unix)]
+use bun_sys::FdExt;
+use bun_sys::{self as sys, Fd};
 
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
@@ -169,7 +171,7 @@ impl Lazy {
                         }
                     }
 
-                    fd.make_lib_uv_owned_for_syscall(sys::Tag::dup, sys::ErrorCase::CloseOnFail)?
+                    fd
                 }
             }
             PathOrFileDescriptor::Path(path) => {
@@ -268,12 +270,7 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_done  = |this| (&*this).on_reader_done();
     on_reader_error = |this, err| (&*this).on_reader_error(err);
     loop_ = |this| {
-        let ev = (&*this).event_loop.get();
-        // The event loop is a libuv
-        // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
-        // `bun_uws_sys::Loop` nominal with `bun_io::Loop` (= `uv::Loop`).
-        #[cfg(windows)] { ev.uv_loop().cast() }
-        #[cfg(not(windows))] { ev.r#loop() }
+        (&*this).event_loop.get().r#loop()
     };
     event_loop = |this| (&*this).event_loop.get().as_event_loop_ctx();
     // A read delivers to `on_read_chunk` consumers (JS, or a native sink such
@@ -338,22 +335,10 @@ impl FileReader {
                             {
                                 file_type = opened.file_type;
                             }
-                            #[cfg(unix)]
-                            {
-                                use bun_io::pipe_reader::PosixFlags;
-                                self.reader()
-                                    .flags
-                                    .set(PosixFlags::NONBLOCKING, opened.nonblocking);
-                                self.reader().flags.set(PosixFlags::POLLABLE, pollable);
-                            }
-                            #[cfg(windows)]
-                            {
-                                use bun_io::pipe_reader::WindowsFlags;
-                                self.reader()
-                                    .flags
-                                    .set(WindowsFlags::NONBLOCKING, opened.nonblocking);
-                                self.reader().flags.set(WindowsFlags::POLLABLE, pollable);
-                            }
+                            self.reader()
+                                .flags
+                                .set(ReaderFlags::NONBLOCKING, opened.nonblocking);
+                            self.reader().flags.set(ReaderFlags::POLLABLE, pollable);
                         }
                     }
                 }
@@ -385,8 +370,8 @@ impl FileReader {
             // POSIX non-pollable regular file every read is synchronous
             // (`read_file` → `sys::pread`), so there is no such callback —
             // holding the Strong there would root an abandoned reader forever
-            // and leak its fd. Windows file reads are async via libuv even for
-            // regular files, so the ref is always taken there.
+            // and leak its fd. On Windows every read, a regular file's included,
+            // completes through the loop, so the ref is always taken there.
             #[cfg(unix)]
             let need_io_ref = pollable;
             #[cfg(windows)]
@@ -412,49 +397,27 @@ impl FileReader {
                 }
                 return streams::Start::Err(e);
             }
-        } else {
-            #[cfg(unix)]
-            {
-                use bun_io::pipe_reader::PosixFlags;
-                if !self.started.get()
-                    && !self.waiting_for_on_reader_done.get()
-                    && self.reader().flags.contains(PosixFlags::POLLABLE)
-                    && !self.reader().is_done()
-                {
-                    self.waiting_for_on_reader_done.set(true);
-                    // SAFETY: see `parent()`.
-                    unsafe { (*self.parent()).increment_count() };
-                }
-            }
-            #[cfg(windows)]
-            {
-                // Non-lazy fromPipe path (Bun.spawn stdout/stderr): hold a
-                // ref across the pending uv_read_start so the source is not
-                // finalized while IOCP has a read queued on it.
-                if !self.started.get()
-                    && !self.waiting_for_on_reader_done.get()
-                    && self.reader().source.is_some()
-                    && !self.reader().is_done()
-                {
-                    self.waiting_for_on_reader_done.set(true);
-                    // SAFETY: see `parent()`.
-                    unsafe { (*self.parent()).increment_count() };
-                }
-            }
+        } else if !self.started.get()
+            && !self.waiting_for_on_reader_done.get()
+            && self.reader().flags.contains(ReaderFlags::POLLABLE)
+            && !self.reader().is_done()
+        {
+            self.waiting_for_on_reader_done.set(true);
+            // SAFETY: see `parent()`.
+            unsafe { (*self.parent()).increment_count() };
         }
 
         #[cfg(unix)]
         {
-            use bun_io::pipe_reader::PosixFlags;
             if file_type == FileType::Socket {
-                self.reader().flags.insert(PosixFlags::SOCKET);
+                self.reader().flags.insert(ReaderFlags::SOCKET);
             }
 
             let r = self.reader();
             if let Some(poll) = r.handle.get_poll() {
                 // `bun_io::FilePoll` is an opaque vtable wrapper; flag
                 // mutation goes through `set_flag(FilePollFlag)`.
-                if file_type == FileType::Socket || r.flags.contains(PosixFlags::SOCKET) {
+                if file_type == FileType::Socket || r.flags.contains(ReaderFlags::SOCKET) {
                     poll.set_flag(bun_io::FilePollFlag::Socket);
                 } else {
                     // if it's a TTY, we report it as a fifo
@@ -462,7 +425,7 @@ impl FileReader {
                     poll.set_flag(bun_io::FilePollFlag::Fifo);
                 }
 
-                if r.flags.contains(PosixFlags::NONBLOCKING) {
+                if r.flags.contains(ReaderFlags::NONBLOCKING) {
                     poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                 }
             }
@@ -477,19 +440,13 @@ impl FileReader {
                     self.buffered.replace(Vec::new()),
                 ));
             }
-        } else {
-            #[cfg(unix)]
-            {
-                use bun_io::pipe_reader::PosixFlags;
-                if !was_lazy && self.reader().flags.contains(PosixFlags::POLLABLE) {
-                    // A from_pipe() reader may arrive with IS_PAUSED set (lazy
-                    // subprocess stdio); clear it so read() does not no-op.
-                    self.reader().unpause();
-                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                    unsafe { IOReader::read(self.reader.get()) };
-                }
-            }
+        } else if !was_lazy && self.reader().flags.contains(ReaderFlags::POLLABLE) {
+            // A from_pipe() reader may arrive with IS_PAUSED set (lazy
+            // subprocess stdio); clear it so read() does not no-op.
+            self.reader().unpause();
+            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+            // the raw re-entrancy-safe entry (its dispatch runs user JS).
+            unsafe { IOReader::read(self.reader.get()) };
         }
 
         streams::Start::Ready
@@ -892,7 +849,7 @@ impl FileReader {
             return out;
         }
 
-        if self.reader().has_pending_read() {
+        if self.reader().buffer_is_awaiting_read() {
             return Vec::<u8>::default();
         }
 

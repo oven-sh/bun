@@ -1246,10 +1246,6 @@ pub use self::event_loop::{
     PosixSignalHandle, PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
 pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
-#[cfg(unix)]
-pub type PlatformEventLoop = bun_uws::Loop;
-#[cfg(not(unix))]
-pub type PlatformEventLoop = bun_io::Loop;
 
 pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 

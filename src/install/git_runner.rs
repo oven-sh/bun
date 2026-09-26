@@ -12,15 +12,12 @@ use bun_core::{Output, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_io::BufferedReader;
 #[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags};
+use bun_io::{FilePollFlag, ReaderFlags};
 use bun_paths as Path;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
-#[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{Process, ProcessHandle, Rusage, SpawnEnv, SpawnOptions, Status};
-use bun_sys::Fd;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
+use bun_sys::{Fd, FdExt as _};
 use bun_threading::thread_pool as ThreadPool;
 
 use crate::install::{ExtractData, ExtractDataJson};
@@ -614,54 +611,21 @@ impl GitSubprocess {
         this.exit_status.set(None);
         this.remaining_fds.set(0);
 
-        // Windows: the `uv::Pipe` allocations are ours until the spawn succeeds.
         let spawn_options = SpawnOptions {
             stdin: bun_spawn::Stdio::Ignore,
-            #[cfg(unix)]
             stdout: bun_spawn::Stdio::Buffer,
-            #[cfg(unix)]
             stderr: bun_spawn::Stdio::Buffer,
-            #[cfg(windows)]
-            stdout: bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                bun_core::ffi::zeroed::<uv::Pipe>(),
-            )) as bun_spawn::windows::UvPipePtr),
-            #[cfg(windows)]
-            stderr: bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                bun_core::ffi::zeroed::<uv::Pipe>(),
-            )) as bun_spawn::windows::UvPipePtr),
-            #[cfg(windows)]
-            windows: bun_spawn::WindowsOptions {
-                loop_: this.event_loop,
-                ..Default::default()
-            },
             stream: false,
             // The kernel kills the child when bun dies, so no git outlives the install.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             linux_pdeathsig: Some(bun_sys::SignalCode::SIGKILL.0),
             ..Default::default()
         };
-        #[cfg(windows)]
-        let mut spawn_options = spawn_options;
-
         let spawned =
-            match bun_spawn::spawn_process_cstr(&spawn_options, &argv, SpawnEnv::Strings(&envp)) {
-                Ok(Ok(spawned)) => spawned,
-                res => {
-                    #[cfg(windows)]
-                    {
-                        spawn_options.stdout.deinit();
-                        spawn_options.stderr.deinit();
-                    }
-                    res??;
-                    unreachable!();
-                }
-            };
-        #[cfg(windows)]
-        let mut spawned = spawned;
+            bun_spawn::spawn_process_cstr(&spawn_options, &argv, SpawnEnv::Strings(&envp))??;
 
         // A reader that fails to start reports through `on_reader_error`, which only
         // touches `remaining_fds` / `read_error`, never the reader cell being borrowed.
-        #[cfg(unix)]
         for (reader, fd, is_memfd) in [
             (&this.stdout, spawned.stdout, spawned.memfds[1]),
             (&this.stderr, spawned.stderr, spawned.memfds[2]),
@@ -669,36 +633,33 @@ impl GitSubprocess {
             let Some(fd) = fd else { continue };
             reader.with_mut(|r| r.set_parent(this_ptr));
             if is_memfd {
+                #[cfg(unix)]
                 reader.with_mut(|r| r.start_memfd(fd));
                 continue;
             }
-            let _ = bun_sys::set_nonblocking(fd);
             this.remaining_fds.set(this.remaining_fds.get() + 1);
-            reader.with_mut(|r| {
-                r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
-                r.start(fd, true)
-            })?;
+            // POSIX: the parent end is a socketpair half.
+            #[cfg(unix)]
+            {
+                let _ = bun_sys::set_nonblocking(fd);
+                reader.with_mut(|r| {
+                    r.flags
+                        .insert(ReaderFlags::NONBLOCKING | ReaderFlags::SOCKET)
+                });
+            }
+            if let Err(err) = reader.with_mut(|r| r.start(fd, true)) {
+                // Windows only: POSIX reports a failed start through `on_reader_error`
+                // itself. The reader did not take `fd`.
+                fd.close();
+                Self::on_reader_error(this, err);
+                continue;
+            }
+            #[cfg(unix)]
             reader.with_mut(|r| {
                 if let Some(poll) = r.handle.get_poll() {
                     poll.set_flag(FilePollFlag::Socket);
                 }
             });
-        }
-        #[cfg(windows)]
-        for (reader, pipe) in [
-            (&this.stdout, spawned.stdout.take()),
-            (&this.stderr, spawned.stderr.take()),
-        ] {
-            // Take sole ownership of each pipe before `spawned` drops.
-            let bun_spawn::SpawnedStdio::Buffer(pipe) = pipe else {
-                continue;
-            };
-            reader.with_mut(|r| {
-                r.set_source(bun_io::Source::Pipe(pipe));
-                r.set_parent(this_ptr);
-            });
-            this.remaining_fds.set(this.remaining_fds.get() + 1);
-            reader.with_mut(|r| r.start_with_current_pipe())?;
         }
 
         debug_assert!(this.process.get().is_none());
@@ -972,6 +933,6 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_done  = |this| GitSubprocess::on_reader_done(ThisPtr::new(this));
     // SAFETY: `this` is the live runner registered via `set_parent`.
     on_reader_error = |this, err| GitSubprocess::on_reader_error(ThisPtr::new(this), err);
-    loop_           = |this| (*this).event_loop.native_loop();
+    loop_           = |this| (*this).event_loop.loop_();
     event_loop      = |this| (*this).event_loop.as_event_loop_ctx();
 }

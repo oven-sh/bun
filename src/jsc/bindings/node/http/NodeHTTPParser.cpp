@@ -5,7 +5,6 @@
 #include "JSConnectionsList.h"
 #include "JSHTTPParser.h"
 #include "ZigGlobalObject.h"
-#include "uv.h"
 
 namespace Bun {
 

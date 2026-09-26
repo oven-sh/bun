@@ -56,7 +56,7 @@ pub(crate) enum S3DownloadResult<'a> {
     Failure(S3Error<'a>),
 }
 
-pub enum S3UploadResult<'a> {
+pub(crate) enum S3UploadResult<'a> {
     Success,
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),

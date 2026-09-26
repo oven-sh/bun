@@ -23,23 +23,12 @@
 #include <time.h>
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 
-void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
-// void Bun__internal_dispatch_ready_poll(void* loop, void* poll) {}
-
-#ifndef WIN32
-/* Cannot include this one on Windows */
 #include <unistd.h>
 #include <stdint.h>
 #include <errno.h>
 #include <string.h> // memset
 #include <mimalloc.h>
-#endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns);
-
-/* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
-#define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
-#define CLEAR_POINTER_TAG(p) ((void *) ((uintptr_t) (p) & UNSET_BITS_49_UNTIL_64))
 #define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
 #define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
 
@@ -76,7 +65,6 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
     us_free(p);
 }
 
-/* Todo: why have us_poll_create AND us_poll_init!? libuv legacy! */
 void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type) {
     p->state.fd = fd;
     p->state.poll_type = poll_type;
@@ -219,7 +207,7 @@ static int bun_kevent64_wait(int kqfd, struct kevent64_s *eventlist, int nevents
 #endif
 
 /* Loop */
-struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
+struct us_loop_t *us_create_loop(void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
     struct us_loop_t *loop = (struct us_loop_t *) us_calloc(1, sizeof(struct us_loop_t) + ext_size);
     loop->num_polls = 0;
     /* These could be accessed if we close a poll before starting the loop */
@@ -254,7 +242,6 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     return loop;
 }
 
-/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick */
 static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_EPOLL
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
@@ -408,7 +395,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
  * Re-poll non-blocking and dispatch again before running pre/post callbacks, so a
  * single tick covers all pending I/O instead of one 1024-event slice per roundtrip.
  * Conditioned on saturation and capped at 48 iterations — matches libuv's uv__io_poll
- * (vendor/libuv/src/unix/linux.c:1387,1590 and kqueue.c:253,451). */
+ * (src/unix/linux.c, src/unix/kqueue.c). */
 static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     int drain_count = 48;
     while (UNLIKELY(loop->num_ready_polls == LIBUS_MAX_READY_POLLS) && --drain_count != 0 && loop->num_polls > 0) {
@@ -445,34 +432,7 @@ static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop,
     return storage;
 }
 
-void us_loop_run(struct us_loop_t *loop) {
-    /* While we have non-fallthrough polls we shouldn't fall through */
-    while (loop->num_polls) {
-        loop->data.tick_depth++;
-        /* Emit pre callback */
-        us_internal_loop_pre(loop);
-
-        struct timespec sweep_ts;
-        const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts);
-
-        /* Fetch ready polls */
-#ifdef LIBUS_USE_EPOLL
-        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
-#else
-        loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, timeout);
-#endif
-
-        us_internal_dispatch_ready_polls(loop);
-        us_internal_drain_ready_polls(loop);
-        us_internal_sweep_if_due(loop);
-
-        /* Emit post callback */
-        us_internal_loop_post(loop);
-        loop->data.tick_depth--;
-    }
-}
-
-extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns, int * _Nullable released_heap_access);
+extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, int * _Nullable released_heap_access);
 extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
@@ -504,28 +464,18 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
-    /* `now_ns` is the reading the JS side took to pick `timeout`
-     * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
-     * if it had none to share. Nothing measures a deadline against it. */
     int released_heap_access = 0;
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        (void) Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns, &released_heap_access);
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm, &released_heap_access);
 
     /* The scavenger sweeps our heaps while we are in the kernel. Must come after
      * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
-     * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
+     * _end. mimalloc paces the sweep itself.
      * With no scavenger to hand off to, fall back to sweeping inline -- but only on a tick that
      * really parks, and rate-limited, because doing it between ticks is what we are avoiding. */
     const int handed_off = mi_on_thread_idle_start();
-    if (!handed_off && will_idle_inside_event_loop) {
-        static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
-        static _Thread_local uint64_t last_idle_sweep_ns = 0;
-        const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
-        if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {
-            last_idle_sweep_ns = sweep_now_ns;
-            mi_on_thread_idle();
-        }
-    }
+    if (!handed_off && will_idle_inside_event_loop)
+        us_internal_idle_sweep(now_ns);
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -785,6 +735,14 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     us_internal_loop_update_pending_ready_polls(loop, p, 0, old_events, new_events);
 }
 
+int us_internal_poll_start_accepting(struct us_poll_t *p, struct us_loop_t *loop) {
+    return us_poll_start_rc(p, loop, LIBUS_SOCKET_READABLE);
+}
+
+LIBUS_SOCKET_DESCRIPTOR us_internal_accept(struct us_poll_t *p, struct bsd_addr_t *addr) {
+    return bsd_accept_socket(us_poll_fd(p), addr);
+}
+
 size_t us_internal_accept_poll_event(struct us_poll_t *p) {
 #ifdef LIBUS_USE_EPOLL
     int fd = us_poll_fd(p);
@@ -819,7 +777,6 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 
     struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
     cb->loop = loop;
-    cb->cb_expects_the_loop = 1;
     cb->leave_poll_ready = 1;  /* Edge-triggered: skip reading eventfd on wakeup */
 
     return (struct us_internal_async *) cb;
@@ -872,7 +829,6 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
     struct us_internal_callback_t *cb = us_calloc(1, sizeof(struct us_internal_callback_t) + ext_size);
     cb->loop = loop;
-    cb->cb_expects_the_loop = 1;
     cb->leave_poll_ready = 0;
 
     /* Bug: us_internal_poll_set_type does not SET the type, it only CHANGES it */
@@ -1011,7 +967,6 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
     struct us_internal_callback_t *cb = us_calloc(1, sizeof(struct us_internal_callback_t) + ext_size);
     cb->loop = loop;
-    cb->cb_expects_the_loop = 1;
     cb->leave_poll_ready = 0;
 
     cb->p.state.poll_type = POLL_TYPE_POLLING_IN;
@@ -1064,14 +1019,5 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
     } while (IS_EINTR(ret));
 }
 #endif
-
-int us_socket_get_error(struct us_socket_t *s) {
-    int error = 0;
-    socklen_t len = sizeof(error);
-    if (getsockopt(us_poll_fd((struct us_poll_t *) s), SOL_SOCKET, SO_ERROR, (char *) &error, &len) == -1) {
-        return errno;
-    }
-    return error;
-}
 
 #endif

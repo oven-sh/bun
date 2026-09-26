@@ -23,6 +23,8 @@ pub(crate) struct Yes {
     /// out to ~BUFSIZ.
     pub(crate) buffer: Vec<u8>,
     pub(crate) buffer_used: usize,
+    /// Chunks written since the event loop last had a turn.
+    pub(crate) chunks_since_bounce: u8,
     /// Populated in `start()`.
     pub task: Option<YesTask>,
 }
@@ -85,8 +87,36 @@ impl Yes {
         Self::write_no_io_loop(interp, cmd)
     }
 
-    /// Write 4 chunks then bounce to the event loop so we don't hog the main
-    /// thread.
+    /// A burst of chunks the event loop gets a turn after: a sink that takes a
+    /// chunk without waiting (no IO, a disk file) completes it inside this
+    /// call, so nothing else would ever run.
+    const CHUNKS_PER_BOUNCE: u8 = 4;
+
+    /// Carry on after the event loop has had its turn.
+    fn resume(interp: &Interpreter, cmd: NodeId) -> Yield {
+        match Builtin::of(interp, cmd).stdout.needs_io() {
+            Some(safeguard) => Self::enqueue_chunk(interp, cmd, safeguard),
+            None => Self::write_no_io_loop(interp, cmd),
+        }
+    }
+
+    /// Bounce back via the event loop so we don't block the main thread.
+    fn bounce(interp: &Interpreter, cmd: NodeId) -> Yield {
+        let task: *mut YesTask = Self::state_mut(interp, cmd)
+            .task
+            .as_mut()
+            .expect("YesTask set in start()");
+        // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
+        // the interpreter arena, so the address is stable across the enqueue
+        // and the later main-thread callback. `enqueue` ticks the event loop
+        // and may re-enter shell dispatch — we hold no `&mut` derived from
+        // `interp` across the call.
+        unsafe { YesTask::enqueue(task) };
+        Yield::suspended()
+    }
+
+    /// Write a burst of chunks then bounce to the event loop so we don't hog
+    /// the main thread.
     fn write_no_io_loop(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Split-borrow the Cmd so the tiled buffer (in `impl_`) and `stdout`
         // are accessible simultaneously — the buffer is written zero-copy,
@@ -100,7 +130,7 @@ impl Yes {
             let (stdout, yes) = Self::split_stdout_state(me);
             let chunk = &yes.buffer[..yes.buffer_used];
             let mut err = None;
-            for _ in 0..4 {
+            for _ in 0..Self::CHUNKS_PER_BOUNCE {
                 // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
                 if let Err(e) = unsafe { stdout.write_no_io_to(shell, chunk) } {
                     err = Some(e);
@@ -119,18 +149,7 @@ impl Yes {
             .to_vec();
             return Self::write_failing_error(interp, cmd, &buf, 1);
         }
-        // Bounce back via the event loop so we don't block the main thread.
-        let task: *mut YesTask = Self::state_mut(interp, cmd)
-            .task
-            .as_mut()
-            .expect("YesTask set in start()");
-        // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
-        // the interpreter arena, so the address is stable across the enqueue
-        // and the later main-thread callback. `enqueue` ticks the event loop
-        // and may re-enter shell dispatch — we hold no `&mut` derived from
-        // `interp` across the call.
-        unsafe { YesTask::enqueue(task) };
-        Yield::suspended()
+        Self::bounce(interp, cmd)
     }
 
     fn enqueue_chunk(
@@ -169,6 +188,12 @@ impl Yes {
             return Builtin::done(interp, cmd, 1);
         }
         debug_assert!(Builtin::of(interp, cmd).stdout.needs_io().is_some());
+        let me = Self::state_mut(interp, cmd);
+        me.chunks_since_bounce += 1;
+        if me.chunks_since_bounce == Self::CHUNKS_PER_BOUNCE {
+            me.chunks_since_bounce = 0;
+            return Self::bounce(interp, cmd);
+        }
         Self::enqueue_chunk(interp, cmd, OutputNeedsIOSafeGuard::OutputNeedsIo)
     }
 
@@ -186,8 +211,8 @@ impl Yes {
 // `buffer: Vec<u8>` drops with the owning `Box<Yes>`; no explicit `Drop` impl
 // needed (PORTING.md §Allocators).
 
-/// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
-/// don't block the main thread forever.
+/// Re-queues `yes` onto the event loop after a burst of writes so we don't
+/// block the main thread forever.
 #[repr(C)]
 pub(crate) struct YesTask {
     /// Back-ref to the owning [`Interpreter`].
@@ -246,7 +271,7 @@ impl YesTask {
     pub(crate) fn run_from_main_thread(this: &Self) {
         // SAFETY: `interp` was set in `Yes::start` and outlives the task.
         let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };
-        Yes::write_no_io_loop(interp, cmd).run(interp);
+        Yes::resume(interp, cmd).run(interp);
     }
 
     /// Signature matches

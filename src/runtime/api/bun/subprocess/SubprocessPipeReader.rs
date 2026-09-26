@@ -6,14 +6,14 @@ use bun_io::BufferedReader;
 use bun_io::FilePollFlag;
 use bun_io::Loop as AsyncLoop;
 use bun_io::max_buf::MaxBuf;
-#[cfg(unix)]
-use bun_io::pipe_reader::PosixFlags;
+use bun_io::pipe_reader::ReaderFlags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_ptr::{ParentRef, RefCount, RefPtr};
+use bun_sys::{self, Fd, FdExt as _};
 
 use super::readable::Readable;
-use super::{StdioKind, StdioResult, Subprocess};
+use super::{StdioKind, Subprocess};
 
 pub(crate) type IOReader = BufferedReader;
 
@@ -46,7 +46,7 @@ pub(crate) struct PipeReader {
     pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
     pub(crate) ref_count: RefCount<PipeReader>,
     pub(crate) state: State,
-    pub(crate) stdio_result: StdioResult,
+    pub(crate) stdio_result: Option<Fd>,
 }
 
 // `pub const ref/deref = RefCount.ref/deref` — thin forwarders so existing call
@@ -103,7 +103,7 @@ impl PipeReader {
     pub(crate) fn create(
         event_loop: NonNull<EventLoop>,
         process: NonNull<Subprocess<'static>>,
-        result: StdioResult,
+        result: Option<Fd>,
         limit: Option<NonNull<MaxBuf>>,
     ) -> RefPtr<PipeReader> {
         let mut this = Box::new(PipeReader {
@@ -116,16 +116,6 @@ impl PipeReader {
             state: State::Pending,
         });
         MaxBuf::add_to_pipereader(limit, &mut this.reader.maxbuf);
-        #[cfg(windows)]
-        {
-            // On Windows `StdioResult` is the `WindowsStdioResult` enum and the
-            // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
-            // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
-            if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
-                this.reader.set_source(bun_io::Source::Pipe(pipe));
-            }
-        }
-
         let raw: *mut PipeReader = bun_core::heap::into_raw(this);
         // SAFETY: `raw` is a valid, freshly-boxed PipeReader.
         unsafe {
@@ -152,75 +142,46 @@ impl PipeReader {
         self.process = Some(ParentRef::from(process));
         self.event_loop = event_loop.into();
         self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
-        #[cfg(windows)]
-        {
-            if lazy {
-                // Leave IS_PAUSED set (the init default) so uv_read_start is
-                // deferred until JS first pulls; the kernel pipe buffer then
-                // provides backpressure and the child blocks.
-                let reader_ptr = core::ptr::from_mut(&mut self.reader).cast::<core::ffi::c_void>();
-                if let Some(source) = self.reader.source.as_mut() {
-                    source.set_data(reader_ptr);
-                }
-                self.reader
-                    .flags
-                    .remove(bun_io::pipe_reader::WindowsFlags::IS_DONE);
-                return;
-            }
-            // Hold one more ref so `self` survives the on_reader_error() teardown
-            // below long enough to return; matches the POSIX keepalive.
-            //
-            // SAFETY: `self` is live; RefPtr bumps the intrusive refcount and
-            // derefs on Drop. The deref may free `*self`, but no borrow of `self`
-            // outlives the guard's drop on return.
-            let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
-            if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
-                // Route through the same teardown as a read-callback error
-                // (matches POSIX's register_poll failure path): state=Err,
-                // detach from the Subprocess via on_close_io, release the
-                // start() ref, and let the caller proceed to the sibling pipe.
-                // Returning Err would have the caller throw after try_kill
-                // without unwinding this pipe or the never-started sibling,
-                // and on_process_exit's later drain then double-derefs them.
-                self.on_reader_error(err);
-            }
+        if lazy {
+            // Defer reading until JS first pulls so the kernel pipe buffer
+            // provides backpressure and the child blocks.
+            self.reader.flags.insert(ReaderFlags::IS_PAUSED);
+        }
+        // On POSIX `start()` always returns Ok(()); if poll registration fails
+        // it synchronously invokes onReaderError() first, which drops both the
+        // Readable.pipe ref (via onCloseIO) and the ref we just took above.
+        // Hold one more ref so `this` survives long enough to check state
+        // after start() returns.
+        //
+        // SAFETY: `self` is live; RefPtr bumps the intrusive refcount and
+        // derefs on Drop. The deref may free `*self`, but no borrow of `self`
+        // outlives the guard's drop on return.
+        let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
+
+        let fd = self.stdio_result.unwrap();
+        if let bun_sys::Result::Err(err) = self.reader.start(fd, true) {
+            // Windows returns a failed start instead of reporting it, and the
+            // reader did not take `fd`. Route it through the same teardown:
+            // state=Err, detach from the Subprocess via on_close_io, release
+            // the start() ref, and let the caller proceed to the sibling pipe.
+            fd.close();
+            self.on_reader_error(err);
         }
 
-        #[cfg(not(windows))]
+        #[cfg(unix)]
         {
-            if lazy {
-                // Defer poll registration until JS first pulls so the kernel
-                // pipe buffer provides backpressure and the child blocks.
-                self.reader.flags.insert(PosixFlags::IS_PAUSED);
+            if matches!(self.state, State::Err(..)) {
+                // onReaderError already ran; `_guard`'s Drop on return
+                // will drop the last ref and deinit() closes the handle.
+                return;
             }
-            // PosixBufferedReader.start() always returns Ok(()); if poll
-            // registration fails it synchronously invokes onReaderError() first,
-            // which drops both the Readable.pipe ref (via onCloseIO) and the ref we
-            // just took above. Hold one more ref so `this` survives long enough to
-            // check state after start() returns.
-            //
-            // SAFETY: `self` is live; RefPtr bumps the intrusive refcount and
-            // derefs on Drop. The deref may free `*self`, but no borrow of `self`
-            // outlives the guard's drop on return.
-            let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
-
-            let _ = self.reader.start(self.stdio_result.unwrap(), true);
-
-            #[cfg(unix)]
-            {
-                if matches!(self.state, State::Err(..)) {
-                    // onReaderError already ran; `_guard`'s Drop on return
-                    // will drop the last ref and deinit() closes the handle.
-                    return;
-                }
-                if let Some(poll) = self.reader.handle.get_poll() {
-                    poll.set_flag(FilePollFlag::Socket);
-                    poll.set_flag(FilePollFlag::Nonblocking);
-                }
-                self.reader
-                    .flags
-                    .insert(PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
+            if let Some(poll) = self.reader.handle.get_poll() {
+                poll.set_flag(FilePollFlag::Socket);
+                poll.set_flag(FilePollFlag::Nonblocking);
             }
+            self.reader
+                .flags
+                .insert(ReaderFlags::SOCKET | ReaderFlags::NONBLOCKING | ReaderFlags::POLLABLE);
         }
     }
 
@@ -371,16 +332,7 @@ impl PipeReader {
             .virtual_machine
             .map(bun_ptr::BackRef::from)
             .expect("event_loop.virtual_machine");
-        let uws = vm.uws_loop();
-        #[cfg(windows)]
-        {
-            // SAFETY: uws loop pointer is live for the VM lifetime.
-            unsafe { (*uws).uv_loop }
-        }
-        #[cfg(not(windows))]
-        {
-            uws.cast()
-        }
+        vm.uws_loop().cast()
     }
 }
 

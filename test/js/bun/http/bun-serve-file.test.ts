@@ -1392,7 +1392,7 @@ process.exit(0);
 // On Windows, FileResponseStream closes its fd via Closer::close in Drop AND
 // WindowsBufferedReader::Drop closed the same CRT fd via File::start_close
 // (CLOSE_HANDLE was cleared on the reader but never honored). Between the two
-// async uv_fs_close calls, an unrelated open could be handed the recycled
+// async closes, an unrelated open could be handed the recycled
 // slot and have it closed under it. On POSIX the reader honors CLOSE_HANDLE,
 // so this is effectively a Windows regression test.
 test.skipIf(!isWindows)(
@@ -1430,7 +1430,7 @@ for (let round = 0; round < 160; round++) {
         .catch(() => {}),
     );
   }
-  // Victim Bun.file().text() reads (async uv_fs_open -> uv_fs_fstat).
+  // Victim Bun.file().text() reads (open -> fstat on the work pool).
   for (let i = 0; i < 16; i++) {
     tasks.push(Bun.file("victim.json").json().then(v => {
       if (!v.ok) throw new Error("wrong contents");
@@ -1439,7 +1439,7 @@ for (let round = 0; round < 160; round++) {
   await Promise.all(tasks);
   if (serverError) throw serverError;
   // Canary: a synchronously opened fd must still be valid on the next tick.
-  // The second queued uv_fs_close runs on the threadpool and, without the
+  // The second queued close runs on the work pool and, without the
   // fix, can close this exact recycled slot.
   const canary = openSync("victim.json", "r");
   await Bun.sleep(0);

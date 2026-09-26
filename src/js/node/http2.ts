@@ -3005,6 +3005,7 @@ function tryClose(fd) {
 // it exactly once) and respondWithFD (the caller owns the descriptor: nothing here may close it,
 // matching node's doSendFD).
 function doSendFileFD(options, fd, headers, err, stat) {
+  // respondWithFD() clears onError in its options: node reads it only for respondWithFile().
   const onError = options.onError;
   const ownsFd = this[kOwnsFd] === true;
   if (err) {
@@ -3013,8 +3014,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     }
 
     if (onError) onError(err);
-    else {
-      this.respond(headers, options);
+    else if (respondOrDestroy.$call(this, headers, options)) {
       this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     }
     return;
@@ -3032,10 +3032,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       const err = isDirectory ? $ERR_HTTP2_SEND_FILE() : $ERR_HTTP2_SEND_FILE_NOSEEK();
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
-      else {
-        this.respond(headers, options);
-        this.destroy(err);
-      }
+      else if (respondOrDestroy.$call(this, headers, options)) this.destroy(err);
       return;
     }
 
@@ -3146,6 +3143,16 @@ function doSendFileFD(options, fd, headers, err, stat) {
     else fileStream.pause();
   });
   fileStream.pipe(sink);
+}
+// respond() can throw, and a throw from an fs callback is an uncaught exception.
+function respondOrDestroy(this: ServerHttp2Stream, headers, options) {
+  try {
+    this.respond(headers, options);
+    return true;
+  } catch (err) {
+    this.destroy(err);
+    return false;
+  }
 }
 function onFileStreamError(this: Http2Stream) {
   if (!this.destroyed && !this.closed) this.close(NGHTTP2_INTERNAL_ERROR);
@@ -3466,6 +3473,8 @@ class ServerHttp2Stream extends Http2Stream {
     // The caller owns this fd; clear any stale flag left by a prior respondWithFile()
     // on the same stream so doSendFileFD will not close it (node semantics).
     this[kOwnsFd] = false;
+    // node never reads onError: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2755-L2790
+    options.onError = undefined;
     if (options.statCheck === undefined) {
       // node's processRespondWithFD runs synchronously when no statCheck is given: the
       // user-facing writable side is already closed by the time respondWithFD() returns, so a

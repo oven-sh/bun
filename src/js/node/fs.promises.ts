@@ -457,17 +457,19 @@ function asyncWrap(fn: any, name: string) {
       throwEBADFIfNecessary("writeFile", fd);
       let encoding: BufferEncoding = "utf8";
       let flush = false;
+      let signal;
       if (options == null || typeof options === "function") {
       } else if (typeof options === "string") {
         encoding = options;
       } else {
         encoding = options?.encoding ?? encoding;
         flush = options?.flush ?? flush;
+        signal = options?.signal;
       }
 
       try {
         this[kRef]();
-        return await writeFile(fd, data, { encoding, flush, flag: this[kFlag] });
+        return await writeFile(fd, data, { encoding, flush, flag: this[kFlag], signal });
       } finally {
         this[kUnref]();
       }
@@ -694,7 +696,7 @@ function asyncWrap(fn: any, name: string) {
         encoding = options;
       } else {
         encoding = options?.encoding ?? encoding;
-        signal = options?.signal ?? undefined;
+        signal = options?.signal;
       }
 
       try {
@@ -1570,7 +1572,7 @@ function throwEBADFIfNecessary(fn: string, fd) {
   }
 }
 
-async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: AbortSignal | null) {
+async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: AbortSignal | undefined) {
   const writer = Bun.file(fd).writer();
 
   const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
@@ -1611,15 +1613,12 @@ function flagTruncates(flag): boolean {
 
 async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
   let encoding;
-  let signal: AbortSignal | null = null;
+  let signal: AbortSignal | undefined;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
     flag = optionsOrEncoding?.flag ?? (flag || "w");
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
-    signal = optionsOrEncoding?.signal ?? null;
-    if (signal?.aborted) {
-      throw $makeAbortError(undefined, { cause: signal.reason });
-    }
+    signal = optionsOrEncoding?.signal;
   } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
     encoding = optionsOrEncoding || "utf8";
     flag ??= "w";
@@ -1629,6 +1628,11 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
   if (!Buffer.isEncoding(encoding)) {
     // ERR_INVALID_OPT_VALUE_ENCODING was removed in Node v15.
     throw new TypeError(`Unknown encoding: ${encoding}`);
+  }
+
+  validateAbortSignal(signal, "options.signal");
+  if (signal?.aborted) {
+    throw $makeAbortError(undefined, { cause: signal.reason });
   }
 
   let mustClose = typeof fdOrPath === "string";

@@ -36,6 +36,12 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  // Portable: five hand-written x86-64 assembly files keep data below the stack pointer (the fiat-crypto ADX
+  // multiply/square of P-256 and curve25519, HRSS's poly_Rq_mul), which -mno-red-zone cannot change. The patch
+  // puts them, and the C that selects them, behind BORINGSSL_NO_RED_ZONE (defined below); the C implementations
+  // of the same functions take over. The perlasm output is not affected: it does not use the red zone.
+  patches: cfg => (cfg.portable ? ["patches/boringssl/portable-no-red-zone-asm.patch"] : []),
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.
@@ -59,6 +65,7 @@ export const boringssl: Dependency = {
         // (src/simdutf_sys/bun-simdutf.cpp) instead of the constant-time path
         // that private keys keep.
         BORINGSSL_PEM_FAST_PUBLIC_BASE64: true,
+        ...(cfg.portable && { BORINGSSL_NO_RED_ZONE: true }),
         ...(cfg.windows && {
           _HAS_EXCEPTIONS: 0,
           WIN32_LEAN_AND_MEAN: true,

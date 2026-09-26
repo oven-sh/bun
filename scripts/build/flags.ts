@@ -106,11 +106,12 @@ export const globalFlags: Flag[] = [
   },
   {
     // Without it a distribution's clang puts its own libc++ headers
-    // (configured for glibc) in front of the sysroot's.
-    flag: c => ["-stdlib=libc++", "-stdlib++-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
+    // (configured for glibc) in front of the sysroot's. It replaces what
+    // -stdlib= would choose for a compile, so that one is a link flag only.
+    flag: c => ["-stdlib++-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
     when: c => c.portable,
     lang: "cxx",
-    desc: "Portable: the sysroot's libc++, and its headers only",
+    desc: "Portable: the sysroot's libc++ headers, and only those",
   },
   {
     // The image's ABI (Config.portable): the same code also runs where

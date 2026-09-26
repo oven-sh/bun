@@ -2742,27 +2742,69 @@ function getStringWidth(str, removeControlChars = true) {
 
 // node's ansi matcher (from chalk/ansi-regex): only complete sequences are stripped —
 // Bun.stripANSI also eats bare/invalid ESC/CSI prefixes, which node keeps.
-// https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
+// https://github.com/nodejs/node/blob/5b316e5402cd7c1bce0afc33cba66fda5f62157c/lib/internal/util/inspect.js#L284-L293
+const kAnsiOsc = "(?:\\u001B\\][\\s\\S]*?(?:\\u0007|\\u001B\\u005C|\\u009C))";
+const kAnsiCsi = "[\\u001B\\u009B][[\\]()#;?]*" + "(?:\\d{1,4}(?:[;:]\\d{0,4})*)?" + "[\\dA-PR-TZcf-nq-uy=><~]";
 let ansi;
+let ansiCsi;
 function getAnsiRegExp() {
-  return (ansi ??= new RegExp(
-    "[\\u001B\\u009B][[\\]()#;?]*" +
-      "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
-      "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
-      "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
-      "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
-      "[\\dA-PR-TZcf-nq-uy=><~]))",
-    "g",
-  ));
+  return (ansi ??= new RegExp(kAnsiOsc + "|" + kAnsiCsi, "g"));
 }
+function getAnsiCsiRegExp() {
+  return (ansiCsi ??= new RegExp(kAnsiCsi, "g"));
+}
+
+// For $call: the bound function uncurryThis() returns costs more per call than these do.
+const StringPrototypeIndexOfUnbound = String.prototype.indexOf;
+const StringPrototypeLastIndexOfUnbound = String.prototype.lastIndexOf;
+const StringPrototypeReplaceUnbound = String.prototype.replace;
+const RegExpPrototype = RegExp.prototype;
+const SymbolReplace = Symbol.replace;
+const RegExpPrototypeSymbolReplaceUnbound = RegExpPrototype[SymbolReplace];
+
+function replaceAnsi(str, regexp) {
+  // JavaScriptCore has its fast path in String.prototype.replace, which calls regexp[Symbol.replace].
+  if (RegExpPrototype[SymbolReplace] === RegExpPrototypeSymbolReplaceUnbound) {
+    return StringPrototypeReplaceUnbound.$call(str, regexp, "");
+  }
+  return RegExpPrototypeSymbolReplaceUnbound.$call(regexp, str, "");
+}
+
+// The end of the last OSC terminator (BEL, ESC \ or ST), or 0.
+function endOfLastOscTerminator(str) {
+  // The reverse search is vectorized for one character only, so that one finds where the other starts.
+  const backslash = StringPrototypeLastIndexOfUnbound.$call(str, "\\");
+  const escBackslash = backslash <= 0 ? -1 : StringPrototypeLastIndexOfUnbound.$call(str, "\u001B\\", backslash - 1);
+  return MathMax(
+    StringPrototypeLastIndexOfUnbound.$call(str, "\u0007") + 1,
+    StringPrototypeLastIndexOfUnbound.$call(str, "\u009C") + 1,
+    escBackslash === -1 ? 0 : escBackslash + 2,
+  );
+}
+
+// A shorter string has at most 63 of the scans described below, of at most 127 characters each.
+const kMinLengthToCheckOscTerminators = 128;
 
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw $ERR_INVALID_ARG_TYPE("str", "string", str);
   // All ANSI escape sequences start with ESC (7-bit) or CSI (8-bit).
-  if (StringPrototypeIndexOf(str, "\u001B") === -1 && StringPrototypeIndexOf(str, "\u009B") === -1) {
+  if (
+    StringPrototypeIndexOfUnbound.$call(str, "\u001B") === -1 &&
+    StringPrototypeIndexOfUnbound.$call(str, "\u009B") === -1
+  ) {
     return str;
   }
-  return RegExpPrototypeSymbolReplace(getAnsiRegExp(), str, "");
+  if (str.length >= kMinLengthToCheckOscTerminators && StringPrototypeIndexOfUnbound.$call(str, "\u001B]") !== -1) {
+    const end = endOfLastOscTerminator(str);
+    // An "\x1b]" past `end` makes the OSC alternative scan the rest of the string and fail. No match spans `end`.
+    if (StringPrototypeIndexOfUnbound.$call(str, "\u001B]", end) !== -1) {
+      return (
+        replaceAnsi(StringPrototypeSlice(str, 0, end), getAnsiRegExp()) +
+        replaceAnsi(StringPrototypeSlice(str, end), getAnsiCsiRegExp())
+      );
+    }
+  }
+  return replaceAnsi(str, getAnsiRegExp());
 }
 
 // utils

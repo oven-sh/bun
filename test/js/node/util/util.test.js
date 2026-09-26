@@ -413,6 +413,126 @@ describe("util", () => {
       invalidArgType('The "str" argument must be of type string. Received type number (1)'),
     );
   });
+  describe("stripVTControlCharacters", () => {
+    it("strips what node strips", () => {
+      // Outputs of the node v26.8.2 binary, which has the RegExp of nodejs/node#64319.
+      const cases = [
+        ["\u001b[31mred\u001b[0m plain", "red plain"],
+        ["\u009b31mred\u009b0m", "red"],
+        ["\u2603\u001b[1;38;2;255;0;0mred\u001b[0m\u2603", "\u2603red\u2603"],
+        ["\u001b[38:2:255:0:0mred\u001b[4:3m", "red"],
+        ["\u001b]0;my title\u0007x", "x"],
+        ["\u001b]8;;https://example.com/a b\u0007link\u001b]8;;\u001b\\", "link"],
+        ["\u001b]0;a\u001bb\u009cc", "c"],
+        ["a\u001b]0;titleXYZ", "aitleXYZ"],
+        ["a\u009d0;t\u009cb", "a\u009d0;t\u009cb"],
+        ["a\u001bPdata no end", "adata no end"],
+        ["a\u001b_payload\u001b\\b", "a\u001b_payload\u001b\\b"],
+        ["a\u001bbcd", "a\u001bbcd"],
+        ["abc\u001b", "abc\u001b"],
+        ["abc\u001b[", "abc\u001b["],
+        ["a\u009bxyz", "a\u009bxyz"],
+        ["\u0090\u0098\u009c\u009d\u009e\u009f", "\u0090\u0098\u009c\u009d\u009e\u009f"],
+        ["\u001b[1", ""],
+        ["\u001b[12345m", "m"],
+        ["\u001b[12;34;x", ";x"],
+        ["\u001b[;?-\u0007", "\u001b[;?-\u0007"],
+        ["\u001b\u001b[0mx", "\u001bx"],
+        ["\u001b[0m", ""],
+        ["", ""],
+      ];
+      expect(cases.map(([input]) => [input, util.stripVTControlCharacters(input)])).toEqual(cases);
+    });
+
+    it("leaves a string with no complete sequence as it is", () => {
+      const plain = Buffer.alloc(1024, "a").toString();
+      expect(util.stripVTControlCharacters(plain)).toBe(plain);
+      expect(util.stripVTControlCharacters("\u2603 abc\u001b")).toBe("\u2603 abc\u001b");
+    });
+
+    it("strips a long string like node's RegExp does", () => {
+      // Past 128 characters Bun strips what follows the last OSC terminator without the OSC alternative.
+      const ansi = new RegExp(
+        "(?:\\u001B\\][\\s\\S]*?(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+          "|[\\u001B\\u009B][[\\]()#;?]*" +
+          "(?:\\d{1,4}(?:[;:]\\d{0,4})*)?" +
+          "[\\dA-PR-TZcf-nq-uy=><~]",
+        "g",
+      );
+      const pieces = [
+        "\u001b]8;;u\u0007",
+        "\u001b]0;t\u001b\\",
+        "\u001b]0;t\u009c",
+        "\u001b]0;t",
+        "\u001b]",
+        "\u001b[31m",
+        "\u009b1;2m",
+        "\u001b",
+        "\\",
+        "\u0007",
+        "\u009c",
+        "]",
+        "text ",
+      ];
+      const pad = Buffer.alloc(128, "x").toString();
+      const inputs = [];
+      for (const a of pieces)
+        for (const b of pieces) for (const c of pieces) inputs.push(pad + a + b + c, a + b + pad + c + "\u2603");
+      const mismatches = inputs
+        .map(input => ({ input, expected: input.replace(ansi, ""), actual: util.stripVTControlCharacters(input) }))
+        .filter(({ expected, actual }) => expected !== actual);
+      expect(mismatches).toEqual([]);
+    });
+
+    it("is linear in the number of OSC introducers that no terminator follows", async () => {
+      // node's RegExp scans to the end of the string from each one: 256 KB of them takes it half a minute.
+      const script = `
+        import { stripVTControlCharacters } from "node:util";
+        const terminated = Buffer.alloc(8 * 1024, "\\x1b]8;;u\\x07x").toString();
+        const unterminated = Buffer.alloc(256 * 1024, "\\x1b]").toString();
+        const output = stripVTControlCharacters(terminated + unterminated + "\\x1b[31mred");
+        console.log(output === Buffer.alloc(1024, "x").toString() + unterminated + "red");
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "true", stderr: "", exitCode: 0 });
+    });
+
+    it("does not call a replaced RegExp.prototype[Symbol.replace]", async () => {
+      const script = `
+        import { stripVTControlCharacters } from "node:util";
+        const original = RegExp.prototype[Symbol.replace];
+        let calls = 0;
+        const before = stripVTControlCharacters("\\x1b[31mred\\x1b[0m");
+        RegExp.prototype[Symbol.replace] = function (...args) {
+          calls++;
+          return original.apply(this, args);
+        };
+        const after = stripVTControlCharacters("\\x1b[31mred\\x1b[0m");
+        RegExp.prototype[Symbol.replace] = original;
+        console.log(JSON.stringify({ before, after, calls }));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ before: "red", after: "red", calls: 0 }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("strips the sequences after a long run of prefix characters", () => {
+      // The RegExp before nodejs/node#64319 rescanned the rest of "\x1b;?;?;?..." from every ';'.
+      // JavaScriptCore stops a match that backtracks that much and reports no match, which left
+      // the color codes in the output.
+      const prefix = "\u001b" + Buffer.alloc(64 * 1024, ";?").toString();
+      const output = util.stripVTControlCharacters(prefix + "\u001b[31mred\u001b[0m");
+      expect({ keptPrefix: output.startsWith(prefix), rest: output.slice(prefix.length) }).toEqual({
+        keptPrefix: true,
+        rest: "red",
+      });
+    });
+  });
   // Ported from the validateObject block of node's test/parallel/test-validators.js (v26.3.0).
   it("validateObject honors the kValidateObject* flags like Node", () => {
     const { validateObject, kValidateObjectAllowNullable, kValidateObjectAllowArray, kValidateObjectAllowFunction } =

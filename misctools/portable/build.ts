@@ -255,7 +255,8 @@ let failed = false;
 function check(name: string, command: string[], expected: { exitCode: number; output?: RegExp }) {
   let passes = 0;
   for (let i = 1; i <= runs; i++) {
-    const result = Bun.spawnSync([...emulator, ...command], { stdout: "pipe", stderr: "pipe" });
+    // In the directory of the build: a run that has to fail may leave what the system writes of it.
+    const result = Bun.spawnSync([...emulator, ...command], { cwd: out, stdout: "pipe", stderr: "pipe" });
     const text = result.stdout.toString();
     // A program that a signal ended has the exit code 128 + the number of the signal in a shell.
     const exitCode =

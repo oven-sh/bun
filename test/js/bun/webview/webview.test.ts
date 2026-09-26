@@ -180,7 +180,7 @@ it("url constructor option fires navigate()", async () => {
   // page has loaded.
   await using view = new Bun.WebView({ width: 200, height: 200, url: html("<h1 id=t>from-ctor</h1>") });
   // No explicit navigate() — the constructor fired it. evaluate() will
-  // wait for the pending navigate to complete (checkSlot serializes).
+  // wait for the pending navigate to complete (checkReady serializes).
   // Actually — evaluate uses m_pendingEval, not m_pendingNavigate, so
   // they don't serialize against each other on the JS side. The child
   // processes the Create+Navigate+Evaluate frames in order from the same

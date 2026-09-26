@@ -91,6 +91,9 @@ the bytes the program wrote (PowerShell's own ">" re-encodes them).
 
    host_win_uv.c names every libuv function of bun's bindings: "undefined symbol uv_.." here means
    that this libuv does not have a function that the bindings declare. Please send the message.
+   host_win.c was written where no Windows SDK is: it was compiled for this target against
+   declarations written by hand, never against the headers. What the compiler says here, an error
+   or a warning, is a finding: please send it as it is.
 
 4. every import of the image against this Windows (it binds each one and prints the ones that fail)
 

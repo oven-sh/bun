@@ -1363,6 +1363,8 @@ describe("permissive autolinks and emphasis delimiters", () => {
     ],
     ["__a@b.cob__", '<p><strong><a href="mailto:a@b.cob">a@b.cob</a></strong></p>\n'],
     ["_a@b.co__", '<p><em><a href="mailto:a@b.co">a@b.co</a></em>_</p>\n'],
+    ["__mail a@b.co.__", '<p><strong>mail <a href="mailto:a@b.co">a@b.co</a>.</strong></p>\n'],
+    ["_http://foo.bar._", '<p><em><a href="http://foo.bar">http://foo.bar</a>.</em></p>\n'],
     ["**http://example.com/a**", '<p><strong><a href="http://example.com/a">http://example.com/a</a></strong></p>\n'],
     ["~~www.example.com/a~~", '<p><del><a href="http://www.example.com/a">www.example.com/a</a></del></p>\n'],
     [
@@ -1375,11 +1377,27 @@ describe("permissive autolinks and emphasis delimiters", () => {
       '<p><a href="http://a.bc/x">http://a.bc/x</a> <img src="i" alt="a www.d.ef/y" /> ' +
         '<a href="http://www.g.hi/z">www.g.hi/z</a> <img src="j" alt="b" /> <a href="mailto:k@l.mn">k@l.mn</a></p>\n',
     ],
+    // As cmark-gfm: a "." in front of the closer is not in the link. md4c keeps it in the link.
+    [
+      "**See http://example.com/page.**",
+      '<p><strong>See <a href="http://example.com/page">http://example.com/page</a>.</strong></p>\n',
+    ],
+    [
+      "**See http://example.com/page...**",
+      '<p><strong>See <a href="http://example.com/page">http://example.com/page</a>...</strong></p>\n',
+    ],
+    ["*see www.example.com/a.*", '<p><em>see <a href="http://www.example.com/a">www.example.com/a</a>.</em></p>\n'],
+    [
+      "~~old: www.example.com/a.~~",
+      '<p><del>old: <a href="http://www.example.com/a">www.example.com/a</a>.</del></p>\n',
+    ],
     // As md4c. cmark-gfm links the whole URL and prints the "*" in front of it as text.
     [
       "see *http://example.com/path*with*stars for more",
       '<p>see <em><a href="http://example.com/path">http://example.com/path</a></em>with*stars for more</p>\n',
     ],
+    // As md4c: "http://foo." is no link. cmark-gfm links the whole URL and prints the last "_" as text.
+    ["http://foo._tcp.example.com/x_", "<p>http://foo.<em>tcp.example.com/x</em></p>\n"],
     // As cmark-gfm: the delimiters in a link between plain boundaries are URL bytes. md4c pairs them.
     [
       "**https://example.com/src/__init__.py**",
@@ -1439,7 +1457,7 @@ describe("permissive autolinks and emphasis delimiters", () => {
   });
 
   test("every mix of delimiters around and in a link renders balanced tags", () => {
-    const links = ["a@b.co", "http://a.bc/d", "http://a.bc/d*e", "www.a.bc/_d_/~e"];
+    const links = ["a@b.co", "http://a.bc/d", "http://a.bc/d*e", "www.a.bc/_d_/~e", "www.a.bc/d."];
     const tails = ["", "x", "_x", " x*"];
     const bad: string[] = [];
     for (const before of ["", "*", "__", "~~"]) {

@@ -181,9 +181,16 @@ pub(crate) fn find_permissive_autolink(
     let al = scan_permissive_autolink(content, pos, emph, content.len())?;
     // No paired run lies between the start of a link and `pos`.
     let runs = &resolved[resolved.partition_point(|d| d.pos < pos)..];
-    let Some(limit) = split_pair_limit(runs, al.end) else {
+    let mut limit = split_pair_limit(runs, al.end).unwrap_or(al.end);
+    // Periods in front of the run that ends the link are not in the link.
+    if content.get(limit).is_some_and(|&c| EMPH_DELIMS.contains(c)) {
+        while limit > pos + 1 && content[limit - 1] == b'.' {
+            limit -= 1;
+        }
+    }
+    if limit == al.end {
         return Some(al);
-    };
+    }
     *cut_end = al.end;
     let al = scan_permissive_autolink(content, pos, emph, limit)?;
     debug_assert!(split_pair_limit(runs, al.end).is_none());

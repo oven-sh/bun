@@ -1,49 +1,32 @@
 #include "HandleScopeBuffer.h"
 #include "GlobalInternals.h"
-#include "../V8Isolate.h"
+#include "../v8_handle_scope_data.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace v8 {
 namespace shim {
 
-// for CREATE_METHOD_TABLE
-namespace JSCastingHelpers = JSC::JSCastingHelpers;
+WTF_MAKE_TZONE_ALLOCATED_IMPL(HandleScopeBuffer);
 
-const JSC::ClassInfo HandleScopeBuffer::s_info = {
-    "HandleScopeBuffer"_s,
-    nullptr,
-    nullptr,
-    nullptr,
-    CREATE_METHOD_TABLE(HandleScopeBuffer)
-};
-
-HandleScopeBuffer* HandleScopeBuffer::create(JSC::VM& vm, JSC::Structure* structure)
+HandleScopeBuffer::HandleScopeBuffer(Bun::HandleScopeImpl* owner, Isolate* isolate)
+    : m_owner(owner)
+    , m_isolate(isolate)
 {
-    HandleScopeBuffer* buffer = new (NotNull, JSC::allocateCell<HandleScopeBuffer>(vm)) HandleScopeBuffer(vm, structure);
-    buffer->finishCreation(vm);
-    return buffer;
+    auto* data = getHandleScopeData(isolate);
+    m_savedNext = data->next;
+    m_savedLimit = data->limit;
 }
 
-template<typename Visitor>
-void HandleScopeBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+HandleScopeBuffer::~HandleScopeBuffer() = default;
+
+JSC::VM& HandleScopeBuffer::vm() const
 {
-    HandleScopeBuffer* thisObject = uncheckedDowncast<HandleScopeBuffer>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-
-    WTF::Locker locker { thisObject->m_gcLock };
-
-    for (auto& handle : thisObject->m_storage) {
-        if (handle.isCell()) {
-            visitor.append(handle.asCell());
-        }
-    }
+    return m_isolate->vm();
 }
-
-DEFINE_VISIT_CHILDREN(HandleScopeBuffer);
 
 Handle& HandleScopeBuffer::createEmptyHandle()
 {
-    WTF::Locker locker { m_gcLock };
+    WTF::Locker locker { m_owner->cellLock() };
     m_storage.append(Handle {});
     return m_storage.last();
 }
@@ -51,7 +34,7 @@ Handle& HandleScopeBuffer::createEmptyHandle()
 TaggedPointer* HandleScopeBuffer::createHandle(JSCell* ptr, const Map* map, JSC::VM& vm)
 {
     auto& handle = createEmptyHandle();
-    handle = Handle(map, ptr, vm, this);
+    handle = Handle(map, ptr, vm, m_owner);
     return handle.slot();
 }
 
@@ -71,7 +54,7 @@ TaggedPointer* HandleScopeBuffer::createDoubleHandle(double value)
 
 TaggedPointer* HandleScopeBuffer::createRawHandleSlot()
 {
-    WTF::Locker locker { m_gcLock };
+    WTF::Locker locker { m_owner->cellLock() };
     m_storage.append(Handle {});
     TaggedPointer* slot = m_storage.last().slot();
     m_rawGrants.append({ slot, m_storage.size() - 1 });
@@ -83,13 +66,13 @@ Handle* HandleScopeBuffer::reserveEscapeHandle()
     return &createEmptyHandle();
 }
 
-void HandleScopeBuffer::deleteGrantsBack(Isolate* isolate, const uintptr_t* limit)
+void HandleScopeBuffer::deleteGrantsBack(const uintptr_t* limit)
 {
     // (slot to repoint, copy of the layout it pointed at) for every condemned
     // handle a live return-value slot references.
     WTF::Vector<std::pair<TaggedPointer*, ObjectLayout>, 2> rescues;
     {
-        WTF::Locker locker { m_gcLock };
+        WTF::Locker locker { m_owner->cellLock() };
         // Pop grants (and every handle created after each, which V8 semantics also
         // scope to the closing inline HandleScope) until the newest remaining grant
         // is the one the restored limit points one past — i.e. the last grant made
@@ -106,7 +89,7 @@ void HandleScopeBuffer::deleteGrantsBack(Isolate* isolate, const uintptr_t* limi
         // frame, and the returned value must outlive this scope (in V8 the scope
         // owns only the slot, never the object). Copy out any condemned handle a
         // frame still points at so it can be re-created in the surviving region.
-        for (TaggedPointer* returnSlot : isolate->globalInternals()->activeReturnValueSlots()) {
+        for (TaggedPointer* returnSlot : m_isolate->globalInternals()->activeReturnValueSlots()) {
             if (const ObjectLayout* layout = findLayoutInRangeLocked(*returnSlot, cut)) {
                 rescues.append({ returnSlot, *layout });
             }
@@ -151,18 +134,17 @@ TaggedPointer HandleScopeBuffer::appendRescuedLayout(const ObjectLayout& layout)
         // Besides heap numbers, scope buffers only ever own string_map/object_map
         // cells (oddballs live in the isolate's roots and globals in their own
         // buffer), so everything else is a cell.
-        handle = Handle(layout.map(), layout.asCell(), vm(), this);
+        handle = Handle(layout.map(), layout.asCell(), vm(), m_owner);
     }
     return *handle.slot();
 }
 
-void HandleScopeBuffer::evacuateActiveReturnValues(Isolate* isolate, HandleScopeBuffer* target)
+void HandleScopeBuffer::evacuateActiveReturnValues(Bun::HandleScopeImpl* parent)
 {
-    ASSERT(target != this);
-    for (TaggedPointer* returnSlot : isolate->globalInternals()->activeReturnValueSlots()) {
+    for (TaggedPointer* returnSlot : m_isolate->globalInternals()->activeReturnValueSlots()) {
         ObjectLayout rescued;
         {
-            WTF::Locker locker { m_gcLock };
+            WTF::Locker locker { m_owner->cellLock() };
             const ObjectLayout* layout = findLayoutInRangeLocked(*returnSlot, 0);
             if (!layout) {
                 continue;
@@ -171,11 +153,11 @@ void HandleScopeBuffer::evacuateActiveReturnValues(Isolate* isolate, HandleScope
         }
         // The source handle is still alive (this buffer clears after the
         // evacuation), so the cell stays visited across this append.
-        *returnSlot = target->appendRescuedLayout(rescued);
+        *returnSlot = parent->ensureV8Handles(m_isolate).appendRescuedLayout(rescued);
     }
 }
 
-TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer address, Isolate* isolate, Handle* reuseHandle)
+TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer address, Handle* reuseHandle)
 {
     int32_t smi;
     if (address.getSmi(smi)) {
@@ -192,20 +174,20 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
             // find which oddball this is
             switch (reinterpret_cast<Oddball*>(v8_object)->kind()) {
             case Kind::kNull:
-                return isolate->nullSlot();
+                return m_isolate->nullSlot();
             case Kind::kUndefined:
-                return isolate->undefinedSlot();
+                return m_isolate->undefinedSlot();
             case Kind::kTrue:
-                return isolate->trueSlot();
+                return m_isolate->trueSlot();
             case Kind::kFalse:
-                return isolate->falseSlot();
+                return m_isolate->falseSlot();
             default:
                 RELEASE_ASSERT_NOT_REACHED("HandleScopeBuffer::createHandleFromExistingObject passed an unknown Oddball kind: %d",
                     reinterpret_cast<Oddball*>(v8_object)->kind());
             }
         }
         if (reuseHandle) {
-            *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), this);
+            *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), m_owner);
             return reuseHandle->slot();
         } else {
             return createHandle(v8_object->asCell(), v8_object->map(), vm());
@@ -213,15 +195,23 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
     }
 }
 
-void HandleScopeBuffer::clear()
+void HandleScopeBuffer::close(Bun::HandleScopeImpl* parent)
 {
-    // detect use-after-free of handles
-    WTF::Locker locker { m_gcLock };
-    for (auto& handle : m_storage) {
-        handle = Handle();
+    auto* internals = m_isolate->globalInternals();
+    // Escape reservations in this buffer belong to scopes that are dead or dying (their slots
+    // are about to be cleared); purge them so stale stack-address keys can't alias new scopes.
+    internals->purgeEscapeReservations(this);
+    auto* data = getHandleScopeData(m_isolate);
+    data->next = m_savedNext;
+    data->limit = m_savedLimit;
+    // A live callback frame's return value may point into this buffer (scopes
+    // popping mid-callback: old-ABI addon scopes, Bun-internal ones like
+    // Array::Iterate's). Move it to the enclosing scope so it survives until
+    // the frame is read.
+    if (parent && !internals->activeReturnValueSlots().isEmpty()) {
+        evacuateActiveReturnValues(parent);
     }
-    m_storage.clear();
-    m_rawGrants.clear();
+    // The owner frees this (and with it every handle) right after detaching it.
 }
 
 } // namespace shim

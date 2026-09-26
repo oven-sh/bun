@@ -61,7 +61,7 @@ public:
     };
 
     static Ref<DOMFormData> create(ScriptExecutionContext*);
-    static Ref<DOMFormData> create(ScriptExecutionContext*, const StringView& urlEncodedString);
+    static ExceptionOr<Ref<DOMFormData>> create(ScriptExecutionContext*, StringView urlEncodedString);
 
     const Vector<Item>& items() const { return m_items; }
 

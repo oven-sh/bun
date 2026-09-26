@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { totalmem } from "node:os";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -1002,5 +1003,105 @@ describe("USVString conversion of lone surrogates", () => {
     expect(formData.get("\u{1F600}")).toBe("emoji");
     expect(formData.getAll("\u{1F600}")).toEqual(["emoji"]);
     expect(formData.get("\uFFFD")).toBeNull();
+  });
+});
+
+// WTF's URL-encoded form parser RELEASE_ASSERTs when the UTF-8 form of a name or
+// value does not fit a WTF::Vector (1 GiB - 1 bytes), so Bun rejects such a body
+// with a RangeError before parsing. The limit follows the synthetic allocation
+// limit so that every entry point can be exercised with megabyte inputs.
+describe("URL-encoded bodies longer than the string limit", () => {
+  const LIMIT = 1024 * 1024;
+  const tooLong = (received: number) =>
+    `RangeError: A URL-encoded name or value must not be longer than ${LIMIT} bytes as UTF-8. Received ${received} bytes.`;
+
+  it("rejects from every formData() entry point instead of crashing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+        setSyntheticAllocationLimitForTesting(${LIMIT});
+        const out = {};
+        const attempt = async (label, f) => {
+          try {
+            out[label] = await f();
+          } catch (e) {
+            out[label] = e.constructor.name + ": " + e.message;
+          }
+        };
+        // "é" is one UTF-16 unit but 2 UTF-8 bytes, so these bodies pass the
+        // character-count check on the way into a WTF::String and reach the
+        // UTF-8 byte check of the parser.
+        const latin1 = n => Buffer.alloc(n * 2, "é");
+        const atLimit = latin1(${LIMIT / 2});
+        const pastLimit = latin1(${LIMIT / 2} + 1);
+        const type = "application/x-www-form-urlencoded";
+
+        await attempt("FormData.from(bytes) at limit", () => FormData.from(atLimit).get(atLimit.toString()));
+        await attempt("FormData.from(bytes) past limit", () => FormData.from(pastLimit).get("x"));
+        await attempt("FormData.from(string) past limit", () => FormData.from(pastLimit.toString()).get("x"));
+        await attempt("Response.formData() past limit", () =>
+          new Response(pastLimit, { headers: { "content-type": type } }).formData());
+        await attempt("Request.formData() past limit", () =>
+          new Request("http://x/", { method: "POST", body: pastLimit, headers: { "content-type": type } }).formData());
+        await attempt("Blob.formData() past limit", () => new Blob([pastLimit], { type }).formData());
+        const stream = new ReadableStream({ start(c) { c.enqueue(pastLimit); c.close(); } });
+        await attempt("streamed Response.formData() past limit", () =>
+          new Response(stream, { headers: { "content-type": type } }).formData());
+        console.log(JSON.stringify(out));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Keep stderr and the exit code in the diff when the child aborts before it prints.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toEqual({
+      results: {
+        "FormData.from(bytes) at limit": "",
+        "FormData.from(bytes) past limit": tooLong(LIMIT + 2),
+        "FormData.from(string) past limit": tooLong(LIMIT + 2),
+        "Response.formData() past limit": tooLong(LIMIT + 2),
+        "Request.formData() past limit": tooLong(LIMIT + 2),
+        "Blob.formData() past limit": tooLong(LIMIT + 2),
+        "streamed Response.formData() past limit": tooLong(LIMIT + 2),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The input Fuzzilli found. The real limit needs a 1 GiB buffer, so this runs
+  // only on large machines.
+  it.skipIf(totalmem() < 10 * 1024 ** 3)("FormData.from throws a RangeError at the real limit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        try {
+          FormData.from(new ArrayBuffer(1073741826));
+          console.log("no error");
+        } catch (e) {
+          console.log(e.constructor.name + ": " + e.message);
+        }
+        Bun.gc(true);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        "RangeError: A URL-encoded name or value must not be longer than 1073741823 bytes as UTF-8. Received 1073741826 bytes.\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

@@ -2085,6 +2085,54 @@ it("preadv", () => {
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
+// Node throws ERR_INVALID_ARG_TYPE at the first element of `buffers` that is
+// not an ArrayBufferView and does not read the rest of the list.
+describe("writevSync and readvSync reject the first invalid element", () => {
+  function codeOf(fn: () => unknown): string | undefined {
+    try {
+      fn();
+    } catch (e: any) {
+      return e.code;
+    }
+    throw new Error("expected the call to throw");
+  }
+
+  it("sparse array of length 2^32 - 1", () => {
+    using dir = tempDir("fs-vectored-sparse", { "f.txt": "abc" });
+    const fd = openSync(join(String(dir), "f.txt"), "r+");
+    try {
+      const buffers = [Buffer.from("a"), Buffer.from("b")];
+      buffers.length = 4294967295;
+      expect(codeOf(() => writevSync(fd, buffers))).toBe("ERR_INVALID_ARG_TYPE");
+      expect(codeOf(() => readvSync(fd, buffers))).toBe("ERR_INVALID_ARG_TYPE");
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("a getter after the invalid element does not run", () => {
+    using dir = tempDir("fs-vectored-getter", { "f.txt": "abc" });
+    const fd = openSync(join(String(dir), "f.txt"), "r+");
+    try {
+      let ran = false;
+      const buffers: unknown[] = [1];
+      Object.defineProperty(buffers, 1, {
+        enumerable: true,
+        get() {
+          ran = true;
+          return Buffer.from("x");
+        },
+      });
+      buffers.length = 2;
+      expect(codeOf(() => writevSync(fd, buffers as any))).toBe("ERR_INVALID_ARG_TYPE");
+      expect(codeOf(() => readvSync(fd, buffers as any))).toBe("ERR_INVALID_ARG_TYPE");
+      expect(ran).toBe(false);
+    } finally {
+      closeSync(fd);
+    }
+  });
+});
+
 // Node defaults an explicit `undefined` len to 0 on every truncate entry point
 // (`if (len === undefined) len = 0` in truncateSync, `len = 0` default params
 // elsewhere), while `null` still fails validateInteger.

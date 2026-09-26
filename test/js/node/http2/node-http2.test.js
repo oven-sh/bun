@@ -5749,6 +5749,333 @@ it("Http2Stream pull-mode read() after pause() replenishes the receive window", 
   }
 });
 
+// setLocalWindowSize() grows the connection-level receive window only (nghttp2's
+// nghttp2_session_set_local_window_size with stream id 0). It used to also raise the local
+// SETTINGS_INITIAL_WINDOW_SIZE without sending a SETTINGS frame, so every new stream waited for
+// half of the raised window before replenishing while the peer still stopped at the 64 KiB it
+// was actually told: any body larger than that stalled forever.
+describe("Http2Session.setLocalWindowSize()", () => {
+  const PAYLOAD = 200_000; // > 65535 initial stream window
+  const WINDOW = 1 << 24;
+  const DEFAULT_WINDOW = http2.getDefaultSettings().initialWindowSize;
+
+  // Resolves on `event`, and rejects when the session fails or closes first.
+  function ready(session, event) {
+    return new Promise((resolve, reject) => {
+      session.once(event, resolve);
+      session.once("error", reject);
+      session.once("close", () => reject(new Error(`the session closed before '${event}'`)));
+    });
+  }
+
+  // One GET over a fresh client. Reports session.state right after `prepare` and again from
+  // inside the 'end' handler, where the engine is still in the middle of a read batch.
+  async function download(bodySize, prepare, { idleEngine = false } = {}) {
+    const server = http2.createServer((req, res) => res.end(Buffer.alloc(bodySize, "y")));
+    await new Promise(r => server.listen(0, "127.0.0.1", r));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      client.on("error", reject);
+      await ready(client, idleEngine ? "remoteSettings" : "connect");
+      // One turn after 'remoteSettings' the engine exists and no read holds it.
+      if (idleEngine) await new Promise(r => setImmediate(r));
+      prepare?.(client);
+      const windowState = ({ effectiveLocalWindowSize, localWindowSize, effectiveRecvDataLength }) => ({
+        effectiveLocalWindowSize,
+        localWindowSize,
+        effectiveRecvDataLength,
+      });
+      const stateAfterPrepare = windowState(client.state);
+      const req = client.request({ ":path": "/" });
+      req.on("error", reject);
+      for (const emitter of [client, req]) emitter.on("close", () => reject(new Error("closed before 'end'")));
+      let received = 0;
+      req.on("data", chunk => (received += chunk.length));
+      req.on("end", () => resolve(windowState(client.state)));
+      const stateAtEnd = await promise;
+      return { received, stateAfterPrepare, stateAtEnd };
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  // "session": before the first read. "stream": inside a frame callback, where the engine is busy.
+  it.each(["session", "stream"])(
+    "server session: a call in the '%s' handler receives a POST body larger than the stream window",
+    async where => {
+      const server = http2.createServer();
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let serverSession;
+      server.on("session", session => {
+        serverSession = session;
+        if (where === "session") session.setLocalWindowSize(WINDOW);
+      });
+      server.on("stream", stream => {
+        if (where === "stream") stream.session.setLocalWindowSize(WINDOW);
+        let received = 0;
+        stream.on("data", chunk => (received += chunk.length));
+        stream.on("end", () => {
+          stream.respond({ ":status": 200 });
+          stream.end();
+          resolve(received);
+        });
+        stream.on("error", reject);
+      });
+      await new Promise(r => server.listen(0, "127.0.0.1", r));
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        client.on("error", reject);
+        client.on("close", () => reject(new Error("the client closed before the server got the body")));
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        req.on("error", reject);
+        req.end(Buffer.alloc(PAYLOAD, "x"));
+        expect(await promise).toBe(PAYLOAD);
+        expect(serverSession.state.effectiveLocalWindowSize).toBe(WINDOW);
+      } finally {
+        client.close();
+        server.close();
+      }
+    },
+  );
+
+  it("client session: receives a response body larger than the stream window", async () => {
+    const grown = { effectiveLocalWindowSize: WINDOW, localWindowSize: WINDOW, effectiveRecvDataLength: 0 };
+    // The body is below half of WINDOW, so no connection WINDOW_UPDATE has given it back yet.
+    expect(await download(PAYLOAD, client => client.setLocalWindowSize(WINDOW))).toEqual({
+      received: PAYLOAD,
+      stateAfterPrepare: grown,
+      stateAtEnd: { ...grown, localWindowSize: WINDOW - PAYLOAD, effectiveRecvDataLength: PAYLOAD },
+    });
+  });
+
+  it("session.state counts received DATA against the connection window, like node", async () => {
+    // 1000 bytes is below half the window, so no WINDOW_UPDATE has replenished it yet.
+    expect(await download(1000)).toEqual({
+      received: 1000,
+      stateAfterPrepare: {
+        effectiveLocalWindowSize: DEFAULT_WINDOW,
+        localWindowSize: DEFAULT_WINDOW,
+        effectiveRecvDataLength: 0,
+      },
+      stateAtEnd: {
+        effectiveLocalWindowSize: DEFAULT_WINDOW,
+        localWindowSize: DEFAULT_WINDOW - 1000,
+        effectiveRecvDataLength: 1000,
+      },
+    });
+  });
+
+  it("session.state reports a window that grew between two reads", async () => {
+    const { received, stateAfterPrepare } = await download(1000, client => client.setLocalWindowSize(WINDOW), {
+      idleEngine: true,
+    });
+    expect({ received, stateAfterPrepare }).toEqual({
+      received: 1000,
+      stateAfterPrepare: { effectiveLocalWindowSize: WINDOW, localWindowSize: WINDOW, effectiveRecvDataLength: 0 },
+    });
+  });
+
+  it("a smaller size keeps the window the peer already has", async () => {
+    const { received, stateAfterPrepare } = await download(100_000, client => client.setLocalWindowSize(20));
+    expect({ received, stateAfterPrepare }).toEqual({
+      received: 100_000,
+      stateAfterPrepare: {
+        effectiveLocalWindowSize: 20,
+        localWindowSize: DEFAULT_WINDOW,
+        effectiveRecvDataLength: 0,
+      },
+    });
+  });
+
+  function frame(type, flags, streamId, body = Buffer.alloc(0)) {
+    const header = Buffer.alloc(9);
+    header.writeUIntBE(body.length, 0, 3);
+    header[3] = type;
+    header[4] = flags;
+    header.writeUInt32BE(streamId, 5);
+    return Buffer.concat([header, body]);
+  }
+
+  // Splits what a client writes into frames, after the 24 byte preface.
+  function frameReader(onFrame) {
+    let pending = Buffer.alloc(0);
+    let sawPreface = false;
+    return chunk => {
+      pending = Buffer.concat([pending, chunk]);
+      if (!sawPreface) {
+        if (pending.length < 24) return;
+        sawPreface = true;
+        pending = pending.subarray(24);
+      }
+      while (pending.length >= 9) {
+        const length = pending.readUIntBE(0, 3);
+        if (pending.length < 9 + length) return;
+        const [type, flags] = [pending[3], pending[4]];
+        const streamId = pending.readUInt32BE(5) & 0x7fffffff;
+        const payload = pending.subarray(9, 9 + length);
+        // Advance first: onFrame can answer, and the answer can make the client write again.
+        pending = pending.subarray(9 + length);
+        onFrame(type, flags, streamId, payload);
+      }
+    };
+  }
+
+  // Bun only: node does not let a transport deliver bytes from inside its own write().
+  it("accepts DATA that a JS transport delivers from inside the WINDOW_UPDATE write", async () => {
+    const GROWN = 1 << 20;
+    // Two corked POST HEADERS leave under 13 free bytes in the 16384 byte cork, so the
+    // WINDOW_UPDATE overflows it and the transport's write() runs inside setLocalWindowSize().
+    // The peer answers at once with 2 x 50000 bytes: each within the 65535 stream window,
+    // together only within the connection window it was just given.
+    async function attempt(pad) {
+      const { promise, resolve } = Promise.withResolvers();
+      const result = { answeredInsideCall: false, error: null, received: [] };
+      const streams = [];
+      let insideCall = false;
+      let replied = false;
+      const read = frameReader((type, flags, streamId, payload) => {
+        if (type === 4 && !(flags & 1)) transport.push(frame(4, 1, 0)); // SETTINGS ACK
+        if (type === 1) streams.push(streamId);
+        if (type === 8 && streamId === 0 && !replied && payload.readUInt32BE(0) === GROWN - DEFAULT_WINDOW) {
+          replied = true;
+          result.answeredInsideCall = insideCall;
+          const body = Buffer.alloc(16384, "y");
+          transport.push(
+            Buffer.concat(
+              streams.flatMap(id => [
+                frame(1, 0x4, id, Buffer.from([0x88])), // :status 200
+                frame(0, 0, id, body),
+                frame(0, 0, id, body),
+                frame(0, 0, id, body),
+                frame(0, 0x1, id, body.subarray(0, 50000 - 3 * 16384)),
+              ]),
+            ),
+          );
+        }
+      });
+      const transport = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          read(chunk);
+          callback();
+        },
+      });
+      transport.push(frame(4, 0, 0)); // the peer's SETTINGS
+      const client = http2.connect("http://localhost", { createConnection: () => transport });
+      client.on("error", err => (result.error = err.code));
+      client.on("close", () => resolve(result));
+      await ready(client, "connect");
+      await new Promise(r => setImmediate(r));
+      let open = 2;
+      // A backslash has no short Huffman code, so each one is one byte of the HEADERS frame.
+      const requests = [pad >> 1, pad - (pad >> 1)].map(n => {
+        const req = client.request(
+          { ":method": "POST", ":path": "/", "x-pad": Buffer.alloc(n, "\\").toString() },
+          { endStream: false },
+        );
+        let received = 0;
+        req.on("data", chunk => (received += chunk.length));
+        req.on("error", () => {});
+        req.on("close", () => {
+          result.received.push(received);
+          if (--open === 0) client.close();
+        });
+        return req;
+      });
+      insideCall = true;
+      client.setLocalWindowSize(GROWN);
+      insideCall = false;
+      for (const req of requests) req.end();
+      return promise;
+    }
+
+    // The sweep keeps one attempt on the 13 byte target if the HEADERS overhead shifts.
+    const results = [];
+    for (const pad of [16306, 16312, 16318]) results.push(await attempt(pad));
+    expect({
+      answeredInsideCall: results.some(r => r.answeredInsideCall),
+      errors: results.map(r => r.error),
+      received: results.map(r => r.received),
+    }).toEqual({
+      answeredInsideCall: true,
+      errors: [null, null, null],
+      received: [
+        [50000, 50000],
+        [50000, 50000],
+        [50000, 50000],
+      ],
+    });
+  });
+
+  // Bun only: it relies on the cork buffer that every session on the thread shares.
+  it("session.state is current inside a write that the engine's own WINDOW_UPDATE triggers", async () => {
+    // `other` corks a PING, so the next write of `client` first flushes that PING through
+    // `other`'s JS transport. That next write is the connection WINDOW_UPDATE the engine sends
+    // after 32768 of 65535 bytes.
+    let hook = null;
+    const other = http2.connect("http://localhost", {
+      createConnection: () =>
+        new Duplex({
+          read() {},
+          write(chunk, encoding, callback) {
+            hook?.();
+            callback();
+          },
+        }),
+    });
+    const sawRequest = Promise.withResolvers();
+    const read = frameReader((type, flags) => {
+      if (type === 4 && !(flags & 1)) transport.push(frame(4, 1, 0)); // SETTINGS ACK
+      if (type === 1) sawRequest.resolve();
+    });
+    const transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        read(chunk);
+        callback();
+      },
+    });
+    transport.push(frame(4, 0, 0)); // the peer's SETTINGS
+    const client = http2.connect("http://localhost", { createConnection: () => transport });
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const req = client.request({ ":path": "/" });
+      for (const emitter of [other, client, req]) {
+        for (const fail of [reject, sawRequest.reject]) {
+          emitter.on("error", fail);
+          emitter.on("close", () => fail(new Error("closed before the WINDOW_UPDATE write")));
+        }
+      }
+      let received = 0;
+      req.on("data", chunk => (received += chunk.length));
+      await sawRequest.promise;
+      await new Promise(r => setImmediate(r));
+
+      hook = () => {
+        hook = null;
+        const { localWindowSize, effectiveRecvDataLength } = client.state;
+        resolve({ received, localWindowSize, effectiveRecvDataLength });
+      };
+      other.ping(() => {});
+      const body = Buffer.alloc(16384, "y");
+      transport.push(
+        Buffer.concat([frame(1, 0x4, 1, Buffer.from([0x88])), frame(0, 0, 1, body), frame(0, 0, 1, body)]),
+      );
+      // `received` proves the hook ran inside that WINDOW_UPDATE write, after both DATA frames.
+      expect(await promise).toEqual({
+        received: 32768,
+        localWindowSize: DEFAULT_WINDOW,
+        effectiveRecvDataLength: 0,
+      });
+    } finally {
+      client.destroy();
+      other.destroy();
+    }
+  });
+});
+
 // The outbound cork buffer is thread-local across every Http2Session. Interleaving
 // respond()/write() across two sessions used to let the second session's corked
 // HEADERS be prepended to the first session's multi-frame DATA batch and sent to

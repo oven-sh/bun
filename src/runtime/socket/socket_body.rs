@@ -81,6 +81,15 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
+/// `read_error_from_close_code` for C++: the `closeError` getter of `JSNodeHTTPServerSocket`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
+    global: &JSGlobalObject,
+    code: c_int,
+) -> JSValue {
+    <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(code), global)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
@@ -338,6 +347,8 @@ pub(crate) struct NewSocket<const SSL: bool> {
     /// keeps its verdict after detach (the live error borrows the `SSL`, and
     /// EPROTO reasons are stack-copied in uSockets).
     pub(crate) verify_error: JsCell<Option<StoredVerifyError>>,
+    /// Owns one reference to the session the new-session callback gave last: TLS 1.3 never stores it on the `SSL`.
+    pub(crate) latest_session: Cell<Option<ptr::NonNull<boringssl_sys::SSL_SESSION>>>,
 }
 
 /// Associated `Socket` handler type.
@@ -345,6 +356,7 @@ pub(super) type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 impl<const SSL: bool> Drop for NewSocket<SSL> {
     fn drop(&mut self) {
+        self.set_latest_session(ptr::null_mut());
         self.mark_inactive();
         self.detach_native_callback();
         self.poll_ref.with_mut(|p| {
@@ -1425,6 +1437,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket: SocketHandler<SSL>,
     ) -> JsResult<()> {
         let this_ptr = this.as_ptr();
+        this.set_latest_session(ptr::null_mut());
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -1518,9 +1531,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     if !this.acts_as_tls_server()
                         && this.flags.get().contains(Flags::REJECT_UNAUTHORIZED)
                     {
-                        tls_socket_functions::ffi::us_internal_ssl_set_inline_reject(
-                            boringssl_sys::SSL::opaque_ref(ssl_ptr),
-                        );
+                        this.socket.get().set_inline_reject();
                     }
                     if let Some(protos) = this.protos.get() {
                         if this.acts_as_tls_server() {
@@ -1778,40 +1789,35 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut authorized = success == 1;
         let mut hostname_mismatch = false;
         let mut hostname_mismatch_message: Option<Box<[u8]>> = None;
+        // `server_identity` failed the handshake: the verdict and error of the check below.
+        let rejected_in_handshake = SSL
+            && success == 0
+            && ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH;
 
-        if SSL && authorized && !this.acts_as_tls_server() {
+        if SSL && (authorized || rejected_in_handshake) && !this.acts_as_tls_server() {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
-                let hostname: &[u8] = match this.server_name.get() {
-                    Some(server_name) if !server_name.is_empty() => &server_name[..],
-                    _ => match this.connection.get() {
-                        Some(super::listener::UnixOrHost::Host { host, .. })
-                            if !host.is_empty() =>
-                        {
-                            bun_core::ip_address::strip_ipv6_brackets(host)
-                        }
-                        _ => b"localhost",
-                    },
-                };
-                if !bun_boringssl::check_server_identity(
-                    boringssl_sys::SSL::opaque_mut(ssl_ptr),
-                    hostname,
-                ) {
-                    authorized = false;
-                    hostname_mismatch = true;
-                    let mut message =
-                        String::from("Hostname/IP does not match certificate's altnames: ");
-                    // Infallible: the writer is a `String`.
-                    let _ = bun_boringssl::write_server_identity_mismatch_reason(
+                let hostname = this.server_identity_hostname();
+                if rejected_in_handshake
+                    || !uws::check_server_identity(
                         boringssl_sys::SSL::opaque_mut(ssl_ptr),
                         hostname,
-                        &mut message,
+                    )
+                {
+                    authorized = false;
+                    hostname_mismatch = true;
+                    hostname_mismatch_message = Some(
+                        bun_boringssl::server_identity_mismatch_message(
+                            boringssl_sys::SSL::opaque_mut(ssl_ptr),
+                            hostname,
+                        )
+                        .into_bytes()
+                        .into_boxed_slice(),
                     );
-                    hostname_mismatch_message = Some(message.into_bytes().into_boxed_slice());
                 }
             }
         }
 
-        let verify_failed = SSL && ssl_error.error_no != 0;
+        let verify_failed = SSL && ssl_error.error_no != 0 && !rejected_in_handshake;
 
         this.verify_error.set(if verify_failed {
             Some(StoredVerifyError {
@@ -1828,6 +1834,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // node:tls sockets defer the hostname verdict: their JS layer applies
         // `checkServerIdentity` (default or user override) itself.
         let flags = this.flags.get();
+        // node:tls closes its own sockets, and nothing marks the ones its servers accept.
+        let failed_native_client = SSL
+            && success == 0
+            && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)
+            && !this.acts_as_tls_server();
         // Deliberately independent of `success`: the inline-reject path
         // dispatches with success=0 after suppressing the client Finished, and
         // REJECTED must still be set there or the write-refusal guards are
@@ -1836,6 +1847,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // failure flavor).
         let reject_unauthorized = flags.contains(Flags::REJECT_UNAUTHORIZED)
             && (verify_failed
+                || failed_native_client
                 || (hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)));
         // A handshake that failed outright (success == 0 with no policy
         // verdict: protocol error, peer alert, EOF mid-handshake) never has a
@@ -1913,7 +1925,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         } else {
             // call handhsake callback with authorized and authorization error if has one
-            let authorization_error: JSValue = if ssl_error.error_no == 0 {
+            let authorization_error: JSValue = if ssl_error.error_no == 0 || rejected_in_handshake {
                 // node:tls (DEFERS) builds its own identity error in JS.
                 if hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY) {
                     this.stored_verify_error_to_js(&global)
@@ -1963,6 +1975,31 @@ impl<const SSL: bool> NewSocket<SSL> {
         });
     }
 
+    /// The name `on_handshake` requires the server's certificate to carry.
+    fn server_identity_hostname(&self) -> &[u8] {
+        match self.server_name.get() {
+            Some(server_name) if !server_name.is_empty() => &server_name[..],
+            _ => match self.connection.get() {
+                Some(super::listener::UnixOrHost::Host { host, .. }) if !host.is_empty() => {
+                    bun_core::ip_address::strip_ipv6_brackets(host)
+                }
+                _ => b"localhost",
+            },
+        }
+    }
+
+    /// `on_handshake`'s native name check, asked inside the handshake. node:tls is left out: its JS check decides.
+    pub(crate) fn server_identity(
+        &self,
+        ssl: &mut boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        let flags = self.flags.get();
+        let enforced = !self.acts_as_tls_server()
+            && flags.contains(Flags::REJECT_UNAUTHORIZED)
+            && !flags.contains(Flags::DEFERS_SERVER_IDENTITY);
+        bun_boringssl::server_identity(ssl, enforced.then(|| self.server_identity_hostname()))
+    }
+
     /// Callers hold `on_handshake`'s ref guard, which outlives the
     /// synchronous `on_close` dispatch of this close.
     fn reject_unauthorized_connection(&self) {
@@ -2008,6 +2045,19 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// unwound, so the JS handler may safely destroy the socket.
     ///
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
+    /// Takes a reference to `session` and drops the one held before. Null only drops.
+    pub(crate) fn set_latest_session(&self, session: *mut boringssl_sys::SSL_SESSION) {
+        let session = ptr::NonNull::new(session);
+        if let Some(session) = session {
+            // SAFETY: the caller passes a live session.
+            unsafe { tls_socket_functions::ffi::SSL_SESSION_up_ref(session.as_ptr().cast()) };
+        }
+        if let Some(prev) = self.latest_session.replace(session) {
+            // SAFETY: `latest_session` owned one reference.
+            unsafe { boringssl_sys::SSL_SESSION_free(prev.as_ptr()) };
+        }
+    }
+
     pub(crate) fn on_session(this: bun_ptr::ThisPtr<Self>, session: &[u8]) -> JsResult<()> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
@@ -2101,6 +2151,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
+        this.set_latest_session(ptr::null_mut());
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -2359,7 +2410,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
 
-        if this.socket.get().is_detached() {
+        let socket = this.socket.get();
+        if socket.is_detached() {
             // The verdict must survive the forced close.
             return Ok(this
                 .stored_verify_error_to_js(global)
@@ -2368,8 +2420,19 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // this error can change if called in different stages of hanshake
         // is very usefull to have this feature depending on the user workflow
-        let ssl_error = this.socket.get().get_verify_error();
-        if ssl_error.error_no == 0 {
+        let ssl_error = socket.get_verify_error();
+        // `on_handshake` stores the name verdict, with its full message, for the in-handshake check too.
+        if ssl_error.error_no == 0
+            || ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH
+        {
+            if let Some(stored) = this.stored_verify_error_to_js(global) {
+                return Ok(stored);
+            }
+            if ssl_error.error_no == 0 {
+                return Ok(JSValue::NULL);
+            }
+        } else if this.flags.get().contains(Flags::HANDSHAKE_COMPLETE) && socket.is_shutdown() {
+            // What `on_handshake` reported stands.
             return Ok(this
                 .stored_verify_error_to_js(global)
                 .unwrap_or(JSValue::NULL));
@@ -3580,6 +3643,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            latest_session: Cell::new(None),
         });
         // Never shadow this with a long-lived borrow: it would alias the
         // reference dispatch materialises from the ext slot during
@@ -3704,6 +3768,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            latest_session: Cell::new(None),
         });
         let raw_ref = raw;
         raw_ref.ref_();
@@ -3733,8 +3798,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SNICallback off, so the resolver goes on the SSL itself. Must run
         // before the handshake is driven.
         if is_server && !tls.get_handlers().on_server_name().is_empty() {
-            bun_opaque::opaque_deref_mut(new_raw.as_ptr())
-                .on_server_name(super::listener::us_dispatch_socket_server_name);
+            bun_opaque::opaque_deref_mut(new_raw.as_ptr()).on_server_name();
         }
         // Fire onOpen with the right `this`, then send ClientHello. Doing
         // it before ext was repointed would have ALPN/onOpen land in the
@@ -4351,6 +4415,16 @@ impl DuplexUpgradeContext {
         }
     }
 
+    fn server_identity(
+        this: bun_ptr::ThisPtr<Self>,
+        ssl: &mut boringssl_sys::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        this.tls_this_ptr()
+            .map_or(bun_boringssl::ServerIdentity::Unchecked, |tls| {
+                tls.server_identity(ssl)
+            })
+    }
+
     fn on_handshake(
         this: bun_ptr::ThisPtr<Self>,
         success: bool,
@@ -4461,6 +4535,12 @@ impl DuplexUpgradeContext {
                 if this.tls.get().is_none() {
                     // SAFETY: `this` is the task's live context; no borrow of `*this` is live.
                     unsafe { Self::deinit(this.as_ptr()) };
+                    return;
+                }
+                // The transport closed while this task was queued: an engine
+                // started now could never handshake, and nothing would free it.
+                if this.upgrade.pending_close.replace(false) {
+                    Self::on_close(this);
                     return;
                 }
                 log!(
@@ -4744,6 +4824,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
         verify_error: JsCell::new(None),
+        latest_session: Cell::new(None),
     });
     let tls_ref = tls;
     let tls_js_value = tls_ref.get_this_value(global);
@@ -4833,6 +4914,10 @@ pub(crate) fn js_upgrade_duplex_to_tls(
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_keylog: |c: *mut (), l| {
                     DuplexUpgradeContext::on_keylog(bun_ptr::ThisPtr::new(c.cast()), l)
+                },
+                // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
+                server_identity: |c: *mut (), ssl| {
+                    DuplexUpgradeContext::server_identity(bun_ptr::ThisPtr::new(c.cast()), ssl)
                 },
                 ctx: duplex_context.cast::<()>(),
             },
@@ -5153,11 +5238,14 @@ pub(crate) mod testing_apis {
                 )));
             };
 
-            // "short" clamps a byte count, which only recv/send have; arming it
-            // on any other syscall would silently never fire.
-            if action == fi::ACTION_SHORT && syscall != fi::RECV && syscall != fi::SEND {
+            // "short" clamps a byte count, which only these have; arming it on any other syscall would silently never fire.
+            if action == fi::ACTION_SHORT
+                && syscall != fi::RECV
+                && syscall != fi::SEND
+                && syscall != fi::WRITEV
+            {
                 return Err(global.throw(format_args!(
-                    "rule.action \"short\" is only supported for syscall \"recv\" or \"send\""
+                    "rule.action \"short\" is only supported for syscall \"recv\", \"send\" or \"writev\""
                 )));
             }
 

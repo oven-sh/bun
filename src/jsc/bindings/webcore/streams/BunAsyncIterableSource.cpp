@@ -168,18 +168,12 @@ static void asyncIterReturnIteratorAndSettle(JSGlobalObject* globalObject, JSAsy
     settlePullPromiseResolved(globalObject, op);
 }
 
-// Error tail (the original `finally` with a closingError): an already-gone consumer
-// (ERR_INVALID_THIS) returns the iterator quietly; otherwise notify it via iterator.throw(error)
-// and settle once that settles.
+// The error tail: iterator.throw(error), then reject the pull promise (resolve it if cancelled).
 static void asyncIterFinishWithError(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-
-    if (errorCodeIs(vm, error, "ERR_INVALID_THIS"_s))
-        RELEASE_AND_RETURN(scope, asyncIterReturnIteratorAndSettle(globalObject, op));
-    bool swallowByCode = errorCodeIs(vm, error, "ERR_INVALID_STATE"_s);
 
     JSObject* iterator = op->iterator();
     op->clearIterator();
@@ -195,11 +189,11 @@ static void asyncIterFinishWithError(JSGlobalObject* globalObject, JSAsyncIterat
     if (auto* thrownPromise = asPromise(thrown)) {
         markPromiseAsHandled(vm, thrownPromise);
         auto* context = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), op, error);
-        auto* handler = swallowByCode ? runtime->onAsyncIterableSourceErrorSwallowed() : runtime->onAsyncIterableSourceErrorRethrow();
+        auto* handler = runtime->onAsyncIterableSourceErrorRethrow();
         thrownPromise->performPromiseThenWithContext(vm, globalObject, handler, handler, jsUndefined(), context);
         return;
     }
-    if (swallowByCode || op->m_cancelled) {
+    if (op->m_cancelled) {
         settlePullPromiseResolved(globalObject, op);
         return;
     }
@@ -398,14 +392,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceErrorRethrow, 
         return JSValue::encode(jsUndefined());
     }
     settlePullPromiseRejected(globalObject, op, tuple->getInternalField(1));
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceErrorSwallowed, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto* tuple = uncheckedDowncast<JSC::InternalFieldTuple>(callFrame->uncheckedArgument(1));
-    auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(tuple->getInternalField(0));
-    settlePullPromiseResolved(globalObject, op);
     return JSValue::encode(jsUndefined());
 }
 

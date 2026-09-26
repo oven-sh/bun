@@ -1835,7 +1835,6 @@ inline bool Http2Response::sendTerminatingChunk(bool) {
 
 inline bool Http2Response::internalEnd(std::string_view body, uint64_t totalSize, bool optional, bool) {
     if (dead || localClosed) return !optional;
-    data.totalSize = totalSize;
     Http2Connection *c = conn;
 
     if (!(data.state & Http2ResponseData::HTTP_WRITE_CALLED)) {

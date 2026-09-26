@@ -1738,6 +1738,29 @@ nativeTests.test_external_buffer_worker_exit = async () => {
   console.log("stats after exit:", JSON.stringify(nativeTests.external_for_transfer_stats()));
 };
 
+// Bun-only: an idle collection ends on the collector thread; every finalizer still runs on the JS thread.
+nativeTests.test_external_buffer_finalized_by_idle_collection = async () => {
+  const deferred = require("./build/Debug/external_buffer_finalizer_thread.node");
+  globalThis.live = new Map();
+  for (let i = 0; i < 400_000; i++) live.set(i, { id: i, name: "user-" + i, tags: ["a" + i, "b" + i] });
+  const count = 200;
+  globalThis.buffers = [];
+  for (let i = 0; i < count; i++) {
+    buffers.push(nativeTests.create_external_buffer_for_transfer(8), deferred.create());
+  }
+  // Old objects: only a full collection frees them, and the next one is the idle one.
+  Bun.gc(true);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  globalThis.buffers = null;
+  await new Promise(resolve => setTimeout(resolve, 4000));
+  for (const [name, stats] of [
+    ["experimental", nativeTests.external_for_transfer_stats()],
+    ["deferred", deferred.stats()],
+  ]) {
+    console.log(`${name}: finalized=${stats.finalized === count} finalizedOffThread=${stats.finalizedOffThread}`);
+  }
+};
+
 // Bun-only: an orphaned threadsafe function is freed by whichever thread drops
 // its last reference, including a call that reports napi_closing. Every
 // iteration must end with as many live threadsafe functions as it started with.

@@ -79,30 +79,11 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Option<T> {
     }
 }
 
-impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump T {
-    #[inline]
-    fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        bump.alloc((**self).deep_clone(bump))
-    }
-}
-
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump [T] {
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
         // PERF: element-wise deep_clone — profile if hot
         // (specialization would let `T: Copy` use `alloc_slice_copy`).
         bump.alloc_slice_fill_iter(self.iter().map(|e| e.deep_clone(bump)))
-    }
-}
-
-impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for ArrayList<'bump, T> {
-    #[inline]
-    fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // PERF: element-wise deep_clone — profile if hot.
-        let mut out = ArrayList::with_capacity_in(self.len(), bump);
-        for item in self.iter() {
-            out.push(item.deep_clone(bump));
-        }
-        out
     }
 }
 
@@ -165,13 +146,6 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Box<T> {
     }
 }
 
-impl<'bump> DeepClone<'bump> for bun_ast::Loc {
-    #[inline]
-    fn deep_clone(&self, _bump: &'bump Arena) -> Self {
-        *self
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────────
 // Eql
 // ───────────────────────────────────────────────────────────────────────────────
@@ -193,19 +167,6 @@ pub use bun_css_derive::CssEql;
 #[inline]
 pub(crate) fn eql<T: CssEql>(lhs: &T, rhs: &T) -> bool {
     lhs.eql(rhs)
-}
-
-fn eql_list<T: CssEql>(lhs: &ArrayList<'_, T>, rhs: &ArrayList<'_, T>) -> bool {
-    if lhs.len() != rhs.len() {
-        return false;
-    }
-    debug_assert_eq!(lhs.len(), rhs.len());
-    for (left, right) in lhs.iter().zip(rhs.iter()) {
-        if !left.eql(right) {
-            return false;
-        }
-    }
-    true
 }
 
 // Blanket / base impls.
@@ -239,13 +200,6 @@ impl<T: CssEql> CssEql for [T] {
             }
         }
         true
-    }
-}
-
-impl<'bump, T: CssEql> CssEql for ArrayList<'bump, T> {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        eql_list(self, other)
     }
 }
 
@@ -313,19 +267,6 @@ impl CssEql for str {
     }
 }
 
-impl<T: CssEql, const N: usize> CssEql for [T; N] {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        // Element-wise eql (length is `N` on both sides by type).
-        for (a, b) in self.iter().zip(other.iter()) {
-            if !a.eql(b) {
-                return false;
-            }
-        }
-        true
-    }
-}
-
 impl<T: CssEql + ?Sized> CssEql for Box<T> {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
@@ -337,13 +278,6 @@ impl CssEql for VendorPrefix {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
         *self == *other
-    }
-}
-
-impl CssEql for bun_ast::Loc {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        self.start == other.start
     }
 }
 
@@ -890,21 +824,10 @@ pub fn implement_hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
     this.hash(hasher)
 }
 
-fn hash_array_list<V: CssHash>(this: &ArrayList<'_, V>, hasher: &mut Wyhash) {
-    for item in this.iter() {
-        item.hash(hasher);
-    }
-}
-
 fn hash_baby_list<V: CssHash>(this: &Vec<V>, hasher: &mut Wyhash) {
     for item in this.slice_const() {
         item.hash(hasher);
     }
-}
-
-impl CssHash for () {
-    #[inline]
-    fn hash(&self, _hasher: &mut Wyhash) {}
 }
 
 impl<T: CssHash> CssHash for Option<T> {
@@ -931,27 +854,6 @@ impl<T: CssHash> CssHash for [T] {
         for item in self {
             item.hash(hasher);
         }
-    }
-}
-
-impl<T: CssHash, const N: usize> CssHash for [T; N] {
-    fn hash(&self, hasher: &mut Wyhash) {
-        // Feed the raw bytes
-        // of the `usize` length into the hasher. `bun_core::write_any_to_hasher` exists
-        // but is `H: Hasher`-generic and routes through `Hasher::write`, which
-        // for `Wyhash11` calls `update` — so inlining the `usize` byte-feed
-        // here is byte-identical and avoids the trait hop.
-        hasher.update(&self.len().to_ne_bytes());
-        for item in self {
-            item.hash(hasher);
-        }
-    }
-}
-
-impl<'bump, T: CssHash> CssHash for ArrayList<'bump, T> {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        hash_array_list(self, hasher)
     }
 }
 
@@ -1016,15 +918,6 @@ impl CssHash for VendorPrefix {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
         hasher.update(&[self.as_bits()]);
-    }
-}
-
-impl CssHash for bun_ast::Loc {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        // Providing a structural hash here lets `#[derive(CssHash)]` types
-        // include a `loc` field without `#[css(skip)]` if they want.
-        hasher.update(&self.start.to_ne_bytes());
     }
 }
 
@@ -1116,13 +1009,6 @@ impl<T: IsCompatible> IsCompatible for [T] {
             }
         }
         true
-    }
-}
-
-impl<T: IsCompatible, const N: usize> IsCompatible for [T; N] {
-    #[inline]
-    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
-        self.as_slice().is_compatible(browsers)
     }
 }
 
@@ -1351,13 +1237,6 @@ impl<T: ToCss> ToCss for Option<T> {
     }
 }
 
-impl<'bump, T: ToCss> ToCss for ArrayList<'bump, T> {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        css::to_css::from_list(self.as_slice(), dest)
-    }
-}
-
 impl<T: ToCss> ToCss for Vec<T> {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -1396,24 +1275,6 @@ impl ToCss for CSSInteger {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         CSSIntegerFns::to_css(*self, dest)
-    }
-}
-impl ToCss for CustomIdent {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        CustomIdentFns::to_css(self, dest)
-    }
-}
-impl ToCss for DashedIdent {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        DashedIdentFns::to_css(self, dest)
-    }
-}
-impl ToCss for Ident {
-    #[inline]
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        IdentFns::to_css(self, dest)
     }
 }
 
@@ -1572,12 +1433,6 @@ impl PartialCmp for f32 {
     #[inline]
     fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
         partial_cmp_f32(*self, *rhs)
-    }
-}
-impl PartialCmp for CSSInteger {
-    #[inline]
-    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        Some(Ord::cmp(self, rhs))
     }
 }
 

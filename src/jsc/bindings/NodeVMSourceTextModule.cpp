@@ -95,14 +95,13 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     WTF::String sourceText = sourceTextValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    TextPosition startPosition {
+    TextPosition startPosition = providerStartPosition(
         clampOffsetForSource(OrdinalNumber::fromZeroBasedInt(lineOffset), sourceText.length()),
-        clampOffsetForSource(OrdinalNumber::fromZeroBasedInt(columnOffset), sourceText.length()),
-    };
+        clampOffsetForSource(OrdinalNumber::fromZeroBasedInt(columnOffset), sourceText.length()));
 
     Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted, startPosition, SourceProviderSourceType::Module);
 
-    SourceCode sourceCode(WTF::move(sourceProvider), startPosition.m_line.zeroBasedInt(), startPosition.m_column.zeroBasedInt());
+    SourceCode sourceCode(WTF::move(sourceProvider));
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     WTF::String identifier = identifierValue.toWTFString(globalObject);
@@ -555,6 +554,7 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(vmModule->m_moduleRequestsArray);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
     visitor.append(vmModule->m_initializeImportMeta);
+    NodeVMScriptFetcher::visitSource(visitor, vmModule->m_sourceCode);
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMSourceTextModule);

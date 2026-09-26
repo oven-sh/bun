@@ -1941,17 +1941,37 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket:
         bun_sys::Result::Err(e) => Some(e),
         bun_sys::Result::Ok(()) => None,
     };
-    // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> jsc::JsResult<()>`.
-    fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
-        // `ManagedTask::new` below; `on_mkdirp_complete` may free it via `throw`, so we
-        // do not touch `this` afterward.
-        unsafe { (*this).on_mkdirp_complete() };
-        Ok(())
-    }
-    ticket.post(jsc::ConcurrentTask::create(
-        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
+    ticket.post(jsc::ConcurrentTask::create_from(
+        std::ptr::from_mut(this).cast::<CopyFileWindowsMkdirp<'_>>(),
     ));
+}
+
+/// `mkdirp` finished on the work pool: the hop back to the JS thread. Same pointer as the copy, its
+/// own tag.
+#[cfg(windows)]
+#[repr(transparent)]
+pub(crate) struct CopyFileWindowsMkdirp<'a>(CopyFileWindows<'a>);
+
+#[cfg(windows)]
+impl bun_event_loop::Taskable for CopyFileWindowsMkdirp<'_> {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CopyFileWindowsMkdirp;
+    /// Frees nothing: the copy is not this task's.
+    unsafe fn release_unrun(_: *mut Self) {}
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+#[cfg(windows)]
+impl CopyFileWindowsMkdirp<'_> {
+    /// # Safety
+    /// `this` is the live `CopyFileWindows` `on_mkdirp_complete_concurrent` posted;
+    /// `on_mkdirp_complete` may free it via `throw`.
+    pub(crate) unsafe fn run(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe { (*this).0.on_mkdirp_complete() };
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

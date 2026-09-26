@@ -37,7 +37,6 @@ use bun_jsc::AbortSignalRef;
 
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask callbacks at the tier-3 layer.
-type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
 use http::signals::BODY_HIGH_WATER_MARK;
 
@@ -68,6 +67,27 @@ impl FetchTaskletDeinitHop {
     pub(crate) unsafe fn run(this: *mut Self) {
         // SAFETY: fn contract — sole owner.
         drop(unsafe { bun_core::heap::take(this.cast::<FetchTasklet>()) });
+    }
+}
+
+/// The HTTP thread drained the request body's buffer: the hop that tells the sink, on the JS
+/// thread. Same pointer, its own tag.
+#[repr(transparent)]
+pub(crate) struct FetchTaskletRequestDrain(FetchTasklet);
+impl Taskable for FetchTaskletRequestDrain {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletRequestDrain;
+    /// Carries the +1 `on_write_request_data_drain` took.
+    unsafe fn release_unrun(this: *mut Self) {
+        FetchTasklet::deref(this.cast::<FetchTasklet>());
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+impl FetchTaskletRequestDrain {
+    pub(crate) fn run(this: *mut Self) {
+        FetchTasklet::resume_request_data_stream(this.cast::<FetchTasklet>());
     }
 }
 
@@ -474,7 +494,7 @@ impl FetchTasklet {
             sink.task = None;
             // `detach` may fire the controller's onClose; every terminal path
             // here has already cleared it, so this just nulls m_sinkPtr.
-            JSSink::<FetchRequestBodySink>::detach(&mut sink.source, &self.global_this);
+            sink.source.detach(&self.global_this);
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
             // The HTTP thread may still be using its ref; `clear_drain_callback`
@@ -1182,7 +1202,7 @@ impl FetchTasklet {
     }
 
     /// `Ok` when the callback approved the certificate; `Err(Some(error))`
-    /// with what it returned or threw; `Err(None)` when there was no
+    /// with the reason when it did not; `Err(None)` when there was no
     /// certificate to show it.
     fn run_check_server_identity(
         &mut self,
@@ -1226,15 +1246,30 @@ impl FetchTasklet {
             &[js_hostname, js_cert],
         ) {
             Ok(v) => v,
-            Err(e) => global_object.take_exception(e),
+            Err(e) => return Err(Some(global_object.take_exception(e))),
         };
 
         // > Returns <Error> object [...] on failure
-        if check_result.is_any_error() {
+        // Any object counts: a DOMException or a util.inherits() error is not an ErrorInstance cell.
+        if check_result.is_object() && check_result.as_any_promise().is_none() {
             return Err(Some(check_result));
         }
+        // Like Node, fail on any other truthy value, a Promise included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671-L1688
+        if check_result.to_boolean() {
+            let received = JSGlobalObject::determine_specific_type(&global_object, check_result)
+                .map_err(|e| Some(global_object.take_exception(e)))?;
+            return Err(Some(
+                global_object
+                    .err(
+                        jsc::ErrorCode::INVALID_RETURN_VALUE,
+                        format_args!(
+                            "Expected undefined or an Error to be returned from the \"tls.checkServerIdentity\" function but got {received}."
+                        ),
+                    )
+                    .to_js(),
+            ));
+        }
         // > On success, returns <undefined>
-        // We treat any non-error value as a success.
         Ok(())
     }
 
@@ -1588,9 +1623,6 @@ impl FetchTasklet {
             http::Error::Cert(http::CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256) => {
                 BunString::static_("Suite B: cannot sign P-384 with P-256")
             }
-            http::Error::Cert(http::CertError::HOSTNAME_MISMATCH) => {
-                BunString::static_("Hostname mismatch")
-            }
             http::Error::Cert(http::CertError::EMAIL_MISMATCH) => {
                 BunString::static_("Email address mismatch")
             }
@@ -1707,7 +1739,7 @@ impl FetchTasklet {
         // between would otherwise reach the stream with its task finding the buffer empty, and
         // nothing left to undo that pause. Unconditional: also flushes body bytes the client
         // holds that arrived with no follow-up read (`drain_response_body`).
-        this.signal_store.unpause_receive();
+        this.signal_store.receive_on_demand();
         this.schedule_receive_resume();
 
         if drained.is_empty() {
@@ -1740,7 +1772,7 @@ impl FetchTasklet {
         self.abandon_response_body();
     }
 
-    /// `SourceHandle::consumer_collected`: the parked stream's wrapper was swept, so nothing
+    /// `SourceHandle::consumer_collected`: the stream's wrapper was swept, so nothing
     /// can read the rest of the body. Inside a GC sweep, like `on_response_finalize`.
     pub(crate) fn on_body_stream_collected(&self) {
         bun_output::scoped_log!(FetchTasklet, "onBodyStreamCollected");
@@ -1765,13 +1797,13 @@ impl FetchTasklet {
 
     /// The other half of this rule is in `callback` (HTTP thread).
     fn after_body_chunk_delivered(&self, bytes: &crate::webcore::ByteStream) {
-        use crate::webcore::byte_stream::{AfterDelivery, ProducerHold};
+        use crate::webcore::byte_stream::AfterDelivery;
         bun_output::scoped_log!(
             FetchTasklet,
             "afterBodyChunkDelivered buffered={}",
             bytes.buffered_len()
         );
-        match ProducerHold::after_delivery(bytes) {
+        match self.response_stream.after_delivery(bytes) {
             AfterDelivery::Resume => self.resume_receive(),
             AfterDelivery::Pause => self.signal_store.pause_receive(),
             AfterDelivery::Park => {
@@ -1985,7 +2017,7 @@ impl FetchTasklet {
             abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
             context: cx.context().id(),
             signals: Signals::default(),
-            signal_store: http::signals::Store::default(),
+            signal_store: http::signals::Store::unclaimed(),
             has_schedule_callback: AtomicBool::new(false),
             abort_reason: StrongOptional::empty(),
             check_server_identity: fetch_options.check_server_identity,
@@ -2226,8 +2258,7 @@ impl FetchTasklet {
         let this_ref = Self::from_raw_ref(this);
         // ref until the main thread callback is called
         this_ref.ref_();
-        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`.
-        let task = ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream);
+        let task = ConcurrentTask::create_from(this.cast::<FetchTaskletRequestDrain>());
         this_ref
             .http_ticket
             .as_ref()
@@ -2236,8 +2267,7 @@ impl FetchTasklet {
     }
 
     /// This is ALWAYS called from the main thread
-    // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
-    fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
+    fn resume_request_data_stream(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_mut(this);
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
         if !this_ref.signal_aborted() {
@@ -2249,7 +2279,6 @@ impl FetchTasklet {
         // deref when done because we ref inside onWriteRequestDataDrain
         // SAFETY: `this` is the live heap tasklet; we hold a ref.
         FetchTasklet::deref(this);
-        Ok(())
     }
 
     /// True for upgraded connections, HTTP/2 (DATA frames) and `Content-Length` framing.

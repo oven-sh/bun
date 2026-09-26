@@ -565,6 +565,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             });
         }
 
+        if let Some(starts) = &mut p.starts_for_parse_only {
+            starts
+                .arrow_expression_bodies
+                .insert(arrow_loc.start, p.lexer.loc().start);
+        }
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, arrow_loc)?;
         // `pop_scope` is called explicitly before each return below.
 

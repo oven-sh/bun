@@ -291,6 +291,11 @@ impl PendingValue {
         self.producer = streams::SourceHandle::None;
     }
 
+    /// `.text()` and friends, `Bun.write`, or a server's render-wait already reads this body.
+    pub(crate) fn has_consumer(&self) -> bool {
+        self.promise.is_some() || !self.action.is_none() || self.on_receive_value.is_some()
+    }
+
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
     #[inline]
     pub(crate) fn global(&self) -> &JSGlobalObject {
@@ -328,7 +333,7 @@ impl PendingValue {
         global_object: &JSGlobalObject,
         this_value: JSValue,
     ) -> bool {
-        if self.promise.is_some() {
+        if self.has_consumer() {
             return true;
         }
 
@@ -347,7 +352,7 @@ impl PendingValue {
     }
 
     pub(crate) fn is_disturbed2(&self, global_object: &JSGlobalObject) -> bool {
-        if self.promise.is_some() {
+        if self.has_consumer() {
             return true;
         }
 
@@ -887,8 +892,7 @@ impl Value {
         // the server's render-wait) owns this body and has retargeted `task`
         // to its own context; materializing a stream here would dispatch the
         // producer's remaining callbacks with that foreign context.
-        if locked.promise.is_some() || !locked.action.is_none() || locked.on_receive_value.is_some()
-        {
+        if locked.has_consumer() {
             return ReadableStream::in_use(cx.global());
         }
         let mut drain_result = DrainResult::EstimatedSize(0);
@@ -1476,13 +1480,7 @@ impl Value {
             }));
         }
 
-        // `on_receive_value`: same consumer-owned-task guard as
-        // `locked_to_native_stream`.
-        if locked.promise.is_some()
-            || !locked.action.is_none()
-            || locked.readable.has()
-            || locked.on_receive_value.is_some()
-        {
+        if locked.has_consumer() || locked.readable.has() {
             return Ok(Value::Used);
         }
 

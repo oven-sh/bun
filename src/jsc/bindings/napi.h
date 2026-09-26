@@ -423,7 +423,8 @@ public:
             return;
         }
 
-        if (mustDeferFinalizers() && inGC()) {
+        // A collection's end phase can run on the collector thread; an addon's finalizer only ever runs on the JS thread.
+        if (inGC() && (mustDeferFinalizers() || WTF::Thread::mayBeGCThread())) {
             Bun__napi_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
             finalize_cb(this, data, finalize_hint);

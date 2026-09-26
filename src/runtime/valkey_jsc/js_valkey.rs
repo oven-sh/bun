@@ -1744,13 +1744,77 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub(crate) fn on_open(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsResult<()> {
+        if SSL {
+            let client = this.client.get();
+            if client.tls.reject_unauthorized(client.vm) {
+                socket.set_inline_reject();
+            }
+        }
         this.client_mut().socket = Self::socket(socket);
         this.client_mut().on_open(Self::socket(socket))
     }
 
+    /// `on_handshake`'s name check, asked inside the handshake.
+    pub(crate) fn server_identity(
+        this: &JSValkeyClient,
+        ssl: &mut boringssl::c::SSL,
+    ) -> boringssl::ServerIdentity {
+        let client = this.client.get();
+        let rejects = client.tls.reject_unauthorized(client.vm);
+        let hostname = rejects.then(|| Self::identity_hostname(this, ssl));
+        boringssl::server_identity(ssl, hostname.as_deref())
+    }
+
+    /// The name to match: the SNI servername, else the URL host. Empty for a unix socket, which has none.
+    fn identity_hostname(
+        this: &JSValkeyClient,
+        ssl_ptr: *mut boringssl::c::SSL,
+    ) -> std::borrow::Cow<'_, [u8]> {
+        let servername = if ssl_ptr.is_null() {
+            None
+        } else {
+            // SAFETY: a non-null `ssl_ptr` is the socket's live `SSL*`.
+            unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
+        };
+        // URL.host() keeps the brackets of an IPv6 literal ("[::1]"); without them it matches IP SAN entries.
+        if let Some(servername) = servername {
+            // SAFETY: NUL-terminated, owned by the SSL: copied.
+            let servername =
+                unsafe { bun_core::ffi::cstr(std::ptr::from_ref(servername).cast()) }.to_bytes();
+            bun_core::ip_address::strip_ipv6_brackets(servername)
+                .to_vec()
+                .into()
+        } else {
+            match &this.client.get().address {
+                valkey::Address::Host { host, .. } => {
+                    bun_core::ip_address::strip_ipv6_brackets(&host[..]).into()
+                }
+                valkey::Address::Unix(_) => (&b""[..]).into(),
+            }
+        }
+    }
+
+    fn fail_handshake_with_altname_error(
+        this: &JSValkeyClient,
+        vm: &VirtualMachine,
+        hostname: &[u8],
+    ) -> JsResult<()> {
+        let err = this
+            .global_object
+            .err(
+                jsc::ErrorCode::TLS_CERT_ALTNAME_INVALID,
+                format_args!(
+                    "Hostname/IP does not match certificate's altnames: Host: {}",
+                    bstr::BStr::new(hostname)
+                ),
+            )
+            .to_js();
+        Self::fail_handshake(this, vm, err)
+    }
+
     pub(crate) fn on_handshake(
         this: &JSValkeyClient,
-        _socket: SocketType<SSL>,
+        socket: SocketType<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
@@ -1773,6 +1837,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _guard = this.ref_guard();
         let _update = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
         let vm = this.client.get().vm;
+        let ssl_ptr: *mut boringssl::c::SSL = socket.ssl().unwrap_or(core::ptr::null_mut());
         if handshake_success {
             if this.client.get().tls.reject_unauthorized(vm) {
                 // only reject the connection if reject_unauthorized == true
@@ -1782,52 +1847,25 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 }
 
                 // Certificate chain is valid; verify the hostname matches the
-                // certificate. Prefer the SNI servername if one was set, otherwise
-                // fall back to the host from the connection URL. Unix-domain
-                // sockets have no hostname to verify, so skip the identity check
-                // for redis+tls+unix:// / valkey+tls+unix:// connections.
-                let ssl_ptr: *mut boringssl::c::SSL = this
-                    .client
-                    .get()
-                    .socket
-                    .get_native_handle()
-                    .unwrap_or(core::ptr::null_mut())
-                    .cast();
-                // SAFETY: SSL_get_servername returns null or NUL-terminated.
-                let mut hostname: &[u8] = if let Some(servername) =
-                    unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
-                {
-                    // SAFETY: NUL-terminated
-                    unsafe { bun_core::ffi::cstr(std::ptr::from_ref(servername).cast()) }.to_bytes()
-                } else {
-                    match &this.client.get().address {
-                        valkey::Address::Host { host, .. } => &host[..],
-                        valkey::Address::Unix(_) => b"",
-                    }
-                };
-                // URL.host() serialises IPv6 literals with surrounding brackets
-                // (e.g. "[::1]"). Strip them so checkServerIdentity can recognise
-                // the value as an IP and match against IP SAN entries.
-                hostname = bun_core::ip_address::strip_ipv6_brackets(hostname);
-                if !hostname.is_empty()
-                    // SAFETY: in the TLS handshake-success path the socket's native
-                    // handle is a live `SSL*`.
-                    && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
-                {
-                    let err = this
-                        .global_object
-                        .err(
-                            jsc::ErrorCode::TLS_CERT_ALTNAME_INVALID,
-                            format_args!(
-                                "Hostname/IP does not match certificate's altnames: Host: {}",
-                                bstr::BStr::new(hostname)
-                            ),
-                        )
-                        .to_js();
-                    return Self::fail_handshake(this, vm, err);
+                // certificate.
+                let hostname = Self::identity_hostname(this, ssl_ptr);
+                // With no `SSL*` there is no certificate to match: fail closed.
+                let identity_ok = hostname.is_empty()
+                    || (!ssl_ptr.is_null()
+                        && uws::check_server_identity(
+                            // SAFETY: non-null, so the dispatched socket's live `SSL*`.
+                            unsafe { &mut *ssl_ptr },
+                            &hostname,
+                        ));
+                if !identity_ok {
+                    return Self::fail_handshake_with_altname_error(this, vm, &hostname);
                 }
             }
             this.client_mut().start()?;
+        } else if ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH {
+            // The same check, made inside the handshake (`server_identity`).
+            let hostname = Self::identity_hostname(this, ssl_ptr);
+            return Self::fail_handshake_with_altname_error(this, vm, &hostname);
         } else {
             // if we are here is because the server rejected us, and the error_no is the cause of
             // this no matter if reject_unauthorized is false, because we were disconnected by the

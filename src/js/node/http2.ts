@@ -6623,9 +6623,7 @@ Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, even
       break;
     }
     default:
-      // args.unshift(err, event);
-      // ReflectApply(net.Server.prototype[EventEmitter.captureRejectionSymbol], this, args);
-      break;
+      net.Server.prototype[EventEmitter.captureRejectionSymbol]!.$call(this, err, event, ...args);
   }
 };
 
@@ -6651,6 +6649,7 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
   declare maxHeaderSize: number | undefined;
   declare insecureHTTPParser: boolean | undefined;
   declare httpValidation: string | undefined;
+  declare joinDuplicateHeaders: boolean | undefined;
   timeout = 0;
   [kSessions] = new SafeSet();
   constructor(options, onRequestHandler) {
@@ -6672,8 +6671,11 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
       this.requestTimeout = http1Options.requestTimeout ?? 300000;
       this.maxHeadersCount = http1Options.maxHeadersCount ?? null;
       this.maxRequestsPerSocket = http1Options.maxRequestsPerSocket ?? 0;
+      const joinDuplicateHeaders = http1Options.joinDuplicateHeaders;
+      if (joinDuplicateHeaders !== undefined) validateBoolean(joinDuplicateHeaders, "options.joinDuplicateHeaders");
+      this.joinDuplicateHeaders = joinDuplicateHeaders;
       // connectionListenerHTTP1 reads these off the server when initializing
-      // the per-connection parser, matching Node's storeHTTP1Options.
+      // the per-connection parser, matching Node's storeHTTPOptions.
       this.maxHeaderSize = http1Options.maxHeaderSize;
       this.insecureHTTPParser = http1Options.insecureHTTPParser;
       this.httpValidation = http1Options.httpValidation;

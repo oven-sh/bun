@@ -203,11 +203,33 @@ pub(crate) struct PathWatcher {
     /// `manager.mutex` on all platforms — every emit path (inotify/kqueue reader
     /// threads and the Darwin FSEvents callback) holds it while iterating, so
     /// attach/detach can never race with dispatch.
-    handlers: ArrayHashMap<*mut c_void, ChangeEvent>,
+    handlers: ArrayHashMap<*mut c_void, Handler>,
 
     /// Per-platform per-watch state (inotify wds, kqueue fds, or the FSEventsWatcher).
     #[cfg(not(windows))]
     platform: PlatformWatch,
+}
+
+/// One `fs.watch()` call attached to a [`PathWatcher`].
+struct Handler {
+    /// Basename of the path this call watched, before symlinks are resolved.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    name: Box<[u8]>,
+    change: ChangeEvent,
+}
+
+impl Handler {
+    /// `watched_path` is `watch()`'s `path`: absolute, symlinks unresolved.
+    fn new(watched_path: &ZStr) -> Self {
+        // Not Linux: libuv's kqueue and FSEvents backends report the resolved name, the basename of `PathWatcher.path`.
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let _ = watched_path;
+        Self {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            name: Box::from(path::basename(watched_path.as_bytes())),
+            change: ChangeEvent::default(),
+        }
+    }
 }
 
 /// Per-handler duplicate suppression.
@@ -265,8 +287,8 @@ impl PathWatcher {
     fn emit(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
         let timestamp = bun_core::time::milli_timestamp();
         let h = hash(rel_path);
-        for (&ctx, ev) in self.handlers.iter() {
-            if ev.should_emit(h, timestamp, event_type) {
+        for (&ctx, handler) in self.handlers.iter() {
+            if handler.change.should_emit(h, timestamp, event_type) {
                 (FSWatcher::ON_PATH_UPDATE)(
                     Some(ctx),
                     event_type.to_event(rel_path.into()),
@@ -276,15 +298,37 @@ impl PathWatcher {
         }
     }
 
-    /// Like [`emit`](Self::emit), but without per-handler duplicate suppression.
+    /// [`emit`](Self::emit) for an event about the watched path itself. Each handler gets its own name, as in libuv: https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L2625
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn emit_self(&self, event_type: WatchEventKind, is_file: bool) {
+        let timestamp = bun_core::time::milli_timestamp();
+        for (&ctx, handler) in self.handlers.iter() {
+            if handler
+                .change
+                .should_emit(hash(&handler.name), timestamp, event_type)
+            {
+                (FSWatcher::ON_PATH_UPDATE)(
+                    Some(ctx),
+                    event_type.to_event(handler.name.clone()),
+                    is_file,
+                );
+            }
+        }
+    }
+
+    /// Like [`emit_self`](Self::emit_self), but without per-handler duplicate suppression.
     /// The `IN_IGNORED` retiring a deleted inode's wd lands in the same
     /// millisecond as its `IN_DELETE_SELF`, with the same path and type, so
     /// `should_emit` would fold the two into one; node (libuv) delivers both.
     /// Caller holds `manager.mutex`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn emit_unsuppressed(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
-        for &ctx in self.handlers.keys() {
-            (FSWatcher::ON_PATH_UPDATE)(Some(ctx), event_type.to_event(rel_path.into()), is_file);
+    fn emit_self_unsuppressed(&self, event_type: WatchEventKind, is_file: bool) {
+        for (&ctx, handler) in self.handlers.iter() {
+            (FSWatcher::ON_PATH_UPDATE)(
+                Some(ctx),
+                event_type.to_event(handler.name.clone()),
+                is_file,
+            );
         }
     }
 
@@ -473,6 +517,8 @@ pub(crate) fn watch(
 
     let mut key_buf = path::path_buffer_pool::get();
     let key = PathWatcherManager::make_key(key_buf.as_mut_slice(), resolved.as_bytes(), recursive);
+    // Per handler: libuv keeps one path per wd, so two node watchers on one inode share the first one's name. Here each reports its own.
+    let handler = Handler::new(path);
 
     manager.mutex.lock();
 
@@ -480,7 +526,7 @@ pub(crate) fn watch(
     // scoped to this lookup.
     if let Some(&existing) = unsafe { (*manager.watchers.get()).get(key) } {
         // SAFETY: existing is a live PathWatcher under manager.mutex.
-        unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
+        unsafe { handle_oom((*existing).handlers.put(ctx, handler)) };
         manager.mutex.unlock();
         return Ok(existing);
     }
@@ -501,7 +547,7 @@ pub(crate) fn watch(
         platform: PlatformWatch::default(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.
-    unsafe { handle_oom((*watcher).handlers.put(ctx, ChangeEvent::default())) };
+    unsafe { handle_oom((*watcher).handlers.put(ctx, handler)) };
     // SAFETY: holding manager.mutex; exclusive access to manager.watchers.
     unsafe { handle_oom((*manager.watchers.get()).put(key, watcher)) };
 
@@ -978,14 +1024,10 @@ impl Linux {
                     if let Some(owners) = wd_map.get_mut(&wd) {
                         for o in owners.drain(..) {
                             // SAFETY: o.watcher live under manager.mutex; shared
-                            // access only — `emit_unsuppressed` takes `&self`.
+                            // access only — `emit_self_unsuppressed` takes `&self`.
                             let w = unsafe { &*o.watcher };
                             if o.subpath.as_bytes().is_empty() && (w.is_file || !w.recursive) {
-                                w.emit_unsuppressed(
-                                    WatchEventKind::Rename,
-                                    path::basename(w.path.as_bytes()),
-                                    w.is_file,
-                                );
+                                w.emit_self_unsuppressed(WatchEventKind::Rename, w.is_file);
                                 let _ = handle_oom(touched.get_or_put(o.watcher));
                             }
                             // SAFETY: exclusive scoped access to this watcher's wd
@@ -1061,12 +1103,11 @@ impl Linux {
                             &*std::ptr::from_ref::<[u8]>(o.subpath.as_bytes()),
                         )
                     };
-                    // SAFETY: owner_watcher live under manager.mutex. Copy the
-                    // scalars and launder the path bytes via a raw ptr so `rel`
-                    // (which may borrow them) is decoupled from the scoped `&mut`
-                    // temporaries `add_one` takes below. `path` is a `ZBox`; its
-                    // heap bytes are a separate allocation, so this mirrors the
-                    // `owner_subpath` raw-ptr laundering above.
+                    // SAFETY: owner_watcher live under manager.mutex. Copy the scalars
+                    // and launder the path bytes via a raw ptr so they are decoupled
+                    // from the scoped `&mut` temporaries `add_one` takes below. `path`
+                    // is a `ZBox`; its heap bytes are a separate allocation, so this
+                    // mirrors the `owner_subpath` raw-ptr laundering above.
                     let (watcher_is_file, watcher_recursive, watcher_path): (bool, bool, &[u8]) = unsafe {
                         (
                             (*owner_watcher).is_file,
@@ -1075,9 +1116,9 @@ impl Linux {
                         )
                     };
 
-                    // Build the path relative to this owner's root.
-                    let rel: &[u8] = if watcher_is_file {
-                        path::basename(watcher_path)
+                    // Build the path relative to this owner's root; `None` is the watched path itself.
+                    let rel: Option<&[u8]> = if watcher_is_file {
+                        None
                     } else if owner_subpath.is_empty() {
                         if name.is_empty() && !watcher_recursive {
                             // A nameless event on the root wd is about the watched
@@ -1085,30 +1126,33 @@ impl Linux {
                             // IN_ATTRIB); libuv reports basename(watched path),
                             // same as for a file. node's recursive watcher uses
                             // root-relative paths instead, so those keep "".
-                            path::basename(watcher_path)
+                            None
                         } else {
-                            name
+                            Some(name)
                         }
                     } else if name.is_empty() {
-                        owner_subpath
+                        Some(owner_subpath)
                     } else {
-                        join_z_buf_spill::<platform::Posix>(
-                            path_buf.as_mut_slice(),
-                            &mut rel_spill,
-                            &[owner_subpath, name],
+                        Some(
+                            join_z_buf_spill::<platform::Posix>(
+                                path_buf.as_mut_slice(),
+                                &mut rel_spill,
+                                &[owner_subpath, name],
+                            )
+                            .as_bytes(),
                         )
-                        .as_bytes()
                     };
 
-                    // SAFETY: owner_watcher live under manager.mutex; `emit` takes `&self`.
+                    let is_file_event = !is_dir_child
+                        && !((ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0)
+                            && !watcher_is_file);
+                    // SAFETY: owner_watcher live under manager.mutex; `emit` and
+                    // `emit_self` take `&self`.
                     unsafe {
-                        (*owner_watcher).emit(
-                            event_type,
-                            rel,
-                            !is_dir_child
-                                && !((ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0)
-                                    && !watcher_is_file),
-                        );
+                        match rel {
+                            Some(rel) => (*owner_watcher).emit(event_type, rel, is_file_event),
+                            None => (*owner_watcher).emit_self(event_type, is_file_event),
+                        }
                     }
                     let _ = handle_oom(touched.get_or_put(owner_watcher));
 
@@ -1116,7 +1160,8 @@ impl Linux {
                     // start watching it so future events inside it are delivered.
                     // This is what makes `{recursive: true}` track structure changes
                     // after the initial crawl (#15939/#15085).
-                    if watcher_recursive
+                    if let Some(rel) = rel
+                        && watcher_recursive
                         && is_dir_child
                         && (ev.mask & (IN::CREATE | IN::MOVED_TO) != 0)
                         && !name.is_empty()

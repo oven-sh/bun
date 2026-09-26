@@ -9,6 +9,7 @@ import {
   isLinux,
   isMacOS,
   isWindows,
+  nodeExe,
   tempDir,
   tempDirWithFiles,
 } from "harness";
@@ -618,6 +619,72 @@ describe("fs.watch", () => {
     expect(await collectWatchEvents(target, 1, () => fs.renameSync(target, path.join(String(dir), "moved")))).toEqual([
       ["rename", "sub"],
     ]);
+  });
+
+  // The "watched path" of a self-event is the path fs.watch was given, so a
+  // symlink is reported under its own name and not under the name of what it
+  // points to. kqueue (macOS files, FreeBSD) asks the kernel for the open
+  // file's path and reports the resolved name instead, so Linux only.
+  describe.skipIf(!isLinux)("a watched symlink is reported under its own name", () => {
+    async function runFixture(exe: string) {
+      using dir = tempDir("fs-watch-symlink-name", {});
+      await using proc = Bun.spawn({
+        cmd: [exe, path.join(import.meta.dir, "fixtures", "symlink-filename-fixture.mjs"), String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { events: exitCode === 0 ? JSON.parse(stdout) : stdout, stderr, exitCode };
+    }
+
+    const removed = (name: string) => [
+      ["change", name],
+      ["rename", name],
+      ["rename", name],
+    ];
+    const oneWatcher = {
+      "file changed": { link: [["change", "link.txt"]] },
+      "file removed": { link: removed("link.txt") },
+      "directory removed": {
+        link: [
+          ["rename", "link-dir"],
+          ["rename", "link-dir"],
+        ],
+      },
+      // An entry of the directory keeps its own name.
+      "directory entry created": { link: [["rename", "child.txt"]] },
+    };
+
+    test.concurrent("in bun, also when the file it points to is watched too", async () => {
+      expect(await runFixture(bunExe())).toEqual({
+        events: {
+          ...oneWatcher,
+          "file watched first, file removed": { target: removed("target.txt"), link: removed("link.txt") },
+          "symlink watched first, file removed": { link: removed("link.txt"), target: removed("target.txt") },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Deliberate difference: libuv keeps one path per inotify watch, so two
+    // node watchers on one inode both report the name the first one was given.
+    // https://github.com/libuv/libuv/blob/v1.52.1/src/unix/linux.c#L2706-L2714
+    test.concurrent.skipIf(!nodeExe())(
+      "in node, where two watchers on one file share the first one's name",
+      async () => {
+        expect(await runFixture(nodeExe()!)).toEqual({
+          events: {
+            ...oneWatcher,
+            "file watched first, file removed": { target: removed("target.txt"), link: removed("target.txt") },
+            "symlink watched first, file removed": { link: removed("link.txt"), target: removed("link.txt") },
+          },
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
   });
 
   // Past fs.inotify.max_queued_events the kernel drops events and queues one

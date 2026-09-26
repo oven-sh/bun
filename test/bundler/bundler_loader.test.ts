@@ -525,6 +525,20 @@ describe("bundler", async () => {
         run: { stdout: '""' },
       });
 
+      itBundled(`${target}/loader-empty-md-file`, {
+        target: target,
+        files: {
+          "/entry.ts": /* js */ `
+          import empty from './empty.md';
+          import blank from './blank.md';
+          console.write(JSON.stringify([empty, blank]));
+        `,
+          "/empty.md": "",
+          "/blank.md": "\n\n  \n",
+        },
+        run: { stdout: '["",""]' },
+      });
+
       itBundled(`${target}/loader-empty-file-loader`, {
         target: target,
         outdir: "/out",

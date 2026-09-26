@@ -225,6 +225,8 @@ bun --cpu-prof script.js
 
 `--cpu-prof` writes a `.cpuprofile` file you can open in Chrome DevTools (Performance tab → Load profile) or VS Code's CPU profiler.
 
+Time that the event loop spends waiting for timers or I/O appears as `(idle)`, as in Node.js profiles.
+
 ### Markdown output
 
 Use `--cpu-prof-md` to generate a markdown CPU profile, which is grep-friendly and designed for LLM analysis:

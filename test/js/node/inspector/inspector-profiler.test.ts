@@ -420,6 +420,64 @@ describe("node:inspector", () => {
       expect(result).toEqual({});
       session2.disconnect();
     });
+
+    // The 400ms timer is the event-loop wait under test. Node puts about a
+    // third of this profile's samples in JS frames and the rest in "(idle)".
+    test("Profiler.stop reports event-loop waits as (idle), like V8", async () => {
+      using dir = tempDir("inspector-profiler-idle", {
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+
+function busy(ms) {
+  const end = performance.now() + ms;
+  let x = 0;
+  while (performance.now() < end) x++;
+  return x;
+}
+
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.start");
+busy(100);
+await new Promise(resolve => setTimeout(resolve, 400));
+busy(100);
+const { profile } = await session.post("Profiler.stop");
+session.disconnect();
+
+const nonJSFrames = new Set(["(root)", "(idle)", "(program)", "(garbage collector)"]);
+const functionNameById = new Map(profile.nodes.map(n => [n.id, n.callFrame.functionName]));
+const idleNode = profile.nodes.find(n => n.callFrame.functionName === "(idle)");
+const jsSamples = profile.samples.filter(id => !nonJSFrames.has(functionNameById.get(id)));
+console.log(
+  JSON.stringify({
+    idleCallFrame: idleNode?.callFrame,
+    idleIsRootChild: profile.nodes[0].children.includes(idleNode?.id),
+    jsSampleShare: jsSamples.length / profile.samples.length,
+  }),
+);
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const { idleCallFrame, idleIsRootChild, jsSampleShare } = JSON.parse(stdout);
+      expect(idleCallFrame).toEqual({
+        functionName: "(idle)",
+        scriptId: "0",
+        url: "",
+        lineNumber: -1,
+        columnNumber: -1,
+      });
+      expect(idleIsRootChild).toBe(true);
+      expect(jsSampleShare).toBeLessThan(0.6);
+    });
   });
 
   describe("callback API", () => {

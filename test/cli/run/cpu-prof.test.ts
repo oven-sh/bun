@@ -444,4 +444,152 @@ describe.concurrent("--cpu-prof", () => {
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
   });
+
+  // ~200ms of JavaScript around a 400ms timer wait. JSC's SamplingProfiler
+  // takes no samples while the event loop is idle, so the wait arrives as one
+  // long gap between two samples. That gap is idle time (Node reports it as
+  // "(idle)"), not self time of whichever JS frame is sampled next to it.
+  const busyFunction = `
+    function busy(ms) {
+      const end = performance.now() + ms;
+      let x = 0;
+      while (performance.now() < end) x++;
+      return x;
+    }
+  `;
+  const idleGapFixture = `${busyFunction}
+    busy(100);
+    setTimeout(() => busy(100), 400);
+  `;
+  const busyOnlyFixture = `${busyFunction}
+    busy(200);
+  `;
+  const nonJSFrames = new Set(["(root)", "(idle)", "(program)", "(garbage collector)"]);
+
+  // Sum of Self% over the JS functions in the "Hot Functions (Self Time)" table.
+  function jsSelfPercent(md: string) {
+    const hotFunctions = md.split("## Hot Functions (Self Time)")[1].split("\n## ")[0];
+    const rows = [...hotFunctions.matchAll(/^\| ([\d.]+)% \| [^|]+ \| [^|]+ \| [^|]+ \| `([^`]+)` \|/gm)];
+    expect(rows.length).toBeGreaterThan(0);
+    return rows
+      .filter(([, , functionName]) => !nonJSFrames.has(functionName))
+      .reduce((sum, [, percent]) => sum + Number(percent), 0);
+  }
+
+  // Chrome DevTools derives self time as hitCount * (endTime - startTime) / totalHits,
+  // so the share of samples in JS frames is the share of wall time it reports as JS.
+  function jsSampleShare(profile: any) {
+    const functionNameById = new Map(profile.nodes.map((n: any) => [n.id, n.callFrame.functionName]));
+    expect(profile.samples.length).toBeGreaterThan(0);
+    const jsSamples = profile.samples.filter((id: number) => !nonJSFrames.has(functionNameById.get(id)));
+    return jsSamples.length / profile.samples.length;
+  }
+
+  // The shape V8 writes: a child of (root) with no script.
+  function expectIdleNode(profile: any) {
+    const idleNode = profile.nodes.find((n: any) => n.callFrame.functionName === "(idle)");
+    expect(idleNode?.callFrame).toEqual({
+      functionName: "(idle)",
+      scriptId: "0",
+      url: "",
+      lineNumber: -1,
+      columnNumber: -1,
+    });
+    expect(idleNode.hitCount).toBeGreaterThan(0);
+    expect(profile.nodes[0].children).toContain(idleNode.id);
+  }
+
+  const idleRow = /^\| [\d.]+% \| [^|]+ \| [\d.]+% \| [^|]+ \| `\(idle\)` \|  \|$/m;
+
+  test("--cpu-prof-md does not bill idle time to a JS function's self time", async () => {
+    using dir = tempDir("cpu-prof-md-idle", { "test.js": idleGapFixture });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof-md", "--cpu-prof-name", "profile.md", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+
+    const md = readFileSync(join(String(dir), "profile.md"), "utf-8");
+    expect(md).toMatch(idleRow);
+    expect(jsSelfPercent(md)).toBeLessThan(60);
+  });
+
+  test("--cpu-prof samples do not attribute idle time to JS frames", async () => {
+    using dir = tempDir("cpu-prof-idle", { "test.js": idleGapFixture });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-name", "profile.cpuprofile", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+
+    const profile = JSON.parse(readFileSync(join(String(dir), "profile.cpuprofile"), "utf-8"));
+    expectIdleNode(profile);
+    expect(jsSampleShare(profile)).toBeLessThan(0.6);
+  });
+
+  test("--cpu-prof and --cpu-prof-md together both report the wait as idle time", async () => {
+    using dir = tempDir("cpu-prof-both-idle", { "test.js": idleGapFixture });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-md", "--cpu-prof-name", "profile", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+
+    const profile = JSON.parse(readFileSync(join(String(dir), "profile.cpuprofile"), "utf-8"));
+    const md = readFileSync(join(String(dir), "profile.md"), "utf-8");
+    expectIdleNode(profile);
+    expect(jsSampleShare(profile)).toBeLessThan(0.6);
+    expect(md).toMatch(idleRow);
+    expect(jsSelfPercent(md)).toBeLessThan(60);
+  });
+
+  test("--cpu-prof-interval spaces (idle) samples like the JS samples", async () => {
+    using dir = tempDir("cpu-prof-interval-idle", { "test.js": idleGapFixture });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-interval", "5000", "--cpu-prof-name", "profile.cpuprofile", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+
+    const profile = JSON.parse(readFileSync(join(String(dir), "profile.cpuprofile"), "utf-8"));
+    expectIdleNode(profile);
+    // About a third, like the wall time: (idle) samples at 1ms would push it below 0.1.
+    const share = jsSampleShare(profile);
+    expect(share).toBeGreaterThan(0.15);
+    expect(share).toBeLessThan(0.6);
+  });
+
+  test("--cpu-prof and --cpu-prof-md still bill busy time to JS frames", async () => {
+    using dir = tempDir("cpu-prof-busy-only", { "test.js": busyOnlyFixture });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-md", "--cpu-prof-name", "profile", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+
+    const profile = JSON.parse(readFileSync(join(String(dir), "profile.cpuprofile"), "utf-8"));
+    const md = readFileSync(join(String(dir), "profile.md"), "utf-8");
+    expect(jsSampleShare(profile)).toBeGreaterThan(0.8);
+    expect(jsSelfPercent(md)).toBeGreaterThan(80);
+  });
 });

@@ -159,6 +159,10 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+    // The portable image asks which OS runs it before anything decides by it.
+    #[cfg(bun_portable)]
+    let host_os = bun_core::host::init();
+
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
@@ -198,6 +202,14 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
+    #[cfg(bun_portable)]
+    if let Err(bun_core::host::InvalidTestHookValue(value)) = host_os {
+        bun_core::pretty_errorln!(
+            "<red>error<r>: BUN_PORTABLE_HOST_OS is {}, expected \"linux\", \"darwin\" or \"win32\"",
+            bun_core::fmt::quote(value),
+        );
+        Global::exit(1);
+    }
     // After stdio::init (fd 0 is open even if we were exec'd with it closed), before any thread.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pregrow_fd_table();

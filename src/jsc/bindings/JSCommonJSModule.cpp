@@ -30,6 +30,7 @@
  */
 
 #include "BunString.h"
+#include "BunHostPath.h"
 #include "headers.h"
 
 #include "JavaScriptCore/CallData.h"
@@ -851,7 +852,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 
     moduleObject->sourceCode = makeSource(
         WTF::move(wrappedString),
-        SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
+        SourceOrigin(Bun::fileURLWithFileSystemPath(filenameString)),
         JSC::SourceTaintedOrigin::Untainted,
         filenameString,
         WTF::TextPosition(),

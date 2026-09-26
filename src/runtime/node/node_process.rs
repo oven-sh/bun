@@ -368,19 +368,11 @@ mod _impl {
         }
 
         // Per-platform path-separator literal suffixes.
-        const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[eval]"
-        } else {
-            b"/[eval]"
-        };
-        const STDIN_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[stdin]"
-        } else {
-            b"/[stdin]"
-        };
+        let eval_suffix: &[u8] = bun_paths::path_literal!("/[eval]").as_bytes();
+        let stdin_suffix: &[u8] = bun_paths::path_literal!("/[stdin]").as_bytes();
         if !vm.main().is_empty()
-            && !strings::ends_with(vm.main(), EVAL_SUFFIX)
-            && !strings::ends_with(vm.main(), STDIN_SUFFIX)
+            && !strings::ends_with(vm.main(), eval_suffix)
+            && !strings::ends_with(vm.main(), stdin_suffix)
         {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_("[worker eval]"));
@@ -571,4 +563,11 @@ mod _impl {
             let _ = SetEnvironmentVariableW(buf1.as_ptr(), str2.unwrap_or(core::ptr::null()));
         }
     }
+
+    /// The portable image on a Windows host. The environment block of the process belongs to the host
+    /// program and the image has no call that edits it: a write to `process.env` stays in the object that
+    /// JavaScript sees, and in bun's env map for the variables that native code reads.
+    #[cfg(bun_portable)]
+    #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
+    extern "C" fn bun_process_edit_windows_env_var(_k: &BunString, _v: &BunString) {}
 } // mod _impl

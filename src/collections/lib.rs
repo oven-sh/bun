@@ -132,6 +132,8 @@ pub use identity_context::{
 };
 
 pub mod array_hash_map;
+#[cfg(bun_portable)]
+pub use array_hash_map::HostEnvNameContext;
 pub use array_hash_map::{
     ArrayHashMap, ArrayHashMapExt, AutoContext, CaseInsensitiveAsciiStringArrayHashMap,
     CaseInsensitiveAsciiStringContext, Entry, GetOrPutResult, MapEntry, OccupiedEntry,

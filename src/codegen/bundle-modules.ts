@@ -811,8 +811,11 @@ for (const file of evalFiles) {
     target: "bun",
     format: "esm",
     env: "disable",
+    // These scripts are not built-in modules: with the platform known at run time only, they read process.platform.
     define: {
-      "process.platform": JSON.stringify(process.env.TARGET_PLATFORM ?? process.platform),
+      ...(process.env.TARGET_PLATFORM_AT_RUNTIME
+        ? {}
+        : { "process.platform": JSON.stringify(process.env.TARGET_PLATFORM ?? process.platform) }),
       "process.arch": JSON.stringify(process.env.TARGET_ARCH ?? process.arch),
     },
   });

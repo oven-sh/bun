@@ -1,12 +1,17 @@
 #pragma once
 #include "root.h"
+#include "BunHostOS.h"
 
 #define POSIX_PATH_SEP_s "/"_s
 #define POSIX_PATH_SEP '/'
 #define WINDOWS_PATH_SEP_s "\\"_s
 #define WINDOWS_PATH_SEP '\\'
 
-#if OS(WINDOWS)
+#if defined(BUN_PORTABLE)
+// The portable image: the separator of the host, known when the program runs.
+#define PLATFORM_SEP_s (Bun::hostIsWindows() ? WINDOWS_PATH_SEP_s : POSIX_PATH_SEP_s)
+#define PLATFORM_SEP (Bun::hostIsWindows() ? WINDOWS_PATH_SEP : POSIX_PATH_SEP)
+#elif OS(WINDOWS)
 #define PLATFORM_SEP_s WINDOWS_PATH_SEP_s
 #define PLATFORM_SEP WINDOWS_PATH_SEP
 #else
@@ -21,7 +26,11 @@
 
 ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 {
-#if OS(WINDOWS)
+#if BUN_HOST_MAY_BE_POSIX
+    if (!Bun::hostIsWindows())
+        return input.startsWith('/');
+#endif
+#if BUN_HOST_MAY_BE_WINDOWS
     if (input.is8Bit()) {
         auto len = input.length();
         if (len < 1)
@@ -47,8 +56,6 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
             return true;
         return false;
     }
-#else // OS(WINDOWS)
-    return input.startsWith('/');
 #endif
 }
 

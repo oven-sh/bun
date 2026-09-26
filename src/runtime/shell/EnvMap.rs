@@ -17,30 +17,21 @@ struct EnvMapContext;
 
 impl ArrayHashContext<EnvStr> for EnvMapContext {
     fn hash(&self, s: &EnvStr) -> u32 {
-        #[cfg(windows)]
-        {
-            return <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
+        if bun_core::host::is_windows() {
+            <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
                 &array_hash_map::CaseInsensitiveAsciiStringContext::default(),
                 s.slice(),
-            );
-        }
-        #[cfg(not(windows))]
-        {
+            )
+        } else {
             array_hash_map::hash_string(s.slice())
         }
     }
 
     fn eql(&self, a: &EnvStr, b: &EnvStr, _b_index: usize) -> bool {
-        #[cfg(windows)]
-        {
+        if bun_core::host::is_windows() {
             // Must be length-checked: "PATH" must NOT match "PATHEXT".
-            return bun_core::strings::eql_case_insensitive_asciii_check_length(
-                a.slice(),
-                b.slice(),
-            );
-        }
-        #[cfg(not(windows))]
-        {
+            bun_core::strings::eql_case_insensitive_asciii_check_length(a.slice(), b.slice())
+        } else {
             a.slice() == b.slice()
         }
     }

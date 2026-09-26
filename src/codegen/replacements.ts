@@ -127,13 +127,23 @@ export const enums = {
   ],
 };
 
+/**
+ * What `process.platform` in a built-in module is replaced with: the platform the binary is built for, as a
+ * string. The portable image (TARGET_PLATFORM_AT_RUNTIME) runs on more than one, so there it is the private
+ * global that holds the name of the platform the image runs on, and both sides of a comparison stay in the
+ * bundle.
+ */
+export const platformDefine: string = Bun.env.TARGET_PLATFORM_AT_RUNTIME
+  ? "__intrinsic__hostPlatform"
+  : JSON.stringify(Bun.env.TARGET_PLATFORM ?? process.platform);
+
 // These are passed to --define to the bundler
 const debug = process.argv[2] === "--debug=ON";
 export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
   "IS_BUN_DEVELOPMENT": String(debug),
 
-  "process.platform": JSON.stringify(Bun.env.TARGET_PLATFORM ?? process.platform),
+  "process.platform": platformDefine,
   "process.arch": JSON.stringify(Bun.env.TARGET_ARCH ?? process.arch),
 };
 

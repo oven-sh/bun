@@ -1,7 +1,9 @@
 #include "ModuleLoader.h"
+#include "BunHostPath.h"
 #include "napi.h"
 
 #include "BunProcess.h"
+#include "BunHostOS.h"
 #include "DLHandleMap.h"
 #include "WebCoreJSBuiltins.h"
 #include "v8/node.h"
@@ -213,19 +215,7 @@ static JSValue constructArch(VM& vm, JSObject* processObject)
 
 static JSValue constructPlatform(VM& vm, JSObject* processObject)
 {
-#if defined(__APPLE__)
-    return JSC::jsString(vm, makeAtomString("darwin"_s));
-#elif defined(__ANDROID__)
-    return JSC::jsString(vm, makeAtomString("android"_s));
-#elif defined(__linux__)
-    return JSC::jsString(vm, makeAtomString("linux"_s));
-#elif defined(__FreeBSD__)
-    return JSC::jsString(vm, makeAtomString("freebsd"_s));
-#elif OS(WINDOWS)
-    return JSC::jsString(vm, makeAtomString("win32"_s));
-#else
-#error "Unknown platform"
-#endif
+    return JSC::jsString(vm, makeAtomString(Bun::hostPlatformName()));
 }
 
 // macOS links the system libicucore dynamically, so the compile-time U_ICU_VERSION can be newer than what actually runs.
@@ -499,7 +489,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             return {};
         }
 
-        filename = fileURL.fileSystemPath();
+        filename = Bun::fileSystemPath(fileURL);
     }
 
     CString utf8;

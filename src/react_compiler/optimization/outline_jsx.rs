@@ -20,13 +20,18 @@ use crate::hir::{
     Pattern, Place, ReactFunctionType, ReturnVariant, StoreStr, Terminal,
 };
 use crate::hir_vec;
+use crate::imports::ProgramContext;
 
 /// Outline JSX expressions in inner functions into separate outlined components.
 ///
 /// Ported from TS `outlineJSX` in `Optimization/OutlineJsx.ts`.
-pub(crate) fn outline_jsx(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn outline_jsx(
+    func: &mut HirFunction,
+    env: &mut Environment,
+    context: &mut ProgramContext,
+) {
     let mut outlined_fns: Vec<HirFunction> = Vec::new();
-    outline_jsx_impl(func, env, &mut outlined_fns);
+    outline_jsx_impl(func, env, context, &mut outlined_fns);
 
     for outlined_fn in outlined_fns {
         env.outline_function(outlined_fn, Some(ReactFunctionType::Component));
@@ -54,6 +59,7 @@ struct OutlinedResult {
 fn outline_jsx_impl(
     func: &mut HirFunction,
     env: &mut Environment,
+    context: &mut ProgramContext,
     outlined_fns: &mut Vec<HirFunction>,
 ) {
     // Collect LoadGlobal instructions (tag -> instr)
@@ -137,7 +143,7 @@ fn outline_jsx_impl(
                         &mut env.functions[func_id.0 as usize],
                         crate::ssa::enter_ssa::placeholder_function(),
                     );
-                    outline_jsx_impl(&mut inner_func, env, outlined_fns);
+                    outline_jsx_impl(&mut inner_func, env, context, outlined_fns);
                     env.functions[func_id.0 as usize] = inner_func;
                 }
                 InstrAction::JsxExpr {
@@ -150,6 +156,7 @@ fn outline_jsx_impl(
                         process_and_outline_jsx(
                             func,
                             env,
+                            context,
                             &mut jsx_group,
                             &globals,
                             &mut rewrite_instr,
@@ -174,6 +181,7 @@ fn outline_jsx_impl(
         process_and_outline_jsx(
             func,
             env,
+            context,
             &mut jsx_group,
             &globals,
             &mut rewrite_instr,
@@ -208,6 +216,7 @@ fn outline_jsx_impl(
 fn process_and_outline_jsx(
     func: &mut HirFunction,
     env: &mut Environment,
+    context: &mut ProgramContext,
     jsx_group: &mut Vec<JsxInstrInfo>,
     globals: &HashMap<IdentifierId, usize>,
     rewrite_instr: &mut HashMap<EvaluationOrder, Vec<Instruction>>,
@@ -219,7 +228,7 @@ fn process_and_outline_jsx(
     // Sort by eval order ascending (TS: sort by a.id - b.id)
     jsx_group.sort_unstable_by_key(|j| j.eval_order);
 
-    let result = process_jsx_group(func, env, jsx_group, globals);
+    let result = process_jsx_group(func, env, context, jsx_group, globals);
     if let Some(result) = result {
         outlined_fns.push(result.func);
         // Map from the LAST JSX instruction's eval order to the replacement instructions
@@ -234,6 +243,7 @@ fn process_and_outline_jsx(
 fn process_jsx_group(
     func: &HirFunction,
     env: &mut Environment,
+    context: &mut ProgramContext,
     jsx_group: &[JsxInstrInfo],
     globals: &HashMap<IdentifierId, usize>,
 ) -> Option<OutlinedResult> {
@@ -242,9 +252,9 @@ fn process_jsx_group(
         return None;
     }
 
-    let props = collect_props(func, env, jsx_group)?;
+    let props = collect_props(func, env, context, jsx_group)?;
 
-    let outlined_tag = env.generate_globally_unique_identifier_name(None);
+    let outlined_tag = context.generate_globally_unique_identifier_name(None);
     let new_instrs = emit_outlined_jsx(func, env, jsx_group, &props, outlined_tag)?;
     let outlined_fn = emit_outlined_fn(func, env, jsx_group, &props, globals)?;
 
@@ -261,6 +271,7 @@ fn process_jsx_group(
 fn collect_props(
     func: &HirFunction,
     env: &mut Environment,
+    context: &mut ProgramContext,
     jsx_group: &[JsxInstrInfo],
 ) -> Option<Vec<OutlinedJsxAttribute>> {
     let mut id_counter = 1u32;
@@ -277,8 +288,9 @@ fn collect_props(
             buf.extend_from_slice(itoa.format(id_counter).as_bytes());
             id_counter += 1;
         }
-        // TS: env.programContext.addNewReference(newName)
-        // We don't have programContext in Rust, but this is needed for unique name tracking
+        if let Ok(name) = core::str::from_utf8(&buf) {
+            context.add_new_reference(name.to_owned());
+        }
         let stored = StoreStr::new(bun_ast::data_store_dupe_str(&buf));
         seen.insert(stored);
         stored

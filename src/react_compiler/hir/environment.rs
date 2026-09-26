@@ -107,11 +107,6 @@ pub struct Environment {
 
     // Outlined functions: functions extracted from the component during outlining passes
     outlined_functions: HirVec<OutlinedFunctionEntry>,
-
-    // Known names for collision-aware UID generation. Lazily populated from
-    // identifiers on first use, then updated with each generated name.
-    // Matches Babel's generateUid behavior of checking hasBinding/hasReference.
-    uid_known_names: Option<HashSet<StoreStr>>,
 }
 
 /// An outlined function entry, stored on Environment during compilation.
@@ -204,7 +199,6 @@ impl Environment {
             default_nonmutating_hook: None,
             default_mutating_hook: None,
             outlined_functions: AstAlloc::vec(),
-            uid_known_names: None,
             config,
         }
     }
@@ -694,121 +688,6 @@ impl Environment {
     /// Get a reference to the globals registry.
     pub fn globals(&self) -> &GlobalRegistry {
         &self.globals
-    }
-
-    /// Generate a globally unique identifier name, analogous to TS
-    /// `generateGloballyUniqueIdentifierName` which delegates to Babel's
-    /// `scope.generateUidIdentifier`. Matches Babel's naming convention:
-    /// first name is `_<name>`, subsequent are `_<name>2`, `_<name>3`, etc.
-    /// Also applies Babel's `toIdentifier` sanitization on the input name.
-    ///
-    /// Like Babel's `generateUid`, checks for collisions against existing
-    /// bindings (source-level identifier names) and previously generated UIDs,
-    /// rather than using a blind counter.
-    pub fn generate_globally_unique_identifier_name(&mut self, name: Option<&[u8]>) -> StoreStr {
-        let base = name.unwrap_or(b"temp");
-        // Apply Babel's toIdentifier sanitization in a single pass:
-        // 1. Replace non-identifier chars with '-'
-        // 2. Strip leading '-' and digits
-        // 3. CamelCase: replace '-' sequences + optional following char with uppercase of that char
-        let mut camel: HirVec<u8> = AstAlloc::vec_with_capacity(base.len());
-        let mut iter = base.iter().copied().peekable();
-        while let Some(&c) = iter.peek() {
-            let is_ident = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
-            if c.is_ascii_digit() || !is_ident {
-                iter.next();
-            } else {
-                break;
-            }
-        }
-        let mut upper_next = false;
-        for c in iter {
-            if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
-                if upper_next {
-                    camel.push(c.to_ascii_uppercase());
-                    upper_next = false;
-                } else {
-                    camel.push(c);
-                }
-            } else {
-                upper_next = true;
-            }
-        }
-        // Strip leading '_' and trailing digits (Babel's generateUid behavior)
-        let camel_ref: &[u8] = if camel.is_empty() { b"temp" } else { &camel };
-        let start = camel_ref
-            .iter()
-            .position(|&c| c != b'_')
-            .unwrap_or(camel_ref.len());
-        let stripped_lead = &camel_ref[start..];
-        let end = stripped_lead
-            .iter()
-            .rposition(|c| !c.is_ascii_digit())
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        let stripped = &stripped_lead[..end];
-        let uid_base: &[u8] = if stripped.is_empty() {
-            b"temp"
-        } else {
-            stripped
-        };
-
-        // Lazily build the set of known names from existing identifiers.
-        // This approximates Babel's hasBinding/hasGlobal/hasReference checks.
-        if self.uid_known_names.is_none() {
-            let mut known = HashSet::new();
-            for id in &self.identifiers {
-                if let Some(name) = &id.name {
-                    known.insert(StoreStr::new(name.value()));
-                }
-            }
-            self.uid_known_names = Some(known);
-        }
-
-        // Find a name that doesn't collide, matching Babel's generateUid loop.
-        // Reuse a single buffer across iterations; HashSet::contains accepts &[u8].
-        let known = self.uid_known_names.as_mut().unwrap();
-        let mut uid: HirVec<u8> = AstAlloc::vec_with_capacity(uid_base.len() + 4);
-        let mut i = 1u32;
-        loop {
-            uid.clear();
-            uid.push(b'_');
-            uid.extend_from_slice(uid_base);
-            if i > 1 {
-                let mut num_buf = [0u8; 10];
-                let mut n = i;
-                let mut pos = num_buf.len();
-                while n > 0 {
-                    pos -= 1;
-                    num_buf[pos] = b'0' + (n % 10) as u8;
-                    n /= 10;
-                }
-                uid.extend_from_slice(&num_buf[pos..]);
-            }
-            i += 1;
-            if !known.contains(uid.as_slice()) {
-                break;
-            }
-        }
-
-        let result = StoreStr::new(uid.leak());
-        known.insert(result);
-        result
-    }
-
-    /// Seed the UID known names set with external names (e.g. from ProgramContext).
-    /// This ensures UID generation avoids names generated by previous function compilations,
-    /// matching Babel's behavior where the program scope accumulates all generated UIDs.
-    pub fn seed_uid_known_names(&mut self, names: &HashSet<StoreStr>) {
-        match &mut self.uid_known_names {
-            Some(existing) => existing.extend(names.iter().copied()),
-            None => self.uid_known_names = Some(names.clone()),
-        }
-    }
-
-    /// Return the UID known names accumulated during this compilation.
-    pub fn take_uid_known_names(&mut self) -> Option<HashSet<StoreStr>> {
-        self.uid_known_names.take()
     }
 
     /// Record an outlined function (extracted during outlineFunctions or outlineJSX).

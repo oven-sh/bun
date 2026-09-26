@@ -624,6 +624,8 @@ describe("fs.watch", () => {
   // the end. inotify IN_MODIFY and kqueue NOTE_WRITE fire per write(2), but
   // FSEvents reports a content change at close, so a file watch on macOS must
   // not use FSEvents. https://github.com/oven-sh/bun/issues/44051
+  // Windows: ReadDirectoryChangesW reports the write only when the writer closes
+  // the file (the test times out there with no event), so the test skips it.
   test.skipIf(isWindows)("reports each write to a file the writer keeps open", async () => {
     using dir = tempDir("fs-watch-open-writer", { "run.log": "" });
     const target = path.join(String(dir), "run.log");
@@ -651,6 +653,35 @@ describe("fs.watch", () => {
       fs.closeSync(fd);
     }
     expect(events).toEqual(Array(4).fill(["change", "run.log"]));
+  });
+
+  // inotify and kqueue follow the inode, so a watcher on a deleted file stays
+  // quiet once the path is recreated (node does the same). Two fs.watch() calls
+  // on one path share one OS watch in Bun, so a call made after the deletion
+  // must register the file now at the path instead of joining the dead watch.
+  test("fs.watch on a path whose watched file was replaced watches the new file", async () => {
+    using dir = tempDir("fs-watch-replaced-root", { "f.txt": "x" });
+    const target = path.join(String(dir), "f.txt");
+    const gone = Promise.withResolvers<void>();
+    const stale = fs.watch(target, eventType => {
+      if (eventType === "rename") gone.resolve();
+    });
+    const changed = Promise.withResolvers<[string, string | null]>();
+    let fresh: fs.FSWatcher | undefined;
+    try {
+      fs.unlinkSync(target);
+      await gone.promise;
+      fs.writeFileSync(target, "y");
+      fresh = fs.watch(target, (eventType, filename) => {
+        // Windows may first deliver the creation of the new file as "rename".
+        if (eventType === "change") changed.resolve([eventType, filename]);
+      });
+      fs.writeFileSync(target, "z");
+      expect(await changed.promise).toEqual(["change", "f.txt"]);
+    } finally {
+      stale.close();
+      fresh?.close();
+    }
   });
 
   // Past fs.inotify.max_queued_events the kernel drops events and queues one

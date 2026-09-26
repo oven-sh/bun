@@ -247,6 +247,9 @@ mod platform {
                     };
                     if rc < 0 {
                         let e = sys::last_errno();
+                        if e == libc::EINTR {
+                            continue 'start_over;
+                        }
                         // FreeBSD reports ENOENT when iterating an unlinked
                         // but still-open directory.
                         if e == libc::ENOENT {
@@ -344,10 +347,11 @@ mod platform {
                         )
                     };
                     if rc < 0 {
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdents64,
-                        ));
+                        let e = sys::last_errno();
+                        if e == libc::EINTR {
+                            continue 'start_over;
+                        }
+                        return Err(sys::Error::from_code_int(e, Tag::getdents64));
                     }
                     if rc == 0 {
                         return Ok(None);

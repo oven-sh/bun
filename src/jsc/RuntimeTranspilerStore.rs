@@ -252,6 +252,7 @@ impl RuntimeTranspilerStore {
                 (*job).promise.deinit();
                 (*job).module_loader.deinit();
                 (*job).reset_for_pool();
+                (*(*job).vm).module_fetches.settled((*job).fetch_generation);
                 self.store.put(job);
             }
         }
@@ -375,6 +376,7 @@ impl RuntimeTranspilerStore {
                 poll_ref: KeepAlive::default(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
+                fetch_generation: 0,
                 parse_error: None,
                 work_task: WorkPoolTask {
                     node: Default::default(),
@@ -432,6 +434,8 @@ pub struct TranspilerJob {
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
     pub(crate) generation_number: u32,
+    /// From `GenerationFetches::started`, for `settled`.
+    pub(crate) fetch_generation: u32,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
@@ -528,6 +532,7 @@ impl TranspilerJob {
 
     fn run_from_js_thread(&mut self) -> JsResult<()> {
         let vm = self.vm;
+        let fetch_generation = self.fetch_generation;
         let promise = self.promise.swap();
         let module_loader = self.module_loader.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
@@ -560,8 +565,9 @@ impl TranspilerJob {
             (*vm)
                 .transpiler_store
                 .store
-                .put(std::ptr::from_mut::<TranspilerJob>(self))
-        };
+                .put(std::ptr::from_mut::<TranspilerJob>(self));
+            (*vm).module_fetches.settled(fetch_generation);
+        }
 
         AsyncModule::fulfill(
             &global_this,
@@ -580,7 +586,10 @@ impl TranspilerJob {
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         // SAFETY: JS thread; the VM owns the store this slot lives in.
-        self.ticket = Some(unsafe { (*self.vm).ticket() });
+        unsafe {
+            self.fetch_generation = (*self.vm).module_fetches.started();
+            self.ticket = Some((*self.vm).ticket());
+        }
         WorkPool::schedule(&raw mut self.work_task);
     }
 

@@ -74,6 +74,35 @@ pub struct EntryPointResult {
     pub evaluated_as_cjs: bool,
 }
 
+/// Unsettled module fetches (transpile jobs, plugin `onLoad` promises) that one `--hot` generation started.
+#[derive(Default)]
+pub(crate) struct GenerationFetches {
+    generation: u32,
+    in_flight: u32,
+}
+
+impl GenerationFetches {
+    fn of(generation: u32) -> Self {
+        Self {
+            generation,
+            in_flight: 0,
+        }
+    }
+
+    /// Returns the generation to pass to [`settled`](Self::settled).
+    pub(crate) fn started(&mut self) -> u32 {
+        self.in_flight += 1;
+        self.generation
+    }
+
+    /// A fetch that an earlier generation started is not in this count.
+    pub(crate) fn settled(&mut self, generation: u32) {
+        if generation == self.generation {
+            self.in_flight -= 1;
+        }
+    }
+}
+
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
 /// Carries the cross-tier subset of `Options` that [`init`] and
 /// `RuntimeHooks::init_runtime_state` need. `transform_options`/`debugger`
@@ -296,6 +325,7 @@ pub struct VirtualMachine {
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub(crate) hot_reload_deferred: bool,
+    pub(crate) module_fetches: GenerationFetches,
     pub entry_point_result: EntryPointResult,
 
     pub on_unhandled_rejection: OnUnhandledRejection,
@@ -761,6 +791,17 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__noteEntryEvaluationStarted(vm: &mut VirtualMachine) {
         vm.entry_evaluation_started = true;
+    }
+
+    /// A plugin's `onLoad` returned a promise. Its reactions call [`Bun__VM__moduleFetchSettled`].
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__moduleFetchStarted(vm: &mut VirtualMachine) -> u32 {
+        vm.module_fetches.started()
+    }
+
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__moduleFetchSettled(vm: &mut VirtualMachine, generation: u32) {
+        vm.module_fetches.settled(generation);
     }
 
     /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
@@ -3567,6 +3608,7 @@ impl VirtualMachine {
                     break;
                 }
                 self.event_loop_mut().tick();
+                self.retry_deferred_hot_reload();
                 let Some(p) = self.pending_internal_promise else {
                     break;
                 };
@@ -4445,7 +4487,7 @@ impl VirtualMachine {
         (self.on_unhandled_rejection)(self, global_object, reason);
     }
 
-    /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.
+    /// Per watch-mode tick: reports the entry promise's rejection, retries a deferred reload, re-arms the watcher.
     pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) {
         let promise = match self.pending_internal_promise {
             Some(p) => p,
@@ -4456,10 +4498,7 @@ impl VirtualMachine {
         };
         // SAFETY: `promise` is a live JSC heap cell tracked by the VM.
         match crate::JSPromise::status_ptr(promise) {
-            crate::js_promise::Status::Pending => {
-                self.add_main_to_watcher_if_needed();
-                return;
-            }
+            crate::js_promise::Status::Pending => {}
             crate::js_promise::Status::Rejected => {
                 if self.pending_internal_promise_reported_at != self.hot_reload_counter {
                     self.pending_internal_promise_reported_at = self.hot_reload_counter;
@@ -4478,10 +4517,15 @@ impl VirtualMachine {
             crate::js_promise::Status::Fulfilled => {}
         }
 
+        self.retry_deferred_hot_reload();
+        self.add_main_to_watcher_if_needed();
+    }
+
+    /// Runs a reload [`reload`] deferred; it defers itself again while the entry load is still in flight.
+    fn retry_deferred_hot_reload(&mut self) {
         if self.hot_reload_deferred {
             self.reload(None);
         }
-        self.add_main_to_watcher_if_needed();
     }
 
     /// Adds the main entry point to the file watcher when watch mode is enabled.
@@ -4540,7 +4584,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
+    /// Re-evaluates the entry point, or defers to [`retry_deferred_hot_reload`] while its load is in flight.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
@@ -4562,8 +4606,14 @@ impl VirtualMachine {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
                 crate::js_promise::Status::Pending => {
-                    self.hot_reload_deferred = true;
-                    return;
+                    // Replaced only when parked on a top-level await: no load in flight (two would share the registry), no body running under this tick.
+                    let parked = self.module_fetches.in_flight == 0
+                        && !self.global().vm().is_entered()
+                        && crate::cpp::Bun__entryRootIsAwaiting(self.global());
+                    if !parked {
+                        self.hot_reload_deferred = true;
+                        return;
+                    }
                 }
                 crate::js_promise::Status::Rejected => {
                     if self.pending_internal_promise_reported_at != self.hot_reload_counter {
@@ -4596,6 +4646,7 @@ impl VirtualMachine {
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
         self.hot_reload_counter += 1;
+        self.module_fetches = GenerationFetches::of(self.hot_reload_counter);
         if self.pending_internal_promise_is_protected {
             if let Some(p) = self.pending_internal_promise {
                 JSValue::from_cell(p).unprotect();

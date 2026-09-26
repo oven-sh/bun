@@ -647,14 +647,15 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
 /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
 /// `bun:main` wrapper. Returns `false` on error (the error is already logged
 /// into `vm.log` by `generate`).
-fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool {
+fn generate_entry_point(vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool {
     let state = runtime_state();
     if state.is_null() {
         return false;
     }
     // SAFETY: `state` is the live per-thread `RuntimeState` (boxed in
     // `init_runtime_state`); no other `&mut` to `entry_point` is held here.
-    ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch, entry_path).is_ok()
+    let entry_point = unsafe { &mut (*state).entry_point };
+    ServerEntryPoint::generate(entry_point, watch, vm.hot_reload_counter, entry_path).is_ok()
 }
 
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected

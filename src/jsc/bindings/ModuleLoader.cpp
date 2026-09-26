@@ -50,6 +50,8 @@ using namespace Zig;
 using namespace WebCore;
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
+extern "C" uint32_t Bun__VM__moduleFetchStarted(void* bunVM);
+extern "C" void Bun__VM__moduleFetchSettled(void* bunVM, uint32_t generation);
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
@@ -453,6 +455,7 @@ static JSValue handleVirtualModuleResult(
         ASSERT(!arguments.hasOverflowed());
         JSC::profiledCall(globalObject, ProfilingReason::Microtask, performPromiseThenFunction, callData, jsUndefined(), arguments);
         RETURN_IF_EXCEPTION(scope, {});
+        pendingModule->fetchGeneration = Bun__VM__moduleFetchStarted(globalObject->bunVM());
         return internalPromise;
     }
     default: {
@@ -1272,6 +1275,8 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     ErrorableResolvedSource res;
     JSC::JSValue objectResult = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = uncheckedDowncast<PendingVirtualModuleResult>(callFrame->argument(1));
+    if (pendingModule->fetchGeneration)
+        Bun__VM__moduleFetchSettled(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), *pendingModule->fetchGeneration);
     JSC::JSValue specifierString = pendingModule->internalField(0).get();
     JSC::JSValue referrerString = pendingModule->internalField(1).get();
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
@@ -1308,6 +1313,8 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObjec
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue reason = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = uncheckedDowncast<PendingVirtualModuleResult>(callFrame->argument(1));
+    if (pendingModule->fetchGeneration)
+        Bun__VM__moduleFetchSettled(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), *pendingModule->fetchGeneration);
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSPromise* promise = pendingModule->internalPromise();

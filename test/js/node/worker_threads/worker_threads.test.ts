@@ -715,6 +715,77 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
+
+  // node (lib/internal/error_serdes.js) copies the error field by field, so a field that cannot be
+  // read costs that field, not the error: the listener always gets an Error carrying the message.
+  // Bun used to emit null when the error could not be printed, and an Error whose message was the
+  // whole rendered diagnostic (source lines included) when it could not be structured-cloned.
+  describe.concurrent("delivers an Error when the thrown error cannot be printed or cloned", () => {
+    // A row leaves out what is incidental to its shape.
+    const shapes: [shape: string, workerSource: string, expected: object][] = [
+      // Bun.inspect() throws on these; the error itself clones fine.
+      [
+        "throwing inspect.custom",
+        `const e = new TypeError("boom"); e.code = "E_INSPECT";
+         e[Symbol.for("nodejs.util.inspect.custom")] = () => { throw new Error("x"); };
+         throw e;`,
+        { name: "TypeError", message: "boom", code: "E_INSPECT", stack: expect.any(String) },
+      ],
+      [
+        "AggregateError whose errors is not iterable",
+        `const e = new AggregateError([new Error("inner")], "boom"); e.errors = 42; throw e;`,
+        { name: "Error", message: "boom", stack: expect.any(String) },
+      ],
+      // postMessage would refuse to clone these; the error report keeps the fields it can read.
+      [
+        "throwing stack getter",
+        `const e = new RangeError("boom"); e.code = "E_STACK";
+         Object.defineProperty(e, "stack", { get() { throw new Error("x"); } });
+         throw e;`,
+        { name: "RangeError", message: "boom", code: "E_STACK", stack: undefined },
+      ],
+      // With the name unreadable, the error's own constructor decides the type.
+      [
+        "throwing name getter",
+        `const e = new TypeError("boom");
+         Object.defineProperty(e, "name", { get() { throw new Error("x"); } });
+         throw e;`,
+        { name: "TypeError", message: "boom", stack: expect.any(String) },
+      ],
+      [
+        "Symbol name",
+        `const e = new TypeError("boom"); e.name = Symbol("name"); throw e;`,
+        { name: "TypeError", message: "boom" },
+      ],
+      // bun leaves the default stack text on the error when prepareStackTrace throws, and reports it.
+      [
+        "throwing Error.prepareStackTrace",
+        `Error.prepareStackTrace = () => { throw new Error("x"); }; throw new Error("boom");`,
+        { name: "Error", message: "boom", stack: expect.any(String) },
+      ],
+      [
+        "AggregateError with a throwing stack getter",
+        `const e = new AggregateError([new Error("inner")], "boom");
+         Object.defineProperty(e, "stack", { get() { throw new Error("x"); } });
+         throw e;`,
+        { name: "Error", message: "boom", stack: undefined },
+      ],
+    ];
+
+    test.each(shapes)("%s", async (_shape, workerSource, expected) => {
+      const worker = new Worker(workerSource, { eval: true });
+      const exited = new Promise<number>(resolve => worker.once("exit", resolve));
+      // 'error' precedes 'exit'; a worker that exits without one fails here instead of timing out.
+      const [err] = await Promise.race([
+        once(worker, "error"),
+        exited.then(code => Promise.reject(new Error(`worker exited with code ${code} without emitting 'error'`))),
+      ]);
+      await exited;
+
+      expect(err).toBeInstanceOf(Error);
+      expect({ name: err.name, message: err.message, code: err.code, stack: err.stack }).toMatchObject(expected);
+    });
+  });
 });
 
 describe("getHeapSnapshot", () => {

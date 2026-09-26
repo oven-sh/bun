@@ -3197,7 +3197,18 @@ impl<'a> Transpiler<'a> {
                 return None;
             }
         };
-        if let Err(e) = sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra) {
+        // The same targets for minify and print: color fallbacks and vendor
+        // prefixes are added during minify, nesting is lowered during print.
+        let targets =
+            bun_css::Targets::for_bundler(self.options.target, self.options.css_target.as_ref());
+        if let Err(e) = sheet.minify(
+            alloc,
+            &bun_css::MinifyOptions {
+                targets,
+                ..bun_css::MinifyOptions::default()
+            },
+            &extra,
+        ) {
             self.log_mut().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
@@ -3209,7 +3220,7 @@ impl<'a> Transpiler<'a> {
         let result = match sheet.to_css(
             alloc,
             &bun_css::PrinterOptions {
-                targets: bun_css::Targets::for_bundler_target(self.options.target),
+                targets,
                 minify: self.options.minify_whitespace,
                 ..bun_css::PrinterOptions::default()
             },

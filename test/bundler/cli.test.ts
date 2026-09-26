@@ -1038,3 +1038,102 @@ describe.concurrent("diagnostic markup", () => {
     expect(stderr).not.toContain("\x1b[");
   });
 });
+
+describe.concurrent("--css-target", () => {
+  test("--css-target keeps modern color syntax the targets support", async () => {
+    using dir = tempDir("build-css-target", {
+      "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "app.css", "--minify", "--css-target", "chrome130, safari18,firefox130"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("oklch(");
+    expect(stdout).not.toContain("lab(");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--css-target can repeat, and the lowest version wins", async () => {
+    using dir = tempDir("build-css-target-repeat", {
+      "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "app.css", "--minify", "--css-target", "chrome130", "--css-target", "chrome80"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("lab(");
+    expect(stdout).not.toContain("oklch(");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--css-target rejects an unknown target string", async () => {
+    using dir = tempDir("build-css-target-invalid", {
+      "app.css": ".a { color: red; }\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "app.css", "--css-target", "netscape4"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Invalid --css-target "netscape4"');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--css-target applies to --no-bundle, in the minify pass too", async () => {
+    // Color fallbacks are added by the minify pass, not the printer.
+    using dir = tempDir("build-css-target-no-bundle", {
+      "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
+    });
+    const build = async (...cssTarget: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", "app.css", "--minify", "--css-target", ...cssTarget],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout;
+    };
+    expect(await build("chrome80")).toContain("lab(");
+    expect(await build("chrome130")).toContain("oklch(");
+  });
+
+  describe.each([
+    ["a blank value", ""],
+    ["an empty entry", "chrome100,,safari16.4"],
+  ])("given %s", (_, value) => {
+    test("--css-target rejects it instead of disabling downleveling", async () => {
+      using dir = tempDir("build-css-target-blank", {
+        "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "app.css", "--css-target", value],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Invalid --css-target ""');
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  });
+});

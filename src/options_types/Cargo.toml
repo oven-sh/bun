@@ -21,6 +21,7 @@ bun_dotenv.workspace = true
 bun_errno.workspace = true
 bun_install_types.workspace = true
 bun_ast.workspace = true
+bun_css.workspace = true
 bun_paths.workspace = true
 bun_semver.workspace = true
 bun_wyhash.workspace = true

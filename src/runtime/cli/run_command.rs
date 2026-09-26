@@ -105,7 +105,12 @@ impl RunCommand {
         // `<b>`/`<r>` tags verbatim.
         pretty!("<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> \\<file or script\\>\n\n");
         pretty!("<b>Flags:<r>");
-        bun_clap::simple_help(crate::cli::arguments::RUN_PARAMS);
+        let params = if crate::cli::PRETEND_TO_BE_NODE.load(Ordering::Relaxed) {
+            crate::cli::arguments::NODE_PARAMS
+        } else {
+            crate::cli::arguments::RUN_PARAMS
+        };
+        bun_clap::simple_help(params);
         pretty!(
             "\n\n\
 <b>Examples:<r>

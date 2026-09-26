@@ -167,7 +167,11 @@ server_exports = {
     }
   },
   async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
-    replaceModules(modules);
+    // Not awaited: requests deferred on this bundle run when this returns and read the manifest below.
+    // DevServer drops the returned promise, so a rejection that nothing handles here ends the process.
+    replaceModules(modules).catch(err => {
+      console.error(err);
+    });
 
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {

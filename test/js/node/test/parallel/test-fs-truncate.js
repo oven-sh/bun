@@ -247,9 +247,9 @@ function testFtruncate(cb) {
     assert.strictEqual(file8, err.path);
     assert.strictEqual(
       err.message,
-      `ENOENT: no such file or directory, truncate '${file8}'`);
+      `ENOENT: no such file or directory, open '${file8}'`);
     assert.strictEqual(err.code, 'ENOENT');
-    assert.strictEqual(err.syscall, 'truncate');
+    assert.strictEqual(err.syscall, 'open');
     return true;
   };
   fs.truncate(file8, 0, common.mustCall(validateError));

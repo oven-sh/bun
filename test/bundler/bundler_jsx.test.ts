@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 import { BundlerTestInput, itBundled } from "./expectBundled";
 
 const helpers = {
@@ -360,6 +361,83 @@ describe("bundler", () => {
         [["custom-renamed","div",{"props":123},["Hello World"]],["custom-renamed","something","null",["Fragment"]]]
       `,
     },
+  });
+  // `<div {...props} key="k" />` makes the automatic runtime fall back to
+  // createElement, with a warning. The runtime that decides this is the one in
+  // effect after the @jsxRuntime pragma is applied, and a pragma applies to the
+  // whole file from any position in it.
+  describe("keyAfterSpreadWarning", () => {
+    const keyAfterSpread = /* js */ `
+      import { print } from 'bun-test-helpers'
+      const props = { a: 1 }
+      print(<div {...props} key="k" />)
+    `;
+    const warning = '"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.';
+
+    itBundled("jsx/KeyAfterSpreadClassicPragmaNoWarning", {
+      files: {
+        "/index.jsx": `
+          /** @jsxRuntime classic */
+          import * as React from 'custom-classic'
+          ${keyAfterSpread}
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      bundleWarnings: {},
+      run: { stdout: `["custom-classic","div",{"a":1,"key":"k"},[]]` },
+    });
+    itBundled("jsx/KeyAfterSpreadClassicPragmaAfterJsxNoWarning", {
+      files: {
+        "/index.jsx": `
+          import * as React from 'custom-classic'
+          ${keyAfterSpread}
+          /** @jsxRuntime classic */
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      bundleWarnings: {},
+      run: { stdout: `["custom-classic","div",{"a":1,"key":"k"},[]]` },
+    });
+    itBundled("jsx/KeyAfterSpreadAutomaticPragmaWarns", {
+      files: {
+        "/index.jsx": `
+          /** @jsxRuntime automatic */
+          ${keyAfterSpread}
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: { runtime: "classic" },
+      bundleWarnings: { "/index.jsx": [warning] },
+      run: { stdout: `["react","div",{"a":1,"key":"k"},[]]` },
+    });
+    itBundled("jsx/KeyAfterSpreadAutomaticPragmaAfterJsxWarns", {
+      files: {
+        "/index.jsx": `
+          ${keyAfterSpread}
+          /** @jsxRuntime automatic */
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: { runtime: "classic" },
+      bundleWarnings: { "/index.jsx": [warning] },
+      run: { stdout: `["react","div",{"a":1,"key":"k"},[]]` },
+    });
+
+    test("the warning points at the spread before the key", async () => {
+      const source = `export const el = <div {...first} key="k" {...last} />;`;
+      using dir = tempDir("jsx-key-after-spread-location", { "index.jsx": source });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "index.jsx")],
+        external: ["react", "react/*"],
+      });
+      expect(build.logs.map(({ message, position }) => ({ message, offset: position?.offset }))).toEqual([
+        { message: warning, offset: source.indexOf("first") },
+      ]);
+    });
   });
   itBundledDevAndProd("jsx/PragmaMultiple", {
     todo: true,

@@ -348,10 +348,16 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
                 "Bun.WebView with backend \"chrome\" is only available on the main thread"_s);
         }
         Bun__Feature__webview_chrome += 1;
+        JSValue spawnError;
         JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height,
             persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit, chromeWsUrl,
-            chromeSkipAutoDetect);
+            chromeSkipAutoDetect, spawnError);
         if (!view) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (spawnError) {
+                scope.throwException(globalObject, spawnError);
+                return {};
+            }
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
                 chromeWsUrl.isEmpty()
                     ? "Failed to spawn Chrome (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s

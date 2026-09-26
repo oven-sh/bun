@@ -873,12 +873,12 @@ impl<'a> LinkerContext<'a> {
 
         // SAFETY: scalar `bool` read of a field disjoint from `self` (= `(*bundle).linker`).
         let has_top_level_await = unsafe { (*bundle).has_any_top_level_await_modules };
-        let unsupported_format = match self.options.output_format {
+        let format_without_top_level_await = match self.options.output_format {
             Format::Cjs => Some("cjs"),
             Format::Iife => Some("iife"),
             Format::Esm | Format::InternalBakeDev => None,
         };
-        if has_top_level_await && let Some(format_name) = unsupported_format {
+        if has_top_level_await && let Some(format_name) = format_without_top_level_await {
             // Only `Bun.build()` installs a completion; the CLI never does.
             // SAFETY: discriminant read of a field disjoint from `self`.
             let from_js_api = unsafe { (*bundle).completion.is_some() };
@@ -887,9 +887,8 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
-        // Validate top-level await for all files first. For cjs and iife no
-        // reachable file has one at this point.
-        if has_top_level_await && unsupported_format.is_none() {
+        // Validate top-level await for all files first.
+        if has_top_level_await && format_without_top_level_await.is_none() {
             // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint
             // from `*self` (= `BundleV2.linker`). The SoA column slices below
             // are physically disjoint and the underlying slabs do not

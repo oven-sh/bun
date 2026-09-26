@@ -12,6 +12,8 @@
 //   BUN_HOST_PATHS=file    every path that the image hands over, with the answer
 //   BUN_HOST_FORWARD=1     linux only, for taking stock: a request that the host does not
 //                          know goes to the kernel as it is. The counts tell which ones did.
+//                          The requests of "file system requests, Linux test host" go there
+//                          without it.
 //   BUN_HOST_SECCOMP=0     linux x86-64 only: do not install the filter that kills the
 //                          process when code outside of the host issues a syscall
 //   BUN_HOST_TEST=winmem   run the memory model of the Windows host (memory.h) on top of
@@ -62,12 +64,18 @@ typedef int (*ImageThreadFn)(void *);
 typedef long HostSyscall(long, long, long, long, long, long, long);
 typedef long HostThreadCreate(ImageThreadFn, void *, long, void *, int *, void *, int *);
 typedef void HostThreadExit(void *, unsigned long);
+typedef void *HostLookup(const char *, const char *);
 struct bun_host {
   unsigned long os, tcb_offset;
   HostSyscall *syscall;
   HostThreadCreate *thread_create;
   HostThreadExit *thread_exit;
+  HostLookup *lookup;
+  /* The OS that runs this host, where os does not say it: the Linux test host has the os of
+     the host whose way to the thread pointer it tests. */
+  unsigned long native_os;
 };
+#define BUN_HOST_ENTRIES (sizeof(struct bun_host) / sizeof(unsigned long))
 
 /* Signals reach the image on x86-64. The arm64 image gets its handlers
    recorded and never called, as before. */
@@ -122,7 +130,7 @@ __attribute__((naked)) static void return_to_host(struct context *save) {
    so the code of this host and of its libc may overwrite it. The image never
    writes it (-ffixed-x18). So this host loads x18 at the two places where it
    enters image code (enter_image for the main thread, call_image for the
-   others), and the three functions of the host table are entered through a
+   others), and the functions of the host table are entered through a
    shim (IMAGE_ENTRY) that keeps x18 in its frame and puts it back before it
    returns into image code.
 
@@ -325,7 +333,12 @@ static long to_linux_errno(int e) {
     E(ENOTTY) E(ETXTBSY) E(EFBIG) E(ENOSPC) E(ESPIPE) E(EROFS) E(EMLINK) E(EPIPE) E(EDOM) E(ERANGE) E(EDEADLK)
     E(ENAMETOOLONG) E(ENOLCK) E(ENOSYS) E(ENOTEMPTY) E(ELOOP) E(EOVERFLOW) E(ENOTSUP) E(ETIMEDOUT)
 #undef E
-    default: return -L_EIO;
+    default:
+#if defined(__linux__)
+      /* Linux test host: a number that the table does not name is the number of the image. */
+      if (e > 0 && e < 4096) return -e;
+#endif
+      return -L_EIO;
   }
 }
 static long ret(long r) { return r < 0 ? to_linux_errno(errno) : r; }
@@ -345,6 +358,11 @@ static int host_open_flags(long f) {
   if (f & L_O_CLOEXEC) h |= O_CLOEXEC;
   if (f & L_O_DIRECTORY) h |= O_DIRECTORY;
   if (f & L_O_NOFOLLOW) h |= O_NOFOLLOW;
+#if defined(__linux__)
+  /* Linux test host: a flag that the table does not name has the value of this kernel. */
+  h |= (int)f & ~(L_O_ACCMODE | L_O_CREAT | L_O_EXCL | L_O_NOCTTY | L_O_TRUNC | L_O_APPEND | L_O_NONBLOCK | L_O_CLOEXEC |
+                  L_O_DIRECTORY | L_O_NOFOLLOW);
+#endif
   return h;
 }
 static long linux_status_flags(int h) {
@@ -771,6 +789,66 @@ static long host_ioctl(int fd, unsigned long request, void *arg) {
       return isatty(fd) ? -L_EINVAL : -L_ENOTTY;
   }
 }
+
+/* ---- file system requests, Linux test host ----
+   The requests that no function above answers. Their numbers and structures are the ones of
+   this kernel, so the Linux test host passes them on as they are, and a program that works
+   with files (bun's file system code) runs under it. A host on another OS has to translate
+   each of them: there they are refused like every request that the host does not know. */
+#if defined(__linux__)
+static int is_file_request(long n) {
+  switch (n) {
+    case N_mkdir: case N_rmdir: case N_rename: case N_symlink: case N_chmod: case N_link:
+    case N_sendfile: case N_statx: case N_preadv: case N_pwritev: case N_mkdirat: case N_renameat: case N_renameat2:
+    case N_symlinkat: case N_linkat: case N_truncate: case N_getdents64: case N_chdir: case N_fchdir: case N_fchmod:
+    case N_fchmodat: case N_copy_file_range: case N_utimensat: case N_statfs: case N_fstatfs:
+      return 1;
+    default:
+      return 0;
+  }
+}
+#else
+static int is_file_request(long n) { (void)n; return 0; }
+#endif
+
+/* ---- functions of the host OS for the image ----
+   The entry "lookup" of the host table. macOS: the dynamic linker. Linux needs none (the
+   program in the image uses the libc of the image there), so the test host only has a library
+   of its own, "bun_host_test", with functions in the calling convention of Windows x64: the
+   image calls them the way it calls Win32 on a Windows host. */
+#if defined(__APPLE__)
+#include <dlfcn.h>
+__attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
+  void *handle = library[0] ? dlopen(library, RTLD_LAZY | RTLD_LOCAL) : RTLD_DEFAULT;
+  return handle ? dlsym(handle, symbol) : 0;
+}
+#elif defined(__x86_64__)
+#define WIN64 __attribute__((ms_abi))
+struct test_pair { long long first, second; };
+typedef WIN64 long long TestCallback(void *, int, long long, unsigned, short, long long, double);
+WIN64 static long long test_sum6(int a, long long b, unsigned c, void *d, short e, long long f) {
+  return a + b * 10 + (long long)c * 100 + (long long)(intptr_t)d * 1000 + e * 10000 + f * 100000;
+}
+WIN64 static double test_mixed(double x, int y, double z, float w, long long v) { return x * 2 + y * 3 + z * 5 + w * 7 + (double)v * 11; }
+WIN64 static struct test_pair test_pair_by_value(struct test_pair p, long long add) { return (struct test_pair){p.second + add, p.first - add}; }
+WIN64 static long long test_callback(TestCallback *callback, void *context) { return callback(context, -1, 20000000000ll, 3000000000u, -4, 5, 6.5) + 1; }
+__attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
+  static const struct { const char *name; void *address; } symbols[] = {
+    {"test_sum6", (void *)test_sum6}, {"test_mixed", (void *)test_mixed},
+    {"test_pair_by_value", (void *)test_pair_by_value}, {"test_callback", (void *)test_callback},
+  };
+  if (strcmp(library, "bun_host_test")) return 0;
+  for (size_t i = 0; i < sizeof symbols / sizeof *symbols; i++)
+    if (!strcmp(symbol, symbols[i].name)) return symbols[i].address;
+  return 0;
+}
+#else
+__attribute__((used)) static void *host_lookup(const char *library, const char *symbol) {
+  FORGET_X18();
+  (void)library; (void)symbol;
+  return 0;
+}
+#endif
 
 /* ---- futex ---- */
 static long host_futex(int *addr, long op, int val, const struct l_timespec *timeout) {
@@ -1514,7 +1592,7 @@ static long dispatch(long n, long a, long b, long c, long d, long e, long f) {
       break;
   }
 #ifdef __linux__
-  if (forward_unknown) {
+  if (forward_unknown || is_file_request(n)) {
     count(forwarded, n);
     long r = syscall(n, a, b, c, d, e, f);
     return r < 0 ? -(long)errno : r;
@@ -1536,6 +1614,7 @@ __attribute__((used)) static long host_syscall(long n, long a, long b, long c, l
 IMAGE_ENTRY(host_syscall)
 IMAGE_ENTRY(host_thread_create)
 IMAGE_ENTRY(host_thread_exit)
+IMAGE_ENTRY(host_lookup)
 #define TABLE_ENTRY(name) name##_entry
 #else
 #define TABLE_ENTRY(name) name
@@ -1774,6 +1853,10 @@ int main(int argc, char **argv) {
   host.syscall = (HostSyscall *)TABLE_ENTRY(host_syscall);
   host.thread_create = (HostThreadCreate *)TABLE_ENTRY(host_thread_create);
   host.thread_exit = (HostThreadExit *)TABLE_ENTRY(host_thread_exit);
+  host.lookup = (HostLookup *)TABLE_ENTRY(host_lookup);
+#if defined(__linux__)
+  host.native_os = BUN_OS_LINUX;
+#endif
   slot_set((void *)0x1122334455667788ull);
   if (slot_read(host.tcb_offset) != (void *)0x1122334455667788ull) { fprintf(stderr, "host: thread slot is not readable at offset %#lx of the thread register\n", host.tcb_offset); return 2; }
 
@@ -1819,7 +1902,8 @@ int main(int argc, char **argv) {
   /* AT_PAGESZ is the page of the host: musl for aarch64 has no fixed page size, and macOS on arm64 has 16 KiB pages. */
   uint64_t aux[] = {L_AT_PHDR, (uint64_t)(uintptr_t)(base + phoff), L_AT_PHENT, sizeof(Phdr), L_AT_PHNUM, phnum, L_AT_PAGESZ, (uint64_t)host_page,
                     L_AT_BASE, 0, L_AT_ENTRY, (uint64_t)(uintptr_t)(base + entry), L_AT_UID, 0, L_AT_EUID, 0, L_AT_GID, 0, L_AT_EGID, 0,
-                    L_AT_SECURE, 0, L_AT_RANDOM, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host, L_AT_NULL, 0};
+                    L_AT_SECURE, 0, L_AT_RANDOM, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host,
+                    AT_BUN_HOST_ENTRIES, BUN_HOST_ENTRIES, L_AT_NULL, 0};
   memcpy(v, aux, sizeof aux);
   if (trace) fprintf(stderr, "[host] file %lld bytes, image at %#llx, mapped at %p to %p, host table os %lu, thread slot offset %#lx, host page %ld, forwarding %s, memory %s\n", (long long)st.st_size,
                      (unsigned long long)place.image_off, (void *)base, (void *)image_end, host.os,

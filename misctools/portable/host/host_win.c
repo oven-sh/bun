@@ -9,6 +9,8 @@
 // the Windows SDK and the UCRT):
 //   clang -O2 --target=x86_64-pc-windows-msvc -o host.exe host\host_win.c
 //   clang -O2 --target=aarch64-pc-windows-msvc -o host.exe host\host_win.c
+// For an image that has bun's code for Windows: with -DBUN_HOST_LIBUV, host\host_win_uv.c and
+// the objects of libuv, see "functions of Windows for the image" below.
 // Only documented Win32 and the C library. One thing is not from the documentation: where
 // the TEB keeps the slots of TlsAlloc, see TEB_TLS_SLOTS.
 //
@@ -74,7 +76,11 @@ struct bun_host {
   SYSV long long (*syscall)(long long, long long, long long, long long, long long, long long, long long);
   SYSV long long (*thread_create)(ImageThreadFn, void *, long long, void *, int *, void *, int *);
   SYSV void (*thread_exit)(void *, unsigned long long);
+  SYSV void *(*lookup)(const char *, const char *);
+  /* For a host whose os is not the OS that runs it (the Linux test host). 0 here. */
+  unsigned long long native_os;
 };
+#define BUN_HOST_ENTRIES (sizeof(struct bun_host) / sizeof(unsigned long long))
 
 struct host_thread {
   ImageThreadFn fn;
@@ -1463,6 +1469,36 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
   return r;
 }
 
+/* ---- functions of Windows for the image ----
+   The entry "lookup" of the host table. The program in the image calls what
+   it gets with the calling convention of Windows, so nothing is translated.
+   A library is a system DLL, named as in an import table ("kernel32",
+   "ntdll", "ws2_32"), and is loaded from the system directory only.
+   "libuv" is the libuv that is linked into this host (BUN_HOST_LIBUV, see
+   host_win_uv.c): libuv has no DLL.
+   The thread is not inside of a request here: a signal that is sent to it
+   meanwhile waits until it is back in the image (send_to_thread() tries again). */
+#ifdef BUN_HOST_LIBUV
+void *bun_host_uv_lookup(const char *symbol);
+#else
+static void *bun_host_uv_lookup(const char *symbol) { (void)symbol; return 0; }
+#endif
+static SYSV void *host_lookup(const char *library, const char *symbol) {
+  void *address = 0;
+  if (!strcmp(library, "libuv")) {
+    address = bun_host_uv_lookup(symbol);
+  } else {
+    wchar_t name[260];
+    if (MultiByteToWideChar(CP_UTF8, 0, library, -1, name, 260) > 1) {
+      HMODULE module = GetModuleHandleW(name);
+      if (!module) module = LoadLibraryExW(name, 0, LOAD_LIBRARY_SEARCH_SYSTEM32);
+      if (module) address = (void *)GetProcAddress(module, symbol);
+    }
+  }
+  if (trace && (!address || trace > 1)) host_log("[host] lookup %s!%s = %p\n", library, symbol, address);
+  return address;
+}
+
 /* ---- image loading and start ---- */
 #if defined(__x86_64__)
 __attribute__((naked)) static void enter_image(void *entry, void *sp) {
@@ -1658,6 +1694,7 @@ int wmain(int argc, wchar_t **wide) {
   host.syscall = host_syscall;
   host.thread_create = host_thread_create;
   host.thread_exit = host_thread_exit;
+  host.lookup = host_lookup;
 
   /* The stack of the main thread. The image asks for its bounds (N_main_stack), and for
      its size as the limit of the stack (getrlimit). */
@@ -1694,7 +1731,8 @@ int wmain(int argc, wchar_t **wide) {
   *v++ = 0;
   uint64_t aux[] = {L_AT_PHDR, (uint64_t)(uintptr_t)image_ph, L_AT_PHENT, sizeof(Phdr), L_AT_PHNUM, eh->phnum, L_AT_PAGESZ, PAGE, L_AT_BASE, 0,
                     L_AT_ENTRY, (uint64_t)(uintptr_t)(base + eh->entry), L_AT_UID, 0, L_AT_EUID, 0, L_AT_GID, 0, L_AT_EGID, 0, L_AT_SECURE, 0,
-                    L_AT_RANDOM, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host, L_AT_NULL, 0};
+                    L_AT_RANDOM, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host,
+                    AT_BUN_HOST_ENTRIES, BUN_HOST_ENTRIES, L_AT_NULL, 0};
   memcpy(v, aux, sizeof aux);
 
   if (trace) fprintf(stderr, "[host] file %lld bytes, image at %#llx, mapped at %p, entry %p, thread slot offset %#llx\n", (long long)file_size.QuadPart, (unsigned long long)image_off, base, base + eh->entry, host.tcb_offset);

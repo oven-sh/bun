@@ -13,6 +13,9 @@
 #include <stdint.h>
 
 #define AT_BUN_HOST 0x62756e00
+/* The number of entries of the host table that the host filled. The libc of the image takes a host
+   that does not say for one with the first five. */
+#define AT_BUN_HOST_ENTRIES 0x62756e10
 /* Requests of the image that are not Linux syscalls. They arrive through the
    syscall entry of the host table like the others.
    N_set_tp(tp)               make tp the thread pointer of this thread (aarch64 images.
@@ -46,6 +49,9 @@ enum {
   N_readlinkat = 267, N_faccessat = 269, N_set_robust_list = 273, N_dup3 = 292, N_pipe2 = 293, N_prlimit64 = 302,
   N_getcpu = 309, N_sched_setattr = 314, N_sched_getattr = 315, N_getrandom = 318, N_membarrier = 324, N_statx = 332,
   N_faccessat2 = 439,
+  N_sendfile = 40, N_truncate = 76, N_fchdir = 81, N_link = 86, N_symlink = 88, N_chmod = 90, N_fchmod = 91,
+  N_statfs = 137, N_fstatfs = 138, N_linkat = 265, N_symlinkat = 266, N_fchmodat = 268, N_utimensat = 280,
+  N_preadv = 295, N_pwritev = 296, N_renameat2 = 316, N_copy_file_range = 326,
 };
 #define L_O_DIRECTORY 0x10000
 #define L_O_NOFOLLOW 0x20000
@@ -66,9 +72,12 @@ enum {
   N_execve = 221, N_mmap = 222, N_mprotect = 226, N_madvise = 233, N_mbind = 235, N_wait4 = 260, N_prlimit64 = 261,
   N_sched_setattr = 274, N_sched_getattr = 275, N_getrandom = 278, N_membarrier = 283, N_statx = 291,
   N_faccessat2 = 439,
+  N_symlinkat = 36, N_linkat = 37, N_statfs = 43, N_fstatfs = 44, N_truncate = 45, N_fchdir = 50, N_fchmod = 52,
+  N_fchmodat = 53, N_preadv = 69, N_pwritev = 70, N_sendfile = 71, N_utimensat = 88, N_renameat2 = 276,
+  N_copy_file_range = 285,
   N_open = -1, N_access = -2, N_unlink = -3, N_arch_prctl = -4, N_stat = -5, N_lstat = -6, N_poll = -7, N_pipe = -8,
   N_dup2 = -9, N_fork = -10, N_vfork = -11, N_getdents = -12, N_rename = -13, N_mkdir = -14, N_rmdir = -15,
-  N_readlink = -16,
+  N_readlink = -16, N_link = -17, N_symlink = -18, N_chmod = -19,
 };
 #define L_O_DIRECTORY 0x4000
 #define L_O_NOFOLLOW 0x8000
@@ -297,6 +306,9 @@ static inline const char *l_request_name(long long n) {
     L_NAME(openat) L_NAME(mkdirat) L_NAME(newfstatat) L_NAME(unlinkat) L_NAME(renameat) L_NAME(readlinkat)
     L_NAME(faccessat) L_NAME(set_robust_list) L_NAME(dup3) L_NAME(pipe2) L_NAME(prlimit64) L_NAME(getcpu)
     L_NAME(sched_setattr) L_NAME(sched_getattr) L_NAME(getrandom) L_NAME(membarrier) L_NAME(statx) L_NAME(faccessat2)
+    L_NAME(sendfile) L_NAME(truncate) L_NAME(fchdir) L_NAME(link) L_NAME(symlink) L_NAME(chmod) L_NAME(fchmod)
+    L_NAME(statfs) L_NAME(fstatfs) L_NAME(linkat) L_NAME(symlinkat) L_NAME(fchmodat) L_NAME(utimensat) L_NAME(preadv)
+    L_NAME(pwritev) L_NAME(renameat2) L_NAME(copy_file_range)
     L_NAME(set_tp) L_NAME(main_stack)
 #undef L_NAME
     default: return "?";

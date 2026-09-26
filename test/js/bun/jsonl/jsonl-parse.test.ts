@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 
 describe("Bun.JSONL", () => {
   test("has Symbol.toStringTag", () => {
@@ -328,12 +329,13 @@ describe("Bun.JSONL", () => {
         expect(Bun.JSONL.parse(JSON.stringify({ s: bigStr }) + "\n")).toStrictEqual([{ s: bigStr }]);
       });
 
-      test("4 GB Uint8Array of null bytes", () => {
+      // simdutf scanning 4 GB exceeds the default budget under debug/ASAN; release covers these.
+      test.skipIf(isASAN || isDebug)("4 GB Uint8Array of null bytes", () => {
         const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
         expect(() => Bun.JSONL.parse(buf)).toThrow();
       });
 
-      test("4 GB Uint8Array with first byte 0xFF (non-ASCII path)", () => {
+      test.skipIf(isASAN || isDebug)("4 GB Uint8Array with first byte 0xFF (non-ASCII path)", () => {
         const buf = new Uint8Array(4 * 1024 * 1024 * 1024);
         buf[0] = 255;
         expect(() => Bun.JSONL.parse(buf)).toThrow();
@@ -1195,6 +1197,57 @@ describe("Bun.JSONL", () => {
         const result = Bun.JSONL.parseChunk(buf);
         expect(result.values.length).toBe(2);
         expect(result.read).toBe(encode(line1 + "\n" + line2).byteLength);
+      });
+
+      describe("invalid UTF-8 does not desync read offset", () => {
+        // Invalid bytes decode to U+FFFD. The reported `read` must index the
+        // original buffer, not the re-encoded width of U+FFFD (3 bytes).
+        const withInvalid = (invalid: number[]) =>
+          new Uint8Array([...encode('{"s":"'), ...invalid, ...encode('"}\n{"b":2}\n')]);
+
+        test.each([
+          ["0xFF 0xFF", [0xff, 0xff], "\uFFFD\uFFFD"],
+          ["single 0xFF", [0xff], "\uFFFD"],
+          ["lone continuation 0x80", [0x80], "\uFFFD"],
+          ["truncated 2-byte lead", [0xc2], "\uFFFD"],
+          ["truncated 3-byte lead", [0xe0, 0xa0], "\uFFFD"],
+          ["truncated 4-byte lead", [0xf0, 0x9f, 0x98], "\uFFFD"],
+          ["overlong C0 80", [0xc0, 0x80], "\uFFFD\uFFFD"],
+        ])("read never exceeds byteLength (%s)", (_, invalid, decoded) => {
+          const buf = withInvalid(invalid);
+          const r = Bun.JSONL.parseChunk(buf);
+          expect(r.values).toEqual([{ s: decoded }, { b: 2 }]);
+          expect(r.read).toBeLessThanOrEqual(buf.byteLength);
+          expect(r.read).toBe(buf.byteLength - 1);
+        });
+
+        test("streaming loop with subarray(read) preserves next record", () => {
+          const buf = withInvalid([0xff, 0xff]);
+          const firstLineBytes = buf.indexOf(0x0a) + 1;
+          const r1 = Bun.JSONL.parseChunk(buf.subarray(0, firstLineBytes + 2));
+          expect(r1.values).toEqual([{ s: "\uFFFD\uFFFD" }]);
+          expect(r1.read).toBe(firstLineBytes - 1);
+          const r2 = Bun.JSONL.parseChunk(buf.subarray(r1.read));
+          expect(r2.values).toEqual([{ b: 2 }]);
+          expect(r2.error).toBeNull();
+        });
+
+        test("start-offset streaming with invalid UTF-8", () => {
+          const buf = withInvalid([0xff, 0xff]);
+          const firstLineBytes = buf.indexOf(0x0a) + 1;
+          const r1 = Bun.JSONL.parseChunk(buf, 0, firstLineBytes + 2);
+          expect(r1.values).toEqual([{ s: "\uFFFD\uFFFD" }]);
+          const r2 = Bun.JSONL.parseChunk(buf, r1.read);
+          expect(r2.values).toEqual([{ b: 2 }]);
+          expect(r2.error).toBeNull();
+        });
+
+        test("invalid bytes mixed with valid multi-byte stay byte-exact", () => {
+          const buf = new Uint8Array([...encode('{"s":"日'), 0xff, ...encode('本"}\n{"e":"🎉"}\n')]);
+          const r = Bun.JSONL.parseChunk(buf);
+          expect(r.values).toEqual([{ s: "日\uFFFD本" }, { e: "🎉" }]);
+          expect(r.read).toBe(buf.byteLength - 1);
+        });
       });
     });
 

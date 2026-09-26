@@ -684,6 +684,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
 const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
+const setSubprocessReading = $newRustFunction("ipc.rs", "setSubprocessReading", 2);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1512,6 +1513,9 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
+        this.#followIpcListeners();
+        // With no listener the channel is not read, so a 'message' waits in the kernel buffer and is not emitted to nobody.
+        this.#updateIpcReading("message");
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1565,6 +1569,31 @@ class ChildProcess extends EventEmitter {
 
   #emitIpcMessage(message, _, handle) {
     this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
+  }
+
+  #followIpcListeners() {
+    this.on("newListener", this.#onNewIpcListener);
+    this.on("removeListener", this.#updateIpcReading);
+  }
+
+  #onNewIpcListener(name) {
+    // On the next tick, like node's flush of kPendingMessages, so each listener added in this tick gets the first message.
+    if (isIpcEvent(name)) process.nextTick(() => this.#updateIpcReading(name));
+  }
+
+  #updateIpcReading(name) {
+    const handle = this.#handle;
+    if (!handle || !isIpcEvent(name)) return;
+    const listeners =
+      this.listenerCount("message") + this.listenerCount("internalMessage") + this.listenerCount("disconnect");
+    setSubprocessReading(handle, listeners > 0);
+  }
+
+  removeAllListeners() {
+    super.removeAllListeners.$apply(this, arguments);
+    // That also removed the two listeners of #followIpcListeners.
+    if (arguments.length === 0 && this.channel) this.#followIpcListeners();
+    return this;
   }
 
   #send(message, handle, options, callback) {
@@ -1738,6 +1767,11 @@ const nodeToBunLookup = {
   inherit: "inherit",
   ipc: "ipc",
 };
+
+// All three arrive by a read of the channel. 'disconnect' is the read that sees the close.
+function isIpcEvent(name) {
+  return name === "message" || name === "internalMessage" || name === "disconnect";
+}
 
 const INTERNAL_IPC_PREFIX = "NODE_";
 

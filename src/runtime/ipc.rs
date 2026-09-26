@@ -917,6 +917,11 @@ pub(crate) struct SendQueue {
     pub internal_msg_queue: JsCell<InternalMsgHolder>,
     incoming: JsCell<IncomingBuffer>,
     pub(crate) incoming_fd: Cell<Option<Fd>>,
+    /// False while the owner has no listener for the messages. The socket is then not read, so they wait in the kernel buffer.
+    reads_wanted: Cell<bool>,
+    /// What the socket was last told. Starts true: a new socket reads.
+    socket_reading: Cell<bool>,
+    dispatching_incoming: Cell<bool>,
 
     pub socket: JsCell<SocketUnion>,
     pub(crate) owner: Cell<Option<SendQueueOwner>>,
@@ -1045,6 +1050,9 @@ impl SendQueue {
             internal_msg_queue: JsCell::new(InternalMsgHolder::default()),
             incoming: JsCell::new(IncomingBuffer::init(mode)),
             incoming_fd: Cell::new(None),
+            reads_wanted: Cell::new(true),
+            socket_reading: Cell::new(true),
+            dispatching_incoming: Cell::new(false),
             socket: JsCell::new(socket),
             owner: Cell::new(owner),
             deferred_scheduled: Cell::new(false),
@@ -1081,6 +1089,67 @@ impl SendQueue {
             return false;
         }
         self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
+    }
+
+    /// The ack of a sent handle arrives on this same stream, so a wait for one reads whatever the owner wants.
+    fn is_reading(&self) -> bool {
+        self.reads_wanted.get() || self.waiting_for_ack.get().is_some()
+    }
+
+    pub(crate) fn set_reads_wanted(&self, wanted: bool) {
+        self.reads_wanted.set(wanted);
+        self.update_reading();
+    }
+
+    fn update_reading(&self) {
+        if !self.is_reading() {
+            return self.apply_socket_reading(false);
+        }
+        if self.socket_reading.get() || !self.socket_is_open() {
+            return;
+        }
+        // The pause left these in `incoming`. A handler can pause again.
+        if !self.dispatching_incoming.get() {
+            let global_this = self.get_global_this();
+            let _scope = global_this.bun_vm().enter_event_loop_scope();
+            dispatch_incoming(self, &global_this);
+        }
+        if self.is_reading() {
+            self.apply_socket_reading(true);
+        }
+    }
+
+    fn apply_socket_reading(&self, reading: bool) {
+        if self.socket_reading.get() == reading {
+            return;
+        }
+        let SocketUnion::Open(socket) = *self.socket.get() else {
+            return;
+        };
+        self.socket_reading.set(reading);
+        #[cfg(not(windows))]
+        {
+            if reading {
+                socket.resume_stream();
+            } else {
+                socket.pause_stream();
+            }
+        }
+        #[cfg(windows)]
+        {
+            // SAFETY: an open pipe is a live uv_pipe_t until `windows_on_closed`.
+            let stream: *mut uv::uv_stream_t = unsafe { (*socket).as_stream() };
+            if !reading {
+                // SAFETY: as above.
+                unsafe { (*stream).read_stop() };
+                return;
+            }
+            // SAFETY: as above; `root_ptr()` is the context pointer both configure fns register.
+            let result = unsafe { (*stream).read_start_ctx::<SendQueue>(self.root_ptr()) };
+            if result.to_error(bun_sys::Tag::listen).is_some() {
+                self.close_socket(CloseReason::Failure, CloseFrom::User);
+            }
+        }
     }
 
     fn close_socket(&self, reason: CloseReason, from: CloseFrom) {
@@ -1393,7 +1462,8 @@ impl SendQueue {
                     .unwrap();
                 self.insert_message(item);
                 log!("IPC call continueSend() from onAckNack retry");
-                return self.continue_send(global, ContinueSendReason::NewMessageAppended);
+                self.continue_send(global, ContinueSendReason::NewMessageAppended);
+                return self.update_reading();
             }
             let cluster_seq = self
                 .waiting_for_ack
@@ -1435,6 +1505,7 @@ impl SendQueue {
         }
         log!("IPC call continueSend() from onAckNack success");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
+        self.update_reading();
     }
 
     fn should_ref(&self) -> bool {
@@ -1583,6 +1654,7 @@ impl SendQueue {
         });
         match done {
             Done::AwaitAck => {
+                self.update_reading();
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
             Done::Completed(item) => {
@@ -2333,9 +2405,39 @@ fn decode_next_advanced(
     })
 }
 
-fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
-    let mut data = all_data;
+/// Dispatches the complete messages in `incoming`. Stops once nothing reads them, and the rest waits for the resume.
+fn dispatch_incoming(send_queue: &SendQueue, global_this: &JSGlobalObject) {
+    let was_dispatching = send_queue.dispatching_incoming.replace(true);
+    let mut slice_start: usize = 0;
+    let step = loop {
+        if !send_queue.is_reading() {
+            break None;
+        }
+        let step = match send_queue.mode {
+            Mode::Json => decode_next_json(&send_queue.incoming, global_this),
+            Mode::Advanced => {
+                decode_next_advanced(&send_queue.incoming, global_this, &mut slice_start)
+            }
+        };
+        match step {
+            DecodeStep::Message(result) => {
+                crate::dispatch::fold(handle_ipc_message(send_queue, result.message, global_this));
+            }
+            step => break Some(step),
+        }
+    };
+    send_queue.dispatching_incoming.set(was_dispatching);
+    match step {
+        Some(step) => finish_decode(send_queue, &step),
+        None => send_queue.incoming.with_mut(|inc| {
+            if let IncomingBuffer::Advanced(adv_buf) = inc {
+                adv_buf.drain_front(slice_start);
+            }
+        }),
+    }
+}
 
+fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
     // In the VirtualMachine case, `globalThis` is an optional, in case
     // the vm is freed before the socket closes.
     let global_this = send_queue.get_global_this();
@@ -2348,21 +2450,8 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 let IncomingBuffer::Json(json_buf) = inc else {
                     unreachable!()
                 };
-                json_buf.append(data);
+                json_buf.append(all_data);
             });
-
-            loop {
-                match decode_next_json(&send_queue.incoming, &global_this) {
-                    DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
-                    }
-                    step => return finish_decode(send_queue, &step),
-                }
-            }
         }
         Mode::Advanced => {
             // Advanced mode: uses length-prefix, no newline scanning needed.
@@ -2374,7 +2463,12 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 adv_buf.len() != 0
             });
             if !buffered {
-                loop {
+                let was_dispatching = send_queue.dispatching_incoming.replace(true);
+                let mut data = all_data;
+                let result = loop {
+                    if !send_queue.is_reading() {
+                        break Err(IPCDecodeError::NotEnoughBytes);
+                    }
                     match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
                         Ok(result) => {
                             let consumed = result.bytes_consumed as usize;
@@ -2383,25 +2477,29 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                                 result.message,
                                 &global_this,
                             ));
-                            if consumed < data.len() {
-                                data = &data[consumed..];
-                            } else {
-                                return;
+                            data = &data[consumed..];
+                            if data.is_empty() {
+                                break Ok(());
                             }
                         }
-                        Err(IPCDecodeError::NotEnoughBytes) => {
-                            send_queue.incoming.with_mut(|inc| {
-                                let IncomingBuffer::Advanced(adv_buf) = inc else {
-                                    unreachable!()
-                                };
-                                handle_oom(adv_buf.write(data));
-                            });
-                            log!("hit NotEnoughBytes");
-                            return;
-                        }
-                        Err(e) => return finish_decode(send_queue, &DecodeStep::Fail(e)),
+                        Err(e) => break Err(e),
                     }
+                };
+                send_queue.dispatching_incoming.set(was_dispatching);
+                match result {
+                    Ok(()) => {}
+                    Err(IPCDecodeError::NotEnoughBytes) => {
+                        send_queue.incoming.with_mut(|inc| {
+                            let IncomingBuffer::Advanced(adv_buf) = inc else {
+                                unreachable!()
+                            };
+                            handle_oom(adv_buf.write(data));
+                        });
+                        log!("hit NotEnoughBytes");
+                    }
+                    Err(e) => finish_decode(send_queue, &DecodeStep::Fail(e)),
                 }
+                return;
             }
 
             // Buffer has existing data, append and process
@@ -2409,23 +2507,11 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 let IncomingBuffer::Advanced(adv_buf) = inc else {
                     unreachable!()
                 };
-                handle_oom(adv_buf.write(data));
+                handle_oom(adv_buf.write(all_data));
             });
-            let mut slice_start: usize = 0;
-            loop {
-                match decode_next_advanced(&send_queue.incoming, &global_this, &mut slice_start) {
-                    DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
-                    }
-                    step => return finish_decode(send_queue, &step),
-                }
-            }
         }
     }
+    dispatch_incoming(send_queue, &global_this);
 }
 
 /// Used on POSIX
@@ -2545,20 +2631,6 @@ pub(crate) mod IPCHandlers {
                         // forwarded.
                         json_buf.notify_written(nread);
                     });
-
-                    // Process complete messages using next() - avoids O(n²) re-scanning
-                    loop {
-                        match decode_next_json(&send_queue.incoming, &global_this) {
-                            DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
-                            }
-                            step => return finish_decode(send_queue, &step),
-                        }
-                    }
                 }
                 Mode::Advanced => {
                     send_queue.incoming.with_mut(|inc| {
@@ -2568,25 +2640,9 @@ pub(crate) mod IPCHandlers {
                         // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
                         unsafe { adv_buf.uv_commit(nread) };
                     });
-                    let mut slice_start: usize = 0;
-                    loop {
-                        match decode_next_advanced(
-                            &send_queue.incoming,
-                            &global_this,
-                            &mut slice_start,
-                        ) {
-                            DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
-                            }
-                            step => return finish_decode(send_queue, &step),
-                        }
-                    }
                 }
             }
+            dispatch_incoming(send_queue, &global_this);
         }
     }
 }

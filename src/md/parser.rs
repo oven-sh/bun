@@ -63,6 +63,8 @@ pub(crate) struct Parser<'a> {
     // Label-frame stack recycled by process_inline_content (inlines.rs) so
     // blocks with links do not allocate a frame stack per block.
     pub(crate) label_frames: Vec<crate::inlines::LabelFrame>,
+    // Plain-boundary permissive autolinks of the slices process_inline_content is in, innermost last.
+    pub(crate) strict_autolinks: Vec<crate::autolinks::Autolink>,
     // Memo of failed closing-delimiter searches in find_html_tag (inlines.rs).
     // Cell because find_html_tag is a &self query reached from both &self and
     // &mut self scanners.
@@ -277,6 +279,7 @@ impl<'a> Parser<'a> {
             emph_delims: Vec::new(),
             bracket_pairs: Vec::new(),
             label_frames: Vec::new(),
+            strict_autolinks: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
             n_containers: 0,
             current_block: None,

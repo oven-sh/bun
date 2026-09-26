@@ -41,7 +41,10 @@ pub enum CmdState {
         idx: u32,
     },
     Exec,
-    WaitingWriteErr,
+    /// An error line is on its way to stderr; the Cmd then finishes with `exit_code`.
+    WaitingWriteErr {
+        exit_code: ExitCode,
+    },
     Done,
 }
 
@@ -52,6 +55,10 @@ pub(crate) enum Exec {
     Builtin(Box<Builtin>),
     Subproc(Box<SubprocExec>),
 }
+
+/// Thrown for a `ReadableStream` redirect other than `< ${stream}`.
+pub(crate) const STREAM_REDIRECT_NOT_STDIN: &str =
+    "ReadableStream cannot be used for stdout or stderr; only '< ${...}' (stdin) is supported";
 
 impl Cmd {
     /// Borrow the AST node this `Cmd` was built from.
@@ -76,6 +83,8 @@ pub(crate) struct SubprocExec {
     /// to drive.
     pub(crate) interp: *mut Interpreter,
     pub(crate) this_id: NodeId,
+    /// The `< ${stream}` source failed, so the child read a truncated stdin: the line for stderr.
+    pub(crate) stdin_stream_failure: Option<Box<[u8]>>,
 }
 
 /// Tracks which subprocess stdio pipes are still open. Each `Option` is `None`
@@ -238,7 +247,7 @@ impl Cmd {
             if interp.failed()
                 && !matches!(
                     interp.as_cmd(this).state,
-                    CmdState::WaitingWriteErr | CmdState::Done
+                    CmdState::WaitingWriteErr { .. } | CmdState::Done
                 )
             {
                 // The script failed: expand nothing more and do not spawn.
@@ -291,9 +300,23 @@ impl Cmd {
                 CmdState::Exec => {
                     return Self::transition_to_exec(interp, this);
                 }
-                CmdState::WaitingWriteErr => return Yield::suspended(),
+                CmdState::WaitingWriteErr { .. } => return Yield::suspended(),
                 CmdState::Done => {
                     let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
+                    let stdin_stream_failure = match &mut interp.as_cmd_mut(this).exec {
+                        Exec::Subproc(sub) => sub.stdin_stream_failure.take(),
+                        _ => None,
+                    };
+                    // A script that already failed reports nothing more.
+                    if let Some(message) = stdin_stream_failure.filter(|_| !interp.failed()) {
+                        // The child's own failure status wins; a truncated stdin is never a success.
+                        return Builtin::cmd_write_error_and_exit(
+                            interp,
+                            this,
+                            if exit == 0 { 1 } else { exit },
+                            format_args!("bun: {}\n", bstr::BStr::new(&message)),
+                        );
+                    }
                     let parent = interp.as_cmd(this).base.parent;
                     return interp.child_done(parent, this, exit);
                 }
@@ -303,7 +326,7 @@ impl Cmd {
 
     /// IOWriter completion callback for the error message written in
     /// `WaitingWriteErr`: throw on write failure, otherwise finish the Cmd
-    /// with exit code 1.
+    /// with that state's exit code.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -314,12 +337,15 @@ impl Cmd {
             interp.throw(crate::shell::ShellErr::from_system(err));
             return Yield::Failed(this);
         }
-        debug_assert!(matches!(
-            interp.as_cmd(this).state,
-            CmdState::WaitingWriteErr
-        ));
+        let exit_code = match interp.as_cmd(this).state {
+            CmdState::WaitingWriteErr { exit_code } => exit_code,
+            _ => {
+                debug_assert!(false, "only `WaitingWriteErr` waits for this write");
+                1
+            }
+        };
         let parent = interp.as_cmd(this).base.parent;
-        interp.child_done(parent, this, 1)
+        interp.child_done(parent, this, exit_code)
     }
 
     pub(crate) fn child_done(
@@ -587,6 +613,7 @@ impl Cmd {
             buffered_closed,
             interp: core::ptr::null_mut(),
             this_id: this,
+            stdin_stream_failure: None,
         }));
 
         // Derive the raw backrefs `spawn_async` needs from a single
@@ -779,8 +806,40 @@ impl Cmd {
                             STDERR_NO as i32,
                         )?;
                     }
-                } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
-                    panic!("TODO SHELL READABLE STREAM");
+                } else if let Some(mut stream) =
+                    crate::webcore::ReadableStream::from_js(jsval, global)?
+                {
+                    if !flags.stdin() {
+                        return Err(global.throw(format_args!("{STREAM_REDIRECT_NOT_STDIN}")));
+                    }
+                    if stream.is_disturbed_or_locked(global) {
+                        return Err(global
+                            .err(
+                                crate::jsc::ErrorCode::INVALID_STATE,
+                                format_args!(
+                                    "ReadableStream redirected to stdin has already been used"
+                                ),
+                            )
+                            .throw());
+                    }
+                    // Stop-gap until `Stdio::extract_blob` keeps a file blob's window (#41209).
+                    let sliced_file = stream.ptr.file().is_some_and(|file| {
+                        file.start_offset.is_some_and(|offset| offset > 0)
+                            || file.max_size.is_some()
+                    });
+                    // Fully-buffered / not-yet-started file-backed streams collapse
+                    // to a blob and take the existing `StaticPipeWriter` path.
+                    let blob = if sliced_file {
+                        None
+                    } else {
+                        stream.to_any_blob(global)
+                    };
+                    match blob {
+                        Some(blob) => {
+                            stdio[STDIN_NO].extract_blob(global, blob, STDIN_NO as i32)?
+                        }
+                        None => stdio[STDIN_NO] = Stdio::ReadableStream(stream),
+                    }
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
                     // `get_body_value` is `&self`.
@@ -994,6 +1053,13 @@ impl Cmd {
             OutKind::Stderr => self.buffered_output_close_stderr(err),
         }
         self.finish_if_done()
+    }
+
+    /// Called by `ShellSubprocess::on_process_exit`, before [`on_exit`](Self::on_exit).
+    pub(crate) fn on_stdin_stream_failed(&mut self, message: Box<[u8]>) {
+        if let Exec::Subproc(sub) = &mut self.exec {
+            sub.stdin_stream_failure = Some(message);
+        }
     }
 
     /// Called by `ShellSubprocess::on_process_exit`.

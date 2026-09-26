@@ -803,11 +803,10 @@ private:
             size_t flushed = asyncSocket->flush();
             /* Check if there's still data waiting to be sent after flush attempt */
             if (asyncSocket->getBufferedAmount() > 0) {
-                /* onEnd deferred close for these bytes; a writable event that
-                 * moves nothing (EPIPE) means the peer is gone and this would
-                 * otherwise spin the writable dispatch until idle timeout.
-                 * Except on libuv, where a stale SEND completion can move
-                 * nothing on a healthy socket; there the kernel is asked. */
+                /* onEnd deferred close for these bytes. A writable event that
+                 * moves nothing is EPIPE when the peer is gone (this would then
+                 * spin the writable dispatch), or ENOBUFS/EAGAIN on a half-closed
+                 * client that still reads, so the kernel is asked which. */
                 if (flushed == 0
                     && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
                     && us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)) {
@@ -846,9 +845,8 @@ private:
             if constexpr (!IsNodeHttp) {
                 /* Bun.serve: onEnd deferred close for a tryEnd tail (offset < total,
                  * nothing in AsyncSocketData::buffer). A retry that moves zero bytes
-                 * after the peer's FIN is EPIPE; close instead of spinning. Except
-                 * on libuv, where the retry can stall while the TLS layer's spill
-                 * is still blocked on a healthy socket; there the kernel is asked. */
+                 * after the peer's FIN is EPIPE when the peer is gone (close instead
+                 * of spinning), or ENOBUFS/EAGAIN on a healthy socket: ask the kernel. */
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
                     && (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
                     && httpResponseData->offset == offsetBefore

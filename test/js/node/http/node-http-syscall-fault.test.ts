@@ -3,6 +3,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
 import http from "node:http";
+import https from "node:https";
+import net from "node:net";
+import tls from "node:tls";
 
 const skip = !fault.available() || isWindows;
 
@@ -262,5 +265,87 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
       proc.kill("SIGTERM");
       await proc.exited;
     }
+  });
+});
+
+// A client that sends FIN after its request (socket.end(request), `nc -N`)
+// still reads the response. send() can move nothing on that healthy socket:
+// ENOBUFS on macOS, EAGAIN under TCP memory pressure on Linux. After the FIN
+// the server took one such writable event as proof that the client was gone,
+// closed the connection and dropped the rest of the response.
+//
+// In-process is not ambiguous here: the client sends its request and its FIN
+// before the rule is armed and nothing after, so every send() that the rule
+// hits is the server's.
+describe.skipIf(skip)("send() stalls after the client's FIN", () => {
+  const BODY = 8 * 1024 * 1024;
+  const payload = Buffer.alloc(BODY, "a");
+
+  // Call after the first send() of the response. That send fills the socket
+  // buffers, so the stalled ones are the retries on writable events. Four, not
+  // one: the server reads the FIN on the dispatch after the request, and that
+  // dispatch runs writable first, so the first stall can land ahead of the FIN.
+  function stallSends() {
+    fault.set({ syscall: "send", action: "errno", errno: "ENOBUFS", repeat: 4 });
+  }
+
+  function nodeHandler(req: http.IncomingMessage, res: http.ServerResponse) {
+    res.writeHead(200, { "Content-Length": String(BODY) });
+    res.end(payload);
+    stallSends();
+  }
+
+  async function bodyOfHalfClosedClient(socket: net.Socket) {
+    const out = { body: 0, ended: false };
+    let head = "";
+    let gotHead = false;
+    socket.on("data", chunk => {
+      if (gotHead) {
+        out.body += chunk.length;
+        return;
+      }
+      head += chunk.toString("latin1");
+      const headEnd = head.indexOf("\r\n\r\n");
+      if (headEnd >= 0) {
+        gotHead = true;
+        out.body = Buffer.byteLength(head.slice(headEnd + 4), "latin1");
+      }
+    });
+    socket.on("end", () => (out.ended = true));
+    socket.on("error", () => {});
+    await once(socket, socket instanceof tls.TLSSocket ? "secureConnect" : "connect");
+    socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await once(socket, "close");
+    return out;
+  }
+
+  test("node:http delivers the whole body", async () => {
+    await using server = http.createServer(nodeHandler);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+    expect(await bodyOfHalfClosedClient(net.connect(port, "127.0.0.1"))).toEqual({ body: BODY, ended: true });
+  });
+
+  // The stalled send() is the drain of the TLS layer's ciphertext spill.
+  test("node:https delivers the whole body", async () => {
+    await using server = https.createServer(certs, nodeHandler);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as net.AddressInfo;
+    const socket = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    expect(await bodyOfHalfClosedClient(socket)).toEqual({ body: BODY, ended: true });
+  });
+
+  // The stalled send() is the retry of a tryEnd tail. Bun.serve writes the
+  // response when fetch() returns, so the rule is armed on the next turn.
+  test("Bun.serve delivers the whole body", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        setImmediate(stallSends);
+        return new Response(payload);
+      },
+    });
+    expect(await bodyOfHalfClosedClient(net.connect(server.port, "127.0.0.1"))).toEqual({ body: BODY, ended: true });
   });
 });

@@ -3059,6 +3059,131 @@ describe("bundler", () => {
   });
 });
 
+// Four passes took time that grows with the square of the size of a component.
+// MergeOverlappingReactiveScopesHIR compared every identifier of the
+// environment, nested functions included, with every set of scopes that it
+// merged. ValidateUseMemo, DropManualMemoization and
+// InlineImmediatelyInvokedFunctionExpressions took entries out of an
+// insertion-ordered map with the remove that keeps the order, which moves every
+// later entry and builds the hash index again. Each pass is a small part of a
+// build, so the test reads the time of the pass itself. Only a debug or ASAN
+// build records it.
+describe.skipIf(!isDebug && !isASAN)(
+  "react-compiler pass time does not grow with the square of the size of a component",
+  () => {
+    // `x` and `y` are mutated in turn, so their scopes overlap and the pass
+    // merges them. Each value of the nested function adds two identifiers that
+    // belong to no merged scope, at the lowest cost to the other passes. The
+    // loop is tight in an optimized build, so an ASAN build needs more of them.
+    const values = isDebug ? 200 : 1200;
+    const overlappingScopes = (name: string, first: number, count: number) => {
+      const index = Array.from({ length: count }, (_, i) => first + i);
+      return `export function ${name}(props) {
+        ${index.map(i => `const x${i} = [], y${i} = []; x${i}.push(props.a); y${i}.push(props.b);`).join("\n")}
+        const f = () => [${Buffer.alloc(count * values * 2, "0,").toString()}];
+        return <div onClick={f}>${index.map(i => `{x${i}}{y${i}}`).join("")}</div>;
+      }\n`;
+    };
+    // The results of all the calls stay unused until the `<div>` reads them, and
+    // each call queues one StartMemoize and one FinishMemoize marker.
+    const useMemoCalls = (name: string, _first: number, count: number) => {
+      const call = "{useMemo(() => 1, [])}";
+      return `export function ${name}(props) {
+        return <div>${Buffer.alloc(count * call.length, call).toString()}</div>;
+      }\n`;
+    };
+    // Every function is a candidate to inline until the array reads it.
+    const functionExpressions = (name: string, _first: number, count: number) =>
+      `export function ${name}(props) {
+        return <div data={[${Buffer.alloc(count * 8, "() => 1,").toString()}]}>{props.a}</div>;
+      }\n`;
+
+    // The bound of a pass is on the time it takes for `size` repetitions in one
+    // component, divided by its time for the same source in components of
+    // `controlSize`. A linear pass takes the same time for both. With the fixes
+    // the ratio is 0.3 to 1.2. Without them it is over 5, on a debug build and on
+    // an ASAN build. MergeOverlappingReactiveScopesHIR has less room: 0.6 to 0.8
+    // against 3.2 to 3.7 on a debug build, and 0.6 to 1.5 against 3.5 to 5 on an
+    // ASAN build.
+    test.each([
+      ["overlapping scopes", overlappingScopes, 100, 5, { MergeOverlappingReactiveScopesHIR: isDebug ? 2 : 2.5 }],
+      ["useMemo calls", useMemoCalls, isDebug ? 600 : 1500, 20, { ValidateUseMemo: 3, DropManualMemoization: 3 }],
+      [
+        "function expressions",
+        functionExpressions,
+        isDebug ? 500 : 2000,
+        25,
+        { InlineImmediatelyInvokedFunctionExpressions: 3 },
+      ],
+    ] as const)(
+      "%s",
+      async (_input, component, size, controlSize, bounds: Record<string, number>) => {
+        const source = (perComponent: number) =>
+          `import { useMemo } from "react";\n` +
+          Array.from({ length: size / perComponent }, (_, c) =>
+            component(`App${c}`, c * perComponent, perComponent),
+          ).join("");
+        using dir = tempDir("react-compiler-pass-time", {
+          "large.jsx": source(size),
+          "control.jsx": source(controlSize),
+        });
+
+        // The milliseconds that each pass took in all the components of `entry`.
+        const passTimes = async (entry: string, components: number) => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+            env: { ...bunEnv, BUN_REACT_COMPILER_TIMING: "1" },
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const times: Record<string, number> = {};
+          const calls: Record<string, string> = {};
+          for (const pass of Object.keys(bounds)) {
+            // "     12.34ms   5.6%      30×  DropManualMemoization"
+            const [, ms, count] = stderr.match(new RegExp(`^ *([\\d.]+)ms +[\\d.]+% +(\\d+)× +${pass}$`, "m")) ?? [];
+            times[pass] = Number(ms);
+            calls[pass] = count ?? stderr;
+          }
+          // Every component reached the pass, and the build compiled them.
+          expect({ calls, compiled: stdout.includes("react/compiler-runtime"), exitCode }).toEqual({
+            calls: Object.fromEntries(Object.keys(bounds).map(pass => [pass, String(components)])),
+            compiled: true,
+            exitCode: 0,
+          });
+          return times;
+        };
+
+        // The times are wall time. Other load on the machine only adds to a time,
+        // so the best time of up to five rounds counts, and the two builds of a
+        // round run together. The inputs run one after the other, because another
+        // build at the same time is such a load.
+        const best = { large: {} as Record<string, number>, control: {} as Record<string, number> };
+        let slow: Record<string, number> = {};
+        for (let round = 0; round < 5; round++) {
+          const [large, control] = await Promise.all([
+            passTimes("large.jsx", 1),
+            passTimes("control.jsx", size / controlSize),
+          ]);
+          slow = {};
+          for (const [pass, bound] of Object.entries(bounds)) {
+            best.large[pass] = Math.min(best.large[pass] ?? Infinity, large[pass]);
+            best.control[pass] = Math.min(best.control[pass] ?? Infinity, control[pass]);
+            const ratio = best.large[pass] / best.control[pass];
+            if (!(ratio < bound)) slow[pass] = ratio;
+          }
+          if (Object.keys(slow).length === 0) break;
+        }
+        expect(slow).toEqual({});
+      },
+      // `bun test` allows 5 seconds by default. On a debug build a round takes up
+      // to 7 seconds, and a test that fails takes five rounds.
+      120_000,
+    );
+  },
+);
+
 // Three passes kept one copy of their work per basic block or per nesting
 // level of a value, so memory grew with the square of the size of a component
 // that has no loop at all. The fixpoint in InferMutationAliasingEffects kept

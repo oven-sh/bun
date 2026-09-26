@@ -372,6 +372,7 @@ impl<K: Copy + Into<u32>, V> IdMap<K, V> {
     pub(crate) fn entry(&mut self, k: K) -> Entry<'_, u32, V> {
         self.0.entry(k.into())
     }
+    /// Order-preserving remove. O(n): it shifts the later entries and rebuilds the index.
     #[inline]
     pub(crate) fn remove(&mut self, k: K) -> Option<V> {
         self.0.remove(&k.into())

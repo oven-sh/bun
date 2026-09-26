@@ -284,7 +284,7 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
                 _ => {
                     // Any other use of a function expression means it isn't an IIFE
                     for id in visitors::each_instruction_value_operand_ids(&instr.value, env) {
-                        functions.remove(id);
+                        functions.swap_remove(id);
                     }
                 }
             }

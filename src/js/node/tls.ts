@@ -27,6 +27,7 @@ const { Server: NetServer, Socket: NetSocket } = net;
 const { kArmHandshakeTimeout, kPreHandshakeWrite, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
 
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
+const loadExtraCACertificates = $newCppFunction("NodeTLS.cpp", "loadExtraCACertificates", 0);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
 const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
@@ -1765,30 +1766,12 @@ function cacheExtraCACertificates(): string[] {
   return extraCACertificates;
 }
 
-let warnedAboutExtraCACerts = false;
-/**
- * Match Node's crypto_context.cc: a NODE_EXTRA_CA_CERTS file that cannot be
- * loaded is ignored with a one-time warning on stderr - emitted when the
- * first secure context is created, not at startup - rather than failing the
- * process. The reason text mirrors the strerror()-derived string Node prints.
- */
+let loadedExtraCACerts = false;
+// Node warns about a NODE_EXTRA_CA_CERTS file it cannot load at the first secure context. The native load prints it.
 function maybeWarnAboutExtraCACerts() {
-  if (warnedAboutExtraCACerts) return;
-  warnedAboutExtraCACerts = true;
-  const extraPath = process.env.NODE_EXTRA_CA_CERTS;
-  if (!extraPath) return;
-  try {
-    require("node:fs").accessSync(extraPath);
-  } catch (err: any) {
-    // Node prints this with a raw fprintf(stderr, ...) from
-    // crypto_context.cc, not through process.emitWarning - no pid prefix and
-    // no colorization.
-    process.stderr.write(
-      `Warning: Ignoring extra certs from \`${extraPath}\`, load failed: ${
-        err?.code === "ENOENT" ? "No such file or directory" : err?.message
-      }\n`,
-    );
-  }
+  if (loadedExtraCACerts) return;
+  loadedExtraCACerts = true;
+  loadExtraCACertificates();
 }
 
 // Runtime override for the "default" CA certificate set, installed by

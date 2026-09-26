@@ -252,9 +252,7 @@ impl FileResponseStream {
             return;
         }
 
-        // A Windows file read runs on the libuv threadpool and cannot be
-        // cancelled once it runs, so only the reader's file source can close
-        // the fd safely: it closes after the read in flight. Hand it the fd.
+        // The reader closes the fd: only it can wait for a threadpool read in flight.
         #[cfg(windows)]
         if opts.auto_close {
             this_ref
@@ -602,11 +600,7 @@ impl FileResponseStream {
         }
 
         if self.mode.get() == Mode::Reader {
-            // An abort can land while the read is parked on a poll that never
-            // fires (a FIFO with an idle writer), or re-entrantly from inside
-            // the read loop, which would re-arm the poll on its way out. The
-            // pause unregisters the poll and blocks that re-arm, so the stream
-            // can be freed without a poll still pointing at it.
+            // Unregisters the poll and keeps the read loop from arming it again.
             self.reader_mut().pause();
             // No reader callback is coming to adopt the in-flight read ref.
             drop(self.take_read_ref());

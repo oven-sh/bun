@@ -331,9 +331,7 @@ impl PosixBufferedReader {
         self.release_poll();
     }
 
-    /// `CLOSE_HANDLE` says who closes the fd. The `FilePoll` is always the
-    /// reader's, so a reader that goes away returns it even when the fd stays
-    /// with the parent.
+    /// The poll is the reader's even when the fd is the parent's (`CLOSE_HANDLE` cleared).
     fn release_poll(&mut self) {
         self.handle.close_without_closing_fd();
     }

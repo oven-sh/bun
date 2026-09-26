@@ -392,8 +392,7 @@ impl Drop for IOReader {
             }
             #[cfg(not(windows))]
             {
-                // Release the poll before closing the fd it watches. With
-                // CLOSE_HANDLE cleared in init(), `deinit` leaves the fd to us.
+                // CLOSE_HANDLE is cleared in init(): `deinit` releases the poll, not the fd.
                 r.deinit();
                 let _ = sys::close(s.fd);
             }

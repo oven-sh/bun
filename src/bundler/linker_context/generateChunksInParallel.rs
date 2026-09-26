@@ -106,7 +106,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 c.worker_pool()
                     .each_ptr(ctx, LinkerContext::finish_js_renamer, chunks);
             }
-            crate::linker_context::cross_chunk_names::apply_to_clauses(c, chunks);
+            crate::linker_context::cross_chunk_names::apply_to_clauses(c, chunks)?;
         }
         debug!("  DONE {} renamers", chunks.len());
     }

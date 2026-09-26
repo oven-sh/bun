@@ -73,6 +73,11 @@ devTest("css file with initial syntax error gets recovered", {
       );
     });
     await c.style("body").color.expect.toBe("red");
+    // The recovered page reuses the HTML stored during the failed build. That
+    // HTML must not keep the source link tag next to the injected bundled one.
+    const html = await dev.fetch("/").text();
+    expect(html).toContain("/_bun/asset/");
+    expect(html).not.toContain('href="styles.css"');
     await dev.write(
       "styles.css",
       `

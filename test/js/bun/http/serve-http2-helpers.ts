@@ -224,18 +224,25 @@ export class RawH2 {
   closed = false;
 
   static async connect(port: number, secure: boolean, opts: { sendPreface?: boolean; settings?: Buffer } = {}) {
-    const c = new RawH2();
+    let socket!: net.Socket | tls.TLSSocket;
     await new Promise<void>((resolve, reject) => {
       const onErr = (e: Error) => reject(e);
       if (secure) {
-        c.socket = tls.connect({ port, host: "127.0.0.1", ALPNProtocols: ["h2"], rejectUnauthorized: false }, () =>
+        socket = tls.connect({ port, host: "127.0.0.1", ALPNProtocols: ["h2"], rejectUnauthorized: false }, () =>
           resolve(),
         );
       } else {
-        c.socket = net.connect({ port, host: "127.0.0.1" }, () => resolve());
+        socket = net.connect({ port, host: "127.0.0.1" }, () => resolve());
       }
-      c.socket.once("error", onErr);
+      socket.once("error", onErr);
     });
+    return RawH2.over(socket, opts);
+  }
+
+  /** Speak HTTP/2 over a socket that is already connected (TLS: whose handshake is done). */
+  static over(socket: net.Socket | tls.TLSSocket, opts: { sendPreface?: boolean; settings?: Buffer } = {}) {
+    const c = new RawH2();
+    c.socket = socket;
     c.socket.on("data", (d: Buffer) => c.onData(d));
     c.socket.on("close", () => {
       c.closed = true;

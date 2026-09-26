@@ -11,11 +11,16 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { builtinModules } from "node:module";
 import { isAbsolute, join, sep } from "path";
+import { signature, signatureLength, signedLength } from "../../misctools/portable/launch/tools/apple_sign.ts";
+import { checkSignature } from "../../misctools/portable/launch/tools/check_signature.ts";
+import { ELF_MACHINE, decodeToc, encodeToc, type Toc } from "../../misctools/portable/launch/tools/format.ts";
+import { inspect } from "../../misctools/portable/launch/tools/inspect.ts";
 
 describe("Bun.build compile", () => {
   test("compile with current platform target string", async () => {
@@ -3035,6 +3040,435 @@ describe("Bun.build compile optimize", () => {
       expect(stderr).toBe("");
       expect(stdout).toBe("ok\n");
       expect(exitCode).toBe(0);
+    });
+  });
+});
+
+// `--target=bun-portable-<arch>`: the executable is ONE file that starts on Windows, Linux and macOS (the format
+// is in misctools/portable/launch). The module graph goes into the ELF image inside that file.
+//
+// BUN_PORTABLE_TEMPLATE is the packed file of a portable bun (misctools/portable/launch/tools/template.ts packs
+// it). Without it the tests that compile are skipped: nothing is published that bun could download.
+describe("portable target", () => {
+  const fixture = {
+    "app.ts": `
+      import { shout } from "./shout.ts";
+      import notes from "./notes.txt" with { type: "file" };
+
+      if (process.env.PORTABLE_CHILD) {
+        console.log(JSON.stringify({ args: process.argv.slice(2), execPath: process.execPath }));
+        process.exit(0);
+      }
+      const worker = new Worker("./worker.ts");
+      const fromWorker = await new Promise(resolve => {
+        worker.onmessage = event => resolve(event.data);
+        worker.postMessage("ping");
+      });
+      await worker.terminate();
+      let self = null;
+      if (process.argv.includes("--start-itself")) {
+        const child = Bun.spawnSync({
+          cmd: [process.execPath, "from", "the parent"],
+          env: { ...process.env, PORTABLE_CHILD: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        self = { stdout: JSON.parse(child.stdout.toString()), stderr: child.stderr.toString(), exitCode: child.exitCode };
+      }
+      console.log(JSON.stringify({
+        shout: shout("two modules"),
+        notes: await Bun.file(notes).text(),
+        worker: fromWorker,
+        args: process.argv.slice(2),
+        stdin: await Bun.stdin.text(),
+        platform: process.platform,
+        windows: process.platform === "win32" ? "yes" : "no",
+        arch: "arch-is-" + process.arch,
+        main: Bun.main,
+        execPath: process.execPath,
+        self,
+      }));
+      process.exitCode = Number(process.env.PORTABLE_EXIT ?? 0);
+    `,
+    "shout.ts": `export const shout = (text: string) => text.toUpperCase() + "!";`,
+    "worker.ts": `self.onmessage = event => postMessage("the worker got " + event.data);`,
+    "notes.txt": "the embedded file\n",
+  };
+
+  async function build(cwd: string, args: string[], env: Record<string, string | undefined> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", ...args],
+      env: { ...bunEnv, ...env },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  describe("the name of the target", () => {
+    const onePerArchitecture =
+      "a portable executable is one file per CPU architecture, use bun-portable-x64 or bun-portable-arm64";
+    const inPlaceOfTheSystem = `"portable" takes the place of the operating system, and no libc, "baseline" or "modern" goes with it`;
+
+    test.concurrent.each([
+      ["bun-portable", onePerArchitecture],
+      ["bun-portable-v1.2.3", onePerArchitecture],
+      ["bun-portable-linux-x64", inPlaceOfTheSystem],
+      ["bun-windows-portable-x64", inPlaceOfTheSystem],
+      ["bun-portable-x64-musl", inPlaceOfTheSystem],
+      ["bun-portable-arm64-android", inPlaceOfTheSystem],
+      ["bun-portable-x64-baseline", inPlaceOfTheSystem],
+      ["bun-x64-modern-portable", inPlaceOfTheSystem],
+      ["bun-portable-x64-riscv", `Unsupported target "riscv" in "bun-portable-x64-riscv"`],
+    ])("--target=%s is refused", async (target, message) => {
+      using dir = tempDir("compile-portable-name", { "app.js": `console.log("never compiled");` });
+      const { stderr, exitCode } = await build(String(dir), [`--target=${target}`, "app.js", "--outfile", "app"]);
+      expect(stderr).toContain(message);
+      expect(existsSync(join(String(dir), "app"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+
+    test("Bun.build says what is wrong with it", () => {
+      expect(() =>
+        Bun.build({ entrypoints: ["app.js"], compile: { target: "bun-portable" as any, outfile: "app" } }),
+      ).toThrow(`Invalid compile target bun-portable: ${onePerArchitecture}`);
+      expect(() =>
+        Bun.build({ entrypoints: ["app.js"], compile: { target: "bun-portable-x64-musl" as any, outfile: "app" } }),
+      ).toThrow(inPlaceOfTheSystem);
+    });
+  });
+
+  test.concurrent.each([
+    "--windows-icon=app.ico",
+    "--windows-title=App",
+    "--windows-publisher=Somebody",
+    "--windows-version=1.2.3.4",
+    "--windows-description=An app",
+    "--windows-copyright=Nobody",
+  ])("%s is refused", async option => {
+    using dir = tempDir("compile-portable-metadata", { "app.js": `console.log("never compiled");`, "app.ico": "" });
+    const { stderr, exitCode } = await build(String(dir), [
+      "--target=bun-portable-x64",
+      option,
+      "app.js",
+      "--outfile",
+      "app",
+    ]);
+    expect(stderr).toContain(
+      "a portable executable takes no Windows icon, title, publisher, version, description or copyright",
+    );
+    expect(existsSync(join(String(dir), "app"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a file that is not a packed portable image is refused", async () => {
+    using dir = tempDir("compile-portable-not-packed", { "app.js": `console.log("never compiled");` });
+    const { stderr, exitCode } = await build(String(dir), [
+      "--target=bun-portable-x64",
+      "--compile-executable-path=app.js",
+      "app.js",
+      "--outfile",
+      "app",
+    ]);
+    expect(stderr).toContain("is not a packed portable image");
+    expect(readdirSync(String(dir)).sort()).toEqual(["app.js"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("without an executable, the error names the package that was looked for and the option", async () => {
+    // The registry is asked through this proxy, which refuses: nothing leaves this machine.
+    using proxy = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          socket.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        },
+      },
+    });
+    using dir = tempDir("compile-portable-download", { "app.js": `console.log("never compiled");` });
+    const proxyUrl = `http://127.0.0.1:${proxy.port}`;
+    const { stderr, exitCode } = await build(String(dir), ["--target=bun-portable-x64", "app.js", "--outfile", "app"], {
+      BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+      BUN_COMPILE_TARGET_TARBALL_URL: undefined,
+      HTTPS_PROXY: proxyUrl,
+      https_proxy: proxyUrl,
+      NO_PROXY: "",
+      no_proxy: "",
+    });
+    const version = Bun.version.split("-")[0];
+    expect(stderr).toContain(`No portable bun for 'bun-portable-x64-v${version}' to compile with`);
+    expect(stderr).toContain(`https://registry.npmjs.org/@oven/bun-portable-x64/-/bun-portable-x64-${version}.tgz`);
+    expect(stderr).toContain("Pass the packed file of a portable bun with --compile-executable-path");
+    expect(existsSync(join(String(dir), "app"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  const template = process.env.BUN_PORTABLE_TEMPLATE;
+
+  describe.skipIf(!template)("with the packed file of a portable bun", () => {
+    const templateBytes = template ? readFileSync(template) : Buffer.alloc(0);
+    const templateToc = decodeToc(templateBytes)!;
+    const arch = templateToc?.arch === ELF_MACHINE.aarch64 ? "arm64" : "x64";
+    const otherArch = arch === "x64" ? "arm64" : "x64";
+    const shells = ["sh", "dash", "bash"].filter(shell => Bun.which(shell));
+    /** The script of a packed file without the two things that follow the length of the image. */
+    const script = (file: Buffer, toc: Toc) =>
+      file
+        .toString("latin1", 0, toc.headerSize)
+        .replace(/image_len=\d+/, "image_len=")
+        .replace(/(#-*)?\n$/, "");
+
+    let dir: ReturnType<typeof tempDir>;
+    let app: string;
+    let appBytes: Buffer;
+    let env: Record<string, string | undefined>;
+
+    beforeAll(async () => {
+      dir = tempDir("compile-portable", fixture);
+      const { stderr, exitCode } = await build(String(dir), [
+        `--target=bun-portable-${arch}`,
+        `--compile-executable-path=${template}`,
+        "app.ts",
+        "worker.ts",
+        "--outfile",
+        "out/app",
+      ]);
+      expect(stderr).not.toContain("error");
+      expect(exitCode).toBe(0);
+      app = join(String(dir), "out", "app");
+      appBytes = readFileSync(app);
+      // The shell script of the file puts the loader stub here, not in the home directory of the user.
+      env = { ...bunEnv, BUN_PORTABLE_CACHE: join(String(dir), "stub-cache") };
+    });
+    afterAll(() => dir?.[Symbol.dispose]());
+
+    async function run(cmd: string[], more: Record<string, string> = {}, stdin = "") {
+      await using proc = Bun.spawn({
+        cmd,
+        env: { ...env, ...more },
+        stdin: Buffer.from(stdin),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test("the result is one file, a packed image with the graph in its image", () => {
+      expect(readdirSync(join(String(dir), "out"))).toEqual(["app"]);
+      expect(statSync(app).mode & 0o777).toBe(0o755);
+
+      const { checks } = inspect(appBytes, { path: app });
+      expect(checks.filter(check => !check.ok)).toEqual([]);
+
+      const toc = decodeToc(appBytes)!;
+      expect(toc).toEqual({
+        ...templateToc,
+        fileSize: appBytes.length,
+        imageLen: expect.any(Number),
+        codeLen: expect.any(Number),
+        sigOff: expect.any(Number),
+        sigLen: expect.any(Number),
+      });
+      expect(toc.imageLen).toBeGreaterThan(templateToc.imageLen);
+      // The modules are in the image, not behind it.
+      const image = appBytes.subarray(toc.imageOff, toc.imageOff + toc.imageLen);
+      expect(image.includes("TWO MODULES".toLowerCase())).toBe(true);
+      expect(image.includes("the embedded file\n")).toBe(true);
+      expect(image.includes("the worker got ")).toBe(true);
+      expect(appBytes.subarray(toc.imageOff + toc.imageLen).includes("the worker got ")).toBe(false);
+    });
+
+    test("what is in front of the image is the template's, but for the length of the image in the script", () => {
+      const toc = decodeToc(appBytes)!;
+      const from = toc.headerSize;
+      expect(appBytes.subarray(from, toc.imageOff).equals(templateBytes.subarray(from, toc.imageOff))).toBe(true);
+      expect(script(appBytes, toc)).toBe(script(templateBytes, templateToc));
+      expect(appBytes.toString("latin1", 0, from)).toContain(`image_len=${toc.imageLen}\n`);
+    });
+
+    test.each(shells)("%s starts it: arguments, standard input and the exit code pass through", async shell => {
+      const { stdout, stderr, exitCode } = await run(
+        [shell, app, "first", "the second", "--third=3"],
+        { PORTABLE_EXIT: "7" },
+        "from standard input",
+      );
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        shout: "TWO MODULES!",
+        notes: "the embedded file\n",
+        worker: "the worker got ping",
+        args: ["first", "the second", "--third=3"],
+        stdin: "from standard input",
+        platform: "linux",
+        windows: "no",
+        arch: `arch-is-${arch}`,
+        main: expect.stringMatching(/^\/\$bunfs\/root\/app(\.ts)?$/),
+        execPath: realpathSync(app),
+        self: null,
+      });
+      expect(exitCode).toBe(7);
+    });
+
+    test.skipIf(!shells.length)("a relative path and another working directory", async () => {
+      await using proc = Bun.spawn({
+        cmd: [shells[0], "./app"],
+        env,
+        cwd: join(String(dir), "out"),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toMatchObject({ execPath: realpathSync(app), args: [] });
+      expect(exitCode).toBe(0);
+    });
+
+    test.skipIf(!shells.length)("the program starts itself by process.execPath", async () => {
+      const { stdout, stderr, exitCode } = await run([shells[0], app, "--start-itself"]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout).self).toEqual({
+        stdout: { args: ["from", "the parent"], execPath: realpathSync(app) },
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.skipIf(!shells.length)(
+      "process.platform is answered when the program runs, process.arch when it is built",
+      async () => {
+        // The test hook of the image: bun decides as on another host. The kernel stays the one of this machine.
+        const { stdout, stderr, exitCode } = await run([shells[0], app], { BUN_PORTABLE_HOST_OS: "darwin" });
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toMatchObject({ platform: "darwin", windows: "no", arch: `arch-is-${arch}` });
+        expect(exitCode).toBe(0);
+
+        // What the bundler made of `"arch-is-" + process.arch` and of `platform: process.platform`.
+        expect(appBytes.includes(`"arch-is-" + "${arch}"`)).toBe(true);
+        expect(appBytes.includes("platform: process.platform")).toBe(true);
+      },
+    );
+
+    test("a signed template gives a file whose signature covers the image with the graph", async () => {
+      // What the packer does as its last step, for a template that came without a signature.
+      const { imageOff, imageLen } = templateToc;
+      const codeLen = signedLength(imageLen);
+      const code = Buffer.alloc(codeLen);
+      templateBytes.copy(code, 0, imageOff, imageOff + imageLen);
+      const blob = signature(code);
+      const tocOff = Math.ceil((imageOff + codeLen + blob.length) / 8) * 8;
+      const signed = Buffer.alloc(tocOff + 128);
+      templateBytes.copy(signed, 0, 0, imageOff);
+      code.copy(signed, imageOff);
+      blob.copy(signed, imageOff + codeLen);
+      const signedToc = {
+        ...templateToc,
+        fileSize: signed.length,
+        codeOff: imageOff,
+        codeLen,
+        sigOff: imageOff + codeLen,
+        sigLen: blob.length,
+      };
+      encodeToc(signedToc).copy(signed, tocOff);
+      expect(checkSignature(signed).checks.filter(check => !check.ok)).toEqual([]);
+      writeFileSync(join(String(dir), "signed-template"), signed);
+
+      const { stderr, exitCode } = await build(String(dir), [
+        `--target=bun-portable-${arch}`,
+        "--compile-executable-path=signed-template",
+        "app.ts",
+        "worker.ts",
+        "--outfile",
+        "signed/app",
+      ]);
+      expect(stderr).not.toContain("error");
+      expect(exitCode).toBe(0);
+
+      const path = join(String(dir), "signed", "app");
+      const file = readFileSync(path);
+      const toc = decodeToc(file)!;
+      expect(toc.imageLen).toBeGreaterThan(imageLen);
+      expect(toc).toEqual({
+        ...signedToc,
+        fileSize: file.length,
+        imageLen: toc.imageLen,
+        codeLen: signedLength(toc.imageLen),
+        sigOff: imageOff + signedLength(toc.imageLen),
+        sigLen: signatureLength(signedLength(toc.imageLen)),
+      });
+      expect(checkSignature(file).checks.filter(check => !check.ok)).toEqual([]);
+      expect(inspect(file, { path }).checks.filter(check => !check.ok)).toEqual([]);
+      // The image of both is the same bytes: the signature is behind it.
+      expect(
+        file.subarray(imageOff, imageOff + toc.imageLen).equals(appBytes.subarray(imageOff, imageOff + toc.imageLen)),
+      ).toBe(true);
+
+      if (shells.length) {
+        const { stdout, stderr, exitCode } = await run([shells[0], path]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toMatchObject({ shout: "TWO MODULES!", execPath: realpathSync(path) });
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    test("--windows-hide-console is the subsystem of the Windows host in the file", async () => {
+      const { stderr, exitCode } = await build(String(dir), [
+        `--target=bun-portable-${arch}`,
+        `--compile-executable-path=${template}`,
+        "--windows-hide-console",
+        "app.ts",
+        "worker.ts",
+        "--outfile",
+        "hidden/app",
+      ]);
+      expect(stderr).not.toContain("error");
+      expect(exitCode).toBe(0);
+
+      const path = join(String(dir), "hidden", "app");
+      const file = readFileSync(path);
+      const toc = decodeToc(file)!;
+      // PE signature, COFF header, then the optional header, whose Subsystem is at 68.
+      const subsystem = toc.headerSize + 4 + 20 + 68;
+      expect(templateBytes.readUInt16LE(subsystem)).toBe(3);
+      expect(file.readUInt16LE(subsystem)).toBe(2);
+      file.writeUInt16LE(3, subsystem);
+      expect(file.equals(appBytes)).toBe(true);
+      expect(inspect(readFileSync(path), { path }).checks.filter(check => !check.ok)).toEqual([]);
+    });
+
+    test("Bun.build compiles for the target", async () => {
+      const outfile = join(String(dir), "api", "app");
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "app.ts"), join(String(dir), "worker.ts")],
+        compile: { target: `bun-portable-${arch}` as any, executablePath: template, outfile },
+      });
+      expect(result.success).toBe(true);
+      expect(result.outputs.map(output => output.path)).toEqual([outfile]);
+      expect(inspect(readFileSync(outfile), { path: outfile }).checks.filter(check => !check.ok)).toEqual([]);
+      if (shells.length) {
+        const { stdout, stderr, exitCode } = await run([shells[0], outfile, "one"]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toMatchObject({ worker: "the worker got ping", args: ["one"] });
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    test("a template for another processor is refused", async () => {
+      const { stderr, exitCode } = await build(String(dir), [
+        `--target=bun-portable-${otherArch}`,
+        `--compile-executable-path=${template}`,
+        "app.ts",
+        "--outfile",
+        "other/app",
+      ]);
+      expect(stderr).toContain("holds an image for another processor");
+      expect(existsSync(join(String(dir), "other", "app"))).toBe(false);
+      expect(exitCode).toBe(1);
     });
   });
 });

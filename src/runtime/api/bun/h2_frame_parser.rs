@@ -4977,7 +4977,8 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
+            // The JS stream can outlive its entry. The state getter reports an idle stream then.
+            return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };

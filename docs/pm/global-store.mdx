@@ -112,7 +112,8 @@ An entry only lives in the global store when it can be safely shared. Entries fa
 
 - the package has a **patch** applied via `bun patch` — the patched contents are project-specific;
 - the package is listed in **`trustedDependencies`** (or trusted via `bun add --trust`) — its lifecycle script may mutate the install directory, and a script running through the project symlink would mutate the shared copy;
-- the package, or **any** dependency it links to, is a `workspace:`, `file:`, or `link:` dependency — those resolve to project-local paths that other projects can't see.
+- the package, or **any** dependency it links to, is a `workspace:`, `file:`, or `link:` dependency — those resolve to project-local paths that other projects can't see;
+- the package has a **peer dependency whose types come from a project-installed `@types/*` package** (e.g. a library peering on `react` in a project that installs `@types/react`). TypeScript type-checks the package's declaration files at their realpath and resolves their imports by walking `node_modules` upward from there, falling back to `@types/*`; from `<cache>/links/` that walk can never reach the project's `@types` packages, so the peer's types would silently resolve as `any`. Keeping the entry project-local keeps the hidden hoisted layer — and the `@types` package — on the resolution path. A package that declares the `@types/*` package as a real dependency of its own still shares globally.
 
 Ineligibility propagates: if `your-app` depends on `internal-utils` which is a workspace package, `internal-utils` is project-local, and so is every entry that links to it. When an entry loses eligibility between installs (newly patched, newly trusted), Bun detaches it from the global store and rebuilds it project-locally on the next install. The shared entry stays untouched.
 

@@ -2244,6 +2244,19 @@ function streamOnResume(this: Http2Stream) {
   const id = this.id;
   if (session && id) session[bunHTTP2Native]?.setStreamReading(id, true);
 }
+// events.errorMonitor listener. A Duplex that errors without being destroyed (autoDestroy is
+// off, like node; a write() after end() is the usual cause) never emits 'end' or 'finish', so a
+// destroy that destroyClosedStream deferred to one of them would never run. Node has the same wait
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L606-L612) and leaves
+// such a stream undestroyed, but there the native close cannot precede a late write made in the
+// same tick as end(chunk). Here it can, and a client stream holds its maxConcurrentStreams slot
+// until 'close'. Unread buffered data is dropped, as in any destroy().
+function streamOnErrored(this: Http2Stream) {
+  if (!this.destroyed && this.errored && (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0) {
+    // Deferred so the 'error' listeners observe the same live stream as when the close comes second.
+    process.nextTick(destroyIfNotDestroyedNT, this);
+  }
+}
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
@@ -2348,6 +2361,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // backpressures instead of the session buffering the whole body.
     this.on("pause", streamOnPause);
     this.on("resume", streamOnResume);
+    this.on(EventEmitter.errorMonitor, streamOnErrored);
   }
 
   get scheme() {
@@ -4115,23 +4129,7 @@ class ServerHttp2Session extends Http2Session {
         markStreamClosed(stream);
         self.#connections--;
         if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
-        if (stream.readable && !stream.rstCode) {
-          // Clean close while data is still buffered on the readable side (e.g. the response
-          // ended before the request body was consumed): node defers the destroy until the
-          // consumer drains it ('end'), so the buffered request body is not lost.
-          stream.once("end", destroySelfOnEnd);
-        } else if (
-          (stream.writableEnded || stream[kEndingWithChunk]) &&
-          !stream.writableFinished &&
-          !stream.destroyed
-        ) {
-          // Writable side is mid-finish (an in-flight _final/_write carrying END_STREAM settled
-          // native synchronously, re-entering before Writable.end() set kEnding): destroying now
-          // swallows 'finish'. Node's kMaybeDestroy waits for writable to finish first.
-          stream.once("finish", destroySelfOnEnd);
-        } else {
-          stream.destroy();
-        }
+        destroyClosedStream(stream);
         if (self.#connections === 0 && self.#closed) {
           if (self.#pendingSettingsAckCount > 0 || (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)) {
             scheduleSettingsAckGraceNT(self);
@@ -4937,6 +4935,26 @@ function sessionTimerExpired(session: Http2Session) {
 function destroySelfOnEnd(this: Http2Stream) {
   this.destroy();
 }
+// streamEnd(7): the native side fully closed the stream and freed it.
+function destroyClosedStream(stream: Http2Stream) {
+  if (stream.errored) {
+    // Neither event below fires on an errored Duplex. node's onStreamClose destroys at once too:
+    // an emitted 'error' makes `stream.readable` false.
+    stream.destroy();
+  } else if (stream.readable && !stream.rstCode) {
+    // Clean close while data is still buffered on the readable side (e.g. the response ended
+    // before the request body was consumed): node defers the destroy until the consumer drains
+    // it ('end'), so a late-attaching reader does not lose data.
+    stream.once("end", destroySelfOnEnd);
+  } else if ((stream.writableEnded || stream[kEndingWithChunk]) && !stream.writableFinished && !stream.destroyed) {
+    // Writable side is mid-finish (an in-flight _final/_write carrying END_STREAM settled
+    // native synchronously, re-entering before Writable.end() set kEnding): destroying now
+    // swallows 'finish'. Node's kMaybeDestroy waits for writable to finish first.
+    stream.once("finish", destroySelfOnEnd);
+  } else {
+    stream.destroy();
+  }
+}
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
@@ -5115,23 +5133,7 @@ class ClientHttp2Session extends Http2Session {
         stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
-        if (stream.readable && !stream.rstCode) {
-          // Clean close while data is still buffered on the readable side: node defers the
-          // destroy until the consumer drains it ('end'), so a late-attaching reader does not
-          // lose data.
-          stream.once("end", destroySelfOnEnd);
-        } else if (
-          (stream.writableEnded || stream[kEndingWithChunk]) &&
-          !stream.writableFinished &&
-          !stream.destroyed
-        ) {
-          // Writable side is mid-finish (an in-flight _final/_write carrying END_STREAM settled
-          // native synchronously, re-entering before Writable.end() set kEnding): destroying now
-          // swallows 'finish'. Node's kMaybeDestroy waits for writable to finish first.
-          stream.once("finish", destroySelfOnEnd);
-        } else {
-          stream.destroy();
-        }
+        destroyClosedStream(stream);
         if (self.#connections === 0 && self.#closed) {
           // Deferred like close()'s own destroy: runs inside a native dispatch batch and
           // not-yet-dispatched frames must still reach JS. An outstanding settings() ACK or

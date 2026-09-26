@@ -6036,6 +6036,123 @@ it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () =>
   }
 });
 
+describe.concurrent("write() after end()", () => {
+  // The late write() errors the stream without destroying it (autoDestroy is off, like node), and
+  // an errored Duplex never emits 'finish' or 'end'. The stream still has to emit 'close' once the
+  // native side has closed, whichever of the two comes first.
+  const lateWriteEvents = ["write:ERR_STREAM_WRITE_AFTER_END", "error:ERR_STREAM_WRITE_AFTER_END", "close"];
+
+  // Records the stream's events and returns the callback for the late write().
+  function record(stream, closed) {
+    const events = [];
+    for (const name of ["finish", "error"]) {
+      stream.on(name, err => events.push(err ? `${name}:${err.code}` : name));
+    }
+    stream.on("close", () => closed.resolve(events.concat("close")));
+    return err => events.push(`write:${err.code}`);
+  }
+
+  // Resolves with the server stream's events and the length of the body the client received.
+  async function serve(respond, requestBody) {
+    const server = http2.createServer();
+    let client;
+    try {
+      const serverClosed = Promise.withResolvers();
+      server.on("stream", stream => respond(stream, record(stream, serverClosed)));
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", serverClosed.reject);
+      const req = client.request({ ":path": "/", ":method": requestBody === undefined ? "GET" : "POST" });
+      const received = new Promise((resolve, reject) => {
+        let length = 0;
+        req.on("error", reject);
+        req.on("data", chunk => (length += chunk.length));
+        req.on("end", () => resolve(length));
+      });
+      req.end(requestBody);
+      return await Promise.all([serverClosed.promise, received]);
+    } finally {
+      client?.close();
+      server.close();
+    }
+  }
+
+  it("server stream, late write before the native close", async () => {
+    const result = await serve((stream, late) => {
+      stream.respond({ ":status": 200 });
+      stream.end("done");
+      stream.write("late", late);
+    });
+    expect(result).toEqual([lateWriteEvents, 4]);
+  });
+
+  it("server stream, native close inside end(chunk)", async () => {
+    // The request has fully arrived, so end(chunk) closes the native stream and the destroy is
+    // already waiting for 'finish' when the late write errors the stream.
+    let closedByEnd;
+    const result = await serve((stream, late) => {
+      stream.resume();
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end("done");
+        closedByEnd = stream.closed;
+        stream.write("late", late);
+      });
+    }, "body");
+    expect([closedByEnd, ...result]).toEqual([true, lateWriteEvents, 4]);
+  });
+
+  // Drives one client request against a server that answers "ok" once the request has ended.
+  async function request(drive) {
+    const server = http2.createServer();
+    let client;
+    try {
+      server.on("stream", stream => {
+        stream.on("error", () => {});
+        stream.resume();
+        stream.on("end", () => {
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        });
+      });
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      const clientClosed = Promise.withResolvers();
+      client.on("error", clientClosed.reject);
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      drive(client, req, record(req, clientClosed));
+      return await clientClosed.promise;
+    } finally {
+      client?.close();
+      server.close();
+    }
+  }
+
+  it("client stream, late write before the native close", async () => {
+    const events = await request((client, req, late) => {
+      req.end("body");
+      req.write("late", late);
+    });
+    expect(events).toEqual(lateWriteEvents);
+  });
+
+  it("client stream, native close before the late write", async () => {
+    // Nothing reads the response, so the destroy is waiting for 'end'. The PING is answered after
+    // the whole response, which makes its ack the first point where the stream is closed for sure.
+    let closedBeforeLateWrite;
+    const events = await request((client, req, late) => {
+      req.end("body");
+      req.on("response", () => {
+        client.ping(() => {
+          closedBeforeLateWrite = req.closed && !req.destroyed;
+          req.write("late", late);
+        });
+      });
+    });
+    expect([closedBeforeLateWrite, events]).toEqual([true, ["finish", ...lateWriteEvents]]);
+  });
+});
+
 it("write() completes its callback on a later turn, not inside write()", async () => {
   // _write hands the chunk to the native session with the write callback deferred, so the
   // chunk is still counted in writableLength when write() returns and the Writable settles it

@@ -94,6 +94,15 @@ pub(crate) struct ConfigureEnvOptions {
     pub(crate) store_root_fd: bool,
 }
 
+/// What the `entry_path` of [`RunCommand::boot`] names.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EntryPath {
+    /// The file to run.
+    Resolved,
+    /// A path as `node` takes it. `Run::start` resolves it and it stays `process.argv[1]` (Node: `resolveMainPath`).
+    Unresolved,
+}
+
 pub(crate) struct RunCommand;
 
 impl RunCommand {
@@ -924,6 +933,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub(crate) fn boot(
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
+        entry_kind: EntryPath,
         loader: Option<Loader>,
     ) -> crate::Result<()> {
         if !ctx.debug.loaded_bunfig {
@@ -1101,8 +1111,27 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: run_entry,
+            entry_kind,
         }
         .start()
+    }
+
+    /// The module key of `entry`, for `vm.main()`. On `None` the module loader reports the failure.
+    fn resolve_entry_path(vm: &mut VirtualMachine, entry: &'static [u8]) -> Option<&'static [u8]> {
+        let top_level_dir = vm.top_level_dir();
+        // Like the module loader, keep the resolver's messages out of `vm.log`.
+        let mut log = bun_ast::Log::default();
+        let resolver = &raw mut vm.transpiler.resolver;
+        // SAFETY: `resolver` is a field of the live VM. `log` is declared
+        // before the guard, so the guard restores the log before `log` drops.
+        let _restore_log = unsafe {
+            bun_resolver::Resolver::scoped_log(resolver, ::core::ptr::NonNull::from(&mut log))
+        };
+        // SAFETY: `vm` is borrowed for this call, so nothing else uses its resolver.
+        let resolved = unsafe { &mut *resolver }
+            .resolve(top_level_dir, entry, bun_ast::ImportKind::EntryPointRun)
+            .ok()?;
+        Some(resolved.path_const()?.text)
     }
 
     /// Entry point for
@@ -1220,6 +1249,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: entry,
+            entry_kind: EntryPath::Resolved,
         }
         .start()
     }
@@ -1240,6 +1270,7 @@ pub(crate) struct Run<'a> {
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// the runner arena).
     entry_path: &'static [u8],
+    entry_kind: EntryPath,
 }
 
 // `on_unhandled_rejection_before_close` is a plain fn pointer stored on the
@@ -1289,6 +1320,7 @@ impl Run<'_> {
             ctx,
             vm,
             entry_path: mut entry,
+            entry_kind,
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
 
@@ -1419,6 +1451,16 @@ impl Run<'_> {
             if !tld.is_empty() {
                 entry = tld;
             }
+        }
+
+        // Resolve last: `NODE_PRESERVE_SYMLINKS` and the `--watch`/`--hot` watcher must be on the resolver.
+        if entry_kind == EntryPath::Unresolved
+            && vm.module_loader.eval_source.is_none()
+            && let Some(resolved) = RunCommand::resolve_entry_path(vm, entry)
+            && resolved != entry
+        {
+            vm.set_main_for_argv(entry);
+            entry = resolved;
         }
 
         match vm.load_entry_point(entry) {
@@ -1700,7 +1742,7 @@ impl RunCommand {
         // owned copy by value.
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
-        if let Err(err) = Self::boot(ctx, owned, loader) {
+        if let Err(err) = Self::boot(ctx, owned, EntryPath::Resolved, loader) {
             Self::boot_failed_exit(ctx, paths::basename(path), &err);
         }
         true
@@ -2856,7 +2898,7 @@ impl RunCommand {
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, owned, None) {
+        if let Err(err) = Self::boot(ctx, owned, EntryPath::Resolved, None) {
             Self::boot_failed_exit(ctx, b"-", &err);
         }
         Ok(true)
@@ -2906,7 +2948,7 @@ impl RunCommand {
         let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
             .to_vec()
             .into_boxed_slice();
-        Self::boot(ctx, entry, None)
+        Self::boot(ctx, entry, EntryPath::Resolved, None)
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
@@ -2941,7 +2983,7 @@ impl RunCommand {
             let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
                 .to_vec()
                 .into_boxed_slice();
-            return Self::boot(ctx, entry, None);
+            return Self::boot(ctx, entry, EntryPath::Resolved, None);
         }
 
         if ctx.positionals.is_empty() {
@@ -2984,7 +3026,7 @@ impl RunCommand {
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, normalized, None) {
+        if let Err(err) = Self::boot(ctx, normalized, EntryPath::Unresolved, None) {
             Self::exec_as_if_node_boot_failed(ctx, &basename, err);
         }
         Ok(())
@@ -4023,7 +4065,12 @@ impl BunXFastPath {
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
-        if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
+        if let Err(err) = RunCommand::boot(
+            ctx,
+            utf8.to_vec().into_boxed_slice(),
+            EntryPath::Resolved,
+            None,
+        ) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(

@@ -582,6 +582,127 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
 });
 
+// cluster._getServer() copies every key of its options into the worker's queryServer message, so the primary reads
+// `ack` and `addressType` as the worker wrote them. Node compares both with ===: an `addressType` that is not 6 binds
+// IPv4, and each of these queries gets errno 0 and a handle.
+const malformedQueryFixture = `
+const cluster = require("node:cluster");
+const fs = require("node:fs");
+
+// Under SCHED_NONE the primary binds the address itself, and that is where it reads addressType.
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", reply => {
+    // "127.0.0.1" cannot bind as IPv6. As a pipe (addressType -1) it is a unix socket in the cwd. Neither means IPv4.
+    console.log(JSON.stringify({ ...reply, unixSocket: fs.existsSync("127.0.0.1") }));
+    worker.kill();
+    process.exit(0);
+  });
+  worker.on("exit", (code, signal) => {
+    console.error("worker exited before the primary answered (" + code + ", " + signal + ")");
+    process.exit(1);
+  });
+} else {
+  const query = { address: "127.0.0.1", port: 0, addressType: 4, fd: -1, ...JSON.parse(process.env.MALFORMED) };
+  cluster._getServer({ once() {} }, query, (errno, handle) => {
+    process.send({ errno, handle: handle != null });
+  });
+}
+`;
+
+test.concurrent.each([
+  { ack: {} },
+  { addressType: {} },
+  { addressType: false },
+  { addressType: 6.5 },
+  { addressType: -1.5 },
+])("primary treats %j in a worker's queryServer message like node", async malformed => {
+  using dir = tempDir("cluster-malformed-query", { "fixture.js": malformedQueryFixture });
+  const { stdout, stderr, exitCode } = await bunRun(joinP(String(dir), "fixture.js"), {
+    MALFORMED: JSON.stringify(malformed),
+  });
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ errno: 0, handle: true, unixSocket: false }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Under SCHED_RR the primary parks a callback for each newconn until the worker acks its seq. A query whose `ack` is
+// not that seq must reach the default handler. A primary that lets it settle the newconn hands the same socket to the
+// worker again and never answers the query.
+const forgedAckFixture = `
+const cluster = require("node:cluster");
+const net = require("node:net");
+
+// Only SCHED_RR sends newconn. An inherited NODE_CLUSTER_SCHED_POLICY=none must not change that.
+cluster.schedulingPolicy = cluster.SCHED_RR;
+
+const SOCKETS = 3;
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", async message => {
+    if (message.port === undefined) {
+      console.log(JSON.stringify(message));
+      worker.kill();
+      process.exit(0);
+    }
+    // One socket at a time: the second socket is the primary's newconn seq 2, and a release build reads null as 2.
+    for (let i = 0; i < SOCKETS; i++) {
+      const socket = net.connect(message.port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.resume();
+      await new Promise(resolve => socket.on("close", resolve));
+    }
+  });
+  worker.on("exit", (code, signal) => {
+    console.error("worker exited before it reported (" + code + ", " + signal + ")");
+    process.exit(1);
+  });
+} else {
+  let newconns = 0;
+  let connections = 0;
+  let answer;
+  const report = () => {
+    const done = connections === SOCKETS && answer !== undefined;
+    if (done || connections > SOCKETS) process.send({ connections, answer });
+  };
+  // This listener runs before the worker acks the newconn, so the primary reads the query while the callback is parked.
+  process.prependListener("internalMessage", message => {
+    if (message?.act !== "newconn" || ++newconns !== 2) return;
+    const ack = process.env.ACK === "null" ? null : message.seq + 0.5;
+    const query = { address: "127.0.0.1", port: 0, addressType: 4, fd: -1, ack };
+    cluster._getServer({ once() {} }, query, (errno, handle) => {
+      answer = { errno, handle: handle != null };
+      report();
+    });
+  });
+  const server = net.createServer(socket => {
+    connections++;
+    socket.on("error", () => {});
+    socket.end();
+    report();
+  });
+  server.listen(0, "127.0.0.1", () => process.send({ port: server.address().port }));
+}
+`;
+
+test.concurrent.each(["null", "seq + 0.5"])(
+  "round-robin: a worker's query with ack %s does not settle the in-flight newconn",
+  async ack => {
+    using dir = tempDir("cluster-forged-ack", { "fixture.js": forgedAckFixture });
+    const { stdout, stderr, exitCode } = await bunRun(joinP(String(dir), "fixture.js"), { ACK: ack });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ connections: 3, answer: { errno: 0, handle: true } }),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 const listeningPayloadFixture = `
 const cluster = require("node:cluster");
 

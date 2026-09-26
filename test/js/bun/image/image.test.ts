@@ -331,6 +331,159 @@ describe("Bun.Image", () => {
     expect(rgbaAt(data, 4, 0, 0)).toEqual([0, 255, 0, 255]); // green moved to top-left
   });
 
+  // A JPEG in, a JPEG out and nothing but geometry in between is done by
+  // permuting DCT coefficients, not by resampling. 64×32 sources: both sides
+  // are whole 16×16 iMCUs at the 4:2:0 the encoder uses, so libjpeg-turbo
+  // accepts every transform as "perfect".
+  describe("lossless JPEG transforms", () => {
+    // High-frequency, so two lossy round trips could not reproduce it.
+    const noisePng = makePng(64, 32, (x, y) => {
+      const n = (x * 2654435761 + y * 40503) >>> 0;
+      return [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, 255];
+    });
+    // Four flat quadrants: which one ends up where is legible through JPEG.
+    const quadrantsPng = makePng(64, 32, (x, y) => {
+      if (x < 32) return y < 16 ? [220, 30, 30, 255] : [30, 220, 30, 255];
+      return y < 16 ? [30, 30, 220, 255] : [235, 235, 235, 255];
+    });
+
+    test("rotate(90) then rotate(270) returns the source coefficients", async () => {
+      const jpeg = await new Bun.Image(noisePng).jpeg().bytes();
+      const before = decodePngRaw(await new Bun.Image(jpeg).png().bytes());
+      const there = await new Bun.Image(jpeg).rotate(90).bytes();
+      const meta = await new Bun.Image(there).metadata();
+      expect({ format: meta.format, w: meta.width, h: meta.height }).toEqual({ format: "jpeg", w: 32, h: 64 });
+      const back = await new Bun.Image(there).rotate(270).bytes();
+      const after = decodePngRaw(await new Bun.Image(back).png().bytes());
+      expect({ w: after.w, h: after.h }).toEqual({ w: before.w, h: before.h });
+      // Counted rather than compared whole, so a failure reads as a number
+      // instead of 8 KiB of bytes.
+      let differing = 0;
+      for (let i = 0; i < before.data.length; i++) if (before.data[i] !== after.data[i]) differing++;
+      expect(differing).toBe(0);
+    });
+
+    test("every rotate/flip/flop combination agrees with the pixel pipeline", async () => {
+      const jpeg = await new Bun.Image(quadrantsPng).jpeg().bytes();
+      const chain = (rotate: number, flip: boolean, flop: boolean) => {
+        let img = new Bun.Image(jpeg);
+        if (rotate) img = img.rotate(rotate);
+        if (flip) img = img.flip();
+        if (flop) img = img.flop();
+        return img;
+      };
+      const mismatches: string[] = [];
+      for (const rotate of [0, 90, 180, 270])
+        for (const flip of [false, true])
+          for (const flop of [false, true]) {
+            if (!rotate && !flip && !flop) continue;
+            const label = `rotate(${rotate}) flip=${flip} flop=${flop}`;
+            // `.png()` resamples; `.bytes()` on a JPEG source transforms.
+            const pixels = decodePngRaw(await chain(rotate, flip, flop).png().bytes());
+            const coeffs = decodePngRaw(await new Bun.Image(await chain(rotate, flip, flop).bytes()).png().bytes());
+            if (coeffs.w !== pixels.w || coeffs.h !== pixels.h) {
+              mismatches.push(`${label}: ${coeffs.w}×${coeffs.h}, expected ${pixels.w}×${pixels.h}`);
+              continue;
+            }
+            // Quadrant centres, away from the edges JPEG rings at.
+            for (const qx of [0.25, 0.75])
+              for (const qy of [0.25, 0.75]) {
+                const x = Math.floor(pixels.w * qx);
+                const y = Math.floor(pixels.h * qy);
+                const a = rgbaAt(pixels.data, pixels.w, x, y);
+                const b = rgbaAt(coeffs.data, coeffs.w, x, y);
+                if (a.some((v, i) => i < 3 && Math.abs(v - b[i]) > 24))
+                  mismatches.push(`${label} at ${x},${y}: ${b} vs ${a}`);
+              }
+          }
+      expect(mismatches).toEqual([]);
+    });
+
+    test("a side that is not whole iMCUs falls back to resampling", async () => {
+      // 33×17 leaves a partial iMCU on both edges, so a perfect rotate is
+      // refused and the decode path has to produce the answer.
+      const odd = makePng(33, 17, (x, y) => [(x * 7) & 255, (y * 15) & 255, 0, 255]);
+      const jpeg = await new Bun.Image(odd).jpeg().bytes();
+      const meta = await new Bun.Image(await new Bun.Image(jpeg).rotate(90).bytes()).metadata();
+      expect({ format: meta.format, w: meta.width, h: meta.height }).toEqual({ format: "jpeg", w: 17, h: 33 });
+    });
+
+    test(".jpeg() options keep the re-encode", async () => {
+      const jpeg = await new Bun.Image(noisePng).jpeg().bytes();
+      const transformed = await new Bun.Image(jpeg).rotate(90).bytes();
+      const requantised = await new Bun.Image(jpeg).rotate(90).jpeg({ quality: 20 }).bytes();
+      expect(requantised.length).toBeLessThan(transformed.length);
+    });
+
+    // Big-endian TIFF with one Orientation entry, spliced in after SOI, as
+    // the "EXIF Orientation=6 auto-rotates" test below builds by hand.
+    const withExifOrientation = (jpeg: Uint8Array, orientation: number) => {
+      // prettier-ignore
+      const tiff = new Uint8Array([
+        0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, // header
+        0x00, 0x01,                                     // 1 entry
+        0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, orientation, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,                         // next IFD = 0
+      ]);
+      const exif = Buffer.concat([Buffer.from("Exif\0\0"), tiff]);
+      const seglen = exif.length + 2;
+      const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, seglen >> 8, seglen & 255]), exif]);
+      return Buffer.concat([jpeg.subarray(0, 2), app1, jpeg.subarray(2)]);
+    };
+
+    test("EXIF orientation folds into the same transform", async () => {
+      const base = await new Bun.Image(quadrantsPng).jpeg().bytes();
+      const mismatches: string[] = [];
+      for (let orientation = 1; orientation <= 8; orientation++) {
+        const jpeg = withExifOrientation(base, orientation);
+        for (const rotate of [0, 90, 180, 270])
+          for (const flip of [false, true])
+            for (const flop of [false, true]) {
+              const chain = () => {
+                let img = new Bun.Image(jpeg);
+                if (rotate) img = img.rotate(rotate);
+                if (flip) img = img.flip();
+                if (flop) img = img.flop();
+                return img;
+              };
+              const label = `orientation=${orientation} rotate(${rotate}) flip=${flip} flop=${flop}`;
+              const pixels = decodePngRaw(await chain().png().bytes());
+              const coeffs = decodePngRaw(await new Bun.Image(await chain().bytes()).png().bytes());
+              if (coeffs.w !== pixels.w || coeffs.h !== pixels.h) {
+                mismatches.push(`${label}: ${coeffs.w}×${coeffs.h}, expected ${pixels.w}×${pixels.h}`);
+                continue;
+              }
+              for (const qx of [0.25, 0.75])
+                for (const qy of [0.25, 0.75]) {
+                  const x = Math.floor(pixels.w * qx);
+                  const y = Math.floor(pixels.h * qy);
+                  const a = rgbaAt(pixels.data, pixels.w, x, y);
+                  const b = rgbaAt(coeffs.data, coeffs.w, x, y);
+                  if (a.some((v, i) => i < 3 && Math.abs(v - b[i]) > 24))
+                    mismatches.push(`${label} at ${x},${y}: ${b} vs ${a}`);
+                }
+            }
+      }
+      expect(mismatches).toEqual([]);
+    });
+
+    test("the transform drops the source Exif", async () => {
+      // Orientation 6 is 90° CW, so the 64×32 source is 32×64 upright and
+      // the rotation ends up in the coefficients. A surviving tag would have
+      // a viewer turn it a second time, which `autoOrient: false` would show
+      // as a different pair of dimensions from the default read.
+      const jpeg = withExifOrientation(await new Bun.Image(quadrantsPng).jpeg().bytes(), 6);
+      expect(await new Bun.Image(jpeg).metadata()).toEqual({ width: 32, height: 64, format: "jpeg" });
+      const out = await new Bun.Image(jpeg).bytes();
+      expect(await new Bun.Image(out).metadata()).toEqual({ width: 32, height: 64, format: "jpeg" });
+      expect(await new Bun.Image(out, { autoOrient: false }).metadata()).toEqual({
+        width: 32,
+        height: 64,
+        format: "jpeg",
+      });
+    });
+  });
+
   describe("resize", () => {
     test("downscale 16→8 with each filter yields correct dims", async () => {
       for (const filter of ["box", "bilinear", "lanczos3"] as const) {

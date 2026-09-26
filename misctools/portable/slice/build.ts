@@ -105,7 +105,14 @@ const steps: Record<string, { done: () => boolean; make: () => void }> = {
     make() {
       const dir = join(work, "codegen");
       mkdirSync(dir, { recursive: true });
-      for (const name of ["json_byte_class.rs", "xml_byte_class.rs", "runtime.out.js", "build_options.rs"]) copyFileSync(join(baseCodegen, name), join(dir, name));
+      for (const name of ["json_byte_class.rs", "xml_byte_class.rs", "runtime.out.js"]) copyFileSync(join(baseCodegen, name), join(dir, name));
+      // build_options.rs is written at configure time by scripts/build/buildOptionsRs.ts. The copy
+      // gets the paths of this build and the cfg that the configuration of the image adds.
+      let options = readFileSync(join(baseCodegen, "build_options.rs"), "utf8");
+      options = options.replace(/pub const BASE_PATH: &\[u8\] = "[^"]*"/, `pub const BASE_PATH: &[u8] = "${repo}"`);
+      options = options.replace(/pub const CODEGEN_PATH: &\[u8\] = "[^"]*"/, `pub const CODEGEN_PATH: &[u8] = "${dir}"`);
+      if (!options.includes("bun_portable")) options = options.replace(/(target_os = "freebsd",\n)/, `$1    bun_portable,\n`);
+      writeFileSync(join(dir, "build_options.rs"), options);
     },
   },
 

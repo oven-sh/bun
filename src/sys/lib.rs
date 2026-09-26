@@ -3607,6 +3607,9 @@ mod windows_impl {
         // read-only-opened HANDLE yields ACCESS_DENIED, which POSIX surfaces
         // as EBADF "fd not open for writing").
         debug_assert!(!buf.is_empty());
+        if let Some(result) = w::console::write(fd, buf) {
+            return result;
+        }
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
         let mut bytes_written: w::DWORD = 0;
         // SAFETY: FFI; `fd.cast()` is a valid HANDLE, buf valid for `adjusted_len`.

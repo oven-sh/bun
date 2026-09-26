@@ -1445,6 +1445,29 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return uwsReq->getHasTransferEncoding();
   }
 
+  size_t uws_req_get_raw_head(uws_req_t *res, const char **dest)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    std::string_view value = uwsReq->getRawHead();
+    *dest = value.data();
+    return value.length();
+  }
+
+  static_assert(uWS::MINIMUM_HTTP_POST_PADDING == 32, "update Request::RAW_HEAD_POST_PADDING in src/uws_sys/Request.rs");
+
+  /* `head`: a copy of uws_req_get_raw_head() plus the padding. `req` is valid only during `callback`. */
+  bool uws_req_with_raw_head(char *head, size_t length, void *ctx,
+                             void (*callback)(void *ctx, uws_req_t *req))
+  {
+    uWS::HttpRequest req;
+    if (!uWS::HttpParser::parseRawHead(head, (unsigned int)length, &req))
+    {
+      return false;
+    }
+    callback(ctx, (uws_req_t *)&req);
+    return true;
+  }
+
   us_socket_t *uws_res_upgrade(int ssl, uws_res_r res, void *data,
                              const char *sec_web_socket_key,
                              size_t sec_web_socket_key_length,

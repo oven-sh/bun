@@ -5,8 +5,10 @@ use core::ptr::NonNull;
 use std::borrow::Cow;
 
 use bun_jsc::JsCell;
+use bun_uws as uws;
 use enumset::EnumSet;
 
+use super::request_head::RequestHeadSnapshot;
 use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
@@ -236,6 +238,46 @@ impl Request {
         self.headers.set(headers);
     }
 
+    /// Runs `f` on the uWS request behind the lazy getters: live in the dispatch, parsed from the copy after it.
+    fn with_uws_request<R>(&self, f: impl FnOnce(&uws::Request) -> R) -> Option<R> {
+        if let Some(req) = self.request_context.get_request() {
+            return Some(f(bun_opaque::opaque_deref(req)));
+        }
+        self.request_context.get_head()?.with_request(f)
+    }
+
+    fn fetch_headers_from_uws(&self) -> Option<HeadersRef> {
+        self.with_uws_request(|req| {
+            HeadersRef::create_from_uws(
+                core::ptr::from_ref::<uws::Request>(req)
+                    .cast_mut()
+                    .cast::<core::ffi::c_void>(),
+            )
+        })
+    }
+
+    /// Whether the lazy `url`/`headers` getters still need the request head.
+    pub(crate) fn wants_request_head(&self) -> bool {
+        self.url.get().is_empty() || self.headers.get().is_none()
+    }
+
+    /// Takes over the context's head copy and returns the bytes kept, for the GC report.
+    pub(crate) fn detach_request_context(&mut self, head: Option<RequestHeadSnapshot>) -> usize {
+        drop(self.request_context.take_head());
+        let (context, kept) = match head {
+            Some(head) if self.wants_request_head() => {
+                let kept = head.memory_cost();
+                (AnyRequestContext::head(head), kept)
+            }
+            _ => (AnyRequestContext::NULL, 0),
+        };
+        self.request_context = context;
+        // `estimated_size` is what every mark reports through reportExtraMemoryVisited.
+        self.reported_estimated_size
+            .set(self.reported_estimated_size.get() + kept);
+        kept
+    }
+
     /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.
     /// If the headers are empty, it will look at request_context to get the headers.
     /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
@@ -249,11 +291,8 @@ impl Request {
             return Ok(self.headers_mut().as_mut().unwrap());
         }
 
-        if let Some(req) = self.request_context.get_request() {
-            // we have a request context, so we can get the headers from it
-            self.headers.set(Some(HeadersRef::create_from_uws(
-                req.cast::<core::ffi::c_void>(),
-            )));
+        if let Some(headers) = self.fetch_headers_from_uws() {
+            self.headers.set(Some(headers));
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
@@ -298,12 +337,7 @@ impl Request {
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
         if self.headers.get().is_none() {
-            if let Some(req) = self.request_context.get_request() {
-                // we have a request context, so we can get the headers from it
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    req.cast::<core::ffi::c_void>(),
-                )));
-            }
+            self.headers.set(self.fetch_headers_from_uws());
         }
 
         let headers = self.headers_mut().as_mut()?;
@@ -323,11 +357,7 @@ impl Request {
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
         if self.headers.get().is_none() {
-            if let Some(uws_req) = self.request_context.get_request() {
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    uws_req.cast::<core::ffi::c_void>(),
-                )));
-            }
+            self.headers.set(self.fetch_headers_from_uws());
         }
 
         if let Some(head) = self.headers_mut().as_mut() {
@@ -347,6 +377,11 @@ impl Request {
             let req = bun_opaque::opaque_deref(req);
             if let Some(value) = req.header(b"content-type") {
                 return Ok(Some(bun_core::Utf8Bytes::Borrowed(value)));
+            }
+        } else if let Some(head) = self.request_context.get_head() {
+            let value = head.with_request(|req| req.header(b"content-type").map(<[u8]>::to_vec));
+            if let Some(value) = value.flatten() {
+                return Ok(Some(bun_core::Utf8Bytes::Owned(value)));
             }
         }
 
@@ -710,6 +745,7 @@ impl Request {
     pub(crate) fn finalize_without_deinit(&mut self) {
         // headers.deref() → HeadersRef::Drop when set to None
         self.headers.set(None);
+        drop(self.request_context.take_head());
 
         self.url.set(BunString::EMPTY);
 
@@ -726,6 +762,8 @@ impl Request {
         // hot-path `Box::from_raw().drop()` below cannot re-run this.
         // SAFETY: `this` is live and this is the sole release point for `body`.
         unsafe { ManuallyDrop::drop(&mut this.body) };
+        // `AnyRequestContext` is `Copy`, so the drop glue below cannot free the head copy.
+        drop(this.request_context.take_head());
         if this.weak_ptr_data.on_finalize() {
             // Hot path: no outstanding weak refs. Reclaim and drop the whole
             // allocation in one shot — `Box::from_raw`'s drop runs
@@ -773,9 +811,7 @@ impl Request {
             return url.byte_slice().len();
         }
 
-        if let Some(req) = self.request_context.get_request() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
-            let req = bun_opaque::opaque_deref(req);
+        self.with_uws_request(|req| {
             let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
                 if let Some(host) = req
@@ -789,10 +825,9 @@ impl Request {
                     return self.get_protocol().len() + host.len() + req_url.len();
                 }
             }
-            return req_url.len();
-        }
-
-        0
+            req_url.len()
+        })
+        .unwrap_or(0)
     }
 
     pub(crate) fn get_protocol(&self) -> &'static [u8] {
@@ -865,9 +900,12 @@ impl Request {
             return Ok(());
         }
 
-        if let Some(req) = self.request_context.get_request() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
-            let req = bun_opaque::opaque_deref(req);
+        let predicted_len = if cfg!(debug_assertions) {
+            self.size_of_url()
+        } else {
+            0
+        };
+        self.with_uws_request(|req| {
             let req_url = Self::request_target_path(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
                 if let Some(host) = req
@@ -881,7 +919,7 @@ impl Request {
                     let protocol = self.get_protocol();
                     let url_bytelength = protocol.len() + host.len() + req_url.len();
 
-                    debug_assert!(self.size_of_url() == url_bytelength);
+                    debug_assert!(predicted_len == url_bytelength);
 
                     if url_bytelength < 128 {
                         let mut buffer = [0u8; 128];
@@ -896,7 +934,7 @@ impl Request {
                             &buffer[..at]
                         };
 
-                        debug_assert!(self.size_of_url() == url.len());
+                        debug_assert!(predicted_len == url.len());
 
                         let href = bun_url::href_from_string(&BunString::from_bytes(url));
                         if !href.is_empty() {
@@ -943,10 +981,11 @@ impl Request {
                 }
             }
 
-            debug_assert!(self.size_of_url() == req_url.len());
+            debug_assert!(predicted_len == req_url.len());
             self.url.set(BunString::clone_utf8(&req_url));
-        }
-        Ok(())
+            Ok(())
+        })
+        .unwrap_or(Ok(()))
     }
 }
 

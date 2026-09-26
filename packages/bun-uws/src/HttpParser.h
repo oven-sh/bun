@@ -209,6 +209,12 @@ struct HttpResponseData;
          * Must be cloned before the request handler returns. */
         std::span<const char> head;
 
+        /* The bytes this request was parsed from: the request line through the blank line. */
+        std::string_view getRawHead()
+        {
+            return std::string_view(headers->key.data(), (size_t) (head.data() - headers->key.data()));
+        }
+
         bool isAncient()
         {
             return ancientHttp;
@@ -1453,6 +1459,32 @@ struct HttpResponseData;
     }
 
 public:
+    /* Fills `req` from a copy of getRawHead() that has MINIMUM_HTTP_POST_PADDING writable bytes after it. */
+    static bool parseRawHead(char *head, unsigned int length, HttpRequest *req) {
+        head[length] = '\r';
+        head[length + 1] = 'a';
+        /* getMethod() lowercases the method in place, so a copy taken after it reads
+         * "connect host:port" and consumeRequestLine's CONNECT token no longer matches. */
+        for (unsigned int i = 0; i < length && head[i] != ' '; i++) {
+            if (head[i] >= 'a' && head[i] <= 'z') {
+                head[i] -= 32;
+            }
+        }
+        bool isConnectRequest = false;
+        /* The bytes were accepted once already, so the most lenient flags give the same result. */
+        auto result = getHeaders(head, head + length, req->headers, req->ancientHttp, isConnectRequest, false, true, 0);
+        if (result.isError() || !result.consumedBytes()) {
+            return false;
+        }
+        req->bf.reset();
+        for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
+            req->bf.add(h->key);
+        }
+        const char *querySeparatorPtr = (const char *) memchr(req->headers->value.data(), '?', req->headers->value.length());
+        req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
+        return true;
+    }
+
     /* When requestHandler returns something other than user (it upgraded or closed
      * the socket), parsing stops and consumedBytes() of the result is the offset in
      * data from which the bytes are the caller's. That is the end of the request's

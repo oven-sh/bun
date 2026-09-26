@@ -3377,6 +3377,9 @@ pub mod bv2_impl {
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.metafile_markdown_path =
                 unsafe { interned_slice(&this.transpiler.options.metafile_markdown_path) };
+            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
+            this.linker.options.caller_output_paths =
+                unsafe { bun_ptr::detach_lifetime(&this.transpiler.options.caller_output_paths) };
 
             this.linker.dev_server = this.dev_server;
 
@@ -4407,6 +4410,7 @@ pub mod bv2_impl {
                         output_files: Vec::new(),
                         metafile: None,
                         metafile_markdown: None,
+                        input_paths: Default::default(),
                     });
                 }
 
@@ -4437,6 +4441,12 @@ pub mod bv2_impl {
                     output_files,
                     metafile,
                     metafile_markdown: None,
+                    // When the linker wrote the files it also checked them, and the metafile paths.
+                    input_paths: if this.linker.writes_output_files_to_disk() {
+                        Default::default()
+                    } else {
+                        crate::input_path_set::InputPathSet::from_graph(&this.graph, this.file_map)
+                    },
                 })
             })();
 
@@ -5625,10 +5635,43 @@ pub mod bv2_impl {
                 _ => None,
             };
 
+            // Without an executable to assemble, the linker checked and wrote everything, the metafile paths included.
+            let input_paths = if self.linker.options.compile_mode.is_executable() {
+                let mut input_paths =
+                    crate::input_path_set::InputPathSet::from_graph(&self.graph, self.file_map);
+                for root in self.transpiler.options.caller_input_roots.iter() {
+                    input_paths.add_root(root);
+                }
+                input_paths
+            } else {
+                Default::default()
+            };
+
             // Write metafile outputs to disk and add them as OutputFiles.
             // Metafile paths are relative to outdir, like all other output files.
             // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
             let outdir = &self.linker.resolver().opts.output_dir;
+            if !outdir.is_empty() && !input_paths.is_empty() {
+                let overwritten = input_overwritten_by_metafile(
+                    &input_paths,
+                    outdir,
+                    [
+                        self.linker.options.metafile_json_path,
+                        self.linker.options.metafile_markdown_path,
+                    ],
+                );
+                if let Some(input) = overwritten {
+                    self.linker.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Refusing to overwrite input file {}",
+                            bun_core::fmt::quote(&input)
+                        ),
+                    );
+                    return Err(Error::OutputOverwritesInput);
+                }
+            }
             if !self.linker.options.metafile_json_path.is_empty() {
                 if let Some(mf) = &metafile {
                     write_metafile_output(
@@ -5656,8 +5699,39 @@ pub mod bv2_impl {
                 output_files,
                 metafile,
                 metafile_markdown,
+                input_paths,
             })
         }
+    }
+
+    /// The path, relative to the working directory, that `write_metafile_output` writes.
+    fn metafile_disk_path<'a>(outdir: &[u8], file_path: &[u8], buf: &'a mut [u8]) -> &'a [u8] {
+        bun_paths::resolve_path::join_string_buf::<bun_paths::resolve_path::platform::Auto>(
+            buf,
+            &[outdir, file_path],
+        )
+    }
+
+    /// The input that `write_metafile_output` would replace for one of `metafile_paths`.
+    pub(crate) fn input_overwritten_by_metafile(
+        input_paths: &crate::input_path_set::InputPathSet,
+        outdir: &[u8],
+        metafile_paths: [&[u8]; 2],
+    ) -> Option<Box<[u8]>> {
+        let mut working_dir: Option<crate::input_path_set::OutputRoot> = None;
+        metafile_paths
+            .into_iter()
+            .filter(|path| !path.is_empty())
+            .find_map(|path| {
+                let working_dir = working_dir
+                    .get_or_insert_with(|| crate::input_path_set::resolve_output_root(b""));
+                let mut buf = bun_paths::path_buffer_pool::get();
+                input_paths.overwritten_by(
+                    working_dir,
+                    metafile_disk_path(outdir, path, &mut buf.0[..]),
+                    crate::input_path_set::OutputWrite::Truncate,
+                )
+            })
     }
 
     /// Writes a metafile (JSON or markdown) to disk and appends it to the output_files list.
@@ -5673,9 +5747,7 @@ pub mod bv2_impl {
             // Open the output directory and write the metafile relative to it,
             // routed through `bun_sys::File`.
             let mut buf = bun_paths::path_buffer_pool::get();
-            let joined = bun_paths::resolve_path::join_string_buf::<
-                bun_paths::resolve_path::platform::Auto,
-            >(&mut buf.0[..], &[outdir, file_path]);
+            let joined = metafile_disk_path(outdir, file_path, &mut buf.0[..]);
             // Create parent directories if needed (relative to outdir).
             let parent = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Loose>(
                 joined,

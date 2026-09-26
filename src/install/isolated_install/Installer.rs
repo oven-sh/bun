@@ -1576,6 +1576,41 @@ impl Task {
                         continue;
                     }
 
+                    let string_buf = lockfile.buffers.string_bytes.as_slice();
+                    let dep = &lockfile.buffers.dependencies[dep_id as usize];
+
+                    // A global-store entry is still in its staging directory
+                    // here. `Step::Binaries` renames it into place.
+                    let mut pkg_cwd = AutoAbsPath::init_top_level_dir();
+                    installer.append_real_store_path(&mut pkg_cwd, self.entry_id, Which::Staging);
+
+                    let default_trust_denied = if installer
+                        .trusted_dependencies_from_update_requests
+                        .contains(&pkg_id)
+                    {
+                        None
+                    } else {
+                        lockfile
+                            .default_trust_denied_by_registry(pkg_name.slice(string_buf), &pkg_res)
+                    };
+                    if let Some(warning) = default_trust_denied {
+                        let mut pkg_scripts: package::scripts::Scripts =
+                            pkg_script_lists[pkg_id as usize];
+                        let mut log = Log::init();
+                        if let Ok(Some(list)) = pkg_scripts.get_list(
+                            &mut log,
+                            lockfile,
+                            &mut pkg_cwd,
+                            dep.name.slice(string_buf),
+                            &pkg_res,
+                        ) {
+                            if list.total > 0 {
+                                bun_core::warn!("{}", warning);
+                                Output::flush();
+                            }
+                        }
+                    }
+
                     // The eligibility check excludes any package whose
                     // lifecycle scripts are trusted to run, so a global-store
                     // entry should never reach script enqueueing. Guard it
@@ -1589,9 +1624,6 @@ impl Task {
                         continue;
                     }
 
-                    let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-                    let dep = &lockfile.buffers.dependencies[dep_id as usize];
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
 
@@ -1611,9 +1643,6 @@ impl Task {
                         }
                         break 'brk (false, false);
                     };
-
-                    let mut pkg_cwd = AutoAbsPath::init_top_level_dir();
-                    installer.append_store_path(&mut pkg_cwd, self.entry_id);
 
                     'enqueue_lifecycle_scripts: {
                         if !(pkg_res.tag != ResolutionTag::Root

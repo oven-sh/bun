@@ -1,0 +1,59 @@
+diff --git a/src/fenv/x86_64/fenv.s b/src/fenv/x86_64/fenv.s
+index 98d876d..0a79aaa 100644
+--- a/src/fenv/x86_64/fenv.s
++++ b/src/fenv/x86_64/fenv.s
+@@ -8,24 +8,28 @@ feclearexcept:
+ 	test %eax,%ecx
+ 	jz 1f
+ 	fnclex
+-1:	stmxcsr -8(%rsp)
++1:	push %rdx
++	stmxcsr (%rsp)
+ 	and $0x3f,%eax
+-	or %eax,-8(%rsp)
+-	test %ecx,-8(%rsp)
++	or %eax,(%rsp)
++	test %ecx,(%rsp)
+ 	jz 1f
+ 	not %ecx
+-	and %ecx,-8(%rsp)
+-	ldmxcsr -8(%rsp)
+-1:	xor %eax,%eax
++	and %ecx,(%rsp)
++	ldmxcsr (%rsp)
++1:	pop %rdx
++	xor %eax,%eax
+ 	ret
+ 
+ .global feraiseexcept
+ .type feraiseexcept,@function
+ feraiseexcept:
+ 	and $0x3f,%edi
+-	stmxcsr -8(%rsp)
+-	or %edi,-8(%rsp)
+-	ldmxcsr -8(%rsp)
++	push %rax
++	stmxcsr (%rsp)
++	or %edi,(%rsp)
++	ldmxcsr (%rsp)
++	pop %rax
+ 	xor %eax,%eax
+ 	ret
+ 
+diff --git a/src/math/x86_64/exp2l.s b/src/math/x86_64/exp2l.s
+index effab2b..5fafd95 100644
+--- a/src/math/x86_64/exp2l.s
++++ b/src/math/x86_64/exp2l.s
+@@ -4,8 +4,10 @@ expm1l:
+ 	fldt 8(%rsp)
+ 	fldl2e
+ 	fmulp
+-	movl $0xc2820000,-4(%rsp)
+-	flds -4(%rsp)
++	push %rax
++	movl $0xc2820000,(%rsp)
++	flds (%rsp)
++	pop %rax
+ 	fucomip %st(1),%st
+ 	fld1
+ 	jb 1f

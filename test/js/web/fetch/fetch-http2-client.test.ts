@@ -388,6 +388,84 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test("ReadableStream body that does not match its declared content-length rejects", async () => {
+    await withH2Server(
+      (req, res) => {
+        req.on("error", () => {});
+        req.resume();
+        req.on("end", () => res.end("unreachable"));
+      },
+      async url => {
+        await using proc = await spawnFetch(`
+          for (const declared of ["2", "50"]) {
+            const body = new ReadableStream({
+              start(ctrl) { ctrl.enqueue(new TextEncoder().encode("nr1-nr2")); ctrl.close(); },
+            });
+            const outcome = await fetch("${url}/upload", {
+              method: "POST",
+              body,
+              duplex: "half",
+              headers: { "content-length": declared },
+              tls: { rejectUnauthorized: false },
+            }).then(r => r.status, e => e.code);
+            console.log(declared, outcome);
+          }
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim().split("\n")).toEqual([
+          "2 ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+          "50 ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+        ]);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  test("303 on a ReadableStream POST: the follow-up GET carries no framing header from the caller", async () => {
+    await withH2Server(
+      (req, res) => {
+        if (req.url === "/upload") {
+          req.resume();
+          req.on("end", () => {
+            res.writeHead(303, { location: "/target" });
+            res.end();
+          });
+          return;
+        }
+        res.end(
+          JSON.stringify({
+            method: req.method,
+            contentLength: req.headers["content-length"] ?? null,
+            transferEncoding: req.headers["transfer-encoding"] ?? null,
+          }),
+        );
+      },
+      async url => {
+        await using proc = await spawnFetch(`
+          for (const headers of [{ "content-length": "7" }, { "transfer-encoding": "gzip, chunked" }, {}]) {
+            const body = new ReadableStream({
+              start(ctrl) { ctrl.enqueue(new TextEncoder().encode("nr1-nr2")); ctrl.close(); },
+            });
+            const res = await fetch("${url}/upload", {
+              method: "POST",
+              body,
+              duplex: "half",
+              headers,
+              tls: { rejectUnauthorized: false },
+            });
+            console.log(res.status, res.redirected, await res.text());
+          }
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        const followUp = '200 true {"method":"GET","contentLength":null,"transferEncoding":null}';
+        expect(stdout.trim().split("\n")).toEqual([followUp, followUp, followUp]);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   test("concurrent ReadableStream uploads route each chunk to its own stream", async () => {
     // Exercises the async_http_id -> stream index on the client session: each
     // JS-side body chunk wakes the HTTP thread which must resolve the target
@@ -1735,6 +1813,118 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         expect(exitCode).toBe(0);
       },
     );
+  });
+
+  test("protocol:'http2' with rejectUnauthorized: false goes ahead without an advisory checkServerIdentity", async () => {
+    await withH2Server(
+      (req, res) => {
+        res.writeHead(200);
+        res.end(req.httpVersion);
+      },
+      async url => {
+        await using proc = await spawnCapped({
+          cmd: [
+            bunExe(),
+            "--no-warnings",
+            "-e",
+            `let calls = 0;
+             const tls = { rejectUnauthorized: false, checkServerIdentity: () => void calls++ };
+             const r = await fetch("${url}", { protocol: "http2", tls });
+             console.log(r.status, await r.text(), calls);
+             // Enforced, it cannot run over h2, so the request is refused.
+             console.log(await fetch("${url}", { protocol: "http2", tls: { ...tls, rejectUnauthorized: true } }).then(r => r.status, e => e.code));`,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim().split("\n")).toEqual(["200 2.0 0", "HTTP2Unsupported"]);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  test("an address in the URL with Host and tls.serverName: :authority, SNI and verification follow the name", async () => {
+    const server = makeH2Server({}, (req, res) => {
+      res.end(JSON.stringify({ authority: req.authority, sni: (req.socket as nodetls.TLSSocket).servername }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnCapped({
+        cmd: [
+          bunExe(),
+          "--no-warnings",
+          "-e",
+          `const pinned = serverName =>
+             fetch("https://127.0.0.1:${port}/", {
+               protocol: "http2",
+               headers: { Host: "localhost" },
+               tls: { ca: ${JSON.stringify(tls.cert)}, serverName },
+               proxy: false,
+             }).then(r => r.json(), e => e.code);
+           console.log(JSON.stringify([await pinned("localhost"), await pinned("pinned.invalid")]));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        { authority: "localhost", sni: "localhost" },
+        "ERR_TLS_CERT_ALTNAME_INVALID",
+      ]);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("each FetchSession has its own h2 session", async () => {
+    let sessions = 0;
+    const server = makeH2Server({}, (req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", c => chunks.push(c));
+      req.on("end", () => res.end(String(Buffer.concat(chunks).length)));
+    });
+    server.on("session", () => sessions++);
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnCapped({
+        cmd: [
+          bunExe(),
+          "--no-warnings",
+          "-e",
+          `const url = "https://localhost:${port}/";
+           using one = new Bun.FetchSession({ tls: { rejectUnauthorized: false } });
+           using other = new Bun.FetchSession({ tls: { rejectUnauthorized: false } });
+           const post = session =>
+             fetch(url, { protocol: "http2", session, method: "POST", body: Buffer.alloc(5000, "x") }).then(r => r.text());
+           console.log(JSON.stringify([await post(one), await post(one), await post(other)]));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(
+        stdout
+          .trim()
+          .split("\n")
+          .map(line => JSON.parse(line)),
+      ).toEqual([["5000", "5000", "5000"]]);
+      expect(sessions).toBe(2);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
   });
 
   test.each([

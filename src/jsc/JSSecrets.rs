@@ -64,10 +64,11 @@ impl crate::JobContext for SecretsJob {
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Secrets__scheduleJob(
     global: &JSGlobalObject,
+    callframe: &crate::CallFrame,
     options: *mut SecretsJobOptions,
     promise: JSValue,
 ) {
-    let cx = global.js_thread();
+    let cx = global.js_thread(global.bun_vm().context_of_caller(callframe));
     crate::Job::<SecretsJob>::schedule(
         &cx,
         SecretsJob {

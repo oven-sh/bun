@@ -691,4 +691,36 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  test("a page can make a WebSocket while it is prerendered", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-websocket", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `export default function IndexPage() {
+  const socket = new WebSocket("ws://127.0.0.1:1/");
+  socket.onerror = () => {};
+  const state = socket.readyState;
+  socket.close();
+  return <div>readyState={state}</div>;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const buildProc = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+
+    const indexHtml = await Bun.file(path.join(dir, "dist", "index.html"))
+      .text()
+      .catch(() => buildProc.stderr.toString());
+    expect(indexHtml).toContain("readyState=<!-- -->" + WebSocket.CONNECTING);
+    expect(buildProc.exitCode).toBe(0);
+  });
 });

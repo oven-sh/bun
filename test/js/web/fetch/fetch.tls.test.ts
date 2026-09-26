@@ -1,8 +1,11 @@
-import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tmpdirSync } from "harness";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tmpdirSync } from "harness";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
+import { inherits } from "node:util";
 
 type TLSOptions = {
   cert: string;
@@ -205,6 +208,128 @@ describe.concurrent("fetch-tls", () => {
     }
   });
 
+  // Only an IP address in the strict form of net.isIP gets no SNI. The native
+  // client asked ares_inet_pton, which also reads "127.1" (as 127.1.0.0), "10",
+  // hex, zero-padded octets and a trailing "/bits". tls.connect() and Node.js
+  // send each of these names.
+  describe("tls.serverName in IP shorthand", () => {
+    // The path of the request names the row, so the rows run at the same time.
+    const seen = new Map<string, string | null>();
+    let server: tls.Server;
+    let port: number;
+    beforeAll(async () => {
+      server = tls.createServer(CERT_LOCALHOST_IP, socket => {
+        socket.on("error", () => {});
+        socket.once("data", data => {
+          seen.set(/^GET (\S+)/.exec(data.toString())![1], socket.servername || null);
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      port = (server.address() as net.AddressInfo).port;
+    });
+    afterAll(() => {
+      server.close();
+    });
+
+    async function sniOf(serverName: string) {
+      const path = `/${encodeURIComponent(serverName)}`;
+      const res = await fetch(`https://127.0.0.1:${port}${path}`, {
+        keepalive: false,
+        tls: { serverName, rejectUnauthorized: false },
+      });
+      await res.text();
+      return seen.get(path);
+    }
+
+    it.each([
+      "127.1",
+      "10",
+      "0x7f000001",
+      "127.000.000.001",
+      "1.2.3",
+      "08.1.1.1",
+      "1.2.3.4/8",
+      "127.0.0.1/32",
+      "::ffff:127.1",
+      "::1/64",
+      // Brackets come off an IPv6 address only.
+      "[::1/64]",
+    ])("fetch sends %j as SNI", async name => {
+      expect(await sniOf(name)).toBe(name);
+    });
+
+    it.each(["127.0.0.1", "::1", "[::1]"])("fetch sends no SNI for the address %j", async address => {
+      expect(await sniOf(address)).toBeNull();
+    });
+
+    it("tls.connect sends the name as well", async () => {
+      const socket = tls.connect({ host: "127.0.0.1", port, servername: "127.1", rejectUnauthorized: false });
+      await once(socket, "secureConnect");
+      socket.end("GET /tls.connect HTTP/1.1\r\n\r\n");
+      socket.resume();
+      await once(socket, "close");
+      expect(seen.get("/tls.connect")).toBe("127.1");
+    });
+  });
+
+  it.skipIf(!isIPv6())("verifies an IPv6-literal URL against the bare address and sends no SNI", async () => {
+    const seen: { sni: string | null; host: string | undefined }[] = [];
+    const server = tls.createServer(CERT_LOCALHOST_IP, socket => {
+      socket.on("error", () => {});
+      socket.once("data", data => {
+        const host = /^host:\s*(.*)\r\n/im.exec(data.toString())?.[1];
+        seen.push({ sni: socket.servername || null, host });
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+      });
+    });
+    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+    server.listen(0, "::1", onListening);
+    await listening;
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const url = `https://[::1]:${port}/`;
+      // The harness certificate lists IP:::1.
+      const native = await fetch(url, { keepalive: false, tls: { ca: CERT_LOCALHOST_IP.cert } });
+      expect(await native.text()).toBe("ok");
+      let hostnameForCallback = "";
+      const viaCallback = await fetch(url, {
+        keepalive: false,
+        tls: {
+          ca: CERT_LOCALHOST_IP.cert,
+          checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
+            hostnameForCallback = hostname;
+            return tls.checkServerIdentity(hostname, cert);
+          },
+        },
+      });
+      expect(await viaCallback.text()).toBe("ok");
+      expect(hostnameForCallback).toBe("::1");
+      expect(seen).toEqual([
+        { sni: null, host: `[::1]:${port}` },
+        { sni: null, host: `[::1]:${port}` },
+      ]);
+    } finally {
+      server.close();
+    }
+    // A certificate without that address still fails.
+    using other = Bun.serve({
+      port: 0,
+      hostname: "::1",
+      tls: CERT_LOCALHOST_ONLY,
+      fetch: () => new Response("no"),
+    });
+    const mismatch = await fetch(`https://[::1]:${other.port}/`, {
+      keepalive: false,
+      tls: { ca: CERT_LOCALHOST_ONLY.cert },
+    }).then(
+      r => r.status,
+      e => e.code,
+    );
+    expect(mismatch).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
+  });
+
   it("can handle multiple requests with non native checkServerIdentity", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       async function request() {
@@ -294,6 +419,35 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  it("fetch with rejectUnauthorized: false calls checkServerIdentity once the chain verifies, and ignores its verdict", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      const calls: string[] = [];
+      for (const verdict of [
+        () => undefined,
+        () => new Error("not enforced"),
+        () => {
+          throw new Error("thrown, not enforced");
+        },
+      ]) {
+        const body = await fetch(`https://localhost:${port}`, {
+          keepalive: false,
+          tls: {
+            rejectUnauthorized: false,
+            // With the CA trusted the chain verifies, which is when Node calls it too.
+            ca: validTls.cert,
+            checkServerIdentity(hostname: string) {
+              calls.push(hostname);
+              return verdict();
+            },
+          },
+        }).then((res: Response) => res.text());
+        expect(body).toBe("Hello World");
+      }
+      expect(calls).toEqual(["localhost", "localhost", "localhost"]);
+    });
+  });
+
+  // The chain does not verify here (the CA is not trusted), so there is nothing to call it with.
   it("fetch with rejectUnauthorized: false should not call checkServerIdentity", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       let count = 0;
@@ -539,6 +693,205 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  const invalidReturnValue = (received: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_RETURN_VALUE",
+    message: `Expected undefined or an Error to be returned from the "tls.checkServerIdentity" function but got ${received}.`,
+  });
+  const settled = (response: Promise<Response>) =>
+    response.then(
+      async res => ({ body: await res.text() }),
+      e => ({ name: e?.name, code: e?.code, message: e?.message }),
+    );
+
+  // Node fails the connection for every truthy return value, not only for an
+  // Error (onConnectSecure in lib/internal/tls/wrap.js). An `async` callback
+  // returns a Promise, so it approves nothing.
+  it("checkServerIdentity approves the certificate only with a falsy return value", async () => {
+    const served: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      tls: CERT_LOCALHOST_IP,
+      fetch(req) {
+        served.push(decodeURIComponent(new URL(req.url).pathname.slice(1)));
+        return new Response("Hello World");
+      },
+    });
+    const request = (label: string, tlsOptions: object) =>
+      settled(
+        fetch(`https://localhost:${server.port}/${encodeURIComponent(label)}`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, ...tlsOptions },
+        }),
+      );
+    const verdicts: Record<string, () => unknown> = {
+      "undefined": () => undefined,
+      "null": () => null,
+      "false": () => false,
+      "0": () => 0,
+      "empty string": () => "",
+      "Error": () => new Error("pin mismatch"),
+      "thrown Error": () => {
+        throw new Error("thrown");
+      },
+      "true": () => true,
+      "1": () => 1,
+      "string": () => "pin mismatch",
+      "async, resolves to undefined": async () => undefined,
+      "async, resolves to an Error": async () => new Error("pin mismatch"),
+    };
+    const outcomes: Record<string, unknown> = {};
+    await Promise.all(
+      Object.entries(verdicts).map(async ([label, checkServerIdentity]) => {
+        outcomes[label] = await request(label, { checkServerIdentity });
+      }),
+    );
+    const approved = { body: "Hello World" };
+    expect(outcomes).toEqual({
+      "undefined": approved,
+      "null": approved,
+      "false": approved,
+      "0": approved,
+      "empty string": approved,
+      "Error": { name: "Error", code: undefined, message: "pin mismatch" },
+      "thrown Error": { name: "Error", code: undefined, message: "thrown" },
+      "true": invalidReturnValue("type boolean (true)"),
+      "1": invalidReturnValue("type number (1)"),
+      "string": invalidReturnValue("type string ('pin mismatch')"),
+      "async, resolves to undefined": invalidReturnValue("an instance of Promise"),
+      "async, resolves to an Error": invalidReturnValue("an instance of Promise"),
+    });
+    // A request never reaches a server whose certificate was not approved.
+    expect(served.sort()).toEqual(["0", "empty string", "false", "null", "undefined"]);
+
+    // With `rejectUnauthorized: false` the callback runs and what it returns is ignored.
+    const ignored = await request("ignored", { rejectUnauthorized: false, checkServerIdentity: () => true });
+    expect(ignored).toEqual(approved);
+  });
+
+  // Node fails the connection with the value the callback returned. An Error
+  // need not be an ErrorInstance cell, so every object is handed back as it is.
+  it("fetch() rejects with the object that checkServerIdentity returns", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      function LegacyError(this: { message: string }, message: string) {
+        this.message = message;
+      }
+      inherits(LegacyError, Error);
+      const reasons: Record<string, object> = {
+        "Error": new Error("pin mismatch"),
+        "DOMException": new DOMException("pin mismatch", "SecurityError"),
+        "util.inherits() error": new (LegacyError as any)("pin mismatch"),
+        "plain object": { message: "pin mismatch" },
+      };
+      const sameObject: Record<string, boolean> = {};
+      for (const [label, reason] of Object.entries(reasons)) {
+        const rejection = await fetch(`https://localhost:${port}`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, checkServerIdentity: () => reason } as any,
+        }).then(
+          () => "resolved",
+          e => e,
+        );
+        sameObject[label] = rejection === reason;
+      }
+      expect(sameObject).toEqual({
+        "Error": true,
+        "DOMException": true,
+        "util.inherits() error": true,
+        "plain object": true,
+      });
+    });
+  });
+
+  it("a session's checkServerIdentity approves the certificate only with a falsy return value", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      const outcomes: Record<string, unknown> = {};
+      const verdicts: Record<string, () => unknown> = {
+        "undefined": () => undefined,
+        "true": () => true,
+        "async": async () => undefined,
+      };
+      for (const [label, checkServerIdentity] of Object.entries(verdicts)) {
+        using session = new Bun.FetchSession({ tls: { ca: validTls.cert, checkServerIdentity } as any });
+        outcomes[label] = await settled(fetch(`https://localhost:${port}`, { session }));
+      }
+      expect(outcomes).toEqual({
+        "undefined": { body: "Hello World" },
+        "true": invalidReturnValue("type boolean (true)"),
+        "async": invalidReturnValue("an instance of Promise"),
+      });
+    });
+  });
+
+  // A function given here replaces Bun's own hostname check, so one that
+  // approves by mistake turns hostname verification off.
+  it("an async checkServerIdentity does not turn hostname verification off", async () => {
+    // This certificate names only DNS:localhost, and the request dials 127.0.0.1.
+    await createServer(CERT_LOCALHOST_ONLY, async port => {
+      const outcome = (checkServerIdentity?: unknown) =>
+        settled(
+          fetch(`https://127.0.0.1:${port}`, {
+            keepalive: false,
+            tls: { ca: CERT_LOCALHOST_ONLY.cert, checkServerIdentity } as any,
+          }),
+        );
+      expect({
+        none: await outcome(),
+        sync: await outcome((hostname: string, cert: tls.PeerCertificate) => tls.checkServerIdentity(hostname, cert)),
+        async: await outcome(async (hostname: string, cert: tls.PeerCertificate) =>
+          tls.checkServerIdentity(hostname, cert),
+        ),
+      }).toEqual({
+        none: {
+          name: "TypeError",
+          code: "ERR_TLS_CERT_ALTNAME_INVALID",
+          message: expect.stringContaining("ERR_TLS_CERT_ALTNAME_INVALID"),
+        },
+        sync: {
+          name: "Error",
+          code: "ERR_TLS_CERT_ALTNAME_INVALID",
+          message: "Hostname/IP does not match certificate's altnames: IP: 127.0.0.1 is not in the cert's list: ",
+        },
+        async: invalidReturnValue("an instance of Promise"),
+      });
+    });
+  });
+
+  // The Bun.FetchSession constructor has the same rule (fetch-session.test.ts).
+  it("fetch() rejects a tls.checkServerIdentity that is not a function", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      const outcome = (checkServerIdentity: unknown) =>
+        fetch(`https://localhost:${port}`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, checkServerIdentity } as any,
+        }).then(
+          res => res.text(),
+          e => `${e.code}: ${e.message}`,
+        );
+      const invalid = (received: string) =>
+        `ERR_INVALID_ARG_TYPE: The "tls.checkServerIdentity" property must be of type function. Received ${received}`;
+      expect({
+        string: await outcome("yes"),
+        true: await outcome(true),
+        false: await outcome(false),
+        number: await outcome(1),
+        object: await outcome({}),
+        null: await outcome(null),
+        undefined: await outcome(undefined),
+        function: await outcome(() => undefined),
+      }).toEqual({
+        string: invalid("string"),
+        true: invalid("boolean"),
+        false: invalid("boolean"),
+        number: invalid("number"),
+        object: invalid("object"),
+        null: "Hello World",
+        undefined: "Hello World",
+        function: "Hello World",
+      });
+    });
+  });
+
   it("checkServerIdentity rejection prevents the request from being transmitted", async () => {
     // Records every plaintext (post-TLS-decryption) byte each connection
     // delivers. Nothing here waits on the rejected connection's server-side
@@ -683,15 +1036,16 @@ describe.concurrent("fetch-tls", () => {
     };
   }
 
-  // https://github.com/oven-sh/bun/issues/40308
-  it("reuses the keep-alive connection across requests that supply checkServerIdentity", async () => {
+  // A closure has no identity a pool key could compare, and most callers
+  // write a fresh one per request: if such requests shared connections, the
+  // second callback would never see the peer the first one approved.
+  it("runs a per-request checkServerIdentity on a connection of its own", async () => {
     using server = await countingKeepAliveServer();
     const seen: { hostname: string; fingerprint: string }[] = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 3; i++) {
       const res = await fetch(server.url, {
         tls: {
           ca: validTls.cert,
-          // fresh closure per request, as most callers write it
           checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
             seen.push({ hostname, fingerprint: cert.fingerprint256 });
             return undefined;
@@ -700,35 +1054,177 @@ describe.concurrent("fetch-tls", () => {
       });
       expect(await res.text()).toBe("ok");
     }
-    // Like Node's https.Agent: the callback runs when a connection is
-    // established, and later requests reuse the approved connection.
-    expect(seen).toEqual([{ hostname: "127.0.0.1", fingerprint: expect.any(String) }]);
-    expect(server.connections).toBe(1);
+    expect(seen).toEqual(Array(3).fill({ hostname: "127.0.0.1", fingerprint: expect.any(String) }));
+    expect(server.connections).toBe(3);
   });
 
-  it("keeps connections approved by checkServerIdentity and natively verified ones in separate pools", async () => {
+  it("a strict per-request checkServerIdentity runs although a permissive one approved the same server", async () => {
     using server = await countingKeepAliveServer();
-    const verified: string[] = [];
-    const tlsWithCallback = {
-      ca: validTls.cert,
-      checkServerIdentity(hostname: string) {
-        verified.push(hostname);
-        return undefined;
+    const calls: string[] = [];
+    const permissive = await fetch(server.url, {
+      tls: {
+        ca: validTls.cert,
+        checkServerIdentity() {
+          calls.push("permissive");
+          return undefined;
+        },
       },
-    };
+    });
+    expect(await permissive.text()).toBe("ok");
+    const strict = await fetch(server.url, {
+      tls: {
+        ca: validTls.cert,
+        checkServerIdentity() {
+          calls.push("strict");
+          return new Error("pinned certificate mismatch");
+        },
+      },
+    }).then(
+      r => r.status,
+      e => e.message,
+    );
+    expect(strict).toBe("pinned certificate mismatch");
+    expect(calls).toEqual(["permissive", "strict"]);
+    expect(server.connections).toBe(2);
+  });
 
-    // 1st connection, identity approved by the callback.
-    expect(await fetch(server.url, { tls: tlsWithCallback }).then(res => res.text())).toBe("ok");
+  it("an https request to a server that does not speak TLS rejects with EPROTO", async () => {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      // Answers the ClientHello in plaintext and leaves closing to the client.
+      socket.once("data", () => socket.write("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const error = await fetch(`https://127.0.0.1:${(server.address() as net.AddressInfo).port}/`).catch(e => e);
+      expect({ code: error.code, message: error.message }).toEqual({
+        code: "EPROTO",
+        message: "EPROTO: The TLS handshake failed. Does the server speak TLS on this port?",
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("a checkServerIdentity on a plain http request does not cost it its keep-alive", async () => {
+    const ports = new Set<number>();
+    using counting = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, srv) {
+        ports.add(srv.requestIP(req)!.port);
+        return new Response("ok");
+      },
+    });
+    for (let i = 0; i < 3; i++) {
+      const res = await fetch(counting.url, { tls: { checkServerIdentity: () => undefined } });
+      expect(await res.text()).toBe("ok");
+    }
+    // One client port: one connection.
+    expect(ports.size).toBe(1);
+  });
+
+  it("a redirect between schemes pools each hop by its own scheme under a per-request checkServerIdentity", async () => {
+    const checked = () => ({ tls: { ca: validTls.cert, checkServerIdentity: () => undefined } });
+    const trusting = { tls: { ca: validTls.cert } };
+
+    // http -> https
+    {
+      using secure = await countingKeepAliveServer();
+      const plainPorts = new Set<number>();
+      using plain = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req, srv) {
+          plainPorts.add(srv.requestIP(req)!.port);
+          return new URL(req.url).pathname === "/go" ? Response.redirect(secure.url, 302) : new Response("plain");
+        },
+      });
+      expect(await (await fetch(`${plain.url}go`, checked())).text()).toBe("ok");
+      // The http hop's socket went back to the pool. (Its key includes the TLS
+      // options, also for a plain socket.)
+      expect(await (await fetch(plain.url, trusting)).text()).toBe("plain");
+      expect(plainPorts.size).toBe(1);
+      // The https hop's, which only the closure vouched for, did not.
+      expect(secure.connections).toBe(1);
+      expect(await (await fetch(secure.url, trusting)).text()).toBe("ok");
+      expect(secure.connections).toBe(2);
+    }
+
+    // https -> http
+    {
+      using plain = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("plain") });
+      let connections = 0;
+      const secure = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+        socket.on("error", () => {});
+        socket.on("data", chunk => {
+          const redirect = chunk.toString().startsWith("GET /go ");
+          socket.write(
+            redirect
+              ? `HTTP/1.1 302 Found\r\nLocation: ${plain.url}\r\nContent-Length: 0\r\n\r\n`
+              : "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+          );
+        });
+      });
+      secure.on("connection", () => connections++);
+      secure.listen(0, "127.0.0.1");
+      await once(secure, "listening");
+      try {
+        const origin = `https://127.0.0.1:${(secure.address() as net.AddressInfo).port}`;
+        expect(await (await fetch(`${origin}/go`, checked())).text()).toBe("plain");
+        expect(connections).toBe(1);
+        // The socket the redirect left is not there for a request the closure never ran for.
+        expect(await (await fetch(`${origin}/`, trusting)).text()).toBe("ok");
+        expect(connections).toBe(2);
+      } finally {
+        secure.close();
+      }
+    }
+  });
+
+  it("a per-request checkServerIdentity neither takes nor leaves a pooled connection", async () => {
+    using server = await countingKeepAliveServer();
+    const plain = () => fetch(server.url, { tls: { ca: validTls.cert } }).then(r => r.text());
+    expect(await plain()).toBe("ok");
+    let called = 0;
+    const checked = await fetch(server.url, {
+      tls: {
+        ca: validTls.cert,
+        checkServerIdentity() {
+          called++;
+          return undefined;
+        },
+      },
+    });
+    expect(await checked.text()).toBe("ok");
+    expect({ called, connections: server.connections }).toEqual({ called: 1, connections: 2 });
+    // The plain request finds its own connection, not the checked one.
+    expect(await plain()).toBe("ok");
+    expect(server.connections).toBe(2);
+  });
+
+  // https://github.com/oven-sh/bun/issues/40308: like Node's https.Agent, a
+  // session's callback runs when a connection is established, and the
+  // session's later requests reuse the approved connection.
+  it("reuses the keep-alive connection across the requests of a session that supplies checkServerIdentity", async () => {
+    using server = await countingKeepAliveServer();
+    const seen: { hostname: string; fingerprint: string }[] = [];
+    using session = new Bun.FetchSession({
+      tls: {
+        ca: validTls.cert,
+        checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
+          seen.push({ hostname, fingerprint: cert.fingerprint256 });
+          return undefined;
+        },
+      },
+    });
+    for (let i = 0; i < 4; i++) {
+      const res = await fetch(server.url, { session });
+      expect(await res.text()).toBe("ok");
+    }
+    expect(seen).toEqual([{ hostname: "127.0.0.1", fingerprint: expect.any(String) }]);
     expect(server.connections).toBe(1);
-    // No callback: must verify natively on its own (2nd) connection rather than
-    // inherit the callback's verdict.
-    expect(await fetch(server.url, { tls: { ca: validTls.cert } }).then(res => res.text())).toBe("ok");
-    expect(server.connections).toBe(2);
-    // Each kind keeps reusing its own connection.
-    expect(await fetch(server.url, { tls: tlsWithCallback }).then(res => res.text())).toBe("ok");
-    expect(await fetch(server.url, { tls: { ca: validTls.cert } }).then(res => res.text())).toBe("ok");
-    expect(server.connections).toBe(2);
-    expect(verified).toEqual(["127.0.0.1"]);
   });
 
   it("a checkServerIdentity request never takes a pooled connection established with NODE_TLS_REJECT_UNAUTHORIZED=0", async () => {

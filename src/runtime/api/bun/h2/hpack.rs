@@ -11,9 +11,9 @@
 use bun_http::lshpack::{DecodeResult, HpackError, HpackHandle};
 
 /// RFC 7541 §6.3: a Dynamic Table Size Update integer never needs more than 6 bytes for a u32.
-pub const MAX_SIZE_UPDATE_BYTES: usize = 6;
+pub(crate) const MAX_SIZE_UPDATE_BYTES: usize = 6;
 
-pub struct Coder {
+pub(crate) struct Coder {
     hpack: HpackHandle,
     enc_capacity: u32,
     /// A capacity change requested by the peer's SETTINGS_HEADER_TABLE_SIZE, applied + announced at
@@ -22,7 +22,7 @@ pub struct Coder {
 }
 
 impl Coder {
-    pub fn new(max_capacity: u32) -> Self {
+    pub(crate) fn new(max_capacity: u32) -> Self {
         Coder {
             hpack: HpackHandle::new(max_capacity),
             enc_capacity: max_capacity,
@@ -32,7 +32,7 @@ impl Coder {
 
     /// Schedule an encoder capacity change from a received SETTINGS_HEADER_TABLE_SIZE. Applied
     /// lazily so the §6.3 size-update opcode is emitted inside the next header block.
-    pub fn queue_encoder_capacity(&mut self, capacity: u32) {
+    pub(crate) fn queue_encoder_capacity(&mut self, capacity: u32) {
         if capacity == self.enc_capacity && self.pending_enc_capacity.is_none() {
             return;
         }
@@ -41,7 +41,7 @@ impl Coder {
 
     /// If a capacity change is pending, apply it and write the §6.3 size-update opcode into `dst` at
     /// `offset`. Returns bytes written (0 if none). `dst[offset..]` needs >= MAX_SIZE_UPDATE_BYTES.
-    pub fn take_pending_size_update(&mut self, dst: &mut [u8], offset: usize) -> usize {
+    pub(crate) fn take_pending_size_update(&mut self, dst: &mut [u8], offset: usize) -> usize {
         let Some(cap) = self.pending_enc_capacity.take() else {
             return 0;
         };
@@ -51,7 +51,7 @@ impl Coder {
     }
 
     #[inline]
-    pub fn encode(
+    pub(crate) fn encode(
         &mut self,
         name: &[u8],
         value: &[u8],
@@ -64,7 +64,7 @@ impl Coder {
 
     /// Decode one header. Result aliases a shared buffer; copy before the next call.
     #[inline]
-    pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
+    pub(crate) fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
         self.hpack.decode(src)
     }
 }

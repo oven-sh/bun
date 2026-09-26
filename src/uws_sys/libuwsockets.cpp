@@ -412,31 +412,6 @@ extern "C"
     }
   }
 
-  void uws_app_listen(int ssl, uws_app_t *app, int port,
-                      uws_listen_handler handler, void *user_data)
-  {
-    uws_app_listen_config_t config;
-    config.port = port;
-    config.host = nullptr;
-    config.options = 0;
-
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(port, [handler,
-                            user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-
-      uwsApp->listen(port, [handler,
-                            user_data](struct us_listen_socket_t *listen_socket)
-                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
-    }
-  }
-
   void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
                                   uint16_t port, int32_t options,
                                   uws_listen_handler handler, void *user_data)
@@ -1522,6 +1497,34 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->uncork();
+    }
+  }
+
+  void uws_res_send_corked(int ssl, uws_res_r res)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->sendCorked();
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->sendCorked();
+    }
+  }
+
+  void uws_res_send_when_complete(int ssl, uws_res_r res)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->sendWhenComplete();
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->sendWhenComplete();
     }
   }
 

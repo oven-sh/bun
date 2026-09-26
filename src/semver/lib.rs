@@ -32,12 +32,6 @@ impl Slicable for crate::semver_string::String {
         crate::semver_string::String::slice(self, buf)
     }
 }
-impl Slicable for crate::external_string::ExternalString {
-    #[inline]
-    fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
-        crate::external_string::ExternalString::slice(self, buf)
-    }
-}
 
 /// Alias so callers can name `bun_semver::string::Formatter` etc.
 pub use crate::semver_string as string;

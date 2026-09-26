@@ -75,10 +75,10 @@ const API_NAME: &str = "app";
 // PORTING.md; could thread `'bump` or introduce `ArenaStr`.
 
 /// Rust version of the TS definition 'Bake.Options' in 'bake.d.ts'
-pub struct UserOptions {
+pub(crate) struct UserOptions {
     /// This arena contains some miscellaneous allocations at startup
     pub(crate) arena: Arena,
-    pub allocations: StringRefList,
+    pub(crate) _allocations: StringRefList,
 
     pub(crate) root: &'static ZStr, // TODO(lifetime): arena-owned, self-referential with .arena
     pub(crate) framework: Framework,
@@ -101,7 +101,7 @@ impl Drop for UserOptions {
 
 impl UserOptions {
     /// Currently, this function must run at the top of the event loop.
-    pub fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
+    pub(crate) fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
         let arena = Arena::new();
         // errdefer arena.deinit() — handled by Drop
 
@@ -134,7 +134,7 @@ impl UserOptions {
                         root,
                         framework,
                         bundler_options,
-                        allocations,
+                        _allocations: allocations,
                         arena,
                     });
                 }
@@ -194,7 +194,7 @@ impl UserOptions {
             root: root_z,
             framework,
             bundler_options,
-            allocations,
+            _allocations: allocations,
             arena,
         })
     }
@@ -202,7 +202,7 @@ impl UserOptions {
 
 /// Each string stores its allocator since some may hold reference counts to JSC
 #[derive(Default)]
-pub struct StringRefList {
+pub(crate) struct StringRefList {
     pub(crate) strings: Vec<Utf8Bytes<'static>>,
 }
 
@@ -235,7 +235,7 @@ impl StringRefList {
 }
 
 #[derive(Default)]
-pub struct SplitBundlerOptions {
+pub(crate) struct SplitBundlerOptions {
     pub plugin: Option<NonNull<Plugin>>,
     pub client: BuildConfigSubset,
     pub server: BuildConfigSubset,
@@ -329,7 +329,7 @@ impl SplitBundlerOptions {
     }
 }
 
-pub struct BuildConfigSubset {
+pub(crate) struct BuildConfigSubset {
     pub ignore_dce_annotations: Option<bool>,
     pub conditions: ArrayHashMap<&'static [u8], ()>,
     pub drop: ArrayHashMap<&'static [u8], ()>,
@@ -344,7 +344,10 @@ pub struct BuildConfigSubset {
 }
 
 impl BuildConfigSubset {
-    pub fn from_js(global: &JSGlobalObject, js_options: JSValue) -> JsResult<BuildConfigSubset> {
+    pub(crate) fn from_js(
+        global: &JSGlobalObject,
+        js_options: JSValue,
+    ) -> JsResult<BuildConfigSubset> {
         let mut options = BuildConfigSubset::default();
 
         'brk: {
@@ -416,7 +419,7 @@ impl Default for BuildConfigSubset {
 /// structure is always arena-allocated, usually owned by the arena in `UserOptions`
 ///
 /// Full documentation on these fields is located in the TypeScript definitions.
-pub struct Framework {
+pub(crate) struct Framework {
     pub is_built_in_react: bool,
     /// `resolve()` rewrites this in place. Stored as an owned `Vec` so
     /// `#[derive(Clone)]` deep-copies (a shared `&[T]` would alias and make
@@ -445,7 +448,7 @@ impl Framework {
     /// Depends on externally provided React
     ///
     /// $ bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun
-    pub fn react(arena: &Arena) -> crate::Result<Framework> {
+    pub(crate) fn react(arena: &Arena) -> crate::Result<Framework> {
         // Cannot use .import because resolution must happen from the user's POV
         let built_in_values: &[BuiltInModule] = &[
             // Browser-side source: compressed in release builds.
@@ -509,7 +512,7 @@ impl Framework {
     /// - If any file system router types are provided, configure using
     ///   the above react configuration.
     /// The provided allocator is not stored.
-    pub fn auto(
+    pub(crate) fn auto(
         arena: &Arena,
         resolver: &mut bun_resolver::Resolver,
         file_system_router_types: Vec<FileSystemRouterType>,
@@ -542,7 +545,7 @@ impl Framework {
 
     /// Unopinionated default. Note: was `pub const NONE` —
     /// `ArrayHashMap::new()` is not `const fn`.
-    pub fn none() -> Framework {
+    pub(crate) fn none() -> Framework {
         Framework {
             is_built_in_react: false,
             file_system_router_types: Vec::new(),
@@ -554,7 +557,7 @@ impl Framework {
 
     /// `Framework.clone()` — manual because `ArrayHashMap` exposes a
     /// fallible inherent `clone()` rather than `impl Clone`.
-    pub fn clone(&self) -> Framework {
+    pub(crate) fn clone(&self) -> Framework {
         Framework {
             is_built_in_react: self.is_built_in_react,
             file_system_router_types: self.file_system_router_types.clone(),
@@ -564,7 +567,7 @@ impl Framework {
         }
     }
 
-    pub fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
+    pub(crate) fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
         let clone_line_text = log.clone_line_text;
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Note,
@@ -591,7 +594,7 @@ impl Framework {
     ///
     /// All resolution errors will happen before returning error.ModuleNotFound
     /// Errors written into `r.log`
-    pub fn resolve(
+    pub(crate) fn resolve(
         &self,
         server: &mut bun_resolver::Resolver,
         client: &mut bun_resolver::Resolver,
@@ -1080,7 +1083,7 @@ impl Framework {
         )
     }
 
-    pub fn init_transpiler_with_options<'a>(
+    pub(crate) fn init_transpiler_with_options<'a>(
         &mut self,
         arena: &'a Arena,
         log: &mut bun_ast::Log,
@@ -1120,10 +1123,7 @@ impl Framework {
         };
         out.options.entry_points = Box::default();
         out.options.log = log;
-        out.options.output_format = match mode {
-            Mode::Development => bun_bundler::options::Format::InternalBakeDev,
-            Mode::ProductionDynamic | Mode::ProductionStatic => bun_bundler::options::Format::Esm,
-        };
+        out.options.output_format = mode.output_format();
         out.options.out_extensions = bun_collections::StringHashMap::new();
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
@@ -1240,7 +1240,7 @@ impl Framework {
 }
 
 #[derive(Clone)]
-pub struct FileSystemRouterType {
+pub(crate) struct FileSystemRouterType {
     pub root: &'static [u8],
     pub prefix: &'static [u8],
     pub entry_server: &'static [u8],
@@ -1259,7 +1259,7 @@ pub enum BuiltInModule {
 }
 
 #[derive(Copy, Clone)]
-pub struct ServerComponents {
+pub(crate) struct ServerComponents {
     pub separate_ssr_graph: bool,
     pub server_runtime_import: &'static [u8],
     // pub client_runtime_import: &'static [u8],
@@ -1281,7 +1281,7 @@ impl Default for ServerComponents {
 }
 
 #[derive(Copy, Clone)]
-pub struct ReactFastRefresh {
+pub(crate) struct ReactFastRefresh {
     pub import_source: &'static [u8],
 }
 
@@ -1410,7 +1410,7 @@ pub(crate) fn add_import_meta_defines(
         b"import.meta.env.MODE",
         DefineData::init_static_string(match mode {
             Mode::Development => &MODE_DEVELOPMENT,
-            Mode::ProductionDynamic | Mode::ProductionStatic => &MODE_PRODUCTION,
+            Mode::ProductionStatic => &MODE_PRODUCTION,
         }),
     )?;
     define.insert(
@@ -1429,7 +1429,7 @@ pub(crate) fn add_import_meta_defines(
 
 /// Stack-allocated structure that is written to from end to start.
 /// Used as a staging area for building pattern strings.
-pub struct PatternBuffer {
+pub(crate) struct PatternBuffer {
     pub(crate) bytes: PathBuffer,
     // On Windows MAX_PATH_BYTES = 32767*3+1 = 98302
     // (> u16::MAX), so u32 is required; u16 would truncate the initial index
@@ -1475,7 +1475,7 @@ impl PatternBuffer {
     }
 }
 
-pub fn print_warning() {
+pub(crate) fn print_warning() {
     // Silence this for the test suite
     if bun_core::env_var::BUN_DEV_SERVER_TEST_RUNNER
         .get()

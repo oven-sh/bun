@@ -42,6 +42,8 @@ const kTrailers = Symbol("kTrailers");
 const kTrailersDistinct = Symbol("kTrailersDistinct");
 const kTrailersCount = Symbol("kTrailersCount");
 
+type IncomingMessage = import("node:http").IncomingMessage;
+
 function readStart(socket) {
   if (socket && !socket._paused && socket.readable) socket.resume();
 }
@@ -503,7 +505,7 @@ const kFieldSetCookie = 1; // duplicates collected into an array
 const kFieldCookie = 2; // duplicates joined with "; "
 const kFieldUnique = 3; // duplicates dropped (or joined, per joinDuplicateHeaders)
 let matchedFieldFlag = kFieldUnique;
-function matchKnownFields(field, lowercased) {
+function matchKnownFields(field, lowercased?) {
   switch (field.length) {
     case 3:
       if (field === "Age" || field === "age") {

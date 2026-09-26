@@ -34,6 +34,8 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLld: undefined,
     rustLlvmVersion: "22.1.4",
+    rustSysroot: undefined,
+    rustHostTriple: undefined,
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
@@ -102,14 +104,24 @@ describe("emitPostLink ninja ordering", () => {
     expect(buildEdge(out, "smoke_test")).toBe(
       `build bun-profile.smoke-test-passed: smoke_test bun-profile${cfg.exeSuffix} || bun${cfg.exeSuffix}`,
     );
-    expect(buildEdge(out, "strip")).toBe(`build bun${cfg.exeSuffix}: strip bun-profile${cfg.exeSuffix}`);
+    // A Windows target has nothing to strip: its `bun` is a copy.
+    const strip = cfg.windows ? "copy_exe" : "strip";
+    expect(buildEdge(out, strip)).toBe(`build bun${cfg.exeSuffix}: ${strip} bun-profile${cfg.exeSuffix}`);
   });
 
+  // `ci` comes from the config alone (resolveConfig never reads the
+  // environment for it), so the local rows hold on a CI agent too.
   describe.each([
-    ["Release", { buildType: "Release" }, false],
-    ["Release with assertions", { buildType: "Release", assertions: true }, false],
-    ["Debug", { buildType: "Debug", assertions: true }, true],
-    ["ASan", { buildType: "Release", asan: true, assertions: true }, true],
+    ["CI Release", { ci: true, buildType: "Release" }, false],
+    ["CI Release with assertions", { ci: true, buildType: "Release", assertions: true }, false],
+    // asan: false, because a Debug build defaults to ASan on some hosts and
+    // this row is the one that depends on `debug` alone.
+    ["CI Debug without ASan", { ci: true, buildType: "Debug", assertions: true, asan: false }, true],
+    ["CI ASan", { ci: true, buildType: "Release", asan: true, assertions: true }, true],
+    ["local Release", { buildType: "Release" }, true],
+    ["local Release with assertions", { buildType: "Release", assertions: true }, true],
+    ["local Debug", { buildType: "Debug", assertions: true }, true],
+    ["local ASan", { buildType: "Release", asan: true, assertions: true }, true],
   ] as [string, PartialConfig, boolean][])("the static scans of a %s build", (_name, partial, warnOnly) => {
     test(warnOnly ? "only warn" : "fail the build", () => {
       using dir = tempDir("build-post-link", {});

@@ -196,11 +196,6 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
 
-enum class FinalizerSafety {
-    NotInFinalizer,
-    MustNotTriggerGC,
-};
-
 class FunctionNameFlags {
 public:
     static constexpr unsigned None = 0;
@@ -212,7 +207,7 @@ public:
 };
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* callee);
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety, unsigned int* flags);
+String functionName(JSC::VM& vm, JSC::JSObject* callee);
+String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags);
 
 }

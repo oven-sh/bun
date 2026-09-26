@@ -80,7 +80,12 @@ server_exports = {
 
       const exports = await loadExports<Bake.ServerEntryPoint>(routerTypeMain);
 
-      const serverRenderer = exports.render;
+      // The third argument is between this runtime and the framework: see `render` in bun-framework-react/server.tsx.
+      const serverRenderer = exports.render as (
+        request: Request,
+        routeMetadata: Bake.RouteMetadata,
+        als: typeof responseOptionsALS,
+      ) => Response | Promise<Response>;
 
       if (!serverRenderer) {
         throw new Error('Framework server entrypoint is missing a "render" export.');
@@ -89,7 +94,7 @@ server_exports = {
         throw new Error('Framework server entrypoint\'s "render" export is not a function.');
       }
 
-      const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
+      const [pageModule, ...layouts]: any[] = await Promise.all(routeModules.map(loadExports));
 
       let requestWithCookies = req;
 
@@ -119,7 +124,10 @@ server_exports = {
         });
 
         if (!(response instanceof Response)) {
-          throw $ERR_SSR_RESPONSE_EXPECTED(`Server-side request handler was expected to return a Response object.`);
+          // Not `$ERR_SSR_RESPONSE_EXPECTED(...)`: those names are only resolved in src/js, and here it was a ReferenceError.
+          throw Object.assign(new Error(`Server-side request handler was expected to return a Response object.`), {
+            code: "ERR_SSR_RESPONSE_EXPECTED",
+          });
         }
 
         return response;

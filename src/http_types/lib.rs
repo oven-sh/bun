@@ -25,3 +25,18 @@ pub mod MimeType;
 pub fn parse_content_length(value: &[u8]) -> usize {
     bun_core::parse_int::<usize>(value, 10).unwrap_or(0)
 }
+
+/// RFC 9110 §8.6 `1*DIGIT`, strictly: `None` for anything else, or a value that overflows `u64`.
+pub fn parse_content_length_strict(value: &[u8]) -> Option<u64> {
+    if value.is_empty() {
+        return None;
+    }
+    let mut n: u64 = 0;
+    for &c in value {
+        if !c.is_ascii_digit() {
+            return None;
+        }
+        n = n.checked_mul(10)?.checked_add(u64::from(c - b'0'))?;
+    }
+    Some(n)
+}

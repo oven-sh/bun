@@ -14,7 +14,7 @@ use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
 
-pub struct Expansion {
+pub(crate) struct Expansion {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Atom>,
     pub(crate) state: ExpansionState,
@@ -69,7 +69,7 @@ pub enum ExpansionState {
 }
 
 #[derive(Default)]
-pub struct ExpansionOut {
+pub(crate) struct ExpansionOut {
     pub(crate) buf: Vec<u8>,
     /// Word boundaries within `buf` (for IFS splitting / glob results).
     pub(crate) bounds: Vec<u32>,

@@ -128,7 +128,7 @@ pub enum ParseTaskStage {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// The information returned to the Bundler thread when a parse finishes.
-pub(crate) struct Result {
+pub struct Result {
     pub(crate) task: EventLoop::Task,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue,
@@ -137,6 +137,24 @@ pub(crate) struct Result {
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
     pub(crate) external: ExternalFreeFunction,
+}
+impl bun_event_loop::Taskable for Result {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2ParseTaskResult;
+    /// The VM that runs the bundle is going: the result goes to nobody.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `run_from_thread_pool_impl` (or
+        // `ServerComponentParseTask`) leaked.
+        let mut result = unsafe { bun_core::heap::take(this) };
+        // A native plugin's source buffer: `on_parse_task_complete` would have handed this to
+        // the bundle's finalizers. The source may borrow the buffer, so it goes first.
+        let external = core::mem::take(&mut result.external);
+        drop(result);
+        external.call();
+    }
+    /// A step of the bundle.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 // `Result` lives in a bump arena (no Drop on free); boxing the large arm
 // would leak the heap allocation. The size diff is acceptable.
@@ -2899,13 +2917,7 @@ pub mod parse_worker {
             .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
         {
             bun_event_loop::AnyEventLoop::Js { .. } => {
-                let ct =
-                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                        // SAFETY: `p` is the `result` Box leaked above; ownership
-                        // transfers to `on_complete`, which deallocates it.
-                        unsafe { on_complete(p) };
-                        Ok(())
-                    });
+                let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
                 let poster = worker
                     .ctx
                     .js_poster
@@ -2916,7 +2928,7 @@ pub mod parse_worker {
                     // SAFETY: refused ⇒ we own the task box and the leaked result.
                     unsafe {
                         bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                        drop(bun_core::heap::take(result));
+                        <Result as bun_event_loop::Taskable>::release_unrun(result);
                     }
                 }
             }
@@ -2971,7 +2983,7 @@ pub mod parse_worker {
     /// (or `ServerComponentParseTask`'s equivalent). Ownership transfers to
     /// this fn, which deallocates `result` before returning. Must run on the
     /// main/bundler thread (it dereferences `result.ctx` mutably).
-    pub(crate) unsafe fn on_complete(result: *mut Result) {
+    pub unsafe fn on_complete(result: *mut Result) {
         // SAFETY: result allocated via heap::alloc above; uniquely owned here.
         let r = unsafe { &mut *result };
         let ctx = r.ctx;
@@ -2988,4 +3000,4 @@ pub mod parse_worker {
     }
 } // end mod parse_worker
 
-pub(crate) use parse_worker::on_complete;
+pub use parse_worker::on_complete;

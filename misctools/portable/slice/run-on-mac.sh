@@ -52,6 +52,32 @@ say_some() {
   if [ "${total:-0}" -gt "$2" ]; then say "    ... and $((total - $2)) more, in $3"; fi
 }
 count() { if [ -f "$1" ]; then grep -c '' "$1"; else put 0; fi; }
+# say_packed <file> <most lines> <what is left out is in>: the lines of a file, as many on a line of the
+# summary as it holds.
+say_packed() {
+  packed=
+  printed=0
+  taken=0
+  total=$(count "$1")
+  while IFS= read -r item; do
+    if [ -z "$packed" ]; then
+      packed=$item
+    elif [ $((${#packed} + ${#item} + 2)) -le 186 ]; then
+      packed="$packed; $item"
+    else
+      say "    $packed"
+      printed=$((printed + 1))
+      packed=$item
+      if [ "$printed" -ge "$2" ]; then
+        packed=
+        break
+      fi
+    fi
+    taken=$((taken + 1))
+  done < "$1"
+  if [ -n "$packed" ]; then say "    $packed"; fi
+  if [ "$taken" -lt "$total" ]; then say "    ... and $((total - taken)) more, in $3"; fi
+}
 
 interrupted=
 child=
@@ -225,8 +251,8 @@ elif [ "${parts:-0}" -eq 0 ]; then
   say "2. layout: verify/darwin_layout.c DOES NOT COMPILE (logs/layout-part-0.txt): $(grep 'error' "$logs/layout-part-0.txt" | sed -n 1p | sed 's/^[^ ]*darwin_layout.c:[0-9:]* //')"
 else
   say "2. layout ($layout_from): $same facts are the same, $(count "$logs/layout-differences.txt") DIFFER, $(count "$logs/layout-not-in-the-headers.txt") are not in the headers, $(count "$logs/layout-parts-that-do-not-compile.txt") of $parts parts do not compile"
-  say_some "$logs/layout-differences.txt" 6 logs/layout-differences.txt
-  say_some "$logs/layout-not-in-the-headers.txt" 3 logs/layout-not-in-the-headers.txt
+  say_packed "$logs/layout-differences.txt" 5 logs/layout-differences.txt
+  say_packed "$logs/layout-not-in-the-headers.txt" 2 logs/layout-not-in-the-headers.txt
   say_some "$logs/layout-parts-that-do-not-compile.txt" 2 logs/layout-parts.txt
   if [ -s "$logs/layout-fields-not-in-the-headers.txt" ]; then
     say "   fields that the headers of this macOS do not have: $(tr '\n' ';' < "$logs/layout-fields-not-in-the-headers.txt" | cut -c 1-140)"
@@ -237,14 +263,16 @@ fi
 if [ -n "$image_runs" ] && [ -z "$interrupted" ]; then
   limit env BUN_HOST_TRACE=1 "$host" "$image" --imports > "$logs/imports.jsonl" 2> "$logs/imports.err" < /dev/null
   code=$?
-  grep '"library":"libSystem"' "$logs/imports.jsonl" | sed -n 's/.*"symbol":"\([^"]*\)","why":"\([^"]*\)".*/\1 (\2)/p' > "$logs/imports-missing.txt"
+  # The names, each once, and why they were not bound, which is one reason for all of them as a rule.
+  grep '"library":"libSystem"' "$logs/imports.jsonl" | sed -n 's/.*"symbol":"\([^"]*\)","why":"[^"]*".*/\1/p' | sort -u > "$logs/imports-missing.txt"
+  why=$(grep '"library":"libSystem"' "$logs/imports.jsonl" | sed -n 's/.*"symbol":"[^"]*","why":"\([^"]*\)".*/\1/p' | sort -u | tr '\n' ';' | sed -e 's/;$//' -e 's/;/; /g')
   totals=$(sed -n 's/^{"step":"imports of macOS","total":\([0-9]*\),"missing":\([0-9]*\).*/\1 functions, \2 missing/p' "$logs/imports.jsonl")
   if [ -z "$totals" ]; then
     rm -f "$logs/imports-missing.txt"
     say "3. imports: the image DID NOT FINISH, $(ended "$code"): $(sed -n '$p' "$logs/imports.err" | cut -c 1-160)"
   else
-    say "3. imports of macOS: $totals"
-    say_some "$logs/imports-missing.txt" 5 logs/imports-missing.txt
+    say "3. imports of macOS: $totals${why:+ ($why)}"
+    say_packed "$logs/imports-missing.txt" 4 logs/imports-missing.txt
   fi
 else
   say "3. imports: not run"

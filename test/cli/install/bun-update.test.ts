@@ -1549,26 +1549,60 @@ it("bun update <name> from the root leaves a member's own entry alone; running i
 it("should update transitive resolutions of a named package", async () => {
   setHandler(
     await perNameRegistry(join(package_dir, ".tarballs"), {
+      shared: { versions: { "1.0.0": {}, "1.0.1": {}, "1.1.0": {} }, latest: "1.1.0" },
+      "dep-x": { versions: { "1.0.0": { dependencies: { shared: "^1.0.1" } } }, latest: "1.0.0" },
+    }),
+  );
+  await writeTextLockfileBunfig();
+  // dep-x@1.0.0 depends on shared@^1.0.1, which dedupes onto the root's
+  // exact shared@1.0.1 at install time.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "root", dependencies: { shared: "1.0.1", "dep-x": "^1.0.0" } }),
+  );
+  await runInPackageDir("install");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.1"']);
+
+  // Moving the root down to 1.0.0 leaves dep-x's row where it was: a plain
+  // install never re-resolves a row whose dependent did not change.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "root", dependencies: { shared: "1.0.0", "dep-x": "^1.0.0" } }),
+  );
+  await runInPackageDir("install");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@1.0.1"']);
+
+  // The root's exact `1.0.0` cannot move and does not satisfy dep-x's `^1.0.1`,
+  // so dep-x's row must move to 1.1.0 on its own.
+  await runInPackageDir("update", "shared");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@1.1.0"']);
+  expect(
+    await file(join(package_dir, "node_modules", "dep-x", "node_modules", "shared", "package.json")).json(),
+  ).toMatchObject({ version: "1.1.0" });
+});
+
+// The row re-enters the queue here too, but the root's copy still satisfies it, so it
+// lands back on that copy instead of nesting 1.1.0 next to the root's 1.0.0.
+it("bun update <name> keeps a transitive row on the root's entry while its range allows it", async () => {
+  setHandler(
+    await perNameRegistry(join(package_dir, ".tarballs"), {
       shared: { versions: { "1.0.0": {}, "1.1.0": {} }, latest: "1.1.0" },
       "dep-x": { versions: { "1.0.0": { dependencies: { shared: "^1.0.0" } } }, latest: "1.0.0" },
     }),
   );
   await writeTextLockfileBunfig();
-  // dep-x@1.0.0 depends on shared@^1.0.0, which dedupes onto the root's
-  // exact shared@1.0.0 at install time.
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({ name: "root", dependencies: { shared: "1.0.0", "dep-x": "^1.0.0" } }),
   );
   await runInPackageDir("install");
   expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"']);
+  const before = await file(join(package_dir, "bun.lock")).text();
 
-  // The root's exact `1.0.0` cannot move; dep-x's `^1.0.0` must move to 1.1.0.
   await runInPackageDir("update", "shared");
-  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@1.1.0"']);
-  expect(
-    await file(join(package_dir, "node_modules", "dep-x", "node_modules", "shared", "package.json")).json(),
-  ).toMatchObject({ version: "1.1.0" });
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"']);
+  expect(await file(join(package_dir, "bun.lock")).text()).toBe(before);
+  expect(await exists(join(package_dir, "node_modules", "dep-x", "node_modules"))).toBeFalse();
 });
 
 it("bun update <name> --latest holds back only the root's entry; a transitive edge declared as a dist-tag keeps following it", async () => {

@@ -827,6 +827,16 @@ pub(crate) fn build_store(
                 continue;
             }
 
+            if lockfile::pruned_workspaces::skips_link_to_pruned_workspace(
+                manager,
+                lockfile,
+                entry.pkg_id,
+                &dependencies[peer_dep_id as usize],
+                resolved_pkg_id,
+            ) {
+                continue;
+            }
+
             for &visited_parent_id in &visited_parent_node_ids {
                 let ctx = store::node::TransitivePeerOrderedArraySetCtx {
                     string_buf,
@@ -1162,6 +1172,17 @@ pub(crate) fn install_isolated_packages(
         packages_to_install,
         timings,
     )?;
+
+    lockfile::pruned_workspaces::report_links_to_pruned_workspaces(
+        &*manager,
+        &*lockfile,
+        &mut store
+            .nodes
+            .items_dependencies()
+            .iter()
+            .flatten()
+            .map(|ids| (ids.dep_id, ids.pkg_id)),
+    );
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
         'global_store_path: {

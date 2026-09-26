@@ -13,7 +13,7 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
-use crate::lockfile::tree;
+use crate::lockfile::{pruned_workspaces, tree};
 use crate::{DependencyID, ExtractData, PackageID};
 // Bring the `items_<field>{,_mut}()` column accessors for
 // `MultiArrayList::Slice<Package>` into scope.
@@ -118,6 +118,18 @@ pub(crate) fn install_hoisted_packages(
             this.lockfile.buffers.hoisted_dependencies = dep_ids;
         },
     );
+
+    {
+        let buffers = &this.lockfile.buffers;
+        pruned_workspaces::report_links_to_pruned_workspaces(
+            this,
+            &this.lockfile,
+            &mut buffers
+                .hoisted_dependencies
+                .iter()
+                .map(|&dep_id| (dep_id, buffers.resolutions[dep_id as usize])),
+        );
+    }
 
     let mut download_node: ProgressNode;
     let mut install_node: ProgressNode = ProgressNode::default();

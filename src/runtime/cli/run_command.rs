@@ -1883,7 +1883,7 @@ impl RunCommand {
                     }
                 }
                 Err(bun_install::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
-                Err(other) => bun_install::RunCommand::warn_node_shim_failed(&other),
+                Err(other) => bun_install::RunCommand::warn_node_shim_failed(other),
             }
 
             needs_to_force_bun = false;

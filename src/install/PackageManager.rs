@@ -1133,7 +1133,7 @@ fn configure_env_for_scripts_run(
                     this.env_mut().map.put(b"PATH", &path_var)?;
                     let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
                 }
-                Err(err) => RunCommand::warn_node_shim_failed(&err),
+                Err(err) => RunCommand::warn_node_shim_failed(err),
             }
         }
     }

@@ -649,7 +649,7 @@ impl RunCommand {
     }
 
     /// Printed when no `node` shim could be created. The script still runs.
-    pub fn warn_node_shim_failed(err: &crate::Error) {
+    pub fn warn_node_shim_failed(err: crate::Error) {
         bun_core::pretty_errorln!(
             "<r><yellow>warn<r>: could not create the <b>node<r> alias for bun: {}. Scripts that run <b>node<r> will not find it.",
             err
@@ -813,10 +813,11 @@ impl RunCommand {
                     Ok(()) => break,
                     Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
                         // An upgrade in place leaves a link at the old image here.
-                        if replaced
-                            || Self::shim_matches(buf, dest_len, image_stat, kind).unwrap_or(false)
-                        {
+                        if Self::shim_matches(buf, dest_len, image_stat, kind).unwrap_or(false) {
                             break;
+                        }
+                        if replaced {
+                            return Err(e.into());
                         }
                         match bun_sys::unlink_w(WStr::from_buf(buf, dest_len)) {
                             Ok(()) => {}

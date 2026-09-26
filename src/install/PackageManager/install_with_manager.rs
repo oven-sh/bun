@@ -708,6 +708,7 @@ pub fn install_with_manager(
         }
 
         manager.verify_resolutions(log_level);
+        manager.verify_workspaces_inside_root(log_level);
 
         super::package_json_write_back::edit_after_resolve(manager)?;
 

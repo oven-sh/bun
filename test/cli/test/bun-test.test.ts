@@ -2042,15 +2042,27 @@ describe.concurrent("test file discovery (scanner)", () => {
     },
   );
 
-  // A path argument that selects no test file fails the run. The other
-  // arguments still run. --pass-with-no-tests opts out of the exit code.
+  // Every path argument that selects no test file is reported, before the
+  // run and again after the summary. The other arguments still run. Only a
+  // path that does not exist fails the run: a shell glob can expand to a
+  // directory with no test files. --pass-with-no-tests opts out of the exit
+  // code.
   describe.each([
-    ["a missing file", ["./exists.test.ts", "./missing.test.ts"], ["./missing.test.ts"]],
-    ["a missing file first", ["./missing.test.ts", "./exists.test.ts"], ["./missing.test.ts"]],
-    ["a directory with no test files", ["./exists.test.ts", "./empty"], ["./empty"]],
-    ["two unmatched paths", ["./exists.test.ts", "./missing.test.ts", "./empty"], ["./missing.test.ts", "./empty"]],
-  ])("a path argument with no matches fails the run (%s)", (_name, args, unmatched) => {
-    test.concurrent("exits 1 and still runs the other files", async () => {
+    ["a missing file", ["./exists.test.ts", "./missing.test.ts"], ["./missing.test.ts"], 1],
+    ["a missing file first", ["./missing.test.ts", "./exists.test.ts"], ["./missing.test.ts"], 1],
+    ["a directory with no test files", ["./exists.test.ts", "./empty"], ["./empty"], 0],
+    ["a file that is not a test file", ["./exists.test.ts", "./empty/not-a-test.md"], ["./empty/not-a-test.md"], 0],
+    [
+      "a missing file and an empty directory",
+      ["./exists.test.ts", "./missing.test.ts", "./empty"],
+      ["./missing.test.ts", "./empty"],
+      1,
+    ],
+  ])("a path argument with no matches is reported (%s)", (_name, args, unmatched, expectedExitCode) => {
+    test.concurrent.each([
+      ["plain", { AGENT: "false" }, ""],
+      ["agent", { AGENT: undefined, CLAUDECODE: "1" }, " in --cwd="],
+    ])("%s output", async (_mode, extraEnv, suffix) => {
       using dir = tempDir("scanner-unmatched-arg", {
         "exists.test.ts": existsTest,
         "empty/not-a-test.md": "",
@@ -2058,23 +2070,20 @@ describe.concurrent("test file discovery (scanner)", () => {
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", ...args],
-        env: bunEnv,
+        env: { ...bunEnv, ...extraEnv },
         cwd: String(dir),
         stderr: "pipe",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      // Each unmatched argument is reported before the run and again after
-      // the summary, where the exit code is decided.
       const summaryAt = stderr.indexOf("Ran 1 test across 1 file.");
       expect(summaryAt).toBeGreaterThan(-1);
       for (const arg of unmatched) {
-        const line = `Test filter "${arg}" had no matches`;
-        expect(stderr.indexOf(line)).toBeLessThan(stderr.indexOf("(pass) exists"));
+        const line = `Test filter "${arg}" had no matches${suffix}`;
+        expect(stderr.indexOf(line)).toBeLessThan(summaryAt);
         expect(stderr.indexOf(line, summaryAt)).toBeGreaterThan(summaryAt);
       }
-      expect(stderr).toContain("(pass) exists");
-      expect(exitCode).toBe(1);
+      expect(exitCode).toBe(expectedExitCode);
     });
 
     test.concurrent("--pass-with-no-tests exits 0", async () => {

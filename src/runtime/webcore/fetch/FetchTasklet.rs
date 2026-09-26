@@ -1642,6 +1642,24 @@ impl FetchTasklet {
                 BunString::static_("unknown certificate verification error")
             }
 
+            e @ (http::Error::SocksCredentialsIncomplete
+            | http::Error::SocksCredentialsInvalid
+            | http::Error::SocksCredentialsTooLong
+            | http::Error::SocksDomainTooLong
+            | http::Error::SocksProtocolError
+            | http::Error::SocksNoAcceptableMethods
+            | http::Error::SocksAuthenticationFailed
+            | http::Error::SocksGeneralFailure
+            | http::Error::SocksConnectionNotAllowed
+            | http::Error::SocksNetworkUnreachable
+            | http::Error::SocksHostUnreachable
+            | http::Error::SocksConnectionRefused
+            | http::Error::SocksTTLExpired
+            | http::Error::SocksCommandNotSupported
+            | http::Error::SocksAddressTypeNotSupported) => {
+                BunString::create_format(format_args!("{code}: {e}"))
+            }
+
             _ => BunString::create_format(format_args!(
                 "{code} fetching \"{path}\". For more information, pass `verbose: true` in the second argument to fetch()",
             )),

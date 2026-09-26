@@ -610,6 +610,7 @@ impl ProxyTunnel {
                 // opting out keeps its SSL off the parked queues entirely.
                 on_session: None,
                 on_keylog: None,
+                on_ssl_error: None,
                 server_identity: Some(server_identity),
                 ctx: this.as_erased_ptr().as_ptr(),
             },

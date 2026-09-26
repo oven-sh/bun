@@ -2559,6 +2559,90 @@ export default class {
   `);
     });
 
+    describe("an export with no initializer", () => {
+      const eliminate = (names, options) => ({ exports: { eliminate: names }, ...options });
+      const replace = (entries, options) => ({ exports: { replace: entries }, ...options });
+      const printed = stdout => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
+      const expected = rows => rows.map(([, , module, names]) => [module, module, names]);
+      const print = async rows => {
+        const modules = [];
+        for (const [options, source] of rows) {
+          const transpiler = new Bun.Transpiler({ loader: "ts", ...options });
+          const module = transpiler.transformSync(source);
+          modules.push([module, await transpiler.transform(source), transpiler.scan(source).exports]);
+        }
+        return modules;
+      };
+      const ns = `var NS;\n((NS) => {})(NS ||= {});\n`;
+
+      // `eliminate` aborted the process on these inputs, so they run in a subprocess.
+      it("eliminate", async () => {
+        // [options, source, printed module, exports that scan() reports]
+        const rows = [
+          [eliminate(["A"]), `export let A`, ``, []],
+          [eliminate(["A"]), `export var A: number`, ``, []],
+          [eliminate(["A"], { loader: "js" }), `export let A; A = 1;`, `A = 1;\n`, []],
+          [eliminate(["A"]), `export let A, B = 1`, `export let B = 1;\n`, ["B"]],
+          [eliminate(["A", "B"], { treeShaking: false }), `export let A, B`, ``, []],
+          [eliminate(["A"], { deadCodeElimination: false }), `export let A`, ``, []],
+          [eliminate(["A"]), `namespace NS { export let A }`, ns, []],
+          [eliminate(["A"]), `namespace NS { export declare const A: number }`, ns, []],
+        ];
+        const result = await bunRun(["-e", `console.log(JSON.stringify(await (${print})(${JSON.stringify(rows)})))`]);
+        expect(result).toEqual(printed(JSON.stringify(expected(rows))));
+      });
+
+      it("replace", async () => {
+        const rows = [
+          [replace({ A: 1 }), `export let A`, `export let A = 1;\n`, ["A"]],
+          [replace({ A: "bar" }), `export let A`, `export let A = "bar";\n`, ["A"]],
+          [replace({ A: "bar" }, { loader: "js" }), `export var A`, `export var A = "bar";\n`, ["A"]],
+          [replace({ A: ["N", "bar"] }), `export let A`, `export let N = "bar";\n`, ["N"]],
+          [replace({ A: 1 }), `export let A, B`, `export let A = 1;\nexport let B;\n`, ["A", "B"]],
+          [
+            replace({ B: 1 }, { treeShaking: false }),
+            `export let A, B, C`,
+            `export let A, B = 1, C;\n`,
+            ["A", "B", "C"],
+          ],
+          // The write of the module comes after the replacement.
+          [replace({ A: 1 }), `export let A; A = 2;`, `export let A = 1;\nA = 2;\n`, ["A"]],
+          // As with an initializer, the replaced export ends the prefix of constants to inline.
+          [
+            replace({ A: 1 }, { inline: true }),
+            `export let A; const B = 2; f(B)`,
+            `export let A = 1;\nconst B = 2;\nf(B);\n`,
+            ["A"],
+          ],
+          // A namespace member with no value prints what it prints with no `exports` option.
+          [replace({ A: 1 }), `namespace NS { export let A }`, ns, []],
+          [replace({ A: ["N", 1] }), `namespace NS { export declare const A: number }`, ns, []],
+          [
+            replace({ A: ["N", 1] }),
+            `namespace NS { let N; export let A }`,
+            `var NS;\n((NS) => {\n  let N;\n})(NS ||= {});\n`,
+            [],
+          ],
+        ];
+        expect(await print(rows)).toEqual(expected(rows));
+      });
+
+      it("replace with a string, after the load of another module", async () => {
+        using dir = tempDir("exports-replace-no-initializer", {
+          "other.cjs": Array.from({ length: 50 }, (_, i) => `exports.v${i} = () => ["v", ${i}].join("-");`).join("\n"),
+        });
+        const result = await bunRun([
+          "-e",
+          `const transpiler = new Bun.Transpiler({ loader: "ts", exports: { replace: { A: "bar", B: 1 } } });
+          require(${JSON.stringify(join(String(dir), "other.cjs"))});
+          const sources = ["export let A", "export let A = 5", "export let B"];
+          console.log(JSON.stringify(sources.map(source => transpiler.transformSync(source))));`,
+        ]);
+        const module = `export let A = "bar";\n`;
+        expect(result).toEqual(printed(JSON.stringify([module, module, `export let B = 1;\n`])));
+      });
+    });
+
     it("deletes dead exports and any imports only referenced in dead regions", () => {
       const output = transpiler.transformSync(`
         import deadFS from 'fs';

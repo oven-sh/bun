@@ -8,6 +8,8 @@
 // each: a name that the headers of this macOS do not have stops one part and not the others.
 //   cc -DPART=<n> -o part darwin_layout.c && ./part        n = 1 .. 69
 //   cc -DPART=0 ...                                         prints the number of parts
+// A field that the headers do not have is left out with -DSKIP_<type>_<field>, which run-on-mac.sh
+// does from the message of the compiler.
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mount.h>
@@ -49,20 +51,34 @@ int main(void) {
 #if PART == 2
   printf("{\"fact\":\"size\",\"of\":\"attrlist\",\"value\":%zu}\n", sizeof(struct attrlist));
   printf("{\"fact\":\"align\",\"of\":\"attrlist\",\"value\":%zu}\n", _Alignof(struct attrlist));
+#ifndef SKIP_attrlist_bitmapcount
   printf("{\"fact\":\"offset\",\"of\":\"attrlist.bitmapcount\",\"value\":%zu}\n", offsetof(struct attrlist, bitmapcount));
   printf("{\"fact\":\"field size\",\"of\":\"attrlist.bitmapcount\",\"value\":%zu}\n", sizeof(((struct attrlist *)0)->bitmapcount));
+#endif
+#ifndef SKIP_attrlist_reserved
   printf("{\"fact\":\"offset\",\"of\":\"attrlist.reserved\",\"value\":%zu}\n", offsetof(struct attrlist, reserved));
   printf("{\"fact\":\"field size\",\"of\":\"attrlist.reserved\",\"value\":%zu}\n", sizeof(((struct attrlist *)0)->reserved));
+#endif
+#ifndef SKIP_attrlist_commonattr
   printf("{\"fact\":\"offset\",\"of\":\"attrlist.commonattr\",\"value\":%zu}\n", offsetof(struct attrlist, commonattr));
   printf("{\"fact\":\"field size\",\"of\":\"attrlist.commonattr\",\"value\":%zu}\n", sizeof(((struct attrlist *)0)->commonattr));
+#endif
+#ifndef SKIP_attrlist_volattr
   printf("{\"fact\":\"offset\",\"of\":\"attrlist.volattr\",\"value\":%zu}\n", offsetof(struct attrlist, volattr));
   printf("{\"fact\":\"field size\",\"of\":\"attrlist.volattr\",\"value\":%zu}\n", sizeof(((struct attrlist *)0)->volattr));
+#endif
+#ifndef SKIP_attrlist_dirattr
   printf("{\"fact\":\"offset\",\"of\":\"attrlist.dirattr\",\"value\":%zu}\n", offsetof(struct attrlist, dirattr));
   printf("{\"fact\":\"field size\",\"of\":\"attrlist.dirattr\",\"value\":%zu}\n", sizeof(((struct attrlist *)0)->dirattr));
+#endif
+#ifndef SKIP_attrlist_fileattr
   printf("{\"fact\":\"offset\",\"of\":\"attrlist.fileattr\",\"value\":%zu}\n", offsetof(struct attrlist, fileattr));
   printf("{\"fact\":\"field size\",\"of\":\"attrlist.fileattr\",\"value\":%zu}\n", sizeof(((struct attrlist *)0)->fileattr));
+#endif
+#ifndef SKIP_attrlist_forkattr
   printf("{\"fact\":\"offset\",\"of\":\"attrlist.forkattr\",\"value\":%zu}\n", offsetof(struct attrlist, forkattr));
   printf("{\"fact\":\"field size\",\"of\":\"attrlist.forkattr\",\"value\":%zu}\n", sizeof(((struct attrlist *)0)->forkattr));
+#endif
 #endif
 #if PART == 3
   printf("{\"fact\":\"size\",\"of\":\"blkcnt_t\",\"value\":%zu}\n", sizeof(blkcnt_t));
@@ -87,32 +103,54 @@ int main(void) {
 #if PART == 8
   printf("{\"fact\":\"size\",\"of\":\"dirent\",\"value\":%zu}\n", sizeof(struct dirent));
   printf("{\"fact\":\"align\",\"of\":\"dirent\",\"value\":%zu}\n", _Alignof(struct dirent));
+#ifndef SKIP_dirent_d_ino
   printf("{\"fact\":\"offset\",\"of\":\"dirent.d_ino\",\"value\":%zu}\n", offsetof(struct dirent, d_ino));
   printf("{\"fact\":\"field size\",\"of\":\"dirent.d_ino\",\"value\":%zu}\n", sizeof(((struct dirent *)0)->d_ino));
+#endif
+#ifndef SKIP_dirent_d_seekoff
   printf("{\"fact\":\"offset\",\"of\":\"dirent.d_seekoff\",\"value\":%zu}\n", offsetof(struct dirent, d_seekoff));
   printf("{\"fact\":\"field size\",\"of\":\"dirent.d_seekoff\",\"value\":%zu}\n", sizeof(((struct dirent *)0)->d_seekoff));
+#endif
+#ifndef SKIP_dirent_d_reclen
   printf("{\"fact\":\"offset\",\"of\":\"dirent.d_reclen\",\"value\":%zu}\n", offsetof(struct dirent, d_reclen));
   printf("{\"fact\":\"field size\",\"of\":\"dirent.d_reclen\",\"value\":%zu}\n", sizeof(((struct dirent *)0)->d_reclen));
+#endif
+#ifndef SKIP_dirent_d_namlen
   printf("{\"fact\":\"offset\",\"of\":\"dirent.d_namlen\",\"value\":%zu}\n", offsetof(struct dirent, d_namlen));
   printf("{\"fact\":\"field size\",\"of\":\"dirent.d_namlen\",\"value\":%zu}\n", sizeof(((struct dirent *)0)->d_namlen));
+#endif
+#ifndef SKIP_dirent_d_type
   printf("{\"fact\":\"offset\",\"of\":\"dirent.d_type\",\"value\":%zu}\n", offsetof(struct dirent, d_type));
   printf("{\"fact\":\"field size\",\"of\":\"dirent.d_type\",\"value\":%zu}\n", sizeof(((struct dirent *)0)->d_type));
+#endif
+#ifndef SKIP_dirent_d_name
   printf("{\"fact\":\"offset\",\"of\":\"dirent.d_name\",\"value\":%zu}\n", offsetof(struct dirent, d_name));
   printf("{\"fact\":\"field size\",\"of\":\"dirent.d_name\",\"value\":%zu}\n", sizeof(((struct dirent *)0)->d_name));
+#endif
 #endif
 #if PART == 9
   printf("{\"fact\":\"size\",\"of\":\"flock\",\"value\":%zu}\n", sizeof(struct flock));
   printf("{\"fact\":\"align\",\"of\":\"flock\",\"value\":%zu}\n", _Alignof(struct flock));
+#ifndef SKIP_flock_l_start
   printf("{\"fact\":\"offset\",\"of\":\"flock.l_start\",\"value\":%zu}\n", offsetof(struct flock, l_start));
   printf("{\"fact\":\"field size\",\"of\":\"flock.l_start\",\"value\":%zu}\n", sizeof(((struct flock *)0)->l_start));
+#endif
+#ifndef SKIP_flock_l_len
   printf("{\"fact\":\"offset\",\"of\":\"flock.l_len\",\"value\":%zu}\n", offsetof(struct flock, l_len));
   printf("{\"fact\":\"field size\",\"of\":\"flock.l_len\",\"value\":%zu}\n", sizeof(((struct flock *)0)->l_len));
+#endif
+#ifndef SKIP_flock_l_pid
   printf("{\"fact\":\"offset\",\"of\":\"flock.l_pid\",\"value\":%zu}\n", offsetof(struct flock, l_pid));
   printf("{\"fact\":\"field size\",\"of\":\"flock.l_pid\",\"value\":%zu}\n", sizeof(((struct flock *)0)->l_pid));
+#endif
+#ifndef SKIP_flock_l_type
   printf("{\"fact\":\"offset\",\"of\":\"flock.l_type\",\"value\":%zu}\n", offsetof(struct flock, l_type));
   printf("{\"fact\":\"field size\",\"of\":\"flock.l_type\",\"value\":%zu}\n", sizeof(((struct flock *)0)->l_type));
+#endif
+#ifndef SKIP_flock_l_whence
   printf("{\"fact\":\"offset\",\"of\":\"flock.l_whence\",\"value\":%zu}\n", offsetof(struct flock, l_whence));
   printf("{\"fact\":\"field size\",\"of\":\"flock.l_whence\",\"value\":%zu}\n", sizeof(((struct flock *)0)->l_whence));
+#endif
 #endif
 #if PART == 10
   printf("{\"fact\":\"size\",\"of\":\"fsid_t\",\"value\":%zu}\n", sizeof(fsid_t));
@@ -121,16 +159,26 @@ int main(void) {
 #if PART == 11
   printf("{\"fact\":\"size\",\"of\":\"fstore_t\",\"value\":%zu}\n", sizeof(fstore_t));
   printf("{\"fact\":\"align\",\"of\":\"fstore_t\",\"value\":%zu}\n", _Alignof(fstore_t));
+#ifndef SKIP_fstore_t_fst_flags
   printf("{\"fact\":\"offset\",\"of\":\"fstore_t.fst_flags\",\"value\":%zu}\n", offsetof(fstore_t, fst_flags));
   printf("{\"fact\":\"field size\",\"of\":\"fstore_t.fst_flags\",\"value\":%zu}\n", sizeof(((fstore_t *)0)->fst_flags));
+#endif
+#ifndef SKIP_fstore_t_fst_posmode
   printf("{\"fact\":\"offset\",\"of\":\"fstore_t.fst_posmode\",\"value\":%zu}\n", offsetof(fstore_t, fst_posmode));
   printf("{\"fact\":\"field size\",\"of\":\"fstore_t.fst_posmode\",\"value\":%zu}\n", sizeof(((fstore_t *)0)->fst_posmode));
+#endif
+#ifndef SKIP_fstore_t_fst_offset
   printf("{\"fact\":\"offset\",\"of\":\"fstore_t.fst_offset\",\"value\":%zu}\n", offsetof(fstore_t, fst_offset));
   printf("{\"fact\":\"field size\",\"of\":\"fstore_t.fst_offset\",\"value\":%zu}\n", sizeof(((fstore_t *)0)->fst_offset));
+#endif
+#ifndef SKIP_fstore_t_fst_length
   printf("{\"fact\":\"offset\",\"of\":\"fstore_t.fst_length\",\"value\":%zu}\n", offsetof(fstore_t, fst_length));
   printf("{\"fact\":\"field size\",\"of\":\"fstore_t.fst_length\",\"value\":%zu}\n", sizeof(((fstore_t *)0)->fst_length));
+#endif
+#ifndef SKIP_fstore_t_fst_bytesalloc
   printf("{\"fact\":\"offset\",\"of\":\"fstore_t.fst_bytesalloc\",\"value\":%zu}\n", offsetof(fstore_t, fst_bytesalloc));
   printf("{\"fact\":\"field size\",\"of\":\"fstore_t.fst_bytesalloc\",\"value\":%zu}\n", sizeof(((fstore_t *)0)->fst_bytesalloc));
+#endif
 #endif
 #if PART == 12
   printf("{\"fact\":\"size\",\"of\":\"gid_t\",\"value\":%zu}\n", sizeof(gid_t));
@@ -163,10 +211,14 @@ int main(void) {
 #if PART == 19
   printf("{\"fact\":\"size\",\"of\":\"iovec\",\"value\":%zu}\n", sizeof(struct iovec));
   printf("{\"fact\":\"align\",\"of\":\"iovec\",\"value\":%zu}\n", _Alignof(struct iovec));
+#ifndef SKIP_iovec_iov_base
   printf("{\"fact\":\"offset\",\"of\":\"iovec.iov_base\",\"value\":%zu}\n", offsetof(struct iovec, iov_base));
   printf("{\"fact\":\"field size\",\"of\":\"iovec.iov_base\",\"value\":%zu}\n", sizeof(((struct iovec *)0)->iov_base));
+#endif
+#ifndef SKIP_iovec_iov_len
   printf("{\"fact\":\"offset\",\"of\":\"iovec.iov_len\",\"value\":%zu}\n", offsetof(struct iovec, iov_len));
   printf("{\"fact\":\"field size\",\"of\":\"iovec.iov_len\",\"value\":%zu}\n", sizeof(((struct iovec *)0)->iov_len));
+#endif
 #endif
 #if PART == 20
   printf("{\"fact\":\"size\",\"of\":\"kern_return_t\",\"value\":%zu}\n", sizeof(kern_return_t));
@@ -175,36 +227,62 @@ int main(void) {
 #if PART == 21
   printf("{\"fact\":\"size\",\"of\":\"kevent\",\"value\":%zu}\n", sizeof(struct kevent));
   printf("{\"fact\":\"align\",\"of\":\"kevent\",\"value\":%zu}\n", _Alignof(struct kevent));
+#ifndef SKIP_kevent_ident
   printf("{\"fact\":\"offset\",\"of\":\"kevent.ident\",\"value\":%zu}\n", offsetof(struct kevent, ident));
   printf("{\"fact\":\"field size\",\"of\":\"kevent.ident\",\"value\":%zu}\n", sizeof(((struct kevent *)0)->ident));
+#endif
+#ifndef SKIP_kevent_filter
   printf("{\"fact\":\"offset\",\"of\":\"kevent.filter\",\"value\":%zu}\n", offsetof(struct kevent, filter));
   printf("{\"fact\":\"field size\",\"of\":\"kevent.filter\",\"value\":%zu}\n", sizeof(((struct kevent *)0)->filter));
+#endif
+#ifndef SKIP_kevent_flags
   printf("{\"fact\":\"offset\",\"of\":\"kevent.flags\",\"value\":%zu}\n", offsetof(struct kevent, flags));
   printf("{\"fact\":\"field size\",\"of\":\"kevent.flags\",\"value\":%zu}\n", sizeof(((struct kevent *)0)->flags));
+#endif
+#ifndef SKIP_kevent_fflags
   printf("{\"fact\":\"offset\",\"of\":\"kevent.fflags\",\"value\":%zu}\n", offsetof(struct kevent, fflags));
   printf("{\"fact\":\"field size\",\"of\":\"kevent.fflags\",\"value\":%zu}\n", sizeof(((struct kevent *)0)->fflags));
+#endif
+#ifndef SKIP_kevent_data
   printf("{\"fact\":\"offset\",\"of\":\"kevent.data\",\"value\":%zu}\n", offsetof(struct kevent, data));
   printf("{\"fact\":\"field size\",\"of\":\"kevent.data\",\"value\":%zu}\n", sizeof(((struct kevent *)0)->data));
+#endif
+#ifndef SKIP_kevent_udata
   printf("{\"fact\":\"offset\",\"of\":\"kevent.udata\",\"value\":%zu}\n", offsetof(struct kevent, udata));
   printf("{\"fact\":\"field size\",\"of\":\"kevent.udata\",\"value\":%zu}\n", sizeof(((struct kevent *)0)->udata));
+#endif
 #endif
 #if PART == 22
   printf("{\"fact\":\"size\",\"of\":\"kevent64_s\",\"value\":%zu}\n", sizeof(struct kevent64_s));
   printf("{\"fact\":\"align\",\"of\":\"kevent64_s\",\"value\":%zu}\n", _Alignof(struct kevent64_s));
+#ifndef SKIP_kevent64_s_ident
   printf("{\"fact\":\"offset\",\"of\":\"kevent64_s.ident\",\"value\":%zu}\n", offsetof(struct kevent64_s, ident));
   printf("{\"fact\":\"field size\",\"of\":\"kevent64_s.ident\",\"value\":%zu}\n", sizeof(((struct kevent64_s *)0)->ident));
+#endif
+#ifndef SKIP_kevent64_s_filter
   printf("{\"fact\":\"offset\",\"of\":\"kevent64_s.filter\",\"value\":%zu}\n", offsetof(struct kevent64_s, filter));
   printf("{\"fact\":\"field size\",\"of\":\"kevent64_s.filter\",\"value\":%zu}\n", sizeof(((struct kevent64_s *)0)->filter));
+#endif
+#ifndef SKIP_kevent64_s_flags
   printf("{\"fact\":\"offset\",\"of\":\"kevent64_s.flags\",\"value\":%zu}\n", offsetof(struct kevent64_s, flags));
   printf("{\"fact\":\"field size\",\"of\":\"kevent64_s.flags\",\"value\":%zu}\n", sizeof(((struct kevent64_s *)0)->flags));
+#endif
+#ifndef SKIP_kevent64_s_fflags
   printf("{\"fact\":\"offset\",\"of\":\"kevent64_s.fflags\",\"value\":%zu}\n", offsetof(struct kevent64_s, fflags));
   printf("{\"fact\":\"field size\",\"of\":\"kevent64_s.fflags\",\"value\":%zu}\n", sizeof(((struct kevent64_s *)0)->fflags));
+#endif
+#ifndef SKIP_kevent64_s_data
   printf("{\"fact\":\"offset\",\"of\":\"kevent64_s.data\",\"value\":%zu}\n", offsetof(struct kevent64_s, data));
   printf("{\"fact\":\"field size\",\"of\":\"kevent64_s.data\",\"value\":%zu}\n", sizeof(((struct kevent64_s *)0)->data));
+#endif
+#ifndef SKIP_kevent64_s_udata
   printf("{\"fact\":\"offset\",\"of\":\"kevent64_s.udata\",\"value\":%zu}\n", offsetof(struct kevent64_s, udata));
   printf("{\"fact\":\"field size\",\"of\":\"kevent64_s.udata\",\"value\":%zu}\n", sizeof(((struct kevent64_s *)0)->udata));
+#endif
+#ifndef SKIP_kevent64_s_ext
   printf("{\"fact\":\"offset\",\"of\":\"kevent64_s.ext\",\"value\":%zu}\n", offsetof(struct kevent64_s, ext));
   printf("{\"fact\":\"field size\",\"of\":\"kevent64_s.ext\",\"value\":%zu}\n", sizeof(((struct kevent64_s *)0)->ext));
+#endif
 #endif
 #if PART == 23
   printf("{\"fact\":\"size\",\"of\":\"mach_msg_type_number_t\",\"value\":%zu}\n", sizeof(mach_msg_type_number_t));
@@ -217,10 +295,14 @@ int main(void) {
 #if PART == 25
   printf("{\"fact\":\"size\",\"of\":\"mach_timebase_info\",\"value\":%zu}\n", sizeof(struct mach_timebase_info));
   printf("{\"fact\":\"align\",\"of\":\"mach_timebase_info\",\"value\":%zu}\n", _Alignof(struct mach_timebase_info));
+#ifndef SKIP_mach_timebase_info_numer
   printf("{\"fact\":\"offset\",\"of\":\"mach_timebase_info.numer\",\"value\":%zu}\n", offsetof(struct mach_timebase_info, numer));
   printf("{\"fact\":\"field size\",\"of\":\"mach_timebase_info.numer\",\"value\":%zu}\n", sizeof(((struct mach_timebase_info *)0)->numer));
+#endif
+#ifndef SKIP_mach_timebase_info_denom
   printf("{\"fact\":\"offset\",\"of\":\"mach_timebase_info.denom\",\"value\":%zu}\n", offsetof(struct mach_timebase_info, denom));
   printf("{\"fact\":\"field size\",\"of\":\"mach_timebase_info.denom\",\"value\":%zu}\n", sizeof(((struct mach_timebase_info *)0)->denom));
+#endif
 #endif
 #if PART == 26
   printf("{\"fact\":\"size\",\"of\":\"mach_timebase_info_data_t\",\"value\":%zu}\n", sizeof(mach_timebase_info_data_t));
@@ -269,12 +351,18 @@ int main(void) {
 #if PART == 37
   printf("{\"fact\":\"size\",\"of\":\"pollfd\",\"value\":%zu}\n", sizeof(struct pollfd));
   printf("{\"fact\":\"align\",\"of\":\"pollfd\",\"value\":%zu}\n", _Alignof(struct pollfd));
+#ifndef SKIP_pollfd_fd
   printf("{\"fact\":\"offset\",\"of\":\"pollfd.fd\",\"value\":%zu}\n", offsetof(struct pollfd, fd));
   printf("{\"fact\":\"field size\",\"of\":\"pollfd.fd\",\"value\":%zu}\n", sizeof(((struct pollfd *)0)->fd));
+#endif
+#ifndef SKIP_pollfd_events
   printf("{\"fact\":\"offset\",\"of\":\"pollfd.events\",\"value\":%zu}\n", offsetof(struct pollfd, events));
   printf("{\"fact\":\"field size\",\"of\":\"pollfd.events\",\"value\":%zu}\n", sizeof(((struct pollfd *)0)->events));
+#endif
+#ifndef SKIP_pollfd_revents
   printf("{\"fact\":\"offset\",\"of\":\"pollfd.revents\",\"value\":%zu}\n", offsetof(struct pollfd, revents));
   printf("{\"fact\":\"field size\",\"of\":\"pollfd.revents\",\"value\":%zu}\n", sizeof(((struct pollfd *)0)->revents));
+#endif
 #endif
 #if PART == 38
   printf("{\"fact\":\"size\",\"of\":\"posix_spawn_file_actions_t\",\"value\":%zu}\n", sizeof(posix_spawn_file_actions_t));
@@ -287,8 +375,10 @@ int main(void) {
 #if PART == 40
   printf("{\"fact\":\"size\",\"of\":\"processor_cpu_load_info\",\"value\":%zu}\n", sizeof(struct processor_cpu_load_info));
   printf("{\"fact\":\"align\",\"of\":\"processor_cpu_load_info\",\"value\":%zu}\n", _Alignof(struct processor_cpu_load_info));
+#ifndef SKIP_processor_cpu_load_info_cpu_ticks
   printf("{\"fact\":\"offset\",\"of\":\"processor_cpu_load_info.cpu_ticks\",\"value\":%zu}\n", offsetof(struct processor_cpu_load_info, cpu_ticks));
   printf("{\"fact\":\"field size\",\"of\":\"processor_cpu_load_info.cpu_ticks\",\"value\":%zu}\n", sizeof(((struct processor_cpu_load_info *)0)->cpu_ticks));
+#endif
 #endif
 #if PART == 41
   printf("{\"fact\":\"size\",\"of\":\"processor_cpu_load_info_data_t\",\"value\":%zu}\n", sizeof(processor_cpu_load_info_data_t));
@@ -313,14 +403,22 @@ int main(void) {
 #if PART == 46
   printf("{\"fact\":\"size\",\"of\":\"sf_hdtr\",\"value\":%zu}\n", sizeof(struct sf_hdtr));
   printf("{\"fact\":\"align\",\"of\":\"sf_hdtr\",\"value\":%zu}\n", _Alignof(struct sf_hdtr));
+#ifndef SKIP_sf_hdtr_headers
   printf("{\"fact\":\"offset\",\"of\":\"sf_hdtr.headers\",\"value\":%zu}\n", offsetof(struct sf_hdtr, headers));
   printf("{\"fact\":\"field size\",\"of\":\"sf_hdtr.headers\",\"value\":%zu}\n", sizeof(((struct sf_hdtr *)0)->headers));
+#endif
+#ifndef SKIP_sf_hdtr_hdr_cnt
   printf("{\"fact\":\"offset\",\"of\":\"sf_hdtr.hdr_cnt\",\"value\":%zu}\n", offsetof(struct sf_hdtr, hdr_cnt));
   printf("{\"fact\":\"field size\",\"of\":\"sf_hdtr.hdr_cnt\",\"value\":%zu}\n", sizeof(((struct sf_hdtr *)0)->hdr_cnt));
+#endif
+#ifndef SKIP_sf_hdtr_trailers
   printf("{\"fact\":\"offset\",\"of\":\"sf_hdtr.trailers\",\"value\":%zu}\n", offsetof(struct sf_hdtr, trailers));
   printf("{\"fact\":\"field size\",\"of\":\"sf_hdtr.trailers\",\"value\":%zu}\n", sizeof(((struct sf_hdtr *)0)->trailers));
+#endif
+#ifndef SKIP_sf_hdtr_trl_cnt
   printf("{\"fact\":\"offset\",\"of\":\"sf_hdtr.trl_cnt\",\"value\":%zu}\n", offsetof(struct sf_hdtr, trl_cnt));
   printf("{\"fact\":\"field size\",\"of\":\"sf_hdtr.trl_cnt\",\"value\":%zu}\n", sizeof(((struct sf_hdtr *)0)->trl_cnt));
+#endif
 #endif
 #if PART == 47
   printf("{\"fact\":\"size\",\"of\":\"sigset_t\",\"value\":%zu}\n", sizeof(sigset_t));
@@ -333,32 +431,54 @@ int main(void) {
 #if PART == 49
   printf("{\"fact\":\"size\",\"of\":\"sockaddr\",\"value\":%zu}\n", sizeof(struct sockaddr));
   printf("{\"fact\":\"align\",\"of\":\"sockaddr\",\"value\":%zu}\n", _Alignof(struct sockaddr));
+#ifndef SKIP_sockaddr_sa_len
   printf("{\"fact\":\"offset\",\"of\":\"sockaddr.sa_len\",\"value\":%zu}\n", offsetof(struct sockaddr, sa_len));
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr.sa_len\",\"value\":%zu}\n", sizeof(((struct sockaddr *)0)->sa_len));
+#endif
+#ifndef SKIP_sockaddr_sa_family
   printf("{\"fact\":\"offset\",\"of\":\"sockaddr.sa_family\",\"value\":%zu}\n", offsetof(struct sockaddr, sa_family));
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr.sa_family\",\"value\":%zu}\n", sizeof(((struct sockaddr *)0)->sa_family));
+#endif
+#ifndef SKIP_sockaddr_sa_data
   printf("{\"fact\":\"offset\",\"of\":\"sockaddr.sa_data\",\"value\":%zu}\n", offsetof(struct sockaddr, sa_data));
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr.sa_data\",\"value\":%zu}\n", sizeof(((struct sockaddr *)0)->sa_data));
+#endif
 #endif
 #if PART == 50
   printf("{\"fact\":\"size\",\"of\":\"sockaddr_dl\",\"value\":%zu}\n", sizeof(struct sockaddr_dl));
   printf("{\"fact\":\"align\",\"of\":\"sockaddr_dl\",\"value\":%zu}\n", _Alignof(struct sockaddr_dl));
+#ifndef SKIP_sockaddr_dl_sdl_len
   printf("{\"fact\":\"offset\",\"of\":\"sockaddr_dl.sdl_len\",\"value\":%zu}\n", offsetof(struct sockaddr_dl, sdl_len));
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr_dl.sdl_len\",\"value\":%zu}\n", sizeof(((struct sockaddr_dl *)0)->sdl_len));
+#endif
+#ifndef SKIP_sockaddr_dl_sdl_family
   printf("{\"fact\":\"offset\",\"of\":\"sockaddr_dl.sdl_family\",\"value\":%zu}\n", offsetof(struct sockaddr_dl, sdl_family));
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr_dl.sdl_family\",\"value\":%zu}\n", sizeof(((struct sockaddr_dl *)0)->sdl_family));
+#endif
+#ifndef SKIP_sockaddr_dl_sdl_index
   printf("{\"fact\":\"offset\",\"of\":\"sockaddr_dl.sdl_index\",\"value\":%zu}\n", offsetof(struct sockaddr_dl, sdl_index));
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr_dl.sdl_index\",\"value\":%zu}\n", sizeof(((struct sockaddr_dl *)0)->sdl_index));
+#endif
+#ifndef SKIP_sockaddr_dl_sdl_type
   printf("{\"fact\":\"offset\",\"of\":\"sockaddr_dl.sdl_type\",\"value\":%zu}\n", offsetof(struct sockaddr_dl, sdl_type));
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr_dl.sdl_type\",\"value\":%zu}\n", sizeof(((struct sockaddr_dl *)0)->sdl_type));
+#endif
+#ifndef SKIP_sockaddr_dl_sdl_nlen
   printf("{\"fact\":\"offset\",\"of\":\"sockaddr_dl.sdl_nlen\",\"value\":%zu}\n", offsetof(struct sockaddr_dl, sdl_nlen));
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr_dl.sdl_nlen\",\"value\":%zu}\n", sizeof(((struct sockaddr_dl *)0)->sdl_nlen));
+#endif
+#ifndef SKIP_sockaddr_dl_sdl_alen
   printf("{\"fact\":\"offset\",\"of\":\"sockaddr_dl.sdl_alen\",\"value\":%zu}\n", offsetof(struct sockaddr_dl, sdl_alen));
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr_dl.sdl_alen\",\"value\":%zu}\n", sizeof(((struct sockaddr_dl *)0)->sdl_alen));
+#endif
+#ifndef SKIP_sockaddr_dl_sdl_slen
   printf("{\"fact\":\"offset\",\"of\":\"sockaddr_dl.sdl_slen\",\"value\":%zu}\n", offsetof(struct sockaddr_dl, sdl_slen));
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr_dl.sdl_slen\",\"value\":%zu}\n", sizeof(((struct sockaddr_dl *)0)->sdl_slen));
+#endif
+#ifndef SKIP_sockaddr_dl_sdl_data
   printf("{\"fact\":\"offset\",\"of\":\"sockaddr_dl.sdl_data\",\"value\":%zu}\n", offsetof(struct sockaddr_dl, sdl_data));
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr_dl.sdl_data\",\"value\":%zu}\n", sizeof(((struct sockaddr_dl *)0)->sdl_data));
+#endif
 #endif
 #if PART == 51
   printf("{\"fact\":\"size\",\"of\":\"socklen_t\",\"value\":%zu}\n", sizeof(socklen_t));
@@ -375,88 +495,166 @@ int main(void) {
 #if PART == 54
   printf("{\"fact\":\"size\",\"of\":\"stat\",\"value\":%zu}\n", sizeof(struct stat));
   printf("{\"fact\":\"align\",\"of\":\"stat\",\"value\":%zu}\n", _Alignof(struct stat));
+#ifndef SKIP_stat_st_dev
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_dev\",\"value\":%zu}\n", offsetof(struct stat, st_dev));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_dev\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_dev));
+#endif
+#ifndef SKIP_stat_st_mode
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_mode\",\"value\":%zu}\n", offsetof(struct stat, st_mode));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_mode\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_mode));
+#endif
+#ifndef SKIP_stat_st_nlink
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_nlink\",\"value\":%zu}\n", offsetof(struct stat, st_nlink));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_nlink\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_nlink));
+#endif
+#ifndef SKIP_stat_st_ino
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_ino\",\"value\":%zu}\n", offsetof(struct stat, st_ino));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_ino\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_ino));
+#endif
+#ifndef SKIP_stat_st_uid
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_uid\",\"value\":%zu}\n", offsetof(struct stat, st_uid));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_uid\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_uid));
+#endif
+#ifndef SKIP_stat_st_gid
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_gid\",\"value\":%zu}\n", offsetof(struct stat, st_gid));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_gid\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_gid));
+#endif
+#ifndef SKIP_stat_st_rdev
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_rdev\",\"value\":%zu}\n", offsetof(struct stat, st_rdev));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_rdev\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_rdev));
+#endif
+#ifndef SKIP_stat_st_atimespec
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_atime\",\"value\":%zu}\n", offsetof(struct stat, st_atimespec.tv_sec));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_atime\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_atimespec.tv_sec));
+#endif
+#ifndef SKIP_stat_st_atimespec
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_atime_nsec\",\"value\":%zu}\n", offsetof(struct stat, st_atimespec.tv_nsec));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_atime_nsec\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_atimespec.tv_nsec));
+#endif
+#ifndef SKIP_stat_st_mtimespec
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_mtime\",\"value\":%zu}\n", offsetof(struct stat, st_mtimespec.tv_sec));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_mtime\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_mtimespec.tv_sec));
+#endif
+#ifndef SKIP_stat_st_mtimespec
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_mtime_nsec\",\"value\":%zu}\n", offsetof(struct stat, st_mtimespec.tv_nsec));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_mtime_nsec\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_mtimespec.tv_nsec));
+#endif
+#ifndef SKIP_stat_st_ctimespec
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_ctime\",\"value\":%zu}\n", offsetof(struct stat, st_ctimespec.tv_sec));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_ctime\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_ctimespec.tv_sec));
+#endif
+#ifndef SKIP_stat_st_ctimespec
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_ctime_nsec\",\"value\":%zu}\n", offsetof(struct stat, st_ctimespec.tv_nsec));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_ctime_nsec\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_ctimespec.tv_nsec));
+#endif
+#ifndef SKIP_stat_st_birthtimespec
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_birthtime\",\"value\":%zu}\n", offsetof(struct stat, st_birthtimespec.tv_sec));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_birthtime\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_birthtimespec.tv_sec));
+#endif
+#ifndef SKIP_stat_st_birthtimespec
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_birthtime_nsec\",\"value\":%zu}\n", offsetof(struct stat, st_birthtimespec.tv_nsec));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_birthtime_nsec\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_birthtimespec.tv_nsec));
+#endif
+#ifndef SKIP_stat_st_size
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_size\",\"value\":%zu}\n", offsetof(struct stat, st_size));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_size\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_size));
+#endif
+#ifndef SKIP_stat_st_blocks
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_blocks\",\"value\":%zu}\n", offsetof(struct stat, st_blocks));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_blocks\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_blocks));
+#endif
+#ifndef SKIP_stat_st_blksize
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_blksize\",\"value\":%zu}\n", offsetof(struct stat, st_blksize));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_blksize\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_blksize));
+#endif
+#ifndef SKIP_stat_st_flags
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_flags\",\"value\":%zu}\n", offsetof(struct stat, st_flags));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_flags\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_flags));
+#endif
+#ifndef SKIP_stat_st_gen
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_gen\",\"value\":%zu}\n", offsetof(struct stat, st_gen));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_gen\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_gen));
+#endif
+#ifndef SKIP_stat_st_lspare
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_lspare\",\"value\":%zu}\n", offsetof(struct stat, st_lspare));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_lspare\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_lspare));
+#endif
+#ifndef SKIP_stat_st_qspare
   printf("{\"fact\":\"offset\",\"of\":\"stat.st_qspare\",\"value\":%zu}\n", offsetof(struct stat, st_qspare));
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_qspare\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_qspare));
+#endif
 #endif
 #if PART == 55
   printf("{\"fact\":\"size\",\"of\":\"statfs\",\"value\":%zu}\n", sizeof(struct statfs));
   printf("{\"fact\":\"align\",\"of\":\"statfs\",\"value\":%zu}\n", _Alignof(struct statfs));
+#ifndef SKIP_statfs_f_bsize
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_bsize\",\"value\":%zu}\n", offsetof(struct statfs, f_bsize));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_bsize\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_bsize));
+#endif
+#ifndef SKIP_statfs_f_iosize
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_iosize\",\"value\":%zu}\n", offsetof(struct statfs, f_iosize));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_iosize\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_iosize));
+#endif
+#ifndef SKIP_statfs_f_blocks
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_blocks\",\"value\":%zu}\n", offsetof(struct statfs, f_blocks));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_blocks\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_blocks));
+#endif
+#ifndef SKIP_statfs_f_bfree
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_bfree\",\"value\":%zu}\n", offsetof(struct statfs, f_bfree));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_bfree\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_bfree));
+#endif
+#ifndef SKIP_statfs_f_bavail
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_bavail\",\"value\":%zu}\n", offsetof(struct statfs, f_bavail));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_bavail\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_bavail));
+#endif
+#ifndef SKIP_statfs_f_files
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_files\",\"value\":%zu}\n", offsetof(struct statfs, f_files));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_files\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_files));
+#endif
+#ifndef SKIP_statfs_f_ffree
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_ffree\",\"value\":%zu}\n", offsetof(struct statfs, f_ffree));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_ffree\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_ffree));
+#endif
+#ifndef SKIP_statfs_f_fsid
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_fsid\",\"value\":%zu}\n", offsetof(struct statfs, f_fsid));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_fsid\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_fsid));
+#endif
+#ifndef SKIP_statfs_f_owner
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_owner\",\"value\":%zu}\n", offsetof(struct statfs, f_owner));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_owner\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_owner));
+#endif
+#ifndef SKIP_statfs_f_type
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_type\",\"value\":%zu}\n", offsetof(struct statfs, f_type));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_type\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_type));
+#endif
+#ifndef SKIP_statfs_f_flags
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_flags\",\"value\":%zu}\n", offsetof(struct statfs, f_flags));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_flags\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_flags));
+#endif
+#ifndef SKIP_statfs_f_fssubtype
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_fssubtype\",\"value\":%zu}\n", offsetof(struct statfs, f_fssubtype));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_fssubtype\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_fssubtype));
+#endif
+#ifndef SKIP_statfs_f_fstypename
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_fstypename\",\"value\":%zu}\n", offsetof(struct statfs, f_fstypename));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_fstypename\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_fstypename));
+#endif
+#ifndef SKIP_statfs_f_mntonname
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_mntonname\",\"value\":%zu}\n", offsetof(struct statfs, f_mntonname));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_mntonname\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_mntonname));
+#endif
+#ifndef SKIP_statfs_f_mntfromname
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_mntfromname\",\"value\":%zu}\n", offsetof(struct statfs, f_mntfromname));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_mntfromname\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_mntfromname));
+#endif
+#ifndef SKIP_statfs_f_flags_ext
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_flags_ext\",\"value\":%zu}\n", offsetof(struct statfs, f_flags_ext));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_flags_ext\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_flags_ext));
+#endif
+#ifndef SKIP_statfs_f_reserved
   printf("{\"fact\":\"offset\",\"of\":\"statfs.f_reserved\",\"value\":%zu}\n", offsetof(struct statfs, f_reserved));
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_reserved\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_reserved));
+#endif
 #endif
 #if PART == 56
   printf("{\"fact\":\"size\",\"of\":\"suseconds_t\",\"value\":%zu}\n", sizeof(suseconds_t));
@@ -473,18 +671,26 @@ int main(void) {
 #if PART == 59
   printf("{\"fact\":\"size\",\"of\":\"timespec\",\"value\":%zu}\n", sizeof(struct timespec));
   printf("{\"fact\":\"align\",\"of\":\"timespec\",\"value\":%zu}\n", _Alignof(struct timespec));
+#ifndef SKIP_timespec_tv_sec
   printf("{\"fact\":\"offset\",\"of\":\"timespec.tv_sec\",\"value\":%zu}\n", offsetof(struct timespec, tv_sec));
   printf("{\"fact\":\"field size\",\"of\":\"timespec.tv_sec\",\"value\":%zu}\n", sizeof(((struct timespec *)0)->tv_sec));
+#endif
+#ifndef SKIP_timespec_tv_nsec
   printf("{\"fact\":\"offset\",\"of\":\"timespec.tv_nsec\",\"value\":%zu}\n", offsetof(struct timespec, tv_nsec));
   printf("{\"fact\":\"field size\",\"of\":\"timespec.tv_nsec\",\"value\":%zu}\n", sizeof(((struct timespec *)0)->tv_nsec));
+#endif
 #endif
 #if PART == 60
   printf("{\"fact\":\"size\",\"of\":\"timeval\",\"value\":%zu}\n", sizeof(struct timeval));
   printf("{\"fact\":\"align\",\"of\":\"timeval\",\"value\":%zu}\n", _Alignof(struct timeval));
+#ifndef SKIP_timeval_tv_sec
   printf("{\"fact\":\"offset\",\"of\":\"timeval.tv_sec\",\"value\":%zu}\n", offsetof(struct timeval, tv_sec));
   printf("{\"fact\":\"field size\",\"of\":\"timeval.tv_sec\",\"value\":%zu}\n", sizeof(((struct timeval *)0)->tv_sec));
+#endif
+#ifndef SKIP_timeval_tv_usec
   printf("{\"fact\":\"offset\",\"of\":\"timeval.tv_usec\",\"value\":%zu}\n", offsetof(struct timeval, tv_usec));
   printf("{\"fact\":\"field size\",\"of\":\"timeval.tv_usec\",\"value\":%zu}\n", sizeof(((struct timeval *)0)->tv_usec));
+#endif
 #endif
 #if PART == 61
   printf("{\"fact\":\"size\",\"of\":\"uid_t\",\"value\":%zu}\n", sizeof(uid_t));
@@ -513,54 +719,102 @@ int main(void) {
 #if PART == 67
   printf("{\"fact\":\"size\",\"of\":\"vm_statistics64\",\"value\":%zu}\n", sizeof(struct vm_statistics64));
   printf("{\"fact\":\"align\",\"of\":\"vm_statistics64\",\"value\":%zu}\n", _Alignof(struct vm_statistics64));
+#ifndef SKIP_vm_statistics64_free_count
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.free_count\",\"value\":%zu}\n", offsetof(struct vm_statistics64, free_count));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.free_count\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->free_count));
+#endif
+#ifndef SKIP_vm_statistics64_active_count
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.active_count\",\"value\":%zu}\n", offsetof(struct vm_statistics64, active_count));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.active_count\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->active_count));
+#endif
+#ifndef SKIP_vm_statistics64_inactive_count
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.inactive_count\",\"value\":%zu}\n", offsetof(struct vm_statistics64, inactive_count));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.inactive_count\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->inactive_count));
+#endif
+#ifndef SKIP_vm_statistics64_wire_count
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.wire_count\",\"value\":%zu}\n", offsetof(struct vm_statistics64, wire_count));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.wire_count\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->wire_count));
+#endif
+#ifndef SKIP_vm_statistics64_zero_fill_count
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.zero_fill_count\",\"value\":%zu}\n", offsetof(struct vm_statistics64, zero_fill_count));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.zero_fill_count\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->zero_fill_count));
+#endif
+#ifndef SKIP_vm_statistics64_reactivations
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.reactivations\",\"value\":%zu}\n", offsetof(struct vm_statistics64, reactivations));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.reactivations\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->reactivations));
+#endif
+#ifndef SKIP_vm_statistics64_pageins
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.pageins\",\"value\":%zu}\n", offsetof(struct vm_statistics64, pageins));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.pageins\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->pageins));
+#endif
+#ifndef SKIP_vm_statistics64_pageouts
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.pageouts\",\"value\":%zu}\n", offsetof(struct vm_statistics64, pageouts));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.pageouts\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->pageouts));
+#endif
+#ifndef SKIP_vm_statistics64_faults
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.faults\",\"value\":%zu}\n", offsetof(struct vm_statistics64, faults));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.faults\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->faults));
+#endif
+#ifndef SKIP_vm_statistics64_cow_faults
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.cow_faults\",\"value\":%zu}\n", offsetof(struct vm_statistics64, cow_faults));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.cow_faults\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->cow_faults));
+#endif
+#ifndef SKIP_vm_statistics64_lookups
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.lookups\",\"value\":%zu}\n", offsetof(struct vm_statistics64, lookups));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.lookups\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->lookups));
+#endif
+#ifndef SKIP_vm_statistics64_hits
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.hits\",\"value\":%zu}\n", offsetof(struct vm_statistics64, hits));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.hits\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->hits));
+#endif
+#ifndef SKIP_vm_statistics64_purges
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.purges\",\"value\":%zu}\n", offsetof(struct vm_statistics64, purges));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.purges\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->purges));
+#endif
+#ifndef SKIP_vm_statistics64_purgeable_count
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.purgeable_count\",\"value\":%zu}\n", offsetof(struct vm_statistics64, purgeable_count));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.purgeable_count\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->purgeable_count));
+#endif
+#ifndef SKIP_vm_statistics64_speculative_count
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.speculative_count\",\"value\":%zu}\n", offsetof(struct vm_statistics64, speculative_count));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.speculative_count\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->speculative_count));
+#endif
+#ifndef SKIP_vm_statistics64_decompressions
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.decompressions\",\"value\":%zu}\n", offsetof(struct vm_statistics64, decompressions));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.decompressions\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->decompressions));
+#endif
+#ifndef SKIP_vm_statistics64_compressions
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.compressions\",\"value\":%zu}\n", offsetof(struct vm_statistics64, compressions));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.compressions\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->compressions));
+#endif
+#ifndef SKIP_vm_statistics64_swapins
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.swapins\",\"value\":%zu}\n", offsetof(struct vm_statistics64, swapins));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.swapins\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->swapins));
+#endif
+#ifndef SKIP_vm_statistics64_swapouts
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.swapouts\",\"value\":%zu}\n", offsetof(struct vm_statistics64, swapouts));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.swapouts\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->swapouts));
+#endif
+#ifndef SKIP_vm_statistics64_compressor_page_count
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.compressor_page_count\",\"value\":%zu}\n", offsetof(struct vm_statistics64, compressor_page_count));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.compressor_page_count\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->compressor_page_count));
+#endif
+#ifndef SKIP_vm_statistics64_throttled_count
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.throttled_count\",\"value\":%zu}\n", offsetof(struct vm_statistics64, throttled_count));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.throttled_count\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->throttled_count));
+#endif
+#ifndef SKIP_vm_statistics64_external_page_count
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.external_page_count\",\"value\":%zu}\n", offsetof(struct vm_statistics64, external_page_count));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.external_page_count\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->external_page_count));
+#endif
+#ifndef SKIP_vm_statistics64_internal_page_count
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.internal_page_count\",\"value\":%zu}\n", offsetof(struct vm_statistics64, internal_page_count));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.internal_page_count\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->internal_page_count));
+#endif
+#ifndef SKIP_vm_statistics64_total_uncompressed_pages_in_compressor
   printf("{\"fact\":\"offset\",\"of\":\"vm_statistics64.total_uncompressed_pages_in_compressor\",\"value\":%zu}\n", offsetof(struct vm_statistics64, total_uncompressed_pages_in_compressor));
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.total_uncompressed_pages_in_compressor\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->total_uncompressed_pages_in_compressor));
+#endif
 #endif
 #if PART == 68
   printf("{\"fact\":\"size\",\"of\":\"vm_statistics64_data_t\",\"value\":%zu}\n", sizeof(vm_statistics64_data_t));

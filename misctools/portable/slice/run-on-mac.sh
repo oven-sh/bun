@@ -108,7 +108,19 @@ if cc -DPART=0 -o "$build/part" "$here/verify/darwin_layout.c" > "$logs/layout-p
 fi
 n=1
 while [ "$n" -le "${parts:-0}" ]; do
-  if cc -w -DPART="$n" -o "$build/part" "$here/verify/darwin_layout.c" > "$logs/layout-part.txt" 2>&1; then
+  skip=
+  if ! cc -w -DPART="$n" -o "$build/part" "$here/verify/darwin_layout.c" > "$logs/layout-part.txt" 2>&1; then
+    # Fields that the headers of this macOS do not have: the part is compiled again without them.
+    type=$(sed -n "s/^$n type //p" "$here/verify/parts.txt")
+    skip=$(sed -n -e "s/.*error: no member named [^A-Za-z_0-9]*\([A-Za-z_0-9]*\)[^A-Za-z_0-9].*/-DSKIP_${type}_\1/p" \
+                  -e "s/.*error: .* has no member named [^A-Za-z_0-9]*\([A-Za-z_0-9]*\)[^A-Za-z_0-9]*$/-DSKIP_${type}_\1/p" "$logs/layout-part.txt" | sort -u | tr '\n' ' ')
+    if [ -n "$skip" ]; then
+      { echo "== part $n, type $type, first attempt"; cat "$logs/layout-part.txt"; } >> "$logs/layout-parts.txt"
+      echo "$type: $(echo "$skip" | sed "s/-DSKIP_${type}_//g")" >> "$logs/layout-fields-not-in-the-headers.txt"
+    fi
+  fi
+  # shellcheck disable=SC2086
+  if cc -w $skip -DPART="$n" -o "$build/part" "$here/verify/darwin_layout.c" > "$logs/layout-part.txt" 2>&1; then
     "$build/part" >> "$logs/layout-headers.jsonl"
   else
     what=$(sed -n "s/^$n //p" "$here/verify/parts.txt")
@@ -153,6 +165,9 @@ else
   say "2. layout ($layout_from): $same facts are the same, $(count "$logs/layout-differences.txt") DIFFER, $(count "$logs/layout-not-in-the-headers.txt") are not in the headers, $(count "$logs/layout-parts-that-do-not-compile.txt") of $parts parts do not compile"
   say_some "$logs/layout-differences.txt" 8 logs/layout-differences.txt
   say_some "$logs/layout-parts-that-do-not-compile.txt" 3 logs/layout-parts.txt
+  if [ -s "$logs/layout-fields-not-in-the-headers.txt" ]; then
+    say "   fields that the headers of this macOS do not have: $(tr '\n' ';' < "$logs/layout-fields-not-in-the-headers.txt" | cut -c 1-140)"
+  fi
 fi
 
 # ---- 3. the functions of macOS that the image can call ----
@@ -240,6 +255,7 @@ verdict=PASSED
 [ -n "$image_runs" ] || verdict=FAILED
 [ -s "$logs/layout-differences.txt" ] && verdict=FAILED
 [ -s "$logs/layout-parts-that-do-not-compile.txt" ] && verdict=FAILED
+[ -s "$logs/layout-fields-not-in-the-headers.txt" ] && verdict=FAILED
 [ -s "$logs/imports-missing.txt" ] && verdict=FAILED
 [ -f "$logs/imports-missing.txt" ] || verdict=FAILED
 cmp -s "$logs/slice-steps.jsonl" "$here/expected/darwin.jsonl" 2>/dev/null || verdict=FAILED

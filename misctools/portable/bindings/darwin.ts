@@ -451,8 +451,11 @@ for (const fact of typeFacts) {
   partOf.push({ part, what: `type ${fact.entry.name}` });
   const lines = [`#if PART == ${part}`, `  printf("{\\"fact\\":\\"size\\",\\"of\\":\\"${fact.entry.name}\\",\\"value\\":%zu}\\n", sizeof(${fact.c}));`, `  printf("{\\"fact\\":\\"align\\",\\"of\\":\\"${fact.entry.name}\\",\\"value\\":%zu}\\n", _Alignof(${fact.c}));`];
   for (const field of fact.fields) {
+    // A field that the headers of a Mac do not have is left out by its macro, and the rest of the type is checked.
+    lines.push(`#ifndef SKIP_${fact.entry.name}_${field.c.split(".")[0]}`);
     lines.push(`  printf("{\\"fact\\":\\"offset\\",\\"of\\":\\"${fact.entry.name}.${field.rust}\\",\\"value\\":%zu}\\n", offsetof(${fact.c}, ${field.c}));`);
     lines.push(`  printf("{\\"fact\\":\\"field size\\",\\"of\\":\\"${fact.entry.name}.${field.rust}\\",\\"value\\":%zu}\\n", sizeof(((${fact.c} *)0)->${field.c}));`);
+    lines.push(`#endif`);
   }
   lines.push(`#endif`);
   parts.push(lines.join("\n"));
@@ -481,6 +484,8 @@ const cText = `// Written by misctools/portable/bindings/darwin.ts. Do not edit.
 // each: a name that the headers of this macOS do not have stops one part and not the others.
 //   cc -DPART=<n> -o part darwin_layout.c && ./part        n = 1 .. ${part}
 //   cc -DPART=0 ...                                         prints the number of parts
+// A field that the headers do not have is left out with -DSKIP_<type>_<field>, which run-on-mac.sh
+// does from the message of the compiler.
 ${headers.map(name => `#include <${name}>`).join("\n")}
 #include <stddef.h>
 

@@ -31,7 +31,8 @@ mkdirSync(root, { recursive: true });
     parts hold them, the last one is for a case to fill. */
 function layoutProgram(facts: string[], broken = false): string {
   const lines = facts.map(fact => `  puts(${JSON.stringify(fact)});`);
-  return `#include <stdio.h>\nint main(void) {\n#if PART == 0\n  puts("2");\n#endif\n#if PART == 1\n${lines.join("\n")}\n#endif\n#if PART == 2\n${broken ? "  this part does not compile;" : ""}\n#endif\n  return 0;\n}\n`;
+  // Part 3 names a field that its structure does not have: the script has to leave that one out.
+  return `#include <stdio.h>\n#include <stddef.h>\nstruct short_one { int a; };\nint main(void) {\n#if PART == 0\n  puts("${broken ? 3 : 2}");\n#endif\n#if PART == 1\n${lines.join("\n")}\n#endif\n#if PART == 2\n${broken ? "  this part does not compile;" : ""}\n#endif\n#if PART == 3\n  printf("{\\"fact\\":\\"offset\\",\\"of\\":\\"short_one.a\\",\\"value\\":%zu}\\n", offsetof(struct short_one, a));\n#ifndef SKIP_short_one_b\n  printf("%zu", offsetof(struct short_one, b));\n#endif\n#endif\n  return 0;\n}\n`;
 }
 const imageFacts = readFileSync(join(packed, `verify/image-layout-${arch}.jsonl`), "utf8").split("\n").filter(Boolean);
 const linuxExpected = readFileSync(join(here, "expected/linux.jsonl"), "utf8").replace(/,"syscall":"[^"]*"/g, "");
@@ -74,11 +75,12 @@ const cases: Case[] = [
         .filter(fact => !fact.includes('"of":"kevent64_s'));
       if (changed.join("\n") === imageFacts.join("\n")) throw new Error("the facts have no size of stat");
       writeFileSync(join(dir, "verify/darwin_layout.c"), layoutProgram(changed, true));
-      writeFileSync(join(dir, "verify/parts.txt"), "1 every fact\n2 type that_is_not_there\n");
+      writeFileSync(join(dir, "verify/parts.txt"), "1 every fact\n2 type that_is_not_there\n3 type short_one\n");
       writeFileSync(join(dir, "expected/darwin.jsonl"), linuxExpected.replace('{"step":"mkdir again","ok":false,"error":"EEXIST","errno":17}', '{"step":"mkdir again","ok":true}'));
     },
     expect: summary => [
-      has(summary, /^2\. layout .*: \d+ facts are the same, 2 DIFFER, \d+ are not in the headers, 1 of 2 parts do not compile/) ? "" : "the layout is not reported with 2 differences and 1 part",
+      has(summary, /^2\. layout .*: \d+ facts are the same, 2 DIFFER, \d+ are not in the headers, 1 of 3 parts do not compile/) ? "" : "the layout is not reported with 2 differences and 1 part",
+      has(summary, /fields that the headers of this macOS do not have: short_one: b/) ? "" : "the field that the headers do not have is not named",
       has(summary, /size stat: 144 in the image, 128 in the headers/) ? "" : "the size that differs is not shown with both values",
       has(summary, /constant O_CLOEXEC: 16777216 in the image, 524288 in the headers/) ? "" : "the constant that differs is not shown with both values",
       has(summary, /type that_is_not_there: /) ? "" : "the part that does not compile is not named",

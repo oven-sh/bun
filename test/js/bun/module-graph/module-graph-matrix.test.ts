@@ -6,10 +6,14 @@
 // lifecycle/error orderings. Each test records everything it observes into one value and compares it
 // against the fully spelled-out expectation.
 //
-import { numberOfDFGCompiles } from "bun:jsc";
+// A test that owns everything it changes (its graphs, its log) is test.concurrent. Sections 3 and 5b
+// are not: they count recompiles of code every instance shares and call Bun.shrink(), and both are
+// process-wide. Section 6 is not: each of its tests is already many instances at once.
+//
+import { numberOfDFGCompiles, reoptimizationRetryCount } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 type ModuleGraphOptions = NonNullable<ConstructorParameters<typeof Bun.ModuleGraph>[0]>;
@@ -30,7 +34,12 @@ function graph(who: string, log: string[], extra: ModuleGraphOptions = {}): Grap
   return new ModuleGraphClass({ ...extra, globals: { process: proc, __log: log, ...extra.globals } });
 }
 
-const errorName = (e: unknown) => (e instanceof Error ? e.constructor.name : typeof e);
+/** What failed: the error's class, plus its `code` when it has one. "RangeError",
+ *  "Error [ERR_INVALID_STATE]" (a disposed graph), "ResolveMessage [ERR_MODULE_NOT_FOUND]". */
+const errorName = (e: unknown) =>
+  e instanceof Error ? e.constructor.name + ("code" in e ? ` [${e.code}]` : "") : typeof e;
+const DISPOSED = "Error [ERR_INVALID_STATE]";
+const NOT_FOUND = "ResolveMessage [ERR_MODULE_NOT_FOUND]";
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 // 1. Dynamic import(): site × target × ordering across instances
@@ -157,7 +166,7 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
           ? `import * as statNs from ${spec}; export const stat = statNs;`
           : `export const stat = null;`;
       const body = site.eager
-        ? `let e; try { e = await ${site.expr(spec)}; } catch (err) { e = { __rejected: err.constructor.name }; } export const dyn = () => Promise.resolve(e);`
+        ? `let e; try { e = await ${site.expr(spec)}; } catch (err) { e = { __rejected: err }; } export const dyn = () => Promise.resolve(e);`
         : `export const dyn = () => ${site.expr(spec)};`;
       writeFileSync(
         join(dir, importerName(siteName, targetName)),
@@ -175,7 +184,7 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
       for (const ordering of orderings) {
         if (site.eager && !(["sequential", "concurrent", "hostFirst", "hostLast"] as Ordering[]).includes(ordering))
           continue;
-        test(`${siteName} × ${targetName} × ${ordering}`, async () => {
+        test.concurrent(`${siteName} × ${targetName} × ${ordering}`, async () => {
           const log: string[] = [];
           const importer = join(dir, importerName(siteName, targetName));
           const whos = Array.from({ length: K }, (_, i) => `g${i}`);
@@ -188,7 +197,7 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
           const settle = async (i: number) => {
             try {
               const ns = await mods[i].dyn();
-              if (ns && ns.__rejected) results[i] = { rejected: ns.__rejected };
+              if (ns && ns.__rejected) results[i] = { rejected: errorName(ns.__rejected) };
               else {
                 namespaces[i] = ns;
                 results[i] = { who: api(ns).who, sameAsStatic: mods[i].stat === null ? "n/a" : ns === mods[i].stat };
@@ -197,13 +206,15 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
               results[i] = { rejected: errorName(e) };
             }
           };
+          // what the host gets of the target: its own instance, never a graph's
           const hostImport = () =>
             import(target.file.startsWith("node:") ? target.file : join(dir, target.file)).then(
-              () => "host-ok",
-              () => "host-rejected",
+              ns => ({ who: api(ns).who }),
+              (e: unknown) => ({ rejected: errorName(e) }),
             );
+          let host: unknown = "n/a";
 
-          if (ordering === "hostFirst") await hostImport();
+          if (ordering === "hostFirst") host = await hostImport();
           if (ordering === "sequential" || ordering === "hostFirst" || ordering === "hostLast") {
             for (let i = 0; i < K; i++) {
               graphs[i] = graph(whos[i], log);
@@ -243,7 +254,7 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
                 : [0, 1, 2])
               await settle(i);
           }
-          if (ordering === "hostLast") await hostImport();
+          if (ordering === "hostLast") host = await hostImport();
 
           // a second dyn() in each instance: same namespace as the first, no new evaluation
           const skipped = (i: number) => ordering === "onlySomeRun" && i === 1;
@@ -252,7 +263,7 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
               skipped(i)
                 ? "skipped"
                 : m.dyn().then(
-                    (ns: any) => (ns && ns.__rejected ? `rejected:${ns.__rejected}` : ns === namespaces[i]),
+                    (ns: any) => (ns && ns.__rejected ? `rejected:${errorName(ns.__rejected)}` : ns === namespaces[i]),
                     (e: unknown) => `rejected:${errorName(e)}`,
                   ),
             ),
@@ -269,6 +280,8 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
           }
 
           const actual = {
+            importers: mods.map(m => m.who),
+            host,
             results,
             repeat,
             distinctNamespaces: new Set(live).size,
@@ -278,18 +291,31 @@ describe("ModuleGraph matrix: dynamic import() site × target × ordering", () =
           };
 
           const liveWhos = whos.filter((_, i) => !disposed(i) && !skipped(i));
-          const rejection = target.missing ? "ResolveMessage" : null;
+          const rejection = target.missing ? NOT_FOUND : null;
           const expected = {
+            importers: whos,
+            host:
+              ordering !== "hostFirst" && ordering !== "hostLast"
+                ? "n/a"
+                : rejection
+                  ? { rejected: rejection }
+                  : { who: target.who(process.env.WHO) },
             results: whos.map((w, i) => {
               if (skipped(i)) return "unset";
-              if (disposed(i)) return { rejected: "Error" }; // ERR_INVALID_STATE: ModuleGraph has been disposed
+              if (disposed(i)) return { rejected: DISPOSED };
               if (rejection) return { rejected: rejection };
               const who = site.hostScope ? target.who(process.env.WHO) : target.who(w);
               const sameAsStatic = site.eager ? "n/a" : !site.hostScope;
               return { who, sameAsStatic };
             }),
             repeat: whos.map((_, i) =>
-              skipped(i) ? "skipped" : disposed(i) ? "rejected:Error" : rejection ? `rejected:${rejection}` : true,
+              skipped(i)
+                ? "skipped"
+                : disposed(i)
+                  ? `rejected:${DISPOSED}`
+                  : rejection
+                    ? `rejected:${rejection}`
+                    : true,
             ),
             distinctNamespaces: rejection ? 0 : site.hostScope ? 1 : liveWhos.length,
             isolation:
@@ -325,7 +351,7 @@ describe("ModuleGraph matrix: dynamic import() of cycle members and self", () =>
   });
   for (const entry of ["entry-a.mjs", "entry-b.mjs"] as const) {
     for (const ordering of ["sequential", "concurrent", "reverse"] as const) {
-      test(`${entry} × ${ordering}`, async () => {
+      test.concurrent(`${entry} × ${ordering}`, async () => {
         const log: string[] = [];
         const whos = ["c0", "c1", "c2"];
         const graphs = whos.map(w => graph(w, log));
@@ -394,7 +420,9 @@ describe("ModuleGraph matrix: hot code across instances", () => {
       export const makeClosure = () => { let c = 0; return () => ++c + ":" + obj.who; };
       export const identity = { C, obj };`,
   });
-  const N = 20_000; // enough for baseline+DFG on release builds; correctness does not depend on tiering
+  // Enough for baseline+DFG on release builds; correctness does not depend on tiering. A debug build is
+  // about a hundred times slower here (each `ns.x` read in these loops is a call into C++), so it loops less.
+  const N = isDebug ? 2_000 : 20_000;
   for (const order of ["hotFirstThenOthers", "allCreatedThenHot", "interleaved", "othersFirstThenHot"] as const) {
     for (const count of [2, 3, 4]) {
       test(`${order} × ${count} instances`, async () => {
@@ -487,13 +515,19 @@ describe("ModuleGraph matrix: hot code across instances", () => {
   // Once a second instance exists, the optimized code the instances share is instance-generic: creating
   // and running further instances must not recompile it (no per-instance OSR-exit/jettison cycle) and each
   // instance still reads its own bindings.
+  // The count is of optimized code thrown away. numberOfDFGCompiles() adds whether optimized code is
+  // installed right now, and a first compile is concurrent: d2() gets hot by calls alone, reaches its
+  // first one about when the first count is taken, and it lands before or after that count.
+  // The shared code is instance-generic only after several recompiles, each with twice the warm-up of
+  // the one before. A debug build has no time for those loops, so a late one can still land there: it
+  // checks that the counts grow by less than one per added instance, which a recompile cycle does not.
   for (const order of ["heatFirstInstanceThenAdd", "heatEachInstance"] as const) {
     test(`shared optimized code is stable across instances × ${order}`, async () => {
       const log: string[] = [];
       const whos = Array.from({ length: 8 }, (_, i) => `j${i}`);
       const graphs: Graph[] = [];
       const mods: any[] = [];
-      const HOT = 200_000;
+      const HOT = isDebug ? 2_000 : 200_000;
       for (let i = 0; i < 2; i++) {
         graphs[i] = graph(whos[i], log);
         mods[i] = await graphs[i].import(join(dir, "hot.mjs"));
@@ -504,10 +538,19 @@ describe("ModuleGraph matrix: hot code across instances", () => {
       mods[0].d0(HOT);
       mods[0].d2(HOT);
       mods[0].viaNamespace(HOT);
-      const compilesAfterTwo = {
-        d0: numberOfDFGCompiles(mods[0].d0),
-        d2: numberOfDFGCompiles(mods[0].d2),
-        viaNamespace: numberOfDFGCompiles(mods[0].viaNamespace),
+      // A first compile runs on a JIT thread, and d2() gets hot by calls alone, so its first one starts about
+      // here. Wait until each counted function has its optimized code, so that the first count comes after.
+      const counted = ["d0", "d2", "viaNamespace"] as const;
+      const optimized = (f: (typeof counted)[number]) =>
+        numberOfDFGCompiles(mods[0][f]) > reoptimizationRetryCount(mods[0][f]);
+      for (let turn = 0; turn < 1000 && !counted.every(optimized); turn++) {
+        for (const m of mods) for (const f of counted) for (let k = 0; k < 100; k++) m[f](1);
+        await new Promise<void>(r => setImmediate(r));
+      }
+      const recompilesAfterTwo = {
+        d0: reoptimizationRetryCount(mods[0].d0),
+        d2: reoptimizationRetryCount(mods[0].d2),
+        viaNamespace: reoptimizationRetryCount(mods[0].viaNamespace),
       };
       const reads: unknown[] = [];
       for (let i = 2; i < whos.length; i++) {
@@ -516,16 +559,18 @@ describe("ModuleGraph matrix: hot code across instances", () => {
         const n = order === "heatEachInstance" ? HOT : 1000;
         reads.push([mods[i].d0(n), mods[i].d2(n), mods[i].viaNamespace(n), mods[i].setThenRead(i, 10)]);
       }
-      const compilesAfterEight = {
-        d0: numberOfDFGCompiles(mods[0].d0),
-        d2: numberOfDFGCompiles(mods[0].d2),
-        viaNamespace: numberOfDFGCompiles(mods[0].viaNamespace),
+      const recompilesAfterEight = {
+        d0: reoptimizationRetryCount(mods[0].d0),
+        d2: reoptimizationRetryCount(mods[0].d2),
+        viaNamespace: reoptimizationRetryCount(mods[0].viaNamespace),
       };
-      expect({ reads, compilesAfterEight, firstTwo: [mods[0].d0(3), mods[1].d0(3)] }).toEqual({
+      expect({ reads, recompilesAfterEight, firstTwo: [mods[0].d0(3), mods[1].d0(3)] }).toEqual({
         reads: whos.slice(2).map((w, k) => [`${w}:0|K:${w}`, `${w}:0|K:${w}`, `${w}:0|K:${w}`, `${w}:${k + 2}|K:${w}`]),
-        compilesAfterEight: compilesAfterTwo,
+        recompilesAfterEight: isDebug ? recompilesAfterEight : recompilesAfterTwo,
         firstTwo: [`${whos[0]}:0|K:${whos[0]}`, `${whos[1]}:0|K:${whos[1]}`],
       });
+      if (isDebug)
+        for (const f of counted) expect(recompilesAfterEight[f] - recompilesAfterTwo[f]).toBeLessThan(whos.length - 2);
       for (const g of graphs) g.dispose();
     });
   }
@@ -620,7 +665,7 @@ describe("ModuleGraph matrix: graph shapes × instantiation order", () => {
   };
   for (const [shapeName, shape] of Object.entries(shapes)) {
     for (const ordering of ["sequential", "concurrent", "reverse", "sameInstanceTwice"] as const) {
-      test(`${shapeName} × ${ordering}`, async () => {
+      test.concurrent(`${shapeName} × ${ordering}`, async () => {
         const log: string[] = [];
         const whos = ["s0", "s1", "s2"];
         const graphs = whos.map(w => graph(w, log));
@@ -653,8 +698,10 @@ describe("ModuleGraph matrix: graph shapes × instantiation order", () => {
       });
     }
   }
+  const AMBIGUOUS = "SyntaxError: Export named 'dup' cannot be resolved due to ambiguous multiple bindings";
   for (const ordering of ["badFirst", "goodFirst", "concurrent"] as const) {
-    test(`ambiguous star export is a per-instance link error and does not poison siblings × ${ordering}`, async () => {
+    const title = `ambiguous star export is a per-instance link error and does not poison siblings × ${ordering}`;
+    test.concurrent(title, async () => {
       const log: string[] = [];
       const whos = ["e0", "e1"];
       const graphs = whos.map(w => graph(w, log));
@@ -663,7 +710,8 @@ describe("ModuleGraph matrix: graph shapes × instantiation order", () => {
           const bad = () =>
             g.import(join(dir, "amb/bad.mjs")).then(
               () => "linked",
-              (e: unknown) => errorName(e),
+              // the message goes on to name the hub by its full path
+              (e: any) => `${errorName(e)}: ${String(e.message).split(" in module ")[0]}`,
             );
           const good = () =>
             g.import(join(dir, "amb/good.mjs")).then(
@@ -677,7 +725,7 @@ describe("ModuleGraph matrix: graph shapes × instantiation order", () => {
         }),
       );
       expect({ observed, log: log.sort() }).toEqual({
-        observed: whos.map(() => ({ bad: "SyntaxError", good: ["p", "q"], badAgain: "SyntaxError" })),
+        observed: whos.map(() => ({ bad: AMBIGUOUS, good: ["p", "q"], badAgain: AMBIGUOUS })),
         log: whos.map(w => "good@" + w).sort(),
       });
       for (const g of graphs) g.dispose();
@@ -705,7 +753,8 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
     "afterImport",
     "afterDynamicImportStarted",
   ] as const) {
-    test(`dispose ${when}: what that instance starts afterwards rejects, siblings complete, a fresh instance works`, async () => {
+    const title = `dispose ${when}: what that instance starts afterwards rejects, siblings complete, a fresh instance works`;
+    test.concurrent(title, async () => {
       const log: string[] = [];
       const a = graph("a", log),
         b = graph("b", log);
@@ -740,12 +789,20 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
       if (parked) aOutcome = Bun.peek.status(parked);
       expect({
         aOutcome,
+        aLog: log.filter(l => l.endsWith("@a")),
         bResult,
         cResult,
         bLog: log.filter(l => l.endsWith("@b")),
         cLog: log.filter(l => l.endsWith("@c")),
       }).toEqual({
-        aOutcome: when === "duringDependencyTla" ? "pending" : "Error",
+        aOutcome: when === "duringDependencyTla" ? "pending" : DISPOSED,
+        // once disposed, a evaluates nothing more: not the rest of slow.mjs, not late.mjs
+        aLog:
+          when === "beforeImportSettles"
+            ? []
+            : when === "duringDependencyTla"
+              ? ["slow-start@a"]
+              : ["slow-start@a", "slow-end@a"],
         bResult: { who: "b", late: "b" },
         cResult: { who: "c", late: "c" },
         bLog: ["slow-start@b", "slow-end@b", "late@b"],
@@ -758,7 +815,8 @@ describe("ModuleGraph matrix: lifecycle and error timing", () => {
 
   for (const kind of ["syncThrow", "tlaReject", "throwInDependency"] as const) {
     for (const ordering of ["failingFirst", "failingLast", "concurrent"] as const) {
-      test(`${kind} × ${ordering}: rejection is per instance with the instance's own error; other instances and retries in new instances are unaffected`, async () => {
+      const title = `${kind} × ${ordering}: rejection is per instance with the instance's own error; other instances and retries in new instances are unaffected`;
+      test.concurrent(title, async () => {
         const log: string[] = [];
         const file = kind === "syncThrow" ? "throws.mjs" : kind === "tlaReject" ? "rejects.mjs" : "dep-of-throws.mjs";
         const outcome = (g: Graph) =>
@@ -825,7 +883,7 @@ describe("ModuleGraph matrix: dependency edits and code deletion between instanc
     // bindings removed/reordered
     v3: `export const shape = 3; export let x = "x3";`,
   } as const;
-  const HOT = 100_000;
+  const HOT = isDebug ? 5_000 : 100_000;
 
   for (const sequence of [
     ["v1", "v2", "v2"],
@@ -1049,6 +1107,9 @@ async function originIn(gc, cells) {
   const origin = new Bun.ModuleGraph();
   const originModule = await origin.import(join(dir, "origin.mjs"));
   const pairs = [];
+  // A collection that ends between here and a cell's first read makes that stack a string before the
+  // read. One that began during the import can still be running (it is concurrent), so finish it first.
+  Bun.gc(true);
   for (let i = 0; i < cells * CANDIDATES; i++) pairs.push(trace === "origin+other" ? underDeadFrame(other, [otherModule.call, originModule.pair, "boom"]) : underDeadFrame(origin, [originModule.pair, "boom"]));
   const keep = gc === "none" || gc === "alive" ? { origin, originModule } : gc === "disposed, module held" ? { originModule } : {};
   if (gc === "disposed, module held" || gc === "collected") origin.dispose();

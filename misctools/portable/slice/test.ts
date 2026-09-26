@@ -1,30 +1,31 @@
 // Runs the file system slice on this Linux machine, each way it can run here, and checks what it prints.
 //
-//   bun test.ts [--runs 3]      after build.ts. WORK as in build.ts.
+//   bun test.ts [--runs 3] [--out <dir>]     after build.ts, --out as there
 //
 //   direct        the kernel runs the image
 //   hosted        the Linux test host (../host/host_posix.c) maps the image and serves its requests
 //   abi           hosted: the image calls functions of the host that have the calling convention of
 //                 Windows x64, through its import table, and the host calls a function of the image
 //   abi, direct   there is no host to resolve anything: the first call has to stop the image
-//   as win32      BUN_PORTABLE_HOST_OS=win32 makes bun decide as on Windows, on Linux: the image takes
-//                 bun's code for Windows, and its first call of Windows has to stop it with a message
+//   as win32      BUN_PORTABLE_HOST_INTERFACE=win32 makes bun call the functions of Windows, on Linux:
+//                 the image takes bun's code for Windows, and its first call of Windows has to stop it
+//                 with a message
 //   imports       the import table has the functions of kernel32, ntdll and libuv that bun's file
 //                 system code for Windows calls, and none of them resolves on Linux
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
+import { TREE } from "../flags.ts";
+import { ARCH, places } from "./places.ts";
 
 const here = dirname(import.meta.path);
-const tree = resolve(here, "..");
-const work = resolve(process.env.WORK ?? "/tmp/portable/n1");
-const runs = Number(process.argv.includes("--runs") ? process.argv[process.argv.indexOf("--runs") + 1] : 3);
-const image = join(work, "out/bun_fs_slice.img");
-const host = join(work, "out/host-linux");
-const directory = join(work, "run");
+const args = process.argv.slice(2);
+const { out, slice, image, host } = places(args);
+const runs = Number(args.includes("--runs") ? args[args.indexOf("--runs") + 1] : 3);
+const directory = join(slice, "run");
 mkdirSync(directory, { recursive: true });
 
-const compiled = Bun.spawnSync(["cc", "-O2", "-Wall", "-Wextra", "-Wno-unused-parameter", "-o", host, join(tree, "host/host_posix.c"), "-lpthread"], { stderr: "inherit" });
-if (compiled.exitCode !== 0 || !existsSync(image)) throw new Error("the host does not compile, or build.ts has not made the image");
+const built = Bun.spawnSync([process.execPath, join(TREE, "build.ts"), "host", "--arch", ARCH, "--out", out], { stdout: "inherit", stderr: "inherit" });
+if (built.exitCode !== 0 || !existsSync(image)) throw new Error("the host does not build, or build.ts of the slice has not made the image");
 
 const expected = readFileSync(join(here, "expected/linux.jsonl"), "utf8");
 function run(command: string[], env: Record<string, string> = {}) {
@@ -62,7 +63,7 @@ check("abi, direct: stops", () => {
   return r.code !== 0 && r.out === "" && r.err.includes("bun_host_test!test_sum6 is a function of Windows, and this host is Linux") ? undefined : `exit code ${r.code}: ${r.err}`;
 });
 check("as win32: stops at the first call of Windows", () => {
-  const r = run([image, directory], { BUN_PORTABLE_HOST_OS: "win32" });
+  const r = run([image, directory], { BUN_PORTABLE_HOST_INTERFACE: "win32" });
   return r.code !== 0 && r.out === "" && / is a function of Windows, and this host is Linux/.test(r.err) ? undefined : `exit code ${r.code}: ${r.err}`;
 });
 check("imports", () => {

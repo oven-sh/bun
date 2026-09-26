@@ -1,26 +1,28 @@
 // Puts together what a person needs on a Windows machine to run the file system slice there.
 //
-//   bun package-windows.ts [directory]      default: <WORK>/windows-package, WORK as in build.ts
+//   bun package-windows.ts [--out <dir>] [directory]
+//                                           --out as for build.ts; the default of the directory
+//                                           is <out>/slice/windows-package
 //
 // In the directory:
 //   bun_fs_slice.img                        the image (x86-64), as build.ts made it
 //   host/host_win.c, host/host_win_uv.c     the Windows host and its table of libuv functions
-//   host_win.diff                           what this branch changed in host_win.c
+//   host/linux_abi.h, host/memory.h         what host_win.c includes
 //   patches/*.patch                         bun's patches of libuv
 //   bindings/                               windows_layout.c, verify.ts, compare.ts and the layout
 //                                           of the bindings in the image (layout.image.json)
 //   expected/, compare-run.ts               the expected output of the slice and its comparison
 //   commands.txt                            the PowerShell commands, with what each one is for
+import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { createHash } from "node:crypto";
+import { REPOSITORY as repo, TREE as tree } from "../flags.ts";
+import { places } from "./places.ts";
 
 const here = dirname(import.meta.path);
-const tree = resolve(here, "..");
-const repo = resolve(tree, "../..");
-const work = resolve(process.env.WORK ?? "/tmp/portable/n1");
-const out = resolve(process.argv[2] ?? join(work, "windows-package"));
-const base = process.env.BASE_COMMIT ?? "43d0bcdeb9";
+const args = process.argv.slice(2);
+const { slice, image } = places(args);
+const out = resolve(args[0] ?? join(slice, "windows-package"));
 
 const libuvCommit = /const LIBUV_COMMIT = "([0-9a-f]+)"/.exec(readFileSync(join(repo, "scripts/build/deps/libuv.ts"), "utf8"))![1];
 const libuvSources = (name: string) => {
@@ -31,9 +33,8 @@ const libuvSources = (name: string) => {
 
 rmSync(out, { recursive: true, force: true });
 for (const dir of ["host", "patches", "bindings", "expected"]) mkdirSync(join(out, dir), { recursive: true });
-const image = join(work, "out/bun_fs_slice.img");
 copyFileSync(image, join(out, "bun_fs_slice.img"));
-for (const name of ["host_win.c", "host_win_uv.c"]) copyFileSync(join(tree, "host", name), join(out, "host", name));
+for (const name of ["host_win.c", "host_win_uv.c", "linux_abi.h", "memory.h"]) copyFileSync(join(tree, "host", name), join(out, "host", name));
 cpSync(join(repo, "patches/libuv"), join(out, "patches"), { recursive: true });
 for (const name of ["windows_layout.c", "verify.ts", "compare.ts"]) copyFileSync(join(tree, "bindings", name), join(out, "bindings", name));
 cpSync(join(here, "expected"), join(out, "expected"), { recursive: true });
@@ -42,9 +43,6 @@ copyFileSync(join(here, "compare-run.ts"), join(out, "compare-run.ts"));
 const layout = Bun.spawnSync([image, "--layout"], { stdout: "pipe" });
 if (layout.exitCode !== 0) throw new Error(`${image} --layout: exit code ${layout.exitCode}`);
 writeFileSync(join(out, "bindings/layout.image.json"), layout.stdout);
-
-const diff = Bun.spawnSync(["git", "--no-pager", "diff", base, "--", "misctools/portable/host/host_win.c"], { cwd: repo, stdout: "pipe" });
-writeFileSync(join(out, "host_win.diff"), diff.stdout);
 
 const sha256 = createHash("sha256").update(readFileSync(image)).digest("hex");
 const quoted = (names: string[]) => names.map(n => `"${n}"`).join(",");
@@ -104,9 +102,10 @@ the bytes the program wrote (PowerShell's own ">" re-encodes them).
 
    With more detail from the host (every lookup, every request it refuses):
     $env:BUN_HOST_TRACE = "2"; cmd /c ".\\host.exe bun_fs_slice.img work > run-trace.jsonl 2> run-trace.stderr.txt"; $env:BUN_HOST_TRACE = $null
-   If the run ends with an out of memory message: the allocator reserves 1 GiB at its start and this
-   host commits what is reserved. A smaller reservation (64 MiB):
-    $env:MIMALLOC_ARENA_RESERVE = "65536"
+   The host reserves what the image maps with MAP_NORESERVE (the arenas of the allocator) and commits
+   1 MiB of it where a page is touched first. The kernel of Windows does not touch for the image: a
+   system call that gets memory of the image which nothing has written to yet fails with
+   ERROR_NOACCESS, and bun reports EACCES. A step that ends so here and passes on Linux is that.
 
 6. the layout of the bindings against the headers of this machine
 

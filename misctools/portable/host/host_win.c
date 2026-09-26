@@ -1477,7 +1477,11 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
    "libuv" is the libuv that is linked into this host (BUN_HOST_LIBUV, see
    host_win_uv.c): libuv has no DLL.
    The thread is not inside of a request here: a signal that is sent to it
-   meanwhile waits until it is back in the image (send_to_thread() tries again). */
+   meanwhile waits until it is back in the image (send_to_thread() tries again).
+   What the image hands to such a function is not known here, so nothing calls
+   model_touch() for it: a page of the image that is reserved and was never
+   touched is committed when code of the process faults on it, and is
+   ERROR_NOACCESS for a system call that is the first to reach it. */
 #ifdef BUN_HOST_LIBUV
 void *bun_host_uv_lookup(const char *symbol);
 #else

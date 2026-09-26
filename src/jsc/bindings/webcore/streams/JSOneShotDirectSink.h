@@ -26,9 +26,9 @@
 
 namespace WebCore {
 
-class JSOneShotDirectSink final : public JSC::JSInternalFieldObjectImpl<4> {
+class JSOneShotDirectSink final : public JSC::JSInternalFieldObjectImpl<5> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<4>;
+    using Base = JSC::JSInternalFieldObjectImpl<5>;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
 
@@ -42,6 +42,8 @@ public:
         CapabilityPromise,
         // The stream's source; its close() hook runs from end()/close().
         Source,
+        // close()'s argument, stored before the source's close() hook runs: oneShotDirectFinish settles with it.
+        CloseReason,
     };
 
     static JSOneShotDirectSink* create(JSC::VM&, JSC::Structure*);
@@ -75,8 +77,14 @@ public:
 
     void clearSource() { internalField(Field::Source).clear(); }
 
-    // Set by end()/close(): later write()/end()/close()/flush() calls are no-ops.
+    JSC::JSValue closeReason() const { return internalField(Field::CloseReason).get(); }
+    void setCloseReason(JSC::VM& vm, JSC::JSValue reason) { internalField(Field::CloseReason).set(vm, this, reason); }
+    void clearCloseReason() { internalField(Field::CloseReason).clear(); }
+
+    // Set by end()/close(): later write()/end()/close()/flush() calls are no-ops. It does not mean the result is settled: a close() hook that throws leaves m_finishOwed set.
     bool m_closed : 1 { false };
+    // end()/close() latched and oneShotDirectFinish has not run yet. The finish consumes it, so it runs at most once per sink.
+    bool m_finishOwed : 1 { false };
     // The pull() call is on the stack: its caller ends the stream once it knows whether the call threw.
     bool m_insidePullCall : 1 { false };
     // true ⇒ resolve with a Uint8Array (toBytes); false ⇒ an ArrayBuffer (toArrayBuffer).
@@ -92,5 +100,7 @@ private:
         return value.isCell() ? value.asCell() : nullptr;
     }
 };
+
+static_assert(sizeof(JSOneShotDirectSink) <= 64);
 
 } // namespace WebCore

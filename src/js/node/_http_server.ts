@@ -520,7 +520,7 @@ Server.prototype.closeAllConnections = function () {
   // close() already dropped the native handle; destroy what is still tracked.
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
-    for (const socket of $Array.from(tracked)) {
+    for (const socket of $Array.from(tracked) as NodeHTTPServerSocket[]) {
       if (!socket[kHandedOff]) socket.destroy();
     }
   }
@@ -595,7 +595,7 @@ Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, ..
       break;
     }
     default:
-      require("node:net").Server.prototype[EventEmitter.captureRejectionSymbol].$apply(this, arguments);
+      require("node:net").Server.prototype[EventEmitter.captureRejectionSymbol]!.$apply(this, arguments);
   }
 };
 
@@ -1637,7 +1637,7 @@ interface NetSocketConstructor {
 }
 function getNodeHTTPServerSocket() {
   if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
-  const { Socket: NetSocket } = require("node:net");
+  const { Socket: NetSocket }: { Socket: NetSocketConstructor } = require("node:net");
   const { getTimerDuration } = require("internal/timers");
   NodeHTTPServerSocket = class Socket extends NetSocket {
     bytesRead = 0;
@@ -1649,7 +1649,7 @@ function getNodeHTTPServerSocket() {
     [kKeepAliveIdleStart] = undefined;
     [kBytesWritten] = 0;
     [kHandle];
-    [kUpgradeIncoming] = undefined;
+    [kUpgradeIncoming]: import("node:http").IncomingMessage | undefined = undefined;
     [kOnReadParsed] = undefined;
     [kHandoffResponse] = undefined;
     [kDestroySoon] = false;
@@ -1664,6 +1664,11 @@ function getNodeHTTPServerSocket() {
     #pendingAbortMessage;
     #closeHandled = false;
     #resetSupported;
+    #closeError: Error | undefined = undefined;
+    declare encrypted: boolean;
+    declare resetAndClosing: boolean;
+    declare _writableState: { emitClose: boolean; decodeStrings: boolean };
+    declare _readableState: { emitClose: boolean };
     constructor(server: Server, handle, encrypted, listenerGeneration) {
       // allowHalfOpen: node's connectionListener sockets never auto-end the
       // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
@@ -1778,7 +1783,7 @@ function getNodeHTTPServerSocket() {
       // is deferred to #onClose so the dispatch promise resolves only after the
       // native on_abort has released the pending-request ref.
       this.#pendingAbortMessage = this._httpMessage;
-      handle.onclose = this.#onCloseForDestroy.bind(this, callback, err);
+      handle.onclose = this.#onCloseForDestroy.bind(this, callback, err, handle);
       if (this.resetAndClosing) {
         this.resetAndClosing = false;
         handle.reset();
@@ -1786,7 +1791,7 @@ function getNodeHTTPServerSocket() {
         handle.close();
       }
     }
-    #onClose() {
+    #onClose(closedHandle = this[kHandle]) {
       // Once: a queued response's abort can destroy the socket, and run this, before the native close calls it.
       if (this.#closeHandled) return;
       this.#closeHandled = true;
@@ -1795,6 +1800,20 @@ function getNodeHTTPServerSocket() {
       // released parser (free() invoked, kOnTimeout nulled).
       releaseServerParserShim(this);
       this[kHandle] = null;
+      if (closedHandle) {
+        // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
+        if (closedHandle.peerEnded) {
+          this.push(null);
+          this.read(0);
+        }
+        // With no 'error' listener (a socket handed to 'upgrade') the read error would be an uncaught exception.
+        const closeError = this.listenerCount("error") > 0 ? closedHandle.closeError : undefined;
+        if (closeError) {
+          // Node's errnoException(nread, 'read'): "read ECONNRESET".
+          const er = new ErrnoException(closeError.errno, "read");
+          this.#closeError = er.code === closeError.code ? er : closeError;
+        }
+      }
       const server = this.server;
       const tracked = server?.[kTrackedConnections];
       if (tracked) {
@@ -3586,7 +3605,7 @@ function emitResponseFinished(res, callback) {
   }
 }
 
-function flushPendingFinish(this: ServerResponse) {
+function flushPendingFinish(this: any) {
   const callback = this[kPendingFinish];
   if (callback === undefined) return;
   this[kPendingFinish] = undefined;

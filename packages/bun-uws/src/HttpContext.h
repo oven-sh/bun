@@ -1034,6 +1034,12 @@ private:
                 return s;
             }
 
+            /* Before the body fin and onClientError below, whose listeners can destroy the socket. Not once this
+             * side shut down: TLS delivers the peer's answer to our close_notify here as an EOF. */
+            if (!us_socket_is_shut_down(s)) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PEER_ENDED;
+            }
+
             /* A request body with no framing (HttpParser::nodeHttpBodyUntilEof) ends
              * here: the FIN completes the message, like Node's parser.finish() on
              * socketOnEnd. Deliver the fin the data handler in onData would. */

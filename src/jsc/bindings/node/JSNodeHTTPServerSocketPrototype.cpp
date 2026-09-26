@@ -15,6 +15,7 @@ extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest,
 extern "C" void us_socket_resume(us_socket_t*);
 extern "C" void us_socket_pause(us_socket_t*);
 extern "C" void us_socket_shutdown(us_socket_t*);
+extern "C" JSC::EncodedJSValue Bun__socketReadErrorFromCloseCode(JSC::JSGlobalObject* globalObject, int code);
 
 namespace Bun {
 

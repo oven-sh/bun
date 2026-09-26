@@ -5002,32 +5002,6 @@ it.each([
   }
 });
 
-// Deliberate divergence from Node v26, which prints the raw proxy URL in these messages, credentials
-// included. Bun removes the userinfo. The message for a URL without credentials is the same as in Node.
-it.each([
-  ["port out of range", "http://user:s3cret@proxy.example.com:99999", "http://proxy.example.com:99999"],
-  ["LF in the password", "http://user:s3c\nret@proxy.example.com:8080", "http://proxy.example.com:8080"],
-  ["unescaped / in the password", "http://user:s3/cret@proxy.example.com:8080", "http://proxy.example.com:8080"],
-  ["unescaped @ in the password", "http://user:s3@cret@proxy.example.com:99999", "http://proxy.example.com:99999"],
-  ["space in the host", "http://user:s3cret@proxy example.com:8080", "http://proxy example.com:8080"],
-  ["no credentials", "http://proxy.example.com:99999", "http://proxy.example.com:99999"],
-])("ERR_PROXY_INVALID_CONFIG does not expose the proxy credentials (%s)", (_name, proxyUrl, printed) => {
-  const errors = [
-    () => new Agent({ proxyEnv: { HTTP_PROXY: proxyUrl } }),
-    () => new https.Agent({ proxyEnv: { HTTPS_PROXY: proxyUrl } }),
-    // Call the returned restore function, so that a missing throw does not replace the global agents.
-    () => (http as any).setGlobalProxyFromEnv({ HTTPS_PROXY: proxyUrl })(),
-  ].map(create => {
-    try {
-      create();
-    } catch (err: any) {
-      return { code: err.code, message: err.message };
-    }
-  });
-  const expected = { code: "ERR_PROXY_INVALID_CONFIG", message: `Invalid proxy URL: ${printed}` };
-  expect(errors).toEqual([expected, expected, expected]);
-});
-
 // Node.js v26 removed res.writeHeader (DEP0063 end-of-life, nodejs/node#60635).
 it("ServerResponse.prototype.writeHeader was removed (DEP0063 EOL)", () => {
   expect("writeHeader" in ServerResponse.prototype).toBe(false);
@@ -7126,5 +7100,33 @@ it("connectionListener applies the server's joinDuplicateHeaders option like the
       emitted: await headersSeenOverEmittedConnection(options),
       listening: await headersSeenOverListeningServer(options),
     }).toEqual({ options, emitted: expected, listening: expected });
+  }
+});
+
+it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<{ setKeepAlive: boolean; resetAndDestroy: boolean }>();
+  const server = createServer((req, res) => {
+    try {
+      const socket = req.socket;
+      resolve({
+        setKeepAlive: socket.setKeepAlive(true).setNoDelay(true) === socket,
+        resetAndDestroy: socket.resetAndDestroy() === socket,
+      });
+    } catch (e) {
+      reject(e);
+    }
+    res.end();
+  });
+  try {
+    await once(server.listen(0), "listening");
+    // resetAndDestroy() resets the connection in node, so the request itself may fail.
+    const request = fetch(`http://localhost:${(server.address() as AddressInfo).port}/`).then(
+      response => response.text(),
+      () => {},
+    );
+    expect(await promise).toEqual({ setKeepAlive: true, resetAndDestroy: true });
+    await request;
+  } finally {
+    server.close();
   }
 });

@@ -6623,7 +6623,7 @@ Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, even
       break;
     }
     default:
-      net.Server.prototype[EventEmitter.captureRejectionSymbol].$call(this, err, event, ...args);
+      net.Server.prototype[EventEmitter.captureRejectionSymbol]!.$call(this, err, event, ...args);
   }
 };
 
@@ -6649,6 +6649,7 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
   declare maxHeaderSize: number | undefined;
   declare insecureHTTPParser: boolean | undefined;
   declare httpValidation: string | undefined;
+  declare joinDuplicateHeaders: boolean | undefined;
   timeout = 0;
   [kSessions] = new SafeSet();
   constructor(options, onRequestHandler) {

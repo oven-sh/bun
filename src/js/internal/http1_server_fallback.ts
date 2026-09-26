@@ -29,6 +29,23 @@ function failPendingWriteCallbacks(res, err) {
   }
 }
 
+type IncomingMessage = import("node:http").IncomingMessage;
+
+interface Http1FallbackRequest extends IncomingMessage {
+  upgrade: boolean;
+  _dumped: boolean;
+  joinDuplicateHeaders?: boolean;
+  _addHeaderLines(headers: string[], n: number): void;
+}
+
+interface Http1FallbackResponseHead {
+  statusCode: number;
+  statusMessage: string | undefined;
+  headers: string[];
+  autoHeaderBits: number;
+  keepAliveTimeoutSecs: number;
+}
+
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
   let head: Http1FallbackResponseHead | null = null;
@@ -37,7 +54,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   let noBody = false;
   let closeDelimited = false;
   // The drain callback of a write() that reported backpressure, and its async context (native's onwritable slot).
-  let onwritable = null;
+  let onwritable: ((...args: unknown[]) => void) | null | undefined = null;
   let onwritableFrame;
 
   function writeHeadToSocket(contentLength) {
@@ -158,11 +175,11 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   }
 
   // Like the `conn.writable` gate of Node's _writeRaw: a write to a socket that was ended (after the client's FIN) would destroy it.
-  function writeToSocket(data, callback) {
+  function writeToSocket(data, callback?) {
     if (!socket.writableEnded) socket.write(data, callback);
   }
 
-  function writeBody(buf, callback) {
+  function writeBody(buf, callback?) {
     const length = buf ? (buf.byteLength ?? buf.length) : 0;
     if (length) {
       if (chunked) {
@@ -208,7 +225,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     finished: false,
     aborted: false,
     shouldKeepAlive,
-    onfinished: null,
+    onfinished: null as (() => void) | null,
     // Like the native getter: an empty slot reads as undefined.
     get onwritable() {
       return onwritable ?? undefined;
@@ -230,7 +247,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (onwritable) settleWaiting(fn);
     },
     // Runs once, from flushed(). ServerResponse#end()'s `onwritable` stays unused: its 'finish' comes a tick later, after a closing socket's 'close'.
-    onflushed: null,
+    onflushed: null as (() => void) | null,
     cork(callback) {
       return callback();
     },
@@ -382,8 +399,8 @@ function connectionListenerHTTP1(server, socket, options) {
   const { maxHeadersCount } = server;
   parser.maxHeaderPairs = typeof maxHeadersCount === "number" ? maxHeadersCount << 1 : MAX_HEADER_PAIRS;
 
-  let req = null;
-  let pendingUpgrade = null;
+  let req: Http1FallbackRequest | null = null;
+  let pendingUpgrade: Http1FallbackRequest | null = null;
   // Node's per-connection state.requestsCount, behind server.maxRequestsPerSocket.
   let requestsCount = 0;
 

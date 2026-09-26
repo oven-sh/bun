@@ -62,6 +62,9 @@ public:
     unsigned tunnelReadEnded : 1 = 0;
     /* write() returned false for bytes that went into the uWS buffer, and JS waits for ondrain. streamBuffer does not show them. */
     unsigned heldWriteAwaitsDrain : 1 = 0;
+    /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
+    unsigned peer_ended : 1 = 0;
+    int closeReadError = 0;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;
     const char* peerCertVerifyErrorCode = nullptr;

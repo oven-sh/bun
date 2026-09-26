@@ -183,6 +183,53 @@ function assert_buildkite_secret() {
   export "$key"="$value"
 }
 
+# The rate_limit endpoint itself does not count against the quota.
+function github_quota_remaining() {
+  gh api rate_limit --jq '.resources.core.remaining' 2> /dev/null || true
+}
+
+# Every push to main re-uploads the full canary asset set (~70 API calls with
+# --clobber), so fail before touching the release when the remaining quota
+# cannot cover it, rather than dying midway with assets partially clobbered.
+GITHUB_QUOTA_FLOOR=200
+
+function assert_github_quota() {
+  GITHUB_QUOTA_BEFORE="$(github_quota_remaining)"
+  if ! [[ "$GITHUB_QUOTA_BEFORE" =~ ^[0-9]+$ ]]; then
+    echo "warn: Cannot read GitHub API rate limit, skipping quota check"
+    GITHUB_QUOTA_BEFORE=""
+    return
+  fi
+  echo "GitHub API quota remaining before release: $GITHUB_QUOTA_BEFORE"
+  if [ "$GITHUB_QUOTA_BEFORE" -lt "$GITHUB_QUOTA_FLOOR" ]; then
+    echo "error: GitHub API quota is too low to complete the release (remaining: $GITHUB_QUOTA_BEFORE, required: $GITHUB_QUOTA_FLOOR)"
+    local reset
+    reset="$(gh api rate_limit --jq '.resources.core.reset' 2> /dev/null || true)"
+    if [[ "$reset" =~ ^[0-9]+$ ]]; then
+      echo "error: Quota resets in $((reset - $(date +%s))) seconds"
+    fi
+    exit 1
+  fi
+}
+
+function report_github_quota() {
+  local after
+  after="$(github_quota_remaining)"
+  if ! [[ "$after" =~ ^[0-9]+$ ]]; then
+    echo "warn: Cannot read GitHub API rate limit, skipping usage report"
+    return
+  fi
+  if [[ "$GITHUB_QUOTA_BEFORE" =~ ^[0-9]+$ ]]; then
+    if [ "$after" -le "$GITHUB_QUOTA_BEFORE" ]; then
+      echo "GitHub API calls used by this release: $((GITHUB_QUOTA_BEFORE - after)) (remaining: $after)"
+    else
+      echo "GitHub API quota remaining after release: $after (quota window reset mid-release)"
+    fi
+  else
+    echo "GitHub API quota remaining after release: $after"
+  fi
+}
+
 function release_tag() {
   local version="$1"
   if [ "$version" == "canary" ]; then
@@ -303,6 +350,11 @@ function create_release() {
   assert_github
   assert_aws
   assert_sentry
+  assert_github_quota
+  # The EXIT trap is the `set -e` equivalent of `if: always()`: it reports
+  # usage even when the release dies midway, which is when the number of
+  # calls already burned matters most.
+  trap report_github_quota EXIT
 
   local tag="$1" # 'canary' or 'x.y.z'
   local artifacts=(

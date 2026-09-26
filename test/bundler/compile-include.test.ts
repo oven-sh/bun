@@ -1,8 +1,8 @@
 // https://github.com/oven-sh/bun/issues/11732
 //
-// `--include <path|glob>` embeds extra files in a `--compile` executable as
-// lazily loaded MODULES (transpiled, resolvable by a computed `import()`),
-// distinct from `--asset` (raw bytes, read via `fs`/`Bun.file`, tested in
+// `--include <path|glob>` / `Bun.build({ compile: { include } })` embed extra files in a
+// `--compile` executable as lazily loaded MODULES (transpiled, resolvable by a computed
+// `import()`), distinct from `--asset` (raw bytes, read via `fs`/`Bun.file`, tested in
 // compile-asset-bunfs.test.ts). See docs/bundler/executables.mdx.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -13,242 +13,295 @@ import { join } from "path";
 const TIMEOUT = 60_000;
 const exe = process.platform === "win32" ? ".exe" : "";
 
-async function compile(dir: string, extraArgs: string[] = []) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "./index.ts", "--outfile", "app", ...extraArgs],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (code !== 0) throw new Error(`compile failed (exit ${code})\n${stdout}\n${stderr}`);
-  return { stdout, stderr };
+type Via = "cli" | "api";
+const vias: Via[] = ["cli", "api"];
+
+async function spawnCapture(cmd: string[], cwd: string) {
+  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// Builds ./index.ts into ./app through the CLI flag or through Bun.build. Returns the
+// failure text (empty on success) so rejection tests and success tests share one path.
+async function build(dir: string, via: Via, include: string[], opts: { bytecode?: boolean } = {}) {
+  if (via === "cli") {
+    const args = include.map(p => `--include=${p}`);
+    if (opts.bytecode) args.push("--bytecode");
+    const { stderr, exitCode } = await spawnCapture(
+      [bunExe(), "build", "--compile", "./index.ts", "--outfile", "app", ...args],
+      dir,
+    );
+    return { failed: exitCode !== 0, message: stderr };
+  }
+  const script = /* js */ `
+    try {
+      const r = await Bun.build({
+        entrypoints: ["./index.ts"],
+        bytecode: ${!!opts.bytecode},
+        compile: { outfile: "app", include: ${JSON.stringify(include)} },
+      });
+      console.log(JSON.stringify({ failed: !r.success, message: r.logs.map(String).join("\\n") }));
+    } catch (e) {
+      console.log(JSON.stringify({ failed: true, message: String(e?.message ?? e) + (e?.errors ?? []).map(String).join("\\n") }));
+    }
+  `;
+  const { stdout } = await spawnCapture([bunExe(), "-e", script], dir);
+  return JSON.parse(stdout.trim());
 }
 
 async function run(dir: string) {
   // cwd outside the build dir so the binary cannot accidentally find real files on disk
   // (that gap is #44053 — an --external/bare-specifier resolution issue, not this feature;
   // an --include'd module must resolve purely from $bunfs).
-  await using proc = Bun.spawn({
-    cmd: [join(dir, "app" + exe)],
-    cwd: process.platform === "win32" ? process.env.TEMP || "C:\\Windows\\Temp" : "/tmp",
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, code };
+  return spawnCapture(
+    [join(dir, "app" + exe)],
+    process.platform === "win32" ? process.env.TEMP || "C:\\Windows\\Temp" : "/tmp",
+  );
 }
 
-describe.concurrent("compile --include", () => {
-  test(
-    "a computed import() of an --include'd file resolves from $bunfs, and its module does not run at startup",
-    async () => {
-      using dir = tempDir("compile-include-basic", {
-        "index.ts": /* ts */ `
-          import { join } from "path";
-          const name = "target";
-          // Not statically analyzable: the specifier is built from a runtime
-          // string concatenation, so the bundler cannot discover this import by
-          // following the static graph. Only --include makes it resolvable.
-          const mod = await import(join(import.meta.dirname, "plugins", name + ".js"));
-          console.log(JSON.stringify({ value: mod.default, ranAtStartup: globalThis.__ranAtStartup === true }));
-        `,
-        "plugins/target.js": /* js */ `
-          // A side-effect marker: if this ran merely because the executable
-          // started (rather than because index.ts's import() reached it), this
-          // would be true by the time index.ts checks it above.
-          globalThis.__ranAtStartup = true;
-          export default "included-value";
-        `,
-      });
+describe.concurrent("compile include", () => {
+  describe.each(vias)("via %s", via => {
+    test(
+      "a computed import() of an included directory resolves from $bunfs, and its module does not run at startup",
+      async () => {
+        using dir = tempDir(`compile-include-basic-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            const name = "target";
+            // Built from a runtime string, so the bundler cannot follow it statically.
+            const mod = await import(join(import.meta.dirname, "plugins", name + ".js"));
+            console.log(JSON.stringify({ value: mod.default, sawMarker: globalThis.__marker === true }));
+          `,
+          "plugins/target.js": /* js */ `
+            globalThis.__marker = true;
+            export default "included-value";
+          `,
+        });
 
-      await compile(String(dir), ["--include", "./plugins/target.js"]);
-      const { stdout, stderr, code } = await run(String(dir));
-      expect(stderr.trim()).toBe("");
-      expect(code).toBe(0);
-      // The marker is set by target.js's own top-level code, observed from
-      // *inside* the same process after the dynamic import() has already
-      // resolved and evaluated it — so `ranAtStartup: true` here only proves
-      // the module ran (synchronously, before the console.log), not that it
-      // ran before main. That half is covered by the next test, which never
-      // imports the file at all.
-      expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value", ranAtStartup: true });
-    },
-    TIMEOUT,
-  );
+        const built = await build(String(dir), via, ["./plugins"]);
+        expect(built).toEqual({ failed: false, message: expect.any(String) });
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        // The marker is observed after import() evaluated the module, so it only proves
+        // the module ran; "not at startup" is the next test.
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value", sawMarker: true });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
 
-  test(
-    "an --include'd module is not executed unless something imports it",
-    async () => {
-      using dir = tempDir("compile-include-not-eager", {
-        "index.ts": /* ts */ `
-          // Deliberately never imports plugins/target.js, directly or
-          // dynamically. If --include eagerly ran included modules (like an
-          // additional entry point that the executable also treated as "the"
-          // program to run), the side effect below would still land.
-          console.log(JSON.stringify({ ranAtStartup: globalThis.__ranAtStartup === true }));
-        `,
-        "plugins/target.js": /* js */ `
-          globalThis.__ranAtStartup = true;
-          export default "included-value";
-        `,
-      });
+    test(
+      "an included module is not executed unless something imports it",
+      async () => {
+        using dir = tempDir(`compile-include-not-eager-${via}`, {
+          "index.ts": /* ts */ `
+            // Never imports plugins/*, directly or dynamically.
+            console.log(JSON.stringify({ sawMarker: globalThis.__marker === true }));
+          `,
+          "plugins/target.js": `globalThis.__marker = true; export default 1;`,
+          "plugins/other.js": `globalThis.__marker = true; export default 2;`,
+        });
 
-      await compile(String(dir), ["--include", "./plugins/target.js"]);
-      const { stdout, stderr, code } = await run(String(dir));
-      expect(stderr.trim()).toBe("");
-      expect(code).toBe(0);
-      expect(JSON.parse(stdout.trim())).toEqual({ ranAtStartup: false });
-    },
-    TIMEOUT,
-  );
+        expect((await build(String(dir), via, ["./plugins/*.js"])).failed).toBe(false);
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ sawMarker: false });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
 
-  test(
-    "--include accepts a directory (recursive) and a glob, both computed-import()-able",
-    async () => {
-      using dir = tempDir("compile-include-dir-glob", {
-        "index.ts": /* ts */ `
-          import { join } from "path";
-          const dirMod = await import(join(import.meta.dirname, "plugins", "sub", "nested.js"));
-          const globMod = await import(join(import.meta.dirname, "handlers", "get.js"));
-          console.log(JSON.stringify({ dir: dirMod.default, glob: globMod.default }));
-        `,
-        "plugins/sub/nested.js": `export default "from-dir";`,
-        "handlers/get.js": `export default "from-glob";`,
-        "handlers/post.js": `export default "unused";`,
-      });
-
-      await compile(String(dir), ["--include", "./plugins", "--include", "./handlers/*.js"]);
-      const { stdout, stderr, code } = await run(String(dir));
-      expect(stderr.trim()).toBe("");
-      expect(code).toBe(0);
-      expect(JSON.parse(stdout.trim())).toEqual({ dir: "from-dir", glob: "from-glob" });
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "a glob walks from its literal directory prefix and matches only files under it",
-    async () => {
-      using dir = tempDir("compile-include-glob-prefix", {
-        "index.ts": /* ts */ `
-          import { join } from "path";
-          const results: Record<string, string> = {};
-          for (const rel of ["a/b/x.js", "a/b/c/y.js", "a/z.js", "other/w.js"]) {
-            try {
-              results[rel] = (await import(join(import.meta.dirname, rel))).default;
-            } catch {
-              results[rel] = "missing";
+    test(
+      "directories include recursively and a glob matches only its own files",
+      async () => {
+        using dir = tempDir(`compile-include-dir-glob-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            const results: Record<string, string> = {};
+            for (const rel of ["plugins/sub/nested.js", "handlers/get.js", "handlers/post.md.js", "handlers/deep/x.js"]) {
+              try {
+                results[rel] = (await import(join(import.meta.dirname, rel))).default;
+              } catch {
+                results[rel] = "missing";
+              }
             }
-          }
-          console.log(JSON.stringify(results));
-        `,
-        "a/b/x.js": `export default "x";`,
-        "a/b/c/y.js": `export default "y";`,
-        "a/z.js": `export default "z";`,
-        "other/w.js": `export default "w";`,
-      });
+            console.log(JSON.stringify(results));
+          `,
+          "plugins/sub/nested.js": `export default "from-dir";`,
+          "handlers/get.js": `export default "from-glob";`,
+          "handlers/post.md.js": `export default "from-glob-too";`,
+          "handlers/deep/x.js": `export default "not-matched";`,
+        });
 
-      // No leading "./" and a two-level literal prefix: only a/b/*.js matches.
-      await compile(String(dir), ["--include", "a/b/*.js"]);
-      const { stdout, stderr, code } = await run(String(dir));
-      expect(stderr.trim()).toBe("");
-      expect(JSON.parse(stdout.trim())).toEqual({
-        "a/b/x.js": "x",
-        "a/b/c/y.js": "missing",
-        "a/z.js": "missing",
-        "other/w.js": "missing",
-      });
-      expect(code).toBe(0);
-    },
-    TIMEOUT,
-  );
+        expect((await build(String(dir), via, ["./plugins", "./handlers/*.js"])).failed).toBe(false);
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({
+          "plugins/sub/nested.js": "from-dir",
+          "handlers/get.js": "from-glob",
+          "handlers/post.md.js": "from-glob-too",
+          "handlers/deep/x.js": "missing",
+        });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "a glob walks from its literal directory prefix and needs no leading ./",
+      async () => {
+        using dir = tempDir(`compile-include-glob-prefix-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            const results: Record<string, string> = {};
+            for (const rel of ["a/b/x.js", "a/b/c/y.js", "a/z.js", "other/w.js"]) {
+              try {
+                results[rel] = (await import(join(import.meta.dirname, rel))).default;
+              } catch {
+                results[rel] = "missing";
+              }
+            }
+            console.log(JSON.stringify(results));
+          `,
+          "a/b/x.js": `export default "x";`,
+          "a/b/c/y.js": `export default "y";`,
+          "a/z.js": `export default "z";`,
+          "other/w.js": `export default "w";`,
+        });
+
+        expect((await build(String(dir), via, ["a/b/*.js"])).failed).toBe(false);
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({
+          "a/b/x.js": "x",
+          "a/b/c/y.js": "missing",
+          "a/z.js": "missing",
+          "other/w.js": "missing",
+        });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "a computed import() of a file outside the include set still fails (negative control)",
+      async () => {
+        using dir = tempDir(`compile-include-negative-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            try {
+              await import(join(import.meta.dirname, "plugins", "target.js"));
+              console.log(JSON.stringify({ threw: false }));
+            } catch (e: any) {
+              console.log(JSON.stringify({ threw: true, hasMessage: typeof e.message === "string" }));
+            }
+          `,
+          "plugins/target.js": `export default "not-included";`,
+          "other/keep.js": `export default "included";`,
+        });
+
+        expect((await build(String(dir), via, ["./other"])).failed).toBe(false);
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ threw: true, hasMessage: true });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "include works together with bytecode",
+      async () => {
+        using dir = tempDir(`compile-include-bytecode-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            // bytecode emits CJS, which has no top-level await.
+            async function main() {
+              const mod = await import(join(import.meta.dirname, "plugins", "target.js"));
+              console.log(JSON.stringify({ value: mod.default }));
+            }
+            main();
+          `,
+          "plugins/target.js": `export default "included-value";`,
+        });
+
+        expect((await build(String(dir), via, ["./plugins"], { bytecode: true })).failed).toBe(false);
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test.each([
+      ["./does-not-exist", "failed to read --include path"],
+      ["./plugins/*.md", "matched no files"],
+    ])(
+      "rejects %s",
+      async (pattern, expected) => {
+        using dir = tempDir(`compile-include-reject-${via}`, {
+          "index.ts": `console.log("x");`,
+          "plugins/target.js": `export default 1;`,
+        });
+        const built = await build(String(dir), via, [pattern]);
+        expect(built.message).toContain(expected);
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+  });
 
   test(
-    "a computed import() of a file that was NOT --include'd still fails the same way it does today (negative control)",
+    "the CLI rejects --include without --compile",
     async () => {
-      using dir = tempDir("compile-include-negative-control", {
-        "index.ts": /* ts */ `
-          import { join } from "path";
-          try {
-            await import(join(import.meta.dirname, "plugins", "target.js"));
-            console.log(JSON.stringify({ threw: false }));
-          } catch (e: any) {
-            console.log(JSON.stringify({ threw: true, hasMessage: typeof e.message === "string" }));
-          }
-        `,
-        "plugins/target.js": `export default "included-value";`,
-      });
-
-      // No --include: plugins/target.js is on disk next to index.ts, but a
-      // `bun build --compile` with no static or --include reference to it
-      // never embeds it, so the computed import() at runtime is unresolvable
-      // — the same failure mode #11732 opened about. We only assert that it
-      // still throws (not a specific error code/message), since pinning the
-      // exact shape of that pre-existing failure is out of scope here.
-      await compile(String(dir), []);
-      const { stdout, stderr, code } = await run(String(dir));
-      expect(stderr.trim()).toBe("");
-      expect(code).toBe(0);
-      const r = JSON.parse(stdout.trim());
-      expect(r).toEqual({ threw: true, hasMessage: true });
-    },
-    TIMEOUT,
-  );
-
-  test(
-    "--include works together with --bytecode",
-    async () => {
-      using dir = tempDir("compile-include-bytecode", {
-        "index.ts": /* ts */ `
-          import { join } from "path";
-          // --bytecode emits CJS, which has no top-level await.
-          async function main() {
-            const mod = await import(join(import.meta.dirname, "plugins", "target.js"));
-            console.log(JSON.stringify({ value: mod.default }));
-          }
-          main();
-        `,
-        "plugins/target.js": `export default "included-value";`,
-      });
-
-      await compile(String(dir), ["--include=./plugins/target.js", "--bytecode"]);
-      const { stdout, stderr, code } = await run(String(dir));
-      expect(stderr.trim()).toBe("");
-      expect(code).toBe(0);
-      expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
-    },
-    TIMEOUT,
-  );
-
-  test.each([
-    [["build", "./index.ts", "--include", "./plugins"], "--include requires --compile"],
-    [
-      ["build", "--compile", "--target=browser", "./index.html", "--include", "./plugins/target.js"],
-      "--target browser with --include",
-    ],
-    [["build", "--compile", "./index.ts", "--outfile", "app", "--include", "./does-not-exist"], "failed to read --include path"],
-    [["build", "--compile", "./index.ts", "--outfile", "app", "--include", "./plugins/*.md"], "--include glob"],
-  ])(
-    "rejects %j",
-    async (args, expected) => {
-      using dir = tempDir("compile-include-reject", {
+      using dir = tempDir("compile-include-no-compile", {
         "index.ts": `console.log("x");`,
+        "plugins/target.js": `export default 1;`,
+      });
+      const { stderr, exitCode } = await spawnCapture(
+        [bunExe(), "build", "./index.ts", "--include", "./plugins"],
+        String(dir),
+      );
+      expect(stderr).toContain("--include requires --compile");
+      expect(exitCode).not.toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "the CLI rejects --include with --compile --target=browser",
+    async () => {
+      using dir = tempDir("compile-include-browser-cli", {
         "index.html": `<!doctype html>`,
         "plugins/target.js": `export default 1;`,
       });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), ...args],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "ignore",
-        stderr: "pipe",
+      const { stderr, exitCode } = await spawnCapture(
+        [bunExe(), "build", "--compile", "--target=browser", "./index.html", "--include", "./plugins/target.js"],
+        String(dir),
+      );
+      expect(stderr).toContain("cannot use --compile --target browser with --include");
+      expect(exitCode).not.toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build rejects compile.include with target 'browser' for standalone HTML",
+    async () => {
+      using dir = tempDir("compile-include-browser-api", {
+        "index.html": `<!doctype html>`,
+        "plugins/target.js": `export default 1;`,
       });
-      const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain(expected);
-      expect(code).not.toBe(0);
+      const script = /* js */ `
+        try {
+          await Bun.build({ entrypoints: ["./index.html"], target: "browser", compile: { include: ["./plugins"] } });
+          console.log("no error");
+        } catch (e) { console.log(String(e.message)); }
+      `;
+      const { stdout } = await spawnCapture([bunExe(), "-e", script], String(dir));
+      expect(stdout.trim()).toContain("Cannot use compile.include with target 'browser'");
     },
     TIMEOUT,
   );

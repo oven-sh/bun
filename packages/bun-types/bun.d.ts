@@ -3715,6 +3715,33 @@ declare module "bun" {
      */
     assets?: string[];
     /**
+     * Files, directories, or globs to embed into the executable as lazily
+     * loaded modules. Unlike `assets`, which embeds raw bytes, an included file
+     * is transpiled like an entry point, so a computed `import()` at runtime
+     * can load it. It does not run until something imports it.
+     *
+     * - A directory includes every file below it.
+     * - A pattern containing `*`, `?`, `[` or `{` is a glob. It walks only the
+     *   directory named by the pattern's literal leading path segments, and
+     *   throws if it matches nothing.
+     * - Anything else is a single file.
+     *
+     * Paths are relative to the current working directory and keep their
+     * relative path under `$bunfs`, so `import(join(import.meta.dirname, "plugins/a.js"))`
+     * finds `plugins/a.js`.
+     *
+     * Equivalent CLI flag: `--include` (repeatable)
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ["./index.ts"],
+     *   compile: { outfile: "app", include: ["./plugins", "./handlers/*.js"] },
+     * });
+     * ```
+     */
+    include?: string[];
+    /**
      * Whether the standalone executable loads .env files when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`

@@ -2148,8 +2148,9 @@ function parseOptions(
     }
   }
 
+  const checkServerIdentity = $isObject(tls) ? tls.checkServerIdentity : undefined;
   if ($isObject(tls)) {
-    const { checkServerIdentity, rejectUnauthorized } = tls;
+    const { rejectUnauthorized } = tls;
     if (checkServerIdentity !== undefined && !$isCallable(checkServerIdentity)) {
       throw $ERR_INVALID_ARG_TYPE("tls.checkServerIdentity", "function", checkServerIdentity);
     }
@@ -2165,7 +2166,8 @@ function parseOptions(
   const tlsObject = tls as Exclude<typeof tls, boolean>;
   if (sslMode !== SSLMode.disable && !tlsObject?.serverName && !tlsObject?.servername) {
     if (hostname) {
-      tls = { ...tlsObject, serverName: hostname };
+      // The spread copies own enumerable properties only: a callback that is a class method would be lost.
+      tls = { ...tlsObject, checkServerIdentity, serverName: hostname };
     } else if (tls) {
       tls = true;
     }

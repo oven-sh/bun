@@ -17,7 +17,8 @@ const client = new RedisClient(`rediss://localhost:${port}`, {
   },
 });
 client.onclose = () => void Atomics.add(count, 1, 1);
-client.send("PING", []).then(
-  () => Atomics.add(count, 2, 1),
-  () => Atomics.add(count, 2, 1),
-);
+const settled = () => {
+  Atomics.add(count, 2, 1);
+  Atomics.notify(count, 0);
+};
+client.send("PING", []).then(settled, settled);

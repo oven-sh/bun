@@ -18,7 +18,8 @@ const sql = new SQL({
     },
   },
 });
-sql.connect().then(
-  () => Atomics.add(count, 2, 1),
-  () => Atomics.add(count, 2, 1),
-);
+const settled = () => {
+  Atomics.add(count, 2, 1);
+  Atomics.notify(count, 0);
+};
+sql.connect().then(settled, settled);

@@ -233,6 +233,19 @@ describe.each([
     });
   });
 
+  test("tls.checkServerIdentity that is a method of a class is called", async () => {
+    await withServer(localhost, async server => {
+      const pin = new Error("PIN_MISMATCH");
+      class PinnedTls {
+        ca = localhost.ca;
+        checkServerIdentity() {
+          return pin;
+        }
+      }
+      expect(await connect(server.url, new PinnedTls())).toBe(pin);
+    });
+  });
+
   test("tls.checkServerIdentity also runs under sslmode=verify-ca", async () => {
     await withServer(agent1, async server => {
       const pin = new Error("PIN_MISMATCH");
@@ -292,7 +305,16 @@ describe.each([
         workerData: { url: `${server.url}?sslmode=verify-full`, ca: localhost.ca, counters },
       });
       const exited = once(worker, "exit");
-      await Atomics.waitAsync(count, 0, 0).value;
+      await Promise.race([
+        Atomics.waitAsync(count, 0, 0).value,
+        once(worker, "error").then(([error]) => Promise.reject(error)),
+        exited.then(([code]) => Promise.reject(new Error(`the worker exited with code ${code} before the callback`))),
+      ]);
+      // The fixture also wakes this wait when connect() settles: then the callback was never called.
+      expect({ callbackEntered: count[0], connectSettled: count[2] }).toEqual({
+        callbackEntered: 1,
+        connectSettled: 0,
+      });
       await worker.terminate();
       const [bytesFromClient] = await Promise.all([tlsClosed, exited]);
       expect({ callbackEntered: count[0], oncloseRan: count[1], connectSettled: count[2], bytesFromClient }).toEqual({

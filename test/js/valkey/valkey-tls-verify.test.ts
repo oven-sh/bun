@@ -484,10 +484,11 @@ describe("RedisClient tls.checkServerIdentity", () => {
           checkServerIdentity: () => (calls++ === 0 ? undefined : new Error("PIN_MISMATCH")),
         },
       });
+      let duplicate: unknown;
       try {
         expect(await client.send("PING", [])).toBe("PONG");
         // A connected client's duplicate dials at once: the callback refuses that connection.
-        const duplicate = await client.duplicate().then(
+        duplicate = await client.duplicate().then(
           d => d,
           e => e,
         );
@@ -495,31 +496,54 @@ describe("RedisClient tls.checkServerIdentity", () => {
           calls: 2,
           duplicateConnected: false,
         });
-        if (duplicate instanceof RedisClient) duplicate.close();
       } finally {
+        if (duplicate instanceof RedisClient) duplicate.close();
         client.close();
       }
     });
   });
 
-  test("a worker terminated inside the callback stops, and sends nothing to the server", async () => {
-    const { promise: serverSocketClosed, resolve } = Promise.withResolvers<void>();
-    let bytesFromClient = 0;
-    const server = tls.createServer({ key: localhostTls.key, cert: localhostTls.cert }, socket => {
-      socket.on("data", chunk => (bytesFromClient += chunk.length));
-      socket.on("error", () => {});
-      socket.on("close", () => resolve());
+  test("a callback that is a method of a class is called", async () => {
+    await withServer({ key: localhostTls.key, cert: localhostTls.cert }, async port => {
+      const pin = new Error("PIN_MISMATCH");
+      class PinnedTls {
+        ca = localhostTls.cert;
+        checkServerIdentity() {
+          return pin;
+        }
+      }
+      const err = await ping(`rediss://localhost:${port}`, new PinnedTls()).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBe(pin);
     });
-    server.listen(0);
-    await once(server, "listening");
-    try {
+  });
+
+  test("a worker terminated inside the callback stops, and sends nothing to the server", async () => {
+    await withServer({ key: localhostTls.key, cert: localhostTls.cert }, async (port, server) => {
+      const { promise: serverSocketClosed, resolve } = Promise.withResolvers<void>();
+      let bytesFromClient = 0;
+      server.on("secureConnection", socket => {
+        socket.on("data", chunk => (bytesFromClient += chunk.length));
+        socket.on("close", () => resolve());
+      });
       const counters = new SharedArrayBuffer(12);
       const count = new Int32Array(counters);
       const worker = new Worker(new URL("./valkey-tls-verify-worker-fixture.ts", import.meta.url), {
-        workerData: { port: (server.address() as AddressInfo).port, ca: localhostTls.cert, counters },
+        workerData: { port, ca: localhostTls.cert, counters },
       });
       const exited = once(worker, "exit");
-      await Atomics.waitAsync(count, 0, 0).value;
+      await Promise.race([
+        Atomics.waitAsync(count, 0, 0).value,
+        once(worker, "error").then(([error]) => Promise.reject(error)),
+        exited.then(([code]) => Promise.reject(new Error(`the worker exited with code ${code} before the callback`))),
+      ]);
+      // The fixture also wakes this wait when the command settles: then the callback was never called.
+      expect({ callbackEntered: count[0], commandSettled: count[2] }).toEqual({
+        callbackEntered: 1,
+        commandSettled: 0,
+      });
       await worker.terminate();
       await Promise.all([exited, serverSocketClosed]);
       expect({ callbackEntered: count[0], oncloseRan: count[1], commandSettled: count[2], bytesFromClient }).toEqual({
@@ -528,9 +552,7 @@ describe("RedisClient tls.checkServerIdentity", () => {
         commandSettled: 0,
         bytesFromClient: 0,
       });
-    } finally {
-      server.close();
-    }
+    });
   });
 
   test("a callback that closes the client rejects the pending command", async () => {

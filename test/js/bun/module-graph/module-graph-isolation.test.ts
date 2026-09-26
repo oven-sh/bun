@@ -75,7 +75,7 @@ const dir = String(
     "opens-then-disposes.mjs": `
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
       const graph = new Bun.ModuleGraph();
-      const app = await graph.import(import.meta.dir + "/app.mjs");
+      const app = await graph.import(import.meta.dir + "/" + (process.argv[5] ?? "app.mjs"));
       await graph.run(() => app.open[kind](state, ...args));
       graph.dispose();
       console.log("disposed");
@@ -1097,7 +1097,10 @@ const dir = String(
       await graph.run(() => app.fetchHeaders(server.url.href));
       graph.dispose();
       await hostTurn();
+      // (What the host is told is noted, which also keeps the rejection from being reported as unhandled at exit.)
+      let told;
       const text = app.response.text();
+      text.catch(error => (told = error.name));
       await hostTurn();
       // Graphs disposed while their script awaits a body.
       for (let i = 0; i < 20; i++) {
@@ -1109,7 +1112,7 @@ const dir = String(
       }
       await hostTurn();
       Bun.gc(true);
-      console.log(JSON.stringify({ text: Bun.peek.status(text), protectedPromises: heapStats().protectedObjectTypeCounts.Promise ?? 0 }));
+      console.log(JSON.stringify({ text: Bun.peek.status(text), told, protectedPromises: heapStats().protectedObjectTypeCounts.Promise ?? 0 }));
       process.exit(0);
     `,
     "errors-of-a-graph-made-by-a-graph.mjs": `
@@ -1189,7 +1192,7 @@ const dir = String(
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
       // (What the opener had queued still runs, in a world that was closed under it: what that throws is the graph's.)
       const graph = new Bun.ModuleGraph({ onError: error => console.error("the opener, after dispose():", error) });
-      const app = await graph.import(import.meta.dir + "/app.mjs");
+      const app = await graph.import(import.meta.dir + "/" + (process.argv[5] ?? "app.mjs"));
       // Not awaited: whatever the opener has under way (a connect, a handshake, a listen) is cut short.
       graph.run(() => { Promise.resolve(app.open[kind](state, ...args)).catch(() => {}); });
       graph.dispose();
@@ -1199,29 +1202,45 @@ const dir = String(
     "disposes-then-opens.mjs": `
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
       const graph = new Bun.ModuleGraph();
-      const app = await graph.import(import.meta.dir + "/app.mjs");
+      const app = await graph.import(import.meta.dir + "/" + (process.argv[5] ?? "app.mjs"));
       // Queued inside the graph's context, so it runs there, and after the dispose() below.
       graph.run(() => app.call(() => queueMicrotask(() => { Promise.resolve(app.open[kind](state, ...args)).catch(() => {}); })));
       graph.dispose();
       console.log("disposed");
       setTimeout(() => { console.log("and the process is still running"); process.exit(1); }, 3000).unref();
     `,
+    // app.mjs behind an import of every node: module it uses. What this process loads, into itself first and then
+    // into every graph: a graph's registry holds the modules as a program's does, and no graph is the first to
+    // load one of them. A fixture's process loads app.mjs as it is.
+    "app-with-every-import.mjs": `
+      import "node:net";
+      import "node:http";
+      import "node:http2";
+      import "node:https";
+      import "node:tls";
+      import "node:dgram";
+      import "node:fs";
+      import "node:zlib";
+      import "node:crypto";
+      import "node:dns";
+      import "node:child_process";
+      import "node:timers/promises";
+      import "node:util";
+      import "node:worker_threads";
+      import "node:stream/promises";
+      export * from "./app.mjs";
+    `,
     "app.mjs": `
-      import net from "node:net";
-      import http from "node:http";
-      import http2 from "node:http2";
-      import https from "node:https";
-      import nodeTls from "node:tls";
-      import dgram from "node:dgram";
-      import fs from "node:fs";
-      import zlib from "node:zlib";
-      import crypto from "node:crypto";
-      import dns from "node:dns";
-      import childProcess from "node:child_process";
-      import timersPromises from "node:timers/promises";
-      import { promisify } from "node:util";
-      import { Worker as ThreadWorker } from "node:worker_threads";
-      import { pipeline } from "node:stream/promises";
+      // Each node: module is loaded by the first thing here that touches it. A fixture's process opens one kind
+      // of thing, and loading all fifteen modules would be most of what that process does. They are the realm's,
+      // one of each for the host and every graph, however they are reached. process.getBuiltinModule() and not
+      // require(): some of this runs as the leftover script of a disposed graph, whose require() throws.
+      const lazy = name => new Proxy({}, { get: (_, key) => process.getBuiltinModule("node:" + name)[key] });
+      const net = lazy("net"), http = lazy("http"), http2 = lazy("http2"), https = lazy("https"), nodeTls = lazy("tls");
+      const dgram = lazy("dgram"), fs = lazy("fs"), zlib = lazy("zlib"), crypto = lazy("crypto"), dns = lazy("dns");
+      const childProcess = lazy("child_process"), timersPromises = lazy("timers/promises"), util = lazy("util");
+      const workerThreads = lazy("worker_threads"), streamPromises = lazy("stream/promises");
+      const promisify = fn => util.promisify(fn);
       export const open = {
         interval(state) {
           const interval = setInterval(() => state.ticks++, 1);
@@ -1620,7 +1639,7 @@ const dir = String(
         // (While the graph lives each load takes turns of the event loop. Rejected at once by a disposed
         // graph, it would be retried at once: a loop of microtasks the host never gets out of.)
         "import() of a module it has not loaded": () => import("./loads-at-once.mjs?" + Math.random().toString(36).slice(2)),
-        "a worker_threads Worker, until it exits": () => new Promise((resolve, reject) => { const worker = new ThreadWorker("", { eval: true }); worker.on("exit", resolve); worker.on("error", reject); }),
+        "a worker_threads Worker, until it exits": () => new Promise((resolve, reject) => { const worker = new workerThreads.Worker("", { eval: true }); worker.on("exit", resolve); worker.on("error", reject); }),
         "Bun.listen and a Bun.connect to it, until the client has closed": () => new Promise((resolve, reject) => {
           const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
           const done = () => { server.stop(true); resolve(); };
@@ -1659,7 +1678,7 @@ const dir = String(
         for (const event of ["exit", "close", "error"]) nodeChild.on(event, () => note("ChildProcess " + event));
         nodeChild.stdout.on("end", () => note("ChildProcess stdout end"));
         nodeChild.stdout.resume();
-        const worker = new ThreadWorker("setInterval(() => {}, 1000)", { eval: true });
+        const worker = new workerThreads.Worker("setInterval(() => {}, 1000)", { eval: true });
         for (const event of ["exit", "error"]) worker.on(event, () => note("Worker " + event));
         await new Promise(resolve => worker.on("online", resolve));
         const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x") });
@@ -1763,7 +1782,7 @@ const dir = String(
         "fs.promises.open": () => fs.promises.open(dataFile).then(handle => handle.close()),
         "fs.stat callback": () => new Promise(resolve => fs.stat(dataFile, resolve)),
         "fs.createWriteStream": () => new Promise(resolve => fs.createWriteStream(dataFile + ".streamed").end("x", resolve)),
-        "stream pipeline through gzip": () => pipeline(fs.createReadStream(dataFile), zlib.createGzip(), fs.createWriteStream(dataFile + ".gz")),
+        "stream pipeline through gzip": () => streamPromises.pipeline(fs.createReadStream(dataFile), zlib.createGzip(), fs.createWriteStream(dataFile + ".gz")),
         "zlib.createGzip stream": () => new Promise(resolve => { const gzip = zlib.createGzip(); gzip.on("data", () => {}).on("end", resolve); gzip.end("hello"); }),
         "zlib.deflate": () => promisify(zlib.deflate)("hello"),
         "zlib.gunzip": () => promisify(zlib.gunzip)(zlib.gzipSync("hello")),
@@ -1846,7 +1865,7 @@ const dir = String(
   }),
 );
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
-const appPath = join(dir, "app.mjs");
+const appPath = join(dir, "app-with-every-import.mjs");
 
 let stateCount = 0;
 function newState(tag: string): State {
@@ -3108,9 +3127,9 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
     await hostTimerTurns();
     expect(state.heard).toEqual([]);
     expect(await servesTag(held)).toBe(false);
-    // The host's handle to the closed server is inert, not dangerous.
-    expect(() => server.stop(true)).not.toThrow();
-    expect(() => server.reload({ fetch: () => new Response("held") })).not.toThrow();
+    // The host's handle to the closed server is inert, not dangerous: stop() settles, reload() serves nothing.
+    expect(await server.stop(true)).toBeUndefined();
+    expect(server.reload({ fetch: () => new Response("held") })).toBe(server);
     expect(await servesTag(held)).toBe(false);
   });
 
@@ -3405,21 +3424,29 @@ describe.concurrent("ModuleGraph isolation: competing graphs", () => {
 });
 
 /** Runs a fixture of `dir` in a process of its own. One that never exits (what these tests are
- *  about) fails its test by that test's timeout, and is killed instead of outliving the run. */
-async function runsFixture(script: string, ...args: string[]) {
+ *  about) fails its test by that test's timeout, and is killed instead of outliving the run.
+ *  No fixture says anything on stderr. What one does say is in the result, so it fails the
+ *  comparison with what the test expects and is shown by it (`toEqual` takes undefined for absent). */
+async function runsFixture(
+  script: string,
+  ...args: string[]
+): Promise<{ stdout: string; stderr?: string; exitCode: number }> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(dir, script), ...args],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
     timeout: 30_000,
     killSignal: "SIGKILL",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  return { stdout: stdout.trim(), exitCode };
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim(), stderr: stderr || undefined, exitCode };
 }
 
 describe.concurrent("ModuleGraph isolation: what a disposed graph had open does not keep the process running", () => {
+  // With every node: module the app uses imported by the graph, as the graphs of the tests in this process have
+  // them. The other fixtures that open one kind of thing, and the one that retries, load app.mjs as it is: their
+  // processes load the modules they use and no others.
   for (const kind of Object.keys(kinds)) {
     test(kind, async () => {
       const state = newState(kind + "-exits");
@@ -3429,6 +3456,7 @@ describe.concurrent("ModuleGraph isolation: what a disposed graph had open does 
           kind,
           JSON.stringify(state),
           JSON.stringify(kinds[kind].args?.(state) ?? []),
+          "app-with-every-import.mjs",
         ),
       ).toEqual({
         stdout: "disposed",
@@ -3438,88 +3466,27 @@ describe.concurrent("ModuleGraph isolation: what a disposed graph had open does 
   }
 });
 
-describe.concurrent(
-  "ModuleGraph isolation: what a graph was still opening when it was disposed does not keep the process running",
-  () => {
-    for (const kind of Object.keys(kinds)) {
-      test(kind, async () => {
-        const state = newState(kind + "-opening-exits");
-        expect(
-          await runsFixture(
-            "disposes-while-opening.mjs",
-            kind,
-            JSON.stringify(state),
-            JSON.stringify(kinds[kind].args?.(state) ?? []),
-          ),
-        ).toEqual({
-          stdout: "disposed",
-          exitCode: 0,
-        });
-      });
-    }
-  },
-);
-
-describe.concurrent("ModuleGraph isolation: what a disposed graph opens does not keep the process running", () => {
-  for (const kind of Object.keys(kinds)) {
-    test(kind, async () => {
-      const state = newState(kind + "-late-exits");
-      expect(
-        await runsFixture(
-          "disposes-then-opens.mjs",
-          kind,
-          JSON.stringify(state),
-          JSON.stringify(kinds[kind].args?.(state) ?? []),
-        ),
-      ).toEqual({
-        stdout: "disposed",
-        exitCode: 0,
-      });
-    });
-  }
-});
-
-describe.concurrent("ModuleGraph isolation: a disposed graph cannot keep itself running", () => {
-  // If what a disposed graph's leftover code starts reported back, a loop that retries on failure
-  // would go on for ever inside the disposed graph (and a spawn loop would go on launching processes).
-  for (const name of Object.keys(hostApp.steps)) {
-    test(name, async () => {
-      expect(
-        await runsFixture(
-          "retries-then-is-disposed.mjs",
-          name,
-          JSON.stringify({ http: hostHttp.port, tcp: hostTcp.port }),
-        ),
-      ).toEqual({ stdout: "armed\nstops", exitCode: 0 });
-    });
-  }
-});
-
-// A forcing function: whoever adds something to `Bun` has to say here what a graph's dispose() does
-// with it. "owned": something it opens outlives the call and a test above (or in
-// module-graph-io.test.ts) shows dispose() closing it. "job": its work runs on a thread pool; the
-// "background work" test says which completions are dropped once the graph is disposed. "pure": nothing
-// outlives the call. "host": process-wide on purpose (the graph's host decides who may use it).
+// After the first block of processes and ahead of the others. Tests that run concurrently are started in the
+// order they are declared: the few long fixtures here would finish by themselves if they were started last, and
+// would take the processor from the in-process tests above if they were started first.
 describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behind in what is the realm's", () => {
   test("its node:perf_hooks observer is disconnected: the host's requests are not buffered for it", async () => {
     const [observed, control] = await Promise.all(
       ["observe", "control"].map(async mode => {
-        const { stdout, exitCode } = await runsFixture("observer-of-a-disposed-graph.mjs", mode);
-        return { ...(JSON.parse(stdout) as { requests: number; kept: number }), exitCode };
+        // (One that failed has printed no counts: how it ended, and what it said on stderr, is what is compared.)
+        const { stdout, ...ended } = await runsFixture("observer-of-a-disposed-graph.mjs", mode);
+        return { ...((stdout ? JSON.parse(stdout) : {}) as { requests: number; kept: number }), ...ended };
       }),
     );
     // An entry buffered for the observer is a dozen objects: kept for every request, that is
     // twelve times `requests` more than the control keeps. Half of that is the line.
     expect({
-      ...observed,
-      keptMoreThanControl: Math.max(0, observed.kept - control.kept - 6 * observed.requests),
+      observed: { ...observed, keptMoreThanControl: Math.max(0, observed.kept - control.kept - 6 * observed.requests) },
+      control,
     }).toEqual({
-      requests: observed.requests,
-      kept: observed.kept,
-      exitCode: 0,
-      keptMoreThanControl: 0,
+      observed: { requests: 100, kept: observed.kept, exitCode: 0, keptMoreThanControl: 0 },
+      control: { requests: 100, kept: control.kept, exitCode: 0 },
     });
-    expect(control.exitCode).toBe(0);
   });
   test.skipIf(isWindows)("the stdio pipes of the children node:child_process spawned for it are closed", async () => {
     expect(await runsFixture("pipes-of-a-disposed-graph.mjs")).toEqual({
@@ -3736,7 +3703,7 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
   test("a Response whose body was still arriving: the host asking for it is told it failed, and nothing awaiting one is kept", async () => {
     expect(await runsFixture("response-bodies-of-disposed-graphs.mjs")).toEqual({
-      stdout: `{"text":"rejected","protectedPromises":0}`,
+      stdout: `{"text":"rejected","told":"AbortError","protectedPromises":0}`,
       exitCode: 0,
     });
   });
@@ -3813,6 +3780,89 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
 });
 
+describe.concurrent(
+  "ModuleGraph isolation: what a graph was still opening when it was disposed does not keep the process running",
+  () => {
+    for (const kind of Object.keys(kinds)) {
+      test(kind, async () => {
+        const state = newState(kind + "-opening-exits");
+        expect(
+          await runsFixture(
+            "disposes-while-opening.mjs",
+            kind,
+            JSON.stringify(state),
+            JSON.stringify(kinds[kind].args?.(state) ?? []),
+          ),
+        ).toEqual({
+          stdout: "disposed",
+          exitCode: 0,
+        });
+      });
+    }
+  },
+);
+
+describe.concurrent("ModuleGraph isolation: what a disposed graph opens does not keep the process running", () => {
+  for (const kind of Object.keys(kinds)) {
+    test(kind, async () => {
+      const state = newState(kind + "-late-exits");
+      expect(
+        await runsFixture(
+          "disposes-then-opens.mjs",
+          kind,
+          JSON.stringify(state),
+          JSON.stringify(kinds[kind].args?.(state) ?? []),
+        ),
+      ).toEqual({
+        stdout: "disposed",
+        exitCode: 0,
+      });
+    });
+  }
+});
+
+// The fixtures of the two blocks above, once each with the graph importing every node: module the app uses.
+describe.concurrent(
+  "ModuleGraph isolation: a disposed graph that imported every node: module the app uses does not keep the process running",
+  () => {
+    for (const [what, fixture] of [
+      ["what it was still opening", "disposes-while-opening.mjs"],
+      ["what it opens afterwards", "disposes-then-opens.mjs"],
+    ]) {
+      test(what, async () => {
+        const state = newState("interval-every-import");
+        expect(
+          await runsFixture(fixture, "interval", JSON.stringify(state), "[]", "app-with-every-import.mjs"),
+        ).toEqual({
+          stdout: "disposed",
+          exitCode: 0,
+        });
+      });
+    }
+  },
+);
+
+describe.concurrent("ModuleGraph isolation: a disposed graph cannot keep itself running", () => {
+  // If what a disposed graph's leftover code starts reported back, a loop that retries on failure
+  // would go on for ever inside the disposed graph (and a spawn loop would go on launching processes).
+  for (const name of Object.keys(hostApp.steps)) {
+    test(name, async () => {
+      expect(
+        await runsFixture(
+          "retries-then-is-disposed.mjs",
+          name,
+          JSON.stringify({ http: hostHttp.port, tcp: hostTcp.port }),
+        ),
+      ).toEqual({ stdout: "armed\nstops", exitCode: 0 });
+    });
+  }
+});
+
+// A forcing function: whoever adds something to `Bun` has to say here what a graph's dispose() does
+// with it. "owned": something it opens outlives the call and a test above (or in
+// module-graph-io.test.ts) shows dispose() closing it. "job": its work runs on a thread pool; the
+// "background work" test says which completions are dropped once the graph is disposed. "pure": nothing
+// outlives the call. "host": process-wide on purpose (the graph's host decides who may use it).
 test("ModuleGraph isolation: every property of Bun is classified", () => {
   const classified: Record<string, "owned" | "job" | "pure" | "host"> = {
     $: "owned", // shell

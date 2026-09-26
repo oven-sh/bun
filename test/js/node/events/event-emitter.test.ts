@@ -1,6 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -1142,6 +1142,194 @@ test("once() wrapper releases its target after firing", async () => {
     stderr: "",
     exitCode: 0,
   });
+});
+
+describe("native EventEmitter reports an 'error' event that has no listener", () => {
+  // `process` is a native EventEmitter. An object that calls the emitter methods of process gets
+  // one too, in `_events`. Node throws the value from emit(). Bun hands it to the uncaught
+  // exception path and emit() returns false. Each script ends with the emit, so the expected
+  // output is the same for both.
+  const env = { ...bunEnv, NODE_NO_WARNINGS: undefined };
+  const emit = `process.emit("error", new Error("boom"));`;
+  const onUncaught = `process.on("uncaughtException", e => console.log("caught", e.message));`;
+  // Every test starts a process. These builds take seconds to start one, and longer for a Worker.
+  const timeout = isDebug || isASAN ? 30_000 : undefined;
+
+  async function run(script: string, flags: string[] = [], extraEnv: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", script],
+      env: { ...env, ...extraEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  function expectUnhandled({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof run>>) {
+    expect(stderr).toContain("error: boom");
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  }
+
+  // The flags start process without its default 'warning' listener, so no listener method ran before the emit.
+  const startup: Array<[name: string, flags: string[], extraEnv: Record<string, string>]> = [
+    ["default flags", [], {}],
+    ["--no-warnings", ["--no-warnings"], {}],
+    ["NODE_NO_WARNINGS=1", [], { NODE_NO_WARNINGS: "1" }],
+    ["BUN_OPTIONS=--no-warnings", [], { BUN_OPTIONS: "--no-warnings" }],
+  ];
+
+  test.concurrent.each(startup)(
+    "the error ends the process: process, %s",
+    async (_name, flags, extraEnv) => expectUnhandled(await run(emit, flags, extraEnv)),
+    timeout,
+  );
+
+  const unhandled: Array<[name: string, script: string]> = [
+    ["process, after removeAllListeners()", `process.removeAllListeners(); ${emit}`],
+    [
+      "process, after removeAllListeners() and calls that add no listener",
+      `process.removeAllListeners();
+       process.listenerCount("error");
+       process.eventNames();
+       process.listeners("error");
+       process.setMaxListeners(20);
+       process.emit("foo");
+       ${emit}`,
+    ],
+    [
+      "emitter from the native constructor",
+      `const NativeEventEmitter = Object.getPrototypeOf(process).constructor;
+       new NativeEventEmitter().emit("error", new Error("boom"));`,
+    ],
+    [
+      "emitter from the native constructor, called without new",
+      `const NativeEventEmitter = Object.getPrototypeOf(process).constructor;
+       NativeEventEmitter().emit("error", new Error("boom"));`,
+    ],
+    [
+      "emitter that outlives its receiver",
+      `function detached() {
+         const receiver = {};
+         Object.getPrototypeOf(process).on.call(receiver, "x", () => {});
+         return receiver._events;
+       }
+       const emitter = detached();
+       Bun.gc(true);
+       emitter.emit("error", new Error("boom"));`,
+    ],
+  ];
+
+  test.concurrent.each(unhandled)(
+    "the error ends the process: %s",
+    async (_name, script) => expectUnhandled(await run(script)),
+    timeout,
+  );
+
+  const handled: Array<[name: string, script: string]> = [
+    [
+      "capture callback, set after removeAllListeners()",
+      `process.removeAllListeners();
+       process.setUncaughtExceptionCaptureCallback(e => console.log("caught", e.message));
+       ${emit}`,
+    ],
+    [
+      "uncaughtException listener, for a receiver that inherits from process",
+      `const receiver = Object.create(process);
+       receiver.on("x", () => {});
+       receiver.removeAllListeners();
+       ${onUncaught}
+       receiver.emit("error", new Error("boom"));`,
+    ],
+    [
+      "uncaughtException listener, for a plain object receiver",
+      `const proto = Object.getPrototypeOf(process);
+       const receiver = {};
+       proto.on.call(receiver, "x", () => {});
+       proto.removeAllListeners.call(receiver);
+       ${onUncaught}
+       proto.emit.call(receiver, "error", new Error("boom"));`,
+    ],
+    [
+      "uncaughtException listener, for a receiver from a node:vm context",
+      `${onUncaught}
+       const receiver = require("node:vm").runInNewContext("({})");
+       process.emit.call(receiver, "error", new Error("boom"));`,
+    ],
+  ];
+
+  test.concurrent.each(handled)(
+    "the error reaches the %s",
+    async (_name, script) => {
+      expect(await run(script)).toEqual({ stdout: "caught boom\n", stderr: "", exitCode: 0 });
+    },
+    timeout,
+  );
+
+  const inWorker: Array<[name: string, script: string, stdout: string]> = [
+    [
+      "'error' event of the Worker, after removeAllListeners()",
+      `process.removeAllListeners(); ${emit}`,
+      "worker error: boom\nworker exit: 1\n",
+    ],
+    [
+      "uncaughtException listener, for a receiver from a node:vm context",
+      `const { parentPort } = require("node:worker_threads");
+       process.on("uncaughtException", e => parentPort.postMessage("caught " + e.message));
+       const receiver = require("node:vm").runInNewContext("({})");
+       process.emit.call(receiver, "error", new Error("boom"));`,
+      "caught boom\nworker exit: 0\n",
+    ],
+  ];
+
+  test.concurrent.each(inWorker)(
+    "in a Worker, the error reaches the %s",
+    async (_name, script, stdout) => {
+      const parent = `const worker = new (require("node:worker_threads").Worker)(${JSON.stringify(script)}, { eval: true });
+         worker.on("message", message => console.log(message));
+         worker.on("error", e => console.log("worker error:", e.message));
+         worker.on("exit", code => console.log("worker exit:", code));`;
+      expect(await run(parent)).toEqual({ stdout, stderr: "", exitCode: 0 });
+    },
+    timeout,
+  );
+
+  const unchanged: Array<[name: string, script: string, stdout: string]> = [
+    [
+      "an event with another name is not an error",
+      `process.removeAllListeners();
+       console.log(process.emit("foo", new Error("boom")), process.emit(Symbol("error"), new Error("boom")));`,
+      "false false\n",
+    ],
+    [
+      "an 'error' listener takes the event",
+      `process.removeAllListeners();
+       process.on("error", e => console.log("listener", e.message));
+       console.log(process.emit("error", new Error("boom")));`,
+      "listener boom\ntrue\n",
+    ],
+    [
+      "a listener added after removeAllListeners() gets the receiver as `this`",
+      `process.removeAllListeners();
+       process.on("x", function () { console.log(this === process); });
+       process.emit("x");
+       const proto = Object.getPrototypeOf(process);
+       const receiver = {};
+       proto.on.call(receiver, "x", () => {});
+       proto.removeAllListeners.call(receiver);
+       proto.on.call(receiver, "x", function () { console.log(this === receiver); });
+       proto.emit.call(receiver, "x");`,
+      "true\ntrue\n",
+    ],
+  ];
+
+  test.concurrent.each(unchanged)(
+    "%s",
+    async (_name, script, stdout) => {
+      expect(await run(script)).toEqual({ stdout, stderr: "", exitCode: 0 });
+    },
+    timeout,
+  );
 });
 
 describe("native EventEmitter propagates an exception from a `_events` getter", () => {

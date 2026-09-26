@@ -90,7 +90,6 @@ bool EventEmitter::removeAllListeners()
     // refs, listener-count mirrors) observes the post-removal zero counts.
     Vector<Identifier> eventTypes = map.eventTypes();
     map.clear();
-    this->m_thisObject.clear();
     if (any) {
         eventListenersDidChange();
         if (this->onDidChangeListener) {
@@ -181,6 +180,13 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
     return listeners;
 }
 
+// Node throws this value from emit(). Bun hands it to the uncaught exception path and emit() returns false.
+static NEVER_INLINE void reportUnhandledErrorEvent(EventEmitter& emitter, JSC::JSValue error)
+{
+    Ref<EventEmitter> protectedEmitter(emitter);
+    Bun__reportUnhandledError(emitter.scriptExecutionContext()->jsGlobalObject(), JSValue::encode(error));
+}
+
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
 bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
@@ -191,15 +197,8 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 
     auto* listenersVector = data->eventListenerMap.find(eventType);
     if (!listenersVector) [[unlikely]] {
-        if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
-            Ref<EventEmitter> protectedThis(*this);
-            auto* thisObject = protectedThis->m_thisObject.get();
-            if (!thisObject)
-                return false;
-
-            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
-            return false;
-        }
+        if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0)
+            reportUnhandledErrorEvent(*this, arguments.at(0));
         return false;
     }
 

@@ -19,6 +19,11 @@
 //   BUN_HOST_TEST=overlay  linux: discard pages (MADV_DONTNEED) the way the macOS branch does
 //   BUN_HOST_TEST=macos-tp arm64 linux only, see "x18" below
 //   BUN_HOST_TEST=macfs    linux: the entries of a directory go through the form that macOS has for them
+//
+// Compiled with -DBUN_HOST_WITHOUT_FILES the host answers what a program needs to start and to
+// print, and none of the requests of the file system that come after "more of the file system"
+// below. That is for a system whose headers stop the compiler in that part: the image can still
+// say what it binds and how it lays its structures out.
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -350,7 +355,7 @@ static const struct { int host, image; } errno_pairs[] = {
 #undef E
   {ENOTSUP, L_ENOTSUP},
 #ifdef __APPLE__
-  {ENOATTR, L_ENODATA}, {EFTYPE, L_EINVAL}, {EAUTH, L_EACCES}, {ENEEDAUTH, L_EACCES}, {EPROCLIM, L_EAGAIN},
+  {ENOATTR, L_ENODATA}, {EFTYPE, L_BUN_EFTYPE}, {EAUTH, L_EACCES}, {ENEEDAUTH, L_EACCES}, {EPROCLIM, L_EAGAIN},
   {EBADRPC, L_EREMOTEIO}, {ERPCMISMATCH, L_EREMOTEIO}, {EPROGUNAVAIL, L_EREMOTEIO}, {EPROGMISMATCH, L_EREMOTEIO},
   {EPROCUNAVAIL, L_EREMOTEIO}, {EPWROFF, L_EIO}, {EDEVERR, L_EIO}, {EBADEXEC, L_ENOEXEC}, {EBADARCH, L_ENOEXEC},
   {ESHLIBVERS, L_ELIBBAD}, {EBADMACHO, L_ENOEXEC}, {ENOPOLICY, L_EPERM}, {EQFULL, L_ENOBUFS},
@@ -784,7 +789,9 @@ static long host_getcwd(char *buf, size_t size) {
   memcpy(buf, here, n);
   return (long)n;
 }
+#ifndef BUN_HOST_WITHOUT_FILES
 static long host_range_lock(int fd, long cmd, struct l_flock *lock);
+#endif
 static long host_fcntl(int fd, long cmd, long arg) {
   switch (cmd) {
     case L_F_GETFD: return ret(fcntl(fd, F_GETFD)) > 0 ? L_FD_CLOEXEC : 0;
@@ -796,7 +803,9 @@ static long host_fcntl(int fd, long cmd, long arg) {
     case L_F_SETFL: return ret(fcntl(fd, F_SETFL, host_open_flags(arg) & (O_APPEND | O_NONBLOCK)));
     case L_F_DUPFD: return ret(fcntl(fd, F_DUPFD, (int)arg));
     case L_F_DUPFD_CLOEXEC: return ret(fcntl(fd, F_DUPFD_CLOEXEC, (int)arg));
+#ifndef BUN_HOST_WITHOUT_FILES
     case L_F_GETLK: case L_F_SETLK: case L_F_SETLKW: return host_range_lock(fd, cmd, (struct l_flock *)arg);
+#endif
     default: return -L_EINVAL;
   }
 }
@@ -827,6 +836,7 @@ static long host_ioctl(int fd, unsigned long request, void *arg) {
   }
 }
 
+#ifndef BUN_HOST_WITHOUT_FILES
 /* ---- more of the file system ----
    What bun's code for POSIX asks of the libc of the image beyond what a program
    needs to start. Each request is answered with the function of this system that
@@ -1188,6 +1198,17 @@ static long host_fallocate(int fd, long mode, int64_t offset, int64_t length) {
   return ret(fallocate(fd, (int)mode, (off_t)offset, (off_t)length));
 #endif
 }
+/* Copies inside of the kernel of Linux. bun's code for Linux asks for them, and its code for
+   macOS has clonefile and fcopyfile in their place, which it calls itself. */
+static long host_copy_in_kernel(long n, long a, long b, long c, long d, long e, long f) {
+#ifdef __linux__
+  return ret(syscall(n == N_sendfile ? SYS_sendfile : SYS_copy_file_range, a, b, c, d, e, f));
+#else
+  (void)n; (void)a; (void)b; (void)c; (void)d; (void)e; (void)f;
+  return -L_ENOSYS;
+#endif
+}
+#endif
 
 /* ---- futex ---- */
 static long host_futex(int *addr, long op, int val, const struct l_timespec *timeout) {
@@ -1919,11 +1940,14 @@ static long dispatch(long n, long a, long b, long c, long d, long e, long f) {
     case N_ioctl: return host_ioctl((int)a, (unsigned long)b, (void *)c);
     case N_dup: return ret(dup((int)a));
     case N_dup2: return ret(dup2((int)a, (int)b));
-    case N_dup3: return host_dup3((int)a, (int)b, c);
     case N_ftruncate: return ret(ftruncate((int)a, (off_t)b));
     case N_fsync: case N_fdatasync: return ret(fsync((int)a));
     case N_umask: return (long)umask((mode_t)a);
 
+#ifdef BUN_HOST_WITHOUT_FILES
+    case N_dup3: return a == b ? -L_EINVAL : ret(dup2((int)a, (int)b));
+#else
+    case N_dup3: return host_dup3((int)a, (int)b, c);
     case N_mkdir: return host_mkdir(n, L_AT_FDCWD, (const char *)a, b);
     case N_mkdirat: return host_mkdir(n, a, (const char *)b, c);
     case N_rmdir: return host_unlink(n, L_AT_FDCWD, (const char *)a, L_AT_REMOVEDIR);
@@ -1959,9 +1983,11 @@ static long dispatch(long n, long a, long b, long c, long d, long e, long f) {
     case N_poll: return host_poll((void *)a, (unsigned long)b, c, 0, 0);
     case N_ppoll: return host_poll((void *)a, (unsigned long)b, -1, (void *)c, (void *)d);
     case N_fallocate: return host_fallocate((int)a, b, (int64_t)c, (int64_t)d);
+    case N_sendfile: case N_copy_file_range: return host_copy_in_kernel(n, a, b, c, d, e, f);
     /* A hint about how a file will be read. */
     case N_fadvise64: return 0;
     case N_sync: sync(); return 0;
+#endif
 
     case N_mmap: return host_mmap((uintptr_t)a, (size_t)b, (uint32_t)c & 7, d, (int)e, (off_t)f);
     case N_mprotect: return host_mprotect((uintptr_t)a, (size_t)b, (uint32_t)c & 7);

@@ -124,6 +124,9 @@ enum {
   L_ENOKEY = 126, L_EKEYEXPIRED = 127, L_EKEYREVOKED = 128, L_EKEYREJECTED = 129, L_EOWNERDEAD = 130,
   L_ENOTRECOVERABLE = 131, L_ERFKILL = 132, L_EHWPOISON = 133,
   L_EWOULDBLOCK = L_EAGAIN, L_EDEADLOCK = L_EDEADLK, L_ENOTSUP = L_EOPNOTSUPP,
+  /* Not a number of Linux: bun has it in the image for the error of this name that macOS and
+     Windows have (src/errno/windows_errno.rs). */
+  L_BUN_EFTYPE = 137,
 };
 
 /* ---- files ---- */

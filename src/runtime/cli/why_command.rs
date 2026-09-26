@@ -11,7 +11,9 @@ use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{CommandLineArguments, PackageID, PackageManager, Subcommand, package_manager};
+use bun_install::{
+    CommandLineArguments, PackageID, PackageManager, ResolutionTag, Subcommand, package_manager,
+};
 use bun_semver as semver;
 
 use crate::command;
@@ -24,6 +26,9 @@ const PREFIX_LAST: &[u8] = b"  \xE2\x94\x94\xE2\x94\x80 "; // "  └─ "
 const PREFIX_MIDDLE: &[u8] = b"  \xE2\x94\x9C\xE2\x94\x80 "; // "  ├─ "
 const PREFIX_CONTINUE: &[u8] = b"  \xE2\x94\x82  "; // "  │  "
 const PREFIX_SPACE: &[u8] = b"     ";
+
+// The label of a root package.json with no "name". It has spaces, so it is never a package name.
+const UNNAMED_ROOT: &[u8] = b"the root package";
 
 // Using AtomicUsize for safe interior mutability on a single-threaded CLI path.
 static MAX_DEPTH: AtomicUsize = AtomicUsize::new(100);
@@ -388,9 +393,12 @@ impl WhyCommand {
         for pkg_idx in 0..packages.len() {
             let pkg_name = pkg_names[pkg_idx].slice(string_bytes);
 
-            if pkg_name.is_empty() {
-                continue;
-            }
+            let dependent_name =
+                if pkg_name.is_empty() && pkg_resolution[pkg_idx].tag == ResolutionTag::Root {
+                    UNNAMED_ROOT
+                } else {
+                    pkg_name
+                };
 
             let dependencies = pkg_dep_slices[pkg_idx].get(dependencies_items);
             let resolutions = pkg_res_slices[pkg_idx].get(resolutions_items);
@@ -433,7 +441,7 @@ impl WhyCommand {
                     || dep_pkg_version.is_empty();
 
                 dependents_entry.push(DependentInfo {
-                    name: Box::<[u8]>::from(pkg_name),
+                    name: Box::<[u8]>::from(dependent_name),
                     version: dep_pkg_version,
                     spec,
                     dep_type,
@@ -442,7 +450,7 @@ impl WhyCommand {
                 });
             }
 
-            if !glob.matches_name(pkg_name, package_pattern) {
+            if pkg_name.is_empty() || !glob.matches_name(pkg_name, package_pattern) {
                 continue;
             }
 
@@ -600,15 +608,16 @@ fn print_dependency_tree(
     // (alloc failures abort under global mimalloc).
 
     if let Some(dependents) = ctx.all_dependents.get(&current_pkg_id) {
-        let mut sorted_dependents: Vec<DependentInfo> = dependents.clone();
+        // The root depends on every workspace, so it is left out of a workspace's dependents.
+        let mut sorted_dependents: Vec<DependentInfo> = dependents
+            .iter()
+            .filter(|dep| !(parent_is_workspace && dep.version.is_empty()))
+            .cloned()
+            .collect();
         index_sort::sort_slice_by(&mut sorted_dependents, cmp_dependents);
 
         let len = sorted_dependents.len();
         for (dep_idx, dep) in sorted_dependents.iter().enumerate() {
-            if parent_is_workspace && dep.version.is_empty() {
-                continue;
-            }
-
             if depth >= MAX_DEPTH.load(AtomicOrdering::Relaxed) {
                 bun_core::prettyln!("<d>{}└─ (deeper dependencies hidden)<r>", BStr::new(prefix));
                 ctx.path_tracker.remove(&current_pkg_id);

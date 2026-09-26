@@ -12,6 +12,9 @@ const {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  kNativeMaxDepth,
+  nativeCopiesTrees,
+  nativeResolvesSymlinks,
 } = require("internal/fs/cp-sync");
 
 const {
@@ -119,33 +122,48 @@ async function checkParentPaths(src, srcStat, dest) {
   return checkParentPaths(src, srcStat, destParent);
 }
 
-// The native recursive copy (a single clonefile() on macOS) copies symlinks
-// verbatim and clones special files, while node rewrites relative symlink
-// targets against the source tree and raises ERR_FS_CP_SOCKET /
-// ERR_FS_CP_FIFO_PIPE. It is therefore only node-equivalent for trees made of
-// regular files and directories; anything else — including entries whose type
-// the filesystem does not report — bails to the ported walker. Scan errors
-// also bail so the walker surfaces them the way node would.
-async function treeContainsOnlyFilesAndDirs(root) {
-  const stack = [root];
-  while (stack.length) {
-    const dir = stack.pop();
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return false;
-    }
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      if (entry.isDirectory()) {
-        stack.push(join(dir, entry.name));
-      } else if (!entry.isFile()) {
+const kScanConcurrency = 64;
+
+// False for a tree the walker has to copy: special files (node's ERR_FS_CP_* errors), scan errors, too deep.
+async function nativeCanCopyTree(root) {
+  let dirs = [root];
+  for (let depth = 0; dirs.length; depth++) {
+    if (depth > kNativeMaxDepth) return false;
+    const next = [];
+    for (let start = 0; start < dirs.length; start += kScanConcurrency) {
+      const pending = [];
+      for (let d = start; d < dirs.length && d < start + kScanConcurrency; d++) {
+        pending.push(readdir(dirs[d], { withFileTypes: true }));
+      }
+      let lists;
+      try {
+        lists = await Promise.all(pending);
+      } catch {
         return false;
       }
+      for (let d = 0; d < lists.length; d++) {
+        const entries = lists[d];
+        for (let i = 0; i < entries.length; i++) {
+          const entry = entries[i];
+          if (entry.isDirectory()) {
+            next.push(join(dirs[start + d], entry.name));
+          } else if (!entry.isFile() && !(nativeResolvesSymlinks && entry.isSymbolicLink())) {
+            return false;
+          }
+        }
+      }
     }
+    dirs = next;
   }
   return true;
+}
+
+async function isEmptyDir(path) {
+  try {
+    return (await readdir(path)).length === 0;
+  } catch {
+    return false;
+  }
 }
 
 // node-correct validation before handing off to the native fast path
@@ -164,20 +182,18 @@ async function tryNativeFastPath(src, dest, opts) {
     });
   }
   if (srcStat.isDirectory()) {
-    // On macOS the native path clones the whole tree with a single
-    // clonefile(). Only take it when the result is indistinguishable from
-    // node's walker: dest must not exist (no merge semantics) and the tree
-    // must contain only regular files and directories.
-    return {
-      ok: process.platform === "darwin" && !destStat && (await treeContainsOnlyFilesAndDirs(src)),
-      checked,
-    };
+    // node rejects an existing dest directory, even an empty one, for `errorOnExist` without `force`.
+    const nothingToMerge = !destStat || (!(opts.errorOnExist && !opts.force) && (await isEmptyDir(dest)));
+    return { ok: nativeCopiesTrees && nothingToMerge && (await nativeCanCopyTree(src)), checked };
   }
   // The single-file native copy is only node-equivalent for regular-file ->
   // regular-file (or missing dest). Symlinks (node resolves relative link
   // targets) and special files (node-specific error codes) must go through
   // the ported implementation.
-  return { ok: srcStat.isFile() && (!destStat || destStat.isFile()), checked };
+  if (!srcStat.isFile()) return { ok: false, checked };
+  // node unlinks an existing dest first and the native copy overwrites it in place: default options only, as before.
+  const overwrites = opts.force && !opts.errorOnExist && opts.mode === 0;
+  return { ok: !destStat || (overwrites && destStat.isFile()), checked };
 }
 
 async function cpFn(src, dest, opts, checked?) {

@@ -71,6 +71,8 @@ void* WebWorker__create(
     size_t preloadModulesLen);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
+// Queue `work` (a heap Bun::VMInterrupts::Work, handed over) for the worker VM. Any thread.
+void WebWorker__requestInterrupt(void*, Bun::VMInterrupts::Work*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
 void WebWorker__setRef(void*, bool);
 // Release that keep-alive. Parent thread.
@@ -237,6 +239,14 @@ bool WorkerMessagingProxy::postTaskToWorkerGlobalScope(Function<void(ScriptExecu
         }
     }
     return ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, BunLoopKind::Regular, WTF::move(task));
+}
+
+bool WorkerMessagingProxy::postInterruptToWorkerGlobalScope(Bun::VMInterrupts::Work&& work)
+{
+    if (isClosingOrClosed() || !m_workerThread)
+        return false;
+    WebWorker__requestInterrupt(m_workerThread, new Bun::VMInterrupts::Work(WTF::move(work)));
+    return true;
 }
 
 uint64_t WorkerMessagingProxy::registerCrossVMRequest(JSC::VM& vm, JSC::JSPromise* promise)

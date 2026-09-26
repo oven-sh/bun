@@ -3682,6 +3682,7 @@ export default db;
             },
             bytecode_cache: Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
             source_code_hash: file.source_hash,
+            line_starts: bun_jsc::resolved_source::LineStarts::persistent(file.line_starts),
             module_info: if !module_info.is_empty() {
                 let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
                     module_info_strings,

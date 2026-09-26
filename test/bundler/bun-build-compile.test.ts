@@ -208,7 +208,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
       const flags = file.readUInt32LE(offsets + 28);
       const u32 = (at: number) => file.readUInt32LE(base + at);
-      const count = modules.length / 52;
+      const count = modules.length / 60;
       // Records chained after the module table, in `Flags` bit order.
       let at = modules.offset + modules.length;
       if (flags & (1 << 5)) at += count * 4; // source hashes
@@ -221,11 +221,11 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       expect(flags & (1 << 13), "Flags::HAS_LINKED_BYTECODE_PAYLOAD").not.toBe(0);
       const payload = { offset: u32(at), length: u32(at + 4) };
       const regionEnds = [0, 1, 2, 3, 4, 5].map(region => u32(at + 8 + region * 4));
-      // `CompiledModuleGraphFile`: name, contents, sourcemap, bytecode, module_info, bytecode_origin_path (StringPointer
-      // each), then 4 bytes. Chunk names are hashed, so identify them by their source text.
+      // `CompiledModuleGraphFile`: name, contents, sourcemap, bytecode, module_info, bytecode_origin_path, line_starts
+      // (StringPointer each), then 4 bytes. Chunk names are hashed, so identify them by their source text.
       const entry: Record<string, number> = {};
       for (let i = 0; i < count; i++) {
-        const record = base + modules.offset + i * 52;
+        const record = base + modules.offset + i * 60;
         const contents = { offset: file.readUInt32LE(record + 8), length: file.readUInt32LE(record + 12) };
         const bytecode = { offset: file.readUInt32LE(record + 24), length: file.readUInt32LE(record + 28) };
         expect(bytecode.offset + bytecode.length, `module ${i}'s bytecode runs to the end of the payload`).toBe(
@@ -823,7 +823,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           const base = offsets - Number(file.readBigUInt64LE(offsets));
           const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
           let edited = 0;
-          for (let at = base + modules.offset; at < base + modules.offset + modules.length; at += 52) {
+          for (let at = base + modules.offset; at < base + modules.offset + modules.length; at += 60) {
             const contents = { offset: file.readUInt32LE(at + 8), length: file.readUInt32LE(at + 12) };
             const source = file.toString("latin1", base + contents.offset, base + contents.offset + contents.length);
             if (!source.includes("markerOfLazy")) continue;
@@ -1933,6 +1933,67 @@ server.close();`,
       expect(exitCode).toBe(0);
     },
     // A --compile build plus (for "cross") bytecode for ~45 internal modules: ~10s under debug+ASAN.
+    60_000,
+  );
+
+  // A position in a stack trace needs to know where the lines of the source start. Finding that out at run time reads
+  // the whole source, which an executable that runs from bytecode has otherwise never read.
+  test.concurrent.each([
+    { bytecode: false, format: "esm", minify: false },
+    { bytecode: true, format: "esm", minify: false },
+    { bytecode: true, format: "cjs", minify: false },
+    { bytecode: true, format: "esm", minify: true },
+  ] as const)(
+    "an executable brings where the lines of its modules start ($format, bytecode: $bytecode, minify: $minify)",
+    async ({ bytecode, format, minify }) => {
+      using dir = tempDir("build-compile-line-starts", {
+        "app.js": `import { sourceHasLineStarts } from "bun:internal-for-testing";
+import { inOther } from "./other.js";
+function here() {
+  const stack = new Error("x").stack;
+  return /:(\\d+:\\d+)\\)?$/.exec(stack.split("\\n")[1])[1];
+}
+const before = [sourceHasLineStarts(here), sourceHasLineStarts(inOther)];
+console.log(JSON.stringify({ before, positions: [here(), inOther()] }));`,
+        "other.js": `
+
+export function inOther() {
+  const stack = new Error("y").stack;
+  return /:(\\d+:\\d+)\\)?$/.exec(stack.split("\\n")[1])[1];
+}`,
+      });
+      const outfile = join(dir + "", isWindows ? "app.exe" : "app");
+      const result = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        compile: { outfile },
+        bytecode,
+        format,
+        minify,
+        target: "bun",
+      });
+      expect(result.success).toBe(true);
+      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { before, positions } = JSON.parse(stdout.trim());
+      expect(before).toEqual([true, true]);
+
+      // The positions, counted in the text the executable holds. A frame is where the call's arguments start.
+      const file = readFileSync(outfile);
+      const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+      const offsets = trailer - 32;
+      const base = offsets - Number(file.readBigUInt64LE(offsets));
+      const record = base + file.readUInt32LE(offsets + 8);
+      expect(file.readUInt32LE(offsets + 12), "one module").toBe(60);
+      const contents = { offset: file.readUInt32LE(record + 8), length: file.readUInt32LE(record + 12) };
+      const source = file.toString("latin1", base + contents.offset, base + contents.offset + contents.length);
+      const counted = ["x", "y"].map(message => {
+        const lines = source.slice(0, source.indexOf(`("${message}")`)).split("\n");
+        return `${lines.length}:${lines.at(-1)!.length + 1}`;
+      });
+      expect(positions).toEqual(counted);
+      expect(exitCode).toBe(0);
+    },
     60_000,
   );
 

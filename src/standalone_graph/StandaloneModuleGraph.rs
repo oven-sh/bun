@@ -461,6 +461,8 @@ pub(crate) struct CompiledModuleGraphFile {
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
     pub bytecode_origin_path: StringPointer,
+    /// Where each line of `contents` starts (`JSC::LineStartTable::encode`).
+    pub line_starts: StringPointer,
     pub encoding: Encoding,
     pub loader: Loader,
     pub module_format: ModuleFormat,
@@ -701,6 +703,8 @@ pub struct File {
     pub bytecode_origin_path: &'static [u8],
     /// `WTF::StringImpl::hash()` of `contents`, computed at build time (0 = not recorded).
     pub source_hash: u32,
+    /// Where each line of `contents` starts, computed at build time, so that a stack trace never reads the source text.
+    pub line_starts: &'static [u8],
     pub module_format: ModuleFormat,
     pub side: FileSide,
     /// This file's module index in `prelinked_module_graph` (`u32::MAX`: not a module of it).
@@ -949,6 +953,13 @@ const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 unsafe extern "C" {
     fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
     fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
+    fn Bun__encodeLineStarts(
+        characters: *const u8,
+        length: usize,
+        is_16_bit: bool,
+        out: *mut u8,
+        capacity: usize,
+    ) -> usize;
 }
 /// `WTF::StringImpl::hash()` for an 8-bit string with these bytes.
 fn wtf_latin1_string_hash(bytes: &[u8]) -> u32 {
@@ -1214,12 +1225,13 @@ impl StandaloneModuleGraph {
             // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is in-bounds
             // (serialized by `to_bytes`) and disjoint from the writable bytecode/module_info
             // subranges; section bytes are a live 'static allocation.
-            let (name, contents, sourcemap_bytes, bytecode_origin) = unsafe {
+            let (name, contents, sourcemap_bytes, bytecode_origin, line_starts) = unsafe {
                 (
                     slice_to_z(raw_const, raw_len, module.name),
                     slice_to_z(raw_const, raw_len, module.contents),
                     slice_to(raw_const, raw_len, module.sourcemap),
                     slice_to_z(raw_const, raw_len, module.bytecode_origin_path),
+                    slice_to(raw_const, raw_len, module.line_starts),
                 )
             };
             let _ = modules.put(
@@ -1274,6 +1286,7 @@ impl StandaloneModuleGraph {
                     source_hash: source_hashes.map_or(0, |h| {
                         u32::from_le_bytes(h[i * 4..i * 4 + 4].try_into().expect("4 bytes"))
                     }),
+                    line_starts,
                     module_format: module.module_format,
                     side: module.side,
                     cached_blob: std::sync::OnceLock::new(),
@@ -1402,6 +1415,32 @@ fn is_stored_as_string(output_file: &OutputFile) -> bool {
             && output_file.side != Some(options::Side::Client))
 }
 
+/// A JS chunk this executable runs: what a stack frame can be in.
+fn has_line_starts(output_file: &OutputFile) -> bool {
+    output_file.loader.is_javascript_like() && is_stored_as_string(output_file)
+}
+
+/// Writes where each line of `contents` (already written by `encode_text_module`) starts.
+fn append_line_starts(
+    string_builder: &mut bun_core::StringBuilder,
+    contents: StringPointer,
+    encoding: Encoding,
+) -> StringPointer {
+    let start = string_builder.len;
+    let is_16_bit = encoding == Encoding::Utf16;
+    let units = contents.length as usize / if is_16_bit { 2 } else { 1 };
+    let text = string_builder.written_slice()[contents.offset as usize..].as_ptr();
+    let out = string_builder.writable();
+    // SAFETY: `text` has `units` initialized code units; `out` is disjoint from it and `to_bytes` reserved the worst case.
+    let length =
+        unsafe { Bun__encodeLineStarts(text, units, is_16_bit, out.as_mut_ptr(), out.len()) };
+    string_builder.len += length;
+    StringPointer {
+        offset: start as u32,
+        length: length as u32,
+    }
+}
+
 /// Writes `utf8` as a `WTF::StringImpl` body (8-bit if ASCII, else UTF-16 at an even offset) with its hash.
 fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
@@ -1516,6 +1555,13 @@ pub(crate) fn to_bytes(
                 if is_stored_as_string(output_file) {
                     // UTF-16 worst case: 2 bytes per byte, padding, 2-byte NUL.
                     string_builder.cap += bytes.len() + 3;
+                }
+                if has_line_starts(output_file) {
+                    // At most a 5-byte length per line, 8 bytes per 64 lines and a 12-byte start. 0xE2 leads U+2028 and U+2029.
+                    let terminators = strings::count_char(bytes, b'\n')
+                        + strings::count_char(bytes, b'\r')
+                        + strings::count_char(bytes, 0xE2);
+                    string_builder.cap += terminators * 6 + 12;
                 }
                 module_count += 1;
             }
@@ -1751,6 +1797,7 @@ pub(crate) fn to_bytes(
             bytecode,
             module_info,
             bytecode_origin_path: StringPointer::default(),
+            line_starts: StringPointer::default(),
             side: match output_file.side.unwrap_or(options::Side::Server) {
                 options::Side::Server => FileSide::Server,
                 options::Side::Client => FileSide::Client,
@@ -1845,6 +1892,13 @@ pub(crate) fn to_bytes(
         if output_file.bytecode_index != u32::MAX {
             module.bytecode_origin_path = string_builder
                 .append_count_z(&output_files[output_file.bytecode_index as usize].dest_path);
+        }
+    }
+
+    for (module, output_file) in modules.iter_mut().zip(&module_files) {
+        if has_line_starts(output_file) {
+            module.line_starts =
+                append_line_starts(&mut string_builder, module.contents, module.encoding);
         }
     }
 
@@ -1971,6 +2025,7 @@ pub(crate) fn to_bytes(
                 m.sourcemap,
                 m.name,
                 m.bytecode_origin_path,
+                m.line_starts,
             ]
         });
         for p in others.chain([offsets.modules_ptr, offsets.compile_exec_argv_ptr]) {

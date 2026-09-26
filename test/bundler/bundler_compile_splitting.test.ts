@@ -275,12 +275,12 @@ describe("bundler", () => {
         const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
         const flags = file.readUInt32LE(offsets + 28);
         const u32 = (at: number) => file.readUInt32LE(base + at);
-        // Three chunks of 52 bytes each; anything else means the layout above is stale.
-        expect(modules.length).toBe(3 * 52);
+        // Three chunks of 60 bytes each; anything else means the layout above is stale.
+        expect(modules.length).toBe(3 * 60);
 
         // Records chained after the module table, in `Flags` bit order.
         let at = modules.offset + modules.length;
-        const count = modules.length / 52;
+        const count = modules.length / 60;
         if (flags & (1 << 5)) at += count * 4; // source hashes
         expect(flags & (1 << 6), "Flags::HAS_BUILTIN_BYTECODE").not.toBe(0);
         const builtinCount = u32(at);
@@ -291,12 +291,12 @@ describe("bundler", () => {
         expect(flags & (1 << 8), "Flags::HAS_STARTUP_MODULE_COUNT").not.toBe(0);
         const startupCount = u32(at);
 
-        // `CompiledModuleGraphFile`: name, contents, sourcemap, bytecode, module_info, bytecode_origin_path
-        // (StringPointer each), then 4 bytes. Chunk names are hashed, so identify them by their source text.
+        // `CompiledModuleGraphFile`: name, contents, sourcemap, bytecode, module_info, bytecode_origin_path,
+        // line_starts (StringPointer each), then 4 bytes. Chunk names are hashed, so identify them by their source text.
         const index: Record<string, number> = {};
         const bytecodeEnd: number[] = [];
         for (let i = 0; i < count; i++) {
-          const record = base + modules.offset + i * 52;
+          const record = base + modules.offset + i * 60;
           const contents = { offset: file.readUInt32LE(record + 8), length: file.readUInt32LE(record + 12) };
           const bytecode = { offset: file.readUInt32LE(record + 24), length: file.readUInt32LE(record + 28) };
           expect(bytecode.length, `module ${i} has bytecode`).toBeGreaterThan(0);
@@ -342,11 +342,11 @@ describe("bundler", () => {
         const offsets = trailer - 32;
         const base = offsets - Number(file.readBigUInt64LE(offsets));
         const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
-        const count = modules.length / 52;
+        const count = modules.length / 60;
         expect(count).toBe(3);
         const names: string[] = [];
         for (let i = 0; i < count; i++) {
-          const record = base + modules.offset + i * 52;
+          const record = base + modules.offset + i * 60;
           const name = { offset: file.readUInt32LE(record), length: file.readUInt32LE(record + 4) };
           names.push(file.toString("latin1", base + name.offset, base + name.offset + name.length));
         }

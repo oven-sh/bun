@@ -103,4 +103,6 @@ struct BytecodeOrderNamesRef {
     }
 };
 
+JSC_DECLARE_HOST_FUNCTION(jsSourceHasLineStarts);
+
 } // namespace Bun

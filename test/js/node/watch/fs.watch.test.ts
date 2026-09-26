@@ -620,6 +620,39 @@ describe("fs.watch", () => {
     ]);
   });
 
+  // A writer that keeps the file open (a log, `exec >> file`) closes it only at
+  // the end. inotify IN_MODIFY and kqueue NOTE_WRITE fire per write(2), but
+  // FSEvents reports a content change at close, so a file watch on macOS must
+  // not use FSEvents. https://github.com/oven-sh/bun/issues/44051
+  test.skipIf(isWindows)("reports each write to a file the writer keeps open", async () => {
+    using dir = tempDir("fs-watch-open-writer", { "run.log": "" });
+    const target = path.join(String(dir), "run.log");
+    const fd = fs.openSync(target, "a");
+    const events: [string, string | null][] = [];
+    let next = Promise.withResolvers<void>();
+    const watcher = fs.watch(target, (eventType, filename) => {
+      events.push([eventType, filename]);
+      next.resolve();
+    });
+    watcher.once("error", err => next.reject(err));
+    try {
+      for (let i = 0; i < 4; i++) {
+        if (i > 0) {
+          // Bun folds an identical event within 1 ms of the previous one into
+          // it, so each write must land in its own millisecond.
+          await Bun.sleep(5);
+        }
+        next = Promise.withResolvers<void>();
+        fs.writeSync(fd, `line ${i}\n`);
+        await next.promise;
+      }
+    } finally {
+      watcher.close();
+      fs.closeSync(fd);
+    }
+    expect(events).toEqual(Array(4).fill(["change", "run.log"]));
+  });
+
   // Past fs.inotify.max_queued_events the kernel drops events and queues one
   // IN_Q_OVERFLOW; Bun reports it as ('change', null) on every watcher sharing
   // the inotify fd, the same shape node uses for overflow on Windows.

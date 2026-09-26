@@ -413,6 +413,26 @@ describe.concurrent("bun pm pkg", () => {
     });
   });
 
+  describe("--dry-run", () => {
+    it("set prints the result and does not write package.json", async () => {
+      using dir = makeTestDir();
+      const before = await Bun.file(join(dir, "package.json")).text();
+      const { output, code } = await runPmPkg(["set", "foo=bar", "--dry-run"], dir);
+      expect(JSON.parse(output).foo).toBe("bar");
+      expect(await Bun.file(join(dir, "package.json")).text()).toBe(before);
+      expect(code).toBe(0);
+    });
+
+    it("delete prints the result and does not write package.json", async () => {
+      using dir = makeTestDir();
+      const before = await Bun.file(join(dir, "package.json")).text();
+      const { output, code } = await runPmPkg(["delete", "scripts", "--dry-run"], dir);
+      expect(JSON.parse(output).scripts).toBeUndefined();
+      expect(await Bun.file(join(dir, "package.json")).text()).toBe(before);
+      expect(code).toBe(0);
+    });
+  });
+
   describe("help command", () => {
     it("should show help", async () => {
       const { output, code } = await runPmPkg(["help"], readonlyDir);

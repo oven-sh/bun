@@ -180,6 +180,15 @@ pub(crate) trait HTMLProcessorHandler {
     fn on_html_tag(&mut self, _element: &mut Element<'_, '_>) -> bool {
         unreachable!()
     }
+
+    /// Whether to call `on_element` for every element. This registers a `*`
+    /// selector, which sends every tag through lol-html's full lexer.
+    fn visits_every_element(&self) -> bool {
+        false
+    }
+    fn on_element(&mut self, _element: &mut Element<'_, '_>) {
+        unreachable!()
+    }
 }
 
 impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
@@ -271,7 +280,7 @@ const TAG_HANDLERS: [TagHandler; 16] = [
     //     TagHandler::new("iframe[src]", "src", ImportKind::Url),
 ];
 
-const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 3;
+const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 4;
 
 #[inline]
 fn lol_err<E>(_: E) -> Error {
@@ -305,6 +314,8 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
     HTMLProcessor<T, VISIT_DOCUMENT_TAGS>
 {
     pub(crate) fn run(this: &mut T, input: &[u8]) -> Result<(), Error> {
+        let visit_every_element = VISIT_DOCUMENT_TAGS && this.visits_every_element();
+
         // Every handler closure and the output sink capture this raw pointer
         // so one `&mut T` can service them all; `this` is not reborrowed
         // until the rewriter holding those closures is gone.
@@ -365,6 +376,17 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                 );
                 element_content_handlers.push(element_entry(tag, on_element)?);
             }
+        }
+
+        if visit_every_element {
+            let on_element: lol_html::ElementHandler<'_> = Box::new(
+                move |element: &mut Element<'_, '_>| -> lol_html::HandlerResult {
+                    // SAFETY: see `on_tag` above.
+                    unsafe { (*this_ptr).on_element(element) };
+                    Ok(())
+                },
+            );
+            element_content_handlers.push(element_entry("*", on_element)?);
         }
 
         let settings = lol_html::Settings {

@@ -28,6 +28,7 @@ mod json;
 #[cfg(bun_portable)]
 mod layout;
 #[cfg(bun_portable)]
+#[rustfmt::skip]
 mod layout_generated;
 
 use json::Report;

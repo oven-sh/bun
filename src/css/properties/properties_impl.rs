@@ -32,6 +32,24 @@ impl Property {
     }
 }
 
+impl PropertyId {
+    /// Parses a `<custom-ident>` that names a property inside a declaration
+    /// *value* (`transition-property`, the `transition` shorthand). Unlike
+    /// [`PropertyId::parse`], which reads a declaration name, this rejects the
+    /// css-wide keywords and `default`: `transition-property: inherit` is the
+    /// keyword applied to `transition-property`, not a property called
+    /// "inherit", and stays a `Property::Unparsed` declaration that no handler
+    /// folds into a shorthand.
+    pub(crate) fn parse_custom_ident(input: &mut css::Parser) -> css::Result<PropertyId> {
+        let location = input.current_source_location();
+        let name = input.expect_ident_cloned()?;
+        if css::css_values::ident::is_reserved_custom_ident(name) {
+            return Err(location.new_unexpected_token_error(css::Token::Ident(name)));
+        }
+        Ok(property_id_mixin::from_string(name))
+    }
+}
+
 /// Ordered single-bit prefix flags. The crate-root `VendorPrefix::FIELDS` is
 /// a `&'static [VendorPrefix]` with the same values in the same declaration
 /// order (webkit, moz, ms, o, none); kept duplicated here as a fixed-size

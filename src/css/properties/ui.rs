@@ -22,40 +22,66 @@ bitflags::bitflags! {
 }
 
 impl ColorScheme {
+    // Consumes only the keywords it knows (`normal | [ light | dark | <custom-ident> ]+ && only?`
+    // minus the custom idents). Anything else, including a css-wide keyword, is left
+    // in the input so that `Property::parse` fails `expect_exhausted` and keeps the
+    // declaration as `Property::Unparsed` instead of collapsing it to `normal`.
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
         let mut res = ColorScheme::empty();
-        let ident = input.expect_ident_cloned()?;
+        let mut has_any = false;
 
-        if let Some(value) = color_scheme_map_get(ident) {
-            match value {
-                ColorSchemeKeyword::Normal => return Ok(res),
-                ColorSchemeKeyword::Only => res.insert(ColorScheme::ONLY),
-                ColorSchemeKeyword::Light => res.insert(ColorScheme::LIGHT),
-                ColorSchemeKeyword::Dark => res.insert(ColorScheme::DARK),
-            }
+        if input
+            .try_parse(|input| input.expect_ident_matching(b"normal"))
+            .is_ok()
+        {
+            return Ok(res);
         }
 
-        while let Ok(i) = input.try_parse(|p| p.expect_ident_cloned()) {
-            if let Some(value) = color_scheme_map_get(i) {
-                match value {
-                    ColorSchemeKeyword::Normal => {
-                        return Err(input.new_custom_error(css::ParserError::invalid_value));
-                    }
-                    ColorSchemeKeyword::Only => {
-                        // Only must be at the start or the end, not in the middle
-                        if res.contains(ColorScheme::ONLY) {
-                            return Err(input.new_custom_error(css::ParserError::invalid_value));
-                        }
-                        res.insert(ColorScheme::ONLY);
-                        return Ok(res);
-                    }
-                    ColorSchemeKeyword::Light => res.insert(ColorScheme::LIGHT),
-                    ColorSchemeKeyword::Dark => res.insert(ColorScheme::DARK),
-                }
-            }
+        if input
+            .try_parse(|input| input.expect_ident_matching(b"only"))
+            .is_ok()
+        {
+            res.insert(ColorScheme::ONLY);
+            has_any = true;
         }
 
-        Ok(res)
+        loop {
+            if input
+                .try_parse(|input| input.expect_ident_matching(b"light"))
+                .is_ok()
+            {
+                res.insert(ColorScheme::LIGHT);
+                has_any = true;
+                continue;
+            }
+
+            if input
+                .try_parse(|input| input.expect_ident_matching(b"dark"))
+                .is_ok()
+            {
+                res.insert(ColorScheme::DARK);
+                has_any = true;
+                continue;
+            }
+
+            break;
+        }
+
+        // `only` is allowed at the start or the end.
+        if !res.contains(ColorScheme::ONLY)
+            && input
+                .try_parse(|input| input.expect_ident_matching(b"only"))
+                .is_ok()
+        {
+            res.insert(ColorScheme::ONLY);
+            has_any = true;
+        }
+
+        if has_any {
+            return Ok(res);
+        }
+
+        Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -75,29 +101,13 @@ impl ColorScheme {
         }
 
         if self.contains(ColorScheme::ONLY) {
+            if !self.intersects(ColorScheme::LIGHT | ColorScheme::DARK) {
+                return dest.write_str("only");
+            }
             dest.write_str(" only")?;
         }
 
         Ok(())
-    }
-}
-
-// ≤8 entries → plain match on bytes.
-#[derive(Clone, Copy)]
-enum ColorSchemeKeyword {
-    Normal,
-    Only,
-    Light,
-    Dark,
-}
-
-fn color_scheme_map_get(ident: &[u8]) -> Option<ColorSchemeKeyword> {
-    match ident {
-        b"normal" => Some(ColorSchemeKeyword::Normal),
-        b"only" => Some(ColorSchemeKeyword::Only),
-        b"light" => Some(ColorSchemeKeyword::Light),
-        b"dark" => Some(ColorSchemeKeyword::Dark),
-        _ => None,
     }
 }
 

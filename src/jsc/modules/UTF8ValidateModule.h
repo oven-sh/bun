@@ -3,7 +3,7 @@ using namespace JSC;
 using namespace WebCore;
 
 namespace Zig {
-inline void
+void
 generateNativeModule_UTF8Validate(JSC::JSGlobalObject* globalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,

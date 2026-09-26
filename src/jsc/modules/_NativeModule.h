@@ -51,18 +51,13 @@
 #endif
 
 #define DEFINE_NATIVE_MODULE(name)                                             \
-  inline void generateNativeModule_##name(                                     \
-      JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     \
-      Vector<JSC::Identifier, 4> &exportNames,                                 \
-      JSC::MarkedArgumentBuffer &exportValues)
-#define DEFINE_NATIVE_MODULE_NOINLINE(name)                                             \
-  void generateNativeModule_##name(                                     \
+  void generateNativeModule_##name(                                            \
       JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     \
       Vector<JSC::Identifier, 4> &exportNames,                                 \
       JSC::MarkedArgumentBuffer &exportValues)
 // For modules in BUN_FOREACH_LAZY_ESM_NATIVE_MODULE; the body usually ends in exportObjectProperties().
 #define DEFINE_LAZY_NATIVE_MODULE(name)                                        \
-  inline JSC::JSObject *generateNativeModule_##name(                           \
+  JSC::JSObject *generateNativeModule_##name(                                  \
       JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     \
       Vector<JSC::Identifier, 4> &exportNames,                                 \
       JSC::MarkedArgumentBuffer &exportValues)

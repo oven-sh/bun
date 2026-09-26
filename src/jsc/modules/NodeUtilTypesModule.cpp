@@ -1234,7 +1234,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsEventTarget,
 namespace Zig {
 
 // Hardcoded module "node:util/types"
-DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes)
+DEFINE_NATIVE_MODULE(NodeUtilTypes)
 {
     INIT_NATIVE_MODULE(NodeUtilTypes, 44);
 

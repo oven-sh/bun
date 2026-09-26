@@ -165,48 +165,64 @@ static String removeBackslashes(const StringView& view)
     return builder.toString();
 }
 
-static void escapeQuoteOrBackslash(const StringView& view, StringBuilder& builder)
+// Returns the characters it adds. The builder's own length stops at String::MaxLength.
+static uint64_t escapeQuoteOrBackslash(const StringView& view, StringBuilder& builder)
 {
     if (view.find([](char16_t c) { return c == '"' || c == '\\'; }) == notFound) {
         builder.append(view);
-        return;
+        return view.length();
     }
 
+    uint64_t length = 0;
     if (view.is8Bit()) {
         auto span = view.span8();
         for (Latin1Character c : span) {
             if (c == '"' || c == '\\') {
                 builder.append('\\');
+                length++;
             }
             builder.append(c);
+            length++;
         }
     } else {
         auto span = view.span16();
         for (char16_t c : span) {
             if (c == '"' || c == '\\') {
                 builder.append('\\');
+                length++;
             }
             builder.append(c);
+            length++;
         }
     }
+    return length;
 }
 
-// Encodes a parameter value for serialization.
-static void encodeParamValue(const StringView& value, StringBuilder& builder)
+// Encodes a parameter value for serialization. Returns the characters it adds.
+static uint64_t encodeParamValue(const StringView& value, StringBuilder& builder)
 {
     if (value.isEmpty()) {
         builder.append("\"\""_s);
-        return;
+        return 2;
     }
     if (findFirstInvalidHTTPTokenChar(value) == -1) {
         // It's a simple token, no quoting needed.
         builder.append(value);
-        return;
+        return value.length();
     }
     // Needs quoting and escaping.
     builder.append('"');
-    escapeQuoteOrBackslash(value, builder);
+    uint64_t length = escapeQuoteOrBackslash(value, builder);
     builder.append('"');
+    return length + 2;
+}
+
+JSC::EncodedJSValue throwMIMEStringBuildFailure(JSGlobalObject* globalObject, ThrowScope& scope, uint64_t intendedLength)
+{
+    if (intendedLength > WTF::String::MaxLength) {
+        return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+    }
+    return Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, globalObject);
 }
 
 // Parses the parameter string and populates the map.
@@ -516,7 +532,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
     }
 
     JSMap* map = thisObject->jsMap();
-    StringBuilder builder;
+    // RecordOverflow: the default policy aborts the process past String::MaxLength.
+    StringBuilder builder(WTF::OverflowPolicy::RecordOverflow);
+    uint64_t intendedLength = 0;
     bool first = true;
 
     JSMapIterator* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map, IterationKind::Entries);
@@ -540,12 +558,18 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
 
         if (!first) {
             builder.append(';');
+            intendedLength++;
         }
         first = false;
 
         builder.append(key);
         builder.append('=');
-        encodeParamValue(value, builder);
+        intendedLength += static_cast<uint64_t>(key.length()) + 1;
+        intendedLength += encodeParamValue(value, builder);
+    }
+
+    if (builder.hasOverflowed()) [[unlikely]] {
+        return throwMIMEStringBuildFailure(globalObject, scope, intendedLength);
     }
 
     return JSValue::encode(jsString(vm, builder.toString()));

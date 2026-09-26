@@ -313,6 +313,8 @@ On WebKit, the shm name looks like `/bun-webview-<pid>-<seq>`; on Chrome, `/bun-
 
 All input methods dispatch **native** browser events. The page receives `pointerdown`/`mousedown`/`keydown`/`wheel` events with `isTrusted: true`. CSS `:active` and `:hover` states apply. Default actions (form submission, link navigation, text selection) fire exactly as if a user performed them.
 
+Input goes to whichever document the page shows when the event arrives. If the page navigates while an input call is in flight, the event can reach the old document, the new one, or neither, and the promise still settles. To act on the page you navigated to, `await` the navigation first.
+
 ### Clicking
 
 Click at viewport coordinates:
@@ -474,6 +476,8 @@ await view.cdp("DOM.focus", { nodeId });
 Commands are scoped to this view's session (they target this tab). You must `await navigate(...)` at least once before calling `cdp()` — the first navigation establishes the session. Calling `cdp()` before that throws `ERR_INVALID_STATE`.
 
 `params` must be a JSON-serializable object; omit it for commands that take no parameters. One `cdp()` call may be in flight at a time per view.
+
+Chrome never answers some commands that are in flight when the page navigates, for example `Page.captureScreenshot`, `Input.insertText`, or an `Input.dispatchMouseEvent` of type `mouseWheel`. Such a `cdp()` call stays pending, and keeps its slot, until `close()`. `await` the navigation before you send them.
 
 ### Subscribing to events
 

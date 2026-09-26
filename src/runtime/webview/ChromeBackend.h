@@ -252,6 +252,10 @@ enum class Method : uint8_t {
     PageCaptureScreenshot,
     RuntimeEvaluate,
     InputDispatchMouseEvent,
+    // Input.dispatchMouseEvent too, with type mouseWheel (scroll()). Tagged
+    // apart from clicks because Chrome can drop a wheel at a main-frame
+    // commit and answers a click; see resolvesAtCommit in ChromeBackend.cpp.
+    InputDispatchMouseWheel,
     InputDispatchKeyEvent,
     InputInsertText,
     EmulationSetDeviceMetricsOverride,
@@ -474,6 +478,10 @@ public:
     void handleMessage(std::span<const char> msg);
     void handleResponse(uint32_t id, std::span<const char> result, std::span<const char> error);
     void handleEvent(std::span<const char> method, std::span<const char> params, std::span<const char> sessionId);
+    // The view's main frame committed another document. Chrome drops some of
+    // the commands that are in flight at that point: their ids get no reply,
+    // ever. Settles the ones that resolvesAtCommit (ChromeBackend.cpp) picks.
+    void mainFrameCommitted(JSC::JSGlobalObject*, JSWebView*);
     void rejectAllAndMarkDead(const WTF::String& reason);
     void updateKeepAlive();
     void writeRaw(const char* data, size_t len);

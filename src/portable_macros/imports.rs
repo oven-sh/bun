@@ -14,6 +14,8 @@ struct Function {
     symbol: String,
     /// The library of this function, when it is not the one of the block.
     library: Option<String>,
+    /// The function never sets the error number of the C library.
+    no_errno: bool,
     arguments: Vec<Argument>,
     result: Tokens,
 }
@@ -28,6 +30,16 @@ pub(crate) fn expand(args: Tokens, item: Tokens) -> syn::Result<Tokens> {
     let block_attributes = cursor.take_attributes()?;
 
     let mut library = string_value(args.clone(), "library");
+    let host = match string_value(args.clone(), "host").as_deref() {
+        None | Some("windows") => Host::Windows,
+        Some("macos") => Host::Macos,
+        Some(_) => {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "expected `host = \"windows\"` or `host = \"macos\"`",
+            ));
+        }
+    };
     if library.is_none() && !args.is_empty() {
         return Err(syn::Error::new(
             Span::call_site(),
@@ -72,14 +84,60 @@ pub(crate) fn expand(args: Tokens, item: Tokens) -> syn::Result<Tokens> {
     let mut functions = Cursor::new(body.stream(), body.span_close());
     let mut out = Tokens::new();
     while !functions.is_done() {
-        let function = parse_function(&mut functions)?;
-        out.extend(per_architecture(wrapper(
-            &function,
-            &library,
-            &kept_attributes,
-        )));
+        let Some(function) = parse_function(&mut functions)? else {
+            continue;
+        };
+        out.extend(match host {
+            Host::Windows => per_architecture(wrapper(&function, &library, &kept_attributes)),
+            Host::Macos => wrapper_for_macos(&function, &library, &kept_attributes),
+        });
     }
     Ok(out)
+}
+
+#[derive(Clone, Copy)]
+enum Host {
+    Windows,
+    Macos,
+}
+
+/// `cfg(bun_portable)` or `cfg(not(bun_portable))` on a function of the block. The macro runs in the
+/// portable image only, and the attributes inside of the block arrive as they are written.
+fn portable_cfg(attribute: &Group) -> Option<bool> {
+    if attribute_name(attribute).as_deref() != Some("cfg") {
+        return None;
+    }
+    let TokenTree::Group(arguments) = attribute.stream().into_iter().nth(1)? else {
+        return None;
+    };
+    let tokens: Vec<TokenTree> = arguments.stream().into_iter().collect();
+    match tokens.as_slice() {
+        [TokenTree::Ident(name)] if name == "bun_portable" => Some(true),
+        [TokenTree::Ident(not), TokenTree::Group(inner)] if not == "not" => {
+            let inner: Vec<TokenTree> = inner.stream().into_iter().collect();
+            match inner.as_slice() {
+                [TokenTree::Ident(name)] if name == "bun_portable" => Some(false),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// `#[cfg_attr(bun_portable, no_errno)]` on a function of the block.
+fn is_no_errno(attribute: &Group) -> bool {
+    if attribute_name(attribute).as_deref() != Some("cfg_attr") {
+        return false;
+    }
+    let Some(TokenTree::Group(arguments)) = attribute.stream().into_iter().nth(1) else {
+        return false;
+    };
+    let tokens: Vec<TokenTree> = arguments.stream().into_iter().collect();
+    matches!(
+        tokens.as_slice(),
+        [TokenTree::Ident(predicate), TokenTree::Punct(_), TokenTree::Ident(name)]
+            if predicate == "bun_portable" && name == "no_errno"
+    )
 }
 
 /// The library of `link(name = "..")` or of `cfg_attr(.., link(name = ".."))`.
@@ -123,17 +181,33 @@ fn library_of_function(attribute: &Group) -> Option<String> {
     string_value(tokens.skip(1).collect(), "library")
 }
 
-fn parse_function(cursor: &mut Cursor) -> syn::Result<Function> {
+/// The next function of the block. `None` for one that the image does not have.
+fn parse_function(cursor: &mut Cursor) -> syn::Result<Option<Function>> {
     let mut symbol = None;
     let mut library = None;
+    let mut no_errno = false;
+    let mut in_image = true;
     let mut attributes = Vec::new();
     for attribute in cursor.take_attributes()? {
         if attribute_name(&attribute).as_deref() == Some("link_name") {
             symbol = string_value(attribute.stream(), "link_name");
         } else if let Some(name) = library_of_function(&attribute) {
             library = Some(name);
+        } else if let Some(has) = portable_cfg(&attribute) {
+            in_image &= has;
+        } else if is_no_errno(&attribute) {
+            no_errno = true;
         } else {
             attributes.push(attribute);
+        }
+    }
+    if !in_image {
+        loop {
+            match cursor.next() {
+                Some(TokenTree::Punct(punct)) if punct.as_char() == ';' => return Ok(None),
+                Some(_) => {}
+                None => return Err(cursor.error("expected `;` after the function")),
+            }
         }
     }
 
@@ -171,16 +245,17 @@ fn parse_function(cursor: &mut Cursor) -> syn::Result<Function> {
         }
     }
 
-    Ok(Function {
+    Ok(Some(Function {
         attributes,
         visibility,
         is_safe,
         symbol: symbol.unwrap_or_else(|| name.to_string()),
         library,
+        no_errno,
         name,
         arguments,
         result,
-    })
+    }))
 }
 
 fn parse_arguments(parameters: Group) -> syn::Result<Vec<Argument>> {
@@ -250,6 +325,7 @@ fn wrapper(function: &Function, library: &str, block_attributes: &[Tokens]) -> T
         name,
         symbol,
         library: own_library,
+        no_errno: _,
         arguments,
         result,
     } = function;
@@ -277,6 +353,60 @@ fn wrapper(function: &Function, library: &str, block_attributes: &[Tokens]) -> T
                     *mut ::core::ffi::c_void,
                     unsafe extern "C" fn(#(#types),*) #result,
                 >(IMPORT.address())(#(#names),*)
+            }
+        }
+    }
+}
+
+fn wrapper_for_macos(function: &Function, library: &str, block_attributes: &[Tokens]) -> Tokens {
+    let Function {
+        attributes,
+        visibility,
+        is_safe,
+        name,
+        symbol,
+        library: own_library,
+        no_errno,
+        arguments,
+        result,
+    } = function;
+    let library = own_library.as_deref().unwrap_or(library);
+    let attributes = attributes.iter().map(attribute_tokens);
+    let unsafety = if *is_safe { quote!() } else { quote!(unsafe) };
+    let names: Vec<&Ident> = arguments.iter().map(|argument| &argument.name).collect();
+    let types: Vec<&Tokens> = arguments.iter().map(|argument| &argument.ty).collect();
+    let library = nul_terminated(library);
+    let symbol = nul_terminated(symbol);
+    let call = quote!(function(#(::bun_darwin_sys::abi::Argument::pass(#names)),*));
+    let call = if *no_errno {
+        call
+    } else {
+        quote!(::bun_darwin_sys::host_imports::keep_errno(|| #call))
+    };
+    quote! {
+        #(#block_attributes)*
+        #(#attributes)*
+        #[inline]
+        #[allow(clippy::too_many_arguments, clippy::missing_safety_doc, non_snake_case)]
+        #visibility #unsafety fn #name(#(#names: #types),*) #result {
+            #[unsafe(link_section = "bun_imports_macos")]
+            static IMPORT: ::bun_darwin_sys::host_imports::Import =
+                ::bun_darwin_sys::host_imports::Import::new(#library, #symbol);
+            const {
+                ::bun_darwin_sys::abi::check_registers(
+                    0 #(+ <#types as ::bun_darwin_sys::abi::Argument>::INTEGER_REGISTERS)*,
+                    0 #(+ <#types as ::bun_darwin_sys::abi::Argument>::FLOAT_REGISTERS)*,
+                )
+            };
+            // SAFETY: `address` returns the address the host resolved for this symbol, or does not return.
+            // The function behind it has the signature of the declaration this was made from, with every
+            // argument in the form that `Argument` gives it, and the caller keeps that declaration's contract.
+            unsafe {
+                let function = ::core::mem::transmute::<
+                    *mut ::core::ffi::c_void,
+                    unsafe extern "C" fn(#(<#types as ::bun_darwin_sys::abi::Argument>::Passed),*) #result,
+                >(IMPORT.address());
+                #call
             }
         }
     }

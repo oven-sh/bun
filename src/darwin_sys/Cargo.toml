@@ -1,0 +1,19 @@
+[package]
+name = "bun_darwin_sys"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+# Nothing of this crate is compiled in a build for one OS: bun for macOS has its definitions of macOS
+# from the `libc` crate. The portable image (`--cfg=bun_portable`) is compiled for Linux, where that
+# crate has none of them.
+[dependencies]
+
+[target.'cfg(bun_portable)'.dependencies]
+bun_portable_macros.workspace = true
+libc.workspace = true

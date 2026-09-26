@@ -41,7 +41,8 @@ export type Item = {
   /** function: the symbol, when it is not the name. */
   symbol?: string;
   fields?: { name: string; type: TypeRef; public: boolean }[];
-  packed?: boolean;
+  /** `repr(packed(n))` and `repr(align(n))`. */
+  packed?: number;
   align?: number;
 };
 
@@ -121,19 +122,22 @@ export function load(target: string, work = process.env.WORK ?? "/tmp/portable/n
       item.kind = "constant";
       item.type = typeRef(inner.constant.type);
       item.value = inner.constant.const.value ?? undefined;
-      const number = /^(-?\d+)/.exec(item.value ?? "");
-      if (number) item.number = number[1];
+      // rustdoc writes 16_777_216i32.
+      const number = /^(-?[\d_]+)/.exec(item.value ?? "");
+      if (number) item.number = number[1].replaceAll("_", "");
     } else if (kindName === "struct" || kindName === "union") {
       item.kind = kindName;
       const ids: number[] = kindName === "struct" ? (inner.struct.kind.plain?.fields ?? []) : inner.union.fields;
       if (kindName === "struct" && !inner.struct.kind.plain) continue;
       item.fields = ids.map(id => index[id]).filter(Boolean).map(field => ({ name: field.name, type: typeRef(field.inner.struct_field), public: field.visibility === "public" }));
       for (const attribute of raw.attrs ?? []) {
-        const repr = typeof attribute === "string" ? attribute : (attribute.repr ? JSON.stringify(attribute.repr) : (attribute.other ?? ""));
-        if (/packed/.test(repr)) item.packed = true;
-        const align = /align[^0-9]*(\d+)/.exec(repr);
-        if (align) item.align = Number(align[1]);
+        const repr = typeof attribute === "object" ? attribute.repr : undefined;
+        if (!repr) continue;
+        if (repr.kind !== "c") item.kind = "other";
+        if (typeof repr.packed === "number") item.packed = repr.packed;
+        if (typeof repr.align === "number") item.align = repr.align;
       }
+      if (item.kind === "other") continue;
     } else if (kindName === "type_alias") {
       item.kind = "type_alias";
       item.type = typeRef(inner.type_alias.type);

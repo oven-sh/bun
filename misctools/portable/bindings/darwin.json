@@ -1,0 +1,4426 @@
+{
+ "about": "What misctools/portable/bindings/darwin.ts wrote into src/darwin_sys/generated.rs, and where each definition is in the libc crate.",
+ "libc_crate": "0.2.186",
+ "targets": [
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin"
+ ],
+ "types": [
+  {
+   "name": "attrgroup_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "attrlist",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "blkcnt_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "blksize_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "copyfile_flags_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "copyfile_state_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "dev_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "dirent",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "flock",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "fsid_t",
+   "kind": "struct",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "fstore_t",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "gid_t",
+   "kind": "type_alias",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "host_flavor_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "host_info64_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "host_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ino_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "integer_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "intptr_t",
+   "kind": "type_alias",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "iovec",
+   "kind": "struct",
+   "file": "src/unix/mod.rs",
+   "the_type_of_the_image": true
+  },
+  {
+   "name": "kern_return_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "kevent",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "kevent64_s",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "mach_msg_type_number_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "mach_port_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "mach_timebase_info",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "mach_timebase_info_data_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "mode_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "natural_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "nfds_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "nl_item",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "nlink_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "off_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "os_unfair_lock",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "os_unfair_lock_s",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "os_unfair_lock_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "pid_t",
+   "kind": "type_alias",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "pollfd",
+   "kind": "struct",
+   "file": "src/unix/mod.rs",
+   "the_type_of_the_image": true
+  },
+  {
+   "name": "posix_spawn_file_actions_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "posix_spawnattr_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "processor_cpu_load_info",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "processor_cpu_load_info_data_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "processor_flavor_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "processor_info_array_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "pthread_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "sa_family_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "sf_hdtr",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "sigset_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "size_t",
+   "kind": "type_alias",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "sockaddr",
+   "kind": "struct",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "sockaddr_dl",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "socklen_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "speed_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ssize_t",
+   "kind": "type_alias",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "stat",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "statfs",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "suseconds_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "tcflag_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "time_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "timespec",
+   "kind": "struct",
+   "file": "src/unix/mod.rs",
+   "the_type_of_the_image": true
+  },
+  {
+   "name": "timeval",
+   "kind": "struct",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "uid_t",
+   "kind": "type_alias",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "uintptr_t",
+   "kind": "type_alias",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "vm_address_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "vm_map_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "vm_offset_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "vm_size_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "vm_statistics64",
+   "kind": "struct",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "vm_statistics64_data_t",
+   "kind": "type_alias",
+   "file": "src/unix/bsd/apple/mod.rs"
+  }
+ ],
+ "constants": [
+  {
+   "name": "AT_EACCESS",
+   "value": "16",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "AT_FDCWD",
+   "value": "-2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "AT_REMOVEDIR",
+   "value": "128",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "AT_SYMLINK_FOLLOW",
+   "value": "64",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "AT_SYMLINK_NOFOLLOW",
+   "value": "32",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_ACL",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_CHECK",
+   "value": "65536",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_CLONE",
+   "value": "16777216",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_CLONE_FORCE",
+   "value": "33554432",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_CONTINUE",
+   "value": "0",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_COPY_DATA",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_COPY_XATTR",
+   "value": "5",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_DATA",
+   "value": "8",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_DATA_SPARSE",
+   "value": "134217728",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_ERR",
+   "value": "3",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_EXCL",
+   "value": "131072",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_FINISH",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_METADATA",
+   "value": "7",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_MOVE",
+   "value": "1048576",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_NOFOLLOW",
+   "value": "786432",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_NOFOLLOW_DST",
+   "value": "524288",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_NOFOLLOW_SRC",
+   "value": "262144",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_PACK",
+   "value": "4194304",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_PRESERVE_DST_TRACKED",
+   "value": "268435456",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_PROGRESS",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_QUIT",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_RECURSE_DIR",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_RECURSE_DIR_CLEANUP",
+   "value": "3",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_RECURSE_ERROR",
+   "value": "0",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_RECURSE_FILE",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_RECURSIVE",
+   "value": "32768",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_RUN_IN_PLACE",
+   "value": "67108864",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_SECURITY",
+   "value": "3",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_SKIP",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_START",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STAT",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_BSIZE",
+   "value": "13",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_COPIED",
+   "value": "8",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_DST_BSIZE",
+   "value": "12",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_DST_FD",
+   "value": "3",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_DST_FILENAME",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_QUARANTINE",
+   "value": "5",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_SRC_BSIZE",
+   "value": "11",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_SRC_FD",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_SRC_FILENAME",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_STATUS_CB",
+   "value": "6",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_STATUS_CTX",
+   "value": "7",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_WAS_CLONED",
+   "value": "10",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_STATE_XATTRNAME",
+   "value": "9",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_UNLINK",
+   "value": "2097152",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_UNPACK",
+   "value": "8388608",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_VERBOSE",
+   "value": "1073741824",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "COPYFILE_XATTR",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "CPU_STATE_IDLE",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "CPU_STATE_MAX",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "CPU_STATE_NICE",
+   "value": "3",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "CPU_STATE_SYSTEM",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "CPU_STATE_USER",
+   "value": "0",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "DT_BLK",
+   "value": "6",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "DT_CHR",
+   "value": "2",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "DT_DIR",
+   "value": "4",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "DT_FIFO",
+   "value": "1",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "DT_LNK",
+   "value": "10",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "DT_REG",
+   "value": "8",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "DT_SOCK",
+   "value": "12",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "DT_UNKNOWN",
+   "value": "0",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "E2BIG",
+   "value": "7",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EACCES",
+   "value": "13",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EADDRINUSE",
+   "value": "48",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EADDRNOTAVAIL",
+   "value": "49",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EAFNOSUPPORT",
+   "value": "47",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EAGAIN",
+   "value": "35",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EALREADY",
+   "value": "37",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EAUTH",
+   "value": "80",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EBADARCH",
+   "value": "86",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EBADEXEC",
+   "value": "85",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EBADF",
+   "value": "9",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EBADMACHO",
+   "value": "88",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EBADMSG",
+   "value": "94",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EBADRPC",
+   "value": "72",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EBUSY",
+   "value": "16",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ECANCELED",
+   "value": "89",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ECHILD",
+   "value": "10",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ECHO",
+   "value": "8",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "ECHOCTL",
+   "value": "64",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "ECHOE",
+   "value": "2",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "ECHOK",
+   "value": "4",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "ECHOKE",
+   "value": "1",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "ECHONL",
+   "value": "16",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "ECHOPRT",
+   "value": "32",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "ECONNABORTED",
+   "value": "53",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ECONNREFUSED",
+   "value": "61",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ECONNRESET",
+   "value": "54",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EDEADLK",
+   "value": "11",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EDESTADDRREQ",
+   "value": "39",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EDEVERR",
+   "value": "83",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EDOM",
+   "value": "33",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EDQUOT",
+   "value": "69",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EEXIST",
+   "value": "17",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EFAULT",
+   "value": "14",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EFBIG",
+   "value": "27",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EFTYPE",
+   "value": "79",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EHOSTDOWN",
+   "value": "64",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EHOSTUNREACH",
+   "value": "65",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EIDRM",
+   "value": "90",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EILSEQ",
+   "value": "92",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EINPROGRESS",
+   "value": "36",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EINTR",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EINVAL",
+   "value": "22",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EIO",
+   "value": "5",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EISCONN",
+   "value": "56",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EISDIR",
+   "value": "21",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ELAST",
+   "value": "106",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ELOOP",
+   "value": "62",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EMFILE",
+   "value": "24",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EMLINK",
+   "value": "31",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EMPTY",
+   "value": "0",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EMSGSIZE",
+   "value": "40",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EMULTIHOP",
+   "value": "95",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENAMETOOLONG",
+   "value": "63",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENEEDAUTH",
+   "value": "81",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENETDOWN",
+   "value": "50",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENETRESET",
+   "value": "52",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENETUNREACH",
+   "value": "51",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENFILE",
+   "value": "23",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOATTR",
+   "value": "93",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOBUFS",
+   "value": "55",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENODATA",
+   "value": "96",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENODEV",
+   "value": "19",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOENT",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOEXEC",
+   "value": "8",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOLCK",
+   "value": "77",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOLINK",
+   "value": "97",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOMEM",
+   "value": "12",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOMSG",
+   "value": "91",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOPOLICY",
+   "value": "103",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOPROTOOPT",
+   "value": "42",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOSPC",
+   "value": "28",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOSR",
+   "value": "98",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOSTR",
+   "value": "99",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOSYS",
+   "value": "78",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOTBLK",
+   "value": "15",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOTCONN",
+   "value": "57",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOTDIR",
+   "value": "20",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOTEMPTY",
+   "value": "66",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOTRECOVERABLE",
+   "value": "104",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOTSOCK",
+   "value": "38",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOTSUP",
+   "value": "45",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENOTTY",
+   "value": "25",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ENXIO",
+   "value": "6",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EOF",
+   "value": "-1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EOPNOTSUPP",
+   "value": "102",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EOVERFLOW",
+   "value": "84",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EOWNERDEAD",
+   "value": "105",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EPERM",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EPFNOSUPPORT",
+   "value": "46",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EPIPE",
+   "value": "32",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EPROCLIM",
+   "value": "67",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EPROCUNAVAIL",
+   "value": "76",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EPROGMISMATCH",
+   "value": "75",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EPROGUNAVAIL",
+   "value": "74",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EPROTO",
+   "value": "100",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EPROTONOSUPPORT",
+   "value": "43",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EPROTOTYPE",
+   "value": "41",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EPWROFF",
+   "value": "82",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EQFULL",
+   "value": "106",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ERA",
+   "value": "45",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ERANGE",
+   "value": "34",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EREMOTE",
+   "value": "71",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EROFS",
+   "value": "30",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ERPCMISMATCH",
+   "value": "73",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ESHLIBVERS",
+   "value": "87",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ESHUTDOWN",
+   "value": "58",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ESOCKTNOSUPPORT",
+   "value": "44",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ESPIPE",
+   "value": "29",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ESRCH",
+   "value": "3",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ESTALE",
+   "value": "70",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ETIME",
+   "value": "101",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ETIMEDOUT",
+   "value": "60",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ETOOMANYREFS",
+   "value": "59",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "ETXTBSY",
+   "value": "26",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EUSERS",
+   "value": "68",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EV_ADD",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EV_CLEAR",
+   "value": "32",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EV_DELETE",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EV_DISABLE",
+   "value": "8",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EV_DISPATCH",
+   "value": "128",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EV_ENABLE",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EV_EOF",
+   "value": "32768",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EV_ERROR",
+   "value": "16384",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EV_ONESHOT",
+   "value": "16",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EV_RECEIPT",
+   "value": "64",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EVFILT_MACHPORT",
+   "value": "-8",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EVFILT_PROC",
+   "value": "-5",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EVFILT_READ",
+   "value": "-1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EVFILT_SIGNAL",
+   "value": "-6",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EVFILT_TIMER",
+   "value": "-7",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EVFILT_USER",
+   "value": "-10",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EVFILT_VNODE",
+   "value": "-4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EVFILT_WRITE",
+   "value": "-2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EWOULDBLOCK",
+   "value": "35",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EXDEV",
+   "value": "18",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EXTA",
+   "value": "19200",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EXTB",
+   "value": "38400",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "EXTPROC",
+   "value": "2048",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "F_ALLOCATEALL",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_ALLOCATECONTIG",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_BARRIERFSYNC",
+   "value": "85",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_DUPFD",
+   "value": "0",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_DUPFD_CLOEXEC",
+   "value": "67",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_FULLFSYNC",
+   "value": "51",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_GETFD",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_GETFL",
+   "value": "3",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_GETLK",
+   "value": "7",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_GETPATH",
+   "value": "50",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_GETPATH_NOFIRMLINK",
+   "value": "102",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_NOCACHE",
+   "value": "48",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_OK",
+   "value": "0",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_PEOFPOSMODE",
+   "value": "3",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_PREALLOCATE",
+   "value": "42",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_RDADVISE",
+   "value": "44",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_RDAHEAD",
+   "value": "45",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_RDLCK",
+   "value": "1",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "F_SETFD",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_SETFL",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_SETLK",
+   "value": "8",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_SETLKW",
+   "value": "9",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_UNLCK",
+   "value": "2",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "F_VOLPOSMODE",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "F_WRLCK",
+   "value": "3",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "FD_CLOEXEC",
+   "value": "1",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "HOST_VM_INFO64",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "HOST_VM_INFO64_COUNT",
+   "value": "38",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MAXPATHLEN",
+   "value": "1024",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "MSG_CTRUNC",
+   "value": "32",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_DONTROUTE",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_DONTWAIT",
+   "value": "128",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_EOF",
+   "value": "256",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_EOR",
+   "value": "8",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_FLUSH",
+   "value": "1024",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_HAVEMORE",
+   "value": "8192",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_HOLD",
+   "value": "2048",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_NEEDSA",
+   "value": "65536",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_NOSIGNAL",
+   "value": "524288",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_OOB",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_PEEK",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_RCVMORE",
+   "value": "16384",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_SEND",
+   "value": "4096",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_TRUNC",
+   "value": "16",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "MSG_WAITALL",
+   "value": "64",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_ATTRIB",
+   "value": "8",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_DELETE",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_EXEC",
+   "value": "536870912",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_EXIT",
+   "value": "2147483648",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_EXITSTATUS",
+   "value": "67108864",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_EXTEND",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_FORK",
+   "value": "1073741824",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_LINK",
+   "value": "16",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_RENAME",
+   "value": "32",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_REVOKE",
+   "value": "64",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_SIGNAL",
+   "value": "134217728",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_TRIGGER",
+   "value": "16777216",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "NOTE_WRITE",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "O_ACCMODE",
+   "value": "3",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_APPEND",
+   "value": "8",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_ASYNC",
+   "value": "64",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_CLOEXEC",
+   "value": "16777216",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "O_CREAT",
+   "value": "512",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_DIRECTORY",
+   "value": "1048576",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "O_DSYNC",
+   "value": "4194304",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "O_EVTONLY",
+   "value": "32768",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "O_EXCL",
+   "value": "2048",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_EXEC",
+   "value": "1073741824",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "O_EXLOCK",
+   "value": "32",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_FSYNC",
+   "value": "128",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_NDELAY",
+   "value": "4",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_NOCTTY",
+   "value": "131072",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "O_NOFOLLOW",
+   "value": "256",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_NOFOLLOW_ANY",
+   "value": "536870912",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "O_NONBLOCK",
+   "value": "4",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_RDONLY",
+   "value": "0",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_RDWR",
+   "value": "2",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_SEARCH",
+   "value": "1074790400",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "O_SHLOCK",
+   "value": "16",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_SYMLINK",
+   "value": "2097152",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "O_SYNC",
+   "value": "128",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_TRUNC",
+   "value": "1024",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "O_WRONLY",
+   "value": "1",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "PATH_MAX",
+   "value": "1024",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "POLLERR",
+   "value": "8",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "POLLHUP",
+   "value": "16",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "POLLIN",
+   "value": "1",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "POLLNVAL",
+   "value": "32",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "POLLOUT",
+   "value": "4",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "POLLPRI",
+   "value": "2",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "POLLRDBAND",
+   "value": "128",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "POLLRDNORM",
+   "value": "64",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "POLLWRBAND",
+   "value": "256",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "POLLWRNORM",
+   "value": "4",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "PROCESSOR_CPU_LOAD_INFO",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "R_OK",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "RENAME_EXCL",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "RENAME_SWAP",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IEXEC",
+   "value": "64",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IFBLK",
+   "value": "24576",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IFCHR",
+   "value": "8192",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IFDIR",
+   "value": "16384",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IFIFO",
+   "value": "4096",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IFLNK",
+   "value": "40960",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IFMT",
+   "value": "61440",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IFREG",
+   "value": "32768",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IFSOCK",
+   "value": "49152",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IREAD",
+   "value": "256",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IRGRP",
+   "value": "32",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IROTH",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IRUSR",
+   "value": "256",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IRWXG",
+   "value": "56",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IRWXO",
+   "value": "7",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IRWXU",
+   "value": "448",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_ISGID",
+   "value": "1024",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "S_ISUID",
+   "value": "2048",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "S_ISVTX",
+   "value": "512",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "S_IWGRP",
+   "value": "16",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IWOTH",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IWRITE",
+   "value": "128",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IWUSR",
+   "value": "128",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IXGRP",
+   "value": "8",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IXOTH",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "S_IXUSR",
+   "value": "64",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SEEK_CUR",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SEEK_DATA",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SEEK_END",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SEEK_HOLE",
+   "value": "3",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SEEK_SET",
+   "value": "0",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGABRT",
+   "value": "6",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGALRM",
+   "value": "14",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGBUS",
+   "value": "10",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGCHLD",
+   "value": "20",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGCONT",
+   "value": "19",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGEMT",
+   "value": "7",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGFPE",
+   "value": "8",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGHUP",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGILL",
+   "value": "4",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGINFO",
+   "value": "29",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGINT",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGIO",
+   "value": "23",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGIOT",
+   "value": "6",
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "SIGKILL",
+   "value": "9",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGNATURE",
+   "value": "10",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGPIPE",
+   "value": "13",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGPROF",
+   "value": "27",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGQUIT",
+   "value": "3",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGSEGV",
+   "value": "11",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGSTKSZ",
+   "value": "131072",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGSTOP",
+   "value": "17",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGSYS",
+   "value": "12",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGTERM",
+   "value": "15",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGTRAP",
+   "value": "5",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SIGTSTP",
+   "value": "18",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGTTIN",
+   "value": "21",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGTTOU",
+   "value": "22",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGURG",
+   "value": "16",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGUSR1",
+   "value": "30",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGUSR2",
+   "value": "31",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGVTALRM",
+   "value": "26",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGWINCH",
+   "value": "28",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGXCPU",
+   "value": "24",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SIGXFSZ",
+   "value": "25",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "SO_NOSIGPIPE",
+   "value": "4130",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SO_RCVBUF",
+   "value": "4098",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SO_SNDBUF",
+   "value": "4097",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "SOL_SOCKET",
+   "value": "65535",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "W_OK",
+   "value": "2",
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "WNOHANG",
+   "value": "1",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "WUNTRACED",
+   "value": "2",
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "X_OK",
+   "value": "1",
+   "file": "src/unix/bsd/apple/mod.rs"
+  }
+ ],
+ "functions": [
+  {
+   "name": "__error",
+   "arguments": 0,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "_NSGetEnviron",
+   "arguments": 0,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "clonefile",
+   "arguments": 3,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "clonefileat",
+   "arguments": 5,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "close",
+   "symbol_x86_64": "close$NOCANCEL",
+   "arguments": 1,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "copyfile",
+   "arguments": 4,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "dlclose",
+   "arguments": 1,
+   "sets_errno": false,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "dlopen",
+   "arguments": 2,
+   "sets_errno": false,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "dlsym",
+   "arguments": 2,
+   "sets_errno": false,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "faccessat",
+   "arguments": 4,
+   "sets_errno": true,
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "fchmod",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "fclonefileat",
+   "arguments": 4,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "fcntl",
+   "symbol": "bun_host_darwin_fcntl3",
+   "variadic_in_libSystem": true,
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "fcopyfile",
+   "arguments": 4,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "fgetattrlist",
+   "arguments": 5,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "flock",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "fstat",
+   "symbol_x86_64": "fstat$INODE64",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "fstatat",
+   "symbol_x86_64": "fstatat$INODE64",
+   "arguments": 4,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "fstatfs",
+   "symbol_x86_64": "fstatfs$INODE64",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "fsync",
+   "arguments": 1,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "ftruncate",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "getattrlist",
+   "arguments": 5,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "getentropy",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "getloadavg",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "getpid",
+   "arguments": 0,
+   "sets_errno": false,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "host_processor_info",
+   "arguments": 5,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "host_statistics64",
+   "arguments": 4,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "kevent",
+   "arguments": 6,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "kevent64",
+   "arguments": 7,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "kqueue",
+   "arguments": 0,
+   "sets_errno": true,
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "lstat",
+   "symbol_x86_64": "lstat$INODE64",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "mach_absolute_time",
+   "arguments": 0,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "mach_timebase_info",
+   "arguments": 1,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "memset_pattern16",
+   "arguments": 3,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "memset_pattern4",
+   "arguments": 3,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "memset_pattern8",
+   "arguments": 3,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "mkdirat",
+   "arguments": 3,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "open",
+   "symbol": "bun_host_darwin_open3",
+   "variadic_in_libSystem": true,
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "openat",
+   "symbol": "bun_host_darwin_openat4",
+   "variadic_in_libSystem": true,
+   "arguments": 3,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "os_unfair_lock_lock",
+   "arguments": 1,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "os_unfair_lock_trylock",
+   "arguments": 1,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "os_unfair_lock_unlock",
+   "arguments": 1,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "posix_spawn_file_actions_addopen",
+   "arguments": 5,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "posix_spawn_file_actions_destroy",
+   "arguments": 1,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "posix_spawn_file_actions_init",
+   "arguments": 1,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "posix_spawnp",
+   "arguments": 6,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "pread",
+   "arguments": 4,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "proc_pidpath",
+   "arguments": 3,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "pthread_setname_np",
+   "arguments": 1,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "pthread_threadid_np",
+   "arguments": 2,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "pwrite",
+   "arguments": 4,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "read",
+   "arguments": 3,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "realpath",
+   "symbol": "realpath$DARWIN_EXTSN",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "renameatx_np",
+   "arguments": 5,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "sendfile",
+   "arguments": 6,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "setsockopt",
+   "arguments": 5,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "sigemptyset",
+   "arguments": 1,
+   "sets_errno": false,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "sigwait",
+   "arguments": 2,
+   "sets_errno": false,
+   "file": "src/unix/bsd/mod.rs"
+  },
+  {
+   "name": "stat",
+   "symbol_x86_64": "stat$INODE64",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "statfs",
+   "symbol_x86_64": "statfs$INODE64",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "strlen",
+   "arguments": 1,
+   "sets_errno": false,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "sysctl",
+   "arguments": 6,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "sysctlbyname",
+   "arguments": 5,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "sysctlnametomib",
+   "arguments": 3,
+   "sets_errno": true,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "truncate",
+   "arguments": 2,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "unlinkat",
+   "arguments": 3,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  },
+  {
+   "name": "vm_deallocate",
+   "arguments": 3,
+   "sets_errno": false,
+   "file": "src/unix/bsd/apple/mod.rs"
+  },
+  {
+   "name": "write",
+   "arguments": 3,
+   "sets_errno": true,
+   "file": "src/unix/mod.rs"
+  }
+ ],
+ "variadic_without_a_function_of_the_host": [],
+ "shims": [
+  "bun_host_darwin_open3",
+  "bun_host_darwin_openat4",
+  "bun_host_darwin_fcntl3",
+  "bun_host_darwin_ioctl3"
+ ],
+ "in_the_numbers_of_the_image": [
+  {
+   "name": "AT_EACCESS",
+   "macos": "16",
+   "in_the_image": "AT_EACCESS",
+   "why": "the same name"
+  },
+  {
+   "name": "AT_FDCWD",
+   "macos": "-2",
+   "in_the_image": "AT_FDCWD",
+   "why": "the same name"
+  },
+  {
+   "name": "AT_REMOVEDIR",
+   "macos": "128",
+   "in_the_image": "AT_REMOVEDIR",
+   "why": "the same name"
+  },
+  {
+   "name": "AT_SYMLINK_FOLLOW",
+   "macos": "64",
+   "in_the_image": "AT_SYMLINK_FOLLOW",
+   "why": "the same name"
+  },
+  {
+   "name": "AT_SYMLINK_NOFOLLOW",
+   "macos": "32",
+   "in_the_image": "AT_SYMLINK_NOFOLLOW",
+   "why": "the same name"
+  },
+  {
+   "name": "E2BIG",
+   "macos": "7",
+   "in_the_image": "E2BIG",
+   "why": "the same name"
+  },
+  {
+   "name": "EACCES",
+   "macos": "13",
+   "in_the_image": "EACCES",
+   "why": "the same name"
+  },
+  {
+   "name": "EADDRINUSE",
+   "macos": "48",
+   "in_the_image": "EADDRINUSE",
+   "why": "the same name"
+  },
+  {
+   "name": "EADDRNOTAVAIL",
+   "macos": "49",
+   "in_the_image": "EADDRNOTAVAIL",
+   "why": "the same name"
+  },
+  {
+   "name": "EAFNOSUPPORT",
+   "macos": "47",
+   "in_the_image": "EAFNOSUPPORT",
+   "why": "the same name"
+  },
+  {
+   "name": "EAGAIN",
+   "macos": "35",
+   "in_the_image": "EAGAIN",
+   "why": "the same name"
+  },
+  {
+   "name": "EALREADY",
+   "macos": "37",
+   "in_the_image": "EALREADY",
+   "why": "the same name"
+  },
+  {
+   "name": "EAUTH",
+   "macos": "80",
+   "in_the_image": "EACCES",
+   "why": "no such name in the image: EACCES"
+  },
+  {
+   "name": "EBADARCH",
+   "macos": "86",
+   "in_the_image": "ENOEXEC",
+   "why": "no such name in the image: ENOEXEC"
+  },
+  {
+   "name": "EBADEXEC",
+   "macos": "85",
+   "in_the_image": "ENOEXEC",
+   "why": "no such name in the image: ENOEXEC"
+  },
+  {
+   "name": "EBADF",
+   "macos": "9",
+   "in_the_image": "EBADF",
+   "why": "the same name"
+  },
+  {
+   "name": "EBADMACHO",
+   "macos": "88",
+   "in_the_image": "ENOEXEC",
+   "why": "no such name in the image: ENOEXEC"
+  },
+  {
+   "name": "EBADMSG",
+   "macos": "94",
+   "in_the_image": "EBADMSG",
+   "why": "the same name"
+  },
+  {
+   "name": "EBADRPC",
+   "macos": "72",
+   "in_the_image": "EREMOTEIO",
+   "why": "no such name in the image: EREMOTEIO"
+  },
+  {
+   "name": "EBUSY",
+   "macos": "16",
+   "in_the_image": "EBUSY",
+   "why": "the same name"
+  },
+  {
+   "name": "ECANCELED",
+   "macos": "89",
+   "in_the_image": "ECANCELED",
+   "why": "the same name"
+  },
+  {
+   "name": "ECHILD",
+   "macos": "10",
+   "in_the_image": "ECHILD",
+   "why": "the same name"
+  },
+  {
+   "name": "ECONNABORTED",
+   "macos": "53",
+   "in_the_image": "ECONNABORTED",
+   "why": "the same name"
+  },
+  {
+   "name": "ECONNREFUSED",
+   "macos": "61",
+   "in_the_image": "ECONNREFUSED",
+   "why": "the same name"
+  },
+  {
+   "name": "ECONNRESET",
+   "macos": "54",
+   "in_the_image": "ECONNRESET",
+   "why": "the same name"
+  },
+  {
+   "name": "EDEADLK",
+   "macos": "11",
+   "in_the_image": "EDEADLK",
+   "why": "the same name"
+  },
+  {
+   "name": "EDESTADDRREQ",
+   "macos": "39",
+   "in_the_image": "EDESTADDRREQ",
+   "why": "the same name"
+  },
+  {
+   "name": "EDEVERR",
+   "macos": "83",
+   "in_the_image": "EIO",
+   "why": "no such name in the image: EIO"
+  },
+  {
+   "name": "EDOM",
+   "macos": "33",
+   "in_the_image": "EDOM",
+   "why": "the same name"
+  },
+  {
+   "name": "EDQUOT",
+   "macos": "69",
+   "in_the_image": "EDQUOT",
+   "why": "the same name"
+  },
+  {
+   "name": "EEXIST",
+   "macos": "17",
+   "in_the_image": "EEXIST",
+   "why": "the same name"
+  },
+  {
+   "name": "EFAULT",
+   "macos": "14",
+   "in_the_image": "EFAULT",
+   "why": "the same name"
+  },
+  {
+   "name": "EFBIG",
+   "macos": "27",
+   "in_the_image": "EFBIG",
+   "why": "the same name"
+  },
+  {
+   "name": "EFTYPE",
+   "macos": "79",
+   "in_the_image": "137",
+   "why": "a number that bun has and Linux has not"
+  },
+  {
+   "name": "EHOSTDOWN",
+   "macos": "64",
+   "in_the_image": "EHOSTDOWN",
+   "why": "the same name"
+  },
+  {
+   "name": "EHOSTUNREACH",
+   "macos": "65",
+   "in_the_image": "EHOSTUNREACH",
+   "why": "the same name"
+  },
+  {
+   "name": "EIDRM",
+   "macos": "90",
+   "in_the_image": "EIDRM",
+   "why": "the same name"
+  },
+  {
+   "name": "EILSEQ",
+   "macos": "92",
+   "in_the_image": "EILSEQ",
+   "why": "the same name"
+  },
+  {
+   "name": "EINPROGRESS",
+   "macos": "36",
+   "in_the_image": "EINPROGRESS",
+   "why": "the same name"
+  },
+  {
+   "name": "EINTR",
+   "macos": "4",
+   "in_the_image": "EINTR",
+   "why": "the same name"
+  },
+  {
+   "name": "EINVAL",
+   "macos": "22",
+   "in_the_image": "EINVAL",
+   "why": "the same name"
+  },
+  {
+   "name": "EIO",
+   "macos": "5",
+   "in_the_image": "EIO",
+   "why": "the same name"
+  },
+  {
+   "name": "EISCONN",
+   "macos": "56",
+   "in_the_image": "EISCONN",
+   "why": "the same name"
+  },
+  {
+   "name": "EISDIR",
+   "macos": "21",
+   "in_the_image": "EISDIR",
+   "why": "the same name"
+  },
+  {
+   "name": "ELOOP",
+   "macos": "62",
+   "in_the_image": "ELOOP",
+   "why": "the same name"
+  },
+  {
+   "name": "EMFILE",
+   "macos": "24",
+   "in_the_image": "EMFILE",
+   "why": "the same name"
+  },
+  {
+   "name": "EMLINK",
+   "macos": "31",
+   "in_the_image": "EMLINK",
+   "why": "the same name"
+  },
+  {
+   "name": "EMSGSIZE",
+   "macos": "40",
+   "in_the_image": "EMSGSIZE",
+   "why": "the same name"
+  },
+  {
+   "name": "EMULTIHOP",
+   "macos": "95",
+   "in_the_image": "EMULTIHOP",
+   "why": "the same name"
+  },
+  {
+   "name": "ENAMETOOLONG",
+   "macos": "63",
+   "in_the_image": "ENAMETOOLONG",
+   "why": "the same name"
+  },
+  {
+   "name": "ENEEDAUTH",
+   "macos": "81",
+   "in_the_image": "EACCES",
+   "why": "no such name in the image: EACCES"
+  },
+  {
+   "name": "ENETDOWN",
+   "macos": "50",
+   "in_the_image": "ENETDOWN",
+   "why": "the same name"
+  },
+  {
+   "name": "ENETRESET",
+   "macos": "52",
+   "in_the_image": "ENETRESET",
+   "why": "the same name"
+  },
+  {
+   "name": "ENETUNREACH",
+   "macos": "51",
+   "in_the_image": "ENETUNREACH",
+   "why": "the same name"
+  },
+  {
+   "name": "ENFILE",
+   "macos": "23",
+   "in_the_image": "ENFILE",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOATTR",
+   "macos": "93",
+   "in_the_image": "ENOATTR",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOBUFS",
+   "macos": "55",
+   "in_the_image": "ENOBUFS",
+   "why": "the same name"
+  },
+  {
+   "name": "ENODATA",
+   "macos": "96",
+   "in_the_image": "ENODATA",
+   "why": "the same name"
+  },
+  {
+   "name": "ENODEV",
+   "macos": "19",
+   "in_the_image": "ENODEV",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOENT",
+   "macos": "2",
+   "in_the_image": "ENOENT",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOEXEC",
+   "macos": "8",
+   "in_the_image": "ENOEXEC",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOLCK",
+   "macos": "77",
+   "in_the_image": "ENOLCK",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOLINK",
+   "macos": "97",
+   "in_the_image": "ENOLINK",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOMEM",
+   "macos": "12",
+   "in_the_image": "ENOMEM",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOMSG",
+   "macos": "91",
+   "in_the_image": "ENOMSG",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOPOLICY",
+   "macos": "103",
+   "in_the_image": "EPERM",
+   "why": "no such name in the image: EPERM"
+  },
+  {
+   "name": "ENOPROTOOPT",
+   "macos": "42",
+   "in_the_image": "ENOPROTOOPT",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOSPC",
+   "macos": "28",
+   "in_the_image": "ENOSPC",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOSR",
+   "macos": "98",
+   "in_the_image": "ENOSR",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOSTR",
+   "macos": "99",
+   "in_the_image": "ENOSTR",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOSYS",
+   "macos": "78",
+   "in_the_image": "ENOSYS",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTBLK",
+   "macos": "15",
+   "in_the_image": "ENOTBLK",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTCONN",
+   "macos": "57",
+   "in_the_image": "ENOTCONN",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTDIR",
+   "macos": "20",
+   "in_the_image": "ENOTDIR",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTEMPTY",
+   "macos": "66",
+   "in_the_image": "ENOTEMPTY",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTRECOVERABLE",
+   "macos": "104",
+   "in_the_image": "ENOTRECOVERABLE",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTSOCK",
+   "macos": "38",
+   "in_the_image": "ENOTSOCK",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTSUP",
+   "macos": "45",
+   "in_the_image": "ENOTSUP",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTTY",
+   "macos": "25",
+   "in_the_image": "ENOTTY",
+   "why": "the same name"
+  },
+  {
+   "name": "ENXIO",
+   "macos": "6",
+   "in_the_image": "ENXIO",
+   "why": "the same name"
+  },
+  {
+   "name": "EOPNOTSUPP",
+   "macos": "102",
+   "in_the_image": "EOPNOTSUPP",
+   "why": "the same name"
+  },
+  {
+   "name": "EOVERFLOW",
+   "macos": "84",
+   "in_the_image": "EOVERFLOW",
+   "why": "the same name"
+  },
+  {
+   "name": "EOWNERDEAD",
+   "macos": "105",
+   "in_the_image": "EOWNERDEAD",
+   "why": "the same name"
+  },
+  {
+   "name": "EPERM",
+   "macos": "1",
+   "in_the_image": "EPERM",
+   "why": "the same name"
+  },
+  {
+   "name": "EPFNOSUPPORT",
+   "macos": "46",
+   "in_the_image": "EPFNOSUPPORT",
+   "why": "the same name"
+  },
+  {
+   "name": "EPIPE",
+   "macos": "32",
+   "in_the_image": "EPIPE",
+   "why": "the same name"
+  },
+  {
+   "name": "EPROCLIM",
+   "macos": "67",
+   "in_the_image": "EAGAIN",
+   "why": "no such name in the image: EAGAIN"
+  },
+  {
+   "name": "EPROCUNAVAIL",
+   "macos": "76",
+   "in_the_image": "EREMOTEIO",
+   "why": "no such name in the image: EREMOTEIO"
+  },
+  {
+   "name": "EPROGMISMATCH",
+   "macos": "75",
+   "in_the_image": "EREMOTEIO",
+   "why": "no such name in the image: EREMOTEIO"
+  },
+  {
+   "name": "EPROGUNAVAIL",
+   "macos": "74",
+   "in_the_image": "EREMOTEIO",
+   "why": "no such name in the image: EREMOTEIO"
+  },
+  {
+   "name": "EPROTO",
+   "macos": "100",
+   "in_the_image": "EPROTO",
+   "why": "the same name"
+  },
+  {
+   "name": "EPROTONOSUPPORT",
+   "macos": "43",
+   "in_the_image": "EPROTONOSUPPORT",
+   "why": "the same name"
+  },
+  {
+   "name": "EPROTOTYPE",
+   "macos": "41",
+   "in_the_image": "EPROTOTYPE",
+   "why": "the same name"
+  },
+  {
+   "name": "EPWROFF",
+   "macos": "82",
+   "in_the_image": "EIO",
+   "why": "no such name in the image: EIO"
+  },
+  {
+   "name": "EQFULL",
+   "macos": "106",
+   "in_the_image": "ENOBUFS",
+   "why": "no such name in the image: ENOBUFS"
+  },
+  {
+   "name": "ERANGE",
+   "macos": "34",
+   "in_the_image": "ERANGE",
+   "why": "the same name"
+  },
+  {
+   "name": "EREMOTE",
+   "macos": "71",
+   "in_the_image": "EREMOTE",
+   "why": "the same name"
+  },
+  {
+   "name": "EROFS",
+   "macos": "30",
+   "in_the_image": "EROFS",
+   "why": "the same name"
+  },
+  {
+   "name": "ERPCMISMATCH",
+   "macos": "73",
+   "in_the_image": "EREMOTEIO",
+   "why": "no such name in the image: EREMOTEIO"
+  },
+  {
+   "name": "ESHLIBVERS",
+   "macos": "87",
+   "in_the_image": "ELIBBAD",
+   "why": "no such name in the image: ELIBBAD"
+  },
+  {
+   "name": "ESHUTDOWN",
+   "macos": "58",
+   "in_the_image": "ESHUTDOWN",
+   "why": "the same name"
+  },
+  {
+   "name": "ESOCKTNOSUPPORT",
+   "macos": "44",
+   "in_the_image": "ESOCKTNOSUPPORT",
+   "why": "the same name"
+  },
+  {
+   "name": "ESPIPE",
+   "macos": "29",
+   "in_the_image": "ESPIPE",
+   "why": "the same name"
+  },
+  {
+   "name": "ESRCH",
+   "macos": "3",
+   "in_the_image": "ESRCH",
+   "why": "the same name"
+  },
+  {
+   "name": "ESTALE",
+   "macos": "70",
+   "in_the_image": "ESTALE",
+   "why": "the same name"
+  },
+  {
+   "name": "ETIME",
+   "macos": "101",
+   "in_the_image": "ETIME",
+   "why": "the same name"
+  },
+  {
+   "name": "ETIMEDOUT",
+   "macos": "60",
+   "in_the_image": "ETIMEDOUT",
+   "why": "the same name"
+  },
+  {
+   "name": "ETOOMANYREFS",
+   "macos": "59",
+   "in_the_image": "ETOOMANYREFS",
+   "why": "the same name"
+  },
+  {
+   "name": "ETXTBSY",
+   "macos": "26",
+   "in_the_image": "ETXTBSY",
+   "why": "the same name"
+  },
+  {
+   "name": "EUSERS",
+   "macos": "68",
+   "in_the_image": "EUSERS",
+   "why": "the same name"
+  },
+  {
+   "name": "EWOULDBLOCK",
+   "macos": "35",
+   "in_the_image": "EWOULDBLOCK",
+   "why": "the same name"
+  },
+  {
+   "name": "EXDEV",
+   "macos": "18",
+   "in_the_image": "EXDEV",
+   "why": "the same name"
+  },
+  {
+   "name": "O_ACCMODE",
+   "macos": "3",
+   "in_the_image": "O_ACCMODE",
+   "why": "the same name"
+  },
+  {
+   "name": "O_APPEND",
+   "macos": "8",
+   "in_the_image": "O_APPEND",
+   "why": "the same name"
+  },
+  {
+   "name": "O_ASYNC",
+   "macos": "64",
+   "in_the_image": "O_ASYNC",
+   "why": "the same name"
+  },
+  {
+   "name": "O_CLOEXEC",
+   "macos": "16777216",
+   "in_the_image": "O_CLOEXEC",
+   "why": "the same name"
+  },
+  {
+   "name": "O_CREAT",
+   "macos": "512",
+   "in_the_image": "O_CREAT",
+   "why": "the same name"
+  },
+  {
+   "name": "O_DIRECTORY",
+   "macos": "1048576",
+   "in_the_image": "O_DIRECTORY",
+   "why": "the same name"
+  },
+  {
+   "name": "O_DSYNC",
+   "macos": "4194304",
+   "in_the_image": "O_DSYNC",
+   "why": "the same name"
+  },
+  {
+   "name": "O_EVTONLY",
+   "macos": "32768",
+   "in_the_image": "0x1000000",
+   "why": "macOS only: a bit that no flag of Linux has"
+  },
+  {
+   "name": "O_EXCL",
+   "macos": "2048",
+   "in_the_image": "O_EXCL",
+   "why": "the same name"
+  },
+  {
+   "name": "O_EXEC",
+   "macos": "1073741824",
+   "in_the_image": "O_EXEC",
+   "why": "the same name"
+  },
+  {
+   "name": "O_EXLOCK",
+   "macos": "32",
+   "in_the_image": "0x2000000",
+   "why": "macOS only: a bit that no flag of Linux has"
+  },
+  {
+   "name": "O_FSYNC",
+   "macos": "128",
+   "in_the_image": "0x4000000",
+   "why": "macOS only: a bit that no flag of Linux has"
+  },
+  {
+   "name": "O_NDELAY",
+   "macos": "4",
+   "in_the_image": "O_NDELAY",
+   "why": "the same name"
+  },
+  {
+   "name": "O_NOCTTY",
+   "macos": "131072",
+   "in_the_image": "O_NOCTTY",
+   "why": "the same name"
+  },
+  {
+   "name": "O_NOFOLLOW",
+   "macos": "256",
+   "in_the_image": "O_NOFOLLOW",
+   "why": "the same name"
+  },
+  {
+   "name": "O_NOFOLLOW_ANY",
+   "macos": "536870912",
+   "in_the_image": "0x8000000",
+   "why": "macOS only: a bit that no flag of Linux has"
+  },
+  {
+   "name": "O_NONBLOCK",
+   "macos": "4",
+   "in_the_image": "O_NONBLOCK",
+   "why": "the same name"
+  },
+  {
+   "name": "O_RDONLY",
+   "macos": "0",
+   "in_the_image": "O_RDONLY",
+   "why": "the same name"
+  },
+  {
+   "name": "O_RDWR",
+   "macos": "2",
+   "in_the_image": "O_RDWR",
+   "why": "the same name"
+  },
+  {
+   "name": "O_SEARCH",
+   "macos": "1074790400",
+   "in_the_image": "O_SEARCH",
+   "why": "the same name"
+  },
+  {
+   "name": "O_SHLOCK",
+   "macos": "16",
+   "in_the_image": "0x10000000",
+   "why": "macOS only: a bit that no flag of Linux has"
+  },
+  {
+   "name": "O_SYMLINK",
+   "macos": "2097152",
+   "in_the_image": "0x20000000",
+   "why": "macOS only: a bit that no flag of Linux has"
+  },
+  {
+   "name": "O_SYNC",
+   "macos": "128",
+   "in_the_image": "O_SYNC",
+   "why": "the same name"
+  },
+  {
+   "name": "O_TRUNC",
+   "macos": "1024",
+   "in_the_image": "O_TRUNC",
+   "why": "the same name"
+  },
+  {
+   "name": "O_WRONLY",
+   "macos": "1",
+   "in_the_image": "O_WRONLY",
+   "why": "the same name"
+  }
+ ],
+ "translated_by_hand": [
+  "open",
+  "openat",
+  "fcntl",
+  "fstatat",
+  "faccessat",
+  "unlinkat",
+  "mkdirat",
+  "renameatx_np",
+  "clonefileat",
+  "fclonefileat",
+  "posix_spawn_file_actions_addopen",
+  "__error"
+ ],
+ "errno": [
+  {
+   "name": "E2BIG",
+   "macos": "7",
+   "in_the_image": "E2BIG",
+   "why": "the same name"
+  },
+  {
+   "name": "EACCES",
+   "macos": "13",
+   "in_the_image": "EACCES",
+   "why": "the same name"
+  },
+  {
+   "name": "EADDRINUSE",
+   "macos": "48",
+   "in_the_image": "EADDRINUSE",
+   "why": "the same name"
+  },
+  {
+   "name": "EADDRNOTAVAIL",
+   "macos": "49",
+   "in_the_image": "EADDRNOTAVAIL",
+   "why": "the same name"
+  },
+  {
+   "name": "EAFNOSUPPORT",
+   "macos": "47",
+   "in_the_image": "EAFNOSUPPORT",
+   "why": "the same name"
+  },
+  {
+   "name": "EAGAIN",
+   "macos": "35",
+   "in_the_image": "EAGAIN",
+   "why": "the same name"
+  },
+  {
+   "name": "EALREADY",
+   "macos": "37",
+   "in_the_image": "EALREADY",
+   "why": "the same name"
+  },
+  {
+   "name": "EBADF",
+   "macos": "9",
+   "in_the_image": "EBADF",
+   "why": "the same name"
+  },
+  {
+   "name": "EBADMSG",
+   "macos": "94",
+   "in_the_image": "EBADMSG",
+   "why": "the same name"
+  },
+  {
+   "name": "EBUSY",
+   "macos": "16",
+   "in_the_image": "EBUSY",
+   "why": "the same name"
+  },
+  {
+   "name": "ECANCELED",
+   "macos": "89",
+   "in_the_image": "ECANCELED",
+   "why": "the same name"
+  },
+  {
+   "name": "ECHILD",
+   "macos": "10",
+   "in_the_image": "ECHILD",
+   "why": "the same name"
+  },
+  {
+   "name": "ECONNABORTED",
+   "macos": "53",
+   "in_the_image": "ECONNABORTED",
+   "why": "the same name"
+  },
+  {
+   "name": "ECONNREFUSED",
+   "macos": "61",
+   "in_the_image": "ECONNREFUSED",
+   "why": "the same name"
+  },
+  {
+   "name": "ECONNRESET",
+   "macos": "54",
+   "in_the_image": "ECONNRESET",
+   "why": "the same name"
+  },
+  {
+   "name": "EDEADLK",
+   "macos": "11",
+   "in_the_image": "EDEADLK",
+   "why": "the same name"
+  },
+  {
+   "name": "EDESTADDRREQ",
+   "macos": "39",
+   "in_the_image": "EDESTADDRREQ",
+   "why": "the same name"
+  },
+  {
+   "name": "EDOM",
+   "macos": "33",
+   "in_the_image": "EDOM",
+   "why": "the same name"
+  },
+  {
+   "name": "EDQUOT",
+   "macos": "69",
+   "in_the_image": "EDQUOT",
+   "why": "the same name"
+  },
+  {
+   "name": "EEXIST",
+   "macos": "17",
+   "in_the_image": "EEXIST",
+   "why": "the same name"
+  },
+  {
+   "name": "EFAULT",
+   "macos": "14",
+   "in_the_image": "EFAULT",
+   "why": "the same name"
+  },
+  {
+   "name": "EFBIG",
+   "macos": "27",
+   "in_the_image": "EFBIG",
+   "why": "the same name"
+  },
+  {
+   "name": "EHOSTDOWN",
+   "macos": "64",
+   "in_the_image": "EHOSTDOWN",
+   "why": "the same name"
+  },
+  {
+   "name": "EHOSTUNREACH",
+   "macos": "65",
+   "in_the_image": "EHOSTUNREACH",
+   "why": "the same name"
+  },
+  {
+   "name": "EIDRM",
+   "macos": "90",
+   "in_the_image": "EIDRM",
+   "why": "the same name"
+  },
+  {
+   "name": "EILSEQ",
+   "macos": "92",
+   "in_the_image": "EILSEQ",
+   "why": "the same name"
+  },
+  {
+   "name": "EINPROGRESS",
+   "macos": "36",
+   "in_the_image": "EINPROGRESS",
+   "why": "the same name"
+  },
+  {
+   "name": "EINTR",
+   "macos": "4",
+   "in_the_image": "EINTR",
+   "why": "the same name"
+  },
+  {
+   "name": "EINVAL",
+   "macos": "22",
+   "in_the_image": "EINVAL",
+   "why": "the same name"
+  },
+  {
+   "name": "EIO",
+   "macos": "5",
+   "in_the_image": "EIO",
+   "why": "the same name"
+  },
+  {
+   "name": "EISCONN",
+   "macos": "56",
+   "in_the_image": "EISCONN",
+   "why": "the same name"
+  },
+  {
+   "name": "EISDIR",
+   "macos": "21",
+   "in_the_image": "EISDIR",
+   "why": "the same name"
+  },
+  {
+   "name": "ELOOP",
+   "macos": "62",
+   "in_the_image": "ELOOP",
+   "why": "the same name"
+  },
+  {
+   "name": "EMFILE",
+   "macos": "24",
+   "in_the_image": "EMFILE",
+   "why": "the same name"
+  },
+  {
+   "name": "EMLINK",
+   "macos": "31",
+   "in_the_image": "EMLINK",
+   "why": "the same name"
+  },
+  {
+   "name": "EMSGSIZE",
+   "macos": "40",
+   "in_the_image": "EMSGSIZE",
+   "why": "the same name"
+  },
+  {
+   "name": "EMULTIHOP",
+   "macos": "95",
+   "in_the_image": "EMULTIHOP",
+   "why": "the same name"
+  },
+  {
+   "name": "ENAMETOOLONG",
+   "macos": "63",
+   "in_the_image": "ENAMETOOLONG",
+   "why": "the same name"
+  },
+  {
+   "name": "ENETDOWN",
+   "macos": "50",
+   "in_the_image": "ENETDOWN",
+   "why": "the same name"
+  },
+  {
+   "name": "ENETRESET",
+   "macos": "52",
+   "in_the_image": "ENETRESET",
+   "why": "the same name"
+  },
+  {
+   "name": "ENETUNREACH",
+   "macos": "51",
+   "in_the_image": "ENETUNREACH",
+   "why": "the same name"
+  },
+  {
+   "name": "ENFILE",
+   "macos": "23",
+   "in_the_image": "ENFILE",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOATTR",
+   "macos": "93",
+   "in_the_image": "ENOATTR",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOBUFS",
+   "macos": "55",
+   "in_the_image": "ENOBUFS",
+   "why": "the same name"
+  },
+  {
+   "name": "ENODATA",
+   "macos": "96",
+   "in_the_image": "ENODATA",
+   "why": "the same name"
+  },
+  {
+   "name": "ENODEV",
+   "macos": "19",
+   "in_the_image": "ENODEV",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOENT",
+   "macos": "2",
+   "in_the_image": "ENOENT",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOEXEC",
+   "macos": "8",
+   "in_the_image": "ENOEXEC",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOLCK",
+   "macos": "77",
+   "in_the_image": "ENOLCK",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOLINK",
+   "macos": "97",
+   "in_the_image": "ENOLINK",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOMEM",
+   "macos": "12",
+   "in_the_image": "ENOMEM",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOMSG",
+   "macos": "91",
+   "in_the_image": "ENOMSG",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOPROTOOPT",
+   "macos": "42",
+   "in_the_image": "ENOPROTOOPT",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOSPC",
+   "macos": "28",
+   "in_the_image": "ENOSPC",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOSR",
+   "macos": "98",
+   "in_the_image": "ENOSR",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOSTR",
+   "macos": "99",
+   "in_the_image": "ENOSTR",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOSYS",
+   "macos": "78",
+   "in_the_image": "ENOSYS",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTBLK",
+   "macos": "15",
+   "in_the_image": "ENOTBLK",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTCONN",
+   "macos": "57",
+   "in_the_image": "ENOTCONN",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTDIR",
+   "macos": "20",
+   "in_the_image": "ENOTDIR",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTEMPTY",
+   "macos": "66",
+   "in_the_image": "ENOTEMPTY",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTRECOVERABLE",
+   "macos": "104",
+   "in_the_image": "ENOTRECOVERABLE",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTSOCK",
+   "macos": "38",
+   "in_the_image": "ENOTSOCK",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTSUP",
+   "macos": "45",
+   "in_the_image": "ENOTSUP",
+   "why": "the same name"
+  },
+  {
+   "name": "ENOTTY",
+   "macos": "25",
+   "in_the_image": "ENOTTY",
+   "why": "the same name"
+  },
+  {
+   "name": "ENXIO",
+   "macos": "6",
+   "in_the_image": "ENXIO",
+   "why": "the same name"
+  },
+  {
+   "name": "EOPNOTSUPP",
+   "macos": "102",
+   "in_the_image": "EOPNOTSUPP",
+   "why": "the same name"
+  },
+  {
+   "name": "EOVERFLOW",
+   "macos": "84",
+   "in_the_image": "EOVERFLOW",
+   "why": "the same name"
+  },
+  {
+   "name": "EOWNERDEAD",
+   "macos": "105",
+   "in_the_image": "EOWNERDEAD",
+   "why": "the same name"
+  },
+  {
+   "name": "EPERM",
+   "macos": "1",
+   "in_the_image": "EPERM",
+   "why": "the same name"
+  },
+  {
+   "name": "EPFNOSUPPORT",
+   "macos": "46",
+   "in_the_image": "EPFNOSUPPORT",
+   "why": "the same name"
+  },
+  {
+   "name": "EPIPE",
+   "macos": "32",
+   "in_the_image": "EPIPE",
+   "why": "the same name"
+  },
+  {
+   "name": "EPROTO",
+   "macos": "100",
+   "in_the_image": "EPROTO",
+   "why": "the same name"
+  },
+  {
+   "name": "EPROTONOSUPPORT",
+   "macos": "43",
+   "in_the_image": "EPROTONOSUPPORT",
+   "why": "the same name"
+  },
+  {
+   "name": "EPROTOTYPE",
+   "macos": "41",
+   "in_the_image": "EPROTOTYPE",
+   "why": "the same name"
+  },
+  {
+   "name": "ERANGE",
+   "macos": "34",
+   "in_the_image": "ERANGE",
+   "why": "the same name"
+  },
+  {
+   "name": "EREMOTE",
+   "macos": "71",
+   "in_the_image": "EREMOTE",
+   "why": "the same name"
+  },
+  {
+   "name": "EROFS",
+   "macos": "30",
+   "in_the_image": "EROFS",
+   "why": "the same name"
+  },
+  {
+   "name": "ESHUTDOWN",
+   "macos": "58",
+   "in_the_image": "ESHUTDOWN",
+   "why": "the same name"
+  },
+  {
+   "name": "ESOCKTNOSUPPORT",
+   "macos": "44",
+   "in_the_image": "ESOCKTNOSUPPORT",
+   "why": "the same name"
+  },
+  {
+   "name": "ESPIPE",
+   "macos": "29",
+   "in_the_image": "ESPIPE",
+   "why": "the same name"
+  },
+  {
+   "name": "ESRCH",
+   "macos": "3",
+   "in_the_image": "ESRCH",
+   "why": "the same name"
+  },
+  {
+   "name": "ESTALE",
+   "macos": "70",
+   "in_the_image": "ESTALE",
+   "why": "the same name"
+  },
+  {
+   "name": "ETIME",
+   "macos": "101",
+   "in_the_image": "ETIME",
+   "why": "the same name"
+  },
+  {
+   "name": "ETIMEDOUT",
+   "macos": "60",
+   "in_the_image": "ETIMEDOUT",
+   "why": "the same name"
+  },
+  {
+   "name": "ETOOMANYREFS",
+   "macos": "59",
+   "in_the_image": "ETOOMANYREFS",
+   "why": "the same name"
+  },
+  {
+   "name": "ETXTBSY",
+   "macos": "26",
+   "in_the_image": "ETXTBSY",
+   "why": "the same name"
+  },
+  {
+   "name": "EUSERS",
+   "macos": "68",
+   "in_the_image": "EUSERS",
+   "why": "the same name"
+  },
+  {
+   "name": "EWOULDBLOCK",
+   "macos": "35",
+   "in_the_image": "EWOULDBLOCK",
+   "why": "the same name"
+  },
+  {
+   "name": "EXDEV",
+   "macos": "18",
+   "in_the_image": "EXDEV",
+   "why": "the same name"
+  },
+  {
+   "name": "EAUTH",
+   "macos": "80",
+   "in_the_image": "EACCES",
+   "why": "no such name in the image: EACCES"
+  },
+  {
+   "name": "EBADARCH",
+   "macos": "86",
+   "in_the_image": "ENOEXEC",
+   "why": "no such name in the image: ENOEXEC"
+  },
+  {
+   "name": "EBADEXEC",
+   "macos": "85",
+   "in_the_image": "ENOEXEC",
+   "why": "no such name in the image: ENOEXEC"
+  },
+  {
+   "name": "EBADMACHO",
+   "macos": "88",
+   "in_the_image": "ENOEXEC",
+   "why": "no such name in the image: ENOEXEC"
+  },
+  {
+   "name": "EBADRPC",
+   "macos": "72",
+   "in_the_image": "EREMOTEIO",
+   "why": "no such name in the image: EREMOTEIO"
+  },
+  {
+   "name": "EDEVERR",
+   "macos": "83",
+   "in_the_image": "EIO",
+   "why": "no such name in the image: EIO"
+  },
+  {
+   "name": "EFTYPE",
+   "macos": "79",
+   "in_the_image": "137",
+   "why": "a number that bun has and Linux has not"
+  },
+  {
+   "name": "ENEEDAUTH",
+   "macos": "81",
+   "in_the_image": "EACCES",
+   "why": "no such name in the image: EACCES"
+  },
+  {
+   "name": "ENOPOLICY",
+   "macos": "103",
+   "in_the_image": "EPERM",
+   "why": "no such name in the image: EPERM"
+  },
+  {
+   "name": "EPROCLIM",
+   "macos": "67",
+   "in_the_image": "EAGAIN",
+   "why": "no such name in the image: EAGAIN"
+  },
+  {
+   "name": "EPROCUNAVAIL",
+   "macos": "76",
+   "in_the_image": "EREMOTEIO",
+   "why": "no such name in the image: EREMOTEIO"
+  },
+  {
+   "name": "EPROGMISMATCH",
+   "macos": "75",
+   "in_the_image": "EREMOTEIO",
+   "why": "no such name in the image: EREMOTEIO"
+  },
+  {
+   "name": "EPROGUNAVAIL",
+   "macos": "74",
+   "in_the_image": "EREMOTEIO",
+   "why": "no such name in the image: EREMOTEIO"
+  },
+  {
+   "name": "EPWROFF",
+   "macos": "82",
+   "in_the_image": "EIO",
+   "why": "no such name in the image: EIO"
+  },
+  {
+   "name": "EQFULL",
+   "macos": "106",
+   "in_the_image": "ENOBUFS",
+   "why": "no such name in the image: ENOBUFS"
+  },
+  {
+   "name": "ERPCMISMATCH",
+   "macos": "73",
+   "in_the_image": "EREMOTEIO",
+   "why": "no such name in the image: EREMOTEIO"
+  },
+  {
+   "name": "ESHLIBVERS",
+   "macos": "87",
+   "in_the_image": "ELIBBAD",
+   "why": "no such name in the image: ELIBBAD"
+  }
+ ],
+ "parts_of_darwin_layout_c": [
+  {
+   "part": 1,
+   "what": "type attrgroup_t"
+  },
+  {
+   "part": 2,
+   "what": "type attrlist"
+  },
+  {
+   "part": 3,
+   "what": "type blkcnt_t"
+  },
+  {
+   "part": 4,
+   "what": "type blksize_t"
+  },
+  {
+   "part": 5,
+   "what": "type copyfile_flags_t"
+  },
+  {
+   "part": 6,
+   "what": "type copyfile_state_t"
+  },
+  {
+   "part": 7,
+   "what": "type dev_t"
+  },
+  {
+   "part": 8,
+   "what": "type dirent"
+  },
+  {
+   "part": 9,
+   "what": "type flock"
+  },
+  {
+   "part": 10,
+   "what": "type fsid_t"
+  },
+  {
+   "part": 11,
+   "what": "type fstore_t"
+  },
+  {
+   "part": 12,
+   "what": "type gid_t"
+  },
+  {
+   "part": 13,
+   "what": "type host_flavor_t"
+  },
+  {
+   "part": 14,
+   "what": "type host_info64_t"
+  },
+  {
+   "part": 15,
+   "what": "type host_t"
+  },
+  {
+   "part": 16,
+   "what": "type ino_t"
+  },
+  {
+   "part": 17,
+   "what": "type integer_t"
+  },
+  {
+   "part": 18,
+   "what": "type intptr_t"
+  },
+  {
+   "part": 19,
+   "what": "type iovec"
+  },
+  {
+   "part": 20,
+   "what": "type kern_return_t"
+  },
+  {
+   "part": 21,
+   "what": "type kevent"
+  },
+  {
+   "part": 22,
+   "what": "type kevent64_s"
+  },
+  {
+   "part": 23,
+   "what": "type mach_msg_type_number_t"
+  },
+  {
+   "part": 24,
+   "what": "type mach_port_t"
+  },
+  {
+   "part": 25,
+   "what": "type mach_timebase_info"
+  },
+  {
+   "part": 26,
+   "what": "type mach_timebase_info_data_t"
+  },
+  {
+   "part": 27,
+   "what": "type mode_t"
+  },
+  {
+   "part": 28,
+   "what": "type natural_t"
+  },
+  {
+   "part": 29,
+   "what": "type nfds_t"
+  },
+  {
+   "part": 30,
+   "what": "type nl_item"
+  },
+  {
+   "part": 31,
+   "what": "type nlink_t"
+  },
+  {
+   "part": 32,
+   "what": "type off_t"
+  },
+  {
+   "part": 33,
+   "what": "type os_unfair_lock"
+  },
+  {
+   "part": 34,
+   "what": "type os_unfair_lock_s"
+  },
+  {
+   "part": 35,
+   "what": "type os_unfair_lock_t"
+  },
+  {
+   "part": 36,
+   "what": "type pid_t"
+  },
+  {
+   "part": 37,
+   "what": "type pollfd"
+  },
+  {
+   "part": 38,
+   "what": "type posix_spawn_file_actions_t"
+  },
+  {
+   "part": 39,
+   "what": "type posix_spawnattr_t"
+  },
+  {
+   "part": 40,
+   "what": "type processor_cpu_load_info"
+  },
+  {
+   "part": 41,
+   "what": "type processor_cpu_load_info_data_t"
+  },
+  {
+   "part": 42,
+   "what": "type processor_flavor_t"
+  },
+  {
+   "part": 43,
+   "what": "type processor_info_array_t"
+  },
+  {
+   "part": 44,
+   "what": "type pthread_t"
+  },
+  {
+   "part": 45,
+   "what": "type sa_family_t"
+  },
+  {
+   "part": 46,
+   "what": "type sf_hdtr"
+  },
+  {
+   "part": 47,
+   "what": "type sigset_t"
+  },
+  {
+   "part": 48,
+   "what": "type size_t"
+  },
+  {
+   "part": 49,
+   "what": "type sockaddr"
+  },
+  {
+   "part": 50,
+   "what": "type sockaddr_dl"
+  },
+  {
+   "part": 51,
+   "what": "type socklen_t"
+  },
+  {
+   "part": 52,
+   "what": "type speed_t"
+  },
+  {
+   "part": 53,
+   "what": "type ssize_t"
+  },
+  {
+   "part": 54,
+   "what": "type stat"
+  },
+  {
+   "part": 55,
+   "what": "type statfs"
+  },
+  {
+   "part": 56,
+   "what": "type suseconds_t"
+  },
+  {
+   "part": 57,
+   "what": "type tcflag_t"
+  },
+  {
+   "part": 58,
+   "what": "type time_t"
+  },
+  {
+   "part": 59,
+   "what": "type timespec"
+  },
+  {
+   "part": 60,
+   "what": "type timeval"
+  },
+  {
+   "part": 61,
+   "what": "type uid_t"
+  },
+  {
+   "part": 62,
+   "what": "type uintptr_t"
+  },
+  {
+   "part": 63,
+   "what": "type vm_address_t"
+  },
+  {
+   "part": 64,
+   "what": "type vm_map_t"
+  },
+  {
+   "part": 65,
+   "what": "type vm_offset_t"
+  },
+  {
+   "part": 66,
+   "what": "type vm_size_t"
+  },
+  {
+   "part": 67,
+   "what": "type vm_statistics64"
+  },
+  {
+   "part": 68,
+   "what": "type vm_statistics64_data_t"
+  },
+  {
+   "part": 69,
+   "what": "the constants"
+  }
+ ]
+}

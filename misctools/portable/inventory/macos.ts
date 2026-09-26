@@ -503,7 +503,7 @@ for (const entry of k1.values()) {
 const translated: { family: RegExp; where: string }[] = [
   { family: /^O_(RDONLY|WRONLY|RDWR|ACCMODE|CREAT|EXCL|NOCTTY|TRUNC|APPEND|NONBLOCK|CLOEXEC|DIRECTORY|NOFOLLOW|SYNC|DSYNC)$/, where: "open, openat, fcntl(F_SETFL, F_GETFL), pipe2, dup3" },
   { family: /^AT_(FDCWD|SYMLINK_NOFOLLOW|REMOVEDIR|EACCESS|SYMLINK_FOLLOW|EMPTY_PATH)$/, where: "the *at requests" },
-  { family: /^E[A-Z0-9]+$/, where: "the result of every request" },
+  { family: /^E(?!CHO|XT[AB]$|XTPROC$|LAST$)[A-Z0-9]+$/, where: "the result of every request" },
   { family: /^S_IF[A-Z]+$|^S_I[RWX](USR|GRP|OTH)$|^S_IS(UID|GID|VTX)$|^S_IRWX[UGO]$/, where: "stat (the same numbers on both systems)" },
   { family: /^DT_[A-Z]+$/, where: "getdents64 (the same numbers on both systems)" },
   { family: /^CLOCK_(REALTIME|MONOTONIC|MONOTONIC_RAW|PROCESS_CPUTIME_ID|THREAD_CPUTIME_ID|BOOTTIME|REALTIME_COARSE|MONOTONIC_COARSE)$/, where: "clock_gettime, clock_getres, clock_nanosleep" },

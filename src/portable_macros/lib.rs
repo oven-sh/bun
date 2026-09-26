@@ -29,6 +29,26 @@ mod imports;
 /// Every `fn` of the block becomes a function of the same name, visibility, arguments and result, `unsafe`
 /// unless it was declared `safe`. It calls the address in its entry of the image's import table
 /// (`bun_windows_sys::host_imports`), with the calling convention of Windows.
+///
+/// # Functions of macOS
+///
+/// `#[cfg_attr(bun_portable, bun_portable_macros::imports(library = "libSystem", host = "macos"))]`.
+/// The entries are the ones of `bun_darwin_sys::host_imports`. The image is compiled with the calling
+/// convention of Linux, which on arm64 is not the one of macOS in three points, and the function that
+/// is made here keeps to what both have in common:
+///
+/// - A function with a variable number of arguments is refused. The host has a function with fixed
+///   arguments for each one that bun calls (`bun_host_darwin_fcntl3`), and the block declares that one:
+///   `#[cfg(not(bun_portable))]` on the declaration for a build for macOS, `#[cfg(bun_portable)]` on
+///   the one for the image.
+/// - An integer argument of fewer than 32 bits is passed as 32 bits (`bun_darwin_sys::abi::Argument`).
+///   A type that has no such rule, a structure by value for one, does not compile.
+/// - More than 8 integer or 8 floating point arguments do not compile: the ninth is on the stack, where
+///   the two conventions lay arguments out differently.
+///
+/// After the call the error number of macOS's C library is the error number of the image's
+/// (`bun_darwin_sys::host_imports::keep_errno`), so the caller reads it as it does after any other call.
+/// `#[cfg_attr(bun_portable, no_errno)]` on a function that never sets one leaves that out.
 #[proc_macro_attribute]
 pub fn imports(args: TokenStream, item: TokenStream) -> TokenStream {
     imports::expand(args.into(), item.into())

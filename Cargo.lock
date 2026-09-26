@@ -489,6 +489,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_darwin_sys"
+version = "0.0.0"
+dependencies = [
+ "bun_portable_macros",
+ "libc",
+]
+
+[[package]]
 name = "bun_dispatch"
 version = "0.0.0"
 dependencies = [

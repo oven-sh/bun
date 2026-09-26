@@ -1,0 +1,23 @@
+{
+ "about": "Error numbers that macOS has and Linux has not, and the error of the image that stands for each: the name of an error of Linux that a program takes the same way, or a number that bun has for it in the image (src/errno/windows_errno.rs, which is the enum of the image). host/host_posix.c has the same table for the requests it answers; tools/check-darwin.ts compares the two.",
+ "in_the_image": {
+  "ENOATTR": "ENODATA",
+  "EFTYPE": "137",
+  "EAUTH": "EACCES",
+  "ENEEDAUTH": "EACCES",
+  "EPROCLIM": "EAGAIN",
+  "EBADRPC": "EREMOTEIO",
+  "ERPCMISMATCH": "EREMOTEIO",
+  "EPROGUNAVAIL": "EREMOTEIO",
+  "EPROGMISMATCH": "EREMOTEIO",
+  "EPROCUNAVAIL": "EREMOTEIO",
+  "EPWROFF": "EIO",
+  "EDEVERR": "EIO",
+  "EBADEXEC": "ENOEXEC",
+  "EBADARCH": "ENOEXEC",
+  "EBADMACHO": "ENOEXEC",
+  "ESHLIBVERS": "ELIBBAD",
+  "ENOPOLICY": "EPERM",
+  "EQFULL": "ENOBUFS"
+ }
+}

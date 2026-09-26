@@ -182,7 +182,7 @@ This is TypeScript!
 Control the depth of object inspection in console output with the `--console-depth` flag.
 
 ```bash terminal icon="terminal"
-bun --console-depth 5 run index.tsx
+bun --console-depth=5 run index.tsx
 ```
 
 `--console-depth` sets how deeply Bun displays nested objects in `console.log()` output. The default depth is `2`. Higher values show more nested properties but may produce verbose output for complex objects.
@@ -190,9 +190,43 @@ bun --console-depth 5 run index.tsx
 ```ts console.ts icon="/icons/typescript.svg"
 const nested = { a: { b: { c: { d: "deep" } } } };
 console.log(nested);
-// With --console-depth 2 (default): { a: { b: { c: [Object] } } }
-// With --console-depth 4: { a: { b: { c: { d: 'deep' } } } }
 ```
+
+At the default depth, Bun prints `[Object ...]` in place of the object in `c`.
+
+```bash terminal icon="terminal"
+bun console.ts
+```
+
+```txt
+{
+  a: {
+    b: {
+      c: [Object ...],
+    },
+  },
+}
+```
+
+At a depth of `4`, Bun prints every level.
+
+```bash terminal icon="terminal"
+bun --console-depth=4 console.ts
+```
+
+```txt
+{
+  a: {
+    b: {
+      c: {
+        d: "deep",
+      },
+    },
+  },
+}
+```
+
+The depth applies to arrays, `Map` objects, and `Set` objects too. Past the depth, Bun prints them as `[Array ...]`, `[Map ...]`, and `[Set ...]`. An empty array, `Map`, or `Set` prints as `[]`, `Map {}`, or `Set {}` at any depth.
 
 ## `bun run --smol`
 

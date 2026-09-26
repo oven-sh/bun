@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { readFileSync } from "fs";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -813,5 +814,72 @@ describe("worker_threads", () => {
     });
     await p;
     expect(message).toEqual("hello");
+  });
+});
+
+describe("worker thread limit", () => {
+  // On Linux, threads count toward RLIMIT_NPROC (the same counter a cgroup
+  // pids.max enforces). The kernel does not enforce the limit for root, so a
+  // root test runner drops to `nobody` through runuser.
+  const isRoot = process.getuid?.() === 0;
+  const hasPrlimit = isLinux && !!Bun.which("prlimit");
+  const hasNobody =
+    isRoot &&
+    !!Bun.which("runuser") &&
+    readFileSync("/etc/passwd", "utf8")
+      .split("\n")
+      .some(line => line.startsWith("nobody:"));
+  const canLimitThreads = hasPrlimit && (!isRoot || hasNobody);
+
+  test.skipIf(!canLimitThreads)("new Worker throws ERR_WORKER_INIT_FAILED when the OS refuses the thread", async () => {
+    // The child lowers its own limit to the number of tasks its uid already
+    // owns, once its lazy runtime threads exist, so only the worker's thread
+    // is refused.
+    const cmd = [
+      bunExe(),
+      "-e",
+      `import { readdirSync, readFileSync } from "node:fs";
+       let keep = [];
+       for (let i = 0; i < 50; i++) keep.push(new Array(10000).fill(i));
+       keep = [];
+       Bun.gc(true);
+       const uid = process.getuid();
+       let tasks = 0;
+       for (const pid of readdirSync("/proc")) {
+         if (!/^\\d+$/.test(pid)) continue;
+         let status;
+         try { status = readFileSync("/proc/" + pid + "/status", "utf8"); } catch { continue; }
+         const owner = status.match(/^Uid:\\s+(\\d+)/m);
+         if (!owner || Number(owner[1]) !== uid) continue;
+         const threads = status.match(/^Threads:\\s+(\\d+)/m);
+         tasks += threads ? Number(threads[1]) : 1;
+       }
+       const limited = Bun.spawnSync([${JSON.stringify(Bun.which("prlimit"))}, "--pid", String(process.pid), "--nproc=" + tasks]);
+       if (limited.exitCode !== 0) throw new Error("prlimit: " + limited.stderr);
+       try {
+         new Worker("data:text/javascript,postMessage(1)");
+         console.log("started");
+       } catch (e) {
+         console.log(JSON.stringify({ code: e.code, message: e.message, name: e.name }));
+       }
+       // A normal exit runs a GC, and its collector thread would be refused too.
+       process.exit(0);`,
+    ];
+    if (isRoot) cmd.unshift(Bun.which("runuser")!, "-u", "nobody", "--");
+    await using proc = Bun.spawn({
+      cmd,
+      env: {
+        ...bunEnv,
+        // `nobody` has no writable home.
+        HOME: "/tmp",
+        // LeakSanitizer needs a tracer thread at exit, which the limit refuses.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ code: "ERR_WORKER_INIT_FAILED", message: "EAGAIN", name: "Error" });
+    expect(exitCode, stderr).toBe(0);
   });
 });

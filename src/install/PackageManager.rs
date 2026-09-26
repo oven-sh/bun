@@ -26,7 +26,7 @@ use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
 use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
-use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
+use bun_threading::{Futex, ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler as transpiler;
 use bun_url::URL;
 
@@ -372,6 +372,10 @@ pub struct PackageManager {
     /// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
     pub(crate) pending_pre_calc_hashes: AtomicU32,
     pub pending_tasks: AtomicU32,
+    /// Bumped by every `wake_raw`. `park_until` waits on it.
+    pub(crate) wake_count: AtomicU32,
+    /// Threads parked on `wake_count`. At zero, `wake_raw` skips the futex syscall.
+    pub(crate) wake_waiters: AtomicU32,
     pub total_tasks: u32,
     pub(crate) preallocated_network_tasks: PreallocatedNetworkTasks,
     pub(crate) preallocated_resolve_tasks: PreallocatedTaskStore,
@@ -942,7 +946,44 @@ impl PackageManager {
                 (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+
+            // SeqCst: each side writes its word, then reads the other's (see `park_until`).
+            let wake_count = &*core::ptr::addr_of!((*this).wake_count);
+            wake_count.fetch_add(1, Ordering::SeqCst);
+            if (*core::ptr::addr_of!((*this).wake_waiters)).load(Ordering::SeqCst) > 0 {
+                Futex::wake(wake_count, u32::MAX);
+            }
         }
+    }
+
+    /// The resolver's auto-install manager. Nothing pending on it may need the event loop.
+    pub(crate) fn waits_without_event_loop(&self) -> bool {
+        matches!(self.event_loop, AnyEventLoop::Js { .. })
+    }
+
+    /// `sleep_until` for a JS thread: blocks the thread, never runs its event loop.
+    unsafe fn park_until<C>(
+        this: *mut PackageManager,
+        closure: &mut C,
+        is_done_fn: fn(&mut C) -> bool,
+    ) {
+        // Re-derived from `this` at every use: `is_done_fn` reborrows the whole
+        // `PackageManager`, so no reference may live across a call to it.
+        // SAFETY: `this` is valid per fn contract; the field is an atomic.
+        let wake_count = || unsafe { &*core::ptr::addr_of!((*this).wake_count) };
+        // SAFETY: as for `wake_count`.
+        let wake_waiters = || unsafe { &*core::ptr::addr_of!((*this).wake_waiters) };
+
+        wake_waiters().fetch_add(1, Ordering::SeqCst);
+        loop {
+            // Read before the drain in `is_done_fn`: a later finish then ends the wait at once.
+            let seen = wake_count().load(Ordering::SeqCst);
+            if is_done_fn(closure) {
+                break;
+            }
+            Futex::wait_forever(wake_count(), seen);
+        }
+        wake_waiters().fetch_sub(1, Ordering::SeqCst);
     }
 
     /// Associated fn taking `*mut PackageManager` (NOT `&mut self`): every
@@ -961,6 +1002,14 @@ impl PackageManager {
         is_done_fn: fn(&mut C) -> bool,
     ) {
         Output::flush();
+
+        // SAFETY: `this` is valid per fn contract; the shared borrow ends
+        // before `is_done_fn` runs.
+        if unsafe { (*this).waits_without_event_loop() } {
+            // SAFETY: same contract as this fn.
+            return unsafe { Self::park_until(this, closure, is_done_fn) };
+        }
+
         // `AnyEventLoop::tick_raw` takes the type-erased
         // `(*mut c_void, fn(*mut c_void) -> bool)`; trampoline through a small wrapper so
         // `is_done_fn` receives `&mut C` and can drive `run_tasks` / record `err`.
@@ -2112,6 +2161,8 @@ pub fn init(
         wr!(patch_task_queue, PatchTaskQueue::default());
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
+        wr!(wake_count, AtomicU32::new(0));
+        wr!(wake_waiters, AtomicU32::new(0));
         wr!(total_tasks, 0);
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));
@@ -2574,6 +2625,8 @@ fn init_with_runtime_once(
         wr!(patch_task_queue, PatchTaskQueue::default());
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
+        wr!(wake_count, AtomicU32::new(0));
+        wr!(wake_waiters, AtomicU32::new(0));
         wr!(total_tasks, 0);
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));

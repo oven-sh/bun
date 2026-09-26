@@ -5052,6 +5052,24 @@ console.log(foo, array);
       const result = await transpiler.transform(input);
       expect(result).toBe(`let list = [\"\\u2022\", \"-\", \"\\u25E6\", \"\\u25AA\", \"\\u25AB\"];\n`);
     });
+
+    // An ES module has no `require` or `module` in Node.js.
+    it("import.meta.main - node and browser targets", () => {
+      const input = `
+        export const a = import.meta.main;
+        export const b = !import.meta.main;
+        export const c = require.main === module;
+        export const d = require.main !== module;
+      `;
+      const output =
+        "export const a = import.meta.main;\n" +
+        "export const b = !import.meta.main;\n" +
+        "export const c = import.meta.main;\n" +
+        "export const d = !import.meta.main;\n";
+      for (const target of ["node", "browser"]) {
+        expect(new Bun.Transpiler({ loader: "ts", target }).transformSync(input)).toBe(output);
+      }
+    });
   });
 
   describe("edge cases", () => {

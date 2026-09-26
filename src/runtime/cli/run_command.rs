@@ -774,6 +774,29 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .copied()
     }
 
+    /// Same lookup order as the VM's `loader_for_path`, so both give the entry point one loader.
+    fn entry_point_loader(ctx: &ContextData, path: &[u8]) -> Loader {
+        let ext = paths::fs::PathName::init(path).ext;
+        if let Some(map) = ctx.args.loaders.as_ref() {
+            if let Some(i) = map.extensions.iter().rposition(|e| **e == *ext) {
+                return <Loader as bun_options_types::LoaderExt>::from_api(map.loaders[i]);
+            }
+        }
+        bun_bundler::options::DEFAULT_LOADERS
+            .get(ext)
+            .copied()
+            .or_else(|| Loader::from_string(ext))
+            .unwrap_or(Loader::Tsx)
+    }
+
+    /// `boot` runs any `.sh` path in the Bun shell. `Html` serves the file and `Md` renders it.
+    fn can_run_entry_point(path: &[u8], loader: Loader) -> bool {
+        strings::has_suffix_comptime(path, b".sh")
+            || loader.can_be_run_by_bun()
+            || loader == Loader::Html
+            || loader == Loader::Md
+    }
+
     /// Shared ctx→transpiler/resolver option projection used by [`boot`] and
     /// [`boot_standalone`].
     fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
@@ -1683,11 +1706,8 @@ fn print_unhandled_version_note(vm: &mut VirtualMachine) {
 impl RunCommand {
     /// Duplicate `path` to a process-lifetime buffer, boot the VM, and on
     /// failure print the formatted error + `exit(1)`.
-    fn boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
-        if matches!(
-            loader.or_else(|| Self::default_loader_for(path)),
-            Some(Loader::Md)
-        ) {
+    fn boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Loader) -> bool {
+        if loader == Loader::Md {
             Self::render_markdown_file_and_exit(path);
         }
 
@@ -1700,7 +1720,7 @@ impl RunCommand {
         // owned copy by value.
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
-        if let Err(err) = Self::boot(ctx, owned, loader) {
+        if let Err(err) = Self::boot(ctx, owned, Some(loader)) {
             Self::boot_failed_exit(ctx, paths::basename(path), &err);
         }
         true
@@ -2325,7 +2345,7 @@ impl RunCommand {
         }
 
         // ── try fast run (file exists & not a dir → boot VM) ────────────────
-        if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name) {
+        if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name, log_errors) {
             return Ok(true);
         }
 
@@ -2535,20 +2555,13 @@ impl RunCommand {
         match resolution {
             Ok(mut resolved) => {
                 let path = resolved.path().expect("resolved primary path");
-                let ext = path.name().ext;
-                let loader: Loader = this_transpiler
-                    .options
-                    .loaders
-                    .get(ext)
-                    .copied()
-                    .or_else(|| bun_bundler::options::DEFAULT_LOADERS.get(ext).copied())
-                    .unwrap_or(Loader::Tsx);
-                if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
+                let loader = Self::entry_point_loader(ctx, path.text);
+                if Self::can_run_entry_point(path.text, loader) {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
                     // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
+                    return Ok(Self::boot_and_handle_error(ctx, &text, loader));
                 } else {
                     bun_core::scoped_log!(
                         RUN_LOG,
@@ -2565,11 +2578,7 @@ impl RunCommand {
                 if strings::has_suffix_comptime(target_name, b".html")
                     && strings::contains_char(target_name, b'*')
                 {
-                    return Ok(Self::boot_and_handle_error(
-                        ctx,
-                        target_name,
-                        Some(Loader::Html),
-                    ));
+                    return Ok(Self::boot_and_handle_error(ctx, target_name, Loader::Html));
                 }
             }
         }
@@ -2635,31 +2644,64 @@ impl RunCommand {
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
                     let out = destination.as_bytes();
-                    let stored = fs.dirname_store.append_slice(out)?;
-                    let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                    Self::run_binary_without_bunx_path(
-                        ctx,
-                        stored,
-                        destination,
-                        top_level_dir,
-                        env_loader,
-                        &passthrough,
-                        Some(target_name),
-                    )?;
+                    // With a directory in the target, `which` skips `$PATH` and looks at that path.
+                    const SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+                    let loader = Self::entry_point_loader(ctx, out);
+                    if strings::contains_any(target_name, SEPARATORS)
+                        && !Self::can_run_entry_point(out, loader)
+                    {
+                        resolved_to_unrunnable_file
+                            .get_or_insert_with(|| (out.to_vec().into_boxed_slice(), loader));
+                    } else {
+                        let stored = fs.dirname_store.append_slice(out)?;
+                        let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
+                        Self::run_binary_without_bunx_path(
+                            ctx,
+                            stored,
+                            destination,
+                            top_level_dir,
+                            env_loader,
+                            &passthrough,
+                            Some(target_name),
+                        )?;
+                    }
                 }
             }
         }
 
         // ── failure ─────────────────────────────────────────────────────────
+        Ok(Self::nothing_ran(
+            ctx,
+            log_errors,
+            target_name,
+            resolved_to_unrunnable_file
+                .as_ref()
+                .map(|(path, loader)| (&**path, *loader)),
+        ))
+    }
+
+    /// Failure tail of [`RunCommand::exec_with_cfg`]. `true` means the target counts as handled.
+    #[cold]
+    #[inline(never)]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
+    fn nothing_ran(
+        ctx: &ContextData,
+        log_errors: bool,
+        target_name: &[u8],
+        unrunnable: Option<(&[u8], Loader)>,
+    ) -> bool {
         if ctx.runtime_options.if_present {
-            return Ok(true);
+            return true;
         }
 
         if log_errors {
-            if let Some((path, loader)) = resolved_to_unrunnable_file {
+            if let Some((path, loader)) = unrunnable {
                 bun_core::pretty_error!(
                     "<r><red>error<r><d>:<r> <b>Cannot run \"{}\"<r>\n",
-                    bstr::BStr::new(&path),
+                    bstr::BStr::new(path),
                 );
                 bun_core::pretty_error!(
                     "<r><d>note<r><d>:<r> Bun cannot run {} files directly\n",
@@ -2694,7 +2736,7 @@ impl RunCommand {
             Global::exit(1);
         }
 
-        Ok(false)
+        false
     }
 
     /// Fast-path file probe: if `target` resolves to an existing regular file,
@@ -2704,7 +2746,7 @@ impl RunCommand {
     ///
     /// `Arguments::parse` does not populate `entry_points` yet, so we
     /// take the target slice explicitly.
-    fn maybe_open_with_bun_js(ctx: &mut ContextData, target: &[u8]) -> bool {
+    fn maybe_open_with_bun_js(ctx: &mut ContextData, target: &[u8], log_errors: bool) -> bool {
         if target.is_empty() {
             return false;
         }
@@ -2810,7 +2852,18 @@ impl RunCommand {
         };
         let _ = bun_sys::close(fd);
 
-        Self::boot_and_handle_error(ctx, &absolute_script_path, None)
+        let loader = Self::entry_point_loader(ctx, &absolute_script_path);
+        // A plugin that a preload registers can turn a data file into code.
+        if ctx.preloads.is_empty() && !Self::can_run_entry_point(&absolute_script_path, loader) {
+            return Self::nothing_ran(
+                ctx,
+                log_errors,
+                target,
+                Some((&absolute_script_path, loader)),
+            );
+        }
+
+        Self::boot_and_handle_error(ctx, &absolute_script_path, loader)
     }
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`

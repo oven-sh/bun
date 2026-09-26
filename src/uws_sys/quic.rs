@@ -26,13 +26,3 @@ pub use self::stream::Stream;
 
 pub use self::header::Header;
 pub use self::header::Qpack;
-
-unsafe extern "C" {
-    // safe: no args; idempotent C-side initialization with no preconditions.
-    pub(crate) safe fn us_quic_global_init();
-}
-
-#[inline]
-pub fn global_init() {
-    us_quic_global_init()
-}

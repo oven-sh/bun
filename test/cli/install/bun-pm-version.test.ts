@@ -487,6 +487,58 @@ describe.concurrent("bun pm version", () => {
     });
   });
 
+  describe("--dry-run", () => {
+    it("prints the new version without writing package.json or running scripts", async () => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify(
+          {
+            name: "test",
+            version: "1.0.0",
+            scripts: {
+              preversion: "echo 'step1' >> lifecycle.log",
+              version: "echo 'step2' >> lifecycle.log",
+              postversion: "echo 'step3' >> lifecycle.log",
+            },
+          },
+          null,
+          2,
+        ),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "minor", "--dry-run", "--no-git-tag-version"],
+        testDir,
+      );
+
+      expect(error.trim()).toBe("");
+      expect(output.trim()).toBe("v1.1.0");
+      expect(code).toBe(0);
+
+      const pkg = await Bun.file(join(testDir, "package.json")).json();
+      expect(pkg.version).toBe("1.0.0");
+      expect(await Bun.file(join(testDir, "lifecycle.log")).exists()).toBe(false);
+    });
+
+    it("does not commit or tag in a git repository", async () => {
+      const testDir = await setupGitTest();
+
+      const { output, error, code } = await runCommand([bunExe(), "pm", "version", "patch", "--dry-run"], testDir);
+
+      expect(error.trim()).toBe("");
+      expect(output.trim()).toBe("v1.0.1");
+      expect(code).toBe(0);
+
+      const pkg = await Bun.file(join(testDir, "package.json")).json();
+      expect(pkg.version).toBe("1.0.0");
+
+      const { output: tagOutput } = await runCommand(["git", "tag", "-l"], testDir);
+      expect(tagOutput.trim()).toBe("");
+
+      const { output: logOutput } = await runCommand(["git", "log", "--oneline"], testDir);
+      expect(logOutput).not.toContain("v1.0.1");
+    });
+  });
+
   describe("JSON formatting preservation", () => {
     it("preserves JSON formatting correctly", async () => {
       const originalJson1 = `{

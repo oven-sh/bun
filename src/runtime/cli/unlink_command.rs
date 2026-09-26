@@ -112,10 +112,13 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
         // `lockfile.buffers.string_bytes`.
         let name = lockfile.str(&package.name);
 
-        match sys::lstat(resolve_path::join_abs_string_z::<platform::Auto>(
+        let dry_run = manager.options.dry_run;
+        let log_level = manager.options.log_level;
+        let link_path = resolve_path::join_abs_string_z::<platform::Auto>(
             global_link_dir_path(manager),
             &[name],
-        )) {
+        );
+        match sys::lstat(link_path) {
             Ok(stat) => {
                 if !sys::S::ISLNK(stat.st_mode as _) {
                     bun_core::pretty_errorln!(
@@ -132,6 +135,18 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
                 );
                 Global::exit(0);
             }
+        }
+
+        if dry_run {
+            if log_level != LogLevel::Silent {
+                bun_core::prettyln!(
+                    "<r><d>dry run:<r> would unlink \"{}\" <d>({})<r>",
+                    BStr::new(name),
+                    BStr::new(link_path.as_bytes()),
+                );
+            }
+            Output::flush();
+            Global::exit(0);
         }
 
         // Step 2. Setup the global directory

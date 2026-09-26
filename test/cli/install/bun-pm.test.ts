@@ -1084,3 +1084,36 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+test("bun pm cache rm --dry-run prints the cache directory and deletes nothing", async () => {
+  using dir = tempDir("pm-cache-rm-dry-run", {
+    "package.json": JSON.stringify({ name: "cache-rm-dry-run", version: "1.0.0" }),
+    "bun-install/install/cache/cached-package.txt": "cached artifact",
+  });
+  const dirStr = String(dir);
+  const bunInstallDir = join(dirStr, "bun-install");
+  const realCacheDir = join(bunInstallDir, "install", "cache");
+
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: bunInstallDir,
+    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
+    HOME: dirStr,
+  };
+  delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "cache", "rm", "--dry-run"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error");
+  expect(stdout).toInclude(`dry run: would delete 'bun install' cache at ${realCacheDir}`);
+  expect(stdout).not.toInclude("Cleared");
+  expect(exitCode).toBe(0);
+  expect(await exists(join(realCacheDir, "cached-package.txt"))).toBeTrue();
+});

@@ -823,6 +823,31 @@ describe("package-lock.json migration fixes", () => {
 
   const sha = (n: number) => Buffer.alloc(39, "0").toString() + n;
 
+  test.concurrent("pm migrate --dry-run does not write bun.lock", async () => {
+    const dependencies = { a: "github:user/a" };
+    using dir = synthetic("npm-migrate-dry-run", {
+      "package.json": JSON.stringify({ name: "dry-run", dependencies }),
+      "package-lock.json": JSON.stringify({
+        name: "dry-run",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "dry-run", dependencies },
+          "node_modules/a": { version: "1.0.0", resolved: `git+ssh://git@github.com/user/a.git#${sha(1)}` },
+        },
+      }),
+    });
+
+    const { stdout, stderr, exitCode } = await run(dir, "pm", "migrate", "--dry-run");
+    expect(stderr).toContain("migrated lockfile from package-lock.json");
+    expect(stdout).toContain("dry run: would write bun.lock");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), "bun.lock")).exists()).toBe(false);
+
+    const { text } = await migrate(dir);
+    expect(text).toContain(`a@github:user/a#${sha(1)}`);
+  });
+
   test.concurrent("git hosts round-trip (B1, github: parity)", async () => {
     const dependencies = {
       a: "github:user/a",

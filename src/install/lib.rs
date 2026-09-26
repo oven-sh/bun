@@ -896,7 +896,7 @@ impl RunCommand {
             };
             match result {
                 Ok(()) => return Ok(()),
-                Err(e) if !*made_dir => {
+                Err(_) if !*made_dir => {
                     *made_dir = true;
                     buf[dir_len] = 0;
                     match bun_sys::mkdir_w(WStr::from_buf(buf, dir_len)) {

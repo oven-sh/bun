@@ -3379,11 +3379,24 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
+    options = { ...options };
+    if (options.offset !== undefined && typeof options.offset !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
+    }
+    if (options.length !== undefined && typeof options.length !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
+    }
+    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
+      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
+    }
+
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
-    const statusCode = headers[HTTP2_HEADER_STATUS];
-    options = { ...options };
+    const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
+    if (statusCode < 200 || statusCode > 599) {
+      throw $ERR_HTTP2_STATUS_INVALID(statusCode);
+    }
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -3393,16 +3406,6 @@ class ServerHttp2Stream extends Http2Stream {
       this.headRequest
     ) {
       throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
-    }
-
-    if (options.offset !== undefined && typeof options.offset !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
-    }
-    if (options.length !== undefined && typeof options.length !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
-    }
-    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
-      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
     this[kOwnsFd] = true;
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
@@ -3439,20 +3442,6 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
-    if (headers[HTTP2_HEADER_STATUS] === undefined) {
-      headers[HTTP2_HEADER_STATUS] = 200;
-    }
-    const statusCode = headers[HTTP2_HEADER_STATUS];
-
-    // Payload/DATA frames are not permitted in these cases
-    if (
-      statusCode === HTTP_STATUS_NO_CONTENT ||
-      statusCode === HTTP_STATUS_RESET_CONTENT ||
-      statusCode === HTTP_STATUS_NOT_MODIFIED ||
-      this.headRequest
-    ) {
-      throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
-    }
     options = { ...options };
     if (options.offset !== undefined && typeof options.offset !== "number") {
       throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
@@ -3462,6 +3451,24 @@ class ServerHttp2Stream extends Http2Stream {
     }
     if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
+    }
+
+    if (headers[HTTP2_HEADER_STATUS] === undefined) {
+      headers[HTTP2_HEADER_STATUS] = 200;
+    }
+    const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
+    if (statusCode < 200 || statusCode > 599) {
+      throw $ERR_HTTP2_STATUS_INVALID(statusCode);
+    }
+
+    // Payload/DATA frames are not permitted in these cases
+    if (
+      statusCode === HTTP_STATUS_NO_CONTENT ||
+      statusCode === HTTP_STATUS_RESET_CONTENT ||
+      statusCode === HTTP_STATUS_NOT_MODIFIED ||
+      this.headRequest
+    ) {
+      throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
     }
     // The caller owns this fd; clear any stale flag left by a prior respondWithFile()
     // on the same stream so doSendFileFD will not close it (node semantics).
@@ -3515,13 +3522,9 @@ class ServerHttp2Stream extends Http2Stream {
     // Pre-validate single-value headers in JS so a throwing additionalHeaders() leaves no partial
     // state in the shared HPACK table (same rule request() applies).
     if (this[bunHTTP2Session]?.[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
-    let hasStatus = true;
-    if (headers[HTTP2_HEADER_STATUS] === undefined) {
-      headers[HTTP2_HEADER_STATUS] = 200;
-      hasStatus = false;
-    }
-    const statusCode = headers[HTTP2_HEADER_STATUS];
-    if (hasStatus) {
+    // Like node, a block without :status goes out as given; only a present status is validated.
+    if (headers[HTTP2_HEADER_STATUS] != null) {
+      const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
       if (statusCode === HTTP_STATUS_SWITCHING_PROTOCOLS) throw $ERR_HTTP2_STATUS_101();
       if (statusCode < 100 || statusCode >= 200) {
         throw $ERR_HTTP2_INVALID_INFO_STATUS(statusCode);
@@ -3640,12 +3643,8 @@ class ServerHttp2Stream extends Http2Stream {
       }
       statusCode = headers[HTTP2_HEADER_STATUS] |= 0;
     }
-    // RFC 9113 8.1.1 removes 101 (Switching Protocols) from HTTP/2; node uses a dedicated code.
-    if (statusCode === 101) {
-      throw $ERR_HTTP2_STATUS_101();
-    }
-    // RFC 9110: only 1xx-5xx status codes exist; node rejects anything outside 100-599.
-    if (statusCode < 100 || statusCode > 599) {
+    // A final response is 2xx-5xx, as in node. A 1xx block goes through additionalHeaders().
+    if (statusCode < 200 || statusCode > 599) {
       throw $ERR_HTTP2_STATUS_INVALID(statusCode);
     }
     let endStream = !!options?.endStream;

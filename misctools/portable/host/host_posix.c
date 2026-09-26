@@ -1612,24 +1612,62 @@ static void find_host_code(void) {}
 static int install_syscall_filter(void) { return 1; }
 #endif
 
-/* ---- code signature, macOS on arm64 ----
+/* ---- where the image lies in the file, and its code signature ----
+   The file in argv[1] comes in one of two forms, and this is the only place
+   that tells them apart.
+
+   A bare image: its ELF header is at offset 0, and an Apple code signature,
+   if there is one, is named by the trailer that tools/apple_sign.py appends
+   (5 x u64: code_off, code_len, sig_off, sig_len, "BUNSIG01").
+
+   Or the packed form of tools/pack.ts: ONE file that is a Windows executable,
+   a shell script, and this image at a 64 KiB boundary. Its last 128 bytes are
+   a table of contents: "BUNPACK1", u32 version, u32 size, then u64 file_size,
+   arch, header_size, image_off, image_len, code_off, code_len, sig_off,
+   sig_len, the stub offsets, and the magic again in the last 8 bytes. The
+   shell header of that file puts this host into a cache directory and execs
+   it with the path of the packed file, so argv[1] is the container and the
+   image lies image_off bytes into it.
+
+   Either way everything below maps the image from that one file, at
+   image_off + the offset of the segment: the image is never copied out.
+
    Apple Silicon maps file pages executable only if a code signature covers
-   them. tools/apple_sign.py appended one for the whole image and a trailer
-   that says where it is: 5 x u64, code_off, code_len, sig_off, sig_len, magic.
+   them, so the signed range is the image where it lies in this file, named
+   with the fields that dyld fills for one slice of a fat Mach-O file.
    Registered as in probe/apple_signed_map.c, before anything is mapped. */
+struct image_place { uint64_t image_off, code_off, code_len, sig_off, sig_len; };
+
+static void find_image(int fd, off_t size, struct image_place *p) {
+  uint64_t toc[16], t[5];
+  memset(p, 0, sizeof *p);
+  if (size >= (off_t)sizeof toc && pread(fd, toc, sizeof toc, size - (off_t)sizeof toc) == (ssize_t)sizeof toc &&
+      !memcmp(&toc[0], "BUNPACK1", 8) && !memcmp(&toc[15], "BUNPACK1", 8)) {
+    p->image_off = toc[5];
+    p->code_off = toc[7];
+    p->code_len = toc[8];
+    p->sig_off = toc[9];
+    p->sig_len = toc[10];
+  } else if (size >= (off_t)sizeof t && pread(fd, t, sizeof t, size - (off_t)sizeof t) == (ssize_t)sizeof t && !memcmp(&t[4], "BUNSIG01", 8)) {
+    p->code_off = t[0];
+    p->code_len = t[1];
+    p->sig_off = t[2];
+    p->sig_len = t[3];
+  }
+}
+
 #if defined(__APPLE__) && defined(__aarch64__)
-static void register_signature(int fd, off_t size) {
-  uint64_t t[5];
-  if (size < (off_t)sizeof t || pread(fd, t, sizeof t, size - (off_t)sizeof t) != (ssize_t)sizeof t || memcmp(&t[4], "BUNSIG01", 8)) {
+static void register_signature(int fd, const struct image_place *p) {
+  if (!p->sig_len) {
     fprintf(stderr, "host: the image has no code signature\n");
     return;
   }
-  fsignatures_t fs = {(off_t)t[0], (void *)(uintptr_t)(t[2] - t[0]), (size_t)t[3]};
+  fsignatures_t fs = {(off_t)p->code_off, (void *)(uintptr_t)(p->sig_off - p->code_off), (size_t)p->sig_len};
   if (fcntl(fd, F_ADDFILESIGS_RETURN, &fs) == -1) fprintf(stderr, "host: the code signature of the image was refused (%s)\n", strerror(errno));
   else if (trace) fprintf(stderr, "[host] code signature registered, it covers the file up to %#llx\n", (unsigned long long)fs.fs_file_start);
 }
 #else
-static void register_signature(int fd, off_t size) { (void)fd; (void)size; }
+static void register_signature(int fd, const struct image_place *p) { (void)fd; (void)p; }
 #endif
 
 /* ---- image loading and start ---- */
@@ -1662,12 +1700,14 @@ int main(int argc, char **argv) {
   int fd = open(argv[1], O_RDONLY);
   struct stat st;
   if (fd < 0 || fstat(fd, &st)) { perror(argv[1]); return 2; }
-  register_signature(fd, st.st_size);
+  struct image_place place; /* where the image lies in this file: see above */
+  find_image(fd, st.st_size, &place);
+  register_signature(fd, &place);
   unsigned char *file = mmap(0, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
   if (file == MAP_FAILED) { perror("map image file"); return 2; }
-  Ehdr *eh = (Ehdr *)file;
+  Ehdr *eh = (Ehdr *)(file + place.image_off);
   if (eh->machine != IMAGE_MACHINE) { fprintf(stderr, "host: %s is an image for another processor (ELF machine %d, this host runs %d)\n", argv[1], eh->machine, IMAGE_MACHINE); return 2; }
-  Phdr *ph = (Phdr *)(file + eh->phoff);
+  Phdr *ph = (Phdr *)((unsigned char *)eh + eh->phoff);
   uint64_t top = 0;
   for (int i = 0; i < eh->phnum; i++)
     if (ph[i].type == 1 && ph[i].vaddr + ph[i].memsz > top) top = ph[i].vaddr + ph[i].memsz;
@@ -1686,18 +1726,19 @@ int main(int argc, char **argv) {
   const char *code_is = "mapped from the file";
   for (int i = 0; i < eh->phnum; i++) {
     if (ph[i].type != 1) continue;
-    if ((ph[i].vaddr | ph[i].offset) & (uint64_t)(host_page - 1)) { fprintf(stderr, "host: segment %d is not aligned to the host page\n", i); return 2; }
+    uint64_t at = place.image_off + ph[i].offset; /* its offset in this file */
+    if ((ph[i].vaddr | at) & (uint64_t)(host_page - 1)) { fprintf(stderr, "host: segment %d is not aligned to the host page\n", i); return 2; }
     size_t mem = (ph[i].memsz + (uint64_t)host_page - 1) & ~((uint64_t)host_page - 1);
     int prot = PROT_READ | (ph[i].flags & 1 ? PROT_EXEC : 0);
     if (!(ph[i].flags & 2)) {
-      void *p = mmap(base + ph[i].vaddr, mem, prot, MAP_PRIVATE | MAP_FIXED, fd, (off_t)ph[i].offset);
+      void *p = mmap(base + ph[i].vaddr, mem, prot, MAP_PRIVATE | MAP_FIXED, fd, (off_t)at);
       if (p != MAP_FAILED) { mapped_bytes += ph[i].filesz; continue; }
       if (trace) fprintf(stderr, "[host] file mapping with prot %d refused (%s), copying\n", prot, strerror(errno));
       if (ph[i].flags & 1) code_is = "copied (file mapping refused)";
     }
     void *p = mmap(base + ph[i].vaddr, mem, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANON_HOST, -1, 0);
     if (p == MAP_FAILED) { perror("map segment"); return 2; }
-    memcpy(p, file + ph[i].offset, ph[i].filesz);
+    memcpy(p, file + at, ph[i].filesz);
     copied_bytes += ph[i].filesz;
     if (!(ph[i].flags & 2) && mprotect(p, mem, prot)) { perror("protect segment"); return 2; }
   }
@@ -1780,7 +1821,8 @@ int main(int argc, char **argv) {
                     L_AT_BASE, 0, L_AT_ENTRY, (uint64_t)(uintptr_t)(base + entry), L_AT_UID, 0, L_AT_EUID, 0, L_AT_GID, 0, L_AT_EGID, 0,
                     L_AT_SECURE, 0, L_AT_RANDOM, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host, L_AT_NULL, 0};
   memcpy(v, aux, sizeof aux);
-  if (trace) fprintf(stderr, "[host] image %lld bytes at %p to %p, host table os %lu, thread slot offset %#lx, host page %ld, forwarding %s, memory %s\n", (long long)st.st_size, (void *)base, (void *)image_end, host.os,
+  if (trace) fprintf(stderr, "[host] file %lld bytes, image at %#llx, mapped at %p to %p, host table os %lu, thread slot offset %#lx, host page %ld, forwarding %s, memory %s\n", (long long)st.st_size,
+                     (unsigned long long)place.image_off, (void *)base, (void *)image_end, host.os,
                      host.tcb_offset, host_page, forward_unknown ? "ON" : "off", test_winmem ? "by the model of the Windows host" : test_overlay ? "of the system, pages are discarded by a new mapping" : "of the system");
   const char *seccomp = getenv("BUN_HOST_SECCOMP");
   if (!(seccomp && !atoi(seccomp))) {

@@ -1486,8 +1486,41 @@ static char *utf8(const wchar_t *w) {
   return s;
 }
 
+/* ---- where the image lies in the file ----
+   Two forms are started, and this is the only place that tells them apart.
+
+   A bare image file named by argv[1]: its ELF header is at offset 0 and the
+   arguments of the image are argv[2] and on. This is how the host is used
+   with an image that was built by misctools/portable/build.sh.
+
+   Or the packed form of tools/pack.ts: this .exe IS the container. One file
+   that is this Windows host, a shell script for sh, the loader stubs of the
+   other systems, and the image at a 64 KiB boundary inside it. Its last 128
+   bytes are a table of contents: "BUNPACK1", u32 version, u32 size, then u64
+   file_size, arch, header_size, image_off, image_len, code_off, code_len,
+   sig_off, sig_len, the stub offsets, and the magic again in the last 8
+   bytes. In that form there is no image argument: argv[0] is the name of the
+   container and all of argv belongs to the image.
+
+   Either way the image is mapped with views of that one file, at image_off +
+   the offset of the segment: nothing is copied out to a second file. */
+#define TOC_SIZE 128
+static HANDLE open_image_file(const wchar_t *path) {
+  return CreateFileW(path, GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+}
+static int read_toc(HANDLE file, uint64_t *image_off) {
+  unsigned char toc[TOC_SIZE];
+  LARGE_INTEGER size, at;
+  DWORD got = 0;
+  if (!GetFileSizeEx(file, &size) || size.QuadPart < TOC_SIZE) return 0;
+  at.QuadPart = size.QuadPart - TOC_SIZE;
+  if (!SetFilePointerEx(file, at, 0, FILE_BEGIN) || !ReadFile(file, toc, TOC_SIZE, &got, 0) || got != TOC_SIZE) return 0;
+  if (memcmp(toc, "BUNPACK1", 8) || memcmp(toc + TOC_SIZE - 8, "BUNPACK1", 8)) return 0;
+  memcpy(image_off, toc + 40, 8);
+  return 1;
+}
+
 int wmain(int argc, wchar_t **wide) {
-  if (argc < 2) { fprintf(stderr, "usage: host <image> [args]\n"); return 2; }
   trace = getenv("BUN_HOST_TRACE") ? atoi(getenv("BUN_HOST_TRACE")) : 0;
   QueryPerformanceFrequency(&qpc_freq);
   fds[0].handle = GetStdHandle(STD_INPUT_HANDLE);
@@ -1522,17 +1555,36 @@ int wmain(int argc, wchar_t **wide) {
   }
 #endif
 
-  HANDLE file_handle = CreateFileW(wide[1], GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_DELETE, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-  if (file_handle == INVALID_HANDLE_VALUE) { fprintf(stderr, "host: cannot open %s\n", utf8(wide[1])); return 2; }
+  /* ---- where the image lies in the file: see above ---- */
+  uint64_t image_off = 0;
+  int first_arg = 1;
+  const wchar_t *image_path = argc > 1 ? wide[1] : wide[0];
+  HANDLE file_handle = INVALID_HANDLE_VALUE;
+  {
+    wchar_t self[32768];
+    DWORD n = GetModuleFileNameW(0, self, 32768);
+    if (n && n < 32768) {
+      HANDLE mine = open_image_file(self);
+      if (mine != INVALID_HANDLE_VALUE) {
+        if (read_toc(mine, &image_off)) { file_handle = mine; first_arg = 0; image_path = wide[0]; }
+        else CloseHandle(mine);
+      }
+    }
+  }
+  if (file_handle == INVALID_HANDLE_VALUE) {
+    if (argc < 2) { fprintf(stderr, "usage: host <image> [args]\n"); return 2; }
+    file_handle = open_image_file(wide[1]);
+  }
+  if (file_handle == INVALID_HANDLE_VALUE) { fprintf(stderr, "host: cannot open %s\n", utf8(image_path)); return 2; }
   LARGE_INTEGER file_size;
   GetFileSizeEx(file_handle, &file_size);
   HANDLE mapping = CreateFileMappingW(file_handle, 0, PAGE_EXECUTE_READ, 0, 0, 0);
   if (!mapping) { fprintf(stderr, "host: cannot create an executable file mapping (%lu)\n", GetLastError()); return 2; }
   unsigned char *file = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
   if (!file) return 2;
-  Ehdr *eh = (Ehdr *)file;
-  if (eh->machine != IMAGE_MACHINE) { fprintf(stderr, "host: %s is an image for another processor (ELF machine %d, this host runs %d)\n", utf8(wide[1]), eh->machine, IMAGE_MACHINE); return 2; }
-  Phdr *ph = (Phdr *)(file + eh->phoff);
+  Ehdr *eh = (Ehdr *)(file + image_off);
+  if (eh->machine != IMAGE_MACHINE) { fprintf(stderr, "host: %s is an image for another processor (ELF machine %d, this host runs %d)\n", utf8(image_path), eh->machine, IMAGE_MACHINE); return 2; }
+  Phdr *ph = (Phdr *)((unsigned char *)eh + eh->phoff);
   uint64_t top = 0;
   for (int i = 0; i < eh->phnum; i++)
     if (ph[i].type == 1 && ph[i].vaddr + ph[i].memsz > top) top = ph[i].vaddr + ph[i].memsz;
@@ -1551,15 +1603,16 @@ int wmain(int argc, wchar_t **wide) {
     mapped_bytes = copied_bytes = 0;
     for (int i = 0; i < eh->phnum && ok; i++) {
       if (ph[i].type != 1) continue;
-      if ((ph[i].vaddr | ph[i].offset) & 0xffff) { fprintf(stderr, "host: segment %d is not aligned to 64 KiB\n", i); return 2; }
+      uint64_t at = image_off + ph[i].offset; /* its offset in this file */
+      if ((ph[i].vaddr | at) & 0xffff) { fprintf(stderr, "host: segment %d is not aligned to 64 KiB\n", i); return 2; }
       size_t mem = (ph[i].memsz + PAGE - 1) & ~(PAGE - 1);
       if (ph[i].flags & 2) {
         unsigned char *p = VirtualAlloc(want + ph[i].vaddr, mem, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-        if (p) { memcpy(p, file + ph[i].offset, ph[i].filesz); copied_bytes += ph[i].filesz; }
+        if (p) { memcpy(p, file + at, ph[i].filesz); copied_bytes += ph[i].filesz; }
         ok = p != 0;
       } else {
         DWORD access = FILE_MAP_READ | (ph[i].flags & 1 ? FILE_MAP_EXECUTE : 0);
-        ok = MapViewOfFileEx(mapping, access, (DWORD)(ph[i].offset >> 32), (DWORD)ph[i].offset, ph[i].filesz, want + ph[i].vaddr) != 0;
+        ok = MapViewOfFileEx(mapping, access, (DWORD)(at >> 32), (DWORD)at, ph[i].filesz, want + ph[i].vaddr) != 0;
         mapped_bytes += ph[i].filesz;
       }
     }
@@ -1620,8 +1673,10 @@ int wmain(int argc, wchar_t **wide) {
   static unsigned char random_bytes[16];
   if (!random_bytes_of_system(random_bytes, 16)) return 2;
 
-  *v++ = (uint64_t)(argc - 1);
-  for (int i = 1; i < argc; i++) {
+  /* first_arg is 1 for a bare image named by argv[1], 0 in the packed form:
+     see "where the image lies in the file" above. */
+  *v++ = (uint64_t)(argc - first_arg);
+  for (int i = first_arg; i < argc; i++) {
     int n = WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, cursor, (int)(stack + stack_size - cursor - 16), 0, 0);
     if (n <= 0) { fprintf(stderr, "host: the arguments do not fit\n"); return 2; }
     *v++ = (uint64_t)(uintptr_t)cursor;
@@ -1642,7 +1697,7 @@ int wmain(int argc, wchar_t **wide) {
                     L_AT_RANDOM, (uint64_t)(uintptr_t)random_bytes, AT_BUN_HOST, (uint64_t)(uintptr_t)&host, L_AT_NULL, 0};
   memcpy(v, aux, sizeof aux);
 
-  if (trace) fprintf(stderr, "[host] image %lld bytes at %p, entry %p, thread slot offset %#llx\n", (long long)file_size.QuadPart, base, base + eh->entry, host.tcb_offset);
+  if (trace) fprintf(stderr, "[host] file %lld bytes, image at %#llx, mapped at %p, entry %p, thread slot offset %#llx\n", (long long)file_size.QuadPart, (unsigned long long)image_off, base, base + eh->entry, host.tcb_offset);
 #if DELIVERS_FAULTS
   if (trace) fprintf(stderr, "[host] state of a thread that is stopped for a signal: %s, %u bytes\n", xsave_size ? "XSAVE" : "FXSAVE", xsave_size ? xsave_size : 512);
 #endif

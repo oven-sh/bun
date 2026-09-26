@@ -64,7 +64,7 @@ pub fn win_abi(args: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// The function is renamed `<name>__<os>`. With `dispatch(..)`, which the last definition carries, the
-/// function `<name>` is added: it calls the definition for the host OS (`bun_core::host`). The kinds are
+/// function `<name>` is added: it calls the definition for the host OS (`bun_core::host::native`). The kinds are
 /// `windows`, `macos`, `linux`, and `posix` for every host that is not Windows.
 #[proc_macro_attribute]
 pub fn host_os(args: TokenStream, item: TokenStream) -> TokenStream {

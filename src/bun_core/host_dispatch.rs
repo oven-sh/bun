@@ -2,7 +2,7 @@
 //!
 //! A build for one OS picks a definition with `cfg`. The portable image (`cfg(bun_portable)`) is compiled
 //! once, for a Linux target, and runs on Linux, macOS and Windows: it holds every definition and picks with
-//! [`crate::host`] when it runs. Each pattern below is, in a build for one OS, the `cfg` it replaces.
+//! [`crate::host::native`] when it runs. Each pattern below is, in a build for one OS, the `cfg` it replaces.
 //!
 //! | what                    | how                                                                       |
 //! | ----------------------- | ------------------------------------------------------------------------- |
@@ -22,7 +22,7 @@
 pub fn no_definition_for_this_host(function: &'static str) -> ! {
     panic!(
         "{function} has no definition for this host ({})",
-        crate::host::os().name_string()
+        crate::host::native::os().name_string()
     )
 }
 
@@ -91,15 +91,15 @@ macro_rules! host_select {
 #[macro_export]
 macro_rules! __host_select_portable {
     ([$windows:block] [$other:block]) => {
-        if $crate::host::is_windows() $windows else $other
+        if $crate::host::native::is_windows() $windows else $other
     };
     ([$windows:block] []) => {
-        if $crate::host::is_windows() $windows else {
+        if $crate::host::native::is_windows() $windows else {
             $crate::host_dispatch::no_definition_for_this_host(concat!(file!(), ":", line!()))
         }
     };
     ([] [$other:block]) => {
-        if $crate::host::is_windows() {
+        if $crate::host::native::is_windows() {
             $crate::host_dispatch::no_definition_for_this_host(concat!(file!(), ":", line!()))
         } else $other
     };
@@ -195,16 +195,16 @@ macro_rules! host_const {
 #[macro_export]
 macro_rules! __host_const_value {
     (windows => $windows:expr, posix => $posix:expr) => {
-        if $crate::host::is_windows() {
+        if $crate::host::native::is_windows() {
             $windows
         } else {
             $posix
         }
     };
     (linux => $linux:expr, macos => $macos:expr, windows => $windows:expr) => {
-        if $crate::host::is_windows() {
+        if $crate::host::native::is_windows() {
             $windows
-        } else if $crate::host::is_mac() {
+        } else if $crate::host::native::is_mac() {
             $macos
         } else {
             $linux
@@ -239,7 +239,7 @@ macro_rules! host_dispatch {
         $(#[$attribute])*
         #[inline]
         $visibility fn $name $(<$lifetime>)? ($($argument: $ty),*) $(-> $result)? {
-            if $crate::host::is_windows() {
+            if $crate::host::native::is_windows() {
                 use $windows as for_host;
                 for_host::$name($($argument),*)
             } else {

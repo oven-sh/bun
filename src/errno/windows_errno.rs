@@ -574,7 +574,7 @@ impl SystemErrnoInit for i64 {
         }
         // A host that is not Windows has no Win32 or Winsock code to find here.
         #[cfg(bun_portable)]
-        if !bun_core::host::is_windows() {
+        if !bun_core::host::native::is_windows() {
             return None;
         }
         SystemErrno::init_c_int(self as c_int)

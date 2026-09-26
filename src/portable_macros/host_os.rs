@@ -176,24 +176,24 @@ fn dispatcher(
     let mut tests = Vec::new();
     if has(Kind::Windows) {
         let call = call(Kind::Windows);
-        tests.push(quote!(if ::bun_core::host::is_windows() { return #call; }));
+        tests.push(quote!(if ::bun_core::host::native::is_windows() { return #call; }));
     }
     if has(Kind::Macos) {
         let call = call(Kind::Macos);
-        tests.push(quote!(if ::bun_core::host::is_mac() { return #call; }));
+        tests.push(quote!(if ::bun_core::host::native::is_mac() { return #call; }));
     }
     let otherwise = if has(Kind::Posix) {
         if has(Kind::Linux) {
             let call = call(Kind::Linux);
-            tests.push(quote!(if ::bun_core::host::is_linux() { return #call; }));
+            tests.push(quote!(if ::bun_core::host::native::is_linux() { return #call; }));
         }
         if has(Kind::Windows) {
             call(Kind::Posix)
         } else {
             let call = call(Kind::Posix);
             quote! {
-                if ::bun_core::host::is_windows() {
-                    ::bun_core::host::no_definition_for_this_host(concat!(module_path!(), "::", stringify!(#name)))
+                if ::bun_core::host::native::is_windows() {
+                    ::bun_core::host_dispatch::no_definition_for_this_host(concat!(module_path!(), "::", stringify!(#name)))
                 }
                 #call
             }
@@ -203,13 +203,11 @@ fn dispatcher(
     } else {
         if has(Kind::Linux) {
             let call = call(Kind::Linux);
-            tests.push(quote!(if ::bun_core::host::is_linux() { return #call; }));
+            tests.push(quote!(if ::bun_core::host::native::is_linux() { return #call; }));
         }
-        quote!(::bun_core::host::no_definition_for_this_host(concat!(
-            module_path!(),
-            "::",
-            stringify!(#name)
-        )))
+        quote!(::bun_core::host_dispatch::no_definition_for_this_host(
+            concat!(module_path!(), "::", stringify!(#name))
+        ))
     };
 
     let attributes = variant

@@ -811,7 +811,7 @@ pub mod dir_iterator {
     impl State {
         #[inline]
         fn new() -> State {
-            if bun_core::host::is_windows() {
+            if bun_core::host::native::is_windows() {
                 State::Windows(State__windows::new())
             } else {
                 State::Posix(State__posix::new())
@@ -3729,7 +3729,7 @@ pub mod sys_uv {
     }
 
     pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Maybe<Fd> {
-        if bun_core::host::is_windows() {
+        if bun_core::host::native::is_windows() {
             super::sys_uv_windows::open(
                 file_path,
                 super::flavor::windows::open_flags(c_flags),
@@ -3740,21 +3740,21 @@ pub mod sys_uv {
         }
     }
     pub fn fstat(fd: Fd) -> Maybe<Stat> {
-        if bun_core::host::is_windows() {
+        if bun_core::host::native::is_windows() {
             super::sys_uv_windows::fstat(fd).map(Stat::from)
         } else {
             super::fstat(fd)
         }
     }
     pub fn lstat(path: &ZStr) -> Maybe<Stat> {
-        if bun_core::host::is_windows() {
+        if bun_core::host::native::is_windows() {
             super::sys_uv_windows::lstat(path).map(Stat::from)
         } else {
             super::lstat(path)
         }
     }
     pub fn stat(path: &ZStr) -> Maybe<Stat> {
-        if bun_core::host::is_windows() {
+        if bun_core::host::native::is_windows() {
             super::sys_uv_windows::stat(path).map(Stat::from)
         } else {
             super::stat(path)
@@ -4682,7 +4682,7 @@ bun_core::host_dispatch! {
 }
 #[cfg(bun_portable)]
 pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-    if bun_core::host::is_windows() {
+    if bun_core::host::native::is_windows() {
         windows_impl::open(path, flavor::windows::open_flags(flags), mode)
     } else {
         posix_impl::open(path, flags, mode)
@@ -4690,7 +4690,7 @@ pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
 }
 #[cfg(bun_portable)]
 pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-    if bun_core::host::is_windows() {
+    if bun_core::host::native::is_windows() {
         windows_impl::openat(dir, path, flavor::windows::open_flags(flags), mode)
     } else {
         posix_impl::openat(dir, path, flags, mode)
@@ -4698,7 +4698,7 @@ pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> 
 }
 #[cfg(bun_portable)]
 pub fn stat(path: &ZStr) -> Maybe<Stat> {
-    if bun_core::host::is_windows() {
+    if bun_core::host::native::is_windows() {
         windows_impl::stat(path).map(Stat::from)
     } else {
         posix_impl::stat(path).map(Stat::from)
@@ -4706,7 +4706,7 @@ pub fn stat(path: &ZStr) -> Maybe<Stat> {
 }
 #[cfg(bun_portable)]
 pub fn fstat(fd: Fd) -> Maybe<Stat> {
-    if bun_core::host::is_windows() {
+    if bun_core::host::native::is_windows() {
         windows_impl::fstat(fd).map(Stat::from)
     } else {
         posix_impl::fstat(fd).map(Stat::from)
@@ -4714,7 +4714,7 @@ pub fn fstat(fd: Fd) -> Maybe<Stat> {
 }
 #[cfg(bun_portable)]
 pub fn lstat(path: &ZStr) -> Maybe<Stat> {
-    if bun_core::host::is_windows() {
+    if bun_core::host::native::is_windows() {
         windows_impl::lstat(path).map(Stat::from)
     } else {
         posix_impl::lstat(path).map(Stat::from)
@@ -4722,7 +4722,7 @@ pub fn lstat(path: &ZStr) -> Maybe<Stat> {
 }
 #[cfg(bun_portable)]
 pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
-    if bun_core::host::is_windows() {
+    if bun_core::host::native::is_windows() {
         windows_impl::fstatat(fd, path).map(Stat::from)
     } else {
         posix_impl::fstatat(fd, path).map(Stat::from)

@@ -203,9 +203,10 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     output::stdio::init();
     let _flush = output::flush_guard();
     #[cfg(bun_portable)]
-    if let Err(bun_core::host::InvalidTestHookValue(value)) = host_os {
+    if let Err(bun_core::host::InvalidTestHookValue(hook, value)) = host_os {
         bun_core::pretty_errorln!(
-            "<red>error<r>: BUN_PORTABLE_HOST_OS is {}, expected \"linux\", \"darwin\" or \"win32\"",
+            "<red>error<r>: {} is {}, expected \"linux\", \"darwin\" or \"win32\"",
+            hook.to_str().unwrap_or_default(),
             bun_core::fmt::quote(value),
         );
         Global::exit(1);

@@ -581,10 +581,12 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     bun_core::output::stdio::init();
     #[cfg(bun_portable)]
     if let Some(invalid) = invalid_hook {
-        let _ = File::borrow(&Fd::stderr())
-            .write_all(b"bun_fs_slice: BUN_PORTABLE_HOST_OS is not linux, darwin or win32: ");
-        let _ = File::borrow(&Fd::stderr()).write_all(invalid.0);
-        let _ = File::borrow(&Fd::stderr()).write_all(b"\n");
+        let stderr = Fd::stderr();
+        let _ = File::borrow(&stderr).write_all(b"bun_fs_slice: ");
+        let _ = File::borrow(&stderr).write_all(invalid.0.to_bytes());
+        let _ = File::borrow(&stderr).write_all(b" is not linux, darwin or win32: ");
+        let _ = File::borrow(&stderr).write_all(invalid.1);
+        let _ = File::borrow(&stderr).write_all(b"\n");
         return 2;
     }
     let passed = match arguments.as_slice() {

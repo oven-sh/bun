@@ -650,7 +650,7 @@ pub mod stdio {
         bun_initialize_process();
 
         #[cfg(any(windows, bun_portable))]
-        if crate::host::is_windows() {
+        if crate::host::native::is_windows() {
             super::windows_stdio::init();
         }
 

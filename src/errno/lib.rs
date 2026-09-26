@@ -270,7 +270,7 @@ pub fn get_errno<T: GetErrno>(rc: T) -> E {
 #[inline]
 pub fn last_error() -> E {
     #[cfg(bun_portable)]
-    if bun_core::host::is_windows() {
+    if bun_core::host::native::is_windows() {
         return windows_errno::last_error();
     }
     u16::try_from(posix::errno()).map_or(E::EUNKNOWN, E::from_raw)

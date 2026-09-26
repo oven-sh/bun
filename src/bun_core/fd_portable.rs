@@ -12,7 +12,7 @@
 use core::ffi::c_void;
 
 use crate::Fd;
-use crate::host;
+use crate::host::native as host;
 use crate::host_dispatch::no_definition_for_this_host;
 
 /// What `Fd::native` returns and `Fd::from_native` takes. The code that uses the value says which: an

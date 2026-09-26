@@ -8069,6 +8069,12 @@ declare module "bun" {
     };
     /**
      * The maximum resident set size (in bytes) used by the process during its lifetime.
+     *
+     * On Linux, this value is never lower than the peak RSS of the process that
+     * spawned the child. The kernel keeps the high-water mark of the resident
+     * set across `exec`, and `Bun.spawn` uses `vfork` semantics, so the child
+     * inherits the spawner's peak. To measure the peak of the child alone,
+     * spawn it from a small process.
      */
     maxRSS: number;
 

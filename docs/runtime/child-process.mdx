@@ -168,6 +168,13 @@ console.log(`CPU time (user): ${usage.cpuTime.user} µs`);
 console.log(`CPU time (system): ${usage.cpuTime.system} µs`);
 ```
 
+<Note>
+  On Linux, `maxRSS` is never lower than the peak RSS of the process that called `Bun.spawn`. The kernel keeps the
+  high-water mark of the resident set across `exec`, and `Bun.spawn` uses `vfork` semantics, so the child inherits the
+  spawner's peak. To measure the peak of the child alone, spawn it from a small process. macOS and Windows report the
+  peak of the child only.
+</Note>
+
 ## Resource limits with cgroups (Linux)
 
 On Linux, pass `cgroup` to start the subprocess inside a [control group](https://docs.kernel.org/admin-guide/cgroup-v2.html). The child joins the cgroup before it begins executing, so limits configured on the cgroup (memory, pids, CPU) apply from the first instruction. They also apply to every process the child spawns in turn. When a memory limit is exceeded the kernel OOM-kills a process _inside_ the cgroup instead of reclaiming memory from the parent.
@@ -639,6 +646,7 @@ interface ResourceUsage {
     system: number;
     total: number;
   };
+  // On Linux, never lower than the peak RSS of the spawning process.
   maxRSS: number;
 
   messages: {

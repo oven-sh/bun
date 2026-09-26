@@ -914,7 +914,7 @@ impl Subprocess<'_> {
             {
                 match item {
                     ExtraPipe::OwnedFd(fd) | ExtraPipe::UnownedFd(fd) => {
-                        array.push(global, JSValue::js_number(fd.native() as f64))?;
+                        array.push(global, JSValue::js_number(fd.posix() as f64))?;
                     }
                     ExtraPipe::Unavailable => {
                         array.push(global, JSValue::NULL)?;

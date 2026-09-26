@@ -2142,9 +2142,9 @@ impl<'a> PackageInstaller<'a> {
                                 // no preconditions), so no `unsafe` needed.
                                 // `st_mode` is u16 on FreeBSD, u32 elsewhere; widen.
                                 let st_mode = stat.st_mode as u32;
-                                let is_writable = if stat.st_uid == bun_sys::c::getuid() {
+                                let is_writable = if stat.st_uid as u32 == bun_sys::c::getuid() {
                                     st_mode & bun_sys::S::IWUSR > 0
-                                } else if stat.st_gid == bun_sys::c::getgid() {
+                                } else if stat.st_gid as u32 == bun_sys::c::getgid() {
                                     st_mode & bun_sys::S::IWGRP > 0
                                 } else {
                                     st_mode & bun_sys::S::IWOTH > 0

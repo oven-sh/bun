@@ -750,11 +750,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // (8 bytes, null-niche optimized), so size and write must match that
         // layout — NOT `Option<*mut This>` (16 bytes).
         let ext_size = size_of::<Option<NonNull<This>>>() as c_int;
+        let native: bun_core::FdNative = handle.native();
         let raw = g.from_fd(
             k,
             None,
             ext_size,
-            handle.native() as LIBUS_SOCKET_DESCRIPTOR,
+            native as LIBUS_SOCKET_DESCRIPTOR,
             0,
             is_ipc,
         );

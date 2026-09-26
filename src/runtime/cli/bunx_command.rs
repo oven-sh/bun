@@ -543,14 +543,16 @@ impl BunxCommand {
     #[cfg(unix)]
     fn is_trusted_cached_binary(destination: &ZStr, uid: libc::uid_t) -> bool {
         let lstat_ok = |st: &bun_sys::Stat| {
-            let kind = st.st_mode & libc::S_IFMT;
-            st.st_uid == uid && (kind == libc::S_IFREG || kind == libc::S_IFLNK)
+            let kind = st.st_mode as libc::mode_t & libc::S_IFMT;
+            st.st_uid as libc::uid_t == uid && (kind == libc::S_IFREG || kind == libc::S_IFLNK)
         };
-        let stat_ok =
-            |st: &bun_sys::Stat| st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG;
+        let stat_ok = |st: &bun_sys::Stat| {
+            st.st_uid as libc::uid_t == uid
+                && (st.st_mode as libc::mode_t & libc::S_IFMT) == libc::S_IFREG
+        };
         match bun_sys::lstat(destination) {
             Ok(st) if lstat_ok(&st) => {
-                if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
+                if (st.st_mode as libc::mode_t & libc::S_IFMT) == libc::S_IFLNK {
                     matches!(bun_sys::stat(destination), Ok(target) if stat_ok(&target))
                 } else {
                     true
@@ -574,9 +576,9 @@ impl BunxCommand {
         }
         buf[..cache_root.len()].copy_from_slice(cache_root);
         let is_trusted_dir = |st: &bun_sys::Stat| {
-            (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
-                && st.st_uid == uid
-                && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+            (st.st_mode as libc::mode_t & libc::S_IFMT) == libc::S_IFDIR
+                && st.st_uid as libc::uid_t == uid
+                && (st.st_mode as libc::mode_t & (libc::S_IWGRP | libc::S_IWOTH)) == 0
         };
         let mut start = temp_dir_len + 1;
         loop {
@@ -619,9 +621,9 @@ impl BunxCommand {
         uid: libc::uid_t,
     ) -> bool {
         let dir_ok = |st: &bun_sys::Stat| {
-            (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
-                && st.st_uid == uid
-                && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+            (st.st_mode as libc::mode_t & libc::S_IFMT) == libc::S_IFDIR
+                && st.st_uid as libc::uid_t == uid
+                && (st.st_mode as libc::mode_t & (libc::S_IWGRP | libc::S_IWOTH)) == 0
         };
         let opened = match bun_sys::fstat(dir) {
             Ok(st) if dir_ok(&st) => st,

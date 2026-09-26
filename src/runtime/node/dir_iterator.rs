@@ -338,7 +338,7 @@ mod platform {
                     let rc = unsafe {
                         libc::syscall(
                             libc::SYS_getdents64,
-                            self.dir.native() as libc::c_long,
+                            self.dir.posix() as libc::c_long,
                             self.buf.0.as_mut_ptr(),
                             self.buf.0.len(),
                         )

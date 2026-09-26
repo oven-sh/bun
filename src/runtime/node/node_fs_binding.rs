@@ -519,7 +519,7 @@ pub(crate) fn create_memfd_for_testing(
         match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
                 let _ = bun_sys::ftruncate(fd, size);
-                Ok(JSValue::js_number_from_int32(fd.native() as i32))
+                Ok(JSValue::js_number_from_int32(fd.posix()))
             }
             Err(err) => Err(global.throw_value(err.to_js(global))),
         }

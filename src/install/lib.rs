@@ -595,7 +595,7 @@ impl RunCommand {
                     Ok(st)
                         if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
                             == bun_sys::FileKind::Directory
-                            && st.st_uid == bun_sys::c::getuid()
+                            && st.st_uid as u32 == bun_sys::c::getuid()
                             && (st.st_mode as bun_sys::Mode) & 0o022 == 0 => {}
                     _ => return Ok(()),
                 },

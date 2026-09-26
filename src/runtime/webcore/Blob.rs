@@ -1059,7 +1059,7 @@ impl BlobExt for Blob {
                                 writer,
                                 ENABLE_ANSI_COLORS,
                                 " (<r>fd<d>:<r> <yellow>{d}<r>)<r>",
-                                fd.native(),
+                                fd.posix(),
                             )?;
                         }
                     }
@@ -2792,7 +2792,7 @@ impl BlobExt for Blob {
                                         .saturating_sub(allocated.as_ptr() as usize);
                                     let result =
                                         jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
-                                            memfd.fd.native() as i64,
+                                            memfd.fd.posix() as i64,
                                             global,
                                             byte_offset,
                                             buf_len,
@@ -3852,8 +3852,13 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     // Wire bytes are untrusted: enforce the same range as `FdJsc::from_js_validated`
                     // so a crafted record cannot materialize an fd no JS could construct (fd == -1
                     // hits `Fd::as_borrowed_fd`'s `raw != -1` assert on posix and aborts).
-                    #[cfg(not(windows))]
+                    #[cfg(not(any(windows, bun_portable)))]
                     if fd.0 < 0 {
+                        return Err(crate::Error::InvalidValue);
+                    }
+                    // The portable image holds the `int` of a POSIX host inside of a `u64`.
+                    #[cfg(bun_portable)]
+                    if !bun_core::host::native::is_windows() && fd.posix() < 0 {
                         return Err(crate::Error::InvalidValue);
                     }
                     let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
@@ -5769,11 +5774,11 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
 /// cfg-split here so the call sites stay shared.
 #[inline]
 fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, bun_portable)))]
     {
         jsc::to_js_time(stat.st_mtime as isize, stat.st_mtime_nsec as isize)
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, bun_portable))]
     {
         jsc::to_js_time(stat.mtim.sec as isize, stat.mtim.nsec as isize)
     }

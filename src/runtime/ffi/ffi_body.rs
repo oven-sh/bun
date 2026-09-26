@@ -2433,7 +2433,9 @@ impl CompilerRT {
             Err(_) => return None,
         };
         let st = bun_sys::fstat(dir.fd()).ok()?;
-        if st.st_uid != uid || (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) != 0 {
+        if st.st_uid as libc::uid_t != uid
+            || (st.st_mode as libc::mode_t & (libc::S_IWGRP | libc::S_IWOTH)) != 0
+        {
             return None;
         }
         Some(dir)

@@ -901,7 +901,7 @@ impl FilePoll {
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
-        debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
+        debug_assert!(fd.posix() >= 0 && fd != INVALID_FD);
 
         let registered = self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollWritable)

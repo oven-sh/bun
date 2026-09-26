@@ -600,7 +600,7 @@ struct PosixSpawnFdGuard {
 impl PosixSpawnFdGuard {
     /// File actions run in slot order, so an earlier slot's `close`/`dup2` would hit a `dup2` source numbered at or below `max_slot`; dup it above every slot first, like libuv.
     fn source_above_slots(&mut self, max_slot: i32, src: Fd) -> bun_sys::Result<Fd> {
-        if src.native() > max_slot {
+        if src.posix() > max_slot {
             return Ok(src);
         }
         let moved = bun_sys::dup_at_least(src, max_slot + 1)?;

@@ -474,7 +474,8 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
     #[cfg(unix)]
     {
         let owned_private = sys::fstat(dir_handle.fd()).is_ok_and(|st| {
-            st.st_uid == sys::c::getuid() && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+            st.st_uid as libc::uid_t == sys::c::getuid()
+                && (st.st_mode as libc::mode_t & (libc::S_IWGRP | libc::S_IWOTH)) == 0
         });
         if !owned_private {
             cclog!(

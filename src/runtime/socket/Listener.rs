@@ -496,7 +496,8 @@ impl Listener {
                 )
             }),
             UnixOrHost::Fd(fd) => {
-                let fd_native = fd.native() as uws_sys::LIBUS_SOCKET_DESCRIPTOR;
+                let fd_native: bun_core::FdNative = fd.native();
+                let fd_native = fd_native as uws_sys::LIBUS_SOCKET_DESCRIPTOR;
                 this_ref.group.with_mut(|g| {
                     g.listen_fd(
                         kind,

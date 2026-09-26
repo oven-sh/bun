@@ -368,7 +368,7 @@ impl us_socket_t {
             "us_socket_ipc_write_fd({:p}, {}, {}) = {}",
             self,
             data.len(),
-            file_descriptor.native(),
+            file_descriptor.posix(),
             rc
         );
         rc

@@ -2960,6 +2960,7 @@ enum class BunProcessStdinFdType : int32_t {
     file = 0,
     pipe = 1,
     socket = 2,
+    unknown = 3,
 };
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
@@ -3022,7 +3023,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     // Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
     bool forceSync = false;
 #if OS(WINDOWS)
-    forceSync = fdType == BunProcessStdinFdType::file || fdType == BunProcessStdinFdType::pipe;
+    forceSync = fdType != BunProcessStdinFdType::socket;
 #else
     // Note: files are always sync anyway.
     // forceSync = fdType == BunProcessStdinFdType::file || bun_stdio_tty[fd];

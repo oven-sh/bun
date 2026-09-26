@@ -1745,13 +1745,14 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return;
     }
 
-    let route_bundle_index =
-        route_bundle::Index::init(u32::try_from(id & 0xFFFFFFFF).expect("int cast"));
-    let generation: u32 = u32::try_from(id >> 32).expect("int cast");
+    let index = id as u32;
+    let generation = (id >> 32) as u32;
 
-    if route_bundle_index.get() as usize >= dev.route_bundles.len() {
+    // The URL can hold any u32 and `Index::init` asserts on `u32::MAX`: check the range first.
+    if index as usize >= dev.route_bundles.len() {
         return not_found(resp);
     }
+    let route_bundle_index = route_bundle::Index::init(index);
 
     let route_bundle = &dev.route_bundles[route_bundle_index.get() as usize];
     if route_bundle.client_script_generation != generation

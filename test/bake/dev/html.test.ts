@@ -373,6 +373,32 @@ devTest("error report endpoint blanks stray non-text bytes in reported frames", 
     await dev.fetch("/").expect.toInclude("<h1>Frame Bytes</h1>");
   },
 });
+
+devTest("client script route answers 404 when the route bundle index is out of range", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Client Script</h1>",
+    }),
+    "script.ts": `
+      console.log("client-script-marker");
+    `,
+  },
+  async test(dev) {
+    // `/_bun/client/{name}-{index}{generation}.js`: each hex group holds the four bytes of a u32.
+    const page = await dev.fetch("/").text();
+    const [script, generation] = page.match(/\/_bun\/client\/index-[0-9a-f]{8}([0-9a-f]{8})\.js/) ?? [];
+    expect(script).toBeString();
+    await dev.fetch(script).expect.toInclude("client-script-marker");
+
+    // `ffffffff` is the value that the index type reserves for "no index".
+    await dev.fetch(`/_bun/client/index-ffffffff${generation}.js`).expect404();
+    await dev.fetch(`/_bun/client/index-feffffff${generation}.js`).expect404();
+
+    await dev.fetch("/").expect.toInclude("<h1>Client Script</h1>");
+  },
+});
+
 devTest("editing a file imported from outside the project root hot-reloads", {
   // The Windows watcher does not watch files outside the project directory.
   skip: ["win32"],

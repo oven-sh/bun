@@ -23,9 +23,11 @@ async function pinned(contents: string | Uint8Array = "hello", options?: { type?
   return { dir, file, blob: await openAsBlob(file, options) };
 }
 
-// Resolves when nothing has `file` open. Bun closes some descriptors on another thread, so this waits for them.
-async function closed(file: string) {
+// Bun closes some descriptors on another thread, so this waits. It holds `stream` to keep the collector out of it.
+async function expectClosed(file: string, stream: ReadableStream) {
+  const deadline = performance.now() + 2000;
   for (; ; await new Promise(resolve => setImmediate(resolve))) {
+    let open: unknown;
     if (isWindows) {
       // Windows does not rename over a file that is open.
       try {
@@ -33,19 +35,24 @@ async function closed(file: string) {
         return fs.renameSync(file + ".other", file);
       } catch (err: any) {
         if (err.code !== "EPERM") throw err;
+        open = err;
       }
-      continue;
+    } else {
+      const { dev, ino } = statSync(file);
+      const descriptors = readdirSync(isLinux ? "/proc/self/fd" : "/dev/fd").filter(fd => {
+        try {
+          const stat = fs.fstatSync(Number(fd));
+          return stat.dev === dev && stat.ino === ino;
+        } catch {
+          return false;
+        }
+      });
+      if (descriptors.length === 0) return;
+      open = descriptors;
     }
-    const { dev, ino } = statSync(file);
-    const isOpen = readdirSync(isLinux ? "/proc/self/fd" : "/dev/fd").some(fd => {
-      try {
-        const stat = fs.fstatSync(Number(fd));
-        return stat.dev === dev && stat.ino === ino;
-      } catch {
-        return false;
-      }
-    });
-    if (!isOpen) return;
+    if (performance.now() > deadline) {
+      expect({ stream: stream.constructor.name, open }).toEqual({ stream: "ReadableStream", open: [] });
+    }
   }
 }
 
@@ -155,8 +162,7 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     };
     await expect(read()).rejects.toEqual(notReadable);
     expect(chunks).toBeGreaterThan(0);
-    await closed(file);
-    expect(stream).toBeInstanceOf(ReadableStream);
+    await expectClosed(file, stream);
   });
 
   // node compares the file that it opened. A new file at the path is not that file.
@@ -498,6 +504,14 @@ describe.concurrent("fs.openAsBlob pins the file", () => {
     expect(await image.metadata()).toEqual({ width: 1, height: 1, format: "png" });
     expect(() => new Response(new Bun.Image(blob).png())).toThrow(notReadable);
     await expect(new Bun.Image(blob).metadata()).rejects.toEqual(notReadable);
+
+    if (!isWindows) {
+      // The open of a FIFO waits for a writer, so this read must not open it.
+      const fifo = join(String(dir), "fifo");
+      mkfifo(fifo, 0o666);
+      const piped = await openAsBlob(fifo);
+      expect(() => new Response(new Bun.Image(piped).png())).toThrow(notReadable);
+    }
   });
 
   it("takes a file descriptor and an s3:// path as before", async () => {
@@ -553,22 +567,22 @@ describe("a stream of an fs.openAsBlob file", () => {
       async (stream: ReadableStream<Uint8Array>) =>
         (await new HTMLRewriter().transform(new Response(stream)).bytes()).length,
     ],
-    [
-      "a reader cancels",
-      async (stream: ReadableStream<Uint8Array>) => {
-        const reader = stream.getReader();
-        await reader.read();
-        await reader.cancel();
-        return 300_000;
-      },
-    ],
   ])("closes the file when %s it", async (_name, consume) => {
     const { dir, file, blob } = await pinned(Buffer.alloc(300_000, "a"));
     using _ = dir;
-    // This test holds the stream, so the garbage collector cannot be what closes the file.
     const stream = blob.stream();
     expect(await consume(stream)).toBe(300_000);
-    await closed(file);
-    expect(stream).toBeInstanceOf(ReadableStream);
+    await expectClosed(file, stream);
+  });
+
+  it("closes the file when a reader cancels it before its end", async () => {
+    const { dir, file, blob } = await pinned(Buffer.alloc(300_000, "a"));
+    using _ = dir;
+    const stream = blob.stream();
+    const reader = stream.getReader();
+    const { value } = await reader.read();
+    expect(value!.length).toBeWithin(1, 300_000);
+    await reader.cancel();
+    await expectClosed(file, stream);
   });
 });

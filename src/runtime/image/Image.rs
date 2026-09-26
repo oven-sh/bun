@@ -1184,7 +1184,10 @@ impl Image {
                 if let blob_store::Data::File(file) = &store.data {
                     match file.source() {
                         blob_store::FileSource::Pinned(pinned) => {
-                            let Some(bytes) = read_pinned(pinned) else {
+                            // The open of a FIFO waits for a writer, and a device has no end.
+                            let is_regular = sys::S::ISREG(file.mode as _);
+                            let Some(bytes) = is_regular.then(|| read_pinned(pinned)).flatten()
+                            else {
                                 let err = crate::webcore::blob::not_readable_error(global);
                                 return Err(global.throw_value(err));
                             };

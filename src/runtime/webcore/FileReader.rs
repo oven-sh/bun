@@ -441,16 +441,16 @@ impl FileReader {
                 self.waiting_for_on_reader_done.set(true);
             }
             self.reader().set_limit(self.max_size);
-            let start_result = if let Some(offset) = self.start_offset {
-                self.reader()
-                    .start_file_offset(self.fd.get(), pollable, offset)
-            } else {
-                self.reader().start(self.fd.get(), pollable)
-            };
-            // From here the `fd` of a pinned file is the one that `check_pinned` compares.
+            let reader_fd = self.fd.get();
+            // The reader can call back from `start`: `fd` is the one for `check_pinned` by then.
             if let Some(fd) = pinned_check_fd {
                 self.fd.set(fd);
             }
+            let start_result = if let Some(offset) = self.start_offset {
+                self.reader().start_file_offset(reader_fd, pollable, offset)
+            } else {
+                self.reader().start(reader_fd, pollable)
+            };
             if let Err(e) = start_result {
                 self.close_pinned();
                 if need_io_ref {

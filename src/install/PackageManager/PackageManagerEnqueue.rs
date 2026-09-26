@@ -2932,6 +2932,15 @@ fn get_or_put_resolved_package(
                     break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                 }
 
+                // See if another declarer already loaded this folder package in-memory
+                if let Some(existing_id) = this.lockfile.get_package_id(
+                    name_hash,
+                    None,
+                    &Resolution::init(ResolutionTagged::Folder(folder)),
+                ) {
+                    break 'res FolderResolutionValue::PackageId(existing_id);
+                }
+
                 let mut package = Package::default();
 
                 {
@@ -2962,7 +2971,6 @@ fn get_or_put_resolved_package(
                     builder.clamp();
                 }
 
-                // these are always new
                 package = this.lockfile.append_package(&package).unwrap_or_oom();
 
                 break 'res FolderResolutionValue::NewPackageId(package.meta.id);

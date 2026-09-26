@@ -92,7 +92,7 @@ const crossing = /^(dirfd|dir_fd|fromfd|tofd|src_dirfd|dst_dirfd|olddirfd|newdir
 const translatedByHand = new Set(["open", "openat", "fcntl", "fstatat", "faccessat", "unlinkat", "mkdirat", "renameatx_np", "clonefileat", "fclonefileat", "posix_spawn_file_actions_addopen", "__error"]);
 /** Families whose numbers cross between shared code and code for macOS: code for macOS has the numbers of
     the image for them, and the functions above translate. */
-const crossingConstants = /^(E[A-Z0-9]+|O_[A-Z_]+|AT_[A-Z_]+)$/;
+const crossingConstants = /^(E[A-Z0-9]+|O_[A-Z_]+|AT_[A-Z_]+|F_(DUPFD_CLOEXEC|GETLK|SETLK|SETLKW|GETOWN|SETOWN|RDLCK|WRLCK|UNLCK))$/;
 /** Functions that never set the error number of the C library. */
 const noErrno = /^(os_unfair_lock_\w+|mach_\w+|host_\w+|vm_\w+|pthread_\w+|posix_spawn\w*|memset_pattern\d+|strlen|_NSGetEnviron|_dyld_\w+|__error|getpid|getppid|dlsym|dlopen|dlclose|sigemptyset|sigfillset|sigaddset|sigdelset|sigwait)$/;
 

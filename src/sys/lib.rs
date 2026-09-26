@@ -5369,6 +5369,21 @@ pub mod c {
     // `@cImport` of system headers. The `libc` crate already binds all of
     // these; re-export so callers (`node_os.rs`, `node_fs.rs`, …) keep a
     // single `bun_sys::c::*` import path matching the `bun.c` namespacing.
+    /// The portable image: the same names, as `bun_darwin_sys` has them.
+    #[cfg(bun_portable)]
+    pub use bun_darwin_sys::libc::{
+        _NSGetEnviron, COPYFILE_ACL, COPYFILE_CHECK, COPYFILE_CLONE, COPYFILE_CLONE_FORCE,
+        COPYFILE_DATA, COPYFILE_EXCL, COPYFILE_METADATA, COPYFILE_MOVE, COPYFILE_NOFOLLOW,
+        COPYFILE_NOFOLLOW_DST, COPYFILE_NOFOLLOW_SRC, COPYFILE_RECURSIVE, COPYFILE_SECURITY,
+        COPYFILE_STAT, COPYFILE_UNLINK, COPYFILE_XATTR, CPU_STATE_IDLE, CPU_STATE_MAX,
+        CPU_STATE_NICE, CPU_STATE_SYSTEM, CPU_STATE_USER, HOST_VM_INFO64, HOST_VM_INFO64_COUNT,
+        PROCESSOR_CPU_LOAD_INFO, clonefile, clonefileat, copyfile, copyfile_flags_t,
+        copyfile_state_t, fclonefileat, fcopyfile, host_processor_info, host_statistics64,
+        integer_t, mach_msg_type_number_t, mach_port_t, memset_pattern4, memset_pattern8,
+        memset_pattern16, natural_t, processor_cpu_load_info, processor_cpu_load_info_data_t,
+        processor_flavor_t, processor_info_array_t, sysctl, sysctlnametomib, vm_deallocate,
+        vm_size_t, vm_statistics64, vm_statistics64_data_t,
+    };
     #[cfg(target_os = "macos")]
     pub use libc::{
         _NSGetEnviron,

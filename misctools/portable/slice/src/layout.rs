@@ -4,6 +4,15 @@
 use crate::json::Report;
 use crate::layout_generated;
 
+/// The definitions of macOS, one fact on each line.
+pub fn print_darwin() -> bool {
+    let mut out = Vec::new();
+    crate::darwin_layout_generated::facts(&mut out);
+    let mut report = Report::new();
+    report.raw(&out);
+    report.print()
+}
+
 pub fn print() -> bool {
     let mut report = Report::new();
     report.raw(b"{\"source\":\"image\",\"types\":{");

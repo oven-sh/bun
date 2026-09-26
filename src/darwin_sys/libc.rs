@@ -83,8 +83,14 @@ impl<T> FcntlArgument for *const T {
     }
 }
 
-/// `fcntl` with the commands of macOS. The flags that `F_SETFL` takes and `F_GETFL` answers are flags of
-/// `open`: the ones of the image on this side.
+/// `fcntl`. A command that macOS and Linux both have is named with the number of the image, as shared
+/// code names it (`F_DUPFD_CLOEXEC` is 1030 there and 67 on macOS); a command that only macOS has
+/// (`F_GETPATH`) with the number of macOS. The two sets of numbers do not meet: the commands of macOS
+/// alone start at 40, the ones of the image are below 40 or above 1023. The flags that `F_SETFL` takes
+/// and `F_GETFL` answers are flags of `open`: the ones of the image on this side.
+///
+/// The locks of a range of a file (`F_GETLK`, `F_SETLK`, `F_SETLKW`) take a structure that macOS lays
+/// out in another way: they are answered with `EINVAL` here.
 ///
 /// # Safety
 ///
@@ -92,6 +98,16 @@ impl<T> FcntlArgument for *const T {
 #[inline]
 pub unsafe fn fcntl(fd: c_int, cmd: c_int, argument: impl FcntlArgument) -> c_int {
     let argument = argument.into_argument();
+    let cmd = match cmd {
+        ::libc::F_DUPFD | ::libc::F_GETFD | ::libc::F_SETFD | ::libc::F_GETFL | ::libc::F_SETFL => cmd,
+        ::libc::F_DUPFD_CLOEXEC => macos::F_DUPFD_CLOEXEC,
+        40..1024 => cmd,
+        _ => {
+            // SAFETY: the address of the error number of this thread.
+            unsafe { ::libc::__errno_location().write(::libc::EINVAL) };
+            return -1;
+        }
+    };
     if cmd == macos::F_SETFL {
         // SAFETY: the caller's contract.
         return unsafe { bound::fcntl(fd, cmd, translate::open_flags(argument as c_int) as isize) };

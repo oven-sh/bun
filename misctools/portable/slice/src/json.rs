@@ -72,12 +72,32 @@ impl Report {
         self.out.extend_from_slice(b"}\n");
     }
 
-    /// The error as bun names it: the name of the errno and the system call that bun attributes it to.
+    /// The error as bun names it: the name of the errno, its number as the host has it, and the system
+    /// call that bun attributes it to.
     pub fn end_error(&mut self, error: &Error) {
         self.boolean("ok", false);
         self.string("error", error.name());
+        self.number("errno", host_errno(error));
         self.string("syscall", <&'static str>::from(error.syscall).as_bytes());
         self.out.extend_from_slice(b"}\n");
+        #[cfg(bun_portable)]
+        {
+            // What the last function of macOS that was called directly left as its error.
+            let of_macos = bun_darwin_sys::host_imports::take_last_error_of_macos();
+            if of_macos != 0 {
+                self.detail("error number of the last call of macOS");
+                self.number("errno", i64::from(of_macos));
+                self.end_line();
+            }
+        }
+    }
+
+    /// A line that says how something went, for the person who reads the output. It is not compared:
+    /// what it says depends on the machine (the file system, the version of the system).
+    pub fn detail(&mut self, what: &str) {
+        self.out.push(b'{');
+        self.first_field = true;
+        self.string("detail", what.as_bytes());
     }
 
     pub fn step<T>(&mut self, step: &str, path: &[u8], result: Maybe<T>) {
@@ -99,6 +119,15 @@ impl Report {
         self.out.clear();
         !self.failed_to_print
     }
+}
+
+/// The number of the error on the host: the image has the numbers of Linux, and macOS has its own.
+fn host_errno(error: &Error) -> i64 {
+    #[cfg(bun_portable)]
+    if bun_core::host::is_mac() {
+        return i64::from(bun_darwin_sys::errno::to_macos(i32::from(error.errno)));
+    }
+    i64::from(error.errno)
 }
 
 fn quoted(out: &mut Vec<u8>, value: &[u8]) {

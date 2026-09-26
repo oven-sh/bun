@@ -13,7 +13,7 @@
 //! macOS does not have the symbol.
 
 use core::ffi::{CStr, c_char, c_int, c_ulong, c_void};
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 unsafe extern "C" {
     /// The C library of the image: the entry `lookup` of the host table, null without one.
@@ -177,8 +177,18 @@ pub fn keep_errno<R>(call: impl FnOnce() -> R) -> R {
     // SAFETY: as above.
     let error = unsafe { of_macos.read() };
     if error != 0 {
+        LAST_ERROR_OF_MACOS.store(error, Ordering::Relaxed);
         // SAFETY: the address of the error number of this thread.
         unsafe { __errno_location().write(crate::errno::to_image(error)) };
     }
     result
+}
+
+static LAST_ERROR_OF_MACOS: AtomicI32 = AtomicI32::new(0);
+
+/// The error number, as macOS has it, that a function of macOS set last on any thread, and 0 from then
+/// on. For a report of what went wrong: the error number of the image has lost what macOS tells apart
+/// and the image does not.
+pub fn take_last_error_of_macos() -> i32 {
+    LAST_ERROR_OF_MACOS.swap(0, Ordering::Relaxed)
 }

@@ -111,9 +111,41 @@ pub fn run() -> bool {
     report.print() && passed
 }
 
-/// Binds everything and prints what could not be bound.
+/// Binds every function of macOS and prints what could not be bound. Returns how many are missing.
+fn print_imports_of_macos(report: &mut Report) -> i64 {
+    use bun_darwin_sys::host_imports::{self as of_macos, Unbound};
+    let mut total = 0;
+    let mut missing = 0;
+    for import in of_macos::all() {
+        total += 1;
+        if let Err(why) = import.bind() {
+            missing += 1;
+            report.begin("import");
+            report.string("library", import.library().to_bytes());
+            report.string("symbol", import.symbol().to_bytes());
+            report.string(
+                "why",
+                match why {
+                    Unbound::HostIsNotMacos(_) => b"the host is not macOS",
+                    Unbound::NotFound => b"not found",
+                },
+            );
+            report.boolean("ok", false);
+            report.end_line();
+        }
+    }
+    report.begin("imports of macOS");
+    report.number("total", total);
+    report.number("missing", missing);
+    report.end_ok();
+    missing
+}
+
+/// Binds everything and prints what could not be bound. Passes if the host has every function of its
+/// own system.
 pub fn print_imports() -> bool {
     let mut report = Report::new();
+    let missing_of_macos = print_imports_of_macos(&mut report);
     let mut total = 0;
     let mut missing = 0;
     for import in host_imports::all() {
@@ -142,5 +174,10 @@ pub fn print_imports() -> bool {
     report.number("missing", missing);
     report.end_ok();
     let _ = test_not_there;
-    report.print() && missing == 0
+    let complete = if bun_core::host::is_mac() {
+        missing_of_macos == 0
+    } else {
+        missing == 0
+    };
+    report.print() && complete
 }

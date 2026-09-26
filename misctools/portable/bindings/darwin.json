@@ -3337,6 +3337,48 @@
    "why": "the same name"
   },
   {
+   "name": "F_DUPFD_CLOEXEC",
+   "macos": "67",
+   "in_the_image": "F_DUPFD_CLOEXEC",
+   "why": "the same name"
+  },
+  {
+   "name": "F_GETLK",
+   "macos": "7",
+   "in_the_image": "F_GETLK",
+   "why": "the same name"
+  },
+  {
+   "name": "F_RDLCK",
+   "macos": "1",
+   "in_the_image": "F_RDLCK",
+   "why": "the same name"
+  },
+  {
+   "name": "F_SETLK",
+   "macos": "8",
+   "in_the_image": "F_SETLK",
+   "why": "the same name"
+  },
+  {
+   "name": "F_SETLKW",
+   "macos": "9",
+   "in_the_image": "F_SETLKW",
+   "why": "the same name"
+  },
+  {
+   "name": "F_UNLCK",
+   "macos": "2",
+   "in_the_image": "F_UNLCK",
+   "why": "the same name"
+  },
+  {
+   "name": "F_WRLCK",
+   "macos": "3",
+   "in_the_image": "F_WRLCK",
+   "why": "the same name"
+  },
+  {
    "name": "O_ACCMODE",
    "macos": "3",
    "in_the_image": "O_ACCMODE",

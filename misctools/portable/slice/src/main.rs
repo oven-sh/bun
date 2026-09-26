@@ -3,17 +3,23 @@
 //!   bun_fs_slice <directory>     runs the steps below in <directory>/slice-tree and prints one JSON
 //!                                object for each. The directory has to exist; the tree is removed
 //!                                before the first step and by the last ones.
-//!   bun_fs_slice --imports       binds every function of Windows that the image can call and prints the
-//!                                ones the host could not resolve
+//!   bun_fs_slice --imports       binds every function of Windows and of macOS that the image can call
+//!                                and prints the ones the host could not resolve
 //!   bun_fs_slice --layout        prints the size, the offsets of the fields and the constants of the
 //!                                bindings, as the image has them (see misctools/portable/bindings)
+//!   bun_fs_slice --layout-darwin the same for the definitions of macOS (bun_darwin_sys), one fact on
+//!                                each line, as misctools/portable/bindings/darwin_layout.c prints them
+//!                                from the headers of macOS
 //!   bun_fs_slice --abi           calls the functions of the Linux test host that have the calling
 //!                                convention of Windows
 //!
 //! Every file system call is one of `bun_sys`, with paths made by `bun_paths`, the way bun's runtime
 //! makes them. Which implementation answers is bun's choice: in the portable image the one for the OS of
 //! the host. The output has no absolute path, no time and no number that depends on the machine, so one
-//! expected output serves every host (`expected/`).
+//! expected output serves every host (`expected/`), with the differences between the systems that
+//! `expected/differences.json` names: some steps are steps of POSIX, some of macOS only, and the number
+//! of an error is the one of the host. A line that starts with `{"detail"` says how something went on
+//! this machine, and is not compared.
 #![no_main]
 
 use core::ffi::{c_char, c_int};
@@ -24,12 +30,18 @@ use bun_sys::{Fd, File, Maybe, O};
 
 #[cfg(bun_portable)]
 mod abi;
+#[cfg(bun_portable)]
+#[rustfmt::skip]
+mod darwin_layout_generated;
 mod json;
 #[cfg(bun_portable)]
 mod layout;
 #[cfg(bun_portable)]
 #[rustfmt::skip]
 mod layout_generated;
+#[cfg(any(target_os = "macos", bun_portable))]
+mod macos;
+mod posix;
 
 use json::Report;
 
@@ -40,7 +52,7 @@ static ALLOCATOR: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 const TREE: &[u8] = b"slice-tree";
 
 /// The directory the steps run in, and the paths inside of it.
-struct Work {
+pub(crate) struct Work {
     /// `<directory>`, absolute, in the path flavour of the host.
     base: Vec<u8>,
     /// `<directory>/slice-tree`
@@ -57,7 +69,7 @@ impl Work {
     }
 
     /// `<root>/<relative>` with the separators of the host, NUL-terminated.
-    fn path(&self, relative: &[u8]) -> Vec<u8> {
+    pub(crate) fn path(&self, relative: &[u8]) -> Vec<u8> {
         let mut buffer = bun_paths::path_buffer_pool::get();
         let joined = if self.windows_paths {
             resolve_path::join_string_buf::<platform::Windows>(
@@ -76,9 +88,20 @@ impl Work {
     }
 }
 
-fn z(path: &[u8]) -> &ZStr {
+pub(crate) fn z(path: &[u8]) -> &ZStr {
     debug_assert!(path.last() == Some(&0));
     ZStr::from_buf(path, path.len() - 1)
+}
+
+fn host_is_mac() -> bool {
+    #[cfg(bun_portable)]
+    {
+        bun_core::host::is_mac()
+    }
+    #[cfg(not(bun_portable))]
+    {
+        cfg!(target_os = "macos")
+    }
 }
 
 fn host_is_windows() -> bool {
@@ -92,7 +115,7 @@ fn host_is_windows() -> bool {
     }
 }
 
-fn kind_name(kind: bun_sys::FileKind) -> &'static str {
+pub(crate) fn kind_name(kind: bun_sys::FileKind) -> &'static str {
     use bun_sys::FileKind as K;
     match kind {
         K::File => "file",
@@ -108,7 +131,7 @@ fn kind_name(kind: bun_sys::FileKind) -> &'static str {
 
 /// What the steps print of a `Stat`: its kind and its size. Times, owners and inode numbers are the
 /// machine's.
-fn stat_fields(report: &mut Report, stat: &bun_sys::Stat) {
+pub(crate) fn stat_fields(report: &mut Report, stat: &bun_sys::Stat) {
     let kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
     report.string("kind", kind_name(kind).as_bytes());
     if kind == bun_sys::FileKind::File {
@@ -508,6 +531,15 @@ fn run_steps(directory: &[u8]) -> bool {
         Err(error) => report.end_error(&error),
     }
 
+    // ── what POSIX has, and what macOS has ──
+    if !windows_paths {
+        posix::steps(&mut report, &work, root_fd);
+    }
+    #[cfg(any(target_os = "macos", bun_portable))]
+    if host_is_mac() {
+        macos::steps(&mut report, &work, root_fd);
+    }
+
     // ── remove ──
     report.step(
         "rmdir, not empty",
@@ -565,7 +597,7 @@ unsafe extern "C" {
 
 fn usage() -> c_int {
     let _ = File::borrow(&Fd::stderr())
-        .write_all(b"usage: bun_fs_slice <directory> | --imports | --layout | --abi\n");
+        .write_all(b"usage: bun_fs_slice <directory> | --imports | --layout | --layout-darwin | --abi\n");
     2
 }
 
@@ -592,6 +624,8 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
         [b"--imports"] => abi::print_imports(),
         #[cfg(bun_portable)]
         [b"--layout"] => layout::print(),
+        #[cfg(bun_portable)]
+        [b"--layout-darwin"] => layout::print_darwin(),
         #[cfg(bun_portable)]
         [b"--abi"] => abi::run(),
         [directory] if !directory.starts_with(b"--") => run_steps(directory),

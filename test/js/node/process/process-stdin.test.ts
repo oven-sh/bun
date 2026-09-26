@@ -665,3 +665,48 @@ test("process.stdin over an anonymous pipe delivers each byte exactly once", asy
   expect(stdout).toBe(`${total} ${expected}`);
   expect(err).toBeNull();
 });
+
+// A regular-file stdin is an open file description shared with the parent
+// shell. The parent may already have consumed a prefix, and a sibling that
+// runs after Bun continues from where Bun stopped. So the stream must read
+// from the current offset with read(2), not pread from 0.
+describe.skipIf(isWindows)("regular-file stdin inherited at an offset", () => {
+  const input = "HEADER-already-consumed\nbody1\nbody2\n";
+
+  async function runAfterRead(js: string, tail = "") {
+    using dir = tempDir("stdin-file-offset", { "in.txt": input });
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `{ read hdr; "$BUN" -e ${JSON.stringify(js)}; ${tail} } < in.txt`],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN: bunExe() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("process.stdin 'data' starts after the line the shell consumed", async () => {
+    const js = `let s = ""; process.stdin.on("data", d => (s += d)).on("end", () => process.stdout.write(JSON.stringify(s)));`;
+    expect(await runAfterRead(js)).toEqual({ stdout: JSON.stringify("body1\nbody2\n"), stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("Bun.stdin.stream() starts after the line the shell consumed", async () => {
+    const js = `process.stdout.write(JSON.stringify(await new Response(Bun.stdin.stream()).text()));`;
+    expect(await runAfterRead(js)).toEqual({ stdout: JSON.stringify("body1\nbody2\n"), stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("for await (const line of console) starts after the line the shell consumed", async () => {
+    const js = `for await (const line of console) { process.stdout.write(JSON.stringify(line)); break; }`;
+    expect(await runAfterRead(js)).toEqual({ stdout: JSON.stringify("body1"), stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("process.stdin advances the shared offset for the next reader", async () => {
+    const js = `let n = 0; process.stdin.on("data", d => (n += d.length)).on("end", () => process.stdout.write("bun:" + n + "\\n"));`;
+    expect(await runAfterRead(js, `echo "cat:$(cat | wc -c | tr -d ' ')";`)).toEqual({
+      stdout: "bun:12\ncat:0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

@@ -350,7 +350,7 @@ describe("Bun.file in serve routes", () => {
         const res2 = await fetch(new URL(`/hello.txt`, server.url), {
           method,
           headers: {
-            "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toISOString(),
+            "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toUTCString(),
           },
         });
 
@@ -364,7 +364,7 @@ describe("Bun.file in serve routes", () => {
         const res = await fetch(new URL(`/hello.txt`, server.url), {
           method,
           headers: {
-            "If-Modified-Since": new Date(Date.now() - 1000000).toISOString(),
+            "If-Modified-Since": new Date(Date.now() - 1000000).toUTCString(),
           },
         });
 
@@ -381,7 +381,7 @@ describe("Bun.file in serve routes", () => {
 
       const res2 = await fetch(new URL(`/partial.txt`, server.url), {
         headers: {
-          "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toISOString(),
+          "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toUTCString(),
           "Range": "bytes=0-3",
         },
       });
@@ -398,7 +398,7 @@ describe("Bun.file in serve routes", () => {
       const res2 = await fetch(new URL(`/hello.txt`, server.url), {
         method: "POST",
         headers: {
-          "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toISOString(),
+          "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toUTCString(),
         },
       });
 
@@ -568,6 +568,52 @@ describe("Bun.file in serve routes", () => {
         expect(res.status).toBe(200);
       });
     });
+
+    // §13.1.3 / §13.1.4: a value that is not an RFC 9110 HTTP-date MUST be
+    // ignored. `Date.parse` accepts every one of these.
+    describe.each(["/hello-blob.txt", "/custom-last-modified.txt"])(
+      "ignores a conditional date that is not an HTTP-date on %s",
+      path => {
+        const NOT_HTTP_DATES = [
+          "2030",
+          "12345",
+          "10",
+          "1/1/2030",
+          "January 2030",
+          "March 2001",
+          "Sun, 30 Feb 2025 00:00:00 GMT",
+          "Tue, 31 Dec 2024 16:00:01 PST",
+        ];
+
+        it.each(NOT_HTTP_DATES)("If-Modified-Since: %s → 200", async value => {
+          const res = await fetch(new URL(path, server.url), { headers: { "If-Modified-Since": value } });
+          expect(res.status).toBe(200);
+          expect(await res.text()).toBe("Hello, World!");
+        });
+
+        it.each(NOT_HTTP_DATES)("If-Unmodified-Since: %s → 200", async value => {
+          const res = await fetch(new URL(path, server.url), { headers: { "If-Unmodified-Since": value } });
+          expect(res.status).toBe(200);
+          expect(await res.text()).toBe("Hello, World!");
+        });
+
+        it("accepts rfc850-date and asctime-date for If-Modified-Since", async () => {
+          const results = await Promise.all(
+            ["Sunday, 06-Nov-94 08:49:37 GMT", "Sun Nov  6 08:49:37 1994", "Sun Nov  6 08:49:37 2050"].map(
+              async value => [
+                value,
+                (await fetch(new URL(path, server.url), { headers: { "If-Modified-Since": value } })).status,
+              ],
+            ),
+          );
+          expect(results).toEqual([
+            ["Sunday, 06-Nov-94 08:49:37 GMT", 200],
+            ["Sun Nov  6 08:49:37 1994", 200],
+            ["Sun Nov  6 08:49:37 2050", 304],
+          ]);
+        });
+      },
+    );
 
     it.todo("handles ETag", async () => {
       const res1 = await fetch(new URL(`/hello.txt`, server.url));
@@ -806,7 +852,7 @@ describe("Bun.file in serve routes", () => {
 
       const res2 = await fetch(new URL(`/hello.txt`, server.url), {
         headers: {
-          "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toISOString(),
+          "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toUTCString(),
         },
       });
 

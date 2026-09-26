@@ -7,7 +7,7 @@ use core::mem::size_of;
 use bun_http::headers::api::StringPointer;
 use bun_http::headers::append_etag;
 use bun_http::{Headers, Method};
-use bun_http_types::ETag;
+use bun_http_types::{ETag, HTTPDate};
 use bun_ptr::{RefPtr, ThisPtr};
 
 use bun_http_types::MimeType::MimeType;
@@ -500,10 +500,7 @@ impl StaticRoute {
         let precondition_failed =
             if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
                 !ETag::if_match(etag, im)
-            } else if let Some(ius) = req
-                .header(b"if-unmodified-since")
-                .and_then(crate::jsc_hooks::parse_http_date)
-            {
+            } else if let Some(ius) = req.header(b"if-unmodified-since").and_then(HTTPDate::parse) {
                 matches!(last_modified(), Some(lm) if lm / 1000 > ius / 1000)
             } else {
                 false
@@ -519,10 +516,7 @@ impl StaticRoute {
                 _ => false,
             }
         // Step 4: If-Modified-Since (only when If-None-Match is absent).
-        } else if let Some(ims) = req
-            .header(b"if-modified-since")
-            .and_then(crate::jsc_hooks::parse_http_date)
-        {
+        } else if let Some(ims) = req.header(b"if-modified-since").and_then(HTTPDate::parse) {
             // §13.1.3: 304 when Last-Modified <= If-Modified-Since. HTTP-date
             // is second-granular, so compare at second precision.
             match last_modified() {

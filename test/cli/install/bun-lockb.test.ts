@@ -411,6 +411,230 @@ it("rejects a binary lockfile whose package scripts flag byte is out of range", 
   expect(code).toBe(0);
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
 });
+
+// The package list is stored SoA; `dependencies` and `resolutions` are
+// per-package `(off: u32, len: u32)` windows into `buffers.dependencies` /
+// `buffers.resolutions`. Both are memcpy'd from disk and dereferenced
+// unchecked by the yarn printer, `Package.clone` and the hoister, so an `off`
+// past the end of its buffer panicked:
+//   "range start index 4294967280 out of range for slice of length 3"
+// The two windows must also be the same range: consumers derive dependency
+// ids from one and index the other with them.
+function corruptPackageColumn(column: "dependencies" | "resolutions", poke: number) {
+  return (lockb: Buffer) => {
+    // Locate the column (the SoA walk documented in the `meta` test above)
+    // and overwrite the last package's `off`. Only the start index matters;
+    // the end is already clamped.
+    const fmt = lockb.readUInt32LE(42);
+    const N = Number(lockb.readBigUInt64LE(86));
+    const begin = Number(lockb.readBigUInt64LE(110));
+    const resolutionSize = fmt === 2 ? 64 : 72;
+    const columnStart = begin + N * (8 + 8 + resolutionSize) + (column === "resolutions" ? N * 8 : 0);
+    expect(N).toBe(3);
+    // Sanity: the root package's list is the first two of the three entries,
+    // and the last package's window starts right after them, so overwriting
+    // its `off` with 0 always de-pairs it from its `dependencies` window.
+    expect(lockb.readUInt32LE(columnStart)).toBe(0);
+    expect(lockb.readUInt32LE(columnStart + 4)).toBe(2);
+    expect(lockb.readUInt32LE(columnStart + 2 * 8)).toBe(2);
+    lockb.writeUInt32LE(poke, columnStart + 2 * 8);
+  };
+}
+
+// The hoisted tree list is written as 20-byte `[id|dependency_id|parent|off|len]`
+// records behind a 16-byte (start, end) header and a type-name prefix. Trees
+// are appended after their parent, so a parent id must precede the tree's own
+// position; a root that names itself as parent is the smallest parent cycle,
+// which the parent-chain walks over a loaded tree (`bun update`'s cleanup of
+// collapsed copies) would never leave.
+function corruptRootTreeParent(lockb: Buffer) {
+  const prefix = lockb.indexOf("\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n");
+  expect(prefix).toBeGreaterThan(16);
+  const treesStart = Number(lockb.readBigUInt64LE(prefix - 16));
+  const treesEnd = Number(lockb.readBigUInt64LE(prefix - 8));
+  // Everything hoists, so there is exactly the root tree: id 0, no parent.
+  expect(treesEnd - treesStart).toBe(20);
+  expect(lockb.readUInt32LE(treesStart)).toBe(0);
+  expect(lockb.readUInt32LE(treesStart + 8)).toBe(0xffffffff);
+  lockb.writeUInt32LE(0, treesStart + 8);
+}
+
+// `hoisted_dependencies` (the `u32` array right behind the tree list) holds
+// the dependency ids each tree's window selects. The writer never stores the
+// unresolved sentinel there, and the readers that walk a loaded tree index
+// `dependencies` with every element, so the sentinel must be rejected too.
+function corruptHoistedDependency(lockb: Buffer) {
+  const trees = lockb.indexOf("\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n");
+  expect(trees).toBeGreaterThan(16);
+  const prefix = lockb.indexOf("\n<u32> 4 sizeof, 4 alignof\n", trees + 1);
+  expect(prefix).toBeGreaterThan(trees);
+  const hoistedStart = Number(lockb.readBigUInt64LE(prefix - 16));
+  const hoistedEnd = Number(lockb.readBigUInt64LE(prefix - 8));
+  // The root tree holds both packages: two ids, each one of the three
+  // dependencies in the lockfile.
+  expect(hoistedEnd - hoistedStart).toBe(8);
+  expect(lockb.readUInt32LE(hoistedStart)).toBeLessThan(3);
+  lockb.writeUInt32LE(0xffffffff, hoistedStart);
+}
+
+for (const [what, corrupt] of [
+  ["package dependencies offset is out of range", corruptPackageColumn("dependencies", 0xfffffff0)],
+  ["package resolutions offset is out of range", corruptPackageColumn("resolutions", 0xfffffff0)],
+  ["package resolutions window does not match dependencies", corruptPackageColumn("resolutions", 0)],
+  ["root tree is its own parent", corruptRootTreeParent],
+  ["hoisted dependency id is the unresolved sentinel", corruptHoistedDependency],
+] as const) {
+  it(`rejects a binary lockfile whose ${what}`, async () => {
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+    // Migrating a package-lock.json with `--lockfile-only` writes bun.lockb
+    // without fetching anything: the resolved URLs (which must live under the
+    // configured registry) are transcribed into the lockfile, never contacted.
+    const resolved = (name: string) => `${registry.registryUrl()}${name}/-/${name}-1.0.0.tgz`;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "corrupt-lockb-slices",
+          version: "1.0.0",
+          dependencies: { depa: "1.0.0", depb: "1.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "package-lock.json"),
+        JSON.stringify({
+          name: "corrupt-lockb-slices",
+          version: "1.0.0",
+          lockfileVersion: 3,
+          requires: true,
+          packages: {
+            "": { name: "corrupt-lockb-slices", version: "1.0.0", dependencies: { depa: "1.0.0", depb: "1.0.0" } },
+            "node_modules/depa": { version: "1.0.0", resolved: resolved("depa"), dependencies: { depb: "1.0.0" } },
+            "node_modules/depb": { version: "1.0.0", resolved: resolved("depb") },
+          },
+        }),
+      ),
+    ]);
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--lockfile-only", "--no-progress"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(out).toBeDefined();
+      expect(code).toBe(0);
+    }
+
+    const lockbPath = join(packageDir, "bun.lockb");
+    expect(await exists(lockbPath)).toBe(true);
+
+    const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+    corrupt(lockb);
+    await write(lockbPath, lockb);
+
+    // Each command is a separate door into the corrupt lockfile, and a
+    // command that re-resolves rewrites the file, so restore the corrupt
+    // bytes before each run. Run all three before asserting: one door that
+    // crashes must not hide what the others do.
+    const corruptBytes = Buffer.from(lockb);
+    const run = async (args: string[]) => {
+      await write(lockbPath, corruptBytes);
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      return { out, err, code };
+    };
+    const print = await run(["bun.lockb"]);
+    const install = await run(["install", "--no-progress"]);
+    const frozen = await run(["install", "--no-progress", "--frozen-lockfile"]);
+
+    // An install must ignore the invalid lockfile and fall back to a fresh
+    // resolve (which then fails: these packages only exist in the lockfile).
+    // `--frozen-lockfile` reads the lockfile through the same path. Both are
+    // asserted before the printer: they are the commands the crash reports
+    // name, and an unfixed binary panics in all three.
+    for (const { err, out, code } of [install, frozen]) {
+      expect(err).toContain("Ignoring lockfile");
+      expect(out).toBeDefined();
+      expect(code).not.toBe(0);
+    }
+
+    // `bun bun.lockb` dereferences every package's dependency list to print
+    // the yarn lockfile; it must report a parse error instead of crashing.
+    expect(print.err).toContain("error parsing lockfile: InvalidLockfile");
+    expect(print.out).toBe("");
+    expect(print.code).toBe(1);
+  });
+}
+
+it("rejects a binary lockfile whose resolution names a package id past the package count", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "corrupt-lockb-resolution-id",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "a-dep": "1.0.1",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const lockbPath = join(packageDir, "bun.lockb");
+
+  // Each buffer is written as a 16-byte (start, end) header, a type-name
+  // prefix, then the aligned payload. `hoisted_dependencies` and
+  // `resolutions` are both `u32` arrays, written in that order, so the second
+  // occurrence of the `u32` prefix belongs to `resolutions`.
+  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+  const N = Number(lockb.readBigUInt64LE(86));
+  const u32Prefix = "\n<u32> 4 sizeof, 4 alignof\n";
+  const hoisted = lockb.indexOf(u32Prefix);
+  const resolutionsPrefix = lockb.indexOf(u32Prefix, hoisted + 1);
+  expect(resolutionsPrefix).toBeGreaterThan(hoisted);
+  const resolutionsStart = Number(lockb.readBigUInt64LE(resolutionsPrefix - 16));
+  const resolutionsEnd = Number(lockb.readBigUInt64LE(resolutionsPrefix - 8));
+  expect(resolutionsEnd - resolutionsStart).toBeGreaterThanOrEqual(4);
+  expect(lockb.readUInt32LE(resolutionsStart)).toBeLessThan(N);
+  lockb.writeUInt32LE(N, resolutionsStart);
+  await write(lockbPath, lockb);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  // A resolution element indexes the package list. One id past the end is in
+  // range for every window check, so only the element check rejects it.
+  // Unvalidated, the id reached `Package::clone` and the install gave up with
+  // a bogus "failed to resolve" instead of re-resolving.
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--no-progress"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+  expect(err).toContain("Ignoring lockfile");
+  expect(err).not.toContain("failed to resolve");
+  expect(out).toContain("no-deps@1.0.0");
+  expect(out).toContain("a-dep@1.0.1");
+  expect(code).toBe(0);
+  expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
+  expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
+});
+
 it("rejects a binary lockfile whose git resolved tag contains path separators", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 

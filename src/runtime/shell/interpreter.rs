@@ -1562,8 +1562,8 @@ impl Interpreter {
                 // resources: deinit every live `Cmd` (kills the child, frees
                 // the `ShellSubprocess`, readers, redirection fd). Slots stay
                 // occupied so the env walk below still sees pipeline-duped
-                // Cmd envs. Windows: leak-over-UAF, see
-                // `ShellSubprocess::abort_after_failed_start`.
+                // Cmd envs. Windows: leaked, because
+                // `ShellSubprocess::deinit_in_flight_io` is POSIX-only.
                 #[cfg(not(windows))]
                 {
                     let node_count = this.nodes.get().len();

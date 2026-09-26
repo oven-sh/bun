@@ -2,8 +2,10 @@
 // on the eager read, or epoll_ctl() registering the pipe) so the reader error
 // surfaces synchronously from inside the spawn call. The command must finish
 // with the syscall errno as its exit code, not tear state down under the spawn.
+// The Windows case at the end injects the same kind of failure into
+// uv_read_start through a debug-only env var.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -572,6 +574,55 @@ test.concurrent.skipIf(!isLinux || !cc)(
     expect(await runStdinBlobFixture(["SHELL_FAIL_EPOLL_IN"], "pipeline")).toEqual({
       parsed: { exitCode: ENOMEM, stderr: "", leaked: [] },
       stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+);
+
+// Windows counterpart of the epoll_ctl failures above: uv_read_start on a
+// freshly spawned stdout/stderr pipe fails (libuv reports UV_EINVAL in the
+// wild). The shell returned that error from the spawn, killed the child and
+// leaked the ShellSubprocess with its exit handler still armed. The command
+// failed (exit 1, "Invalid argument"), its Cmd node was freed, and when the
+// killed child's exit callback fired it resolved the stale CmdHandle:
+//   panic: expected Node::Cmd at Node#2, got Free
+// The reader now reports the failure through on_reader_error like POSIX does,
+// so the command finishes with the errno as its exit code and the child's
+// exit is delivered to a live Cmd. A real uv_read_start failure cannot
+// be provoked from JS, so this uses the same debug-only fault injection as
+// test/js/bun/spawn/spawn-pipe-start-error.test.ts.
+const EINVAL = 22;
+
+test.concurrent.skipIf(!isWindows || !isDebug)(
+  "shell survives a failed uv_read_start on the stdout and stderr pipes during spawn (windows)",
+  async () => {
+    const fixture = /* js */ `
+import { $ } from "bun";
+const r = await $\`\${process.execPath} -e 1\`.quiet().nothrow();
+// Wait out one more child lifetime so the first child's exit callback has
+// fired before the process exits. Ignored stdio spawns no pipe reader, so
+// the fault injection does not apply to this one.
+await Bun.spawn({ cmd: [process.execPath, "-e", "1"], stdio: ["ignore", "ignore", "ignore"] }).exited;
+console.log(JSON.stringify({ exitCode: r.exitCode, stderr: r.stderr.toString() }));
+`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture, "--debug-crash-handler-use-trace-string"],
+      env: { ...bunEnv, BUN_INTERNAL_FAIL_PIPE_READER_START: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = stdout.trim().split("\n").pop() ?? "";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      parsed = line;
+    }
+    // One combined assertion so a crash surfaces stderr and the exit code in the diff.
+    expect({ parsed, stderr, exitCode }).toEqual({
+      parsed: { exitCode: EINVAL, stderr: "" },
+      stderr: "",
       exitCode: 0,
     });
   },

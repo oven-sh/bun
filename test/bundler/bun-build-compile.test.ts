@@ -1979,7 +1979,8 @@ export function inOther() {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       const { before, positions } = JSON.parse(stdout.trim());
-      expect(before).toEqual([true, true, true]);
+      // A module of Bun's own is compiled as a function, and has them only out of bytecode.
+      expect(before).toEqual([true, true, bytecode]);
 
       // The positions, counted in the text the executable holds. A frame is where the call's arguments start.
       const file = readFileSync(outfile);

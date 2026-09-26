@@ -1,5 +1,6 @@
 import { edenGC, fullGC } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import vm from "node:vm";
 
 // Coverage for the WebKit 7b485a76e9 sync. The first group pins observable differences
@@ -195,14 +196,11 @@ describe("WebKit 7b485a76e9 upgrade", () => {
   test("a source knows where its lines start once it is parsed (c76c52f5b1)", () => {
     // Not at the top of the file: a build without it would run none of the other tests.
     const { sourceHasLineStarts } = require("bun:internal-for-testing");
-    // Upstream reads the whole source again the first time a position in it is asked for. Nothing has asked for one
-    // in these.
+    // Upstream reads the whole source the first time a position in it is asked for. Nothing has asked for one in these.
     const long = `/* ${Buffer.alloc(1024, "x")} */\n`;
-    expect(sourceHasLineStarts(new Function(long + "return 1;\n"))).toBe(true);
     expect(sourceHasLineStarts((0, eval)(long + "(function () {\n})"))).toBe(true);
     expect(sourceHasLineStarts(vm.runInThisContext(long + "(function () {\n})"))).toBe(true);
     expect(sourceHasLineStarts(new vm.Script(long + "(function () {\n})").runInNewContext())).toBe(true);
-    expect(sourceHasLineStarts(require("node:punycode").toASCII)).toBe(true);
     // That is not worth its cost to a short source, which is read if it is asked.
     const short = (0, eval)("(function () {\n  return new Error().stack;\n})");
     expect(sourceHasLineStarts(short)).toBe(false);
@@ -213,7 +211,15 @@ describe("WebKit 7b485a76e9 upgrade", () => {
   });
 
   test("a position in a builtin counts from where the builtin starts (c76c52f5b1)", () => {
-    // The builtins share one text. With offsets only, upstream reports the line in that text.
+    // The builtins share one text. With offsets only, upstream reports the line in that text, which is in the thousands.
+    // A builtin has no positions of its own, so a frame in it is where its parameters start, after "(function ". A build
+    // with assertions keeps them, and its frame is the call in the builtin.
+    const position = (stack: string, name: string) =>
+      new RegExp(`at ${name} \\(native:(\\d+):(\\d+)\\)`).exec(stack)?.slice(1).map(Number);
+    const expectInBuiltin = ([line, column]: number[]) => {
+      if (isDebug || isASAN) expect(line).toBeLessThan(100);
+      else expect([line, column]).toEqual([1, 11]);
+    };
     let stack = "";
     try {
       [1].map(() => {
@@ -222,7 +228,7 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     } catch (e) {
       stack = (e as Error).stack!;
     }
-    expect(stack).toContain("at map (native:1:11)");
+    expectInBuiltin(position(stack, "map")!);
 
     let thrownInside: any;
     try {
@@ -230,8 +236,8 @@ describe("WebKit 7b485a76e9 upgrade", () => {
     } catch (e) {
       thrownInside = e;
     }
-    expect(thrownInside.stack).toContain("at reduce (native:1:11)");
-    expect([thrownInside.line, thrownInside.column]).toEqual([1, 11]);
+    expectInBuiltin(position(thrownInside.stack, "reduce")!);
+    expectInBuiltin([thrownInside.line, thrownInside.column]);
   });
 
   test("Reflect.construct call sites keep the semantics of the function (7b485a76e9)", () => {

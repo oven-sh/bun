@@ -11,7 +11,8 @@
 // graph's socket and request saw them close, and its child was killed; terminate() resolved
 // (or, for a node:worker_threads worker of a disposed graph, stayed pending: see hostTerminate);
 // the bystander, the sibling and the main thread's own server and timer still work; on Linux the
-// process's descriptors are back to where they were; and the process then exits by itself, with 0.
+// process's descriptors are back to where they were; and the process then exits by itself, with 0,
+// having printed nothing on stderr.
 import { afterAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -25,7 +26,17 @@ const dir = String(
       export const BYSTANDER = 16;
       export const LEAF = { ready: 1, inHandler: 2, blocked: 3, exiting: 4 };
       export const turn = () => new Promise(resolve => setImmediate(resolve));
-      export const until = async condition => { while (!condition()) await turn(); };
+      // A thread that waits sleeps. (A cell has two or three threads waiting at a time and twenty cells run at
+      // once: were each to poll through setImmediate, they would take the processors from the threads they are
+      // waiting for.) What the steps of a cell's plan wait for happens on the waiting thread, and calls wake():
+      // a graph ticking, receiving, hearing something, performing an order or throwing, and the hosting worker's
+      // messages and exit. The wait then looks again a setImmediate later, which is when a poll through
+      // setImmediate would have. Anything else, another thread's doing included, is seen at the next look, which
+      // a 1ms timer brings. (Every thread has sleepers of its own: a graph's code gets its host's wake() from control.)
+      const sleepers = new Set();
+      export const wake = () => { for (const resolve of sleepers) resolve(); sleepers.clear(); };
+      const sleep = () => new Promise(resolve => { sleepers.add(resolve); setTimeout(() => { sleepers.delete(resolve); resolve(); }, 1); });
+      export const until = async condition => { while (!condition()) { await sleep(); await turn(); } };
     `,
     "leaf.mjs": String.raw`
       import { parentPort, workerData } from "node:worker_threads";
@@ -70,6 +81,7 @@ const dir = String(
       const held = control.held;
       export function perform(order) {
         control.performed++;
+        control.wake();
         if (order === "dispose") control.dispose();
         else if (order === "dispose-inner") { control.snapshot(); held.inner.dispose(); }
         else if (order === "terminate-leaf") Promise.resolve(held.worker.terminate()).then(() => control.hear("terminate resolved"));
@@ -141,7 +153,7 @@ const dir = String(
       import { AsyncLocalStorage } from "node:async_hooks";
       import fs from "node:fs";
       import { parentPort } from "node:worker_threads";
-      import { LEAF, S, turn, until } from "./shared.mjs";
+      import { LEAF, S, turn, until, wake } from "./shared.mjs";
 
       export async function runHost({ sab, base, ports, channel, cell, onReady }) {
         const i32 = new Int32Array(sab);
@@ -161,9 +173,10 @@ const dir = String(
         const control = {
           sab, base, ports, channel, work: cell.work, tla: cell.graphState === "tla-slow" ? "slow" : "never",
           held: {}, orders: [], performed: 0, began: false, onLeafMessage: undefined, onLeafClose: undefined, released: false,
-          tick: () => void Atomics.add(i32, base + S.TICKS, 1),
-          recv: () => void Atomics.add(i32, base + S.RECV, 1),
-          hear: name => { heard.push(name); Atomics.add(i32, base + S.HEARD, 1); },
+          wake,
+          tick: () => { Atomics.add(i32, base + S.TICKS, 1); wake(); },
+          recv: () => { Atomics.add(i32, base + S.RECV, 1); wake(); },
+          hear: name => { heard.push(name); Atomics.add(i32, base + S.HEARD, 1); wake(); },
           pid: pid => store(S.PID, pid),
           sendPort: port => parentPort.postMessage({ port }, [port]),
           snapshot,
@@ -213,7 +226,7 @@ const dir = String(
 
         graph = new Bun.ModuleGraph({
           globals: { control },
-          onError: cell.onError && ((error, kind) => { out.onError = kind + ": " + error.message; if (cell.onError !== "record") step(cell.onError); }),
+          onError: cell.onError && ((error, kind) => { out.onError = kind + ": " + error.message; if (cell.onError !== "record") step(cell.onError); wake(); }),
         });
 
         const inState = async ([kind, arg]) => {
@@ -284,14 +297,15 @@ const dir = String(
       // What the main thread of every cell has: the peers the graphs' sockets and requests talk to, its own
       // server and timer, and the checks made once the cell's events have been issued.
       import fs from "node:fs";
-      import { BYSTANDER, S, turn, until } from "./shared.mjs";
+      import { BYSTANDER, S, until } from "./shared.mjs";
 
       export function setUp() {
         const sab = new SharedArrayBuffer(4 * 2 * BYSTANDER);
         const i32 = new Int32Array(sab);
         const result = {};
-        // Nothing of a finished cell keeps the process running; this says so if something does.
-        setTimeout(() => { fs.writeSync(1, JSON.stringify({ stillRunning: true, ...result }) + "\n"); process.exit(1); }, 30000).unref();
+        // Nothing of a finished cell keeps the process running; this says so if something does. (It exits
+        // even if nobody is left to tell: the write throws once the test that started the cell has gone.)
+        setTimeout(() => { try { fs.writeSync(1, JSON.stringify({ stillRunning: true, ...result }) + "\n"); } finally { process.exit(1); } }, 30000).unref();
         const closers = [];
         const peersOf = base => {
           const seen = () => { Atomics.store(i32, base + S.PEER_SEEN, 1); Atomics.notify(i32, base + S.PEER_SEEN); };
@@ -352,8 +366,10 @@ const dir = String(
         // (A bystander in a readFile loop has a descriptor open half the time: any sample at the baseline will do.)
         const fdsAbove = async baseline => {
           if (process.platform !== "linux") return 0;
-          for (const deadline = Date.now() + 1000; Date.now() < deadline; await turn()) if (fds() <= baseline) return 0;
-          return fds() - baseline;
+          let above;
+          const deadline = Date.now() + 1000;
+          await until(() => (above = Math.max(fds() - baseline, 0)) === 0 || Date.now() >= deadline);
+          return above;
         };
         const disposed = () => load(0, S.DISPOSED) === 1;
         // What the subject's graph heard, ticked and received since it was disposed.
@@ -444,7 +460,7 @@ const dir = String(
       import fs from "node:fs";
       import { Worker as NodeWorker } from "node:worker_threads";
       import { setUp } from "./main-shared.mjs";
-      import { BYSTANDER, S, turn, until } from "./shared.mjs";
+      import { BYSTANDER, S, turn, until, wake } from "./shared.mjs";
 
       const cell = JSON.parse(process.argv[2]);
       const main = setUp();
@@ -457,18 +473,20 @@ const dir = String(
           if (message === "pong") seen.pongs++;
           else if (message.port) seen.port = message.port;
           else { seen.stages.push(message.stage); seen.reported = message; }
+          wake();
         };
+        const onExit = code => { seen.exit = code; wake(); };
         let worker;
         if (cell.hostApi === "web") {
           worker = new Worker(import.meta.dir + "/b-worker.mjs", options);
           worker.onmessage = event => onMessage(event.data);
           worker.onerror = event => { seen.error = event.message; };
-          worker.addEventListener("close", event => { seen.exit = event.code; });
+          worker.addEventListener("close", event => onExit(event.code));
         } else {
           worker = new NodeWorker(import.meta.dir + "/b-worker.mjs", options);
           worker.on("message", onMessage);
           worker.on("error", error => { seen.error = error.message; });
-          worker.on("exit", code => { seen.exit = code; });
+          worker.on("exit", onExit);
         }
         const answers = async () => { const from = seen.pongs; worker.postMessage("ping"); await until(() => seen.pongs > from); return "answers"; };
         return { worker, seen, answers };
@@ -1111,11 +1129,13 @@ for (const [topology, list] of Object.entries(cells))
               return line;
             }
           });
+        // A cell prints nothing on stderr. (Where something of the cell's throws, whether a worker that
+        // throws gets to print there is not pinned down: stderr is only there to say why the cell failed.)
+        const throws = /"throwing"|:throw"/.test(JSON.stringify(cell));
         const [got, want] = [
-          { results, exitCode },
-          { results: [expected], exitCode: 0 },
+          { results, ...(!throws && { stderr }), exitCode },
+          { results: [expected], ...(!throws && { stderr: "" }), exitCode: 0 },
         ];
-        // (stderr is there to say why a cell failed; a worker that throws prints there in cells that pass.)
         expect(Bun.deepEquals(got, want) ? got : { ...got, stderr }).toEqual(want);
       });
   });

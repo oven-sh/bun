@@ -74,6 +74,21 @@ test.concurrent("navigate, events and evaluate cross the pipes", async () => {
   });
 });
 
+test.concurrent("the events the backend consumes itself still reach addEventListener", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/first");
+    const seen = [];
+    view.addEventListener("Page.frameNavigated", e => seen.push("frameNavigated " + e.data.frame.url + " loading=" + view.loading));
+    view.addEventListener("Page.loadEventFired", e => seen.push("loadEventFired " + typeof e.data.timestamp + " loading=" + view.loading));
+    await view.navigate("http://fake/second");
+    print(seen);
+    view.close();
+  `);
+  // The backend has already applied each event (url, loading) when the listener runs.
+  expect(result).toEqual(["frameNavigated http://fake/second loading=true", "loadEventFired number loading=false"]);
+});
+
 test.concurrent("a reply larger than the read buffer is reassembled", async () => {
   const result = await runScenario(`
     const view = newView();

@@ -82,6 +82,41 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  itBundled("browser/NodeBufferBase64Url", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Buffer } from "buffer";
+        const buf = Buffer.from("aGk_-w", "base64url");
+        console.log(buf.toString("hex"));
+        console.log(buf.toString("base64url"));
+        console.log(Buffer.from("aGk/+w==", "base64url").toString("hex"));
+        console.log(Buffer.from("aGk_-w", "BASE64URL").toString("hex"));
+        console.log(Buffer.isEncoding("base64url"));
+        console.log(Buffer.byteLength("aGk_-w", "base64url"));
+        const dst = Buffer.alloc(4);
+        console.log(dst.write("aGk_-w", "base64url"), dst.toString("hex"));
+        console.log(Buffer.from([1, 2]).toString("base64url"), Buffer.from([1, 2, 3]).toString("base64url"));
+        console.log(Buffer.from([0xfb, 0xff, 0xfe]).toString("base64url"));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: `
+        68693ffb
+        aGk_-w
+        68693ffb
+        68693ffb
+        true
+        4
+        4 68693ffb
+        AQI AQID
+        -__-
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
+    },
+  });
   itBundled("browser/NodeFS", {
     files: {
       "/entry.js": /* js */ `

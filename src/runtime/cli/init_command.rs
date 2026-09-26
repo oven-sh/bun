@@ -440,12 +440,9 @@ impl InitCommand {
 
                 #[cfg(windows)]
                 let prev_file_pos = pkg.get_pos()?;
-                if pkg
-                    .pread_all(package_json_contents.list.as_mut_slice(), 0)
-                    .is_err()
-                {
-                    package_json_file = None;
-                    break 'read_package_json;
+                if let Err(err) = pkg.pread_all(package_json_contents.list.as_mut_slice(), 0) {
+                    Output::err(err, "failed to read package.json", ());
+                    Global::exit(1);
                 }
                 #[cfg(windows)]
                 pkg.seek_to(prev_file_pos)?;
@@ -466,45 +463,48 @@ impl InitCommand {
         };
         let mut did_load_package_json = false;
         if !package_json_contents.list.is_empty() {
-            'process_package_json: {
-                let source = bun_ast::Source::init_path_string(
-                    b"package.json",
-                    package_json_contents.list.as_slice(),
-                );
-                let mut log = bun_ast::Log::init();
-                let package_json_expr: bun_ast::Expr =
-                    match json::parse_package_json_utf8(&source, &mut log, &bump) {
-                        Ok(e) => e,
-                        Err(_) => {
-                            package_json_file = None;
-                            break 'process_package_json;
+            // A package.json that exists but does not parse must never be
+            // treated as absent: that would overwrite it with the scaffold.
+            let source = bun_ast::Source::init_path_string(
+                b"package.json",
+                package_json_contents.list.as_slice(),
+            );
+            let mut log = bun_ast::Log::init();
+            let package_json_expr: bun_ast::Expr =
+                match json::parse_package_json_utf8(&source, &mut log, &bump) {
+                    Ok(e) => e,
+                    Err(err) => {
+                        if log.errors > 0 {
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         }
-                    };
-
-                if !package_json_expr.data.is_e_object() {
-                    package_json_file = None;
-                    break 'process_package_json;
-                }
-
-                fields.object = package_json_expr.data.e_object();
-
-                if let Some(name) = package_json_expr.get(b"name") {
-                    if let Some(str) = name.as_utf8_string_literal() {
-                        fields.name = str.to_vec();
+                        Output::err(err, "failed to parse package.json", ());
+                        Global::exit(1);
                     }
-                }
+                };
 
-                if let Some(name) = package_json_expr
-                    .get(b"module")
-                    .or_else(|| package_json_expr.get(b"main"))
-                {
-                    if let Some(str_) = name.as_utf8_string_literal() {
-                        fields.entry_point = str_.to_vec();
-                    }
-                }
-
-                did_load_package_json = true;
+            if !package_json_expr.data.is_e_object() {
+                Output::err_generic("package.json root must be an object", ());
+                Global::exit(1);
             }
+
+            fields.object = package_json_expr.data.e_object();
+
+            if let Some(name) = package_json_expr.get(b"name") {
+                if let Some(str) = name.as_utf8_string_literal() {
+                    fields.name = str.to_vec();
+                }
+            }
+
+            if let Some(name) = package_json_expr
+                .get(b"module")
+                .or_else(|| package_json_expr.get(b"main"))
+            {
+                if let Some(str_) = name.as_utf8_string_literal() {
+                    fields.entry_point = str_.to_vec();
+                }
+            }
+
+            did_load_package_json = true;
         }
 
         if fields.entry_point.is_empty() && !minimal {

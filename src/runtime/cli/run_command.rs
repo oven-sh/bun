@@ -2390,7 +2390,7 @@ impl RunCommand {
 
         // ── stdin (`bun run -`) ─────────────────────────────────────────────
         if target_name.len() == 1 && target_name[0] == b'-' {
-            return Self::exec_stdin(ctx);
+            return Self::exec_stdin(ctx, true);
         }
 
         // ── package.json script lookup ──────────────────────────────────────
@@ -2815,7 +2815,10 @@ impl RunCommand {
 
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
     /// and boot the VM with the synthetic `[stdin]` path.
-    fn exec_stdin(ctx: &mut ContextData) -> crate::Result<bool> {
+    pub(crate) fn exec_stdin(
+        ctx: &mut ContextData,
+        include_argv_marker: bool,
+    ) -> crate::Result<bool> {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
         // read from stdin
@@ -2843,12 +2846,16 @@ impl RunCommand {
         entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
         let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
 
-        // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
-        // Node's `node -` semantics.
-        let mut passthrough_list: Vec<Box<[u8]>> = Vec::with_capacity(ctx.passthrough.len() + 1);
-        passthrough_list.push(b"-".to_vec().into_boxed_slice());
-        passthrough_list.append(&mut ctx.passthrough);
-        ctx.passthrough = passthrough_list;
+        if include_argv_marker {
+            // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
+            // Node's `node -` semantics. Bare `node --input-type=module` has
+            // no argv marker even though it reads the same stdin source.
+            let mut passthrough_list: Vec<Box<[u8]>> =
+                Vec::with_capacity(ctx.passthrough.len() + 1);
+            passthrough_list.push(b"-".to_vec().into_boxed_slice());
+            passthrough_list.append(&mut ctx.passthrough);
+            ctx.passthrough = passthrough_list;
+        }
 
         // NOT routed through `boot_and_handle_error` — the
         // stdin path skips the

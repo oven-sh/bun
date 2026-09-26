@@ -17,6 +17,15 @@ use crate::offline_mode::OfflineMode;
 // Every `Box<[u8]>` / `Vec<Box<[u8]>>` struct field below is a proc-lifetime
 // CLI string: populated once from argv/bunfig during startup and never freed.
 
+#[repr(u8)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum RuntimeInputType {
+    #[default]
+    Auto,
+    CommonJS,
+    Module,
+}
+
 pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
@@ -563,6 +572,7 @@ pub struct RuntimeOptions {
     pub redis_preconnect: bool,
     pub sql_preconnect: bool,
     pub eval: Eval,
+    pub input_type: RuntimeInputType,
     pub preconnect: Vec<Box<[u8]>>,
     pub experimental_http2_fetch: bool,
     pub experimental_http3_fetch: bool,
@@ -634,6 +644,7 @@ impl Default for RuntimeOptions {
             redis_preconnect: false,
             sql_preconnect: false,
             eval: Eval::default(),
+            input_type: RuntimeInputType::Auto,
             preconnect: Vec::new(),
             experimental_http2_fetch: false,
             experimental_http3_fetch: false,

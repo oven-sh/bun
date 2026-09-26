@@ -287,6 +287,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
     ),
+    parse_param!("--input-type <STR>"),
     parse_param!(
         "--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)"
     ),
@@ -1020,6 +1021,16 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             | CommandTag::TestCommand
             | CommandTag::RunAsNodeCommand
     ) {
+        ctx.runtime_options.input_type = match args.option(b"--input-type") {
+            Some(value) if value == b"commonjs" || value == b"commonjs-typescript" => {
+                bun_options_types::context::RuntimeInputType::CommonJS
+            }
+            Some(value) if value == b"module" || value == b"module-typescript" => {
+                bun_options_types::context::RuntimeInputType::Module
+            }
+            _ => bun_options_types::context::RuntimeInputType::Auto,
+        };
+
         {
             let preloads = args.options(b"--preload");
             let preloads2 = args.options(b"--require");

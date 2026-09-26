@@ -6,8 +6,10 @@
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
 
-import { describe, test } from "node:test";
+import http from "http";
 import assert from "node:assert";
+import { describe, test } from "node:test";
+import { createProxy } from "proxy";
 
 function expect(value: any) {
   return {
@@ -51,8 +53,6 @@ function expect(value: any) {
     },
   };
 }
-import http from "http";
-import { createProxy } from "proxy";
 
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
@@ -222,8 +222,17 @@ describe("HTTP server CONNECT", () => {
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
 
+    // A loopback port nothing listens on, so the upstream connect is refused
+    // without DNS. The established connection keeps the port bound, so no
+    // concurrent listen(0) can take it while the test runs.
+    await using sink = net.createServer();
+    await once(sink.listen(0, "127.0.0.1"), "listening");
+    const holder = net.connect((sink.address() as AddressInfo).port, "127.0.0.1");
+    await once(holder, "connect");
+    const target = `127.0.0.1:${holder.localPort}`;
+
     const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      client.write("CONNECT invalid.host.that.does.not.exist:9999 HTTP/1.1\r\nHost: invalid.host:9999\r\n\r\n");
+      client.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`);
     });
 
     const { promise, resolve } = Promise.withResolvers<string>();
@@ -238,7 +247,8 @@ describe("HTTP server CONNECT", () => {
     });
 
     const response = await promise;
-    expect(response).toContain("502 Bad Gateway");
+    holder.destroy();
+    expect(response).toBe("HTTP/1.1 502 Bad Gateway\r\n\r\n");
   });
 
   test("should handle CONNECT with authentication failure", async () => {

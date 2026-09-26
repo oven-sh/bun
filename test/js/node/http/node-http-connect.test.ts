@@ -1,39 +1,47 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isWindows,
+  nodeExe,
+  normalizeBunSnapshot,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import http from "http";
 
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { join } from "node:path";
-function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, add_http_prefix: boolean) {
-  const client = net.connect({ port: proxyAddress.port, host: proxyAddress.address }, () => {
-    client.write(
-      `CONNECT ${add_http_prefix ? "http://" : ""}${targetAddress.address}:${targetAddress.port} HTTP/1.1\r\nHost: ${targetAddress.address}:${targetAddress.port}\r\nProxy-Authorization: Basic dXNlcjpwYXNzd29yZA==\r\n\r\n`,
-    );
-  });
 
-  const received: string[] = [];
-  const { promise, resolve, reject } = Promise.withResolvers<string>();
+const ESTABLISHED = "HTTP/1.1 200 Connection established\r\n\r\n";
+// What the server answers on its own (no 'clientError' listener) to a request its parser rejects.
+const BAD_REQUEST = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
 
-  client.on("data", data => {
-    if (data.toString().includes("200 Connection established")) {
-      client.write("GET / HTTP/1.1\r\nHost: www.example.com:80\r\nConnection: close\r\n\r\n");
-    }
-    received.push(data.toString());
-  });
-  client.on("error", reject);
-
-  client.on("end", () => {
-    resolve(received.join(""));
-  });
+// Writes one raw request and resolves with everything the server sent plus the
+// client-side events seen before the connection closed.
+function rawRequest(address: AddressInfo, request: string) {
+  const { promise, resolve } = Promise.withResolvers<{ response: string; events: string[] }>();
+  const client = net.connect(address.port, address.address, () => client.write(request));
+  const received: Buffer[] = [];
+  const events: string[] = [];
+  client.on("data", chunk => received.push(chunk));
+  client.on("end", () => events.push("end"));
+  client.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}`));
+  client.on("close", () => resolve({ response: Buffer.concat(received).toString(), events }));
   return promise;
 }
 
-const BIG_DATA = Buffer.alloc(1024 * 1024 * 64, "bun").toString();
-describe("HTTP server CONNECT", () => {
+describe.concurrent("HTTP server CONNECT", () => {
   test("should handle backpressure", async () => {
+    // Several times what loopback takes in one write: the target's end() has to
+    // wait for its buffered bytes and the proxy pipes across many reads.
+    const payload = Buffer.alloc(8 * 1024 * 1024, "bun");
     const responseHeader = "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n";
+    const proxyResponse = "HTTP/1.1 200 Connection established\r\nConnection: close\r\n\r\n";
     await using proxyServer = http.createServer((req, res) => {
       res.end("Hello World from proxy server");
     });
@@ -41,22 +49,21 @@ describe("HTTP server CONNECT", () => {
       // Accepted net sockets start in Node's flowing=null state; drain the
       // inbound GET so 'end' can fire and server.close() can resolve.
       socket.resume();
-      socket.write(responseHeader, () => {
-        socket.write(BIG_DATA, () => {
-          //TODO: is this a net bug? on windows the connection is closed before everything is sended
-          Bun.sleep(100).then(() => {
-            socket.end();
-          });
-        });
-      });
+      socket.write(responseHeader);
+      socket.end(payload);
     });
-    let proxyHeaders = {};
+    let connectRequest: { method?: string; url?: string; proxyAuthorization?: string; head?: Buffer } = {};
     proxyServer.on("connect", (req, socket, head) => {
-      proxyHeaders = req.headers;
+      connectRequest = {
+        method: req.method,
+        url: req.url,
+        proxyAuthorization: req.headers["proxy-authorization"],
+        head,
+      };
       const [host, port] = req.url?.split(":") ?? [];
 
       const serverSocket = net.connect(parseInt(port), host, async () => {
-        socket.write(`HTTP/1.1 200 Connection established\r\nConnection: close\r\n\r\n`);
+        socket.write(proxyResponse);
         serverSocket.pipe(socket);
         socket.pipe(serverSocket);
       });
@@ -76,69 +83,123 @@ describe("HTTP server CONNECT", () => {
     await once(targetServer.listen(0, "127.0.0.1"), "listening");
     const targetAddress = targetServer.address() as AddressInfo;
 
-    {
-      const response = await connectClient(proxyAddress, targetAddress, false);
-      expect(proxyHeaders["proxy-authorization"]).toBe("Basic dXNlcjpwYXNzd29yZA==");
-      expect(response).toContain("HTTP/1.1 200 OK");
-      expect(response.length).toBeGreaterThan(responseHeader.length + BIG_DATA.length);
-      expect(response).toContain(BIG_DATA);
-    }
+    const target = `${targetAddress.address}:${targetAddress.port}`;
+    const client = net.connect({ port: proxyAddress.port, host: proxyAddress.address }, () => {
+      client.write(
+        `CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\nProxy-Authorization: Basic dXNlcjpwYXNzd29yZA==\r\n\r\n`,
+      );
+    });
+    const received: Buffer[] = [];
+    const { promise: response, resolve, reject } = Promise.withResolvers<Buffer>();
+    let sentRequest = false;
+    client.on("data", data => {
+      received.push(data);
+      if (!sentRequest && Buffer.concat(received).includes(proxyResponse)) {
+        sentRequest = true;
+        client.write("GET / HTTP/1.1\r\nHost: www.example.com:80\r\nConnection: close\r\n\r\n");
+      }
+    });
+    client.on("error", reject);
+    client.on("end", () => resolve(Buffer.concat(received)));
+
+    const expected = Buffer.concat([Buffer.from(proxyResponse), Buffer.from(responseHeader), payload]);
+    const tunneled = await response;
+    // Compared by hand: a failed toEqual on 8 MiB buffers prints megabytes of diff.
+    expect({
+      connectRequest,
+      response: { length: tunneled.length, equalsExpected: tunneled.equals(expected) },
+    }).toEqual({
+      connectRequest: {
+        method: "CONNECT",
+        url: target,
+        proxyAuthorization: "Basic dXNlcjpwYXNzd29yZA==",
+        head: Buffer.alloc(0),
+      },
+      response: { length: expected.length, equalsExpected: true },
+    });
   });
 
-  test("should handle data, drain, end and close events", async () => {
+  // The 'connect' handler writes 1 MiB chunks until write() returns false, ends
+  // the socket from the 'drain' listener and reports what both ends saw.
+  // `drainListener` picks whether every 'drain' is recorded or only the first.
+  async function writeUntilDrain(drainListener: "on" | "once") {
+    // One write of this size is not enough to back up loopback, so the loop
+    // below runs a few times before write() returns false.
+    const chunk = Buffer.alloc(1024 * 1024, "bun");
     await using proxyServer = http.createServer((req, res) => {
       res.end("Hello World from proxy server");
     });
 
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
-    let data_received: string[] = [];
-    let client_data_received: string[] = [];
-    let proxy_drain_received = false;
-    let proxy_end_received = false;
+    const proxyReceived: Buffer[] = [];
+    const clientReceived: Buffer[] = [];
+    const proxyEvents: string[] = [];
+    let connectRequest: { url?: string; head?: Buffer } = {};
+    let writes = 0;
 
-    const { promise, resolve, reject } = Promise.withResolvers<string>();
-
-    const { promise: clientPromise, resolve: clientResolve, reject: clientReject } = Promise.withResolvers<string>();
+    const { promise: proxyClosed, resolve: resolveProxyClosed, reject: rejectProxy } = Promise.withResolvers<void>();
+    const { promise: clientEnded, resolve: resolveClientEnded, reject: rejectClient } = Promise.withResolvers<void>();
     const clientSocket = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      clientSocket.on("error", clientReject);
-      clientSocket.on("data", chunk => {
-        client_data_received.push(chunk?.toString());
-      });
-      clientSocket.on("end", () => {
-        clientSocket.end();
-        clientResolve(client_data_received.join(""));
-      });
-
       clientSocket.write("CONNECT localhost:80 HTTP/1.1\r\nHost: localhost:80\r\nConnection: close\r\n\r\n");
+    });
+    clientSocket.on("error", rejectClient);
+    clientSocket.on("data", data => clientReceived.push(data));
+    clientSocket.on("end", () => {
+      clientSocket.end();
+      resolveClientEnded();
     });
 
     proxyServer.on("connect", (req, socket, head) => {
-      expect(head).toBeInstanceOf(Buffer);
-      socket.on("data", chunk => {
-        data_received.push(chunk?.toString());
-      });
-      socket.on("end", () => {
-        proxy_end_received = true;
-      });
+      connectRequest = { url: req.url, head };
+      socket.on("data", data => proxyReceived.push(data));
+      socket.on("end", () => proxyEvents.push("end"));
       socket.on("close", () => {
-        resolve(data_received.join(""));
+        proxyEvents.push("close");
+        resolveProxyClosed();
       });
-      socket.on("drain", () => {
-        proxy_drain_received = true;
+      socket[drainListener]("drain", () => {
+        proxyEvents.push("drain");
         socket.end();
       });
-      socket.on("error", reject);
-      proxy_drain_received = false;
+      socket.on("error", rejectProxy);
       // write until backpressure
-      while (socket.write(BIG_DATA)) {}
+      do {
+        writes++;
+      } while (socket.write(chunk));
       clientSocket.write("Hello World");
     });
 
-    expect(await promise).toContain("Hello World");
-    expect(await clientPromise).toContain(BIG_DATA);
-    expect(proxy_drain_received).toBe(true);
-    expect(proxy_end_received).toBe(true);
+    await Promise.all([proxyClosed, clientEnded]);
+    const expected = Buffer.concat(Array.from({ length: writes }, () => chunk));
+    const received = Buffer.concat(clientReceived);
+    return {
+      connectRequest,
+      proxyReceived: Buffer.concat(proxyReceived).toString(),
+      proxyEvents,
+      clientReceived: { length: received.length, equalsExpected: received.equals(expected) },
+      expectedLength: expected.length,
+    };
+  }
+
+  test("should handle data, drain, end and close events", async () => {
+    const { expectedLength, ...result } = await writeUntilDrain("once");
+    expect(result).toEqual({
+      connectRequest: { url: "localhost:80", head: Buffer.alloc(0) },
+      proxyReceived: "Hello World",
+      proxyEvents: ["drain", "end", "close"],
+      clientReceived: { length: expectedLength, equalsExpected: true },
+    });
+  });
+
+  // Node emits one 'drain' per write() that returned false. The socket handed to
+  // 'connect' emits it twice: NodeHTTPServerSocket.#onDrain in
+  // src/js/node/_http_server.ts runs the pending write callback, whose afterWrite
+  // already emitted 'drain', then emits 'drain' again. This test starts to fail
+  // once that second emit is gone: drop the `.failing` and the test above's `once`.
+  test.failing("should emit 'drain' once per write() that returned false, like Node", async () => {
+    const { proxyEvents } = await writeUntilDrain("on");
+    expect(proxyEvents).toEqual(["drain", "end", "close"]);
   });
 
   test("should handle CONNECT with invalid target", async () => {
@@ -166,23 +227,18 @@ describe("HTTP server CONNECT", () => {
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
 
-    const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      client.write("CONNECT invalid.host.that.does.not.exist:9999 HTTP/1.1\r\nHost: invalid.host:9999\r\n\r\n");
-    });
+    // A loopback port nothing listens on, so the upstream connect is refused
+    // without DNS. The established connection keeps the port bound, so no
+    // concurrent listen(0) can take it while the test runs.
+    await using sink = net.createServer();
+    await once(sink.listen(0, "127.0.0.1"), "listening");
+    const holder = net.connect((sink.address() as AddressInfo).port, "127.0.0.1");
+    await once(holder, "connect");
+    const target = `127.0.0.1:${holder.localPort}`;
 
-    const { promise, resolve } = Promise.withResolvers<string>();
-    const received: string[] = [];
-
-    client.on("data", data => {
-      received.push(data.toString());
-    });
-
-    client.on("end", () => {
-      resolve(received.join(""));
-    });
-
-    const response = await promise;
-    expect(response).toContain("502 Bad Gateway");
+    const result = await rawRequest(proxyAddress, `CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`);
+    holder.destroy();
+    expect(result).toEqual({ response: "HTTP/1.1 502 Bad Gateway\r\n\r\n", events: ["end"] });
   });
 
   // TODO: timeout is not supported in bun socket yet
@@ -278,173 +334,85 @@ describe("HTTP server CONNECT", () => {
     expect(resumeCount).toBeGreaterThan(0);
   });
 
-  test("should deliver bytes following a CONNECT request with Content-Length: 0 to the connect socket, not as a new request", async () => {
-    const requestUrls: string[] = [];
-    await using proxyServer = http.createServer((req, res) => {
-      requestUrls.push(req.url ?? "");
-      res.end();
-    });
+  // Bytes that arrive with or after a CONNECT request belong to the tunnel: they
+  // reach the 'connect' socket verbatim (as `head` or 'data') and never start a
+  // new request. Node v26.3.0 behaves the same for every framing below.
+  const tunneledFramings = [
+    {
+      name: "Content-Length: 0",
+      headers: "Content-Length: 0",
+      pipelined: "GET /pipelined HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    },
+    {
+      // The chunked framing bytes reach the connect socket un-decoded.
+      name: "Transfer-Encoding: chunked (raw, not chunk-decoded)",
+      headers: "Transfer-Encoding: chunked",
+      pipelined: "5\r\nhello\r\n0\r\n\r\nGET /smuggled HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    },
+    {
+      // The declared body and everything after it reach the connect socket.
+      name: "a nonzero Content-Length",
+      headers: "Content-Length: 5",
+      pipelined: "helloGET /smuggled HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    },
+  ];
+  test.each(tunneledFramings)(
+    "should deliver bytes following a CONNECT request with $name to the connect socket, not as a new request",
+    async ({ headers, pipelined }) => {
+      const requestUrls: string[] = [];
+      await using proxyServer = http.createServer((req, res) => {
+        requestUrls.push(req.url ?? "");
+        res.end();
+      });
 
-    const pipelined = "GET /pipelined HTTP/1.1\r\nHost: example.com\r\n\r\n";
-    const afterEstablished = "GET /after-established HTTP/1.1\r\nHost: example.com\r\n\r\n";
-    const expectedTunneled = pipelined + afterEstablished;
+      const afterEstablished = "GET /after-established HTTP/1.1\r\nHost: example.com\r\n\r\n";
+      const expectedTunneled = pipelined + afterEstablished;
 
-    const { promise: tunneled, resolve: resolveTunneled, reject: rejectTunneled } = Promise.withResolvers<string>();
-    proxyServer.on("connect", (req, socket, head) => {
-      const chunks: Buffer[] = [head];
-      let receivedLength = head.length;
-      socket.on("data", chunk => {
-        chunks.push(chunk);
-        receivedLength += chunk.length;
-        if (receivedLength >= Buffer.byteLength(expectedTunneled)) {
-          socket.end();
+      const { promise: tunneled, resolve: resolveTunneled, reject: rejectTunneled } = Promise.withResolvers<string>();
+      proxyServer.on("connect", (req, socket, head) => {
+        const chunks: Buffer[] = [head];
+        let receivedLength = head.length;
+        socket.on("data", chunk => {
+          chunks.push(chunk);
+          receivedLength += chunk.length;
+          if (receivedLength >= Buffer.byteLength(expectedTunneled)) {
+            socket.end();
+          }
+        });
+        socket.on("end", () => {
+          resolveTunneled(Buffer.concat(chunks).toString());
+        });
+        socket.on("error", rejectTunneled);
+        socket.write(ESTABLISHED);
+      });
+
+      await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+      const proxyAddress = proxyServer.address() as AddressInfo;
+
+      const { promise: clientReceived, resolve: resolveClient, reject: rejectClient } = Promise.withResolvers<string>();
+      const received: string[] = [];
+      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
+        client.write(`CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\n${headers}\r\n\r\n${pipelined}`);
+      });
+      client.on("data", data => {
+        received.push(data.toString());
+        if (received.join("") === ESTABLISHED) {
+          client.write(afterEstablished);
         }
       });
-      socket.on("end", () => {
-        resolveTunneled(Buffer.concat(chunks).toString());
+      client.on("error", rejectClient);
+      client.on("end", () => {
+        client.end();
+        resolveClient(received.join(""));
       });
-      socket.on("error", rejectTunneled);
-      socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
-    });
 
-    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
-    const proxyAddress = proxyServer.address() as AddressInfo;
-
-    const { promise: clientReceived, resolve: resolveClient, reject: rejectClient } = Promise.withResolvers<string>();
-    const received: string[] = [];
-    const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      client.write(`CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nContent-Length: 0\r\n\r\n${pipelined}`);
-    });
-    client.on("data", data => {
-      received.push(data.toString());
-      if (received.join("") === "HTTP/1.1 200 Connection established\r\n\r\n") {
-        client.write(afterEstablished);
-      }
-    });
-    client.on("error", rejectClient);
-    client.on("end", () => {
-      client.end();
-      resolveClient(received.join(""));
-    });
-
-    expect(await tunneled).toBe(expectedTunneled);
-    expect(await clientReceived).toBe("HTTP/1.1 200 Connection established\r\n\r\n");
-    expect(requestUrls).toEqual([]);
-  });
-
-  // Node v26.3.0 tunnels "5\r\nhello\r\n0\r\n\r\nGET ..." verbatim — the chunked framing
-  // bytes reach the connect socket un-decoded and no 'request' event fires.
-  test("should deliver bytes following a CONNECT request with Transfer-Encoding: chunked raw, not chunk-decoded", async () => {
-    const requestUrls: string[] = [];
-    await using proxyServer = http.createServer((req, res) => {
-      requestUrls.push(req.url ?? "");
-      res.end();
-    });
-
-    const pipelined = "5\r\nhello\r\n0\r\n\r\nGET /smuggled HTTP/1.1\r\nHost: example.com\r\n\r\n";
-    const afterEstablished = "GET /after-established HTTP/1.1\r\nHost: example.com\r\n\r\n";
-    const expectedTunneled = pipelined + afterEstablished;
-
-    const { promise: tunneled, resolve: resolveTunneled, reject: rejectTunneled } = Promise.withResolvers<string>();
-    proxyServer.on("connect", (req, socket, head) => {
-      const chunks: Buffer[] = [head];
-      let receivedLength = head.length;
-      socket.on("data", chunk => {
-        chunks.push(chunk);
-        receivedLength += chunk.length;
-        if (receivedLength >= Buffer.byteLength(expectedTunneled)) {
-          socket.end();
-        }
+      expect({ tunneled: await tunneled, clientReceived: await clientReceived, requestUrls }).toEqual({
+        tunneled: expectedTunneled,
+        clientReceived: ESTABLISHED,
+        requestUrls: [],
       });
-      socket.on("end", () => {
-        resolveTunneled(Buffer.concat(chunks).toString());
-      });
-      socket.on("error", rejectTunneled);
-      socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
-    });
-
-    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
-    const proxyAddress = proxyServer.address() as AddressInfo;
-
-    const { promise: clientReceived, resolve: resolveClient, reject: rejectClient } = Promise.withResolvers<string>();
-    const received: string[] = [];
-    const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      client.write(
-        `CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nTransfer-Encoding: chunked\r\n\r\n${pipelined}`,
-      );
-    });
-    client.on("data", data => {
-      received.push(data.toString());
-      if (received.join("") === "HTTP/1.1 200 Connection established\r\n\r\n") {
-        client.write(afterEstablished);
-      }
-    });
-    client.on("error", rejectClient);
-    client.on("end", () => {
-      client.end();
-      resolveClient(received.join(""));
-    });
-
-    expect(await tunneled).toBe(expectedTunneled);
-    expect(await clientReceived).toBe("HTTP/1.1 200 Connection established\r\n\r\n");
-    expect(requestUrls).toEqual([]);
-  });
-
-  // Node v26.3.0 tunnels "helloGET /smuggled ..." verbatim — the declared body and
-  // everything after it reach the connect socket and no 'request' event fires.
-  test("should deliver the body and trailing bytes of a CONNECT request with a nonzero Content-Length to the connect socket, not as a new request", async () => {
-    const requestUrls: string[] = [];
-    await using proxyServer = http.createServer((req, res) => {
-      requestUrls.push(req.url ?? "");
-      res.end();
-    });
-
-    const pipelined = "helloGET /smuggled HTTP/1.1\r\nHost: example.com\r\n\r\n";
-    const afterEstablished = "GET /after-established HTTP/1.1\r\nHost: example.com\r\n\r\n";
-    const expectedTunneled = pipelined + afterEstablished;
-
-    const { promise: tunneled, resolve: resolveTunneled, reject: rejectTunneled } = Promise.withResolvers<string>();
-    proxyServer.on("connect", (req, socket, head) => {
-      const chunks: Buffer[] = [head];
-      let receivedLength = head.length;
-      socket.on("data", chunk => {
-        chunks.push(chunk);
-        receivedLength += chunk.length;
-        if (receivedLength >= Buffer.byteLength(expectedTunneled)) {
-          socket.end();
-        }
-      });
-      socket.on("end", () => {
-        resolveTunneled(Buffer.concat(chunks).toString());
-      });
-      socket.on("error", rejectTunneled);
-      socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
-    });
-
-    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
-    const proxyAddress = proxyServer.address() as AddressInfo;
-
-    const { promise: clientReceived, resolve: resolveClient, reject: rejectClient } = Promise.withResolvers<string>();
-    const received: string[] = [];
-    const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      client.write(`CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nContent-Length: 5\r\n\r\n${pipelined}`);
-    });
-    client.on("data", data => {
-      received.push(data.toString());
-      if (received.join("") === "HTTP/1.1 200 Connection established\r\n\r\n") {
-        client.write(afterEstablished);
-      }
-    });
-    client.on("error", rejectClient);
-    client.on("end", () => {
-      client.end();
-      resolveClient(received.join(""));
-    });
-
-    expect(await tunneled).toBe(expectedTunneled);
-    expect(await clientReceived).toBe("HTTP/1.1 200 Connection established\r\n\r\n");
-    expect(requestUrls).toEqual([]);
-  });
+    },
+  );
 
   // Node v26.3.0: HPE_INVALID_CONTENT_LENGTH — Transfer-Encoding + Content-Length is
   // rejected with a 400 before the 'connect' event is dispatched.
@@ -463,28 +431,25 @@ describe("HTTP server CONNECT", () => {
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
 
-    const { promise, resolve, reject } = Promise.withResolvers<string>();
-    const received: string[] = [];
-    const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      client.write(
-        "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n",
-      );
+    const result = await rawRequest(
+      proxyAddress,
+      "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n",
+    );
+    expect({ ...result, connectEvents, requestUrls }).toEqual({
+      response: BAD_REQUEST,
+      events: ["end"],
+      connectEvents: 0,
+      requestUrls: [],
     });
-    client.on("data", data => received.push(data.toString()));
-    client.on("error", reject);
-    client.on("close", () => resolve(received.join("")));
-
-    const response = await promise;
-    expect(response).toContain("400 Bad Request");
-    expect(connectEvents).toBe(0);
-    expect(requestUrls).toEqual([]);
   });
 
   test("should handle malformed CONNECT requests", async () => {
     await using proxyServer = http.createServer();
 
+    const connectUrls: string[] = [];
     proxyServer.on("connect", (req, socket, head) => {
-      socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+      connectUrls.push(req.url ?? "");
+      socket.write(ESTABLISHED);
       socket.end();
     });
 
@@ -506,56 +471,21 @@ describe("HTTP server CONNECT", () => {
       "CONNECT :80 HTTP/1.1\r\n\r\n", // Missing host
     ];
 
-    for (const request of acceptedRequests) {
-      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-        client.write(request);
-      });
-
-      const { promise, resolve } = Promise.withResolvers<string>();
-      const received: string[] = [];
-      client.on("data", data => {
-        received.push(data.toString());
-      });
-      client.on("end", () => {
-        resolve(received.join(""));
-      });
-      client.on("error", () => {
-        resolve("CONNECTION_ERROR");
-      });
-
-      const response = await promise;
-      expect(response).toContain("200 Connection established");
-    }
-
-    for (const request of malformedRequests) {
-      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-        client.write(request);
-      });
-
-      const { promise, resolve } = Promise.withResolvers<string>();
-      const received: string[] = [];
-
-      client.on("data", data => {
-        received.push(data.toString());
-      });
-
-      client.on("end", () => {
-        resolve(received.join(""));
-      });
-
-      client.on("error", () => {
-        resolve("CONNECTION_ERROR");
-      });
-
-      setTimeout(() => {
-        client.end();
-        resolve(received.join("") || "TIMEOUT");
-      }, 100);
-
-      const response = await promise;
-      // Should either get an error response or timeout/connection error
-      expect(response).not.toContain("200 Connection established");
-    }
+    const results = await Promise.all(
+      [...acceptedRequests, ...malformedRequests].map(async request => ({
+        request,
+        ...(await rawRequest(proxyAddress, request)),
+      })),
+    );
+    // A rejected request gets the server's 400 and the connection is closed; an
+    // accepted one reaches the handler above.
+    expect({ results, connectUrls: connectUrls.sort() }).toEqual({
+      results: [
+        ...acceptedRequests.map(request => ({ request, response: ESTABLISHED, events: ["end"] })),
+        ...malformedRequests.map(request => ({ request, response: BAD_REQUEST, events: ["end"] })),
+      ],
+      connectUrls: [":80", "example.com"],
+    });
   });
 
   // https CONNECT: server socket.end() after peer FIN must also FIN the TCP
@@ -651,42 +581,25 @@ describe("HTTP server CONNECT", () => {
  * These tests should run in both Node.js and Bun
  */
 
-describe("HTTP server socket access via normal requests", () => {
+describe.concurrent("HTTP server socket access via normal requests", () => {
   test("should handle socket errors during normal requests", async () => {
-    let errorHandled = false;
+    const { promise: serverError, resolve: resolveServerError } = Promise.withResolvers<Error>();
 
     await using server = http.createServer((req, res) => {
       const socket = res.socket!;
-
-      socket.on("error", err => {
-        errorHandled = true;
-      });
-
-      // Simulate an error condition
-      setTimeout(() => {
-        socket.destroy(new Error("Simulated error"));
-      }, 50);
+      socket.on("error", resolveServerError);
+      socket.destroy(new Error("Simulated error"));
     });
 
     await once(server.listen(0, "127.0.0.1"), "listening");
     const serverAddress = server.address() as AddressInfo;
 
-    const client = net.connect(serverAddress.port, serverAddress.address, () => {
-      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    const result = await rawRequest(serverAddress, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    expect({ ...result, serverError: (await serverError).message }).toEqual({
+      response: "",
+      events: ["end"],
+      serverError: "Simulated error",
     });
-
-    const { promise, resolve } = Promise.withResolvers<boolean>();
-
-    client.on("error", () => {
-      resolve(true);
-    });
-
-    client.on("close", () => {
-      resolve(false);
-    });
-
-    await promise;
-    expect(errorHandled).toBe(true);
   });
 
   test.todo("should handle socket pause/resume during request", async () => {
@@ -757,7 +670,7 @@ describe("HTTP server socket access via normal requests", () => {
   });
 });
 
-describe("Should be compatible with node.js", () => {
+describe.concurrent("Should be compatible with node.js", () => {
   // https://github.com/oven-sh/bun/issues/34158
   test("server.close(cb) completes after a CONNECT handoff once both sockets are destroyed", async () => {
     const server = http.createServer();
@@ -773,7 +686,8 @@ describe("Should be compatible with node.js", () => {
     const request = http.request({ host: "127.0.0.1", port, method: "CONNECT", path: "example.com:80" });
     request.on("error", () => {});
     request.end();
-    const [, clientSocket] = (await once(request, "connect")) as [unknown, net.Socket];
+    const [response, clientSocket] = (await once(request, "connect")) as [http.IncomingMessage, net.Socket];
+    expect(response.statusCode).toBe(200);
 
     clientSocket.destroy();
     serverSocket!.destroy();
@@ -782,37 +696,88 @@ describe("Should be compatible with node.js", () => {
     await closed;
   });
 
+  const nodeSuite = join(import.meta.dir, "node-http-connect.node.mts");
   test("tests should run on node.js", async () => {
-    const process = Bun.spawn({
-      cmd: [nodeExe(), "--test", join(import.meta.dir, "node-http-connect.node.mts")],
-      stdout: "inherit",
-      stderr: "inherit",
+    await using proc = Bun.spawn({
+      cmd: [nodeExe()!, "--test", "--test-reporter=tap", nodeSuite],
+      cwd: import.meta.dir,
+      stdout: "pipe",
+      stderr: "pipe",
       stdin: "ignore",
       env: bunEnv,
     });
-    expect(await process.exited).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // TAP: one "ok N - name" line per test and per suite, then "# key value" totals.
+    // A failure's message and stack are YAML lines on stdout, so keep the whole
+    // output in the diff when the run did not pass.
+    const lines = stdout.split("\n").map(line => line.trim());
+    expect({
+      results: lines.filter(line => /^(not )?ok \d+ - /.test(line)),
+      totals: Object.fromEntries(
+        lines.filter(line => /^# (?!duration_ms )\w+ \d+$/.test(line)).map(line => line.slice(2).split(" ")),
+      ),
+      stderr,
+      exitCode,
+      ...(exitCode !== 0 && { stdout }),
+    }).toEqual({
+      results: [
+        "ok 1 - should work with proxy package",
+        "ok 2 - should work with raw sockets",
+        "ok 3 - should handle multiple concurrent CONNECT requests",
+        "ok 4 - should handle CONNECT with invalid target",
+        "ok 5 - should handle CONNECT with authentication failure",
+        "ok 6 - should handle partial writes and buffering",
+        "ok 7 - should handle keep-alive connections",
+        "ok 1 - HTTP server CONNECT",
+      ],
+      totals: { tests: "7", suites: "1", pass: "7", fail: "0", cancelled: "0", skipped: "0", todo: "0" },
+      stderr: "",
+      exitCode: 0,
+    });
   });
+  // A whole `bun test` run of the shared suite takes about 5s in a debug build,
+  // so this one test does not fit the default timeout. A per-test value also
+  // replaces the CI --timeout, so it is generous.
   test("tests should run on bun", async () => {
-    const process = Bun.spawn({
-      cmd: [bunExe(), "test", join(import.meta.dir, "node-http-connect.node.mts")],
-      stdout: "inherit",
-      stderr: "inherit",
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", nodeSuite],
+      cwd: import.meta.dir,
+      stdout: "pipe",
+      stderr: "pipe",
       stdin: "ignore",
       env: bunEnv,
     });
-    expect(await process.exited).toBe(0);
-  });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "node-http-connect.node.mts:
+        (pass) HTTP server CONNECT > should work with proxy package
+        (pass) HTTP server CONNECT > should work with raw sockets
+        (pass) HTTP server CONNECT > should handle multiple concurrent CONNECT requests
+        (pass) HTTP server CONNECT > should handle CONNECT with invalid target
+        (pass) HTTP server CONNECT > should handle CONNECT with authentication failure
+        (pass) HTTP server CONNECT > should handle partial writes and buffering
+        (pass) HTTP server CONNECT > should handle keep-alive connections
+
+         7 pass
+         0 fail
+        Ran 7 tests across 1 file."
+      `);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun test <version> (<revision>)"`);
+    expect(exitCode).toBe(0);
+  }, 60_000);
 });
 
 // Windows: after FIN on a CONNECT-tunnel socket, AFD's level-triggered
 // UV_DISCONNECT used to re-derive EOF and bounce the poll between 0 and
 // WRITABLE forever (pins the poll_cb allow_half_open arm).
-test("CONNECT: process exits after the tunnel socket is re-emitted as a connection and the server closes", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const http = require("node:http");
+test.concurrent(
+  "CONNECT: process exits after the tunnel socket is re-emitted as a connection and the server closes",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const http = require("node:http");
        let endCount = 0;
        const server = http.createServer(() => { throw new Error("request listener should not run"); });
        server.on("connect", (req, socket) => {
@@ -828,16 +793,17 @@ test("CONNECT: process exits after the tunnel socket is re-emitted as a connecti
          if (endCount !== 1) throw new Error("end fired " + endCount + " times (expected 1)");
          console.log("ok");
        });`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: "ok\n",
-    stderr: "",
-    exitCode: 0,
-    signalCode: null,
-  });
-});
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);

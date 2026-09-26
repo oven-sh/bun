@@ -24,6 +24,9 @@
 //                   a file system that clones and once with one that refuses, where the copy has to
 //                   be made by copyfile. The stand-in stops the run if a number arrives that is no
 //                   number of macOS
+//   arms            which arm of host_select! the image takes as each host, and that the places of
+//                   bun whose code for Windows is not in the image run their code for Linux when bun
+//                   decides as on Windows, as they did before they had arms
 //   imports         the import tables have the functions that bun's file system code for Windows and
 //                   for macOS calls, and none of them resolves on Linux
 //   translation     what the image makes of the flags of open, of AT_FDCWD and of error numbers for
@@ -145,6 +148,22 @@ for (const [mode, way] of [["libsystem", "clonefile"], ["libsystem-noclone", "co
     const refused = details.find(detail => detail.detail === "clonefile")?.errno;
     if (mode === "libsystem-noclone" && refused !== 45) return `clonefile was refused with the error number ${refused} of macOS, expected 45 (ENOTSUP)`;
     return undefined;
+  });
+}
+for (const [os, arm] of [["linux", "linux"], ["win32", "linux"], ["darwin", "macos"]]) {
+  check(`arms, as ${os}`, () => {
+    // The code for Linux asks the kernel of this machine, so the image runs without a host. As macOS
+    // the places call functions of macOS: the host has the stand-in for them.
+    const r = os === "darwin" ? run([host, image, "--arms"], { BUN_PORTABLE_HOST_OS: os, BUN_HOST_TEST: "libsystem" }) : run([image, "--arms"], { BUN_PORTABLE_HOST_OS: os });
+    const lines = r.out.split("\n").filter(Boolean).map(line => JSON.parse(line));
+    const found = (of: string) => lines.find(line => line.step === "place" && line.of === of)?.found === true;
+    // As Windows the code for Linux of the two other places goes on into what bun has for Windows
+    // (Fd::native as an integer, bun_sys::readlink), which stops on this machine with a message.
+    const others =
+      os === "win32"
+        ? r.code !== 0 && /( is a function of Windows, and this host is Linux| has no definition for this host \(win32\))/.test(r.err)
+        : r.code === 0 && found("get_fd_path") && found("lstatat");
+    return lines.find(line => line.step === "arm")?.taken === arm && found("fd_path_raw") && others ? undefined : `exit code ${r.code}: ${r.out} ${r.err.slice(-300)}`;
   });
 }
 check("imports", () => {

@@ -44,6 +44,7 @@ pub fn no_definition_for_this_host(function: &'static str) -> ! {
 /// | `posix`               | `not(windows)`                                                 |
 /// | `unix`                | `unix`                                                         |
 /// | `linux`               | `any(target_os = "linux", target_os = "android")`              |
+/// | `linux_and_windows_host` | the same                                                    |
 /// | `not_linux`           | `not(any(target_os = "linux", target_os = "android"))`         |
 /// | `unix_not_linux`      | `all(unix, not(any(target_os = "linux", target_os = "android")))` |
 /// | `macos`               | `target_os = "macos"`                                          |
@@ -63,6 +64,11 @@ pub fn no_definition_for_this_host(function: &'static str) -> ! {
 ///
 /// An arm for targets that the image has nothing to do with is written with its `cfg`,
 /// `cfg(target_os = "netbsd") => { .. }`: a build for one OS has it under that `cfg`, the image has not.
+///
+/// Without an arm for Windows the image stops on a Windows host, with the place in the message. Where
+/// bun's code for Windows of a place is not in the image yet, and the image ran the code for Linux on
+/// a Windows host before the place had arms, the arm for Linux is named `linux_and_windows_host`: a
+/// Windows host goes on running it.
 #[cfg(not(bun_portable))]
 #[macro_export]
 macro_rules! host_select {
@@ -88,6 +94,10 @@ macro_rules! __host_select_arm {
         $block
     };
     (linux [] $block:block) => {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        $block
+    };
+    (linux_and_windows_host [] $block:block) => {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         $block
     };
@@ -166,6 +176,9 @@ macro_rules! __host_select_portable {
     };
     ([$($windows:block)?] [$($macos:block)?] [] linux => $block:block $($rest:tt)*) => {
         $crate::__host_select_portable!([$($windows)?] [$($macos)?] [$block] $($rest)*)
+    };
+    ([] [$($macos:block)?] [] linux_and_windows_host => $block:block $($rest:tt)*) => {
+        $crate::__host_select_portable!([$block] [$($macos)?] [$block] $($rest)*)
     };
     ([$($windows:block)?] [$($macos:block)?] [] posix => $block:block $($rest:tt)*) => {
         $crate::__host_select_portable!([$($windows)?] [$($macos)?] [$block] $($rest)*)

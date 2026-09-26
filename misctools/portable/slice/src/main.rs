@@ -12,6 +12,8 @@
 //!                                from the headers of macOS
 //!   bun_fs_slice --translate     prints what the flags of `open`, `AT_FDCWD` and the error numbers of
 //!                                the image become where the image calls macOS, and the way back
+//!   bun_fs_slice --arms          prints which arm the image takes for this host, and runs the places
+//!                                of bun whose code for Windows is not in the image
 //!   bun_fs_slice --abi           calls the functions of the Linux test host that have the calling
 //!                                convention of Windows
 //!
@@ -32,6 +34,8 @@ use bun_sys::{Fd, File, Maybe, O};
 
 #[cfg(bun_portable)]
 mod abi;
+#[cfg(bun_portable)]
+mod arms;
 #[cfg(bun_portable)]
 #[rustfmt::skip]
 mod darwin_layout_generated;
@@ -601,7 +605,7 @@ unsafe extern "C" {
 
 fn usage() -> c_int {
     let _ = File::borrow(&Fd::stderr()).write_all(
-        b"usage: bun_fs_slice <directory> | --imports | --layout | --layout-darwin | --translate | --abi\n",
+        b"usage: bun_fs_slice <directory> | --imports | --layout | --layout-darwin | --translate | --arms | --abi\n",
     );
     2
 }
@@ -615,6 +619,15 @@ pub extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     let arguments: Vec<&'static [u8]> = (1..argc.max(1) as usize)
         .map(|index| unsafe { core::ffi::CStr::from_ptr(*argv.add(index)).to_bytes() })
         .collect();
+    // Before bun's output is set up, which is code for Windows when bun decides as on Windows.
+    #[cfg(bun_portable)]
+    if let [b"--arms"] = arguments.as_slice() {
+        return if invalid_hook.is_none() && arms::print() {
+            0
+        } else {
+            1
+        };
+    }
     bun_core::output::stdio::init();
     #[cfg(bun_portable)]
     if let Some(invalid) = invalid_hook {

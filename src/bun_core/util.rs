@@ -1283,7 +1283,7 @@ impl Stdio {
 /// SAFETY: `buf` must be valid for `cap` writable bytes.
 pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     crate::host_select! {
-    linux => {
+    linux_and_windows_host => {
         let mut proc = [0u8; 32];
         use std::io::Write as _;
         let mut c = std::io::Cursor::new(&mut proc[..]);

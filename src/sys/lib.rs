@@ -936,7 +936,7 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
 pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
     let fd = fd.as_fd();
     bun_core::host_select! {
-        linux => {
+        linux_and_windows_host => {
             let dirfd = if fd.is_valid() {
                 fd.native()
             } else {
@@ -7932,7 +7932,7 @@ fn get_fd_path_freebsd_linuxulator<'a>(
 /// macOS: `fcntl(F_GETPATH)`; Windows: `GetFinalPathNameByHandle`.
 pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {
     bun_core::host_select! {
-        linux => {
+        linux_and_windows_host => {
             // Fast path: a previous call already proved this is
             // FreeBSD's Linuxulator. Skip the doomed `/proc/self/fd/N` readlink.
             if linux_kernel_cached_is_freebsd() {

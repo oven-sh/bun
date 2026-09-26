@@ -82,6 +82,9 @@ struct State {
     globstar: Wildcard,
 
     brace_depth: u8,
+
+    /// False: a leading `.` in a segment needs an explicit `.`, `\.`, or `[.]`.
+    dot: bool,
 }
 
 impl State {
@@ -151,7 +154,21 @@ struct Wildcard {
 // TODO: consider just taking arena and resetting to initial state,
 // all usages of this function pass in Arena.arena()
 pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
-    let mut state = State::default();
+    match_with_dot(glob, path, true)
+}
+
+/// One path segment. A leading `.` needs an explicit `.`, `\.`, or `[.]` in its branch.
+pub(crate) fn match_no_dot(glob: &[u8], name: &[u8]) -> MatchResult {
+    debug_assert!(!strings::contains_char(name, b'/'));
+    debug_assert!(!cfg!(windows) || !strings::contains_char(name, b'\\'));
+    match_with_dot(glob, name, false)
+}
+
+fn match_with_dot(glob: &[u8], path: &[u8], dot: bool) -> MatchResult {
+    let mut state = State {
+        dot,
+        ..State::default()
+    };
 
     let mut negated = false;
     while (state.glob_index as usize) < glob.len() && glob[state.glob_index as usize] == b'!' {
@@ -196,6 +213,13 @@ fn glob_match_impl(
         if (state.glob_index as usize) < glob.len() {
             'fallthrough: {
                 let ch = glob[state.glob_index as usize];
+                if !state.dot
+                    && !matches!(ch, b'{' | b',' | b'}')
+                    && at_hidden_segment_start(path, state.path_index)
+                    && !is_explicit_dot(glob, state.glob_index)
+                {
+                    return false;
+                }
                 'to_else: {
                     match ch {
                         b'*' => {
@@ -597,6 +621,25 @@ fn find_brace_end(glob: &[u8], open_idx: u32) -> u32 {
 }
 
 use bun_paths::is_sep_native as is_separator;
+
+/// Is `path[path_index]` a `.` that begins a path segment?
+#[inline(always)]
+fn at_hidden_segment_start(path: &[u8], path_index: u32) -> bool {
+    let i = path_index as usize;
+    i < path.len() && path[i] == b'.' && (i == 0 || is_separator(path[i - 1]))
+}
+
+/// Does the pattern at `glob_index` spell out a literal `.`: `.`, `\.`, or `[.]`?
+#[inline(always)]
+fn is_explicit_dot(glob: &[u8], glob_index: u32) -> bool {
+    let rest = &glob[glob_index as usize..];
+    match rest.first() {
+        Some(b'.') => true,
+        Some(b'\\') => rest.get(1) == Some(&b'.'),
+        Some(b'[') => rest.starts_with(b"[.]"),
+        _ => false,
+    }
+}
 
 #[inline(always)]
 fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {

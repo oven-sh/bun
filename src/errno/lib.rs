@@ -189,12 +189,27 @@ pub use freebsd_errno::*;
 // `linux`/`android`, so list both.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod linux_errno;
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(all(any(target_os = "linux", target_os = "android"), not(bun_portable)))]
 pub use linux_errno::*;
-#[cfg(windows)]
+#[cfg(any(windows, bun_portable))]
 pub mod windows_errno;
 #[cfg(windows)]
 pub use windows_errno::{posix, *};
+
+// The portable image: the enum of Windows, which has every code of Linux at its number, under the names
+// of POSIX. `uv_e` is the table for Linux: the numbers that JavaScript sees on another host are not
+// decided here.
+#[cfg(bun_portable)]
+mod portable_errno;
+#[cfg(bun_portable)]
+pub use linux_errno::uv_e;
+#[cfg(bun_portable)]
+pub use portable_errno::E;
+#[cfg(bun_portable)]
+pub use windows_errno::{
+    NTSTATUS, S, SystemErrno, SystemErrnoInit, Win32Error, Win32ErrorExt, translate_uv_error_to_e,
+    windows,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // posix — mode_t, the errno enum, S_* mode bits, and the C errno accessor
@@ -252,6 +267,10 @@ pub fn get_errno<T: GetErrno>(rc: T) -> E {
 #[cfg(not(windows))]
 #[inline]
 pub fn last_error() -> E {
+    #[cfg(bun_portable)]
+    if bun_core::host::is_windows() {
+        return windows_errno::last_error();
+    }
     u16::try_from(posix::errno()).map_or(E::EUNKNOWN, E::from_raw)
 }
 
@@ -262,16 +281,16 @@ pub fn last_error() -> E {
 #[inline]
 pub fn e_from_negated(errno: core::ffi::c_int) -> E {
     let n = errno.wrapping_neg();
-    #[cfg(windows)]
-    {
-        u16::try_from(n)
-            .ok()
-            .and_then(E::try_from_raw)
-            .unwrap_or(E::EUNKNOWN)
-    }
-    #[cfg(not(windows))]
-    {
-        SystemErrno::init(i64::from(n)).unwrap_or(SystemErrno::EUNKNOWN)
+    bun_core::host_select! {
+        windows => {
+            u16::try_from(n)
+                .ok()
+                .and_then(E::try_from_raw)
+                .unwrap_or(E::EUNKNOWN)
+        }
+        posix => {
+            SystemErrno::init(i64::from(n)).unwrap_or(SystemErrno::EUNKNOWN)
+        }
     }
 }
 
@@ -295,7 +314,7 @@ pub fn from_errno(errno: i32) -> SystemErrno {
     SystemErrno::init(errno as i64).unwrap_or(SystemErrno::EIO)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, bun_portable)))]
 impl SystemErrno {
     // `i64` covers every concrete call site (errno-range values).
     //
@@ -336,26 +355,26 @@ impl bun_core::output::ErrName for SystemErrno {
 /// the contract bun_core's `coreutils_error_map` relies on.
 #[inline]
 fn system_errno_name(errno: i32) -> Option<&'static str> {
-    #[cfg(not(windows))]
-    {
-        if errno <= 0 {
-            return None;
+    bun_core::host_select! {
+        windows => {
+            // Windows libuv errnos arrive negated; abs-normalise before the
+            // lookup. `from_repr` (strum::FromRepr)
+            // covers BOTH the dense 0..=137 range and the sparse UV_* tags.
+            let n = errno.unsigned_abs();
+            if n == 0 {
+                return None;
+            }
+            u16::try_from(n)
+                .ok()
+                .and_then(SystemErrno::from_repr)
+                .map(<&'static str>::from)
         }
-        SystemErrno::init(i64::from(errno)).map(<&'static str>::from)
-    }
-    #[cfg(windows)]
-    {
-        // Windows libuv errnos arrive negated; abs-normalise before the
-        // lookup. `from_repr` (strum::FromRepr)
-        // covers BOTH the dense 0..=137 range and the sparse UV_* tags.
-        let n = errno.unsigned_abs();
-        if n == 0 {
-            return None;
+        posix => {
+            if errno <= 0 {
+                return None;
+            }
+            SystemErrno::init(i64::from(errno)).map(<&'static str>::from)
         }
-        u16::try_from(n)
-            .ok()
-            .and_then(SystemErrno::from_repr)
-            .map(<&'static str>::from)
     }
 }
 
@@ -374,16 +393,16 @@ const fn system_errno_max_dense() -> u32 {
 /// always `None` off Windows.
 #[inline]
 fn win32_errno_name(code: u32) -> Option<&'static str> {
-    #[cfg(windows)]
-    {
-        let code = u16::try_from(code).ok()?;
-        SystemErrno::init_win32_error(windows_errno::Win32Error::from_raw(code))
-            .map(<&'static str>::from)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = code;
-        None
+    bun_core::host_select! {
+        windows => {
+            let code = u16::try_from(code).ok()?;
+            SystemErrno::init_win32_error(windows_errno::Win32Error::from_raw(code))
+                .map(<&'static str>::from)
+        }
+        posix => {
+            let _ = code;
+            None
+        }
     }
 }
 

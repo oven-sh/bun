@@ -176,11 +176,12 @@ pub fn debug_warn(payload: impl PrettyFmtInput) {
     }
 }
 
-/// `bun.Output.warn` — yellow `warn:` prefix to stderr.
+/// `bun.Output.warn` — yellow `warn:` prefix to stderr, flushed.
 #[inline]
 pub fn warn(payload: impl PrettyFmtInput) {
     let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
     pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", buf);
+    flush();
 }
 
 /// `Output.prettyErrorln` — function form. Performs `<tag>` → ANSI rewrite on
@@ -2305,12 +2306,13 @@ macro_rules! note {
     };
 }
 
-/// Print a yellow warning message to stderr
+/// Print a yellow warning message to stderr and flush it.
 #[macro_export]
 macro_rules! warn {
-    ($fmt:expr $(, $arg:expr)* $(,)?) => {
-        $crate::pretty_errorln!(concat!("<yellow>warn<r><d>:<r> ", $fmt) $(, $arg)*)
-    };
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
+        $crate::pretty_errorln!(concat!("<yellow>warn<r><d>:<r> ", $fmt) $(, $arg)*);
+        $crate::output::flush();
+    }};
 }
 
 /// Print a yellow warning message, only in debug mode

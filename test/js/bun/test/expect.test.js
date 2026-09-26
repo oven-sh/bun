@@ -141,6 +141,163 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  test("resolves/rejects on a thenable that is not a Promise", async () => {
+    /**
+     * @param {"resolve" | "reject"} how
+     * @param {unknown} value
+     */
+    const thenable = (how, value) => ({
+      /**
+       * @param {(value: unknown) => void} resolve
+       * @param {(reason: unknown) => void} reject
+       */
+      then(resolve, reject) {
+        (how === "resolve" ? resolve : reject)(value);
+      },
+    });
+
+    await expect(thenable("resolve", 4)).resolves.toBe(4);
+    await expect(thenable("resolve", 4)).resolves.not.toBe(5);
+    await expect(thenable("reject", new Error("thenable boom"))).rejects.toThrow("thenable boom");
+    await expect(thenable("reject", 4)).rejects.toBe(4);
+
+    // `then` found on the prototype chain or through a Proxy
+    class Inherited {
+      /** @param {(value: unknown) => void} resolve */
+      then(resolve) {
+        resolve("inherited");
+      }
+    }
+    await expect(new Inherited()).resolves.toBe("inherited");
+    await expect(Object.create(thenable("resolve", "created"))).resolves.toBe("created");
+    await expect(
+      new Proxy({}, { get: (_, key) => (key === "then" ? thenable("resolve", "proxy").then : undefined) }),
+    ).resolves.toBe("proxy");
+
+    // A thenable that a function throws is the thrown value, not a promise to wait for.
+    expect(() => {
+      throw Object.assign(new Error("thrown thenable"), thenable("resolve", 1));
+    }).toThrow("thrown thenable");
+
+    // toThrow() does not start a thenable that the function returns, such as a query builder.
+    let started = false;
+    expect(() => ({
+      /** @param {() => void} resolve */
+      then(resolve) {
+        started = true;
+        resolve();
+      },
+    })).not.toThrow();
+    expect(started).toBe(false);
+
+    if (isBun) {
+      await expectFailure(() => expect(thenable("resolve", 4)).rejects.toBe(4)).toThrow(
+        /Received promise that resolved/,
+      );
+      await expectFailure(() => expect(thenable("reject", 4)).resolves.toBe(4)).toThrow(
+        /Received promise that rejected/,
+      );
+      // A non-callable `then` does not make a thenable.
+      await expectFailure(() => expect({ then: 4 }).resolves.toBe(4)).toThrow(/Expected promise/);
+      await expectFailure(() => expect({ a: 4 }).resolves.toBe(4)).toThrow(/Expected promise/);
+
+      // `then` is read once, as `await` reads it.
+      let reads = 0;
+      await expect({
+        get then() {
+          reads++;
+          return thenable("resolve", "getter").then;
+        },
+      }).resolves.toBe("getter");
+      expect(reads).toBe(1);
+
+      // A `then` getter or a `then()` that throws is a rejection, as under `await`.
+      const boom = new Error("then boom");
+      const throwingGetter = {
+        get then() {
+          throw boom;
+        },
+      };
+      const throwingThen = {
+        then() {
+          throw boom;
+        },
+      };
+      await expect(throwingGetter).rejects.toBe(boom);
+      await expect(throwingThen).rejects.toBe(boom);
+      await expectFailure(() => expect(throwingGetter).resolves.toBe(1)).toThrow(/Received promise that rejected/);
+
+      // expect.resolvesTo and expect.rejectsTo take the same path.
+      expect({ a: thenable("resolve", "one") }).toEqual({ a: expect.resolvesTo.stringContaining("one") });
+      expect({ a: thenable("reject", "two") }).toEqual({ a: expect.rejectsTo.stringContaining("two") });
+      expect({ a: thenable("resolve", "one") }).not.toEqual({ a: expect.rejectsTo.stringContaining("one") });
+    }
+  });
+
+  // Bun.SQL's Query and Bun.$'s ShellPromise are Promise subclasses that start
+  // their work in an overridden then(). The matcher must call then(), as `await` does.
+  test("resolves/rejects on a Promise subclass whose then() starts the work", async () => {
+    /** @type {ReturnType<typeof setTimeout>[]} */
+    const fallbacks = [];
+    /**
+     * @param {"resolve" | "reject"} how
+     * @param {unknown} value
+     */
+    function lazy(how, value) {
+      /** @type {(value: unknown) => void} */
+      let settle = () => {};
+      /** @extends {Promise<unknown>} */
+      class Lazy extends Promise {
+        static get [Symbol.species]() {
+          return Promise;
+        }
+        /** @override */
+        // @ts-expect-error
+        then(onFulfilled, onRejected) {
+          queueMicrotask(() => settle(value));
+          return super.then(onFulfilled, onRejected);
+        }
+      }
+      const promise = new Lazy((resolve, reject) => {
+        settle = how === "resolve" ? resolve : reject;
+      });
+      // A matcher that never calls then() would wait forever. This timer makes
+      // such a regression fail the assertion instead. It never fires otherwise:
+      // then() runs in the first microtask drain, before any timer.
+      fallbacks.push(setTimeout(() => settle(new Error("then() was never called")), 1000));
+      return promise;
+    }
+
+    try {
+      await expect(lazy("resolve", 42)).resolves.toBe(42);
+      await expect(lazy("resolve", 42)).resolves.not.toBe(43);
+      await expect(lazy("reject", new Error("lazy boom"))).rejects.toThrow("lazy boom");
+      await expect(lazy("reject", 7)).rejects.toBe(7);
+
+      if (isBun) {
+        await expectFailure(() => expect(lazy("resolve", 1)).rejects.toBe(1)).toThrow(/Received promise that resolved/);
+        await expectFailure(() => expect(lazy("reject", 1)).resolves.toBe(1)).toThrow(/Received promise that rejected/);
+
+        // expect(fn).toThrow() awaits a promise returned by fn (Bun only)
+        expect(() => lazy("reject", new Error("lazy boom"))).toThrow("lazy boom");
+        expect(() => lazy("resolve", 1)).not.toThrow();
+
+        // a custom matcher may return the lazy subclass
+        expect.extend({
+          _toBeViaLazyThen(/** @type {unknown} */ received, /** @type {unknown} */ expected) {
+            return lazy("resolve", { pass: Object.is(received, expected), message: () => "_toBeViaLazyThen" });
+          },
+        });
+        // @ts-expect-error custom matcher
+        expect(1)._toBeViaLazyThen(1);
+        // @ts-expect-error custom matcher
+        expect(() => expect(1)._toBeViaLazyThen(2)).toThrow("_toBeViaLazyThen");
+      }
+    } finally {
+      for (const timer of fallbacks) clearTimeout(timer);
+    }
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });

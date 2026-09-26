@@ -143,6 +143,14 @@ export const zlib: Dependency = {
       // Gates the entire SIMD dispatch block in functable.c. Without it the
       // arch kernels compile but are never selected.
       WITH_OPTIM: true,
+      // zlib-ng's WITH_NEW_STRATEGIES=OFF. deflate_quick (level 1) and
+      // deflate_medium (levels 5/6) make block decisions at avail_in
+      // boundaries, so the bytes a createGzip() stream emits depend on
+      // upstream write() sizes and never match gzipSync(). deflate_fast/slow
+      // carry all match state in deflate_state and stay chunk-invariant (as
+      // cloudflare/zlib was). SIMD kernels above are unaffected.
+      NO_QUICK_STRATEGY: true,
+      NO_MEDIUM_STRATEGY: true,
       // zlib-ng 340f2f6e moved infback.c's distance-too-far-back check behind
       // INFLATE_STRICT (default OFF). Upstream zlib has it unconditional. Bun
       // doesn't call inflateBack(), but anything in-process linking the same

@@ -1892,11 +1892,9 @@ pub fn has_created_network_task(
         .expect("unreachable");
 
     // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
-    gpe.value_ptr.is_required = if !gpe.found_existing {
-        is_required
-    } else {
-        gpe.value_ptr.is_required || is_required
-    };
+    if !gpe.value_ptr.failed {
+        gpe.value_ptr.is_required |= is_required;
+    }
 
     gpe.found_existing
 }

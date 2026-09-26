@@ -117,6 +117,7 @@ pub enum Callback {
 
 #[derive(Default, Clone, Copy)]
 pub struct DedupeMapEntry {
+    /// Once `failed`, this says whether the failure was an error or a warning, and stays.
     pub(crate) is_required: bool,
     /// Set once the download/extract for this task id has terminally failed so a
     /// later `enqueue_*_for_download` can observe the failure instead of

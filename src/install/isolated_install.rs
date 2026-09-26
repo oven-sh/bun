@@ -42,7 +42,7 @@ use bun_wyhash::{Wyhash, Wyhash11};
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::{Node as ProgressNode, Progress};
-use crate::lockfile::tree::is_filtered_dependency_or_workspace;
+use crate::lockfile::tree::{RequiredPackages, is_filtered_dependency_or_workspace};
 use crate::lockfile::{self, Lockfile};
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
@@ -2100,6 +2100,12 @@ pub(crate) fn install_isolated_packages(
             );
         }
 
+        let mut required_packages = RequiredPackages::new(
+            workspace_filters,
+            install_root_dependencies,
+            packages_to_install,
+        );
+
         // add the pending task count upfront
         installer
             .manager_mut()
@@ -2409,6 +2415,8 @@ pub(crate) fn install_isolated_packages(
                     let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
 
                     let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
+                    let is_required =
+                        required_packages.contains(installer.manager(), dep_id, pkg_id);
 
                     match pkg_res_tag {
                         ResolutionTag::Npm => {
@@ -2420,6 +2428,7 @@ pub(crate) fn install_isolated_packages(
                                 pkg_res.npm().url.slice(string_buf),
                                 ctx,
                                 patch_info.name_and_version_hash(),
+                                is_required,
                             ) {
                                 Ok(()) => {}
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
@@ -2468,6 +2477,7 @@ pub(crate) fn install_isolated_packages(
                                 &pkg_res,
                                 ctx,
                                 patch_info.name_and_version_hash(),
+                                is_required,
                             ) == crate::package_manager::GitEnqueueResult::OfflineMiss
                             {
                                 // --offline and not cached: nothing was queued
@@ -2490,6 +2500,7 @@ pub(crate) fn install_isolated_packages(
                                 &url,
                                 ctx,
                                 patch_info.name_and_version_hash(),
+                                is_required,
                             ) {
                                 Ok(()) => {}
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
@@ -2546,6 +2557,7 @@ pub(crate) fn install_isolated_packages(
                                 pkg_res.remote_tarball().slice(string_buf),
                                 ctx,
                                 patch_info.name_and_version_hash(),
+                                is_required,
                             ) {
                                 Ok(()) => {}
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {

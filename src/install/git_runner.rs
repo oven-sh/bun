@@ -427,10 +427,19 @@ impl GitSubprocess {
         unsafe { &mut *self.task.as_ptr() }
     }
 
-    fn log_error(&self, args: core::fmt::Arguments<'_>) {
-        self.task()
-            .log
-            .add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+    /// A clone that only optional packages wait for fails with warnings.
+    fn is_required(&self) -> bool {
+        self.tag == Tag::GitCheckout || self.manager().is_git_task_required(self.task().id)
+    }
+
+    fn log_failure(&self, args: core::fmt::Arguments<'_>) {
+        let is_required = self.is_required();
+        let log = &mut self.task().log;
+        if is_required {
+            log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+        } else {
+            log.add_warning_fmt(None, bun_ast::Loc::EMPTY, args);
+        }
     }
 
     fn new_staging(&self) -> Result<Vec<u8>, Error> {
@@ -477,7 +486,7 @@ impl GitSubprocess {
             }
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                 if offline {
-                    this.log_error(format_args!(
+                    this.log_failure(format_args!(
                         "--offline: git repository for \"{}\" is not in the cache",
                         BStr::new(&this.name)
                     ));
@@ -550,7 +559,7 @@ impl GitSubprocess {
         let repo_dir = req.repo_dir;
         let resolved = req.resolved.slice().to_vec();
         if !is_safe_resolved_tag(&resolved) {
-            this.log_error(format_args!(
+            this.log_failure(format_args!(
                 "invalid git commit \"{}\" for \"{}\"",
                 BStr::new(&resolved),
                 BStr::new(&this.name)
@@ -595,7 +604,7 @@ impl GitSubprocess {
     fn spawn(this: ThisPtr<Self>, args: &[&[u8]]) -> Result<(), Error> {
         let env = GitEnv::get(this.manager().env_mut());
         let Some(git) = &env.git else {
-            this.log_error(format_args!(
+            this.log_failure(format_args!(
                 "\"git\" is not installed (needed for \"{}\")",
                 BStr::new(&this.name)
             ));
@@ -785,7 +794,7 @@ impl GitSubprocess {
                 if ok {
                     Self::finish_on_pool(this, Finalize::Repo(dir.into_raw()));
                 } else {
-                    this.log_error(format_args!("\"git fetch\" for \"{}\" failed", name));
+                    this.log_failure(format_args!("\"git fetch\" for \"{}\" failed", name));
                     Self::fail(this, Error::InstallFailed);
                 }
             }
@@ -804,7 +813,7 @@ impl GitSubprocess {
                         Self::fail(this, err);
                     }
                 } else {
-                    this.log_error(format_args!("\"git clone\" for \"{}\" failed", name));
+                    this.log_failure(format_args!("\"git clone\" for \"{}\" failed", name));
                     Self::fail(
                         this,
                         if not_found {
@@ -843,7 +852,7 @@ impl GitSubprocess {
                         Self::fail(this, err);
                     }
                 } else {
-                    this.log_error(format_args!("\"git clone\" for \"{}\" failed", name));
+                    this.log_failure(format_args!("\"git clone\" for \"{}\" failed", name));
                     Self::fail(this, Error::InstallFailed);
                 }
             }
@@ -852,7 +861,7 @@ impl GitSubprocess {
                     let staging = this.staging.take().expect("checkout has a staging folder");
                     Self::finish_on_pool(this, Finalize::PublishCheckout(staging));
                 } else {
-                    this.log_error(format_args!("\"git checkout\" for \"{}\" failed", name));
+                    this.log_failure(format_args!("\"git checkout\" for \"{}\" failed", name));
                     Self::fail(this, Error::InstallFailed);
                 }
             }
@@ -861,22 +870,22 @@ impl GitSubprocess {
 
     /// Mirrors git's stderr and termination kind, which name the cause.
     fn report_failure(&self, status: &Status, stderr: &[u8]) {
-        match (status, self.read_error.take()) {
-            (_, Some(err)) => {
-                Output::err_generic("reading the output of git failed: {}", (err,));
-            }
-            (Status::Exited(exit), None) => {
-                Output::err_generic("git failed with exit code {}", (exit.code,));
-            }
-            (Status::Signaled(sig), None) => {
-                Output::err_generic("git failed with signal {}", (sig,));
-            }
-            (Status::Err(err), None) => {
-                Output::err_generic("spawning git failed: {}", (err,));
-            }
-            (Status::Running, None) => {
-                Output::err_generic("git failed with unknown status", ());
-            }
+        let is_required = self.is_required();
+        // `--silent` drops warnings.
+        if !is_required && self.manager().options.log_level.is_silent() {
+            return;
+        }
+        let cause = match (status, self.read_error.take()) {
+            (_, Some(err)) => format!("reading the output of git failed: {err}"),
+            (Status::Exited(exit), None) => format!("git failed with exit code {}", exit.code),
+            (Status::Signaled(sig), None) => format!("git failed with signal {sig}"),
+            (Status::Err(err), None) => format!("spawning git failed: {err}"),
+            (Status::Running, None) => "git failed with unknown status".to_owned(),
+        };
+        if is_required {
+            bun_core::err_generic!("{}", cause);
+        } else {
+            bun_core::warn!("{}", cause);
         }
         if !stderr.is_empty() {
             let ew = Output::error_writer();

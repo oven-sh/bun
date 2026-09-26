@@ -178,10 +178,19 @@ function integrityOf(tarball: Uint8Array) {
   return `sha512-${new Bun.CryptoHasher("sha512").update(tarball).digest("base64")}`;
 }
 
-function writeProject(root: string, dependencies: Record<string, string>): string {
+type OtherGroup = "optionalDependencies" | "peerDependencies";
+
+function writeProject(
+  root: string,
+  dependencies: Record<string, string>,
+  otherGroups: Partial<Record<OtherGroup, Record<string, string>>> = {},
+): string {
   const project = join(root, "project");
   mkdirSync(project, { recursive: true });
-  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "project", version: "1.0.0", dependencies }));
+  writeFileSync(
+    join(project, "package.json"),
+    JSON.stringify({ name: "project", version: "1.0.0", dependencies, ...otherGroups }),
+  );
   return project;
 }
 
@@ -714,4 +723,262 @@ exit 1
       rmSync(running, { force: true });
     }
   },
+);
+
+// The `warn:` and `error:` lines of an install's stderr, without what git
+// itself printed.
+function reported(stderr: string): string[] {
+  return stderr.split(/\r?\n/).filter(line => /^(warn|error):/.test(line));
+}
+
+// bun.lock resolves an optional git dependency, the cache is cold, and the
+// repository is gone. The install phase failed for it with either linker. An
+// optional registry package that cannot be downloaded is left out with a warning.
+for (const linker of ["hoisted", "isolated"] as const) {
+  // how each linker reports a package that fails the install
+  const failed = (step: string, name: string, resolution: string) =>
+    linker === "hoisted"
+      ? `error: InstallFailed ${step} repository for ${name}`
+      : `error: failed to download ${name}@${resolution}: InstallFailed`;
+
+  test.concurrent(
+    `${linker} linker skips a locked optional git dependency that cannot be cloned`,
+    async () => {
+      using dir = tempDir(`git-dep-${linker}-optional-clone`, {});
+      const root = String(dir);
+      const bare = await makeSharedRepo(root, [{ name: nameOf("o"), branch: "pkg-o" }]);
+      const optionalUrl = `git+${pathToFileURL(bare)}`;
+      const project = writeProject(
+        root,
+        { [nameOf("b")]: `git+${pathToFileURL(sharedBare)}#pkg-b` },
+        { optionalDependencies: { [nameOf("o")]: `${optionalUrl}#pkg-o` } },
+      );
+
+      const warm = await runInstall(project, join(root, "cache-warm"), {}, `--linker=${linker}`);
+      expect(reported(warm.stderr)).toEqual([]);
+      expect(warm.exitCode).toBe(0);
+
+      // a fresh machine that cannot reach the repository of the optional package
+      rmSync(bare, { recursive: true });
+      rmSync(join(project, "node_modules"), { recursive: true });
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, `--linker=${linker}`);
+      expect(reported(stderr)).toEqual([
+        expect.stringMatching(/^warn: git failed with exit code \d+$/),
+        `warn: "git clone" for "${nameOf("o")}" failed`,
+        `warn: InstallFailed cloning repository for ${nameOf("o")}`,
+      ]);
+      expect(await installedVersions(project, [nameOf("b"), nameOf("o")])).toEqual({
+        [nameOf("b")]: "pkg-b",
+        [nameOf("o")]: null,
+      });
+      expect(exitCode).toBe(0);
+
+      // `--silent` drops the warnings, and what git printed
+      rmSync(join(project, "node_modules"), { recursive: true });
+      const silent = await runInstall(project, join(root, "cache-silent"), {}, `--linker=${linker}`, "--silent");
+      expect(silent).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    },
+    30_000,
+  );
+
+  // The commit that bun.lock holds is gone from the repository: the clone
+  // works and `git checkout` fails. That stays an error for every package,
+  // like a tarball that cannot be extracted.
+  test.concurrent(
+    `${linker} linker fails for a locked optional git dependency that cannot be checked out`,
+    async () => {
+      using dir = tempDir(`git-dep-${linker}-optional-checkout`, {});
+      const root = String(dir);
+      const bare = await makeSharedRepo(root, [{ name: nameOf("o"), branch: "pkg-o" }]);
+      const optionalUrl = `git+${pathToFileURL(bare)}`;
+      const lockedCommit = branchCommits(bare)["pkg-o"];
+      const project = writeProject(root, {}, { optionalDependencies: { [nameOf("o")]: `${optionalUrl}#pkg-o` } });
+
+      const warm = await runInstall(project, join(root, "cache-warm"), {}, `--linker=${linker}`);
+      expect(reported(warm.stderr)).toEqual([]);
+      expect(warm.exitCode).toBe(0);
+
+      // the repository starts over with another history
+      rmSync(bare, { recursive: true });
+      await makeSharedRepo(root, [{ name: nameOf("o"), branch: "pkg-o", files: { "README.md": "rewritten" } }]);
+      expect(branchCommits(bare)["pkg-o"]).not.toBe(lockedCommit);
+      rmSync(join(project, "node_modules"), { recursive: true });
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, `--linker=${linker}`);
+      expect(reported(stderr)).toEqual([
+        expect.stringMatching(/^error: git failed with exit code \d+$/),
+        `error: "git checkout" for "${nameOf("o")}" failed`,
+        failed("checking out", nameOf("o"), `${optionalUrl}#${lockedCommit}`),
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+
+  // The package that depends on it is optional, the dependency itself is not.
+  // That fails the install, as it does for a registry package.
+  test.concurrent(
+    `${linker} linker fails for a git dependency of an optional package that cannot be cloned`,
+    async () => {
+      using dir = tempDir(`git-dep-${linker}-optional-parent`, {});
+      const root = String(dir);
+      const childBare = await makeSharedRepo(root, [{ name: nameOf("q"), branch: "pkg-q" }], "child-repo.git");
+      const childUrl = `git+${pathToFileURL(childBare)}`;
+      const childCommit = branchCommits(childBare)["pkg-q"];
+      const parentBare = await makeSharedRepo(
+        root,
+        [{ name: nameOf("p"), branch: "pkg-p", dependencies: { [nameOf("q")]: `${childUrl}#pkg-q` } }],
+        "parent-repo.git",
+      );
+      const project = writeProject(
+        root,
+        {},
+        { optionalDependencies: { [nameOf("p")]: `git+${pathToFileURL(parentBare)}#pkg-p` } },
+      );
+
+      const warm = await runInstall(project, join(root, "cache-warm"), {}, `--linker=${linker}`);
+      expect(reported(warm.stderr)).toEqual([]);
+      expect(warm.exitCode).toBe(0);
+
+      rmSync(childBare, { recursive: true });
+      rmSync(join(project, "node_modules"), { recursive: true });
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, `--linker=${linker}`);
+      expect(reported(stderr)).toEqual([
+        expect.stringMatching(/^error: git failed with exit code \d+$/),
+        `error: "git clone" for "${nameOf("q")}" failed`,
+        failed("cloning", nameOf("q"), `${childUrl}#${childCommit}`),
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+
+  // The root's optional dependency comes first and asks for the package. The
+  // dependency of `req` on the same package still makes it a required one.
+  test.concurrent(
+    `${linker} linker fails for an optional git dependency that a required package depends on too`,
+    async () => {
+      using dir = tempDir(`git-dep-${linker}-optional-and-required`, {});
+      const root = String(dir);
+      const bare = await makeSharedRepo(root, [{ name: nameOf("o"), branch: "pkg-o" }]);
+      const repoUrl = `git+${pathToFileURL(bare)}`;
+      const commit = branchCommits(bare)["pkg-o"];
+      const project = writeProject(
+        root,
+        { req: "file:./req" },
+        { optionalDependencies: { [nameOf("o")]: `${repoUrl}#pkg-o` } },
+      );
+      mkdirSync(join(project, "req"));
+      writeFileSync(
+        join(project, "req", "package.json"),
+        JSON.stringify({ name: "req", version: "1.0.0", dependencies: { [nameOf("o")]: `${repoUrl}#pkg-o` } }),
+      );
+
+      const warm = await runInstall(project, join(root, "cache-warm"), {}, `--linker=${linker}`);
+      expect(reported(warm.stderr)).toEqual([]);
+      expect(warm.exitCode).toBe(0);
+
+      rmSync(bare, { recursive: true });
+      rmSync(join(project, "node_modules"), { recursive: true });
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, `--linker=${linker}`);
+      expect(reported(stderr)).toEqual([
+        expect.stringMatching(/^error: git failed with exit code \d+$/),
+        `error: "git clone" for "${nameOf("o")}" failed`,
+        failed("cloning", nameOf("o"), `${repoUrl}#${commit}`),
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+
+  // One clone serves both packages. The optional one does not make its failure a warning.
+  test.concurrent(
+    `${linker} linker fails when a required git dependency shares the repository of an optional one`,
+    async () => {
+      using dir = tempDir(`git-dep-${linker}-optional-shared`, {});
+      const root = String(dir);
+      const bare = await makeSharedRepo(root, [
+        { name: nameOf("m"), branch: "pkg-m" },
+        { name: nameOf("n"), branch: "pkg-n" },
+      ]);
+      const repoUrl = `git+${pathToFileURL(bare)}`;
+      const commits = branchCommits(bare);
+      const project = writeProject(
+        root,
+        { [nameOf("m")]: `${repoUrl}#pkg-m` },
+        { optionalDependencies: { [nameOf("n")]: `${repoUrl}#pkg-n` } },
+      );
+
+      const warm = await runInstall(project, join(root, "cache-warm"), {}, `--linker=${linker}`);
+      expect(reported(warm.stderr)).toEqual([]);
+      expect(warm.exitCode).toBe(0);
+
+      rmSync(bare, { recursive: true });
+      rmSync(join(project, "node_modules"), { recursive: true });
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, `--linker=${linker}`);
+      // the optional package comes first and starts the clone
+      expect(reported(stderr)).toEqual([
+        expect.stringMatching(/^error: git failed with exit code \d+$/),
+        `error: "git clone" for "${nameOf("n")}" failed`,
+        ...(linker === "hoisted"
+          ? [failed("cloning", nameOf("n"), "")]
+          : [
+              failed("cloning", nameOf("n"), `${repoUrl}#${commits["pkg-n"]}`),
+              failed("cloning", nameOf("m"), `${repoUrl}#${commits["pkg-m"]}`),
+            ]),
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+}
+
+// The hoisted linker handles finished tasks after every 16 dependencies. The
+// optional package comes first, and without git its clone fails at once. The
+// required package, 40 dependencies later, must not join that finished clone:
+// nothing would report that it is missing.
+test.concurrent(
+  "hoisted linker fails for a required git dependency after an optional one failed to clone the same repository",
+  async () => {
+    using dir = tempDir("git-dep-hoisted-optional-first", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [
+      { name: "aa-optional", branch: "optional" },
+      { name: "zz-required", branch: "required" },
+    ]);
+    const repoUrl = `git+${pathToFileURL(bare)}`;
+    const fillers = Array.from({ length: 40 }, (_, i) => `filler-${String(i).padStart(2, "0")}`);
+    const project = writeProject(
+      root,
+      { ...Object.fromEntries(fillers.map(name => [name, `file:./${name}`])), "zz-required": `${repoUrl}#required` },
+      { optionalDependencies: { "aa-optional": `${repoUrl}#optional` } },
+    );
+    for (const name of fillers) {
+      mkdirSync(join(project, name));
+      writeFileSync(join(project, name, "package.json"), JSON.stringify({ name, version: "1.0.0" }));
+    }
+
+    const warm = await runInstall(project, join(root, "cache-warm"), {}, "--linker=hoisted");
+    expect(reported(warm.stderr)).toEqual([]);
+    expect(warm.exitCode).toBe(0);
+
+    // a fresh machine without git
+    rmSync(join(project, "node_modules"), { recursive: true });
+    const emptyPath = join(root, "empty-path");
+    mkdirSync(emptyPath);
+    // Windows spells it `Path`, and the first spelling in an environment wins there.
+    const pathKey = Object.keys(gitEnv).find(key => key.toUpperCase() === "PATH") ?? "PATH";
+    const { stderr, exitCode } = await runInstall(
+      project,
+      join(root, "cache-cold"),
+      { [pathKey]: emptyPath },
+      "--linker=hoisted",
+    );
+    // The error names the optional package when the required one was reached
+    // before the failed clone was handled: then both waited for that clone.
+    expect(reported(stderr)).toContainEqual(
+      expect.stringMatching(/^error: ENOENT cloning repository for (aa-optional|zz-required)$/),
+    );
+    expect(exitCode).toBe(1);
+  },
+  30_000,
 );

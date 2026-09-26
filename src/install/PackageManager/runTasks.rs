@@ -80,6 +80,7 @@ pub trait RunTasksCallbacks {
     // `package_id: PackageID` otherwise. Static dispatch via two trait
     // methods lets impls receive the correctly-typed id without a
     // `Task::Id` round-trip pun.
+    // `is_required == false`: only optional dependencies need the download.
     fn on_package_download_error_store(
         _ctx: &mut Self::Ctx,
         _task_id: Task::Id,
@@ -87,6 +88,7 @@ pub trait RunTasksCallbacks {
         _resolution: &bun_install::Resolution,
         _err: crate::Error,
         _url: &[u8],
+        _is_required: bool,
     ) {
         unreachable!()
     }
@@ -133,7 +135,7 @@ struct ErasedCallbacks {
     is_store_installer: bool,
     on_package_manifest_error: fn(*mut (), &[u8], crate::Error, &[u8]),
     on_package_download_error_store:
-        fn(*mut (), Task::Id, &[u8], &bun_install::Resolution, crate::Error, &[u8]),
+        fn(*mut (), Task::Id, &[u8], &bun_install::Resolution, crate::Error, &[u8], bool),
     on_package_download_error_pkg:
         fn(*mut (), PackageID, &[u8], &bun_install::Resolution, crate::Error, &[u8]),
     on_extract_package_installer:
@@ -163,9 +165,18 @@ impl ErasedCallbacks {
             on_package_manifest_error: |c, name, err, url| {
                 C::on_package_manifest_error(ctx::<C>(c), name, err, url)
             },
-            on_package_download_error_store: |c, task_id, name, resolution, err, url| {
-                C::on_package_download_error_store(ctx::<C>(c), task_id, name, resolution, err, url)
-            },
+            on_package_download_error_store:
+                |c, task_id, name, resolution, err, url, is_required| {
+                    C::on_package_download_error_store(
+                        ctx::<C>(c),
+                        task_id,
+                        name,
+                        resolution,
+                        err,
+                        url,
+                        is_required,
+                    )
+                },
             on_package_download_error_pkg: |c, package_id, name, resolution, err, url| {
                 C::on_package_download_error_pkg(
                     ctx::<C>(c),
@@ -794,6 +805,7 @@ fn run_tasks_erased(
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
+                                true,
                             );
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
@@ -879,6 +891,7 @@ fn run_tasks_erased(
                                 &extract.resolution,
                                 err,
                                 &task.url_buf,
+                                true,
                             );
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
@@ -1166,6 +1179,7 @@ fn run_tasks_erased(
                                 resolution,
                                 err,
                                 fail_url,
+                                true,
                             );
                         } else {
                             (cb.on_package_download_error_pkg)(
@@ -1334,6 +1348,10 @@ fn run_tasks_erased(
                         // never reaches checkout, so drain every waiting
                         // checkout for this repo or the install loop blocks
                         // forever on the entry's pending-task slot.
+                        let is_required = manager.is_git_task_required(task.id);
+                        if !is_required && log_level != Options::LogLevel::Silent {
+                            warn_clone_failed(manager, err, name);
+                        }
                         let mut drained_any = false;
                         if let Some(waiters) = manager.task_queue.remove(&task.id) {
                             let pkg_resolutions = manager.lockfile.packages.items_resolution();
@@ -1365,6 +1383,7 @@ fn run_tasks_erased(
                                     res,
                                     err,
                                     url,
+                                    is_required,
                                 );
                             }
                         }
@@ -1386,8 +1405,15 @@ fn run_tasks_erased(
                                 &clone.res,
                                 err,
                                 url,
+                                is_required,
                             );
                         }
+                    } else if !manager.is_git_task_required(task.id) {
+                        if log_level != Options::LogLevel::Silent {
+                            warn_clone_failed(manager, err, name);
+                        }
+                        // A required package that needs this repository later runs git again instead of joining this clone.
+                        let _ = manager.task_queue.remove(&task.id);
                     } else if log_level != Options::LogLevel::Silent {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
@@ -1554,6 +1580,7 @@ fn run_tasks_erased(
                             resolution,
                             err,
                             manager.lockfile.str(repo),
+                            true,
                         );
                     } else {
                         bun_ast::add_error_pretty!(
@@ -1908,6 +1935,45 @@ pub fn is_network_task_required(this: &PackageManager, task_id: Task::Id) -> boo
     }
 }
 
+/// False when only optional dependencies resolve to the packages that wait for this clone: its failure is a warning.
+pub(crate) fn is_git_task_required(this: &PackageManager, task_id: Task::Id) -> bool {
+    let dependencies = this.lockfile.buffers.dependencies.as_slice();
+    let resolutions = this.lockfile.buffers.resolutions.as_slice();
+    let mut is_waited_for = false;
+    for waiter in this.task_queue.get(&task_id).into_iter().flatten() {
+        let (bun_install::TaskCallbackContext::Dependency(id)
+        | bun_install::TaskCallbackContext::RootDependency(id)) = waiter
+        else {
+            continue;
+        };
+        let package_id = resolutions.get(*id as usize).copied();
+        // No package yet: the resolve phase waits for the clone.
+        if package_id.is_none_or(|package_id| package_id == INVALID_PACKAGE_ID) {
+            return true;
+        }
+        // Not only the dependency that asked: another one can require the same package.
+        let is_required_by = |(dependency, resolution): (&bun_install::Dependency, &PackageID)| {
+            Some(*resolution) == package_id && !dependency.behavior.contains(Behavior::OPTIONAL)
+        };
+        if dependencies.iter().zip(resolutions).any(is_required_by) {
+            return true;
+        }
+        is_waited_for = true;
+    }
+    !is_waited_for
+}
+
+fn warn_clone_failed(manager: &mut PackageManager, err: crate::Error, name: &[u8]) {
+    bun_ast::add_warning_pretty!(
+        manager.log_mut(),
+        None,
+        bun_ast::Loc::EMPTY,
+        "{} cloning repository for <b>{}<r>",
+        err.name(),
+        bstr::BStr::new(name),
+    );
+}
+
 pub(crate) fn mark_network_task_failed(this: &mut PackageManager, task_id: Task::Id) {
     if let Some(entry) = this.network_dedupe_map.get_mut(&task_id) {
         entry.failed = true;
@@ -2197,6 +2263,10 @@ impl PackageManager {
     #[inline]
     pub(crate) fn is_network_task_required(&self, task_id: Task::Id) -> bool {
         is_network_task_required(self, task_id)
+    }
+    #[inline]
+    pub(crate) fn is_git_task_required(&self, task_id: Task::Id) -> bool {
+        is_git_task_required(self, task_id)
     }
     #[inline]
     pub(crate) fn mark_network_task_failed(&mut self, task_id: Task::Id) {

@@ -5959,7 +5959,7 @@ class ClientHttp2Session extends Http2Session {
       // a destroyed session (lib/internal/http2/core.js request()).
       if (options !== undefined) {
         if (options.endStream !== undefined) validateBoolean(options.endStream, "options.endStream");
-        if (options.parent !== undefined) validateNumber(options.parent, "options.parent");
+        if (options.parent !== undefined) validateNumber(options.parent, "options.parent", 0);
         if (options.exclusive !== undefined) validateBoolean(options.exclusive, "options.exclusive");
         if (options.silent !== undefined) validateBoolean(options.silent, "options.silent");
       }
@@ -6064,7 +6064,7 @@ class ClientHttp2Session extends Http2Session {
 
       if ($isObject(options) && "weight" in options) {
         // RFC 9113 deprecated priority signalling: node emits DEP0194 when the option is present
-        // and ignores it (the request always goes out with the default weight).
+        // and ignores it. No priority fields go on the wire.
         if (!priorityWeightDeprecationWarned) {
           priorityWeightDeprecationWarned = true;
           process.emitWarning(
@@ -6073,7 +6073,6 @@ class ClientHttp2Session extends Http2Session {
             "DEP0194",
           );
         }
-        delete options.weight;
       }
 
       const sensitives = headers[sensitiveHeaders];

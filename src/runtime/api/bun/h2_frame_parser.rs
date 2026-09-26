@@ -301,7 +301,6 @@ enum HeadersFrameFlags {
     END_STREAM = 0x1,
     END_HEADERS = 0x4,
     PADDED = 0x8,
-    PRIORITY = 0x20,
 }
 
 // Open set of wire values → newtype over u32
@@ -340,13 +339,6 @@ impl UInt31WithReserved {
     fn init(value: u32, reserved: bool) -> Self {
         Self((value & 0x7fff_ffff) | if reserved { 0x8000_0000 } else { 0 })
     }
-    /// Note: the wire format (RFC 7540 §6.3) wants the reserved/E bit at bit
-    /// 31, so the layout is `(reserved << 31) | uint31`, which matches
-    /// `write` and the on-wire `StreamPriority.stream_identifier`.
-    #[inline]
-    fn to_uint32(self) -> u32 {
-        self.0
-    }
     #[inline]
     fn write(self, writer: &mut impl WireWriter) -> bool {
         let mut value: u32 = self.uint31();
@@ -355,29 +347,6 @@ impl UInt31WithReserved {
         }
         value = value.swap_bytes();
         writer.write_all(&value.to_ne_bytes()).is_ok()
-    }
-}
-
-// packed struct(u40): streamIdentifier: u32, weight: u8
-#[repr(C, packed)]
-#[derive(Clone, Copy, Default)]
-struct StreamPriority {
-    stream_identifier: u32,
-    weight: u8,
-}
-// SAFETY: `#[repr(C, packed)]` with `u32 + u8` fields — no padding, no niches,
-// every 5-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for StreamPriority {}
-// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for StreamPriority {}
-const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::BYTE_SIZE);
-impl StreamPriority {
-    pub(crate) const BYTE_SIZE: usize = 5;
-    #[inline]
-    fn write(self, writer: &mut impl WireWriter) -> bool {
-        let mut swap = self;
-        swap.stream_identifier = swap.stream_identifier.swap_bytes();
-        writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
     }
 }
 
@@ -1337,7 +1306,6 @@ pub(crate) struct Stream {
     end_after_headers: bool,
     padding_strategy: PaddingStrategy,
     rst_code: u32,
-    weight: u16,
     // current window size for the stream
     window_size: u64,
     // used window size for the stream
@@ -1842,9 +1810,6 @@ impl Stream {
             end_after_headers: false,
             padding_strategy,
             rst_code: 0,
-            // RFC 7540 §5.3.5 / nghttp2 NGHTTP2_DEFAULT_WEIGHT: streams default to weight 16,
-            // which is what stream.state.weight reports when no priority was signaled.
-            weight: 16,
             window_size: initial_window_size as u64,
             used_window_size: 0,
             remote_window_size: remote_window_size as u64,
@@ -5009,11 +4974,8 @@ impl H2FrameParser {
             b"sumDependencyWeight",
             JSValue::js_number(0.0),
         );
-        state.put(
-            global_object,
-            b"weight",
-            JSValue::js_number(stream.weight as f64),
-        );
+        // NGHTTP2_DEFAULT_WEIGHT. node reports it for every stream: no priority is signaled.
+        state.put(global_object, b"weight", JSValue::js_number(16.0));
 
         Ok(state)
     }
@@ -6895,10 +6857,6 @@ impl H2FrameParser {
             stream.set_context(stream_ctx_arg, global_object);
         }
         let mut flags: u8 = HeadersFrameFlags::END_HEADERS as u8;
-        let mut exclusive: bool = false;
-        let mut has_priority: bool = false;
-        let mut weight: i32 = 0;
-        let mut parent: i32 = 0;
         let mut silent: bool = false;
         let mut wait_for_trailers: bool = false;
         let mut end_stream: bool = false;
@@ -6962,81 +6920,6 @@ impl H2FrameParser {
                 }
             }
 
-            if let Some(exclusive_js) = options.get(global_object, "exclusive")? {
-                if exclusive_js.is_boolean() {
-                    if exclusive_js.as_boolean() {
-                        exclusive = true;
-                        has_priority = true;
-                    }
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.exclusive",
-                        b"boolean",
-                        exclusive_js,
-                    ));
-                }
-            }
-
-            if let Some(parent_js) = options.get(global_object, "parent")? {
-                if parent_js.is_number() || parent_js.is_int32() {
-                    has_priority = true;
-                    parent = parent_js.to_int32();
-                    if parent <= 0 || parent as u32 > MAX_STREAM_ID {
-                        stream.state = StreamState::CLOSED;
-                        stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
-                        return Ok(JSValue::js_number(stream.id as f64));
-                    }
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.parent",
-                        b"number",
-                        parent_js,
-                    ));
-                }
-            }
-
-            if let Some(weight_js) = options.get(global_object, "weight")? {
-                if weight_js.is_number() || weight_js.is_int32() {
-                    has_priority = true;
-                    weight = weight_js.to_int32();
-                    if weight < 1 || weight > u8::MAX as i32 {
-                        stream.state = StreamState::CLOSED;
-                        stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
-                        return Ok(JSValue::js_number(stream_id as f64));
-                    }
-                    stream.weight = u16::try_from(weight).expect("int cast");
-                } else {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"options.weight",
-                        b"number",
-                        weight_js,
-                    ));
-                }
-
-                if weight < 1 || weight > u8::MAX as i32 {
-                    stream.state = StreamState::CLOSED;
-                    stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                    this.dispatch_with_extra(
-                        JSH2FrameParser::Gc::onStreamError,
-                        stream.get_identifier(),
-                        JSValue::js_number(stream.rst_code as f64),
-                    );
-                    return Ok(JSValue::js_number(stream_id as f64));
-                }
-
-                stream.weight = u16::try_from(weight).expect("int cast");
-            }
-
             if let Some(signal_arg) = options.get(global_object, "signal")? {
                 if let Some(signal_ptr) = AbortSignal::from_js(signal_arg) {
                     // SAFETY: `from_js` returns a live *mut AbortSignal owned by JSC; rooted via `signal_arg` on the stack.
@@ -7085,12 +6968,6 @@ impl H2FrameParser {
             }
             return Ok(JSValue::js_number(stream_id as f64));
         }
-        let mut length: usize = encoded_size;
-        if has_priority {
-            length += 5;
-            flags |= HeadersFrameFlags::PRIORITY as u8;
-        }
-
         bun_output::scoped_log!(H2FrameParser, "request encoded_size {}", encoded_size);
 
         // Check if headers block exceeds maxSendHeaderBlockLength
@@ -7120,12 +6997,7 @@ impl H2FrameParser {
             .get()
             .unwrap_or_else(|| this.local_settings.get())
             .max_frame_size as usize;
-        let priority_overhead: usize = if has_priority {
-            StreamPriority::BYTE_SIZE
-        } else {
-            0
-        };
-        let available_payload = actual_max_frame_size - priority_overhead;
+        let available_payload = actual_max_frame_size;
         // Reserve one byte for the pad-length field so `encoded_size +
         // padding_overhead` never exceeds `available_payload`; otherwise the
         // CONTINUATION branch below would slice past the end of the encoded
@@ -7148,7 +7020,7 @@ impl H2FrameParser {
         // Check if we need CONTINUATION frames
         if encoded_size <= headers_frame_max_payload {
             // Single HEADERS frame - fits in one frame
-            let payload_size = encoded_size + priority_overhead + padding_overhead;
+            let payload_size = encoded_size + padding_overhead;
             bun_output::scoped_log!(
                 H2FrameParser,
                 "padding: {} size: {} max_size: {} payload_size: {}",
@@ -7181,17 +7053,6 @@ impl H2FrameParser {
             };
             let _ = frame.write(&mut writer, &this.frames_sent_legacy);
 
-            // Write priority data if present
-            if has_priority {
-                let stream_identifier =
-                    UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
-                let priority_data = StreamPriority {
-                    stream_identifier: stream_identifier.to_uint32(),
-                    weight: u8::try_from(weight).expect("int cast"),
-                };
-                let _ = priority_data.write(&mut writer);
-            }
-
             // Handle padding
             if padding != 0 {
                 // Zero-fill the padding region (RFC 7540 §6.2: padding octets MUST be zero) and
@@ -7214,31 +7075,16 @@ impl H2FrameParser {
                 actual_max_frame_size
             );
 
-            let first_chunk_size = actual_max_frame_size - priority_overhead;
+            let first_chunk_size = actual_max_frame_size;
             let headers_flags = flags & !(HeadersFrameFlags::END_HEADERS as u8);
 
             let headers_frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
-                flags: headers_flags
-                    | (if has_priority {
-                        HeadersFrameFlags::PRIORITY as u8
-                    } else {
-                        0
-                    }),
+                flags: headers_flags,
                 stream_identifier: stream.id,
-                length: u32::try_from(first_chunk_size + priority_overhead).expect("int cast"),
+                length: u32::try_from(first_chunk_size).expect("int cast"),
             };
             let _ = headers_frame.write(&mut writer, &this.frames_sent_legacy);
-
-            if has_priority {
-                let stream_identifier =
-                    UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
-                let priority_data = StreamPriority {
-                    stream_identifier: stream_identifier.to_uint32(),
-                    weight: u8::try_from(weight).expect("int cast"),
-                };
-                let _ = priority_data.write(&mut writer);
-            }
 
             // Write first chunk of header block fragment
             let _ = writer.write_all(&encoded_headers[0..first_chunk_size]);
@@ -7304,7 +7150,6 @@ impl H2FrameParser {
             // TODO: should we make use of this in the future? We validate it.
         }
 
-        let _ = length;
         Ok(JSValue::js_number(stream_id as f64))
     }
 

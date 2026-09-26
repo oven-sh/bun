@@ -2101,6 +2101,198 @@ it("http2 padded DATA write survives a re-entrant stream write from a JS Duplex 
   expect(exitCode).toBe(0);
 });
 
+// node v26.3.0 sends no priority fields. Its nghttp2 (1.69.0) discards the priority spec of a
+// request (nghttp2_submit_request in deps/nghttp2/lib/nghttp2_submit.c), and respond() never had
+// one. Each test here gives the same result on node.
+describe("http2 priority options send no priority fields, like node", () => {
+  const { PADDING_STRATEGY_NONE, PADDING_STRATEGY_ALIGNED, PADDING_STRATEGY_MAX } = http2.constants;
+  const HEADERS = 0x1;
+  const CONTINUATION = 0x9;
+  const END_HEADERS = 0x4;
+  const PRIORITY = 0x20;
+
+  // A Duplex transport for one session. `headerBlock` settles with the first header block the
+  // session writes: the flags and the payload of the HEADERS frame, and the payloads of the
+  // CONTINUATION frames after it.
+  function captureTransport() {
+    const headerBlock = Promise.withResolvers();
+    const magic = http2utils.kClientMagic;
+    let wire = Buffer.alloc(0);
+    const transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        wire = Buffer.concat([wire, chunk]);
+        const frames = [];
+        let offset = wire.subarray(0, magic.length).equals(magic) ? magic.length : 0;
+        while (offset + 9 <= wire.length) {
+          const end = offset + 9 + wire.readUIntBE(offset, 3);
+          if (end > wire.length) break;
+          const type = wire[offset + 3];
+          const flags = wire[offset + 4];
+          if (type === HEADERS || type === CONTINUATION) {
+            frames.push({ flags, payload: wire.subarray(offset + 9, end) });
+            if (flags & END_HEADERS) {
+              const [first, ...rest] = frames;
+              headerBlock.resolve({
+                flags: first.flags,
+                payload: first.payload.toString("hex"),
+                continuation: Buffer.concat(rest.map(frame => frame.payload)).toString("hex"),
+              });
+            }
+          }
+          offset = end;
+        }
+        callback();
+      },
+    });
+    return { transport, headerBlock };
+  }
+
+  // Sends one request on a new client session and resolves with its header block. The authority
+  // is fixed, so every session encodes the same header block for the same headers.
+  async function captureRequestHeaderBlock(paddingStrategy, headers, options) {
+    const { transport, headerBlock } = captureTransport();
+    const session = http2.connect("http://localhost:1", { createConnection: () => transport, paddingStrategy });
+    session.on("error", headerBlock.reject);
+    session.on("close", () => headerBlock.reject(new Error("the session closed before the header block was written")));
+    try {
+      const connected = new Promise(resolve => session.once("connect", resolve));
+      await Promise.race([connected, headerBlock.promise]);
+      const req = session.request(headers, options);
+      req.on("error", headerBlock.reject);
+      req.on("close", () => headerBlock.reject(new Error("the request closed before its header block was written")));
+      return await headerBlock.promise;
+    } finally {
+      session.destroy();
+    }
+  }
+
+  // Answers one request on a new server session and resolves with the response header block.
+  async function captureResponseHeaderBlock(options) {
+    const { transport, headerBlock } = captureTransport();
+    const session = http2.performServerHandshake(transport);
+    session.on("error", headerBlock.reject);
+    session.on("close", () => headerBlock.reject(new Error("the session closed before the header block was written")));
+    session.on("stream", stream => {
+      stream.on("error", headerBlock.reject);
+      try {
+        stream.respond({ ":status": 200 }, { endStream: true, sendDate: false, ...options });
+      } catch (err) {
+        headerBlock.reject(err);
+      }
+    });
+    try {
+      // :method: GET, :scheme: http, :path: /, :authority: localhost (literal, name index 1)
+      const request = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 9]), Buffer.from("localhost")]);
+      transport.push(
+        Buffer.concat([
+          http2utils.kClientMagic,
+          new http2utils.SettingsFrame().data,
+          new http2utils.HeadersFrame(1, request, 0, true, true).data,
+        ]),
+      );
+      return await headerBlock.promise;
+    } finally {
+      session.destroy();
+    }
+  }
+
+  const small = { ":path": "/" };
+  // The header block is about 22 KiB, more than one 16384-byte frame.
+  const large = { ":path": "/", "x-fill": Buffer.alloc(30000, "p").toString() };
+
+  it.each([
+    ["one HEADERS frame", PADDING_STRATEGY_NONE, small, { exclusive: true, parent: 3 }],
+    ["HEADERS and CONTINUATION frames", PADDING_STRATEGY_NONE, large, { exclusive: true, parent: 3 }],
+    ["a padded HEADERS frame", PADDING_STRATEGY_MAX, small, { exclusive: true, parent: 3 }],
+    ["parent: 0", PADDING_STRATEGY_NONE, small, { parent: 0 }],
+  ])(
+    "request() with priority options sends the bytes of a plain request (%s)",
+    async (_, paddingStrategy, headers, options) => {
+      const plain = await captureRequestHeaderBlock(paddingStrategy, headers, undefined);
+      const withOptions = await captureRequestHeaderBlock(paddingStrategy, headers, options);
+      expect(withOptions.flags & PRIORITY).toBe(0);
+      expect(withOptions).toEqual(plain);
+    },
+  );
+
+  it.each([-1, -0.5, NaN])("request() throws ERR_OUT_OF_RANGE for parent: %p", parent => {
+    const { transport } = captureTransport();
+    const session = http2.connect("http://localhost:1", { createConnection: () => transport });
+    session.on("error", () => {});
+    try {
+      let error;
+      try {
+        session.request(small, { parent });
+      } catch (err) {
+        error = err;
+      }
+      expect({ name: error?.name, code: error?.code, message: error?.message }).toEqual({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "options.parent" is out of range. It must be >= 0. Received ${parent}`,
+      });
+    } finally {
+      session.destroy();
+    }
+  });
+
+  it.each([
+    ["exclusive, parent and weight", { exclusive: true, parent: 1, weight: 256 }],
+    ["a weight and a parent out of range", { weight: 0, parent: -1 }],
+  ])("respond() with %s sends the bytes of a plain response", async (_, options) => {
+    const plain = await captureResponseHeaderBlock({});
+    const withOptions = await captureResponseHeaderBlock(options);
+    expect(withOptions.flags & PRIORITY).toBe(0);
+    expect(withOptions).toEqual(plain);
+  });
+
+  it.each([
+    ["ALIGNED", PADDING_STRATEGY_ALIGNED],
+    ["MAX", PADDING_STRATEGY_MAX],
+  ])("a session with PADDING_STRATEGY_%s survives requests with priority options", async (_, paddingStrategy) => {
+    const server = http2.createServer();
+    server.on("sessionError", () => {});
+    server.on("stream", (stream, headers) => {
+      stream.respond({ ":status": 200 });
+      stream.end(headers[":path"]);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`, { paddingStrategy });
+    try {
+      const sessionErrors = [];
+      client.on("error", err => sessionErrors.push(err.message));
+      const get = (path, options) =>
+        new Promise(resolve => {
+          const req = client.request({ ":path": path }, options);
+          let status;
+          let body = "";
+          req.setEncoding("utf8");
+          req.on("response", headers => (status = headers[":status"]));
+          req.on("data", chunk => (body += chunk));
+          req.on("error", err => resolve({ error: err.message }));
+          req.on("close", () => resolve({ status, body }));
+        });
+      const results = [
+        await get("/exclusive", { exclusive: true }),
+        await get("/parent", { parent: 1 }),
+        await get("/plain", undefined),
+      ];
+      expect({ results, sessionErrors }).toEqual({
+        results: [
+          { status: 200, body: "/exclusive" },
+          { status: 200, body: "/parent" },
+          { status: 200, body: "/plain" },
+        ],
+        sessionErrors: [],
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
 it("http2 server sends protocol-error GOAWAY on stream 0", async () => {
   // RFC 9113 section 6.8: GOAWAY frames MUST be sent with a stream identifier
   // of 0 in the frame header; the last processed stream id lives in the

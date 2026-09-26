@@ -1,7 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
-import { join } from "path";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import dns from "node:dns";
+import { readFileSync } from "node:fs";
+import https from "node:https";
+import type { AddressInfo } from "node:net";
+import { join } from "node:path";
+import type { TLSSocket } from "node:tls";
 
 // Self-signed cert with ONLY DNS:localhost in SANs (no IP SANs).
 // Valid from 2025-01-01 to 2035-01-01 to avoid CI clock skew issues.
@@ -15,183 +18,99 @@ const localhostOnlyTls = {
   key: readFileSync(join(import.meta.dir, "27890-localhost-only.key"), "utf8"),
 };
 
-// Uses a local HTTPS server with self-signed certs to avoid CI environments
-// lacking system CA certificates (Windows, Alpine).
-describe("custom lookup with HTTPS", () => {
-  test("https.request with custom lookup should not break TLS", async () => {
-    using server = Bun.serve({
-      tls: localhostOnlyTls,
-      port: 0,
-      fetch() {
-        return new Response("OK");
-      },
-    });
+type Result = {
+  status: number | undefined;
+  body: string;
+  // SNI hostname the server saw in the ClientHello (req.socket.servername),
+  // echoed back in the x-servername response header. "false" when none was sent.
+  servername: string;
+};
 
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-const https = require("https");
-const port = ${server.port};
-const ca = ${JSON.stringify(localhostOnlyTls.cert)};
-
-function customLookup(hostname, options, callback) {
-  // Resolve "localhost" to 127.0.0.1 — simulates the real-world scenario
-  // where a custom lookup returns an IP address for a hostname.
-  if (options && options.all) {
-    callback(null, [{ address: "127.0.0.1", family: 4 }]);
-  } else {
-    callback(null, "127.0.0.1", 4);
-  }
+function request(options: https.RequestOptions): Promise<Result> {
+  const { promise, resolve, reject } = Promise.withResolvers<Result>();
+  const req = https.request({ ...options, ca: localhostOnlyTls.cert }, res => {
+    let body = "";
+    res.setEncoding("utf8");
+    res.on("data", chunk => (body += chunk));
+    res.on("end", () => resolve({ status: res.statusCode, body, servername: res.headers["x-servername"] as string }));
+  });
+  req.on("error", reject);
+  req.end();
+  return promise;
 }
 
-const req = https.request("https://localhost:" + port, {
-  lookup: customLookup,
-  ca,
-}, (res) => {
-  let data = "";
-  res.on("data", (chunk) => data += chunk);
-  res.on("end", () => {
-    console.log("status:" + res.statusCode + " body:" + data);
-  });
-});
-req.on("error", (e) => {
-  console.error("error:" + e.message + " " + (e.code || ""));
-  process.exitCode = 1;
-});
-req.end();
-`,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
+// Uses a local HTTPS server with a self-signed cert to avoid CI environments
+// lacking system CA certificates (Windows, Alpine).
+describe.concurrent("custom lookup with HTTPS", () => {
+  let server: https.Server;
+  let port: number;
+
+  beforeAll(async () => {
+    server = https.createServer(localhostOnlyTls, (req, res) => {
+      res.setHeader("x-servername", String((req.socket as TLSSocket).servername));
+      res.end("OK");
     });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    port = (server.address() as AddressInfo).port;
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  afterAll(() => {
+    server.close();
+  });
 
-    expect(stderr).not.toContain("certificate");
-    expect(stderr).not.toContain("CERT_ALTNAME");
-    expect(stdout).toContain("status:200");
-    expect(stdout).toContain("body:OK");
-    expect(exitCode).toBe(0);
-  }, 30_000);
+  test("https.request with custom lookup should not break TLS", async () => {
+    const lookedUp: string[] = [];
+    // Resolve "localhost" to 127.0.0.1. Simulates the real-world scenario
+    // where a custom lookup returns an IP address for a hostname.
+    function customLookup(hostname: string, options: dns.LookupOptions, callback: Function) {
+      lookedUp.push(hostname);
+      if (options?.all) {
+        callback(null, [{ address: "127.0.0.1", family: 4 }]);
+      } else {
+        callback(null, "127.0.0.1", 4);
+      }
+    }
+
+    const result = await request({ host: "localhost", port, lookup: customLookup });
+    expect(result).toEqual({ status: 200, body: "OK", servername: "localhost" });
+    expect(lookedUp).toEqual(["localhost"]);
+  });
 
   test("https.request without custom lookup should still work", async () => {
-    using server = Bun.serve({
-      tls: localhostOnlyTls,
-      port: 0,
-      fetch() {
-        return new Response("OK");
-      },
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-const https = require("https");
-const port = ${server.port};
-const ca = ${JSON.stringify(localhostOnlyTls.cert)};
-
-const req = https.request("https://localhost:" + port, { ca }, (res) => {
-  let data = "";
-  res.on("data", (chunk) => data += chunk);
-  res.on("end", () => {
-    console.log("status:" + res.statusCode + " body:" + data);
+    const result = await request({ host: "localhost", port });
+    expect(result).toEqual({ status: 200, body: "OK", servername: "localhost" });
   });
-});
-req.on("error", (e) => {
-  console.error("error:" + e.message + " " + (e.code || ""));
-  process.exitCode = 1;
-});
-req.end();
-`,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).not.toContain("certificate");
-    expect(stdout).toContain("status:200");
-    expect(stdout).toContain("body:OK");
-    expect(exitCode).toBe(0);
-  }, 30_000);
 
   test("custom lookup via dns.lookup should preserve hostname for TLS SNI", async () => {
-    // This test verifies the specific scenario from issue #27890:
-    // A custom lookup that resolves hostname to IP should not break TLS.
-    // The lookup uses dns.lookup (which checks /etc/hosts) to resolve
-    // "localhost" to an IP, but the original hostname must be preserved
-    // for SNI and certificate SAN matching.
-    // The cert only has DNS:localhost (no IP SANs), so if SNI is broken
-    // and the IP is used for cert verification, it WILL fail.
-    using server = Bun.serve({
-      tls: localhostOnlyTls,
-      port: 0,
-      fetch() {
-        return new Response("OK");
-      },
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-const https = require("https");
-const dns = require("dns");
-const port = ${server.port};
-const ca = ${JSON.stringify(localhostOnlyTls.cert)};
-
-// Custom lookup using dns.lookup — exercises the real resolution path
-// (including /etc/hosts) where hostname is resolved to IP, reproducing
-// the exact issue #27890 scenario. Forces IPv4 to avoid inconsistent
-// results on dual-stack hosts.
-function customLookup(hostname, options, callback) {
-  dns.lookup(hostname, { all: true, family: 4 }, (err, addresses) => {
-    if (err) { callback(err); return; }
-    if (options && options.all) {
-      callback(null, addresses);
-    } else {
-      const first = addresses[0];
-      callback(null, first.address, first.family);
+    // This is the exact scenario from issue #27890: a custom lookup that uses
+    // dns.lookup (which checks /etc/hosts) to resolve "localhost" to an IP.
+    // The original hostname must still be used for SNI and certificate SAN
+    // matching. Forces IPv4 to avoid inconsistent results on dual-stack hosts.
+    const resolved: { hostname: string; addresses: string[] }[] = [];
+    function customLookup(hostname: string, options: dns.LookupOptions, callback: Function) {
+      dns.lookup(hostname, { all: true, family: 4 }, (err, addresses) => {
+        if (err) return callback(err);
+        // dns.lookup may list the same hosts-file entry more than once.
+        resolved.push({ hostname, addresses: [...new Set(addresses.map(a => `${a.address}/${a.family}`))] });
+        if (options?.all) {
+          callback(null, addresses);
+        } else {
+          callback(null, addresses[0].address, addresses[0].family);
+        }
+      });
     }
-  });
-}
 
-const req = https.request("https://localhost:" + port, {
-  lookup: customLookup,
-  ca,
-}, (res) => {
-  let data = "";
-  res.on("data", (chunk) => data += chunk);
-  res.on("end", () => {
-    console.log("status:" + res.statusCode + " body:" + data);
+    const result = await request({ host: "localhost", port, lookup: customLookup });
+    expect(result).toEqual({ status: 200, body: "OK", servername: "localhost" });
+    expect(resolved).toEqual([{ hostname: "localhost", addresses: ["127.0.0.1/4"] }]);
   });
-});
-req.on("error", (e) => {
-  console.error("error:" + e.message + " " + (e.code || ""));
-  process.exitCode = 1;
-});
-req.end();
-`,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
+
+  test("connecting by IP fails certificate verification (cert has no IP SAN)", async () => {
+    // Proves the cert cannot be matched by IP. If the custom lookup tests
+    // above leaked the resolved IP into SNI or hostname verification, they
+    // would fail with this same error.
+    await expect(request({ host: "127.0.0.1", port })).rejects.toMatchObject({
+      code: "ERR_TLS_CERT_ALTNAME_INVALID",
     });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).not.toContain("certificate");
-    expect(stderr).not.toContain("CERT_ALTNAME");
-    expect(stdout).toContain("status:200");
-    expect(stdout).toContain("body:OK");
-    expect(exitCode).toBe(0);
-  }, 30_000);
+  });
 });

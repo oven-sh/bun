@@ -2,7 +2,7 @@
 // to an operation, and the two ways to address a bucket.
 
 import { describe, expect, test } from "bun:test";
-import { SigningClient, type RequestRecord, type S3ServerOptions } from "../index.ts";
+import { SigningClient, type RequestOptions, type RequestRecord, type S3ServerOptions } from "../index.ts";
 import { child, children, childText, expectError, parseXml, start, toObject, xml, type TestServer } from "./helpers.ts";
 
 const XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/";
@@ -233,6 +233,9 @@ describe("a bucket", () => {
     // S3 looks at the region of the bucket before it looks at the signature.
     const unknown = new SigningClient({ endpoint: t.server.url, accessKeyId: "AKIAUNKNOWN", secretAccessKey: "none" });
     const client = new Bun.S3Client({ ...t.server.clientOptions("far-bucket"), ...CREDENTIALS[0] });
+    const preflight = { "origin": "https://example.com", "access-control-request-method": "GET" };
+    const create = (sender: SigningClient, options: RequestOptions = {}) =>
+      outcome(sender.fetch("PUT", "/far-bucket", options));
     await expectSteps([
       [() => outcome(t.client.fetch("GET", "/far-bucket/key")), "301 PermanentRedirect"],
       [() => outcome(t.client.fetch("GET", "/far-bucket", { query: { "list-type": "2" } })), "301 PermanentRedirect"],
@@ -245,12 +248,30 @@ describe("a bucket", () => {
         () => client.write("key", "data").then(String, error => `${error.name} ${error.code}`),
         "S3Error PermanentRedirect",
       ],
+      // The preflight request of a browser and a request without an operation get the redirect too.
+      [
+        () => outcome(fetch(t.server.url + "/far-bucket/key", { method: "OPTIONS", headers: preflight })),
+        "301 PermanentRedirect",
+      ],
+      [() => outcome(t.client.fetch("PATCH", "/far-bucket")), "301 PermanentRedirect"],
+      [() => outcome(t.client.fetch("GET", "/far-bucket", { query: { analytics: "" } })), "301 PermanentRedirect"],
       // Each endpoint tells the location of a bucket, and the name of the bucket is in use in each region.
       [() => read(t.client, "/far-bucket", "location"), { LocationConstraint: "eu-west-1" }],
-      [() => outcome(t.client.fetch("PUT", "/far-bucket")), "409 BucketAlreadyOwnedByYou"],
+      [() => create(t.client), "409 BucketAlreadyOwnedByYou"],
+      // A query parameter that names no subresource does not change the operation.
+      [() => create(t.client, { presign: { expiresIn: 60 } }), "409 BucketAlreadyOwnedByYou"],
+      [() => create(t.client, { query: { "x-id": "CreateBucket" } }), "409 BucketAlreadyOwnedByYou"],
+      [() => create(t.other, { query: { "x-id": "CreateBucket" } }), "409 BucketAlreadyExists"],
       [() => outcome(t.client.fetch("PUT", KEY, { body: "data" })), "200"],
     ]);
     expect(t.server.buckets.get("far-bucket")!.isEmpty).toBe(true);
+
+    // The record of a request has the bucket and the key, also when the server refused the request at once.
+    const refusals = [await t.client.fetch("GET", "/far-bucket/key"), await unknown.fetch("GET", KEY)];
+    expect(refusals.map(response => record(t, response))).toMatchObject([
+      { operation: "", bucket: "far-bucket", key: "key", status: 301, errorCode: "PermanentRedirect" },
+      { operation: "", bucket: "test-bucket", key: "key", status: 403, errorCode: "InvalidAccessKeyId" },
+    ]);
   });
 
   test("DeleteBucket needs a bucket without objects, versions and delete markers", async () => {

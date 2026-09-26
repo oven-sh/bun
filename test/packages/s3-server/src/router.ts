@@ -18,6 +18,9 @@ export interface Route {
   handler: Handler;
 }
 
+/** The parts of a request that select the operation. */
+export type RouteTarget = Pick<RequestContext, "method" | "headers" | "query" | "bucketName" | "key">;
+
 type Methods = Partial<Record<"GET" | "HEAD" | "PUT" | "POST" | "DELETE", [operation: string, handler: Handler]>>;
 
 const bucketSubresources: Record<string, Methods> = {
@@ -127,7 +130,7 @@ const unsupportedSubresources = [
   "renameObject",
 ];
 
-function methodNotAllowed(context: RequestContext, resourceType: string, allow: string[]): S3Error {
+function methodNotAllowed(context: RouteTarget, resourceType: string, allow: string[]): S3Error {
   return new S3Error("MethodNotAllowed", {
     details: { Method: context.method, ResourceType: resourceType },
     headers: { allow: allow.join(", ") },
@@ -135,7 +138,7 @@ function methodNotAllowed(context: RequestContext, resourceType: string, allow: 
 }
 
 function fromSubresources(
-  context: RequestContext,
+  context: RouteTarget,
   table: Record<string, Methods>,
   resourceType: string,
 ): Route | undefined {
@@ -154,7 +157,7 @@ function fromSubresources(
   return undefined;
 }
 
-export function route(context: RequestContext): Route {
+export function route(context: RouteTarget): Route {
   const { method, query, headers } = context;
 
   if (method === "OPTIONS" && context.bucketName !== undefined) {

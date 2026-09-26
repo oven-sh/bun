@@ -4,7 +4,7 @@ import { errorResponse, Query, type RequestContext } from "./context.ts";
 import { corsResponseHeaders } from "./cors.ts";
 import { httpDate, percentDecodeToString, randomHex } from "./encoding.ts";
 import { S3Error } from "./errors.ts";
-import { route } from "./router.ts";
+import { route, type RouteTarget } from "./router.ts";
 import { authenticate, type Credential, type Owner } from "./signature.ts";
 import { Bucket, isValidBucketName, type VersioningStatus } from "./store.ts";
 
@@ -101,14 +101,32 @@ const AMAZON_HOST = /^(?:(.+)\.)?s3(?:[.-][a-z0-9-]+)*\.amazonaws\.com(?:\.cn)?$
 /** The largest request body. An aws-chunked body is larger than the 5 GiB object that it carries. */
 const MAX_REQUEST_BODY_SIZE = 6 * 1024 * 1024 * 1024;
 
+/** What a request is for. The server knows it before it looks at the signature. */
+interface Target extends RouteTarget {
+  /** The path of the URL as the client sent it, percent-encoded. */
+  path: string;
+  /** The bucket is in the `Host` header and not in the path. */
+  virtualHosted: boolean;
+  /** The bucket with the name `bucketName`, when it exists. */
+  bucket: Bucket | undefined;
+}
+
 /**
- * True for the requests that an endpoint answers for a bucket of another
- * region: CreateBucket, GetBucketLocation and the preflight request.
+ * The operations that each endpoint answers for a bucket of another region.
+ * The name of a bucket is in use in each region, and each endpoint tells the
+ * location of a bucket.
  */
-function isForEachRegion(method: string, key: string | undefined, query: Query): boolean {
-  if (method === "OPTIONS") return true;
-  if (key !== undefined) return false;
-  return method === "PUT" ? query.parameters.length === 0 : query.has("location");
+const OPERATIONS_FOR_EACH_REGION = ["CreateBucket", "GetBucketLocation"];
+
+/** True when an endpoint answers the request for a bucket of another region. */
+function isForEachRegion(target: RouteTarget): boolean {
+  try {
+    return OPERATIONS_FOR_EACH_REGION.includes(route(target).operation);
+  } catch (error) {
+    // The request has no operation. It gets the redirect.
+    if (error instanceof S3Error) return false;
+    throw error;
+  }
 }
 
 function hostWithoutPort(host: string): string {
@@ -293,11 +311,13 @@ export class S3Server {
     const now = this.#clock();
     const partial = { method: request.method, requestId, hostId };
 
+    let target: Target | undefined;
     let context: RequestContext | undefined;
     let response: Response;
     let errorCode: string | undefined;
     try {
-      context = this.#context(request, server, requestId, hostId, now);
+      target = this.#target(request);
+      context = this.#context(target, request, server, requestId, hostId, now);
       const { operation, handler } = route(context);
       context.operation = operation;
       response = await handler(context);
@@ -320,10 +340,13 @@ export class S3Server {
     headers.set("date", httpDate(now));
 
     const origin = request.headers.get("origin");
-    if (origin !== null && request.method !== "OPTIONS" && context?.bucket?.cors) {
+    // The rules are those of the bucket that the request names, also for a request that the server refused.
+    // The endpoint of another region does not have the rules of the bucket.
+    const rules = target?.bucket?.region === this.region ? target.bucket.cors : undefined;
+    if (origin !== null && request.method !== "OPTIONS" && rules) {
       // S3 matches the rules with the method of Access-Control-Request-Method when the request has this header.
       const method = request.headers.get("access-control-request-method") ?? request.method;
-      const cors = corsResponseHeaders(context.bucket.cors, origin, method);
+      const cors = corsResponseHeaders(rules, origin, method);
       for (const name in cors) headers.set(name, cors[name]);
     }
 
@@ -332,8 +355,9 @@ export class S3Server {
       operation: context?.operation ?? "",
       method: request.method,
       url: request.url,
-      bucket: context?.bucketName,
-      key: context?.key,
+      bucket: target?.bucketName,
+      // The key of PostObject is in the form. The handler puts it in the context.
+      key: context ? context.key : target?.key,
       headers: request.headers,
       status: response.status,
       errorCode,
@@ -345,15 +369,15 @@ export class S3Server {
     return response;
   }
 
-  #context(request: Request, server: Server | undefined, requestId: string, hostId: string, now: Date): RequestContext {
+  /** Finds the bucket and the key of the request in the URL and in the `Host` header. */
+  #target(request: Request): Target {
     const url = request.url;
     const authority = url.indexOf("://");
     const pathStart = url.indexOf("/", authority === -1 ? 0 : authority + 3);
-    const target = pathStart === -1 ? "/" : url.slice(pathStart);
-    const question = target.indexOf("?");
-    const path = question === -1 ? target : target.slice(0, question);
-    const query = new Query(question === -1 ? "" : target.slice(question + 1));
-    const secure = url.startsWith("https:");
+    const pathAndQuery = pathStart === -1 ? "/" : url.slice(pathStart);
+    const question = pathAndQuery.indexOf("?");
+    const path = question === -1 ? pathAndQuery : pathAndQuery.slice(0, question);
+    const query = new Query(question === -1 ? "" : pathAndQuery.slice(question + 1));
 
     const host = hostWithoutPort(request.headers.get("host") ?? "").toLowerCase();
     const hostBucket = this.#bucketFromHost(host);
@@ -378,9 +402,30 @@ export class S3Server {
       if (key === undefined) throw new S3Error("InvalidURI", { details: { URI: path } });
     }
 
-    const bucket = bucketName === undefined ? undefined : this.buckets.get(bucketName);
+    return {
+      method: request.method,
+      headers: request.headers,
+      path,
+      query,
+      virtualHosted: hostBucket !== undefined,
+      bucketName,
+      key,
+      bucket: bucketName === undefined ? undefined : this.buckets.get(bucketName),
+    };
+  }
+
+  /** Looks at the region of the bucket, then at the signature. */
+  #context(
+    target: Target,
+    request: Request,
+    server: Server | undefined,
+    requestId: string,
+    hostId: string,
+    now: Date,
+  ): RequestContext {
+    const { method, headers, path, query, bucket } = target;
     // S3 serves a bucket only at the endpoint of its region. It looks at the region before the signature.
-    if (bucket && bucket.region !== this.region && !isForEachRegion(request.method, key, query)) {
+    if (bucket && bucket.region !== this.region && !isForEachRegion(target)) {
       throw new S3Error("PermanentRedirect", {
         details: { Endpoint: `${bucket.name}.s3.${bucket.region}.amazonaws.com`, Bucket: bucket.name },
         headers: { "x-amz-bucket-region": bucket.region },
@@ -389,13 +434,13 @@ export class S3Server {
 
     // A preflight request of a browser carries no credentials.
     const authentication =
-      request.method === "OPTIONS"
+      method === "OPTIONS"
         ? ({ type: "anonymous" } as const)
         : authenticate({
-            method: request.method,
+            method,
             path,
             query: query.parameters,
-            headers: request.headers,
+            headers,
             now,
             region: this.#enforceRegion ? this.region : undefined,
             findCredential: accessKeyId => this.#credentials.get(accessKeyId),
@@ -404,14 +449,14 @@ export class S3Server {
     return {
       server: this,
       request,
-      method: request.method,
-      headers: request.headers,
+      method,
+      headers,
       path,
       query,
-      secure,
-      virtualHosted: hostBucket !== undefined,
-      bucketName,
-      key,
+      secure: request.url.startsWith("https:"),
+      virtualHosted: target.virtualHosted,
+      bucketName: target.bucketName,
+      key: target.key,
       requestId,
       hostId,
       now,

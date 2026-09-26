@@ -3,6 +3,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { SigningClient, type S3ServerOptions } from "../index.ts";
+import { parseCorsConfiguration } from "../src/cors.ts";
 import { child, children, childText, expectError, parseXml, start, toObject, xml, type TestServer } from "./helpers.ts";
 
 const XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/";
@@ -694,12 +695,13 @@ describe("CORS", () => {
     const names = ["origin", "access-control-request-method", "access-control-request-headers"];
     const headers = names.flatMap((name, index) => (values[index] === undefined ? [] : [[name, values[index]]]));
     const response = await fetch(t.server.url + path, { method, headers: Object.fromEntries(headers) });
-    const cors = [...response.headers].filter(([name]) => name.startsWith("access-control-") || name === "vary");
     const text = await response.text();
-    if (!text.startsWith("<?xml")) return [response.status, Object.fromEntries(cors), text];
+    if (!text.startsWith("<?xml")) return [response.status, corsHeaders(response), text];
     const { RequestId, HostId, ...error } = toObject(parseXml(text));
-    return [response.status, Object.fromEntries(cors), error];
+    return [response.status, corsHeaders(response), error];
   }
+  const corsHeaders = (response: Response) =>
+    Object.fromEntries([...response.headers].filter(([name]) => name.startsWith("access-control-") || name === "vary"));
   const forbidden = (Message: string, Method: string, ResourceType: string) => {
     return [403, {}, { Code: "AccessForbidden", Message, Method, ResourceType }];
   };
@@ -775,5 +777,48 @@ describe("CORS", () => {
     ];
     const results = await Promise.all(cases.map(([method, path, headers]) => cross(t, method, path, headers)));
     expect(results).toEqual(cases.map(([, , , expected]) => expected));
+  });
+
+  test("a request with a signature that the server refuses gets the CORS headers of the bucket", async () => {
+    const far = { name: "far-bucket", region: "eu-west-1" };
+    await using t = await startAccounts({ buckets: ["test-bucket", "no-cors", far] });
+    expect(await outcome(send(t, "owner PUT /test-bucket?cors @cors"))).toBe("200");
+    // The server is the endpoint of one region. No request can give the rules to a bucket of another region.
+    t.server.buckets.get("far-bucket")!.cors = parseCorsConfiguration(BODIES.cors);
+
+    const endpoint = t.server.url;
+    const unknown = new SigningClient({ endpoint, accessKeyId: "AKIAUNKNOWN", secretAccessKey: "none" });
+    const wrong = new SigningClient({ endpoint, accessKeyId: CREDENTIALS[0].accessKeyId, secretAccessKey: "wrong" });
+    const from = { headers: { origin: ORIGIN } };
+    const expired = { ...from, presign: { expiresIn: 60 }, date: new Date(Date.now() - 3_600_000) };
+    const cases: [send: () => Promise<Response>, expected: unknown][] = [
+      [() => unknown.fetch("GET", KEY, from), ["403:InvalidAccessKeyId", SITE]],
+      [() => wrong.fetch("PUT", KEY, { ...from, body: "data" }), ["403:SignatureDoesNotMatch", SITE]],
+      [() => t.client.fetch("GET", KEY, expired), ["403:AccessDenied", SITE]],
+      [() => wrong.fetch("HEAD", KEY, { headers: { origin: "https://example.org" } }), ["403", EVERYONE]],
+      // No rule of the bucket has this method.
+      [() => wrong.fetch("DELETE", KEY, from), ["403:SignatureDoesNotMatch", {}]],
+      [() => unknown.fetch("GET", KEY), ["403:InvalidAccessKeyId", {}]],
+      [() => unknown.fetch("GET", "/no-cors/key", from), ["403:InvalidAccessKeyId", {}]],
+      [() => unknown.fetch("GET", "/missing-bucket/key", from), ["403:InvalidAccessKeyId", {}]],
+      // The endpoint of another region does not have the rules of the bucket.
+      [() => t.client.fetch("GET", "/far-bucket/key", from), ["301:PermanentRedirect", {}]],
+      [
+        () =>
+          fetch(endpoint + "/far-bucket/key", {
+            method: "OPTIONS",
+            headers: { origin: ORIGIN, "access-control-request-method": "GET" },
+          }),
+        ["301:PermanentRedirect", {}],
+      ],
+      [() => t.client.fetch("GET", "/far-bucket", { ...from, query: { location: "" } }), ["200", {}]],
+    ];
+    const results: unknown[] = await Promise.all(
+      cases.map(async ([send]) => {
+        const response = await send();
+        return [await outcome(response), corsHeaders(response)];
+      }),
+    );
+    expect(results).toEqual(cases.map(([, expected]) => expected));
   });
 });

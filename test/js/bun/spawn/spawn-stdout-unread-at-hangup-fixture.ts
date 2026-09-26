@@ -17,7 +17,8 @@ const untilChildHungUp = () => {
 
 let received: Buffer;
 if (consumer === "shell") {
-  const captured = $`${cmd}`.quiet().arrayBuffer();
+  // The child ends by a signal, which is not a failure here.
+  const captured = $`${cmd}`.quiet().nothrow().arrayBuffer();
   setImmediate(untilChildHungUp);
   received = Buffer.from(await captured);
 } else {

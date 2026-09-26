@@ -26,4 +26,6 @@ const queued = sockets.sendWithoutBlocking(1, positionDependentBytes(length));
 // parent's socket holds the bytes and the hangup when the report arrives.
 closeSync(1);
 writeSync(report, String(queued));
-process.exit(0);
+// Ends without the teardown of the runtime. With leak checks on, that teardown takes seconds after a dlopen,
+// and the parent waits for the end of this process.
+process.kill(process.pid, "SIGKILL");

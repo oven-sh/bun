@@ -986,10 +986,7 @@ impl RunCommand {
         match kind {
             ShimKind::HardLink => bun_sys::link_w(src, WStr::from_buf(buf, tmp_len))?,
             ShimKind::Copy => {
-                // SAFETY: `src` and `buf[..=tmp_len]` are NUL-terminated wide strings.
-                if unsafe { win::CopyFileW(src.as_ptr(), buf.as_ptr(), 0) } == 0 {
-                    let err =
-                        bun_sys::Error::from_win32(win::Win32Error::get(), bun_sys::Tag::copyfile);
+                if let Err(err) = bun_sys::copy_file::copy_file(src, WStr::from_buf(buf, tmp_len)) {
                     let _ = bun_sys::unlink_w(WStr::from_buf(buf, tmp_len));
                     return Err(err);
                 }

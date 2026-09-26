@@ -323,7 +323,12 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // The portable image (Config.portable), Rust half; flags.ts has the C/C++ half and the reasons. A static-pie,
     // so `pie` and a static C runtime; no red zone; thread-locals through __emutls_get_address. std is compiled
     // from source with the same flags like every other crate (cargoBuildStdArg).
-    rustflags.push("-Crelocation-model=pie", "-Ctarget-feature=+crt-static", "-Cno-redzone=yes", "-Ztls-model=emulated");
+    rustflags.push(
+      "-Crelocation-model=pie",
+      "-Ctarget-feature=+crt-static",
+      "-Cno-redzone=yes",
+      "-Ztls-model=emulated",
+    );
     // No syscall instruction outside libc: rustix's default backend on Linux issues them inline (linux_raw);
     // this is the cfg it documents for its libc backend. `bun_portable` gates the same in bun's own crates, and
     // what a static image cannot do (load a shared library).

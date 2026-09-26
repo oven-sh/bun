@@ -841,7 +841,7 @@ pub(crate) type OpenPtyFn = unsafe extern "C" fn(
 ) -> c_int;
 
 /// Dynamic loading of openpty on Linux (it's in libutil which may not be linked)
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(all(any(target_os = "linux", target_os = "android"), not(bun_portable)))]
 mod lib_util {
     use super::*;
     use bun_core::ZStr;
@@ -884,8 +884,9 @@ mod lib_util {
 #[cfg(unix)]
 fn get_open_pty_fn() -> Option<OpenPtyFn> {
     // openpty is linked directly on macOS (libc) and FreeBSD (libutil, see
-    // scripts/build/bun.ts).
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    // scripts/build/bun.ts), and in the portable image, whose libc is static
+    // and has it (it could not load a library to find it in).
+    #[cfg(any(target_os = "macos", target_os = "freebsd", bun_portable))]
     {
         // Declared locally (not via the `libc` crate) so the `OpenPtyFn`
         // type unifies with the Linux dlsym path.
@@ -906,7 +907,7 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
 
     // On Linux, openpty is in libutil, which may not be linked
     // Load it dynamically via dlopen
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(all(any(target_os = "linux", target_os = "android"), not(bun_portable)))]
     {
         return lib_util::get_open_pty();
     }

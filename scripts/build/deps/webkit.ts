@@ -261,6 +261,16 @@ export const webkit: Dependency = {
         "-mno-red-zone",
         "-femulated-tls",
         "-fPIE",
+        // What the prebuilt is compiled with (oven-sh/WebKit Dockerfile.musl DEFAULT_CFLAGS) and WebKit's own
+        // cmake is not: there is no prebuilt for this target to fall back on. Frame pointers are what bun's
+        // crash handler walks; without them a trace ends at the first JSC frame.
+        "-fno-omit-frame-pointer",
+        "-mno-omit-leaf-frame-pointer",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-faddrsig",
+        "-fno-unwind-tables",
+        "-fno-asynchronous-unwind-tables",
       );
     }
     if (cfg.lto) optFlags.push("-flto=thin");

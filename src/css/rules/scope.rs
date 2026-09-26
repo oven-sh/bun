@@ -1,6 +1,6 @@
 use crate::css_rules::{CssRuleList, Location};
 use crate::selectors::SelectorList;
-use crate::{PrintErr, Printer};
+use crate::{PrintErr, Printer, VendorPrefix};
 
 /// A [@scope](https://drafts.csswg.org/css-cascade-6/#scope-atrule) rule.
 ///
@@ -30,6 +30,15 @@ impl<R> ScopeRule<R> {
         // compiling nesting, like style rule preludes do (see
         // `serialize::serialize_nesting`).
         dest.nesting_expansions = 0;
+        // With nesting compiled away, `&` prints the parent selectors in their last pass, the unprefixed one if there is one.
+        let saved_prefix = dest.vendor_prefix;
+        if let Some(ctx) = dest.ctx
+            && let Some(&last_pass) = VendorPrefix::FIELDS
+                .iter()
+                .rfind(|&&prefix| ctx.prefix_passes.contains(prefix))
+        {
+            dest.vendor_prefix = last_pass;
+        }
         if let Some(scope_start) = &self.scope_start {
             dest.write_char(b'(')?;
             // scope_start.to_css(dest)?;
@@ -52,6 +61,7 @@ impl<R> ScopeRule<R> {
                 // first closure arg (no `&self` capture across `&mut dest`).
                 dest.with_context(
                     scope_start,
+                    VendorPrefix::empty(),
                     scope_end,
                     |scope_end: &SelectorList, d: &mut Printer| -> Result<(), PrintErr> {
                         let ctx = d.ctx;
@@ -60,11 +70,14 @@ impl<R> ScopeRule<R> {
                 )?;
             } else {
                 let ctx = dest.ctx;
-                return serialize_selector_list(scope_end.v.slice(), dest, ctx, false);
+                let result = serialize_selector_list(scope_end.v.slice(), dest, ctx, false);
+                dest.vendor_prefix = saved_prefix;
+                return result;
             }
             dest.write_char(b')')?;
             dest.whitespace()?;
         }
+        dest.vendor_prefix = saved_prefix;
         dest.write_char(b'{')?;
         dest.indent();
         dest.newline()?;

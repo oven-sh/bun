@@ -553,6 +553,26 @@ Hello World! pwd=C:\Users\Demo
 
 ---
 
+## Unsupported syntax
+
+Bun Shell does not implement all of the POSIX shell language. A script that uses one of these constructs fails with an error before any command runs:
+
+- loops and other compound commands: `for`, `while`, `until`, `case`, `select`
+- function definitions with `function`
+- background commands (`&`)
+
+```ts
+import { $ } from "bun";
+
+await $`for f in *.txt; do echo $f; done`;
+// error: "for" is a reserved word that Bun Shell does not support yet.
+// To run a command named "for", quote it.
+```
+
+To run a program whose name is one of these words, quote the name (`"for"`) or interpolate it (`${"for"}`).
+
+---
+
 ## Implementation notes
 
 Bun Shell is a small programming language implemented in Rust, with a handwritten lexer, parser, and interpreter. Unlike bash, zsh, and other shells, Bun Shell runs operations concurrently.

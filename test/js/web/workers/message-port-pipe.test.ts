@@ -275,12 +275,14 @@ describe("MessagePort pipe", () => {
   //
   // Sanitizer-gated: the race being exercised is a memory-safety bug that
   // only surfaces deterministically under ASAN/UBSan.
-  test.skipIf(!isDebug && !isASAN)("concurrent MessageChannel creation across workers is race-free", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  test.skipIf(!isDebug && !isASAN)(
+    "concurrent MessageChannel creation across workers is race-free",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           const { Worker } = require("worker_threads");
           const workerSrc = \`
             const { parentPort, MessageChannel } = require("worker_threads");
@@ -310,16 +312,23 @@ describe("MessagePort pipe", () => {
           await Promise.all(workers);
           console.log("OK");
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0);
-  });
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("OK");
+      expect(exitCode).toBe(0);
+      // 10000 MessageChannels across 5 threads take 10s+ under a loaded debug
+      // ASAN build; the 5s default flakes. The iteration count is the
+      // race-detection budget of this sanitizer test, so shrinking the
+      // workload to fit the default would weaken it; raise the ceiling
+      // instead.
+    },
+    60_000,
+  );
 
   test.skipIf(!isDebug && !isASAN)("burst of postMessage across threads delivers every message in order", async () => {
     await using proc = Bun.spawn({
@@ -352,6 +361,44 @@ describe("MessagePort pipe", () => {
             if (v !== next) { console.error("out of order", v, next); process.exit(1); }
             next++;
           });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
+
+  // Each onmessage enqueues the next message mid-drain, so the drain's fixed
+  // budget runs out with the inbox non-empty while the in-handler send has
+  // already posted a wakeup task. Exercises the budget-yield handoff:
+  // out-of-order or missing delivery fails, and so does a chain that runs to
+  // completion before a timer armed ahead of it gets its turn.
+  test("self-feeding chain outlives the drain budget, stays in order and yields to timers", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { port1, port2 } = new MessageChannel();
+          const N = 2500;
+          let next = 0;
+          let timerFiredAt = -1;
+          port1.onmessage = e => {
+            if (e.data !== next) { console.error("out of order", e.data, next); process.exit(1); }
+            next++;
+            if (next === N) {
+              if (timerFiredAt < 0 || timerFiredAt >= N) { console.error("timer starved", timerFiredAt); process.exit(1); }
+              console.log("OK"); port1.close(); port2.close(); return;
+            }
+            port2.postMessage(next);
+          };
+          setTimeout(() => { timerFiredAt = next; }, 0);
+          port2.postMessage(0);
         `,
       ],
       env: bunEnv,

@@ -204,8 +204,8 @@ impl WalkOrder {
             entered: vec![u32::MAX; c.graph.files.len()],
         };
         for walk in walks {
-            for (&chunk_index, runs) in walk.chunks.iter().zip(walk.runs) {
-                order.runs_of_chunk[chunk_index as usize] = runs;
+            for owned in walk.owned {
+                order.runs_of_chunk[owned.chunk_index as usize] = owned.runs;
             }
             for (tick, &source_index) in walk.entered.iter().enumerate() {
                 order.entered[source_index as usize] = tick as u32;
@@ -221,7 +221,7 @@ struct WalkPlan {
     chunk_of_file: Vec<u32>,
     /// Per chunk: the entry point id of the walk that lays it out (`u32::MAX`: not a JS chunk).
     owner_of_chunk: Vec<u32>,
-    /// Per chunk: its index in `EntryWalk::runs` of its owner.
+    /// Per chunk: its index in `EntryWalk::owned` of its owner.
     slot_of_chunk: Vec<u32>,
     /// With code splitting: the entry point id of each entry point's file, `u32::MAX` for the others.
     entry_id_of_file: Vec<u32>,
@@ -303,18 +303,92 @@ impl WalkPlan {
                 *walk_index = walks.len() as u32;
                 walks.push(EntryWalk {
                     entry_id: owner,
-                    chunks: Vec::new(),
-                    runs: Vec::new(),
+                    owned: Vec::new(),
                     entered: Vec::new(),
                 });
             }
             let walk = &mut walks[*walk_index as usize];
             plan.owner_of_chunk[chunk_index] = owner;
-            plan.slot_of_chunk[chunk_index] = walk.chunks.len() as u32;
-            walk.chunks.push(chunk_index as u32);
-            walk.runs.push(Vec::new());
+            plan.slot_of_chunk[chunk_index] = walk.owned.len() as u32;
+            walk.owned.push(OwnedChunk {
+                chunk_index: chunk_index as u32,
+                runs: Vec::new(),
+            });
         }
         (plan, walks)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Edge {
+    /// `file` runs here, under the same load.
+    Import(IndexInt),
+    /// A split `require()` in a part that runs at load: the chunk of `file` runs here.
+    LoadNow(IndexInt),
+    /// An `import()`, or a split `require()` in a part that only declares.
+    LoadLater(IndexInt),
+}
+
+/// The files that a file leads to, in evaluation order, with the part that leads there. `runs`: the load evaluates the file.
+fn for_each_edge(
+    c: &LinkerContext,
+    source_index: IndexInt,
+    runs: bool,
+    mut each: impl FnMut(u32, Edge),
+) {
+    let records = c.graph.ast.items_import_records()[source_index as usize].as_slice();
+    if c.graph.ast.items_css()[source_index as usize].is_some()
+        || c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
+    {
+        // A CSS or HTML file has no parts; every record counts.
+        for record in records {
+            if record.source_index.is_valid() {
+                each(0, Edge::Import(record.source_index.get()));
+            }
+        }
+        return;
+    }
+
+    let parts = c.graph.ast.items_parts()[source_index as usize].as_slice();
+    let parts_live = &c.graph.parts_live[source_index as usize];
+    for (part_index, part) in parts.iter().enumerate() {
+        let runs_here = runs && parts_live.is_set(part_index);
+        let part_index = part_index as u32;
+        for &record_id in part.import_record_indices.slice() {
+            let record: &ImportRecord = &records[record_id as usize];
+            if !record.source_index.is_valid() || !(record.kind == ImportKind::Stmt || runs_here) {
+                continue;
+            }
+            let other = record.source_index.get();
+            each(
+                part_index,
+                if !c.is_external_dynamic_import(record, source_index) {
+                    Edge::Import(other)
+                } else if record.kind == ImportKind::Require && !part_has_no_side_effects(part) {
+                    Edge::LoadNow(other)
+                } else {
+                    Edge::LoadLater(other)
+                },
+            );
+        }
+        // A file that the `import` statements did not reach: ahead of the part that uses it.
+        if runs_here && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX {
+            for dependency in part.dependencies.iter() {
+                each(part_index, Edge::Import(dependency.source_index.get()));
+            }
+        }
+    }
+    // The namespace export part is ahead of the `import` statements and only holds getters.
+    if let Some(namespace_export) = parts.get(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
+        && runs
+        && parts_live.is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
+    {
+        for dependency in namespace_export.dependencies.iter() {
+            each(
+                parts.len() as u32,
+                Edge::Import(dependency.source_index.get()),
+            );
+        }
     }
 }
 
@@ -336,10 +410,6 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
     let files_len = c.graph.files.len();
     let entry_points = c.graph.entry_points.items_source_index();
     let entry_point_kinds = c.graph.files.items_entry_point_kind();
-    let css = c.graph.ast.items_css();
-    let loaders = c.parse_graph().input_files.items_loader();
-    let parts = c.graph.ast.items_parts();
-    let import_records = c.graph.ast.items_import_records();
     let entry_bits = c.graph.files.items_entry_bits();
 
     // The load of an entry point that loads the file evaluated it.
@@ -409,54 +479,16 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
             }
 
             let mark = stack.len();
-            let records = import_records[source_index as usize].as_slice();
-            if css[source_index as usize].is_some()
-                || loaders[source_index as usize] == Loader::Html
-            {
-                for record in records {
-                    if record.source_index.is_valid() {
-                        stack.push(LoadFrame::Enter {
-                            source_index: record.source_index.get(),
-                            loader,
-                        });
-                    }
-                }
-            } else {
-                let parts_live = &c.graph.parts_live[source_index as usize];
-                for (part_index, part) in parts[source_index as usize].as_slice().iter().enumerate()
-                {
-                    let runs = evaluates && parts_live.is_set(part_index);
-                    for &record_id in part.import_record_indices.slice() {
-                        let record: &ImportRecord = &records[record_id as usize];
-                        if !record.source_index.is_valid()
-                            || !(record.kind == ImportKind::Stmt || runs)
-                        {
-                            continue;
-                        }
-                        let other = record.source_index.get();
-                        stack.push(if !c.is_external_dynamic_import(record, source_index) {
-                            LoadFrame::Enter {
-                                source_index: other,
-                                loader,
-                            }
-                        } else if record.kind == ImportKind::Require
-                            && !part_has_no_side_effects(part)
-                        {
-                            LoadFrame::Load(entry_id_of_file[other as usize])
-                        } else {
-                            LoadFrame::Later(entry_id_of_file[other as usize])
-                        });
-                    }
-                    if runs {
-                        for dependency in part.dependencies.iter() {
-                            stack.push(LoadFrame::Enter {
-                                source_index: dependency.source_index.get(),
-                                loader,
-                            });
-                        }
-                    }
-                }
-            }
+            for_each_edge(c, source_index, evaluates, |_, edge| {
+                stack.push(match edge {
+                    Edge::Import(source_index) => LoadFrame::Enter {
+                        source_index,
+                        loader,
+                    },
+                    Edge::LoadNow(other) => LoadFrame::Load(entry_id_of_file[other as usize]),
+                    Edge::LoadLater(other) => LoadFrame::Later(entry_id_of_file[other as usize]),
+                });
+            });
             stack[mark..].reverse();
         }
     }
@@ -467,18 +499,22 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
 enum WalkFrame {
     /// `loader`: the entry point whose load runs the file. A split `require()` that runs at load changes it.
     Enter { source_index: IndexInt, loader: u32 },
-    /// The walk is past what `run` waits for: `run` goes at the end of `runs[slot]`.
+    /// The walk is past what `run` waits for: `run` goes at the end of `owned[slot].runs`.
     Place { run: PartRun, slot: u32 },
-    /// The class-name object of a CSS file goes at the end of `runs[slot]`, unless the list has it.
+    /// The class-name object of a CSS file goes at the end of `owned[slot].runs`, unless the list has it.
     PlaceCss { source_index: IndexInt, slot: u32 },
+}
+
+struct OwnedChunk {
+    chunk_index: u32,
+    /// The runs placed so far.
+    runs: Vec<PartRun>,
 }
 
 /// One walk from an entry point. It lays out the chunks that the entry point owns.
 struct EntryWalk {
     entry_id: u32,
-    chunks: Vec<u32>,
-    /// Per owned chunk: the runs placed so far.
-    runs: Vec<Vec<PartRun>>,
+    owned: Vec<OwnedChunk>,
     /// With code splitting: the files placed, in the order the walk entered them.
     entered: Vec<IndexInt>,
 }
@@ -493,8 +529,8 @@ impl EntryWalk {
 
         // Chunk folding can move a file into a chunk whose entry points do not import it. It goes last there.
         let runtime = Index::RUNTIME.value();
-        for slot in 0..self.chunks.len() {
-            let chunk = &chunks[self.chunks[slot] as usize];
+        for slot in 0..self.owned.len() {
+            let chunk = &chunks[self.owned[slot].chunk_index as usize];
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
                 if source_index != runtime && !seen.is_set(source_index as usize) {
                     self.walk(
@@ -525,9 +561,6 @@ impl EntryWalk {
         let entry_bits = c.graph.files.items_entry_bits();
         let flags = c.graph.meta.items_flags();
         let css = c.graph.ast.items_css();
-        let loaders = c.parse_graph().input_files.items_loader();
-        let parts = c.graph.ast.items_parts();
-        let import_records = c.graph.ast.items_import_records();
         let loads = |source_index: IndexInt, loader: u32| {
             files_live.is_set(source_index as usize)
                 && entry_bits[source_index as usize].is_set(loader as usize)
@@ -553,13 +586,13 @@ impl EntryWalk {
         while let Some(frame) = stack.pop() {
             let (source_index, loader) = match frame {
                 WalkFrame::Place { run, slot } => {
-                    self.runs[slot as usize].push(run);
+                    self.owned[slot as usize].runs.push(run);
                     continue;
                 }
                 WalkFrame::PlaceCss { source_index, slot } => {
                     let key = u64::from(slot) << 32 | u64::from(source_index);
                     if !bun_core::handle_oom(css_placed.get_or_put(key)).found_existing {
-                        self.runs[slot as usize].push(PartRun {
+                        self.owned[slot as usize].runs.push(PartRun {
                             source_index,
                             begin: 0,
                             end: u32::MAX,
@@ -640,59 +673,13 @@ impl EntryWalk {
                 });
             };
 
-            let records = import_records[source_index as usize].as_slice();
-            if css[source_index as usize].is_some()
-                || loaders[source_index as usize] == Loader::Html
-            {
-                // A CSS or HTML file has no parts; every record counts.
-                for record in records {
-                    if record.source_index.is_valid() {
-                        import(0, record.source_index.get(), loader);
-                    }
+            for_each_edge(c, source_index, runs, |part_index, edge| match edge {
+                Edge::Import(other) => import(part_index, other, loader),
+                Edge::LoadNow(other) => {
+                    import(part_index, other, plan.entry_id_of_file[other as usize])
                 }
-            } else {
-                let parts_live = &c.graph.parts_live[source_index as usize];
-                for (part_index, part) in parts[source_index as usize].as_slice().iter().enumerate()
-                {
-                    let runs_here = runs && parts_live.is_set(part_index);
-                    let part_index = part_index as u32;
-                    for &record_id in part.import_record_indices.slice() {
-                        let record: &ImportRecord = &records[record_id as usize];
-                        if !record.source_index.is_valid()
-                            || !(record.kind == ImportKind::Stmt || runs_here)
-                        {
-                            continue;
-                        }
-                        let other = record.source_index.get();
-                        if !c.is_external_dynamic_import(record, source_index) {
-                            import(part_index, other, loader);
-                        } else if record.kind == ImportKind::Require
-                            && !part_has_no_side_effects(part)
-                        {
-                            // A split `require()` in a part that runs at load runs its chunk here.
-                            import(part_index, other, plan.entry_id_of_file[other as usize]);
-                        }
-                    }
-                    // A file that the `import` statements did not reach: ahead of the part that uses it.
-                    if runs_here && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX {
-                        for dependency in part.dependencies.iter() {
-                            import(part_index, dependency.source_index.get(), loader);
-                        }
-                    }
-                }
-                // The namespace export part is ahead of the `import` statements and only holds getters.
-                let file_parts = parts[source_index as usize].as_slice();
-                if let Some(namespace_export) =
-                    file_parts.get(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
-                    && runs
-                    && parts_live.is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
-                {
-                    let after_all_parts = file_parts.len() as u32;
-                    for dependency in namespace_export.dependencies.iter() {
-                        import(after_all_parts, dependency.source_index.get(), loader);
-                    }
-                }
-            }
+                Edge::LoadLater(_) => {}
+            });
             if let Some(slot) = slot {
                 stack.push(WalkFrame::Place {
                     run: PartRun {

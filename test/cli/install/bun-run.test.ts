@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync, existsSync } from "fs";
+import { chmodSync, copyFileSync, existsSync } from "fs";
 import { bunEnv as bunEnv_, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { basename, dirname, join } from "path";
 
@@ -1184,6 +1184,62 @@ describe.concurrent("bun run", () => {
       expect(basename(stdout.trim())).toBe("node.exe");
       expect(basename(dirname(stdout.trim()))).toStartWith("bun-node");
       expect(exitCode).toBe(0);
+    }
+  });
+
+  // When the directory beside bun.exe cannot be created, the shims go to
+  // %TEMP%. When %TEMP% is unusable as well, bun warns once and the script
+  // runs without `node`. A file named `bun-node` beside the exe blocks the
+  // first tier deterministically.
+  it.if(isWindows)("falls back to %TEMP% for the node shim and warns when that fails too", async () => {
+    using dir = tempDir("bun-run-node-shim-fallback", {
+      "bin/bun-node": "not a directory",
+      "tmp/.keep": "",
+      "package.json": JSON.stringify({
+        name: "shim",
+        scripts: { v: `node -e "console.log(process.execPath)"` },
+      }),
+    });
+    const bin = join(String(dir), "bin", "bun.exe");
+    copyFileSync(bunExe(), bin);
+    const env = Object.fromEntries(
+      Object.entries(bunEnv).filter(([k]) => !["PATH", "NODE", "NPM_NODE_EXECPATH"].includes(k.toUpperCase())),
+    );
+    env.PATH = (process.env.PATH ?? "")
+      .split(";")
+      .filter(p => p && !existsSync(join(p, "node.exe")) && !existsSync(join(p, "node.cmd")))
+      .join(";");
+
+    const usableTemp = join(String(dir), "tmp");
+    {
+      await using proc = Bun.spawn({
+        cmd: [bin, "run", "v"],
+        cwd: String(dir),
+        env: { ...env, TEMP: usableTemp, TMP: usableTemp },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("warn:");
+      expect(dirname(dirname(stdout.trim())).toLowerCase()).toBe(usableTemp.toLowerCase());
+      expect(basename(stdout.trim())).toBe("node.exe");
+      expect(exitCode).toBe(0);
+    }
+
+    const missingTemp = join(String(dir), "missing", "deeper");
+    {
+      await using proc = Bun.spawn({
+        cmd: [bin, "run", "v"],
+        cwd: String(dir),
+        env: { ...env, TEMP: missingTemp, TMP: missingTemp },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("warn: could not create the node alias for bun");
+      expect(stderr).toContain("command not found: node");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
     }
   });
 

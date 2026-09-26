@@ -1131,7 +1131,9 @@ fn configure_env_for_scripts_run(
             match RunCommand::create_fake_temporary_node_executable(&mut path_var, &mut bun_path) {
                 Ok(()) => {
                     this.env_mut().map.put(b"PATH", &path_var)?;
-                    let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
+                    // Windows finds the `node.exe` shim on the PATH just set; POSIX keeps bun itself.
+                    let node: &[u8] = if cfg!(windows) { b"" } else { bun_path };
+                    let _ = this.env_mut().load_node_js_config(paths_fs, node)?;
                 }
                 Err(err) => RunCommand::warn_node_shim_failed(err),
             }

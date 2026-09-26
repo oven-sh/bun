@@ -28,7 +28,6 @@
 #include "config.h"
 #include "MessageEvent.h"
 
-// #include "Blob.h"
 #include "EventNames.h"
 #include "JSDOMConvert.h"
 #include "JSMessageEvent.h"

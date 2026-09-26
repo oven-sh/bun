@@ -77,9 +77,6 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
 
     auto passive = options.passive;
 
-    // if (!passive.has_value() && Quirks::shouldMakeEventListenerPassive(*this, eventType, listener.get()))
-    //     passive = true;
-
     auto* registeredListener = ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once, options.resistStopPropagation });
     if (!registeredListener)
         return false;
@@ -158,11 +155,7 @@ void EventTarget::setAttributeEventListener(const AtomString& eventType, JSC::JS
         if (existingListener)
             removeEventListener(eventType, *existingListener, false);
     } else if (existingListener) {
-        // bool capture = false;
-
-        // InspectorInstrumentation::willRemoveEventListener(*this, eventType, *existingListener, capture);
         existingListener->replaceJSFunctionForAttributeListener(asObject(listener), &jsEventTarget);
-        // InspectorInstrumentation::didAddEventListener(*this, eventType, *existingListener, capture);
     } else
         addEventListener(eventType, JSMaybeErrorEventListener::create(*asObject(listener), jsEventTarget, true, isolatedWorld), {});
 }
@@ -269,9 +262,6 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         if (phase == EventInvokePhase::Bubbling && registeredListener->useCapture())
             continue;
 
-        // if (InspectorInstrumentation::isEventListenerDisabled(*this, event.type(), registeredListener->callback(), registeredListener->useCapture()))
-        //     continue;
-
         // If stopImmediatePropagation has been called, skip the remaining listeners. Listeners
         // registered with resistStopPropagation still run: they are how internal modules attach
         // teardown that unrelated code sharing the event target must not be able to suppress.
@@ -295,16 +285,11 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         registeredListener->callback().checkValidityForEventTarget(*this);
 #endif
 
-        // InspectorInstrumentation::willHandleEvent(context, event, *registeredListener);
         registeredListener->callback().handleEvent(context, event);
-        // InspectorInstrumentation::didHandleEvent(context, event, *registeredListener);
 
         if (registeredListener->isPassive())
             event.setInPassiveListener(false);
     }
-
-    // if (contextIsDocument)
-    //     InspectorInstrumentation::didDispatchEvent(downcast<Document>(context), event);
 }
 
 Vector<AtomString> EventTarget::eventTypes()

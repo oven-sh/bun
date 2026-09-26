@@ -370,12 +370,6 @@ template<> struct JSConverter<IDLUnrestrictedDouble> {
     {
         return JSC::jsNumber(JSC::purifyNaN(value));
     }
-
-    // Add overload for MediaTime.
-    static JSC::JSValue convert(const MediaTime& value)
-    {
-        return JSC::jsNumber(JSC::purifyNaN(value.toDouble()));
-    }
 };
 
 } // namespace WebCore

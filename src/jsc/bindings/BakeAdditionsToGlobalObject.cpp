@@ -17,7 +17,6 @@ void createDevServerFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initi
     structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "styles"_s), 0, offset);
     structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "params"_s), 0, offset);
 
-    // init.setPrototype(init.global->objectPrototype());
     init.setStructure(structure);
 }
 

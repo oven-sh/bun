@@ -167,8 +167,6 @@ JSPerformanceTiming::JSPerformanceTiming(Structure* structure, JSDOMGlobalObject
 {
 }
 
-// static_assert(!std::is_base_of<ActiveDOMObject, PerformanceTiming>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 JSObject* JSPerformanceTiming::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     auto* structure = JSPerformanceTimingPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());

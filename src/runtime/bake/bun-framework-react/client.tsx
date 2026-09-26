@@ -81,7 +81,6 @@ const root = hydrateRoot(document, <Root />, {
 // Keep a cache of page objects to avoid re-fetching a page when pressing the
 // back button. The cache is indexed by the date it was created.
 const cachedPages = new Map<number, Page>();
-// const defaultPageExpiryTime = 1000 * 60 * 5; // 5 minutes
 interface Page {
   css: string[];
   element: unknown;

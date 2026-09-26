@@ -974,8 +974,6 @@ DEFINE_NATIVE_MODULE(NodeConstants)
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::objectConstructorFreeze(globalObject, defaultObject);
     RETURN_IF_EXCEPTION(scope, void());
-
-    // RETURN_NATIVE_MODULE();
 }
 
 } // namespace Zig

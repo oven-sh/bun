@@ -28,8 +28,6 @@
 #include "SerializedScriptValue.h"
 #include "BunClientData.h"
 #include "BunString.h"
-// #include "BlobRegistry.h"
-// #include "ByteArrayPixelBuffer.h"
 #include "CryptoKeyAES.h"
 #include "CryptoKeyAKP.h"
 #include <openssl/err.h>
@@ -3581,8 +3579,6 @@ private:
     {
         const uint8_t* preTagPtr = m_ptr;
         SerializationTag tag = readTag();
-        // if (!isTypeExposedToGlobalObject(*m_globalObject, tag))
-        //     return JSValue();
 
         // read bun types
         if (auto value = StructuredCloneableDeserialize::fromTagDeserialize(tag, m_lexicalGlobalObject, m_ptr, m_end)) {

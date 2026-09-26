@@ -2510,7 +2510,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
         return {};
     }
 
-    // sqlite3_reset(stmt);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 
@@ -2600,7 +2599,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
         return {};
     }
 
-    // sqlite3_reset(stmt);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
 }
 

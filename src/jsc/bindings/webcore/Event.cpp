@@ -23,15 +23,9 @@
 #include "config.h"
 #include "Event.h"
 
-// #include "DOMWindow.h"
-// #include "Document.h"
 #include "EventNames.h"
 #include "EventPath.h"
 #include "EventTarget.h"
-// #include "InspectorInstrumentation.h"
-// #include "Performance.h"
-// #include "UserGestureIndicator.h"
-// #include "WorkerGlobalScope.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -149,8 +143,6 @@ void Event::resetAfterDispatch()
     m_eventPhase = NONE;
     m_propagationStopped = false;
     m_immediatePropagationStopped = false;
-
-    // InspectorInstrumentation::eventDidResetAfterDispatch(*this);
 }
 
 } // namespace WebCore

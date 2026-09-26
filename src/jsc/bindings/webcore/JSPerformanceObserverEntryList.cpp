@@ -132,8 +132,6 @@ JSPerformanceObserverEntryList::JSPerformanceObserverEntryList(Structure* struct
 {
 }
 
-// static_assert(!std::is_base_of<ActiveDOMObject, PerformanceObserverEntryList>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 JSObject* JSPerformanceObserverEntryList::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     auto* structure = JSPerformanceObserverEntryListPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());

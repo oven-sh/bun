@@ -33,8 +33,6 @@
 #include "JSCallbackData.h"
 
 #include "JSDOMBinding.h"
-// #include "JSExecState.h"
-// #include "JSExecStateInstrumentation.h"
 #include <JavaScriptCore/Exception.h>
 
 namespace WebCore {
@@ -91,12 +89,8 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     ASSERT(!function.isEmpty());
     ASSERT(callData.type != CallData::Type::None);
 
-    // JSExecState::instrumentFunction(context, callData);
-
     returnedException = nullptr;
     JSValue result = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, function, callData, thisValue, args, returnedException);
-
-    // InspectorInstrumentation::didCallFunction(context);
 
     return result;
 }

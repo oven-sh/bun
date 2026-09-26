@@ -154,8 +154,6 @@ JSAbortController::JSAbortController(Structure* structure, JSDOMGlobalObject& gl
 {
 }
 
-// static_assert(!std::is_base_of<ActiveDOMObject, AbortController>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 JSObject* JSAbortController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     auto* structure = JSAbortControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());

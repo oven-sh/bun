@@ -234,8 +234,6 @@ JSDOMURL::JSDOMURL(Structure* structure, JSDOMGlobalObject& globalObject, Ref<DO
 {
 }
 
-// static_assert(!std::is_base_of<ActiveDOMObject, DOMURL>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 JSObject* JSDOMURL::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     auto* structure = JSDOMURLPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());

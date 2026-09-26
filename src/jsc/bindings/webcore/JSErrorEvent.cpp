@@ -273,8 +273,6 @@ void JSErrorEvent::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, ErrorEvent>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
 
 JSObject* JSErrorEvent::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

@@ -19,12 +19,10 @@
 
 #pragma once
 
-// #include "DOMWindow.h"
 #include "BunClientData.h"
 #include "DOMWrapperWorld.h"
 #include "EventListener.h"
 #include "EventNames.h"
-// #include "HTMLElement.h"
 #include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WeakInlines.h>

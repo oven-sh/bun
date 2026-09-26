@@ -39,7 +39,6 @@ inline DOMWrapperWorld& worldForDOMObject(JSC::JSObject& object);
 inline bool isWorldCompatible(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
 {
     return true;
-    // return !value.isObject() || &worldForDOMObject(*value.getObject()) == &currentWorld(lexicalGlobalObject);
 }
 
 inline DOMWrapperWorld& currentWorld(JSC::JSGlobalObject& lexicalGlobalObject)

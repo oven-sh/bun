@@ -79,7 +79,6 @@ public:
     DOMHighResTimeStamp now() const;
     DOMHighResTimeStamp timeOrigin() const;
 
-    // PerformanceNavigation* navigation();
     PerformanceTiming* timing();
 
     Vector<RefPtr<PerformanceEntry>> getEntries() const;
@@ -130,7 +129,6 @@ private:
     void queueEntry(PerformanceEntry&);
     void scheduleTaskIfNeeded();
 
-    // mutable RefPtr<PerformanceNavigation> m_navigation;
     mutable RefPtr<PerformanceTiming> m_timing;
 
     Vector<RefPtr<PerformanceEntry>> m_resourceTimingBuffer;

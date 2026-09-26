@@ -194,8 +194,6 @@ static inline size_t formatMessage(char *dst, const char *src, size_t length, Op
 
     dst[0] = (char) ((fin ? 128 : 0) | ((compressed && opCode) ? SND_COMPRESSED : 0) | (char) opCode);
 
-    //printf("%d\n", (int)dst[0]);
-
     char mask[4];
     if (!isServer) {
         dst[1] |= 0x80;

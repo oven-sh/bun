@@ -507,6 +507,41 @@ describe("bundler", () => {
   const jsOutput = (api: BundlerTestBundleAPI, name: string) =>
     api.readFile("/out/" + jsFilesIn(api).find(f => f === `${name}.js` || f.startsWith(`${name}-`))!);
 
+  // Lets `run` name /out/main.js when the entry point is /out/main.entry-[hash].js.
+  const launchHashedEntry = (api: BundlerTestBundleAPI, entry: string) => {
+    const hashed = jsFilesIn(api).find(f => f.startsWith(entry + ".entry-"));
+    if (hashed) api.writeFile(`/out/${entry}.js`, `import "./${hashed}";`);
+  };
+
+  // An entry point takes a fold only with [hash] in its name, so a fold test runs with both kinds of name.
+  function itFolds(
+    id: string,
+    {
+      pinned,
+      folded,
+      ...options
+    }: Omit<Parameters<typeof itBundled>[1], "onAfterBundle"> &
+      Record<"pinned" | "folded", (api: BundlerTestBundleAPI) => void>,
+  ) {
+    const entry = options.entryPoints![0].replace(/^\/|\.[jt]s$/g, "");
+    itBundled(id, {
+      ...options,
+      onAfterBundle(api) {
+        pinned(api);
+        const importsEntry = new RegExp(`(from|import)\\s*\\(?"\\./${entry}\\.js"`);
+        for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toMatch(importsEntry);
+      },
+    });
+    itBundled(id + "HashedEntry", {
+      ...options,
+      entryNaming: "[name].entry-[hash].[ext]",
+      onAfterBundle(api) {
+        folded(api);
+        launchHashedEntry(api, entry);
+      },
+    });
+  }
+
   // https://github.com/oven-sh/bun/issues/42290
   const versionedEntry = {
     "/index.js": /* js */ `
@@ -518,21 +553,23 @@ describe("bundler", () => {
     "/shared.js": `export const state = { n: 0 }; console.log("shared");`,
     "/page.js": `await import("./out/index.js?v=1");`,
   };
-  itBundled("splitting/NoChunkImportsBrowserEntryWithoutHash", {
-    files: versionedEntry,
-    entryPoints: ["/index.js"],
-    splitting: true,
-    target: "browser",
-    outdir: "/out",
-    format: "esm",
-    onAfterBundle(api) {
-      expect(jsOutputs(api)).toEqual(["index.js", "index.js", "route.js"]);
-      api.expectFile("/out/index.js").not.toMatch(/^\s*export\b/m);
-      expect(jsOutput(api, "route")).not.toContain(`"./index.js"`);
-    },
-    run: { file: "/page.js", stdout: "shared\nindex 1\nroute 1" },
-  });
-  itBundled("splitting/FoldsSharedIntoBrowserEntryWithHash", {
+  for (const target of ["browser", "bun", "node"] as const) {
+    itBundled("splitting/NoChunkImportsEntryWithoutHash/" + target, {
+      files: versionedEntry,
+      entryPoints: ["/index.js"],
+      splitting: true,
+      target,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        expect(jsOutputs(api)).toEqual(["index.js", "index.js", "route.js"]);
+        api.expectFile("/out/index.js").not.toMatch(/^\s*export\b/m);
+        expect(jsOutput(api, "route")).not.toContain(`"./index.js"`);
+      },
+      run: { file: "/page.js", stdout: "shared\nindex 1\nroute 1" },
+    });
+  }
+  itBundled("splitting/FoldsSharedIntoEntryWithHash", {
     files: versionedEntry,
     entryPoints: ["/index.js"],
     entryNaming: "[name]-[hash].[ext]",
@@ -545,7 +582,7 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("splitting/FoldsSharedIntoEntry", {
+  itFolds("splitting/FoldsSharedIntoEntry", {
     files: {
       "/entry.js": /* js */ `
         import { shared } from './shared.js'
@@ -567,18 +604,22 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
-    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "lazy.js"]);
+    },
+    folded(api) {
       // Keyed by importers alone this is entry.js importing everything from
       // an {entry, lazy} chunk with all of the code, and lazy.js.
-      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
-      api.expectFile("/out/entry.js").toContain("41");
-      api.expectFile("/out/entry.js").not.toMatch(/^\s*import\s*[{"]/m);
-      expect(api.readFile("/out/entry.js").match(/^\s*export\b/gm)).toHaveLength(1);
-      expect(jsOutput(api, "lazy")).toMatch(/import\s*\{\s*shared,\s*helper\s*\}\s*from "\.\/entry\.js"/);
+      expect(jsOutputs(api)).toEqual(["entry.entry.js", "lazy.js"]);
+      expect(jsOutput(api, "entry.entry")).toContain("41");
+      expect(jsOutput(api, "entry.entry")).not.toMatch(/^\s*import\s*[{"]/m);
+      expect(jsOutput(api, "entry.entry").match(/^\s*export\b/gm)).toHaveLength(1);
+      expect(jsOutput(api, "lazy")).toMatch(
+        /import\s*\{\s*shared,\s*helper\s*\}\s*from "\.\/entry\.entry-[a-z0-9]{8}\.js"/,
+      );
     },
     run: { file: "/out/entry.js", stdout: "shared\nentry 41 1\nlazy 42" },
   });
@@ -586,7 +627,7 @@ describe("bundler", () => {
   // A CommonJS module shared with an import() target folds into the entry
   // like anything else: the entry chunk exports its `require_x` wrapper and
   // the lazy chunk calls it, so the body still runs once, on first use.
-  itBundled("splitting/FoldsSharedCommonJSIntoEntry", {
+  itFolds("splitting/FoldsSharedCommonJSIntoEntry", {
     files: {
       "/entry.js": /* js */ `
         import './start.js'
@@ -608,14 +649,16 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
-    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
-      expect(jsOutput(api, "lazy")).toMatch(/require_shared\s*\}\s*from "\.\/entry\.js"/);
-      api.expectFile("/out/entry.js").toContain("shared evaluated");
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "lazy.js"]);
+    },
+    folded(api) {
+      expect(jsOutputs(api)).toEqual(["entry.entry.js", "lazy.js"]);
+      expect(jsOutput(api, "lazy")).toMatch(/require_shared\s*\}\s*from "\.\/entry\.entry-[a-z0-9]{8}\.js"/);
+      expect(jsOutput(api, "entry.entry")).toContain("shared evaluated");
     },
     run: { file: "/out/entry.js", stdout: "entry start\nshared evaluated\nentry 1\nlazy 2" },
   });
@@ -623,7 +666,7 @@ describe("bundler", () => {
   // import() of a CommonJS module that the entry also requires: the module
   // lives in entry.js and the import() target chunk is
   // `export default require_x()` over the entry's wrapper.
-  itBundled("splitting/FoldsDynamicallyImportedCommonJSIntoEntry", {
+  itFolds("splitting/FoldsDynamicallyImportedCommonJSIntoEntry", {
     files: {
       "/entry.js": /* js */ `
         import { counter } from './shared.cjs'
@@ -637,14 +680,16 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
-    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "shared.js"]);
-      expect(jsOutput(api, "shared")).toContain('from "./entry.js"');
-      api.expectFile("/out/entry.js").toContain("shared evaluated");
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "shared.js"]);
+    },
+    folded(api) {
+      expect(jsOutputs(api)).toEqual(["entry.entry.js", "shared.js"]);
+      expect(jsOutput(api, "shared")).toMatch(/from "\.\/entry\.entry-[a-z0-9]{8}\.js"/);
+      expect(jsOutput(api, "entry.entry")).toContain("shared evaluated");
     },
     run: { file: "/out/entry.js", stdout: "shared evaluated\nentry 1\nlazy 2" },
   });
@@ -1018,7 +1063,7 @@ describe("bundler", () => {
     `,
   };
 
-  itBundled("splitting/SideEffectFreeBarrelLeavesLazyModulesToTheirChunk", {
+  itFolds("splitting/SideEffectFreeBarrelLeavesLazyModulesToTheirChunk", {
     files: {
       ...sideEffectFreeBarrel,
       "/entry.js": /* js */ `
@@ -1032,14 +1077,16 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
-    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
-      api.expectFile("/out/entry.js").toContain("AAAA");
-      api.expectFile("/out/entry.js").not.toContain("BBBB_MARK");
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "lazy.js"]);
+    },
+    folded(api) {
+      expect(jsOutputs(api)).toEqual(["entry.entry.js", "lazy.js"]);
+      expect(jsOutput(api, "entry.entry")).toContain("AAAA");
+      expect(jsOutput(api, "entry.entry")).not.toContain("BBBB_MARK");
       expect(jsOutput(api, "lazy")).toContain("BBBB_MARK");
       expect(jsOutput(api, "lazy")).not.toContain("import ");
     },
@@ -1047,7 +1094,7 @@ describe("bundler", () => {
   });
 
   // The same through a namespace whose properties bind directly.
-  itBundled("splitting/SideEffectFreeBarrelNamespacePropertyAccess", {
+  itFolds("splitting/SideEffectFreeBarrelNamespacePropertyAccess", {
     files: {
       ...sideEffectFreeBarrel,
       "/entry.js": /* js */ `
@@ -1061,13 +1108,15 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
-    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
-      api.expectFile("/out/entry.js").not.toContain("BBBB_MARK");
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "lazy.js"]);
+    },
+    folded(api) {
+      expect(jsOutputs(api)).toEqual(["entry.entry.js", "lazy.js"]);
+      expect(jsOutput(api, "entry.entry")).not.toContain("BBBB_MARK");
       expect(jsOutput(api, "lazy")).toContain("BBBB_MARK");
     },
     run: { file: "/out/entry.js", stdout: "AAAA\nBBBB_MARK" },
@@ -1105,7 +1154,7 @@ describe("bundler", () => {
   // A barrel that does not declare itself side-effect free still loads every
   // module it re-exports wherever it is imported: b.js may have side effects,
   // and they run before the entry's own code.
-  itBundled("splitting/BarrelWithSideEffectsLoadsEveryReExport", {
+  itFolds("splitting/BarrelWithSideEffectsLoadsEveryReExport", {
     files: {
       "/entry.js": /* js */ `
         import { A } from './lib/index.js'
@@ -1129,13 +1178,15 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
-    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
-      api.expectFile("/out/entry.js").toContain("BBBB_MARK");
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "lazy.js"]);
+    },
+    folded(api) {
+      expect(jsOutputs(api)).toEqual(["entry.entry.js", "lazy.js"]);
+      expect(jsOutput(api, "entry.entry")).toContain("BBBB_MARK");
     },
     run: { file: "/out/entry.js", stdout: "b runs\nAAAA\nBBBB_MARK" },
   });
@@ -1989,7 +2040,7 @@ describe("bundler", () => {
 
   // The same graph with no top-level await: the files that entry.ts and page.ts
   // share fold into the chunk of entry.ts, and their entry bits change with that.
-  itBundled("splitting/FoldedSharedFilesFollowStaticImportsBeforeDynamic", {
+  itFolds("splitting/FoldedSharedFilesFollowStaticImportsBeforeDynamic", {
     files: {
       "/a.ts": /* js */ `
         export * as A from "./a";
@@ -2016,11 +2067,13 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.ts"],
-    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "page.js"]);
+    },
+    folded(api) {
       expect(jsFilesIn(api)).toHaveLength(2);
     },
     run: { file: "/out/entry.js", stdout: "entry b\npage b 3" },
@@ -2349,7 +2402,7 @@ describe("bundler", () => {
   // always loaded together with `a`'s own chunk — but `a` has exports, and
   // folding into it would add `helper` to what `import('./a.js')` resolves
   // to, so the shared chunk stays.
-  itBundled("splitting/MinChunkSizeFoldsNestedLazyShared", {
+  itFolds("splitting/MinChunkSizeFoldsNestedLazyShared", {
     files: {
       "/entry.js": /* js */ `
         console.log('entry')
@@ -2371,14 +2424,16 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
-    target: "bun",
     splitting: true,
     minChunkSize: 1024 * 1024,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["a.js", "b.js", "entry.js", "entry.js", "entry.js"]);
+    },
+    folded(api) {
       expect(jsFilesIn(api)).toHaveLength(4);
-      api.expectFile("/out/entry.js").not.toContain("helper");
+      expect(jsOutput(api, "entry.entry")).not.toContain("helper");
       expect(jsOutput(api, "b")).not.toMatch(/from "\.\/a-[a-z0-9]{8}\.js"/);
     },
     run: { file: "/out/entry.js", stdout: "entry\na h\nb h" },
@@ -2606,7 +2661,7 @@ describe("bundler", () => {
   // Lazy modules that import() each other: `d` is only reached through `x`,
   // which `main` or `y` loads, and `y` only through `x`, so `main` always
   // comes first and the {main, d} chunk folds into main.js.
-  itBundled("splitting/FoldsChunkBehindDynamicImportCycle", {
+  itFolds("splitting/FoldsChunkBehindDynamicImportCycle", {
     files: {
       "/main.js": /* js */ `
         import { shared } from './shared.js'
@@ -2630,14 +2685,16 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/main.js"],
-    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
-      expect(jsOutputs(api)).toEqual(["d.js", "main.js", "x.js", "y.js"]);
-      api.expectFile("/out/main.js").toContain("41");
-      expect(jsOutput(api, "d")).toContain('from "./main.js"');
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["d.js", "main.js", "main.js", "x.js", "y.js"]);
+    },
+    folded(api) {
+      expect(jsOutputs(api)).toEqual(["d.js", "main.entry.js", "x.js", "y.js"]);
+      expect(jsOutput(api, "main.entry")).toContain("41");
+      expect(jsOutput(api, "d")).toMatch(/from "\.\/main\.entry-[a-z0-9]{8}\.js"/);
     },
     run: { file: "/out/main.js", stdout: "main 41\nx\nd 42" },
   });
@@ -2697,7 +2754,7 @@ describe("bundler", () => {
   // in the importer. f.js may still move into g.js's chunk: that chunk
   // imports main.js, which has already made the call by then, so repeating it
   // does nothing.
-  itBundled("splitting/MinChunkSizeFoldsImporterOfInitializedWrappedModule", {
+  itFolds("splitting/MinChunkSizeFoldsImporterOfInitializedWrappedModule", {
     files: {
       "/main.js": /* js */ `
         import lib from './lib.cjs'
@@ -2738,12 +2795,14 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/main.js"],
-    target: "bun",
     splitting: true,
     minChunkSize: 1024,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["a.js", "b.js", "c.js", "main.js", "main.js", "main.js", "main.js"]);
+    },
+    folded(api) {
       // main, a, b, c and g.js's chunk, now holding f.js.
       expect(jsFilesIn(api)).toHaveLength(5);
       api.expectFile("/out/" + chunkContaining(api, "g evaluated")).toContain("var f = ");
@@ -2757,7 +2816,7 @@ describe("bundler", () => {
   // c.js moves into t.js's chunk as above. r1 imports c.js, then x.js, then
   // t.js: c.js's require_lib() call (a no-op there) must not pull the whole
   // t.js chunk, and its side effect, ahead of x.js's chunk.
-  itBundled("splitting/MinChunkSizeHoistedRequireKeepsChunkOrder", {
+  itFolds("splitting/MinChunkSizeHoistedRequireKeepsChunkOrder", {
     files: {
       "/main.js": /* js */ `
         import lib from './lib.cjs'
@@ -2801,12 +2860,23 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/main.js"],
-    target: "bun",
     splitting: true,
     minChunkSize: 1024,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual([
+        "main.js",
+        "main.js",
+        "main.js",
+        "main.js",
+        "main.js",
+        "r1.js",
+        "r2.js",
+        "r3.js",
+      ]);
+    },
+    folded(api) {
       // main, r1, r2, r3, x.js's chunk and t.js's chunk, now holding c.js.
       expect(jsFilesIn(api)).toHaveLength(6);
       api.expectFile("/out/" + chunkContaining(api, "t evaluated")).toContain("var c = ");
@@ -2816,7 +2886,7 @@ describe("bundler", () => {
 
   // Here nothing main.js loads initializes lib.cjs, so moving f.js (and its
   // require_lib() call) into main.js would run lib.cjs at startup.
-  itBundled("splitting/MinChunkSizeKeepsFirstInitializerOfWrappedModule", {
+  itFolds("splitting/MinChunkSizeKeepsFirstInitializerOfWrappedModule", {
     files: {
       "/main.js": /* js */ `
         import { shared } from './shared.js'
@@ -2845,14 +2915,16 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/main.js"],
-    target: "bun",
     splitting: true,
     minChunkSize: 1024 * 1024,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["a.js", "b.js", "main.js", "main.js", "main.js"]);
+    },
+    folded(api) {
       expect(jsFilesIn(api)).toHaveLength(4);
-      api.expectFile("/out/main.js").not.toContain("lib evaluated");
+      expect(jsOutput(api, "main.entry")).not.toContain("lib evaluated");
     },
     run: [
       { file: "/out/main.js", stdout: "main 20000" },
@@ -2865,10 +2937,12 @@ describe("bundler", () => {
   for (const [name, options, outputs] of [
     ["Browser", {}, 4],
     ["BrowserZero", { minChunkSize: 0 }, 4],
-    // Only main.js could take f.js, and nothing folds into a browser entry point without [hash] in its name.
+    // Only main.js could take f.js, and nothing folds into an entry point without [hash] in its name.
     ["BrowserOn", { minChunkSize: 16 * 1024 }, 4],
+    ["BrowserOnHashedEntry", { minChunkSize: 16 * 1024, entryNaming: "[name].entry-[hash].[ext]" }, 3],
     ["Bun", { target: "bun" }, 4],
-    ["BunOn", { target: "bun", minChunkSize: 16 * 1024 }, 3],
+    ["BunOn", { target: "bun", minChunkSize: 16 * 1024 }, 4],
+    ["BunOnHashedEntry", { target: "bun", minChunkSize: 16 * 1024, entryNaming: "[name].entry-[hash].[ext]" }, 3],
     ["Node", { target: "node" }, 4],
   ] as const) {
     itBundled("splitting/MinChunkSizeDefault" + name, {
@@ -2901,6 +2975,7 @@ describe("bundler", () => {
       ...options,
       onAfterBundle(api) {
         expect(jsFilesIn(api)).toHaveLength(outputs);
+        launchHashedEntry(api, "main");
       },
       run: { file: "/out/main.js", args: ["a"], stdout: "main 20000\na 1" },
     });
@@ -2912,7 +2987,7 @@ describe("bundler", () => {
   // did, c.js (which does import them) could move into entry.js, entry.js
   // would import the b.js chunk, and that chunk imports require_lib from
   // entry.js — a static cycle that reads require_lib before it is assigned.
-  itBundled("splitting/MinChunkSizeBarrelRecordIsNotAnImport", {
+  itFolds("splitting/MinChunkSizeBarrelRecordIsNotAnImport", {
     files: {
       "/entry.js": /* js */ `
         import lib from "lib"
@@ -2948,15 +3023,27 @@ describe("bundler", () => {
       "/node_modules/lib/index.js": `module.exports = { v: 1, w: 2 }`,
     },
     entryPoints: ["/entry.js"],
-    target: "bun",
     splitting: true,
     minChunkSize: 1024,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual([
+        "entry.js",
+        "entry.js",
+        "entry.js",
+        "entry.js",
+        "entry.js",
+        "r1.js",
+        "r2.js",
+        "r3.js",
+        "r4.js",
+      ]);
+    },
+    folded(api) {
       // entry, r1..r4, and the c.js, b.js and b2.js chunks.
       expect(jsFilesIn(api)).toHaveLength(8);
-      expect(api.readFile("/out/entry.js")).not.toMatch(/^import /m);
+      expect(jsOutput(api, "entry.entry")).not.toMatch(/^import /m);
     },
     run: { file: "/out/entry.js", args: ["r1"], stdout: "entry A 1 40000\nr1 3" },
   });
@@ -2995,7 +3082,7 @@ describe("bundler", () => {
   // takes d.js's {x, y, z} chunk along as a new import of it, so d.js is then
   // loaded wherever q.js is and folds there too; nothing may land in main.js,
   // which must not run q.js's side effect at startup.
-  itBundled("splitting/MinChunkSizeTracksLoadConditionsAcrossFolds", {
+  itFolds("splitting/MinChunkSizeTracksLoadConditionsAcrossFolds", {
     files: {
       "/main.js": /* js */ `
         import { mxy } from './mxy.js'
@@ -3052,17 +3139,19 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/main.js"],
-    target: "bun",
     splitting: true,
     minChunkSize: 1024,
     outdir: "/out",
     format: "esm",
-    onAfterBundle(api) {
+    pinned(api) {
+      expect(jsOutputs(api)).toEqual(["main.js", "main.js", "main.js", "w.js", "x.js", "y.js", "z.js"]);
+    },
+    folded(api) {
       // main (with mxy.js), x, y, z, w and the q.js chunk holding c0, c and d.
       expect(jsFilesIn(api)).toHaveLength(6);
       const q = chunkContaining(api, "q evaluated");
       for (const f of ["c0", "c", "d"]) api.expectFile("/out/" + q).toContain(`function ${f}()`);
-      api.expectFile("/out/main.js").not.toContain("q evaluated");
+      expect(jsOutput(api, "main.entry")).not.toContain("q evaluated");
     },
     run: { file: "/out/main.js", stdout: "main 12000" },
   });
@@ -3639,7 +3728,7 @@ describe("bundler", () => {
         "/shared.js": `export const shared = "shared";`,
       },
       entryPoints: ["/main.js"],
-      target: "bun",
+      entryNaming: "[name].entry-[hash].[ext]",
       splitting: true,
       foldChunks,
       outdir: "/out",
@@ -3647,6 +3736,7 @@ describe("bundler", () => {
       onAfterBundle(api) {
         const chunks = readdirSync(api.outdir).filter(name => name.endsWith(".js"));
         expect(chunks.length).toBe(foldChunks === false ? 3 : 2);
+        launchHashedEntry(api, "main");
       },
     });
   }
@@ -3660,7 +3750,7 @@ describe("bundler", () => {
       "build.js": `
         const result = await Bun.build({
           entrypoints: [import.meta.dir + "/main.js"],
-          target: "bun",
+          naming: { entry: "[name]-[hash].[ext]" },
           splitting: true,
           foldChunksForTesting: false,
         });

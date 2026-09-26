@@ -204,8 +204,8 @@ impl WalkOrder {
             entered: vec![u32::MAX; c.graph.files.len()],
         };
         for walk in walks {
-            for (&chunk_index, runs) in walk.chunks.iter().zip(walk.runs) {
-                order.runs_of_chunk[chunk_index as usize] = runs;
+            for owned in walk.owned {
+                order.runs_of_chunk[owned.chunk_index as usize] = owned.runs;
             }
             for (tick, &source_index) in walk.entered.iter().enumerate() {
                 order.entered[source_index as usize] = tick as u32;
@@ -221,7 +221,7 @@ struct WalkPlan {
     chunk_of_file: Vec<u32>,
     /// Per chunk: the entry point id of the walk that lays it out (`u32::MAX`: not a JS chunk).
     owner_of_chunk: Vec<u32>,
-    /// Per chunk: its index in `EntryWalk::runs` of its owner.
+    /// Per chunk: its index in `EntryWalk::owned` of its owner.
     slot_of_chunk: Vec<u32>,
     /// With code splitting: the entry point id of each entry point's file, `u32::MAX` for the others.
     entry_id_of_file: Vec<u32>,
@@ -303,16 +303,17 @@ impl WalkPlan {
                 *walk_index = walks.len() as u32;
                 walks.push(EntryWalk {
                     entry_id: owner,
-                    chunks: Vec::new(),
-                    runs: Vec::new(),
+                    owned: Vec::new(),
                     entered: Vec::new(),
                 });
             }
             let walk = &mut walks[*walk_index as usize];
             plan.owner_of_chunk[chunk_index] = owner;
-            plan.slot_of_chunk[chunk_index] = walk.chunks.len() as u32;
-            walk.chunks.push(chunk_index as u32);
-            walk.runs.push(Vec::new());
+            plan.slot_of_chunk[chunk_index] = walk.owned.len() as u32;
+            walk.owned.push(OwnedChunk {
+                chunk_index: chunk_index as u32,
+                runs: Vec::new(),
+            });
         }
         (plan, walks)
     }
@@ -498,18 +499,22 @@ fn load_rank(c: &LinkerContext, entry_id_of_file: &[u32]) -> Vec<u32> {
 enum WalkFrame {
     /// `loader`: the entry point whose load runs the file. A split `require()` that runs at load changes it.
     Enter { source_index: IndexInt, loader: u32 },
-    /// The walk is past what `run` waits for: `run` goes at the end of `runs[slot]`.
+    /// The walk is past what `run` waits for: `run` goes at the end of `owned[slot].runs`.
     Place { run: PartRun, slot: u32 },
-    /// The class-name object of a CSS file goes at the end of `runs[slot]`, unless the list has it.
+    /// The class-name object of a CSS file goes at the end of `owned[slot].runs`, unless the list has it.
     PlaceCss { source_index: IndexInt, slot: u32 },
+}
+
+struct OwnedChunk {
+    chunk_index: u32,
+    /// The runs placed so far.
+    runs: Vec<PartRun>,
 }
 
 /// One walk from an entry point. It lays out the chunks that the entry point owns.
 struct EntryWalk {
     entry_id: u32,
-    chunks: Vec<u32>,
-    /// Per owned chunk: the runs placed so far.
-    runs: Vec<Vec<PartRun>>,
+    owned: Vec<OwnedChunk>,
     /// With code splitting: the files placed, in the order the walk entered them.
     entered: Vec<IndexInt>,
 }
@@ -524,8 +529,8 @@ impl EntryWalk {
 
         // Chunk folding can move a file into a chunk whose entry points do not import it. It goes last there.
         let runtime = Index::RUNTIME.value();
-        for slot in 0..self.chunks.len() {
-            let chunk = &chunks[self.chunks[slot] as usize];
+        for slot in 0..self.owned.len() {
+            let chunk = &chunks[self.owned[slot].chunk_index as usize];
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
                 if source_index != runtime && !seen.is_set(source_index as usize) {
                     self.walk(
@@ -581,13 +586,13 @@ impl EntryWalk {
         while let Some(frame) = stack.pop() {
             let (source_index, loader) = match frame {
                 WalkFrame::Place { run, slot } => {
-                    self.runs[slot as usize].push(run);
+                    self.owned[slot as usize].runs.push(run);
                     continue;
                 }
                 WalkFrame::PlaceCss { source_index, slot } => {
                     let key = u64::from(slot) << 32 | u64::from(source_index);
                     if !bun_core::handle_oom(css_placed.get_or_put(key)).found_existing {
-                        self.runs[slot as usize].push(PartRun {
+                        self.owned[slot as usize].runs.push(PartRun {
                             source_index,
                             begin: 0,
                             end: u32::MAX,

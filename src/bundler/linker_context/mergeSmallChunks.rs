@@ -994,11 +994,9 @@ pub(crate) fn merge_small_chunks(
     // other. `--compile` leaves the chunks of user entry points alone too.
     let export_aliases = this.graph.meta.items_sorted_and_filtered_export_aliases();
     let loaders = this.parse_graph().input_files.items_loader();
-    // A page can load such a file as `entry.js?v=1`; an `import "./entry.js"` in a chunk would then run it a second time.
+    // The host can load such a file as `entry.js?v=1`; an `import "./entry.js"` in a chunk would then run it a second time.
     let host_names_url = |source_index: usize| {
-        this.options.target == Target::Browser
-            && !this.options.entry_naming_has_hash
-            && loaders[source_index] != Loader::Html
+        !this.options.entry_naming_has_hash && loaders[source_index] != Loader::Html
     };
     let pin_entry_chunk = |entry_id: usize| {
         let source_index = entry_source_indices[entry_id] as usize;

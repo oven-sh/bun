@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isWindows, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
@@ -562,6 +562,39 @@ test("closeAllConnections() after close() force-drains the withheld callback", a
     socket.destroy();
     server.closeAllConnections();
   }
+});
+
+// The request waits for a body that cannot come any more. Like in Node, that and the half-open socket do not hold the process.
+test("an upgraded socket whose request body never ended does not hold the process after the client's FIN", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const http = require("node:http"), net = require("node:net");
+       const server = http.createServer();
+       server.on("upgrade", (req, socket) => {
+         socket.on("error", () => {});
+         socket.on("end", () => {
+           console.log("end");
+           server.closeAllConnections();
+           server.close();
+         });
+         client.end();
+       });
+       let client;
+       server.listen(0, "127.0.0.1", () => {
+         client = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true });
+         client.unref();
+         client.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nConnection: Upgrade\\r\\nUpgrade: x\\r\\nContent-Length: 100\\r\\n\\r\\n0123456789");
+       });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "end\n", stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 test("closeAllConnections() on a listening server destroys the connections and keeps the listener", async () => {

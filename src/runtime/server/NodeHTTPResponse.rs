@@ -651,10 +651,9 @@ impl NodeHTTPResponse {
         true
     }
 
-    pub(crate) fn maybe_stop_reading_body(&self, vm: &mut VirtualMachine, this_value: JSValue) {
+    pub(crate) fn maybe_stop_reading_body(&self, this_value: JSValue) {
         self.upgrade_context.with_mut(|c| c.reset()); // we can discard the upgrade context now
 
-        let _ = vm;
         let flags = self.flags.get();
         // An ended response keeps a body that a reader is armed for: it completes at its last chunk.
         let stopped = if flags.contains(Flags::SOCKET_CLOSED) {
@@ -1483,7 +1482,7 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
+    this.maybe_stop_reading_body(arguments[1]);
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !this.is_socket_closed_or_closing() {
@@ -1525,7 +1524,7 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
+    this.maybe_stop_reading_body(arguments[1]);
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -2598,8 +2597,8 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
 
     let vm = bun_vm_mut(global_object);
     let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
-    // GET can have a body in node.js. CONNECT cannot: the parser tunnels every byte after its head.
-    if method != HttpMethod::CONNECT && (method.has_request_body() || method == HttpMethod::GET) {
+    // Like llhttp, the framing decides, not the method. CONNECT has no body: the parser tunnels every byte after its head.
+    if method != HttpMethod::CONNECT {
         let req_len: usize = 'brk: {
             if let Some(content_length) = request_ref.header(b"content-length") {
                 scoped_log!(

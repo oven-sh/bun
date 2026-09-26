@@ -6598,7 +6598,7 @@ describe("request body still flows after res.end() was called in the handler", (
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe('["body0","body1","body2"]');
     expect(exitCode).toBe(0);
-  }, 20_000);
+  });
 
   it("chunked request body split across writes", async () => {
     let body = "";
@@ -6666,7 +6666,7 @@ describe("request body still flows after res.end() was called in the handler", (
     // and the process reaches beforeExit.
     expect(stdout.trim()).toBe('["data(3)"]');
     expect(exitCode).toBe(0);
-  }, 20_000);
+  });
 
   // The body outliving the response must not leave anything holding the event
   // loop open: the process has to exit on its own both when the body does

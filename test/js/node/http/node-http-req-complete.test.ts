@@ -206,6 +206,53 @@ test("res.end() on a socket that the listener destroyed does not finish the resp
   assert.deepStrictEqual(events, ["req aborted", "req error ECONNRESET", "req close"]);
 });
 
+// llhttp frames a body by Content-Length and Transfer-Encoding, whatever the method is.
+for (const method of ["HEAD", "OPTIONS", "GET"]) {
+  test(`a ${method} request with Content-Length has a body`, async () => {
+    const seen: Record<string, unknown> = {};
+    const { promise: dispatched, resolve: onDispatched } = Promise.withResolvers<void>();
+    const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => {
+        Object.assign(seen, { body, end: req.complete });
+        res.end();
+        onEnd();
+      });
+      process.nextTick(() => {
+        seen.nextTick = req.complete;
+        onDispatched();
+      });
+    });
+    await withServer(server, async port => {
+      const socket = send(port, `${method} / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n`, reject);
+      await dispatched;
+      socket.write("hello");
+      await ended;
+    });
+    assert.deepStrictEqual(seen, { nextTick: false, body: "hello", end: true });
+  });
+}
+
+test("res.end(chunk) after the client went away ends the response", async () => {
+  const { promise: done, resolve: onDone } = Promise.withResolvers<unknown>();
+  const server = http.createServer((req, res) => {
+    const events: string[] = [];
+    res.on("prefinish", () => events.push("prefinish"));
+    res.on("finish", () => events.push("finish"));
+    res.on("close", () => {
+      res.end("late");
+      onDone({ events, finished: res.finished, writableEnded: res.writableEnded });
+    });
+  });
+  await withServer(server, async port => {
+    const socket = send(port, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", () => {});
+    server.once("request", () => socket.destroy());
+    assert.deepStrictEqual(await done, { events: ["prefinish"], finished: true, writableEnded: true });
+  });
+});
+
 describe("a connection given to the server with emit('connection')", () => {
   async function withForwarder(server: http.Server, run: (port: number) => Promise<void>, onRead = () => {}) {
     const forwarder = createNetServer(socket => {

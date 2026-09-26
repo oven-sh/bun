@@ -3422,6 +3422,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     callback = undefined;
   }
 
+  // Node's write_() drops the chunk of a destroyed response, and end() goes on: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
+  if (chunk && this.destroyed && !this.finished) chunk = undefined;
+
   if (hasServerResponseFinished(this, chunk, callback, true)) {
     return this;
   }

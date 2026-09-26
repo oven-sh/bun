@@ -964,10 +964,10 @@ ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int
 
 #if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
     /* A "short" rule keeps the first `clamp` bytes of the list. */
-    struct iovec clamped[8];
+    struct iovec clamped[1024];
     ssize_t injected = 0; int clamp = INT_MAX;
     if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, clamp)) return injected;
-    if (clamp != INT_MAX && count <= 8) {
+    if (clamp != INT_MAX) {
         size_t left = (size_t)clamp;
         int kept = 0;
         for (; kept < count && left; kept++) {

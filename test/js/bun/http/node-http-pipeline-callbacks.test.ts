@@ -72,4 +72,4 @@ test("aborting a connection settles every queued pipelined response callback onc
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
   }
-}, 10_000);
+});

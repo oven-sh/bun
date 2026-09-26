@@ -1024,6 +1024,17 @@ private:
                 if (httpResponseData->socketData && httpContextData->onSocketData) {
                     httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
                 }
+                /* No more of that body can come. A request that still waits for it holds the event loop, so end it like onClose does. */
+                if (!us_socket_is_closed(s) && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
+                    httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY;
+                    httpResponseData->isConnectRequest = true;
+                    if (httpResponseData->inStream) {
+                        httpResponseData->inStream((HttpResponse<SSL> *) s, "", 0, true, httpResponseData->userData);
+                        if (!us_socket_is_closed(s)) {
+                            httpResponseData->inStream = nullptr;
+                        }
+                    }
+                }
                 return s;
             }
 

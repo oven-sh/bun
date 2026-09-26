@@ -1608,7 +1608,7 @@ it("--hot reload of a node:http server fires 'connection' once per socket", asyn
   expect(stderr.replaceAll(/^DEBUG:.*\n/gm, "")).toBe("");
   expect(stdout).toBe("[reload 0] 1\n[reload 1] 1\n[reload 2] 1\n[reload 3] 1\n");
   expect(exitCode).toBe(0);
-}, 30_000);
+});
 
 it("reload() cannot turn a Bun.serve server into a node:http server", async () => {
   // The server's kind is fixed when listen() sizes its connections' native

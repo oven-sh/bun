@@ -646,11 +646,7 @@ it("chrome: views orphaned by a Chrome death are closed, even after a new view r
       bunExe(),
       "-e",
       `
-        // Spawn args come from whichever construction spawns Chrome, so every
-        // view passes them: the one constructed after closeAll() spawns the
-        // second Chrome. --no-sandbox: Chrome refuses to start as root
-        // (containers) otherwise.
-        const backend = { type: "chrome", url: false, argv: ["--no-sandbox"] };
+        const backend = { type: "chrome", url: false };
         const open = () => new Bun.WebView({ backend, width: 200, height: 200 });
         // An op on a dead view must throw synchronously, not hand back a
         // promise. The catch handler keeps an unfixed build's promise from

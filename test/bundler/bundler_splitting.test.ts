@@ -507,6 +507,44 @@ describe("bundler", () => {
   const jsOutput = (api: BundlerTestBundleAPI, name: string) =>
     api.readFile("/out/" + jsFilesIn(api).find(f => f === `${name}.js` || f.startsWith(`${name}-`))!);
 
+  // https://github.com/oven-sh/bun/issues/42290
+  const versionedEntry = {
+    "/index.js": /* js */ `
+      import { state } from "./shared.js";
+      console.log("index", ++state.n);
+      import("./route.js");
+    `,
+    "/route.js": `import { state } from "./shared.js"; console.log("route", state.n);`,
+    "/shared.js": `export const state = { n: 0 }; console.log("shared");`,
+    "/page.js": `await import("./out/index.js?v=1");`,
+  };
+  itBundled("splitting/NoChunkImportsBrowserEntryWithoutHash", {
+    files: versionedEntry,
+    entryPoints: ["/index.js"],
+    splitting: true,
+    target: "browser",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["index.js", "index.js", "route.js"]);
+      api.expectFile("/out/index.js").not.toMatch(/^\s*export\b/m);
+      expect(jsOutput(api, "route")).not.toContain(`"./index.js"`);
+    },
+    run: { file: "/page.js", stdout: "shared\nindex 1\nroute 1" },
+  });
+  itBundled("splitting/FoldsSharedIntoBrowserEntryWithHash", {
+    files: versionedEntry,
+    entryPoints: ["/index.js"],
+    entryNaming: "[name]-[hash].[ext]",
+    splitting: true,
+    target: "browser",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["index.js", "route.js"]);
+    },
+  });
+
   itBundled("splitting/FoldsSharedIntoEntry", {
     files: {
       "/entry.js": /* js */ `
@@ -529,6 +567,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
+    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
@@ -569,6 +608,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
+    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
@@ -597,6 +637,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
+    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
@@ -991,6 +1032,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
+    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
@@ -1019,6 +1061,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
+    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
@@ -1086,6 +1129,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
+    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
@@ -1972,6 +2016,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.ts"],
+    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
@@ -2012,6 +2057,29 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     run: { file: "/out/entry.js", stdout: "late2 b late1 b" },
+  });
+
+  // The namespace object of barrel.js names a before b, but b.js runs first: the shared chunk follows late_b.js.
+  itBundled("splitting/SharedChunkOwnerIgnoresNamespaceExportOrder", {
+    files: {
+      "/x.js": `import { y } from "./y.js"; export const x = "x"; export const readY = () => y;`,
+      "/y.js": `import { x } from "./x.js"; export const y = "y" + x;`,
+      "/late_a.js": `import { x, readY } from "./x.js"; console.log("late_a", x, readY());`,
+      "/late_b.js": `import { y } from "./y.js"; console.log("late_b", y);`,
+      "/a.js": `export const a = "a"; (globalThis.loads ??= []).push(() => import("./late_a.js"));`,
+      "/b.js": `export const b = "b"; (globalThis.loads ??= []).push(() => import("./late_b.js"));`,
+      "/barrel.js": `export { b } from "./b.js"; export { a } from "./a.js";`,
+      "/entry.js": /* js */ `
+        import * as ns from "./barrel.js";
+        console.log(Object.keys(ns).join());
+        for (const load of globalThis.loads) await load();
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "a,b\nlate_b yx\nlate_a x yx" },
   });
 
   // entry.js uses only x from pkg, so it does not load loader.js. The import() in
@@ -2303,6 +2371,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
+    target: "bun",
     splitting: true,
     minChunkSize: 1024 * 1024,
     outdir: "/out",
@@ -2561,6 +2630,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/main.js"],
+    target: "bun",
     splitting: true,
     outdir: "/out",
     format: "esm",
@@ -2668,6 +2738,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/main.js"],
+    target: "bun",
     splitting: true,
     minChunkSize: 1024,
     outdir: "/out",
@@ -2730,6 +2801,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/main.js"],
+    target: "bun",
     splitting: true,
     minChunkSize: 1024,
     outdir: "/out",
@@ -2773,6 +2845,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/main.js"],
+    target: "bun",
     splitting: true,
     minChunkSize: 1024 * 1024,
     outdir: "/out",
@@ -2792,7 +2865,8 @@ describe("bundler", () => {
   for (const [name, options, outputs] of [
     ["Browser", {}, 4],
     ["BrowserZero", { minChunkSize: 0 }, 4],
-    ["BrowserOn", { minChunkSize: 16 * 1024 }, 3],
+    // Only main.js could take f.js, and nothing folds into a browser entry point without [hash] in its name.
+    ["BrowserOn", { minChunkSize: 16 * 1024 }, 4],
     ["Bun", { target: "bun" }, 4],
     ["BunOn", { target: "bun", minChunkSize: 16 * 1024 }, 3],
     ["Node", { target: "node" }, 4],
@@ -2874,6 +2948,7 @@ describe("bundler", () => {
       "/node_modules/lib/index.js": `module.exports = { v: 1, w: 2 }`,
     },
     entryPoints: ["/entry.js"],
+    target: "bun",
     splitting: true,
     minChunkSize: 1024,
     outdir: "/out",
@@ -2977,6 +3052,7 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/main.js"],
+    target: "bun",
     splitting: true,
     minChunkSize: 1024,
     outdir: "/out",
@@ -3563,6 +3639,7 @@ describe("bundler", () => {
         "/shared.js": `export const shared = "shared";`,
       },
       entryPoints: ["/main.js"],
+      target: "bun",
       splitting: true,
       foldChunks,
       outdir: "/out",
@@ -3583,6 +3660,7 @@ describe("bundler", () => {
       "build.js": `
         const result = await Bun.build({
           entrypoints: [import.meta.dir + "/main.js"],
+          target: "bun",
           splitting: true,
           foldChunksForTesting: false,
         });

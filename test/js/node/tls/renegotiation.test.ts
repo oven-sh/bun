@@ -476,8 +476,16 @@ it("a client that called end() emits 'secureConnect' once when the server then a
     stdin: "pipe",
     env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
   });
-  const { value } = await server.stdout.getReader().read();
-  const port = Number(new TextDecoder().decode(value).trim());
+  const reader = server.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  while (!output.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error("the server exited before it printed its port");
+    output += decoder.decode(value, { stream: true });
+  }
+  reader.releaseLock();
+  const port = Number(output.trim());
 
   // Holds what the client sends after its handshake, so the server does not see the client's close_notify.
   let holding = false;

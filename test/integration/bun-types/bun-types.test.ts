@@ -1007,57 +1007,57 @@ describe("@types/bun integration test", () => {
         },
         {
           code: 2551,
-          line: "websocket.ts:192:17",
+          line: "websocket.ts:206:17",
           message: "Property 'URL' does not exist on type 'WebSocket'. Did you mean 'url'?",
         },
         {
           code: 2322,
-          line: "websocket.ts:196:3",
+          line: "websocket.ts:210:3",
           message: "Type '\"nodebuffer\"' is not assignable to type 'BinaryType'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:242:6",
-          message: "Property 'ping' does not exist on type 'WebSocket'.",
-        },
-        {
-          code: 2339,
-          line: "websocket.ts:245:6",
-          message: "Property 'ping' does not exist on type 'WebSocket'.",
-        },
-        {
-          code: 2339,
-          line: "websocket.ts:249:6",
-          message: "Property 'ping' does not exist on type 'WebSocket'.",
-        },
-        {
-          code: 2339,
-          line: "websocket.ts:253:6",
-          message: "Property 'ping' does not exist on type 'WebSocket'.",
-        },
-        {
-          code: 2339,
           line: "websocket.ts:256:6",
-          message: "Property 'pong' does not exist on type 'WebSocket'.",
+          message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
           line: "websocket.ts:259:6",
-          message: "Property 'pong' does not exist on type 'WebSocket'.",
+          message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
           line: "websocket.ts:263:6",
-          message: "Property 'pong' does not exist on type 'WebSocket'.",
+          message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
           line: "websocket.ts:267:6",
-          message: "Property 'pong' does not exist on type 'WebSocket'.",
+          message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
           line: "websocket.ts:270:6",
+          message: "Property 'pong' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:273:6",
+          message: "Property 'pong' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:277:6",
+          message: "Property 'pong' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:281:6",
+          message: "Property 'pong' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:284:6",
           message: "Property 'terminate' does not exist on type 'WebSocket'.",
         },
         {

@@ -1798,11 +1798,21 @@ extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
     return webSocket->rejectUnauthorized();
 }
 
+extern "C" bool WebSocket__isProxyTLS(WebCore::WebSocket* webSocket)
+{
+    return webSocket->isProxyTLS();
+}
+
 // The Rust half of the context of the script that made the WebSocket. Called from connect(),
 // which has the context.
 extern "C" void* WebSocket__bunContext(WebCore::WebSocket* webSocket)
 {
     return webSocket->scriptExecutionContext()->bunContext();
+}
+
+extern "C" JSC::EncodedJSValue WebSocket__checkServerIdentity(WebCore::WebSocket* webSocket)
+{
+    return JSC::JSValue::encode(webSocket->checkServerIdentity().getValue(JSC::jsUndefined()));
 }
 
 // The native client keeps this object (and its wrapper) alive across work it has queued that will

@@ -39,7 +39,7 @@ use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 use super::websocket_proxy_tunnel::IntoUpgradeClientRef;
 use bun_uws::{self as uws, SocketHandler, SocketKind};
 
-use super::cpp_websocket::CppWebSocket;
+use super::cpp_websocket::{CppWebSocket, TlsHandshake, TlsPeer};
 use super::websocket_deflate as WebSocketDeflate;
 use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
@@ -121,8 +121,11 @@ pub struct HTTPClient<const SSL: bool> {
     to_send_len: Cell<usize>,
     headers_buf: JsCell<[picohttp::Header; 128]>,
     body: JsCell<Vec<u8>>,
-    /// Owned NUL-terminated hostname for SNI; empty when unset.
+    /// SNI and certificate verification name: `tls.serverName`, else the
+    /// dialed host. Empty when unset.
     hostname: JsCell<ZBox>,
+    /// The context of the script that made the WebSocket. `checkServerIdentity` runs in it.
+    context: bun_jsc::ContextId,
     poll_ref: JsCell<KeepAlive>,
     state: Cell<State>,
     subprotocols: JsCell<StringSet>,
@@ -201,6 +204,13 @@ where
 
         debug_assert!(vm.event_loop_handle.is_some());
 
+        let server_name: Option<Box<[u8]>> = ssl_config
+            .as_deref()
+            .and_then(SSLConfig::server_name_bytes)
+            .map(bun_http::strip_ipv6_brackets)
+            .filter(|name| !name.is_empty())
+            .map(Box::from);
+
         // Decode all BunString inputs into UTF-8 slices. The underlying
         // JavaScript strings may be Latin1 or UTF-16; `String.to_utf8()` either
         // borrows the 8-bit ASCII backing (no allocation) or allocates a
@@ -274,7 +284,10 @@ where
             );
 
             // Duplicate target_host (needed for SNI during TLS handshake).
-            let target_host_dup: Box<[u8]> = Box::from(host_slice.slice());
+            let target_host_dup: Box<[u8]> = match &server_name {
+                Some(name) => name.clone(),
+                None => Box::from(host_slice.slice()),
+            };
 
             let proxy = WebSocketProxy::init(
                 target_host_dup,
@@ -315,10 +328,11 @@ where
         );
 
         let loop_ = global.bun_vm().uws_loop();
+        let context = websocket.context();
         let group = global
             .bun_vm()
             .as_mut()
-            .client_socket_groups_in(websocket.context())
+            .client_socket_groups_in(context)
             .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
             SocketKind::WsClientUpgradeTls
@@ -378,6 +392,7 @@ where
             headers_buf: JsCell::new([picohttp::Header::ZERO; 128]),
             body: JsCell::new(Vec::new()),
             hostname: JsCell::new(ZBox::default()),
+            context: context.id(),
             poll_ref: JsCell::new(poll_ref),
             state: Cell::new(State::Initializing),
             proxy: JsCell::new(proxy_state),
@@ -409,17 +424,13 @@ where
             bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
             if SSL {
-                // SNI uses the URL host (defaulted to "localhost" in
-                // C++ when absent), mirroring the TCP path below. A
-                // user-supplied Host header does NOT affect SNI; use
-                // `tls: { checkServerIdentity }` or put the hostname
-                // in the URL (wss+unix://name/path) to verify against
-                // a specific certificate name.
-                if !host_slice.slice().is_empty() {
-                    this.hostname
-                        .set(ZBox::from_bytes(bun_http::strip_ipv6_brackets(
-                            host_slice.slice(),
-                        )));
+                // A user-supplied Host header does NOT affect SNI.
+                let sni: &[u8] = match &server_name {
+                    Some(name) => name,
+                    None => bun_http::strip_ipv6_brackets(host_slice.slice()),
+                };
+                if !sni.is_empty() {
+                    this.hostname.set(ZBox::from_bytes(sni));
                 }
             }
 
@@ -447,14 +458,14 @@ where
         bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         if SSL {
-            // SNI for the outer TLS socket must use the host we actually
-            // dialed. For HTTPS proxy connections, that's the proxy host,
-            // not the wss:// target.
-            if !display_host.is_empty() {
-                this.hostname
-                    .set(ZBox::from_bytes(bun_http::strip_ipv6_brackets(
-                        display_host,
-                    )));
+            // The outer socket's SNI is the host we dialed. Through a proxy
+            // that is the proxy; `server_name` names the target (tunnel).
+            let sni: &[u8] = match &server_name {
+                Some(name) if !using_proxy => name,
+                _ => bun_http::strip_ipv6_brackets(display_host),
+            };
+            if !sni.is_empty() {
+                this.hostname.set(ZBox::from_bytes(sni));
             }
         }
 
@@ -605,34 +616,34 @@ where
         );
 
         let handshake_success = success == 1;
-        let reject_unauthorized = this
-            .cpp_websocket()
-            .is_some_and(|ws| ws.reject_unauthorized());
 
         if handshake_success {
-            // handshake completed but we may have ssl errors
-            if reject_unauthorized {
-                // only reject the connection if reject_unauthorized == true
-                if ssl_error.error_no != 0 {
-                    log!(
-                        "TLS handshake failed: ssl_error={}, has_custom_ctx={}",
-                        ssl_error.error_no,
-                        this.secure.get().is_some()
-                    );
-                    Self::fail(this, ErrorCode::TlsHandshakeFailed);
-                    return;
-                }
-                let Some(ssl) = socket.ssl_mut() else {
-                    // No SSL object to verify against — treat as handshake failure.
-                    Self::fail(this, ErrorCode::TlsHandshakeFailed);
-                    return;
-                };
-                let hostname = this.identity_hostname(ssl);
-                let identity_ok =
-                    !hostname.is_empty() && uws::check_server_identity(ssl, &hostname);
-                if !identity_ok {
-                    Self::fail(this, ErrorCode::TlsHandshakeFailed);
-                }
+            let Some(ws) = this.cpp_websocket() else {
+                return;
+            };
+            // `tls.checkServerIdentity` may close the WebSocket, which frees `this`.
+            let _guard = RefPtr::from_this(this);
+            // That close clears `hostname`, so the name is moved out while the verdict borrows it.
+            let hostname = this.hostname.take();
+            let ssl = socket.ssl_mut();
+            let name = identity_name(hostname.as_bytes(), ssl.as_deref());
+            let handshake = TlsHandshake::First {
+                context: this.context,
+                peer: this.tls_peer(),
+            };
+            let accepted = ws.accepts_tls_peer(handshake, ssl, ssl_error.error_no == 0, &name);
+            if this.cpp_websocket().is_none() {
+                // `tls.checkServerIdentity` closed the WebSocket.
+                return;
+            }
+            this.hostname.set(hostname);
+            if !accepted {
+                log!(
+                    "TLS handshake failed: ssl_error={}, has_custom_ctx={}",
+                    ssl_error.error_no,
+                    this.secure.get().is_some()
+                );
+                Self::fail(this, ErrorCode::TlsHandshakeFailed);
             }
         } else {
             // if we are here is because server rejected us, and the error_no is the cause of this
@@ -641,26 +652,49 @@ where
         }
     }
 
-    /// `handle_handshake`'s name check, asked inside the handshake.
+    /// The name check inside the handshake. See `CppWebSocket::server_identity`.
     pub fn server_identity(&self, ssl: &mut boringssl::c::SSL) -> boringssl::ServerIdentity {
-        let rejects = self
-            .cpp_websocket()
-            .is_some_and(|ws| ws.reject_unauthorized());
-        let hostname = rejects.then(|| self.identity_hostname(ssl));
-        boringssl::server_identity(ssl, hostname.as_deref())
+        let Some(ws) = self.cpp_websocket() else {
+            return boringssl::ServerIdentity::Unchecked;
+        };
+        let hostname = identity_name(self.hostname.get().as_bytes(), Some(ssl));
+        ws.server_identity(self.tls_peer(), ssl, &hostname)
     }
 
-    /// The name to match: the dialed host, else the SNI.
-    fn identity_hostname(&self, ssl: &boringssl::c::SSL) -> std::borrow::Cow<'_, [u8]> {
-        let own_hostname = self.hostname.get();
-        if !own_hostname.is_empty() {
-            own_hostname.as_bytes().into()
+    /// Through a proxy this socket's peer is the proxy. The tunnel handshakes with the target.
+    fn tls_peer(&self) -> TlsPeer {
+        if self.proxy.get().is_some() {
+            TlsPeer::Proxy
         } else {
-            ssl.servername()
-                .map(<[u8]>::to_vec)
-                .unwrap_or_default()
-                .into()
+            TlsPeer::Target
         }
+    }
+
+    /// `server_identity` for the tunnel, whose peer is the target.
+    pub(crate) fn tunnel_server_identity(
+        this: ThisPtr<Self>,
+        ssl: &mut boringssl::c::SSL,
+        hostname: &[u8],
+    ) -> boringssl::ServerIdentity {
+        this.cpp_websocket()
+            .map_or(boringssl::ServerIdentity::Unchecked, |ws| {
+                ws.server_identity(TlsPeer::Target, ssl, hostname)
+            })
+    }
+
+    /// `accepts_tls_peer` for the tunnel, whose peer is the target.
+    pub(crate) fn accepts_tunnel_peer(
+        this: ThisPtr<Self>,
+        ssl: Option<&mut boringssl::c::SSL>,
+        chain_verified: bool,
+        hostname: &[u8],
+    ) -> bool {
+        let handshake = TlsHandshake::First {
+            context: this.context,
+            peer: TlsPeer::Target,
+        };
+        this.cpp_websocket()
+            .is_some_and(|ws| ws.accepts_tls_peer(handshake, ssl, chain_verified, hostname))
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
@@ -1832,6 +1866,21 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     let mut result = [0u8; 28];
     let _ = bun_base64::encode(&mut result, &hash);
     result
+}
+
+/// The name to match: `hostname` (`tls.serverName`, else the dialed host), else the SNI.
+fn identity_name<'a>(
+    hostname: &'a [u8],
+    ssl: Option<&boringssl::c::SSL>,
+) -> std::borrow::Cow<'a, [u8]> {
+    if !hostname.is_empty() {
+        hostname.into()
+    } else {
+        ssl.and_then(|ssl| ssl.servername())
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default()
+            .into()
+    }
 }
 
 // LAYERING: `Bun__WebSocket__parseSSLConfig` / `Bun__WebSocket__freeSSLConfig`

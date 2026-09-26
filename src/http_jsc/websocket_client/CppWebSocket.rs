@@ -8,10 +8,12 @@
 //!
 //! Note: This is specifically for WebSocket client implementations, not for server-side WebSockets.
 
+use bun_boringssl as boringssl;
 use bun_boringssl::c::OwnedSslCtx;
 use bun_core::ffi::FfiSlice;
 use bun_core::{EncodedSlice, String as BunString};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{ContextId, JSGlobalObject, JSValue, JsResult, VirtualMachineRef};
 use bun_ptr::ThisPtr;
 use bun_uws_sys::Socket;
 
@@ -21,6 +23,35 @@ use super::{ErrorCode, InitialData, WebSocketProxyTunnel};
 bun_opaque::opaque_ffi! {
     /// Opaque handle to the C++ `WebCore::WebSocket` object.
     pub struct CppWebSocket;
+}
+
+/// Whose certificate a TLS handshake presented.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TlsPeer {
+    /// The WebSocket server, reached directly or inside a proxy tunnel.
+    Target,
+    /// An HTTPS proxy. `tls.checkServerIdentity` is for the target only, as in fetch.
+    Proxy,
+}
+
+/// Who decides whether a certificate whose chain verified names the server.
+enum NameCheck {
+    /// `rejectUnauthorized: false` and no callback.
+    Nobody,
+    BuiltIn,
+    /// `tls.checkServerIdentity`. Without `enforce` it still runs, as in Node, and its verdict is dropped.
+    Callback {
+        callback: JSValue,
+        enforce: bool,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum TlsHandshake {
+    /// `tls.checkServerIdentity` runs in the context of the script that made the WebSocket.
+    First { context: ContextId, peer: TlsPeer },
+    /// On the connected client's socket. BoringSSL refuses a changed certificate here.
+    Renegotiation,
 }
 
 /// Matches `WebCore::WebSocket::HandshakeRawHeader` (WebSocket.h).
@@ -75,7 +106,9 @@ unsafe extern "C" {
         opcode: u8,
     );
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__isProxyTLS(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__bunContext(websocket_context: &CppWebSocket) -> *const core::ffi::c_void;
+    safe fn WebSocket__checkServerIdentity(websocket_context: &CppWebSocket) -> JSValue;
     safe fn WebSocket__holdPendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__releasePendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
@@ -150,6 +183,71 @@ impl CppWebSocket {
         WebSocket__rejectUnauthorized(self)
     }
 
+    /// Rooted through the JS wrapper, which is alive while the socket is.
+    fn check_server_identity(&self) -> Option<JSValue> {
+        let callback = WebSocket__checkServerIdentity(self);
+        (!callback.is_empty_or_undefined_or_null() && callback.is_callable()).then_some(callback)
+    }
+
+    fn name_check(&self, peer: TlsPeer) -> NameCheck {
+        let enforce = self.reject_unauthorized();
+        let callback = match peer {
+            TlsPeer::Target => self.check_server_identity(),
+            TlsPeer::Proxy => None,
+        };
+        match callback {
+            Some(callback) => NameCheck::Callback { callback, enforce },
+            None if enforce => NameCheck::BuiltIn,
+            None => NameCheck::Nobody,
+        }
+    }
+
+    /// The name check inside the handshake. `Unchecked` leaves the name to `accepts_tls_peer`.
+    pub(crate) fn server_identity(
+        &self,
+        peer: TlsPeer,
+        ssl: &mut boringssl::c::SSL,
+        hostname: &[u8],
+    ) -> boringssl::ServerIdentity {
+        match self.name_check(peer) {
+            NameCheck::BuiltIn => boringssl::server_identity(ssl, Some(hostname)),
+            NameCheck::Nobody | NameCheck::Callback { .. } => boringssl::ServerIdentity::Unchecked,
+        }
+    }
+
+    /// The one verdict on a completed TLS handshake. May run JS that closes the WebSocket.
+    pub(crate) fn accepts_tls_peer(
+        &self,
+        handshake: TlsHandshake,
+        ssl: Option<&mut boringssl::c::SSL>,
+        chain_verified: bool,
+        // The name the certificate must carry. That JS must not be able to free it.
+        hostname: &[u8],
+    ) -> bool {
+        if !chain_verified {
+            // As in Node, the callback never sees a chain that did not verify.
+            return !self.reject_unauthorized();
+        }
+        let peer = match handshake {
+            TlsHandshake::First { peer, .. } => peer,
+            // Without a tunnel, that socket goes to the target or to the HTTPS proxy of a ws:// target.
+            TlsHandshake::Renegotiation if WebSocket__isProxyTLS(self) => TlsPeer::Proxy,
+            TlsHandshake::Renegotiation => TlsPeer::Target,
+        };
+        match (self.name_check(peer), handshake) {
+            (NameCheck::Nobody, _) | (NameCheck::Callback { .. }, TlsHandshake::Renegotiation) => {
+                true
+            }
+            (NameCheck::BuiltIn, _) => ssl.is_some_and(|ssl| {
+                !hostname.is_empty() && bun_uws::check_server_identity(ssl, hostname)
+            }),
+            (NameCheck::Callback { callback, enforce }, TlsHandshake::First { context, .. }) => {
+                ssl.is_some_and(|ssl| run_check_server_identity(context, callback, ssl, hostname))
+                    || !enforce
+            }
+        }
+    }
+
     /// `buffered_data` and `secure` are handed on to the connected client.
     pub(crate) fn did_connect(
         &self,
@@ -201,6 +299,62 @@ impl CppWebSocket {
         bun_jsc::mark_binding!();
         WebSocket__setProtocol(self, protocol);
     }
+}
+
+/// Runs the callback in the context of the script that made the WebSocket.
+fn run_check_server_identity(
+    context: ContextId,
+    callback: JSValue,
+    ssl: &mut boringssl::c::SSL,
+    hostname: &[u8],
+) -> bool {
+    let vm = VirtualMachineRef::get();
+    let _context = vm.enter_context(context);
+    let event_loop = vm.event_loop_mut();
+    event_loop.enter();
+    let verdict = match call_check_server_identity(vm.global(), callback, ssl, hostname) {
+        Ok(approved) => approved,
+        Err(err) => {
+            // A throw rejects the peer and is reported like any uncaught exception.
+            let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
+            false
+        }
+    };
+    event_loop.exit();
+    verdict
+}
+
+/// `Ok(true)` only if the callback ran and returned a falsy value.
+fn call_check_server_identity(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    ssl: &mut boringssl::c::SSL,
+    hostname: &[u8],
+) -> JsResult<bool> {
+    let Some(cert) = ssl.peer_leaf_certificate() else {
+        return Ok(false);
+    };
+    let js_cert =
+        bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global))?;
+    let js_hostname = bun_jsc::bun_string_jsc::create_utf8_for_js(global, hostname)?;
+    let verdict = callback.call(global, JSValue::UNDEFINED, &[js_hostname, js_cert])?;
+    js_hostname.ensure_still_alive();
+    js_cert.ensure_still_alive();
+    // When script may not run (a stopping VM), `call` returns `undefined`, which reads as approval.
+    let vm = global.bun_vm();
+    if !vm.script_allowed() || global.vm().execution_forbidden() || vm.calls_nobody() {
+        return Ok(false);
+    }
+    // As in `tls.connect()` (src/js/node/net.ts), any truthy verdict rejects: an async callback's Promise too.
+    Ok(!verdict.is_truthy())
+}
+
+// Also declared in `bun_runtime::api::bun::x509`, which is above this crate.
+unsafe extern "C" {
+    safe fn Bun__X509__toJSLegacyEncoding(
+        cert: &mut boringssl::c::X509,
+        global_object: &JSGlobalObject,
+    ) -> JSValue;
 }
 
 /// RAII owner of one pending-activity ref on a C++ `WebCore::WebSocket`.

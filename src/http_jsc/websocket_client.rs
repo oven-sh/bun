@@ -11,7 +11,6 @@ use core::cell::{Cell, RefCell};
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
-use bun_boringssl as boringssl;
 use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
@@ -23,7 +22,7 @@ use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
-use self::cpp_websocket::{CppWebSocket, CppWebSocketRef};
+use self::cpp_websocket::{CppWebSocket, CppWebSocketRef, TlsHandshake};
 use self::websocket_deflate::WebSocketDeflate;
 use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 
@@ -253,31 +252,17 @@ impl<const SSL: bool> WebSocket<SSL> {
     ) {
         jsc::mark_binding!();
 
-        let authorized = success == 1;
-
         log!("onHandshake({})", success);
 
         let Some(ws) = self.cpp_websocket() else {
             return;
         };
-        if !ws.reject_unauthorized() {
-            // We accept the connection regardless of SSL errors.
-            return;
-        }
-
-        if ssl_error.error_no != 0 || !authorized {
-            self.fail(ErrorCode::FailedToConnect);
-            return;
-        }
-
-        // Fail closed: without the SSL handle or a name to check against we
-        // cannot verify the peer.
-        let Some(ssl) = socket.ssl_mut() else {
-            self.fail(ErrorCode::FailedToConnect);
-            return;
-        };
-        let hostname = &self.verified_hostname;
-        if hostname.is_empty() || !boringssl::check_server_identity(ssl, hostname) {
+        if !ws.accepts_tls_peer(
+            TlsHandshake::Renegotiation,
+            socket.ssl_mut(),
+            success == 1 && ssl_error.error_no == 0,
+            &self.verified_hostname,
+        ) {
             self.fail(ErrorCode::FailedToConnect);
         }
     }

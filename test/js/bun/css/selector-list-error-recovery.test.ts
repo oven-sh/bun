@@ -105,7 +105,7 @@ test("valid of-lists still parse and minify", () => {
     ":nth-child(2n of li.important){width:20px}",
   );
   expect(minifyTest(":nth-last-child(2n of li.important, .other) {width: 20px}", "")).toBe(
-    ":nth-last-child(2n of li.important, .other){width:20px}",
+    ":nth-last-child(2n of li.important,.other){width:20px}",
   );
   expect(minifyTest("a:nth-child(2n of *) { color: red }", "")).toBe("a:nth-child(2n of *){color:red}");
 });

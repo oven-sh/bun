@@ -26,37 +26,36 @@
 
 ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 {
-#if BUN_HOST_MAY_BE_POSIX
-    if (!Bun::hostIsWindows())
-        return input.startsWith('/');
-#endif
 #if BUN_HOST_MAY_BE_WINDOWS
-    if (input.is8Bit()) {
-        auto len = input.length();
-        if (len < 1)
+    if (Bun::hostIsWindows()) {
+        if (input.is8Bit()) {
+            auto len = input.length();
+            if (len < 1)
+                return false;
+            const auto bytes = input.span8().data();
+            if (IS_SLASH(bytes[0]))
+                return true;
+            if (len < 3)
+                return false;
+            if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
+                return true;
             return false;
-        const auto bytes = input.span8().data();
-        if (IS_SLASH(bytes[0]))
-            return true;
-        if (len < 3)
+        } else {
+            auto len = input.length();
+            if (len < 1)
+                return false;
+            const auto bytes = input.span16().data();
+            if (IS_SLASH(bytes[0]))
+                return true;
+            if (len < 3)
+                return false;
+            if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
+                return true;
             return false;
-        if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
-            return true;
-        return false;
-    } else {
-        auto len = input.length();
-        if (len < 1)
-            return false;
-        const auto bytes = input.span16().data();
-        if (IS_SLASH(bytes[0]))
-            return true;
-        if (len < 3)
-            return false;
-        if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
-            return true;
-        return false;
+        }
     }
 #endif
+    return input.startsWith('/');
 }
 
 #undef IS_LETTER

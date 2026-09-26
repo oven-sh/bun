@@ -2,7 +2,7 @@ import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair, socketFaultInjection } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
-import { closeSync, readFileSync } from "fs";
+import { closeSync, readFileSync, readSync, writeSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -4782,6 +4782,51 @@ it("a paused socket with a backpressured write still closes when its peer resets
   peer.terminate();
   const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
   expect(error?.code).toBe("ECONNRESET");
+});
+
+// The raw socketpair peer runs synchronously inside open(), so the first poll event is writable and readable at once.
+it.skipIf(isWindows)("pause() in drain() holds back the data that the same poll event reports", async () => {
+  const [fd, peerFd] = createSocketPair();
+  const log: string[] = [];
+  const received = Promise.withResolvers<void>();
+  const big = Buffer.alloc(4 * 1024 * 1024, "x");
+  const scratch = Buffer.alloc(1024 * 1024);
+  try {
+    using _socket = await Bun.connect({
+      fd,
+      socket: {
+        open(socket) {
+          // The peer does not read yet, so the kernel refuses this part-way: writable interest.
+          const written = socket.write(big);
+          // The peer sends, which makes the socket readable...
+          writeSync(peerFd, "sent before the pause");
+          // ...and reads everything, which makes it writable again.
+          for (let read = 0; read < written; ) read += readSync(peerFd, scratch);
+        },
+        drain(socket) {
+          // resume() polls for writable again, so drain() runs a second time.
+          if (log.length > 0) return;
+          socket.pause();
+          log.push("drain: pause()");
+          // Resume after this dispatch ends: the same poll event also reports the socket readable.
+          setImmediate(() => {
+            log.push("resume()");
+            socket.resume();
+          });
+        },
+        data(_socket, chunk) {
+          log.push(`data: ${chunk.toString()}`);
+          received.resolve();
+        },
+        error: (_socket, error) => received.reject(error),
+        close: () => received.reject(new Error("the socket closed before the data arrived")),
+      },
+    });
+    await received.promise;
+    expect(log).toEqual(["drain: pause()", "resume()", "data: sent before the pause"]);
+  } finally {
+    closeSync(peerFd);
+  }
 });
 
 // A close that the event loop initiated passes the read error to close(). usockets

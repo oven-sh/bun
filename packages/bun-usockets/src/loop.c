@@ -623,6 +623,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
                     #endif
                 }
+
+                /* The handler can drop the read interest (us_socket_pause), and `events` was masked before it ran. */
+                if (!(us_poll_events(&s->p) & LIBUS_SOCKET_READABLE)) {
+                    events &= ~LIBUS_SOCKET_READABLE;
+                }
             }
 
             /* An error event (EPOLLERR, EV_EOF with the socket error in fflags, an AFD

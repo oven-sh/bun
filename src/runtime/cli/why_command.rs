@@ -11,7 +11,10 @@ use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{CommandLineArguments, PackageID, PackageManager, Subcommand, package_manager};
+use bun_install::{
+    CommandLineArguments, DependencyExt as _, PackageID, PackageManager, Subcommand,
+    package_manager,
+};
 use bun_semver as semver;
 
 use crate::command;
@@ -37,6 +40,8 @@ struct VersionInfo {
 struct DependentInfo {
     name: Box<[u8]>,
     version: Box<[u8]>,
+    /// What this dependent calls the package, when that is not the package's name.
+    alias: Option<Box<[u8]>>,
     spec: Box<[u8]>,
     dep_type: DependencyType,
     pkg_id: PackageID,
@@ -278,7 +283,7 @@ impl WhyCommand {
             "Explain why a package is installed\n\
 \n\
 <b>Arguments:<r>\n\
-  <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>\n\
+  <blue>\\<package\\><r>     <d>The package name or alias to explain (supports glob patterns like '@org/*')<r>\n\
 \n\
 <b>Options:<r>\n\
   <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>\n\
@@ -385,6 +390,17 @@ impl WhyCommand {
         let _pkg_resolutions = packages.items_resolutions();
         let pkg_resolution = packages.items_resolution();
 
+        // The pattern also selects a package through the name of a dependency
+        // that resolves to it, so an alias finds the package behind it.
+        let mut matched_by_dependency_name = vec![false; packages.len()];
+        for (dependency, &target_id) in dependencies_items.iter().zip(resolutions_items) {
+            if (target_id as usize) < packages.len()
+                && glob.matches_name(dependency.name.slice(string_bytes), package_pattern)
+            {
+                matched_by_dependency_name[target_id as usize] = true;
+            }
+        }
+
         for pkg_idx in 0..packages.len() {
             let pkg_name = pkg_names[pkg_idx].slice(string_bytes);
 
@@ -415,6 +431,13 @@ impl WhyCommand {
                 let spec: Box<[u8]> =
                     Box::<[u8]>::from(dependency.version.literal.slice(string_bytes));
 
+                let alias = dependency
+                    .alias_for(
+                        pkg_names[target_id as usize].slice(string_bytes),
+                        string_bytes,
+                    )
+                    .map(Box::<[u8]>::from);
+
                 let dep_type = if dependency.behavior.contains(Behavior::DEV) {
                     DependencyType::Dev
                 } else if dependency.behavior.contains(Behavior::OPTIONAL)
@@ -435,6 +458,7 @@ impl WhyCommand {
                 dependents_entry.push(DependentInfo {
                     name: Box::<[u8]>::from(pkg_name),
                     version: dep_pkg_version,
+                    alias,
                     spec,
                     dep_type,
                     pkg_id: PackageID::try_from(pkg_idx).expect("int cast"),
@@ -442,7 +466,8 @@ impl WhyCommand {
                 });
             }
 
-            if !glob.matches_name(pkg_name, package_pattern) {
+            if !glob.matches_name(pkg_name, package_pattern) && !matched_by_dependency_name[pkg_idx]
+            {
                 continue;
             }
 
@@ -557,10 +582,16 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
         }
     }
 
-    if !package.spec.is_empty() {
-        bun_core::prettyln!(" <d>(requires {})<r>", BStr::new(&package.spec));
-    } else {
+    if package.spec.is_empty() {
         bun_core::prettyln!("");
+    } else if let Some(alias) = &package.alias {
+        bun_core::prettyln!(
+            " <d>(requires {}@{})<r>",
+            BStr::new(alias),
+            BStr::new(&package.spec)
+        );
+    } else {
+        bun_core::prettyln!(" <d>(requires {})<r>", BStr::new(&package.spec));
     }
 }
 

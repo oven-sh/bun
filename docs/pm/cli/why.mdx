@@ -13,7 +13,7 @@ bun why <package>
 
 ## Arguments
 
-- `<package>`: The name of the package to explain. Supports glob patterns like `@org/*` or `*-lodash`.
+- `<package>`: The name of the package to explain, or the alias a `package.json` gives it. Supports glob patterns like `@org/*` or `*-lodash`.
 
 ## Options
 
@@ -45,6 +45,17 @@ bun why "@types/*"
 
 @types/react-dom@18.2.7
   └─ dev my-app@1.0.0 (requires ^18.0.0)
+```
+
+Find the package behind an alias. With `"lodash3": "npm:lodash@^3.0.0"` in `package.json`, both `bun why lodash3` and `bun why lodash` print:
+
+```bash terminal icon="terminal"
+bun why lodash3
+```
+
+```txt
+lodash@3.10.1
+  └─ my-app@1.0.0 (requires lodash3@npm:lodash@^3.0.0)
 ```
 
 Show only top-level dependencies:

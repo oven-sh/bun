@@ -3842,7 +3842,7 @@ where
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
-                    if !strings::contains_any(truncated, b"\r\n\0\"") {
+                    if truncated.iter().all(|&byte| is_qdtext(byte)) {
                         let header_value = {
                             let mut w = &mut filename_buf[..];
                             if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
@@ -4770,6 +4770,11 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         bits.set(FlagsBits::HAS_FINALIZED, v);
         self.0.set(bits);
     }
+}
+
+/// RFC 9110 5.6.4 `qdtext`: a byte that a quoted-string holds without a quoted-pair escape.
+fn is_qdtext(byte: u8) -> bool {
+    matches!(byte, b'\t' | b' ' | 0x21 | 0x23..=0x5B | 0x5D..=0x7E | 0x80..=0xFF)
 }
 
 fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (MimeType, bool, bool) {

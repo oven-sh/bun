@@ -1225,6 +1225,100 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   }
 });
 
+// The automatic `content-disposition: filename="..."` carries the basename as
+// raw qdtext (RFC 9110 5.6.4), so a basename with any other byte gets no
+// header. A `\` starts a quoted-pair: a trailing one escapes the closing quote,
+// and `a\b` reads as `ab`. A control byte makes the field invalid and fetch()
+// rejects the whole response, so the header is read off the wire.
+describe("automatic content-disposition is sent only for a basename that is valid qdtext", () => {
+  const ok = "HTTP/1.1 200 OK";
+  const sent = (basename: string) => [ok, `content-disposition: filename="${basename}"`];
+  const expected: Record<string, string[]> = {
+    "plain.bin": sent("plain.bin"),
+    "two words.bin": sent("two words.bin"),
+    "tab\tname.bin": sent("tab\tname.bin"),
+    // The first and the last byte of each qdtext range.
+    "!#[]~.bin": sent("!#[]~.bin"),
+    "café.bin": sent("café.bin"),
+    "report\\": [ok],
+    "back\\slash.bin": [ok],
+    'quo"te.bin': [ok],
+    "ctl\x01name.bin": [ok],
+    "del\x7fname.bin": [ok],
+    "line\nfeed.bin": [ok],
+  };
+  const names = Object.keys(expected);
+
+  // For each name, the status line and the content-disposition line of a GET
+  // whose response body is `body(name)`.
+  async function heads(names: string[], body: (name: string) => Blob) {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => new Response(body(new URL(req.url).searchParams.get("name")!)),
+    });
+    async function head(name: string) {
+      const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+      const chunks: Buffer[] = [];
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(socket) {
+            socket.write(`GET /?name=${encodeURIComponent(name)} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+          },
+          data(_socket, chunk) {
+            chunks.push(Buffer.from(chunk));
+          },
+          close() {
+            resolve(Buffer.concat(chunks));
+          },
+          error(_socket, error) {
+            reject(error);
+          },
+        },
+      });
+      const raw = (await promise).toString();
+      const lines = raw.slice(0, raw.indexOf("\r\n\r\n")).split("\r\n");
+      return lines.filter((line, i) => i === 0 || /^content-disposition:/i.test(line));
+    }
+    return Object.fromEntries(await Promise.all(names.map(async name => [name, await head(name)])));
+  }
+
+  // Windows file names cannot hold `\`, `"` or a control byte.
+  test.skipIf(isWindows)("Bun.file() body", async () => {
+    using dir = tempDir("serve-file-disposition", Object.fromEntries(names.map(name => [name, "x"])));
+    expect(await heads(names, name => Bun.file(join(String(dir), name)))).toEqual(expected);
+  });
+
+  const file = (name: string) => new File(["x"], name, { type: "application/octet-stream" });
+
+  test("File body", async () => {
+    expect(await heads(names, file)).toEqual(
+      isWindows
+        ? // `\` is a path separator on Windows, so it never reaches the basename.
+          { ...expected, "report\\": sent("report"), "back\\slash.bin": sent("slash.bin") }
+        : expected,
+    );
+  });
+
+  // The header carries the first 992 bytes of a longer name, and only those
+  // bytes decide. A file name on disk cannot be this long.
+  test("File body with a name longer than the header carries", async () => {
+    const a = (count: number) => Buffer.alloc(count, "a").toString();
+    const lastWritten = a(991) + "\x01tail.bin";
+    const firstCut = a(992) + "\x01tail.bin";
+    const seen = await heads([lastWritten, firstCut], file);
+    expect({
+      "bad byte is the last one written": seen[lastWritten],
+      "bad byte is the first one cut off": seen[firstCut],
+    }).toEqual({
+      "bad byte is the last one written": [ok],
+      "bad byte is the first one cut off": sent(a(992)),
+    });
+  });
+});
+
 // A file route serves the window of the Bun.file() slice it was built from,
 // given either the slice or its unread stream (which is turned back into the
 // slice). FileRoute used to clamp the window to the file size without taking

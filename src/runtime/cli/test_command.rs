@@ -2882,7 +2882,13 @@ impl TestCommand {
             let bun_test_root = &mut jest::Jest::runner().unwrap().bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
-            bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
+            // Without --isolate the preload-level hooks wrap the whole loop, not every run.
+            let isolate = vm.test_isolation_enabled;
+            let run_first_last = bun_test::FirstLast {
+                first: first_last.first && (isolate || repeat_index == 0),
+                last: first_last.last && (isolate || repeat_index + 1 == repeat_count),
+            };
+            bun_test_root.enter_file(file_id, reporter, should_run_concurrent, run_first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
             let global = vm.global();
             scopeguard::defer! {
@@ -2930,12 +2936,34 @@ impl TestCommand {
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             match jsc::JSInternalPromise::opaque_mut(promise).status() {
                 jsc::js_promise::Status::Rejected => {
+                    // This run ends the loop: a file that fails to load is not run again.
+                    let mut owed = bun_test::FirstLast {
+                        first: run_first_last.first,
+                        last: first_last.last,
+                    };
+                    if let Some(failed) = bun_test_root.clone_active_file() {
+                        if failed.phase != bun_test::Phase::Collection {
+                            // An earlier unhandled error made the file schedule its own hooks.
+                            Self::run_until_done(vm, &failed)?;
+                            owed.first = false;
+                            owed.last = owed.last && !run_first_last.last;
+                        }
+                    }
+                    // An empty file runs the owed hooks and none of the failed file's tests.
+                    bun_test_root.exit_file();
+                    bun_test_root.enter_file(file_id, reporter, should_run_concurrent, owed);
+
                     // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
                     // `unhandled_rejection(&mut self, ...)` can reborrow.
                     let global = vm.global();
                     let p = jsc::JSInternalPromise::opaque_mut(promise);
                     let (result, promise_js) = (p.result(global.vm()), p.to_js());
                     vm.unhandled_rejection(global, result, promise_js);
+                    // Hooks end first: a hook that fails counts itself and checks --bail.
+                    if let Some(hooks_only) = bun_test_root.clone_active_file() {
+                        Self::run_until_done(vm, &hooks_only)?;
+                    }
+                    Self::forget_spawned_processes(vm);
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
@@ -2987,37 +3015,7 @@ impl TestCommand {
                     debug_assert!(false);
                     break 'blk;
                 };
-                let buntest = buntest_strong.get();
-
-                // Automatically execute bun_test tests
-                if buntest.result_queue.readable_length() == 0 {
-                    buntest.add_result(bun_test::ResultMsg::Start);
-                }
-                // `BunTestPtr` is `Rc<BunTestCell>`; clone (refcount++) so the
-                // local `buntest_strong` survives for the post-run drain loop and
-                // the explicit `drop` below.
-                bun_test::BunTest::run(&buntest_strong, vm.global())?;
-
-                // Process event loop while bun_test tests are running
-                vm.event_loop_ref().tick();
-
-                let mut prev_unhandled_count = vm.unhandled_error_counter;
-                while buntest.phase != bun_test::Phase::Done {
-                    if buntest.wants_wakeup {
-                        buntest.wants_wakeup = false;
-                        vm.wakeup();
-                    }
-                    vm.event_loop_ref().auto_tick();
-                    if buntest.phase == bun_test::Phase::Done {
-                        break;
-                    }
-                    vm.event_loop_ref().tick();
-
-                    while prev_unhandled_count < vm.unhandled_error_counter {
-                        let _ = vm.global().handle_rejected_promises();
-                        prev_unhandled_count = vm.unhandled_error_counter;
-                    }
-                }
+                Self::run_until_done(vm, &buntest_strong)?;
 
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
@@ -3040,18 +3038,57 @@ impl TestCommand {
                 Output::flush();
             }
 
-            if !vm.test_isolation_enabled {
-                // Ensure these never linger across files. Under --isolate this
-                // is done by swapGlobalForTestIsolation() (kill+clear) and we
-                // need tracking to remain enabled and populated until then.
-                vm.auto_killer.clear();
-                vm.auto_killer.disable();
-            }
+            Self::forget_spawned_processes(vm);
 
             repeat_index += 1;
         }
         if let Some(junit) = reporter.reporters.junit.as_mut() {
             let _ = junit.end_file(None);
+        }
+        Ok(())
+    }
+
+    /// Empties the auto-killer's set so a later test timeout does not kill what this run spawned.
+    fn forget_spawned_processes(vm: &mut VirtualMachine) {
+        // --isolate: the global swap kills and clears the set, and tracking stays on until then.
+        if !vm.test_isolation_enabled {
+            vm.auto_killer.clear();
+            vm.auto_killer.disable();
+        }
+    }
+
+    /// Starts the file unless something already has, then runs the event loop until it is done.
+    fn run_until_done(
+        vm: &mut VirtualMachine,
+        buntest_strong: &bun_test::BunTestPtr,
+    ) -> crate::Result<()> {
+        let buntest = buntest_strong.get();
+
+        // Automatically execute bun_test tests
+        if buntest.result_queue.readable_length() == 0 {
+            buntest.add_result(bun_test::ResultMsg::Start);
+        }
+        bun_test::BunTest::run(buntest_strong, vm.global())?;
+
+        // Process event loop while bun_test tests are running
+        vm.event_loop_ref().tick();
+
+        let mut prev_unhandled_count = vm.unhandled_error_counter;
+        while buntest.phase != bun_test::Phase::Done {
+            if buntest.wants_wakeup {
+                buntest.wants_wakeup = false;
+                vm.wakeup();
+            }
+            vm.event_loop_ref().auto_tick();
+            if buntest.phase == bun_test::Phase::Done {
+                break;
+            }
+            vm.event_loop_ref().tick();
+
+            while prev_unhandled_count < vm.unhandled_error_counter {
+                let _ = vm.global().handle_rejected_promises();
+                prev_unhandled_count = vm.unhandled_error_counter;
+            }
         }
         Ok(())
     }

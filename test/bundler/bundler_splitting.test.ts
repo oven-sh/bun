@@ -837,6 +837,48 @@ describe("bundler", () => {
     format: "esm",
     run: { file: "/out/index.js", stdout: "store\na\nb function\nindex s\nlazy s" },
   });
+  itBundled("splitting/EntrySetupFilesInImportCycleRunBeforeSharedCode", {
+    files: {
+      ...setupBeforeShared(""),
+      "/setup.js": /* js */ `
+        import { log } from "./logger.js";
+        globalThis.APP = { name: "app" };
+        log("setup");
+      `,
+      "/logger.js": /* js */ `
+        import "./setup.js";
+        console.log("logger");
+        export const log = m => console.log(m);
+      `,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "logger\nsetup\nindex app\nsettings app" },
+  });
+  itBundled("splitting/EntryFilesInImportCycleStayTogether", {
+    files: {
+      "/index.js": /* js */ `
+        import "./first.js";
+        import { Store } from "./store.js";
+        export const name = "index";
+        console.log("index", new Store().name);
+        import("./lazy.js");
+      `,
+      "/first.js": `import "./second.js"; import "./back.js"; import "./third.js"; console.log("first", globalThis.T);`,
+      "/second.js": `import "./first.js"; console.log("second");`,
+      "/back.js": `import { name } from "./index.js"; console.log("back"); globalThis.B = () => name;`,
+      "/third.js": `console.log("third", typeof globalThis.B); globalThis.T = 3;`,
+      "/store.js": `console.log("store"); export class Store { name = "s"; }`,
+      "/lazy.js": `import { Store } from "./store.js"; console.log("lazy", new Store().name);`,
+    },
+    entryPoints: ["/index.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "store\nsecond\nback\nthird function\nfirst 3\nindex s\nlazy s" },
+  });
   itBundled("splitting/EntryFilesAfterSharedCodeStay", {
     files: {
       ...setupBeforeShared(""),

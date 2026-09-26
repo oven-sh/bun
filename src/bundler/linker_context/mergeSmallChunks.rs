@@ -852,10 +852,15 @@ fn files_that_leave_entry_chunk(
     }
 
     // A file takes what it imports along. No chunk may import a pinned chunk, so the first file that cannot go ends the list.
+    let candidates = &candidates[..cut];
     let mut taken: Vec<u32> = Vec::new();
     let mut pending: Vec<u32> = Vec::new();
-    for &candidate in &candidates[..cut] {
-        taken.clear();
+    // An import cycle reaches a later candidate. All up to that one go together or not at all.
+    let mut together_until = 0;
+    for (index, &candidate) in candidates.iter().enumerate() {
+        if index >= together_until {
+            taken.clear();
+        }
         pending.push(candidate);
         while let Some(file) = pending.pop() {
             if leaves.is_set(file as usize) {
@@ -868,10 +873,14 @@ fn files_that_leave_entry_chunk(
                 if !own(other) || css[other as usize].is_some() || leaves.is_set(other as usize) {
                     return;
                 }
-                if other == entry_source || !this.loading_file_only_declares(other) {
+                if other == entry_source {
                     stuck = true;
-                } else {
+                } else if this.loading_file_only_declares(other) {
                     pending.push(other);
+                } else if let Some(later) = candidates.iter().position(|&file| file == other) {
+                    together_until = together_until.max(later + 1);
+                } else {
+                    stuck = true;
                 }
             });
             if stuck {

@@ -1262,12 +1262,8 @@ impl<'a> Resolver<'a> {
             Ok(Some(data_url)) => {
                 // "import 'data:text/javascript,console.log(123)';"
                 // "@import 'data:text/css,body{background:white}';"
-                let mime = data_url.decode_mime_type();
                 use ::bun_http_types::MimeType::Category;
-                if matches!(
-                    mime.category,
-                    Category::Javascript | Category::Css | Category::Json | Category::Text
-                ) {
+                if data_url.loader().is_some() || data_url.mime_type_category() == Category::Text {
                     if let Some(debug) = self.debug_logs.as_mut() {
                         debug.add_note(b"Putting this path in the \"dataurl\" namespace".to_vec());
                     }

@@ -3754,7 +3754,7 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
 /// `bun_ast::LoaderHashTable` (= `StringArrayHashMap<bun_ast::Loader>`).
 fn loader_for_path(path: &Fs::Path<'_>, loaders: &bun_ast::LoaderHashTable) -> Option<Loader> {
     if path.is_data_url() {
-        return Some(Loader::Dataurl);
+        return Some(bun_bundler::options::data_url_loader(path.text));
     }
     let name = path.name();
     let ext = name.ext;
@@ -3844,7 +3844,12 @@ unsafe fn get_loader_and_virtual_source<'a>(
     let (normalized_file_path_from_specifier, specifier, query) =
         // SAFETY: per fn contract.
         unsafe { normalize_specifier_for_loader(jsc_vm, specifier_str) };
-    let mut path = Fs::Path::init(normalized_file_path_from_specifier);
+    let mut path =
+        if bun_core::strings::has_prefix_comptime(normalized_file_path_from_specifier, b"data:") {
+            Fs::Path::init_with_namespace(normalized_file_path_from_specifier, b"dataurl")
+        } else {
+            Fs::Path::init(normalized_file_path_from_specifier)
+        };
 
     // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
     let mut loader: Option<Loader> =
@@ -4141,6 +4146,9 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
 
     // ── module_type sniff from extension / package.json ─────────────────────
     let module_type: ModuleType = 'brk: {
+        if lr.path.is_data_url() {
+            break 'brk ModuleType::Unknown;
+        }
         let ext = lr.path.name().ext;
         // regex /\.[cm][jt]s$/
         if ext.len() == b".cjs".len() {

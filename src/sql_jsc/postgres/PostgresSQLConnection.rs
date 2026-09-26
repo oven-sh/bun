@@ -1560,21 +1560,25 @@ impl PostgresSQLConnection {
     /// request.
     fn requeue_for_retry(&self, request: &PostgresSQLQuery) {
         self.requests.with_mut(|q| {
-            if !q.front().is_some_and(|f| core::ptr::eq(f.as_ptr(), request)) {
+            if !q
+                .front()
+                .is_some_and(|f| core::ptr::eq(f.as_ptr(), request))
+            {
                 return;
             }
             let Some(head) = q.pop_front() else { return };
             let at = q
                 .iter()
-                .position(|r| {
-                    r.status.get() == QueryStatus::Pending && !r.flags.get().reprepared
-                })
+                .position(|r| r.status.get() == QueryStatus::Pending && !r.flags.get().reprepared)
                 .unwrap_or(q.len());
             debug_assert!(
                 q.iter().skip(at).all(|r| !matches!(
                     r.status.get(),
                     QueryStatus::Binding | QueryStatus::Running | QueryStatus::PartialResponse
-                )) && !self.flags.get().contains(ConnectionFlags::WAITING_TO_PREPARE),
+                )) && !self
+                    .flags
+                    .get()
+                    .contains(ConnectionFlags::WAITING_TO_PREPARE),
                 "retry inserted ahead of a request that is on the wire"
             );
             q.insert(at, head);

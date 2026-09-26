@@ -1613,6 +1613,42 @@ describe("throwing 'secureConnect' listener", () => {
     expect(JSON.parse(stdout.trim())).toEqual({ uncaught: "boom-secureConnect", socketError: null });
     expect(exitCode).toBe(0);
   });
+
+  // The server still listens, so a report that the process survives would
+  // leave it running, and the immediate is work that a later exit would still
+  // run. Node v26.3.0 prints the error and exits 1 at the throw.
+  it("ends the process when nothing listens for uncaughtException", async () => {
+    const script = `
+      const tlsMod = require("node:tls");
+      const server = tlsMod.createServer(${JSON.stringify(COMMON_CERT_)}, function onConn() {});
+      server.listen(0, "127.0.0.1", function onListen() {
+        const client = tlsMod.connect({
+          port: server.address().port,
+          host: "127.0.0.1",
+          rejectUnauthorized: false,
+        });
+        client.on("secureConnect", function onSecureConnect() {
+          setImmediate(() => console.log("immediate-ran"));
+          throw new Error("boom-secureConnect");
+        });
+        client.on("error", function onError(err) {
+          console.log("socket-error:" + err.message);
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("boom-secureConnect"),
+      exitCode: 1,
+    });
+  });
 });
 
 describe.concurrent("a client paused while connecting", () => {

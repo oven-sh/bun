@@ -3844,7 +3844,12 @@ Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
 
 Object.defineProperty(ServerResponse.prototype, "writableFinished", {
   get() {
-    return !!(this.finished && (!this[kHandle] || this[kHandle].finished));
+    const handle = this[kHandle];
+    // Like Node, nothing is left to write once the socket is gone.
+    return !!(
+      this.finished &&
+      (!handle || handle.finished || handle.flags & NodeHTTPResponseFlags.closed_or_completed)
+    );
   },
 });
 

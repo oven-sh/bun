@@ -219,7 +219,10 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   }
 
   const handle = {
-    flags: 0,
+    // NodeHTTPResponseFlags.socket_closed, like the native getter: end() and write() stop at it.
+    get flags() {
+      return this.aborted || socket.destroyed ? 1 : 0;
+    },
     ended: false,
     // True once the bytes end() wrote have left the socket, like the native handle's.
     finished: false,

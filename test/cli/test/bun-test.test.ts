@@ -1810,6 +1810,88 @@ describe("bun test", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe.concurrent("process.argv", () => {
+    // Each file reports what it sees next to its own path, so the assertions
+    // hold whichever file runs first. The same array is reachable as process.argv,
+    // Bun.argv, and the exports of the node:process and bun modules.
+    const argvProbe = /* ts */ `
+      import { test } from "bun:test";
+      import { argv } from "node:process";
+      import * as nodeProcess from "process";
+      import { argv as bunModuleArgv } from "bun";
+      test("argv", () => {
+        const copies = [Bun.argv, argv, nodeProcess.argv, bunModuleArgv];
+        console.log("ARGV " + JSON.stringify({
+          file: import.meta.path,
+          argv1: process.argv[1],
+          copies1: copies.map(copy => copy[1]),
+          same: copies.every(copy => copy === process.argv),
+        }));
+      });
+    `;
+
+    function parseProbes(stdout: string) {
+      return stdout
+        .split("\n")
+        .filter(line => line.startsWith("ARGV "))
+        .map(line => JSON.parse(line.slice("ARGV ".length)));
+    }
+
+    function expectedProbe(file: string) {
+      return { file, argv1: file, copies1: [file, file, file, file], same: true };
+    }
+
+    test("argv[1] is the current file, not the first file that read process.argv", async () => {
+      using dir = tempDir("bun-test-argv", { "a.test.ts": argvProbe, "b.test.ts": argvProbe });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const probes = parseProbes(stdout);
+      expect(probes.map(p => basename(p.file)).sort()).toEqual(["a.test.ts", "b.test.ts"]);
+      for (const probe of probes) {
+        expect(probe).toEqual(expectedProbe(probe.file));
+      }
+      expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a file that replaces process.argv does not leak it into the next file", async () => {
+      using dir = tempDir("bun-test-argv-replace", {
+        "a.test.ts": /* ts */ `
+          import { test } from "bun:test";
+          test("replace", () => {
+            process.argv = ["custom", "argv"];
+            process.argv.push("--flag");
+          });
+        `,
+        "b.test.ts": argvProbe,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // Files run in argument order, so a.test.ts has replaced argv before b.test.ts reads it.
+      const [aStart, bStart] = [stderr.indexOf("a.test.ts:"), stderr.indexOf("b.test.ts:")];
+      expect(aStart).toBeGreaterThanOrEqual(0);
+      expect(aStart).toBeLessThan(bStart);
+      const probes = parseProbes(stdout);
+      expect(probes).toHaveLength(1);
+      expect(probes[0]).toEqual(expectedProbe(probes[0].file));
+      expect(basename(probes[0].file)).toBe("b.test.ts");
+      expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {

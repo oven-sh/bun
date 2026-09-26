@@ -728,7 +728,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     return globalObject;
 }
 
-static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
+bool Bun::isModuleEvaluated(JSC::AbstractModuleRecord* record)
 {
     if (!record)
         return false;

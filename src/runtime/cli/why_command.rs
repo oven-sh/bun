@@ -600,15 +600,16 @@ fn print_dependency_tree(
     // (alloc failures abort under global mimalloc).
 
     if let Some(dependents) = ctx.all_dependents.get(&current_pkg_id) {
-        let mut sorted_dependents: Vec<DependentInfo> = dependents.clone();
+        // Drop the hidden workspace-root entry before counting.
+        let mut sorted_dependents: Vec<DependentInfo> = dependents
+            .iter()
+            .filter(|dep| !(parent_is_workspace && dep.version.is_empty()))
+            .cloned()
+            .collect();
         index_sort::sort_slice_by(&mut sorted_dependents, cmp_dependents);
 
         let len = sorted_dependents.len();
         for (dep_idx, dep) in sorted_dependents.iter().enumerate() {
-            if parent_is_workspace && dep.version.is_empty() {
-                continue;
-            }
-
             if depth >= MAX_DEPTH.load(AtomicOrdering::Relaxed) {
                 bun_core::prettyln!("<d>{}└─ (deeper dependencies hidden)<r>", BStr::new(prefix));
                 ctx.path_tracker.remove(&current_pkg_id);

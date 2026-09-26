@@ -2143,7 +2143,8 @@ declare module "bun:test" {
        */
       calls: Array<Parameters<T>>;
       /**
-       * List of all the object instances that have been instantiated from the mock.
+       * List of the `this` value of every call that has been made to the mock.
+       * For a call with `new`, the value is the instance that the call created.
        */
       instances: Array<ReturnType<T>>;
       /**

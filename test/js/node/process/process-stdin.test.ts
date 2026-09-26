@@ -240,6 +240,38 @@ test.concurrent("touching stdin again after 'end' does not keep the process aliv
   expect(await stdioResult(proc)).toEqual({ stdout: "END\nEXIT\n", exitCode: 0 });
 });
 
+test.concurrent("resume() after 'end' does not reset readableEnded", async () => {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const stdin = process.stdin;
+      let ends = 0;
+      stdin.on("data", () => {});
+      stdin.on("end", () => {
+        ends++;
+        stdin.pause();
+        stdin.resume();
+        // One macrotask later the 'resume' event has run.
+        setImmediate(() => {
+          console.log(JSON.stringify({ ends, readableEnded: stdin.readableEnded, destroyed: stdin.destroyed }));
+        });
+      });`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("abcdefgh");
+  proc.stdin.end();
+
+  expect(await stdioResult(proc)).toEqual({
+    stdout: JSON.stringify({ ends: 1, readableEnded: true, destroyed: true }) + "\n",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("'end' is not emitted when the buffer is never drained, and the process still exits", async () => {
   const proc = Bun.spawn({
     cmd: [
@@ -258,6 +290,83 @@ test.concurrent("'end' is not emitted when the buffer is never drained, and the 
   proc.stdin.end();
 
   expect(await stdioResult(proc)).toEqual({ stdout: "EXIT 8\n", exitCode: 0 });
+});
+
+test.concurrent("resuming after EOF is buffered behind unread data still delivers the data and 'end'", async () => {
+  // A consumer that pauses in 'data' and resumes later reaches this state when
+  // the pipe closes in between. The child builds it without the race: it reads
+  // nothing until push(null) has run, then switches to flowing mode.
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const stdin = process.stdin;
+      const result = { buffered: 0, data: "", end: false };
+      stdin.on("readable", function onReadable() {
+        // EOF always emits 'readable'.
+        if (!stdin._readableState.ended) return;
+        result.buffered = stdin.readableLength;
+        stdin.removeListener("readable", onReadable);
+        stdin.on("data", chunk => (result.data += chunk));
+        stdin.on("end", () => (result.end = true));
+      });
+      process.on("exit", () => console.log(JSON.stringify({ ...result, readableEnded: stdin.readableEnded })));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("abcdefgh");
+  proc.stdin.end();
+
+  expect(await stdioResult(proc)).toEqual({
+    stdout: JSON.stringify({ buffered: 8, data: "abcdefgh", end: true, readableEnded: true }) + "\n",
+    exitCode: 0,
+  });
+});
+
+// [title, code before destroy(), code after destroy()]. The later cases are
+// the four ways to take the native reader back.
+test.concurrent.each([
+  ["on('data') then destroy()", `stdin.on("data", onData);`, ``],
+  ["resume() then destroy()", `stdin.resume();`, ``],
+  ["destroy() then resume()", `stdin.on("data", onData);`, `setImmediate(() => stdin.resume());`],
+  ["destroy() then ref()", `stdin.on("data", onData);`, `setImmediate(() => stdin.ref());`],
+  ["destroy() then read(n)", `stdin.on("data", onData);`, `setImmediate(() => stdin.read(5));`],
+  ["destroy() then on('readable')", ``, `setImmediate(() => stdin.on("readable", () => events.push("readable")));`],
+])("%s: stdin stays destroyed and the process exits", async (_, beforeDestroy, afterDestroy) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const stdin = process.stdin;
+      const events = [];
+      const onData = () => events.push("data");
+      stdin.on("end", () => events.push("end"));
+      stdin.on("close", () => events.push("close"));
+      ${beforeDestroy}
+      stdin.destroy();
+      ${afterDestroy}
+      // Nothing reports that stdin still holds the event loop. This timer is
+      // unref'd, so it only fires if something else keeps the process alive.
+      setTimeout(() => {
+        console.log("STILL_ALIVE");
+        process.exit(1);
+      }, 1500).unref();
+      process.on("exit", () => console.log(JSON.stringify({ events, destroyed: stdin.destroyed })));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  // The parent never closes the pipe: the child must exit because of destroy(), not because of EOF.
+  expect(await stdioResult(proc)).toEqual({
+    stdout: JSON.stringify({ events: ["close"], destroyed: true }) + "\n",
+    exitCode: 0,
+  });
+  expect(proc.signalCode).toBeNull();
 });
 
 test.concurrent("stdin should allow process to exit when paused", async () => {

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -217,6 +217,84 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     const output = await stdout.text();
     expect(output).toContain("pkg-a@");
     expect(output).toContain("pkg-b@");
+  });
+
+  describe("version in the query for a package without an npm resolution", () => {
+    // `bun why` reads only the lockfile, so a static bun.lock keeps this off the network.
+    // The github package has no semver version, so only `*` (and no version) can match it.
+    const files = {
+      "package.json": JSON.stringify({
+        name: "ws-root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { "gh-pkg": "github:owner/repo#abc1234" },
+      }),
+      "packages/pkg-a/package.json": JSON.stringify({ name: "pkg-a", version: "1.2.3" }),
+      "packages/pkg-b/package.json": JSON.stringify({ name: "pkg-b", version: "2.0.0" }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: {
+          "": { name: "ws-root", dependencies: { "gh-pkg": "github:owner/repo#abc1234" } },
+          "packages/pkg-a": { name: "pkg-a", version: "1.2.3" },
+          "packages/pkg-b": { name: "pkg-b", version: "2.0.0" },
+        },
+        packages: {
+          "gh-pkg": ["gh-pkg@github:owner/repo#abc1234", {}, "abc1234"],
+          "pkg-a": ["pkg-a@workspace:packages/pkg-a"],
+          "pkg-b": ["pkg-b@workspace:packages/pkg-b"],
+        },
+      }),
+    };
+
+    async function why(cwd: string, query: string) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd.split(" "), query],
+        cwd,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The workspace path is printed with the platform separator.
+      return { stdout: stdout.replaceAll("\\", "/"), stderr, exitCode };
+    }
+
+    // The glob keeps this independent of exact-name matching.
+    it.each([
+      ["pkg-*@1.2.3", ["pkg-a"]],
+      ["pkg-*@^1", ["pkg-a"]],
+      ["pkg-*@>=1.0.0 <2", ["pkg-a"]],
+      ["pkg-*@2.0.0", ["pkg-b"]],
+      ["pkg-*@*", ["pkg-a", "pkg-b"]],
+      // Not a range: compared with the printed resolution, which uses the platform separator.
+      [`pkg-*@workspace:packages${isWindows ? "\\" : "/"}pkg-a`, ["pkg-a"]],
+    ])("matches the workspace version for %s", async (query, expected) => {
+      using dir = tempDir(`why-workspace-version-${i++}`, files);
+      const { stdout, stderr, exitCode } = await why(String(dir), query);
+      expect(stderr).toBe("");
+      const found = ["pkg-a", "pkg-b"].filter(name => stdout.includes(`${name}@workspace:packages/${name}`));
+      expect(found).toEqual(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    it.each(["pkg-*@^3", "pkg-*@1.2.4", "pkg-*@beta"])("does not match the workspace version for %s", async query => {
+      using dir = tempDir(`why-workspace-version-${i++}`, files);
+      const { stdout, exitCode } = await why(String(dir), query);
+      expect(stdout).toContain(`No packages matching '${query}' found in lockfile`);
+      expect(exitCode).toBe(1);
+    });
+
+    it("matches a github resolution for * and not for a semver range", async () => {
+      using dir = tempDir(`why-github-version-${i++}`, files);
+      const star = await why(String(dir), "gh-*@*");
+      expect(star.stderr).toBe("");
+      expect(star.stdout).toContain("gh-pkg@github:owner/repo#abc1234");
+      expect(star.exitCode).toBe(0);
+
+      const range = await why(String(dir), "gh-*@^1");
+      expect(range.stdout).toContain("No packages matching 'gh-*@^1' found in lockfile");
+      expect(range.exitCode).toBe(1);
+    });
   });
 
   it("should handle npm aliases", async () => {

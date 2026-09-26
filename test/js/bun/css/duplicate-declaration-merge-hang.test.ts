@@ -134,15 +134,34 @@ test("deferred merge re-minify keeps per-merge output", () => {
   ).toBe(".a,.b{color:#00f}.c{font-style:italic}");
 });
 
-// The merge-with-previous cascade pops rules without purging their indices
-// from the duplicate-rule table, so a rule pushed into a reused slot could
-// match its own stale table entry and erase itself: this input used to
+// The merge-with-previous cascade used to pop rules without purging their
+// indices from the duplicate-rule table, so a rule pushed into a reused slot
+// could match its own stale table entry and erase itself: this input used to
 // minify to ".a,.b{color:#00f}", silently dropping .a{color:purple} and
 // changing the computed color of .a elements.
 test("stale duplicate-rule entries do not erase a later rule", () => {
   expect(
     cssInternals.minifyTest(".a,.b{color:red}.a{color:blue}.b{color:green}.b{color:blue}.a{color:purple}", ""),
   ).toBe(".a,.b{color:#00f}.a{color:purple}");
+});
+
+// A stale entry could also point at a different rule pushed into the reused
+// slot. The cascade pops the merged .q rule out of slot 1 (it merges into .a),
+// the rule with the nested .n takes slot 1, and the last .q{color:blue}
+// matched the stale index: both inputs used to drop ".q .n{color:green}".
+test("stale duplicate-rule entries do not erase a rule that has nested rules", () => {
+  expect(
+    cssInternals.minifyTest(".a{color:red}.q{color:blue}.q{color:red}.q{color:red;.n{color:green}}.q{color:blue}", ""),
+  ).toBe(".a,.q{color:red}.q{color:red;& .n{color:green}}.q{color:#00f}");
+
+  // Here .q{font-style:italic} merges into the slot 1 rule after the table
+  // recorded it, so the popped rule no longer hashes to its table entry.
+  expect(
+    cssInternals.minifyTest(
+      ".a{color:blue;font-style:italic}.q{color:blue}.q{font-style:italic}.q{color:red;.n{color:green}}.q{color:blue}",
+      "",
+    ),
+  ).toBe(".a,.q{color:#00f;font-style:italic}.q{color:red;& .n{color:green}}.q{color:#00f}");
 });
 
 // When target-incompatible selectors are partitioned out of a rule whose

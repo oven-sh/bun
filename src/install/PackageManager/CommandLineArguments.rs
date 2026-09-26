@@ -187,6 +187,9 @@ pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
         clap::param!("-D, --development"),
         clap::param!("--no-optional                         Don't update optionalDependencies"),
         clap::param!(
+            "--depth <NUM>                         Only 0 is accepted: update direct dependencies and keep transitive dependencies at their locked versions"
+        ),
+        clap::param!(
             "-E, --exact                           Write exact versions to package.json instead of ^ or ~ ranges"
         ),
         clap::param!(
@@ -537,6 +540,8 @@ pub struct CommandLineArguments {
     pub(crate) recursive: bool,
     pub(crate) filters: &'static [&'static [u8]],
     pub update_groups: UpdateGroups,
+    /// `bun update --depth 0`: transitive rows keep their lockfile resolution.
+    pub(crate) update_direct_only: bool,
 
     pub(crate) pack_destination: &'static [u8],
     pub(crate) pack_filename: &'static [u8],
@@ -641,6 +646,7 @@ impl Default for CommandLineArguments {
             recursive: false,
             filters: &[],
             update_groups: UpdateGroups::default(),
+            update_direct_only: false,
 
             pack_destination: b"",
             pack_filename: b"",
@@ -826,6 +832,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 
   <d>Only update dependencies and optionalDependencies:<r>
   <b><green>bun update<r> <cyan>--prod<r>
+
+  <d>Only update direct dependencies, keep transitive dependencies locked:<r>
+  <b><green>bun update<r> <cyan>--depth 0<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
 ";
@@ -1648,6 +1657,16 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 no_optional: args.flag(b"--no-optional"),
             };
             cli.production = false;
+            if let Some(depth) = args.option(b"--depth") {
+                if depth != b"0" {
+                    Output::err_generic(
+                        "bun update --depth only accepts 0 (update direct dependencies, keep transitive dependencies locked), got '{}'",
+                        (bstr::BStr::new(depth),),
+                    );
+                    Global::exit(1);
+                }
+                cli.update_direct_only = true;
+            }
         }
 
         let specified_backend: Option<package_install::Method> = 'brk: {

@@ -633,6 +633,7 @@ _bun_update_completion() {
         '-D[Only update devDependencies]' \
         '--development[Only update devDependencies]' \
         '--no-optional[Don'"'"'t update optionalDependencies]' \
+        '--depth[Only 0 is accepted: update direct dependencies and keep transitive dependencies locked]:depth:(0)' \
         '-E[Write exact versions to package.json instead of ^ or ~ ranges]' \
         '--exact[Write exact versions to package.json instead of ^ or ~ ranges]' \
         '--no-save[Don'"'"'t save a lockfile]' \

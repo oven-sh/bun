@@ -649,9 +649,11 @@ pub fn install_with_manager(
         resolve_pending_tasks(manager, &root, log_level, &mut named)?;
     }
 
-    direct_deps_before.redirect_dependents(&mut manager.lockfile);
+    // `--depth 0`: a transitive edge that shared the old package with a moved direct entry stays on it.
+    let direct_only = manager.options.do_.update_direct_only();
+    direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
     transitive.redirect_dependents(&mut manager.lockfile);
-    redirect_moved_edges(&mut manager.lockfile, &named.moved);
+    redirect_moved_edges(&mut manager.lockfile, &named.moved, direct_only);
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
 
@@ -1571,9 +1573,16 @@ fn enqueue_named_updates(
     direct: &DirectDependencies,
     lockfile_name: &'static str,
 ) -> crate::Result<NamedUpdates> {
-    let walkable = crate::update_scope::UpdateScope::of(&*manager).walkable_rows(&manager.lockfile);
+    let direct_only = manager.options.do_.update_direct_only();
+    let scope = crate::update_scope::UpdateScope::of(&*manager);
+    let walkable = if direct_only {
+        scope.direct_walkable_rows(&manager.lockfile)
+    } else {
+        scope.walkable_rows(&manager.lockfile)
+    };
     let plannable_peers = plannable_peer_rows(&manager.lockfile, direct);
-    let collect_latest_rows = manager.options.do_.update_to_latest();
+    // `--depth 0` keeps the children of a moved package at their locked versions, so there is nothing to refresh.
+    let collect_latest_rows = manager.options.do_.update_to_latest() && !direct_only;
     let requests = manager.update_requests.len();
     let mut matched = DynamicBitSet::init_empty(requests).unwrap_or_oom();
     let mut matched_elsewhere = DynamicBitSet::init_empty(requests).unwrap_or_oom();

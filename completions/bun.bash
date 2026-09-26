@@ -98,7 +98,7 @@ _bun_completions() {
     PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d -F";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="--filter";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="-F";
-    PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]="--latest --interactive --recursive --filter --dev --development --prod --no-optional --exact";
+    PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]="--latest --interactive --recursive --filter --dev --development --prod --no-optional --depth --exact";
     PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]="-L -i -r -F -d -D -P -E";
 
     PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";

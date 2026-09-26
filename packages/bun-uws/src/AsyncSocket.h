@@ -348,7 +348,7 @@ public:
             if (slot != LoopData::INVALID_CORK_SLOT) {
                 /* We are corked */
                 auto *s = loopData->getCorkSlot(slot);
-                if (LoopData::CORK_BUFFER_SIZE - s->offset >= (unsigned int) length) {
+                if ((unsigned int) length <= LoopData::CORK_COPY_MAX && LoopData::CORK_BUFFER_SIZE - s->offset >= (unsigned int) length) {
                     /* If the entire chunk fits in cork buffer */
                     memcpy(s->buffer + s->offset, src, (unsigned int) length);
                     s->offset += (unsigned int) length;
@@ -395,7 +395,8 @@ public:
         BackPressure &backpressure = getAsyncSocketData()->buffer;
         int slot = loopData->findCorkSlot(this);
         unsigned int corked = slot != LoopData::INVALID_CORK_SLOT ? loopData->getCorkSlot(slot)->offset : 0;
-        const bool fitsCork = slot != LoopData::INVALID_CORK_SLOT && LoopData::CORK_BUFFER_SIZE - corked >= head.length() + (size_t) length + tail.length();
+        const bool fitsCork = slot != LoopData::INVALID_CORK_SLOT && (unsigned int) length <= LoopData::CORK_COPY_MAX
+            && LoopData::CORK_BUFFER_SIZE - corked >= head.length() + (size_t) length + tail.length();
 
         /* macOS refuses a writev of more than INT_MAX bytes. */
         const bool tooLong = (size_t) length > (size_t) INT_MAX - LoopData::CORK_BUFFER_SIZE - head.length() - tail.length();
@@ -408,7 +409,7 @@ public:
             const bool fromWrite = head.empty() && tail.empty() && slot != LoopData::INVALID_CORK_SLOT && !fitsCork;
             auto result = fromWrite ? uncork(src, length, optionally) : write(src, length, optionally);
             if (tail.length() && result.first == length) {
-                write(tail.data(), (int) tail.length());
+                result.second |= write(tail.data(), (int) tail.length()).second;
             }
             return result;
         }

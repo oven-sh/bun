@@ -230,7 +230,7 @@ public:
      * then BACKPRESSURE beats SUCCESS. */
     PublishStatus publish(std::string_view topic, std::string_view message, OpCode opCode, bool compress = false) {
         /* Anything big bypasses corking efforts */
-        if (message.length() >= LoopData::CORK_BUFFER_SIZE) {
+        if (message.length() >= LoopData::CORK_COPY_MAX) {
             PublishStatus worst = PublishStatus::SUCCESS;
             bool hasReceivers = false;
             topicTree->publishBig(nullptr, topic, {message, opCode, compress}, [&worst, &hasReceivers](Subscriber *s, TopicTreeBigMessage &message) {

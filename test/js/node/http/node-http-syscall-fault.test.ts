@@ -49,6 +49,7 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
         // 1-byte sends → guaranteed backpressure → on_drain is exercised on
         // every event-loop turn for both the proxy→client and upstream→proxy legs.
         fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+        fault.set({ syscall: "writev", action: "short", bytes: 1, repeat: -1 });
 
         const port = proxy.address().port;
         const reqs = [];
@@ -118,6 +119,7 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
         },
       });
       fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+      fault.set({ syscall: "writev", action: "short", bytes: 1, repeat: -1 });
       const ctrl = new AbortController();
       const res = await fetch("http://127.0.0.1:" + server.port, { signal: ctrl.signal });
       const reader = res.body.getReader();
@@ -162,6 +164,7 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
       });
       server.listen(0, "127.0.0.1", async () => {
         fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+        fault.set({ syscall: "writev", action: "short", bytes: 1, repeat: -1 });
         const port = server.address().port;
         await Promise.all(Array.from({ length: N }, () => new Promise(resolve => {
           const r = http.get({ port, host: "127.0.0.1" }, res => {
@@ -213,6 +216,7 @@ describe.skipIf(skip)("node:http pipelining under short sends", () => {
       });
       server.listen(0, "127.0.0.1", () => {
         fault.set({ syscall: "send", action: "short", bytes: 12 * 1024, repeat: -1 });
+        fault.set({ syscall: "writev", action: "short", bytes: 12 * 1024, repeat: -1 });
         console.log(server.address().port);
       });
     `;
@@ -332,6 +336,7 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
         const bytes = Number(url.searchParams.get("bytes"));
         const after = Number(url.searchParams.get("after"));
         fault.set({ syscall: "send", action: "short", bytes, after, repeat: -1 });
+        fault.set({ syscall: "writev", action: "short", bytes, after, repeat: -1 });
         res.writeHead(200, { "content-length": String(body.length) });
         res.end(body);
         res.on("close", () => fault.clear());

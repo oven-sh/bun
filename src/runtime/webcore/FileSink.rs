@@ -508,12 +508,14 @@ impl FileSink {
 
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` (see
-    /// [`on_attached_process_exit`](Self::on_attached_process_exit)). `clear_keep_alive_ref`
-    /// at the end may free `this`.
+    /// [`on_attached_process_exit`](Self::on_attached_process_exit)). May free `this`.
     pub unsafe fn on_close(this: *mut FileSink) {
         bun_core::scoped_log!(FileSink, "onClose()");
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
+            // `source.close()` may drop the last ref (a Subprocess whose `.stdin` was never read).
+            let _guard = RefPtr::init_ref(this);
+
             (*this).abort_handle.leave();
             if (*this).js_global().is_some() {
                 if let Some(stream) = (*this).pipe.get().stream() {
@@ -533,8 +535,7 @@ impl FileSink {
             (*this).release_pipe();
 
             // The writer is fully closed; no further callbacks will arrive. Release
-            // the ref taken when a write returned `.pending`. This must be the last
-            // thing we do as it may free `this`.
+            // the ref taken when a write returned `.pending`.
             FileSink::clear_keep_alive_ref(this);
         }
     }

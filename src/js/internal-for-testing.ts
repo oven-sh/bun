@@ -109,6 +109,9 @@ export const subprocessInternals = {
     subprocess: import("bun").Subprocess,
     kind: "stdout" | "stderr",
   ) => boolean,
+  closeStdinWriter: $newRustFunction("subprocess.rs", "TestingAPIs.closeStdinWriter", 1) as (
+    subprocess: import("bun").Subprocess,
+  ) => boolean,
 };
 
 export const iniInternals = {

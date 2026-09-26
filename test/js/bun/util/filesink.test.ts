@@ -1067,6 +1067,41 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
   });
 });
 
+// FileSink::on_close tells the owner of the sink that it closed, and a Subprocess then drops its ref
+// on its stdin sink. That is the only ref when script never read `proc.stdin`, and on_close used the
+// sink after it (ASAN: heap-use-after-free in settle_stream_done). Outside tests only the stop phase
+// of a Windows worker closes the writer in this state (see worker-terminate-lifetime.test.ts), so the
+// hook does that close here, on every platform.
+it("a Bun.spawn stdin pipe that closes before script reads proc.stdin does not use the freed sink", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { subprocessInternals } = require("bun:internal-for-testing");
+        // The child lives until its stdin reaches EOF.
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "process.stdin.on('data', () => {}).on('end', () => process.exit(0))"],
+          stdin: "pipe",
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const closed = subprocessInternals.closeStdinWriter(child);
+        console.log(JSON.stringify({ closed, stdin: typeof child.stdin, exitCode: await child.exited }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ closed: true, stdin: "undefined", exitCode: 0 }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({

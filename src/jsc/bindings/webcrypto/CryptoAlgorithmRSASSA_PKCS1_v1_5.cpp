@@ -120,6 +120,8 @@ void CryptoAlgorithmRSASSA_PKCS1_v1_5::importKey(CryptoKeyFormat format, KeyData
             exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
+        if (!validateJwkKeyOps(key, usages, exceptionCallback))
+            return;
 
         bool isMatched = false;
         switch (rsaParameters.hashIdentifier) {

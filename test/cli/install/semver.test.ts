@@ -106,6 +106,55 @@ describe("Bun.semver.order()", () => {
     }
   });
 
+  // SemVer 2.0 §11.4: numeric identifiers have no size limit, and always have
+  // lower precedence than alphanumeric identifiers. An all-digit identifier
+  // that overflows u64 must still be classified as numeric.
+  test("prerelease: numeric identifiers larger than u64::MAX", () => {
+    const u64max = "18446744073709551615";
+    const u64maxPlus1 = "18446744073709551616";
+    // [greater, lesser]
+    const tests = [
+      // numeric < alphanumeric, regardless of magnitude
+      ["1.0.0--", "1.0.0-99999999999999999999999"],
+      ["1.0.0--", `1.0.0-${u64maxPlus1}`],
+      ["1.0.0--", `1.0.0-${u64max}`],
+      ["1.0.0-a", "1.0.0-99999999999999999999999"],
+      ["1.0.0-alpha", `1.0.0-${u64maxPlus1}`],
+      ["1.0.0-0a", `1.0.0-${u64maxPlus1}`],
+      // two overflowing numerics: compare numerically (by length, then lex)
+      ["1.0.0-100000000000000000000", "1.0.0-20000000000000000000"],
+      ["1.0.0-99999999999999999999999", `1.0.0-${u64maxPlus1}`],
+      [`1.0.0-${u64maxPlus1}`, `1.0.0-${u64max}`],
+      // one side overflows, other fits u64
+      [`1.0.0-${u64maxPlus1}`, "1.0.0-1"],
+      ["1.0.0-99999999999999999999999", "1.0.0-0"],
+      [`1.0.0-${u64max}`, "1.0.0-1"],
+      // same length, both overflow
+      ["1.0.0-99999999999999999999", "1.0.0-20000000000000000000"],
+      // nested in a dotted identifier
+      ["1.0.0-alpha.100000000000000000000", "1.0.0-alpha.20000000000000000000"],
+      ["1.0.0-alpha.beta", "1.0.0-alpha.99999999999999999999999"],
+    ];
+    for (const [greater, lesser] of tests) {
+      expect({ greater, lesser, result: order(greater, lesser) }).toEqual({ greater, lesser, result: 1 });
+      expect({ greater, lesser, result: order(lesser, greater) }).toEqual({ greater, lesser, result: -1 });
+      expect(order(greater, greater)).toBe(0);
+      expect(order(lesser, lesser)).toBe(0);
+    }
+
+    // equality across the u64 boundary
+    for (const n of [u64max, u64maxPlus1, "99999999999999999999999"]) {
+      expect(order(`1.0.0-${n}`, `1.0.0-${n}`)).toBe(0);
+      expect(order(`1.0.0-a.${n}`, `1.0.0-a.${n}`)).toBe(0);
+    }
+
+    // satisfies() uses the same ordering
+    expect(satisfies("1.0.0--", ">1.0.0-99999999999999999999999")).toBe(true);
+    expect(satisfies("1.0.0-99999999999999999999999", "<1.0.0--")).toBe(true);
+    expect(satisfies("1.0.0-100000000000000000000", ">1.0.0-20000000000000000000")).toBe(true);
+    expect(satisfies(`1.0.0-${u64maxPlus1}`, `>1.0.0-${u64max}`)).toBe(true);
+  });
+
   // not supported by semver, but supported by Bun
   test.each([
     ["0", "0.0"],

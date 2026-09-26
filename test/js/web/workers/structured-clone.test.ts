@@ -1,3 +1,4 @@
+import { structuredCloneAdvanced } from "bun:internal-for-testing";
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
@@ -537,6 +538,127 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
           const cloned = structuredCloneFn({ buffer }, { transfer: new Set([buffer]) as any });
           expect(cloned.buffer.byteLength).toBe(8);
           expect(buffer.byteLength).toBe(0);
+        });
+        // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializewithtransfer
+        // WPT: html/webappapis/structured-clone "A detached platform object cannot be transferred"
+        // Both native entry points transfer ports: structuredClone() and the internal structuredCloneAdvanced().
+        describe.each([
+          ["structuredClone", (value: unknown, transfer: object[]) => structuredCloneFn(value, { transfer } as any)],
+          [
+            "structuredCloneAdvanced",
+            (value: unknown, transfer: object[]) => structuredCloneAdvanced(value, transfer, false, false, "default"),
+          ],
+        ] as const)("MessagePort through %s", (_, transferWith) => {
+          const closeAll = (...ports: (MessagePort | undefined)[]) => ports.forEach(port => port?.close());
+          const dataCloneErrorFrom = (fn: () => unknown) => {
+            try {
+              fn();
+            } catch (error) {
+              return {
+                isDOMException: error instanceof DOMException,
+                name: (error as any).name,
+                code: (error as any).code,
+              };
+            }
+            return "did not throw";
+          };
+          const dataCloneError = { isDOMException: true, name: "DataCloneError", code: DOMException.DATA_CLONE_ERR };
+
+          test("a detached MessagePort cannot be transferred", () => {
+            const { port1, port2 } = new MessageChannel();
+            try {
+              transferWith(null, [port1]);
+              expect(dataCloneErrorFrom(() => transferWith(port1, [port1]))).toEqual(dataCloneError);
+            } finally {
+              closeAll(port2);
+            }
+          });
+          test("a transfer detaches the source and returns a new port that takes over its end", async () => {
+            const { port1, port2 } = new MessageChannel();
+            const sink = new MessageChannel();
+            let cloned: MessagePort | undefined;
+            try {
+              cloned = transferWith(port1, [port1]) as MessagePort;
+              expect(cloned).toBeInstanceOf(MessagePort);
+              expect(cloned).not.toBe(port1);
+              // The source is detached now: a second transfer over any path throws.
+              expect(dataCloneErrorFrom(() => sink.port1.postMessage(null, [port1]))).toEqual(dataCloneError);
+              expect(dataCloneErrorFrom(() => transferWith(null, [port1]))).toEqual(dataCloneError);
+              // The new port took over port1's end of the channel, in both directions.
+              const toPeer = Promise.withResolvers<unknown>();
+              const toClone = Promise.withResolvers<unknown>();
+              port2.onmessage = e => toPeer.resolve(e.data);
+              cloned.onmessage = e => toClone.resolve(e.data);
+              cloned.postMessage("hello");
+              port2.postMessage("world");
+              expect(await Promise.all([toPeer.promise, toClone.promise])).toEqual(["hello", "world"]);
+            } finally {
+              closeAll(cloned, port2, sink.port1, sink.port2);
+            }
+          });
+          test("a MessagePort that is already detached is rejected before any ArrayBuffer is detached", () => {
+            const { port1, port2 } = new MessageChannel();
+            try {
+              transferWith(null, [port1]);
+              const buffer = new ArrayBuffer(8);
+              expect(dataCloneErrorFrom(() => transferWith(null, [buffer, port1]))).toEqual(dataCloneError);
+              expect(buffer.byteLength).toBe(8);
+            } finally {
+              closeAll(port2);
+            }
+          });
+          test("a MessagePort that a getter transfers away during serialization cannot be transferred", () => {
+            const { port1, port2 } = new MessageChannel();
+            const sink = new MessageChannel();
+            const value = {
+              get x() {
+                sink.port1.postMessage(null, [port1]);
+                return 1;
+              },
+            };
+            try {
+              expect(dataCloneErrorFrom(() => transferWith(value, [port1]))).toEqual(dataCloneError);
+            } finally {
+              closeAll(port2, sink.port1, sink.port2);
+            }
+          });
+          test("the new port belongs to the Bun.ModuleGraph whose script made the transfer", async () => {
+            // An open port with a listener refs the event loop, so hasRef() turns false when it is closed.
+            const isOpen = (port: any): boolean => port.hasRef();
+            const graph = new Bun.ModuleGraph();
+            // The channel is the host's and port2 stays open, so only the new port's owner closes it.
+            const host = new MessageChannel();
+            const ofTheHost = new MessageChannel();
+            ofTheHost.port1.onmessage = () => {};
+            let made: { transferred: MessagePort; ofTheGraph: MessageChannel } | undefined;
+            try {
+              made = graph.run(() => {
+                const transferred = transferWith(host.port1, [host.port1]) as MessagePort;
+                const ofTheGraph = new MessageChannel();
+                transferred.onmessage = ofTheGraph.port1.onmessage = () => {};
+                return { transferred, ofTheGraph };
+              });
+              expect([made.transferred, made.ofTheGraph.port1, ofTheHost.port1].map(isOpen)).toEqual([
+                true,
+                true,
+                true,
+              ]);
+              graph.dispose();
+              // dispose() closes the graph's ports from the event loop's queue. A port the graph made
+              // with `new MessageChannel()` tells when that ran.
+              for (const deadline = Date.now() + 3000; isOpen(made.ofTheGraph.port1) && Date.now() < deadline; )
+                await new Promise(resolve => setImmediate(resolve));
+              expect({
+                ofTheGraph: isOpen(made.ofTheGraph.port1),
+                transferred: isOpen(made.transferred),
+                ofTheHost: isOpen(ofTheHost.port1),
+              }).toEqual({ ofTheGraph: false, transferred: false, ofTheHost: true });
+            } finally {
+              graph.dispose();
+              closeAll(made?.transferred, made?.ofTheGraph.port1, made?.ofTheGraph.port2);
+              closeAll(host.port2, ofTheHost.port1, ofTheHost.port2);
+            }
+          });
         });
       });
     }

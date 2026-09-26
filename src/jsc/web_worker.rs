@@ -1158,7 +1158,7 @@ impl WebWorker {
 
 fn on_unhandled_rejection(
     vm: &mut VirtualMachine,
-    global_object: &JSGlobalObject,
+    _: &JSGlobalObject,
     error_instance_or_exception: JSValue,
 ) {
     // Prevent recursion
@@ -1171,6 +1171,9 @@ fn on_unhandled_rejection(
     if !vm.script_allowed() {
         return;
     }
+
+    // Not the realm the error was raised in: that may be a node:vm context.
+    let global_object = vm.global();
 
     let mut error_instance = error_instance_or_exception
         .to_error()

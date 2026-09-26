@@ -258,7 +258,7 @@ export function scanRust(file: string, source: string): Decision[] {
 }
 
 const cOsCondition =
-  /\bOS\s*\(|\bPLATFORM\s*\(|\b_WIN32\b|\b_WIN64\b|\bWIN32\b|\b_MSC_VER\b|\b__MINGW32__\b|\b__CYGWIN__\b|\b__APPLE__\b|\b__MACH__\b|\b__linux__\b|\b__linux\b|\b__gnu_linux__\b|\b__FreeBSD__\b|\b__OpenBSD__\b|\b__NetBSD__\b|\b__ANDROID__\b|\b__unix__\b|\b__sun\b|\b__GLIBC__\b|\bLIBUS_USE_(EPOLL|KQUEUE|LIBUV|IO_URING)\b|\bBUN_HOST_MAY_BE_(WINDOWS|POSIX)\b/;
+  /\bOS\s*\(|\bPLATFORM\s*\(|\b_WIN32\b|\b_WIN64\b|\bWIN32\b|\b_MSC_VER\b|\b__CYGWIN__\b|\b__APPLE__\b|\b__MACH__\b|\b__linux__\b|\b__linux\b|\b__gnu_linux__\b|\b__FreeBSD__\b|\b__OpenBSD__\b|\b__NetBSD__\b|\b__ANDROID__\b|\b__unix__\b|\b__sun\b|\b__GLIBC__\b|\bLIBUS_USE_(EPOLL|KQUEUE|LIBUV|IO_URING)\b|\bBUN_HOST_MAY_BE_(WINDOWS|POSIX)\b/;
 const cRuntimeHost =
   /\bBun::(hostOS|hostIsWindows|hostIsMac|hostIsLinux|hostPlatformName)\s*\(|\b(hostIsWindows|hostIsMac|hostIsLinux)\s*\(\)/g;
 

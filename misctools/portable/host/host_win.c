@@ -1,7 +1,8 @@
-// Windows host for the portable image (x86-64).
+// Windows host for the portable image (x86-64 and arm64).
 // It maps the image, builds a Linux-style start stack, and serves the image's
-// OS requests: Linux syscall numbers come in with the System V calling
-// convention and are answered with Win32. The image itself is never modified.
+// OS requests: Linux syscall numbers come in with the calling convention of
+// the image and are answered with Win32. The image itself is never modified.
+// The host has the architecture of the image.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdint.h>
@@ -9,9 +10,57 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define SYSV __attribute__((sysv_abi))
 #define AT_BUN_HOST 0x62756e00
 #define PAGE 4096ull
+
+/* Calling convention of the image, and the Linux syscall numbers of its
+   architecture. A request that an architecture does not have is negative
+   here: it never arrives. */
+#if defined(__x86_64__)
+#define SYSV __attribute__((sysv_abi))
+#define IMAGE_MACHINE 62
+enum {
+  N_read = 0, N_write = 1, N_open = 2, N_close = 3, N_lseek = 8, N_mmap = 9, N_mprotect = 10, N_munmap = 11, N_brk = 12,
+  N_rt_sigaction = 13, N_rt_sigprocmask = 14, N_ioctl = 16, N_readv = 19, N_writev = 20, N_access = 21, N_sched_yield = 24,
+  N_mremap = 25, N_madvise = 28, N_nanosleep = 35, N_getpid = 39, N_exit = 60, N_unlink = 87, N_sigaltstack = 131,
+  N_arch_prctl = 158, N_gettid = 186, N_tkill = 200, N_futex = 202, N_set_tid_address = 218, N_clock_gettime = 228,
+  N_clock_nanosleep = 230, N_exit_group = 231, N_tgkill = 234, N_openat = 257, N_unlinkat = 263, N_faccessat = 269,
+  N_set_robust_list = 273, N_getrandom = 318,
+};
+#elif defined(__aarch64__)
+/* The image is AAPCS64 as on Linux, the host is AAPCS64 as on Windows. For the
+   functions of the host table the two agree: up to 7 integer or pointer
+   arguments in x0 to x6, the result in x0, x19 to x28 and d8 to d15 kept by
+   the callee. They differ for variadic functions and in x18, which is the TEB
+   here: the image is built with -ffixed-x18 and no host table function is
+   variadic. */
+#define SYSV
+#define IMAGE_MACHINE 183
+enum {
+  N_ioctl = 29, N_unlinkat = 35, N_faccessat = 48, N_openat = 56, N_close = 57, N_lseek = 62, N_read = 63, N_write = 64,
+  N_readv = 65, N_writev = 66, N_exit = 93, N_exit_group = 94, N_set_tid_address = 96, N_futex = 98, N_set_robust_list = 99,
+  N_nanosleep = 101, N_clock_gettime = 113, N_clock_nanosleep = 115, N_sched_yield = 124, N_tkill = 130, N_tgkill = 131,
+  N_sigaltstack = 132, N_rt_sigaction = 134, N_rt_sigprocmask = 135, N_getpid = 172, N_gettid = 178, N_brk = 214,
+  N_munmap = 215, N_mremap = 216, N_mmap = 222, N_mprotect = 226, N_madvise = 233, N_getrandom = 278,
+  N_open = -1, N_access = -2, N_unlink = -3, N_arch_prctl = -4,
+};
+#else
+#error "host_win.c: x86-64 or arm64"
+#endif
+/* BUN_SYS_set_tp, a request of the image that is not a Linux syscall: set the
+   thread pointer. aarch64 images send it (Linux has no syscall for that
+   there), x86-64 images send arch_prctl. */
+#define N_set_tp 0x62756e01
+
+/* Offsets in the TEB, the same on x64 and on arm64. The image reads its thread
+   pointer at TEB + TEB_TLS_SLOTS + 8 * slot: through gs on x64, through x18 on
+   arm64, which is what NtCurrentTeb() reads. Not from the SDK headers, which
+   keep the TEB opaque. For arm64: the Go runtime reads a TlsAlloc slot at
+   x18 + 0x1480 + 8 * slot (runtime/sys_windows_arm64.s, TEB_TlsSlots),
+   Boost.Context has x18 + 0x1478 as TeDeallocationStack. main() checks the
+   slot before it starts the image. */
+#define TEB_DEALLOCATION_STACK 0x1478
+#define TEB_TLS_SLOTS 0x1480
 
 typedef SYSV int (*ImageThreadFn)(void *);
 struct bun_host {
@@ -177,6 +226,7 @@ static DWORD to_ms(const struct l_timespec *t) {
 }
 
 /* ---- threads ---- */
+#if defined(__x86_64__)
 __attribute__((naked)) static void switch_and_call(void *sp, void (*fn)(void *), void *arg) {
   __asm__("mov %rcx, %rsp\n"
           "sub $32, %rsp\n"
@@ -185,11 +235,20 @@ __attribute__((naked)) static void switch_and_call(void *sp, void (*fn)(void *),
           "call *%rdx\n"
           "ud2\n");
 }
+#else
+__attribute__((naked)) static void switch_and_call(void *sp, void (*fn)(void *), void *arg) {
+  __asm__("mov sp, x0\n"
+          "mov x0, x2\n"
+          "mov x29, #0\n"
+          "blr x1\n"
+          "brk #1\n");
+}
+#endif
 static void set_stack_fields(void *base, void *limit, void *dealloc) {
   NT_TIB *tib = (NT_TIB *)NtCurrentTeb();
   tib->StackBase = base;
   tib->StackLimit = limit;
-  *(void **)((char *)tib + 0x1478) = dealloc;
+  *(void **)((char *)tib + TEB_DEALLOCATION_STACK) = dealloc;
 }
 static void finish_thread(void *p) {
   struct host_thread *t = p;
@@ -224,7 +283,7 @@ static DWORD WINAPI thread_main(LPVOID p) {
   NT_TIB *tib = (NT_TIB *)NtCurrentTeb();
   t->orig_base = tib->StackBase;
   t->orig_limit = tib->StackLimit;
-  t->orig_dealloc = *(void **)((char *)tib + 0x1478);
+  t->orig_dealloc = *(void **)((char *)tib + TEB_DEALLOCATION_STACK);
   AcquireSRWLockShared(&region_lock);
   struct region *r = find_region((char *)t->stack_top - 1);
   void *low = r ? (void *)r->base : (void *)((char *)t->stack_top - 0x20000);
@@ -272,65 +331,66 @@ BOOLEAN NTAPI SystemFunction036(PVOID, ULONG);
 static SYSV long long host_syscall(long long n, long long a, long long b, long long c, long long d, long long e, long long f) {
   long long r;
   switch (n) {
-    case 0: r = host_rw(a, (char *)b, (size_t)c, 0); break;
-    case 1: r = host_rw(a, (char *)b, (size_t)c, 1); break;
-    case 2: r = host_open((const char *)a, b); break;
-    case 257: r = host_open((const char *)b, c); break;
-    case 3: {
+    case N_read: r = host_rw(a, (char *)b, (size_t)c, 0); break;
+    case N_write: r = host_rw(a, (char *)b, (size_t)c, 1); break;
+    case N_open: r = host_open((const char *)a, b); break;
+    case N_openat: r = host_open((const char *)b, c); break;
+    case N_close: {
       HANDLE h = fd_handle(a);
       if (!h) { r = -L_EBADF; break; }
       if (a > 2) { CloseHandle(h); fds[a] = 0; }
       r = 0;
       break;
     }
-    case 8: {
+    case N_lseek: {
       LARGE_INTEGER to, out;
       to.QuadPart = b;
       r = SetFilePointerEx(fd_handle(a), to, &out, (DWORD)c) ? out.QuadPart : win_error();
       break;
     }
-    case 9: r = host_mmap((char *)a, (size_t)b, c, d, (int)e); break;
-    case 10: r = host_mprotect((char *)a, (size_t)b, c); break;
-    case 11: r = host_munmap((char *)a, (size_t)b); break;
-    case 12: r = -L_ENOSYS; break;
-    case 25: r = -L_ENOMEM; break;
-    case 28: r = 0; break;
-    case 13: case 14: case 131: case 273: r = 0; break;
-    case 16: {
+    case N_mmap: r = host_mmap((char *)a, (size_t)b, c, d, (int)e); break;
+    case N_mprotect: r = host_mprotect((char *)a, (size_t)b, c); break;
+    case N_munmap: r = host_munmap((char *)a, (size_t)b); break;
+    case N_brk: r = -L_ENOSYS; break;
+    case N_mremap: r = -L_ENOMEM; break;
+    case N_madvise: r = 0; break;
+    case N_rt_sigaction: case N_rt_sigprocmask: case N_sigaltstack: case N_set_robust_list: r = 0; break;
+    case N_ioctl: {
       DWORD mode;
       if (b == 0x5413 && fd_handle(a) && GetConsoleMode(fd_handle(a), &mode)) { unsigned short *w = (void *)c; w[0] = 24; w[1] = 80; w[2] = w[3] = 0; r = 0; }
       else r = -L_ENOTTY;
       break;
     }
-    case 19: r = host_rwv(a, (struct l_iovec *)b, c, 0); break;
-    case 20: r = host_rwv(a, (struct l_iovec *)b, c, 1); break;
-    case 21: case 269: {
+    case N_readv: r = host_rwv(a, (struct l_iovec *)b, c, 0); break;
+    case N_writev: r = host_rwv(a, (struct l_iovec *)b, c, 1); break;
+    case N_access: case N_faccessat: {
       wchar_t w[4096];
-      const char *path = (const char *)(n == 21 ? a : b);
+      const char *path = (const char *)(n == N_access ? a : b);
       r = to_wide(path, w, 4096) && GetFileAttributesW(w) != INVALID_FILE_ATTRIBUTES ? 0 : -L_ENOENT;
       break;
     }
-    case 87: case 263: {
+    case N_unlink: case N_unlinkat: {
       wchar_t w[4096];
-      const char *path = (const char *)(n == 87 ? a : b);
+      const char *path = (const char *)(n == N_unlink ? a : b);
       r = to_wide(path, w, 4096) && DeleteFileW(w) ? 0 : win_error();
       break;
     }
-    case 24: SwitchToThread(); r = 0; break;
-    case 35: Sleep(to_ms((void *)a)); r = 0; break;
-    case 230: Sleep(to_ms((void *)c)); r = 0; break;
-    case 39: r = GetCurrentProcessId(); break;
-    case 186: r = GetCurrentThreadId(); break;
-    case 218: r = GetCurrentThreadId(); break;
-    case 158:
+    case N_sched_yield: SwitchToThread(); r = 0; break;
+    case N_nanosleep: Sleep(to_ms((void *)a)); r = 0; break;
+    case N_clock_nanosleep: Sleep(to_ms((void *)c)); r = 0; break;
+    case N_getpid: r = GetCurrentProcessId(); break;
+    case N_gettid: r = GetCurrentThreadId(); break;
+    case N_set_tid_address: r = GetCurrentThreadId(); break;
+    case N_arch_prctl:
       if (a == 0x1002) { TlsSetValue(tp_slot, (void *)b); r = 0; } else r = -L_EINVAL;
       break;
-    case 202: r = host_futex((int *)a, b, (int)c, (void *)d); break;
-    case 228: r = host_clock_gettime(a, (void *)b); break;
-    case 318: r = SystemFunction036((void *)a, (ULONG)b) ? b : -L_EIO; break;
-    case 60: leave_thread(0, 0); r = 0; break;
-    case 231: fflush(0); ExitProcess((UINT)a); r = 0; break;
-    case 200: case 234: fflush(0); ExitProcess(134); r = 0; break;
+    case N_set_tp: TlsSetValue(tp_slot, (void *)a); r = 0; break;
+    case N_futex: r = host_futex((int *)a, b, (int)c, (void *)d); break;
+    case N_clock_gettime: r = host_clock_gettime(a, (void *)b); break;
+    case N_getrandom: r = SystemFunction036((void *)a, (ULONG)b) ? b : -L_EIO; break;
+    case N_exit: leave_thread(0, 0); r = 0; break;
+    case N_exit_group: fflush(0); ExitProcess((UINT)a); r = 0; break;
+    case N_tkill: case N_tgkill: fflush(0); ExitProcess(134); r = 0; break;
     default: r = -L_ENOSYS; break;
   }
   if (trace && (r == -L_ENOSYS || trace > 1)) fprintf(stderr, "[host] syscall %lld(%#llx, %#llx, %#llx) = %lld\n", n, a, b, c, r);
@@ -341,12 +401,21 @@ static SYSV long long host_syscall(long long n, long long a, long long b, long l
 typedef struct { unsigned char ident[16]; uint16_t type, machine; uint32_t version; uint64_t entry, phoff, shoff; uint32_t flags; uint16_t ehsize, phentsize, phnum, shentsize, shnum, shstrndx; } Ehdr;
 typedef struct { uint32_t type, flags; uint64_t offset, vaddr, paddr, filesz, memsz, align; } Phdr;
 
+#if defined(__x86_64__)
 __attribute__((naked)) static void enter_image(void *entry, void *sp) {
   __asm__("mov %rdx, %rsp\n"
           "xor %ebp, %ebp\n"
           "xor %edx, %edx\n"
           "jmp *%rcx\n");
 }
+#else
+__attribute__((naked)) static void enter_image(void *entry, void *sp) {
+  __asm__("mov sp, x1\n"
+          "mov x29, #0\n"
+          "mov x30, #0\n"
+          "br x0\n");
+}
+#endif
 
 int main(int argc, char **argv) {
   if (argc < 2) { fprintf(stderr, "usage: host <image> [args]\n"); return 2; }
@@ -368,6 +437,7 @@ int main(int argc, char **argv) {
   unsigned char *file = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
   if (!file) return 2;
   Ehdr *eh = (Ehdr *)file;
+  if (eh->machine != IMAGE_MACHINE) { fprintf(stderr, "host: %s is an image for another processor (ELF machine %d, this host runs %d)\n", argv[1], eh->machine, IMAGE_MACHINE); return 2; }
   Phdr *ph = (Phdr *)(file + eh->phoff);
   uint64_t top = 0;
   for (int i = 0; i < eh->phnum; i++)
@@ -418,7 +488,9 @@ int main(int argc, char **argv) {
   if (tp_slot >= 64) { fprintf(stderr, "host: no low TLS slot\n"); return 2; }
   static struct bun_host host;
   host.os = 2;
-  host.tcb_offset = 0x1480 + 8ull * tp_slot;
+  host.tcb_offset = TEB_TLS_SLOTS + 8ull * tp_slot;
+  TlsSetValue(tp_slot, (void *)0x1122334455667788ull);
+  if (*(void **)((char *)NtCurrentTeb() + host.tcb_offset) != (void *)0x1122334455667788ull) { fprintf(stderr, "host: thread slot %lu is not at offset %#llx of the TEB\n", tp_slot, host.tcb_offset); return 2; }
   host.syscall = host_syscall;
   host.thread_create = host_thread_create;
   host.thread_exit = host_thread_exit;

@@ -948,6 +948,41 @@ pub(crate) mod js_bundler {
                 )));
             }
 
+            // `compile.include`: expanded here, before the root directory is derived
+            // from the entry points below, so included files are ordinary entries.
+            if let Some(compile_value) = config.get_truthy(global_this, "compile")? {
+                if compile_value.is_object() {
+                    if let Some(include) = compile_value.get_own_array(global_this, "include")? {
+                        let mut patterns: Vec<Box<[u8]>> = Vec::new();
+                        let mut iter = include.array_iterator(global_this)?;
+                        while let Some(arg) = iter.next()? {
+                            let slice = arg.to_utf8(global_this)?;
+                            patterns.push(Box::from(slice.slice()));
+                        }
+                        if !patterns.is_empty() {
+                            let all_html = this.entry_points.count() != 0
+                                && this.entry_points.keys().iter().all(|ep| ep.ends_with(b".html"));
+                            if this.target == Target::Browser && all_html {
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                                    "Cannot use compile.include with target 'browser' for standalone HTML"
+                                )));
+                            }
+                            match crate::cli::build_command::expand_compile_includes(&patterns) {
+                                Ok(extra) => {
+                                    for path in extra.iter() {
+                                        this.entry_points.insert(path)?;
+                                    }
+                                }
+                                Err(msg) => {
+                                    return Err(global_this
+                                        .throw_invalid_arguments(format_args!("{}", msg)));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Parse the files option for in-memory files
             if let Some(files_obj) = config.get_own_object(global_this, "files")? {
                 this.files = file_map_from_js(global_this, JSValue::from_cell(files_obj))?;

@@ -153,11 +153,6 @@
    "file": "src/unix/bsd/mod.rs"
   },
   {
-   "name": "nl_item",
-   "kind": "type_alias",
-   "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
    "name": "nlink_t",
    "kind": "type_alias",
    "file": "src/unix/bsd/apple/mod.rs"
@@ -264,11 +259,6 @@
    "file": "src/unix/bsd/mod.rs"
   },
   {
-   "name": "speed_t",
-   "kind": "type_alias",
-   "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
    "name": "ssize_t",
    "kind": "type_alias",
    "file": "src/unix/mod.rs"
@@ -285,11 +275,6 @@
   },
   {
    "name": "suseconds_t",
-   "kind": "type_alias",
-   "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
-   "name": "tcflag_t",
    "kind": "type_alias",
    "file": "src/unix/bsd/apple/mod.rs"
   },
@@ -767,41 +752,6 @@
    "file": "src/unix/bsd/apple/mod.rs"
   },
   {
-   "name": "ECHO",
-   "value": "8",
-   "file": "src/unix/bsd/mod.rs"
-  },
-  {
-   "name": "ECHOCTL",
-   "value": "64",
-   "file": "src/unix/bsd/mod.rs"
-  },
-  {
-   "name": "ECHOE",
-   "value": "2",
-   "file": "src/unix/bsd/mod.rs"
-  },
-  {
-   "name": "ECHOK",
-   "value": "4",
-   "file": "src/unix/bsd/mod.rs"
-  },
-  {
-   "name": "ECHOKE",
-   "value": "1",
-   "file": "src/unix/bsd/mod.rs"
-  },
-  {
-   "name": "ECHONL",
-   "value": "16",
-   "file": "src/unix/bsd/mod.rs"
-  },
-  {
-   "name": "ECHOPRT",
-   "value": "32",
-   "file": "src/unix/bsd/mod.rs"
-  },
-  {
    "name": "ECONNABORTED",
    "value": "53",
    "file": "src/unix/bsd/apple/mod.rs"
@@ -912,11 +862,6 @@
    "file": "src/unix/bsd/apple/mod.rs"
   },
   {
-   "name": "ELAST",
-   "value": "106",
-   "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
    "name": "ELOOP",
    "value": "62",
    "file": "src/unix/bsd/apple/mod.rs"
@@ -929,11 +874,6 @@
   {
    "name": "EMLINK",
    "value": "31",
-   "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
-   "name": "EMPTY",
-   "value": "0",
    "file": "src/unix/bsd/apple/mod.rs"
   },
   {
@@ -1102,11 +1042,6 @@
    "file": "src/unix/bsd/apple/mod.rs"
   },
   {
-   "name": "EOF",
-   "value": "-1",
-   "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
    "name": "EOPNOTSUPP",
    "value": "102",
    "file": "src/unix/bsd/apple/mod.rs"
@@ -1179,11 +1114,6 @@
   {
    "name": "EQFULL",
    "value": "106",
-   "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
-   "name": "ERA",
-   "value": "45",
    "file": "src/unix/bsd/apple/mod.rs"
   },
   {
@@ -1360,21 +1290,6 @@
    "name": "EXDEV",
    "value": "18",
    "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
-   "name": "EXTA",
-   "value": "19200",
-   "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
-   "name": "EXTB",
-   "value": "38400",
-   "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
-   "name": "EXTPROC",
-   "value": "2048",
-   "file": "src/unix/bsd/mod.rs"
   },
   {
    "name": "F_ALLOCATEALL",
@@ -2092,11 +2007,6 @@
    "file": "src/unix/bsd/apple/mod.rs"
   },
   {
-   "name": "SIGNATURE",
-   "value": "10",
-   "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
    "name": "SIGPIPE",
    "value": "13",
    "file": "src/unix/bsd/apple/mod.rs"
@@ -2114,11 +2024,6 @@
   {
    "name": "SIGSEGV",
    "value": "11",
-   "file": "src/unix/bsd/apple/mod.rs"
-  },
-  {
-   "name": "SIGSTKSZ",
-   "value": "131072",
    "file": "src/unix/bsd/apple/mod.rs"
   },
   {
@@ -4306,162 +4211,150 @@
   },
   {
    "part": 30,
-   "what": "type nl_item"
-  },
-  {
-   "part": 31,
    "what": "type nlink_t"
   },
   {
-   "part": 32,
+   "part": 31,
    "what": "type off_t"
   },
   {
-   "part": 33,
+   "part": 32,
    "what": "type os_unfair_lock"
   },
   {
-   "part": 34,
+   "part": 33,
    "what": "type os_unfair_lock_s"
   },
   {
-   "part": 35,
+   "part": 34,
    "what": "type os_unfair_lock_t"
   },
   {
-   "part": 36,
+   "part": 35,
    "what": "type pid_t"
   },
   {
-   "part": 37,
+   "part": 36,
    "what": "type pollfd"
   },
   {
-   "part": 38,
+   "part": 37,
    "what": "type posix_spawn_file_actions_t"
   },
   {
-   "part": 39,
+   "part": 38,
    "what": "type posix_spawnattr_t"
   },
   {
-   "part": 40,
+   "part": 39,
    "what": "type processor_cpu_load_info"
   },
   {
-   "part": 41,
+   "part": 40,
    "what": "type processor_cpu_load_info_data_t"
   },
   {
-   "part": 42,
+   "part": 41,
    "what": "type processor_flavor_t"
   },
   {
-   "part": 43,
+   "part": 42,
    "what": "type processor_info_array_t"
   },
   {
-   "part": 44,
+   "part": 43,
    "what": "type pthread_t"
   },
   {
-   "part": 45,
+   "part": 44,
    "what": "type sa_family_t"
   },
   {
-   "part": 46,
+   "part": 45,
    "what": "type sf_hdtr"
   },
   {
-   "part": 47,
+   "part": 46,
    "what": "type sigset_t"
   },
   {
-   "part": 48,
+   "part": 47,
    "what": "type size_t"
   },
   {
-   "part": 49,
+   "part": 48,
    "what": "type sockaddr"
   },
   {
-   "part": 50,
+   "part": 49,
    "what": "type sockaddr_dl"
   },
   {
-   "part": 51,
+   "part": 50,
    "what": "type socklen_t"
   },
   {
-   "part": 52,
-   "what": "type speed_t"
-  },
-  {
-   "part": 53,
+   "part": 51,
    "what": "type ssize_t"
   },
   {
-   "part": 54,
+   "part": 52,
    "what": "type stat"
   },
   {
-   "part": 55,
+   "part": 53,
    "what": "type statfs"
   },
   {
-   "part": 56,
+   "part": 54,
    "what": "type suseconds_t"
   },
   {
-   "part": 57,
-   "what": "type tcflag_t"
-  },
-  {
-   "part": 58,
+   "part": 55,
    "what": "type time_t"
   },
   {
-   "part": 59,
+   "part": 56,
    "what": "type timespec"
   },
   {
-   "part": 60,
+   "part": 57,
    "what": "type timeval"
   },
   {
-   "part": 61,
+   "part": 58,
    "what": "type uid_t"
   },
   {
-   "part": 62,
+   "part": 59,
    "what": "type uintptr_t"
   },
   {
-   "part": 63,
+   "part": 60,
    "what": "type vm_address_t"
   },
   {
-   "part": 64,
+   "part": 61,
    "what": "type vm_map_t"
   },
   {
-   "part": 65,
+   "part": 62,
    "what": "type vm_offset_t"
   },
   {
-   "part": 66,
+   "part": 63,
    "what": "type vm_size_t"
   },
   {
-   "part": 67,
+   "part": 64,
    "what": "type vm_statistics64"
   },
   {
-   "part": 68,
+   "part": 65,
    "what": "type vm_statistics64_data_t"
   },
   {
-   "part": 69,
+   "part": 66,
    "what": "the constants"
   }
  ]

@@ -104,7 +104,6 @@ pub mod types {
     pub type mode_t = u16;
     pub type natural_t = u32;
     pub type nfds_t = u32;
-    pub type nl_item = i32;
     pub type nlink_t = u16;
     pub type off_t = i64;
     pub type os_unfair_lock = os_unfair_lock_s;
@@ -158,7 +157,6 @@ pub mod types {
         pub sdl_data: [c_char; 12],
     }
     pub type socklen_t = u32;
-    pub type speed_t = u64;
     pub type ssize_t = isize;
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -208,7 +206,6 @@ pub mod types {
         pub f_reserved: [u32; 7],
     }
     pub type suseconds_t = i32;
-    pub type tcflag_t = u64;
     pub type time_t = i64;
     pub use ::libc::timespec;
     #[repr(C)]
@@ -340,13 +337,6 @@ pub mod constants {
     pub const EBUSY: i32 = 16;
     pub const ECANCELED: i32 = 89;
     pub const ECHILD: i32 = 10;
-    pub const ECHO: u64 = 8;
-    pub const ECHOCTL: u64 = 64;
-    pub const ECHOE: u64 = 2;
-    pub const ECHOK: u64 = 4;
-    pub const ECHOKE: u64 = 1;
-    pub const ECHONL: u64 = 16;
-    pub const ECHOPRT: u64 = 32;
     pub const ECONNABORTED: i32 = 53;
     pub const ECONNREFUSED: i32 = 61;
     pub const ECONNRESET: i32 = 54;
@@ -369,11 +359,9 @@ pub mod constants {
     pub const EIO: i32 = 5;
     pub const EISCONN: i32 = 56;
     pub const EISDIR: i32 = 21;
-    pub const ELAST: i32 = 106;
     pub const ELOOP: i32 = 62;
     pub const EMFILE: i32 = 24;
     pub const EMLINK: i32 = 31;
-    pub const EMPTY: i16 = 0;
     pub const EMSGSIZE: i32 = 40;
     pub const EMULTIHOP: i32 = 95;
     pub const ENAMETOOLONG: i32 = 63;
@@ -407,7 +395,6 @@ pub mod constants {
     pub const ENOTSUP: i32 = 45;
     pub const ENOTTY: i32 = 25;
     pub const ENXIO: i32 = 6;
-    pub const EOF: i32 = -1;
     pub const EOPNOTSUPP: i32 = 102;
     pub const EOVERFLOW: i32 = 84;
     pub const EOWNERDEAD: i32 = 105;
@@ -423,7 +410,6 @@ pub mod constants {
     pub const EPROTOTYPE: i32 = 41;
     pub const EPWROFF: i32 = 82;
     pub const EQFULL: i32 = 106;
-    pub const ERA: i32 = 45;
     pub const ERANGE: i32 = 34;
     pub const EREMOTE: i32 = 71;
     pub const EROFS: i32 = 30;
@@ -459,9 +445,6 @@ pub mod constants {
     pub const EVFILT_WRITE: i16 = -2;
     pub const EWOULDBLOCK: i32 = 35;
     pub const EXDEV: i32 = 18;
-    pub const EXTA: u64 = 19200;
-    pub const EXTB: u64 = 38400;
-    pub const EXTPROC: u64 = 2048;
     pub const F_ALLOCATEALL: u32 = 4;
     pub const F_ALLOCATECONTIG: u32 = 2;
     pub const F_BARRIERFSYNC: i32 = 85;
@@ -605,12 +588,10 @@ pub mod constants {
     pub const SIGIO: i32 = 23;
     pub const SIGIOT: i32 = 6;
     pub const SIGKILL: i32 = 9;
-    pub const SIGNATURE: i16 = 10;
     pub const SIGPIPE: i32 = 13;
     pub const SIGPROF: i32 = 27;
     pub const SIGQUIT: i32 = 3;
     pub const SIGSEGV: i32 = 11;
-    pub const SIGSTKSZ: usize = 131072;
     pub const SIGSTOP: i32 = 17;
     pub const SIGSYS: i32 = 12;
     pub const SIGTERM: i32 = 15;
@@ -945,13 +926,6 @@ pub(crate) mod constants_for_bun {
     pub const EBUSY: i32 = ::libc::EBUSY as i32;
     pub const ECANCELED: i32 = ::libc::ECANCELED as i32;
     pub const ECHILD: i32 = ::libc::ECHILD as i32;
-    pub use super::constants::ECHO;
-    pub use super::constants::ECHOCTL;
-    pub use super::constants::ECHOE;
-    pub use super::constants::ECHOK;
-    pub use super::constants::ECHOKE;
-    pub use super::constants::ECHONL;
-    pub use super::constants::ECHOPRT;
     pub const ECONNABORTED: i32 = ::libc::ECONNABORTED as i32;
     pub const ECONNREFUSED: i32 = ::libc::ECONNREFUSED as i32;
     pub const ECONNRESET: i32 = ::libc::ECONNRESET as i32;
@@ -974,11 +948,9 @@ pub(crate) mod constants_for_bun {
     pub const EIO: i32 = ::libc::EIO as i32;
     pub const EISCONN: i32 = ::libc::EISCONN as i32;
     pub const EISDIR: i32 = ::libc::EISDIR as i32;
-    pub use super::constants::ELAST;
     pub const ELOOP: i32 = ::libc::ELOOP as i32;
     pub const EMFILE: i32 = ::libc::EMFILE as i32;
     pub const EMLINK: i32 = ::libc::EMLINK as i32;
-    pub use super::constants::EMPTY;
     pub const EMSGSIZE: i32 = ::libc::EMSGSIZE as i32;
     pub const EMULTIHOP: i32 = ::libc::EMULTIHOP as i32;
     pub const ENAMETOOLONG: i32 = ::libc::ENAMETOOLONG as i32;
@@ -1012,7 +984,6 @@ pub(crate) mod constants_for_bun {
     pub const ENOTSUP: i32 = ::libc::ENOTSUP as i32;
     pub const ENOTTY: i32 = ::libc::ENOTTY as i32;
     pub const ENXIO: i32 = ::libc::ENXIO as i32;
-    pub use super::constants::EOF;
     pub const EOPNOTSUPP: i32 = ::libc::EOPNOTSUPP as i32;
     pub const EOVERFLOW: i32 = ::libc::EOVERFLOW as i32;
     pub const EOWNERDEAD: i32 = ::libc::EOWNERDEAD as i32;
@@ -1028,7 +999,6 @@ pub(crate) mod constants_for_bun {
     pub const EPROTOTYPE: i32 = ::libc::EPROTOTYPE as i32;
     pub const EPWROFF: i32 = ::libc::EIO as i32;
     pub const EQFULL: i32 = ::libc::ENOBUFS as i32;
-    pub use super::constants::ERA;
     pub const ERANGE: i32 = ::libc::ERANGE as i32;
     pub const EREMOTE: i32 = ::libc::EREMOTE as i32;
     pub const EROFS: i32 = ::libc::EROFS as i32;
@@ -1064,9 +1034,6 @@ pub(crate) mod constants_for_bun {
     pub use super::constants::EVFILT_WRITE;
     pub const EWOULDBLOCK: i32 = ::libc::EWOULDBLOCK as i32;
     pub const EXDEV: i32 = ::libc::EXDEV as i32;
-    pub use super::constants::EXTA;
-    pub use super::constants::EXTB;
-    pub use super::constants::EXTPROC;
     pub use super::constants::F_ALLOCATEALL;
     pub use super::constants::F_ALLOCATECONTIG;
     pub use super::constants::F_BARRIERFSYNC;
@@ -1210,12 +1177,10 @@ pub(crate) mod constants_for_bun {
     pub use super::constants::SIGIO;
     pub use super::constants::SIGIOT;
     pub use super::constants::SIGKILL;
-    pub use super::constants::SIGNATURE;
     pub use super::constants::SIGPIPE;
     pub use super::constants::SIGPROF;
     pub use super::constants::SIGQUIT;
     pub use super::constants::SIGSEGV;
-    pub use super::constants::SIGSTKSZ;
     pub use super::constants::SIGSTOP;
     pub use super::constants::SIGSYS;
     pub use super::constants::SIGTERM;

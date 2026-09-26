@@ -241,11 +241,6 @@ pub fn facts(out: &mut Vec<u8>) {
         let _ = writeln!(out, "{{\"fact\":\"align\",\"of\":\"nfds_t\",\"value\":{}}}", align_of::<T>());
     }
     {
-        type T = types::nl_item;
-        let _ = writeln!(out, "{{\"fact\":\"size\",\"of\":\"nl_item\",\"value\":{}}}", size_of::<T>());
-        let _ = writeln!(out, "{{\"fact\":\"align\",\"of\":\"nl_item\",\"value\":{}}}", align_of::<T>());
-    }
-    {
         type T = types::nlink_t;
         let _ = writeln!(out, "{{\"fact\":\"size\",\"of\":\"nlink_t\",\"value\":{}}}", size_of::<T>());
         let _ = writeln!(out, "{{\"fact\":\"align\",\"of\":\"nlink_t\",\"value\":{}}}", align_of::<T>());
@@ -389,11 +384,6 @@ pub fn facts(out: &mut Vec<u8>) {
         let _ = writeln!(out, "{{\"fact\":\"align\",\"of\":\"socklen_t\",\"value\":{}}}", align_of::<T>());
     }
     {
-        type T = types::speed_t;
-        let _ = writeln!(out, "{{\"fact\":\"size\",\"of\":\"speed_t\",\"value\":{}}}", size_of::<T>());
-        let _ = writeln!(out, "{{\"fact\":\"align\",\"of\":\"speed_t\",\"value\":{}}}", align_of::<T>());
-    }
-    {
         type T = types::ssize_t;
         let _ = writeln!(out, "{{\"fact\":\"size\",\"of\":\"ssize_t\",\"value\":{}}}", size_of::<T>());
         let _ = writeln!(out, "{{\"fact\":\"align\",\"of\":\"ssize_t\",\"value\":{}}}", align_of::<T>());
@@ -490,11 +480,6 @@ pub fn facts(out: &mut Vec<u8>) {
         type T = types::suseconds_t;
         let _ = writeln!(out, "{{\"fact\":\"size\",\"of\":\"suseconds_t\",\"value\":{}}}", size_of::<T>());
         let _ = writeln!(out, "{{\"fact\":\"align\",\"of\":\"suseconds_t\",\"value\":{}}}", align_of::<T>());
-    }
-    {
-        type T = types::tcflag_t;
-        let _ = writeln!(out, "{{\"fact\":\"size\",\"of\":\"tcflag_t\",\"value\":{}}}", size_of::<T>());
-        let _ = writeln!(out, "{{\"fact\":\"align\",\"of\":\"tcflag_t\",\"value\":{}}}", align_of::<T>());
     }
     {
         type T = types::time_t;
@@ -690,13 +675,6 @@ pub fn facts(out: &mut Vec<u8>) {
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EBUSY\",\"value\":{}}}", constants::EBUSY as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECANCELED\",\"value\":{}}}", constants::ECANCELED as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECHILD\",\"value\":{}}}", constants::ECHILD as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECHO\",\"value\":{}}}", constants::ECHO as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECHOCTL\",\"value\":{}}}", constants::ECHOCTL as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECHOE\",\"value\":{}}}", constants::ECHOE as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECHOK\",\"value\":{}}}", constants::ECHOK as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECHOKE\",\"value\":{}}}", constants::ECHOKE as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECHONL\",\"value\":{}}}", constants::ECHONL as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECHOPRT\",\"value\":{}}}", constants::ECHOPRT as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECONNABORTED\",\"value\":{}}}", constants::ECONNABORTED as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECONNREFUSED\",\"value\":{}}}", constants::ECONNREFUSED as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ECONNRESET\",\"value\":{}}}", constants::ECONNRESET as i64);
@@ -719,11 +697,9 @@ pub fn facts(out: &mut Vec<u8>) {
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EIO\",\"value\":{}}}", constants::EIO as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EISCONN\",\"value\":{}}}", constants::EISCONN as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EISDIR\",\"value\":{}}}", constants::EISDIR as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ELAST\",\"value\":{}}}", constants::ELAST as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ELOOP\",\"value\":{}}}", constants::ELOOP as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EMFILE\",\"value\":{}}}", constants::EMFILE as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EMLINK\",\"value\":{}}}", constants::EMLINK as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EMPTY\",\"value\":{}}}", constants::EMPTY as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EMSGSIZE\",\"value\":{}}}", constants::EMSGSIZE as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EMULTIHOP\",\"value\":{}}}", constants::EMULTIHOP as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ENAMETOOLONG\",\"value\":{}}}", constants::ENAMETOOLONG as i64);
@@ -757,7 +733,6 @@ pub fn facts(out: &mut Vec<u8>) {
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ENOTSUP\",\"value\":{}}}", constants::ENOTSUP as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ENOTTY\",\"value\":{}}}", constants::ENOTTY as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ENXIO\",\"value\":{}}}", constants::ENXIO as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EOF\",\"value\":{}}}", constants::EOF as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EOPNOTSUPP\",\"value\":{}}}", constants::EOPNOTSUPP as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EOVERFLOW\",\"value\":{}}}", constants::EOVERFLOW as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EOWNERDEAD\",\"value\":{}}}", constants::EOWNERDEAD as i64);
@@ -773,7 +748,6 @@ pub fn facts(out: &mut Vec<u8>) {
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EPROTOTYPE\",\"value\":{}}}", constants::EPROTOTYPE as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EPWROFF\",\"value\":{}}}", constants::EPWROFF as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EQFULL\",\"value\":{}}}", constants::EQFULL as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ERA\",\"value\":{}}}", constants::ERA as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"ERANGE\",\"value\":{}}}", constants::ERANGE as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EREMOTE\",\"value\":{}}}", constants::EREMOTE as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EROFS\",\"value\":{}}}", constants::EROFS as i64);
@@ -809,9 +783,6 @@ pub fn facts(out: &mut Vec<u8>) {
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EVFILT_WRITE\",\"value\":{}}}", constants::EVFILT_WRITE as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EWOULDBLOCK\",\"value\":{}}}", constants::EWOULDBLOCK as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EXDEV\",\"value\":{}}}", constants::EXDEV as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EXTA\",\"value\":{}}}", constants::EXTA as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EXTB\",\"value\":{}}}", constants::EXTB as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"EXTPROC\",\"value\":{}}}", constants::EXTPROC as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"F_ALLOCATEALL\",\"value\":{}}}", constants::F_ALLOCATEALL as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"F_ALLOCATECONTIG\",\"value\":{}}}", constants::F_ALLOCATECONTIG as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"F_BARRIERFSYNC\",\"value\":{}}}", constants::F_BARRIERFSYNC as i64);
@@ -955,12 +926,10 @@ pub fn facts(out: &mut Vec<u8>) {
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGIO\",\"value\":{}}}", constants::SIGIO as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGIOT\",\"value\":{}}}", constants::SIGIOT as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGKILL\",\"value\":{}}}", constants::SIGKILL as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGNATURE\",\"value\":{}}}", constants::SIGNATURE as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGPIPE\",\"value\":{}}}", constants::SIGPIPE as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGPROF\",\"value\":{}}}", constants::SIGPROF as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGQUIT\",\"value\":{}}}", constants::SIGQUIT as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGSEGV\",\"value\":{}}}", constants::SIGSEGV as i64);
-    let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGSTKSZ\",\"value\":{}}}", constants::SIGSTKSZ as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGSTOP\",\"value\":{}}}", constants::SIGSTOP as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGSYS\",\"value\":{}}}", constants::SIGSYS as i64);
     let _ = writeln!(out, "{{\"fact\":\"constant\",\"of\":\"SIGTERM\",\"value\":{}}}", constants::SIGTERM as i64);

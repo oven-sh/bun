@@ -46,16 +46,15 @@ for (const place of inventory.k2.places) {
   for (const t of place.types) wanted.add(t.name);
   for (const c of place.constants) wanted.add(c.name);
 }
-/** Families that bun_darwin_sys translates between the numbers of the image and the ones of macOS, whole. */
+/** Families that bun_darwin_sys translates between the numbers of the image and the ones of macOS, whole.
+    Error numbers and signals are taken by what they are, below: a name alone does not say it. */
 const families: RegExp[] = [
-  /^E[A-Z0-9]+$/,
   /^O_[A-Z_]+$/,
   /^AT_[A-Z_]+$/,
   /^F_(DUPFD|DUPFD_CLOEXEC|GETFD|SETFD|GETFL|SETFL|GETPATH|GETPATH_NOFIRMLINK|NOCACHE|FULLFSYNC|BARRIERFSYNC|PREALLOCATE|RDADVISE|RDAHEAD|GETLK|SETLK|SETLKW|RDLCK|WRLCK|UNLCK|ALLOCATECONTIG|ALLOCATEALL|PEOFPOSMODE|VOLPOSMODE|OK)$/,
   /^FD_CLOEXEC$/,
   /^S_I[A-Z]+$/,
   /^DT_[A-Z]+$/,
-  /^SIG[A-Z0-9]+$/,
   /^CLONE_(NOFOLLOW|NOOWNERCOPY|ACL)$/,
   /^COPYFILE_[A-Z_]+$/,
   /^RENAME_(SWAP|EXCL)$/,
@@ -72,7 +71,20 @@ const extra = [
   "kqueue", "kevent64", "kevent64_s", "kevent", "os_unfair_lock", "os_unfair_lock_lock", "os_unfair_lock_unlock", "os_unfair_lock_trylock",
 ];
 for (const name of extra) wanted.add(name);
-for (const facts of [mac.aarch64, mac.x86_64]) for (const name of facts.byName.keys()) if (families.some(family => family.test(name))) wanted.add(name);
+const pick = (facts: Facts, name: string, want: "function" | "other") => {
+  const list = facts.byName.get(name) ?? [];
+  return want === "function" ? list.find(item => item.kind === "function") : list.find(item => item.kind !== "function" && item.kind !== "other");
+};
+/** A constant of the type `int` from `least` to `most`. */
+const isNumber = (name: string, least: number, most: number) => {
+  const item = pick(mac.aarch64, name, "other");
+  return item?.kind === "constant" && item.type?.kind === "named" && item.type.name === "c_int" && Number(item.number) >= least && Number(item.number) <= most;
+};
+// ELAST is the greatest error number, not an error. ECHO, EXTA and EXTPROC are settings of a terminal,
+// ERA is an item of the locale, EMPTY and SIGNATURE are of the records of logins: none of them is here.
+const isErrno = (name: string) => /^E[A-Z0-9]+$/.test(name) && name !== "ELAST" && isNumber(name, 1, 106);
+const isSignal = (name: string) => /^SIG[A-Z0-9]+$/.test(name) && isNumber(name, 1, 31);
+for (const facts of [mac.aarch64, mac.x86_64]) for (const name of facts.byName.keys()) if (families.some(family => family.test(name)) || isErrno(name) || isSignal(name)) wanted.add(name);
 /** Names of the inventory that are no definitions of the crate for macOS, or that are written by hand. */
 const notGenerated = new Set(["as", "c_char", "c_int", "c_uint", "c_void", "c_long", "c_ulong", "c_short", "c_ushort", "c_longlong", "c_ulonglong", "c_schar", "c_uchar", "c_float", "c_double"]);
 
@@ -100,10 +112,6 @@ const noErrno = /^(os_unfair_lock_\w+|mach_\w+|host_\w+|vm_\w+|pthread_\w+|posix
 
 type Chosen = { name: string; kind: Item["kind"]; perArch: Record<ArchName, Item | undefined> };
 const chosen = new Map<string, Chosen>();
-const pick = (facts: Facts, name: string, want: "function" | "other") => {
-  const list = facts.byName.get(name) ?? [];
-  return want === "function" ? list.find(item => item.kind === "function") : list.find(item => item.kind !== "function" && item.kind !== "other");
-};
 const key = (name: string, want: "function" | "other") => `${want === "function" ? "fn" : "item"} ${name}`;
 function choose(name: string, want: "function" | "other") {
   if (notGenerated.has(name) || chosen.has(key(name, want))) return;
@@ -252,11 +260,6 @@ const shared = new Set(types.filter(sameInImage).map(entry => entry.name));
 
 // errno: the number of the image for every name of macOS.
 const onlyMacos: Record<string, string> = JSON.parse(readFileSync(join(here, "darwin-errno.json"), "utf8")).in_the_image;
-// ELAST is the greatest error number, not an error; ECHO, EXTA and EXTPROC are settings of a terminal.
-const isErrno = (name: string) => {
-  const item = pick(mac.aarch64, name, "other");
-  return /^E[A-Z0-9]+$/.test(name) && name !== "ELAST" && item?.kind === "constant" && item.type?.kind === "named" && item.type.name === "c_int" && Number(item.number) > 0 && Number(item.number) <= 106;
-};
 // The table is asked first: the libc crate has ENOATTR for Linux too, as a second name of ENODATA that
 // the headers of Linux do not have, and the name of 61 on the way back is ENODATA.
 const imageErrno = (name: string): { value: string; from: string } => {

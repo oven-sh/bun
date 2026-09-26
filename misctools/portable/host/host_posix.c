@@ -538,7 +538,9 @@ static int host_prot(uint32_t prot) {
    counted. A run that had such a call ends with exit code 98. */
 static struct { uintptr_t base, size; } reservations[65536];
 static size_t reservation_count;
+#ifdef MAP_FIXED_NOREPLACE
 static uintptr_t reserve_next;
+#endif
 static void reservation_add(uintptr_t base, size_t size) {
   if (reservation_count == sizeof reservations / sizeof *reservations) {
     static const char message[] = "host: too many reservations for the books of the test\n";
@@ -595,7 +597,9 @@ static uintptr_t os_reserve(uintptr_t hint, size_t bytes) {
   char *base = (char *)(((uintptr_t)p + 0xffff) & ~(uintptr_t)0xffff);
   if (base > p) munmap(p, (size_t)(base - p));
   if (base + bytes < p + bytes + 0x10000) munmap(base + bytes, (size_t)(p + bytes + 0x10000 - (base + bytes)));
+#ifdef MAP_FIXED_NOREPLACE
   reserve_next = (uintptr_t)base + bytes;
+#endif
   reservation_add((uintptr_t)base, bytes);
   return (uintptr_t)base;
 }
@@ -2236,7 +2240,7 @@ static void register_signature(int fd, const struct image_place *p) {
     fprintf(stderr, "host: the image has no code signature\n");
     return;
   }
-  fsignatures_t fs = {(off_t)p->code_off, (void *)(uintptr_t)(p->sig_off - p->code_off), (size_t)p->sig_len};
+  fsignatures_t fs = {.fs_file_start = (off_t)p->code_off, .fs_blob_start = (void *)(uintptr_t)(p->sig_off - p->code_off), .fs_blob_size = (size_t)p->sig_len};
   if (fcntl(fd, F_ADDFILESIGS_RETURN, &fs) == -1) fprintf(stderr, "host: the code signature of the image was refused (%s)\n", strerror(errno));
   else if (trace) fprintf(stderr, "[host] code signature registered, it covers the file up to %#llx\n", (unsigned long long)fs.fs_file_start);
 }

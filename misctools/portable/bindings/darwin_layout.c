@@ -4,9 +4,9 @@
 // JSON object on each line: {"fact": "size" | "align" | "offset" | "field size" | "constant", "of", "value"}.
 // `bun_fs_slice.img --layout-darwin` prints the same lines from the image, in the same order.
 //
-// The program has 69 parts, one for each structure and one for the constants, and is compiled once for
+// The program has 66 parts, one for each structure and one for the constants, and is compiled once for
 // each: a name that the headers of this macOS do not have stops one part and not the others.
-//   cc -DPART=<n> -o part darwin_layout.c && ./part        n = 1 .. 69
+//   cc -DPART=<n> -o part darwin_layout.c && ./part        n = 1 .. 66
 //   cc -DPART=0 ...                                         prints the number of parts
 // A field that the headers do not have is left out with -DSKIP_<type>_<field>, which run-on-mac.sh
 // does from the message of the compiler.
@@ -42,7 +42,7 @@
 
 int main(void) {
 #if PART == 0
-  printf("69\n");
+  printf("66\n");
 #endif
 #if PART == 1
   printf("{\"fact\":\"size\",\"of\":\"attrgroup_t\",\"value\":%zu}\n", sizeof(attrgroup_t));
@@ -321,34 +321,30 @@ int main(void) {
   printf("{\"fact\":\"align\",\"of\":\"nfds_t\",\"value\":%zu}\n", _Alignof(nfds_t));
 #endif
 #if PART == 30
-  printf("{\"fact\":\"size\",\"of\":\"nl_item\",\"value\":%zu}\n", sizeof(nl_item));
-  printf("{\"fact\":\"align\",\"of\":\"nl_item\",\"value\":%zu}\n", _Alignof(nl_item));
-#endif
-#if PART == 31
   printf("{\"fact\":\"size\",\"of\":\"nlink_t\",\"value\":%zu}\n", sizeof(nlink_t));
   printf("{\"fact\":\"align\",\"of\":\"nlink_t\",\"value\":%zu}\n", _Alignof(nlink_t));
 #endif
-#if PART == 32
+#if PART == 31
   printf("{\"fact\":\"size\",\"of\":\"off_t\",\"value\":%zu}\n", sizeof(off_t));
   printf("{\"fact\":\"align\",\"of\":\"off_t\",\"value\":%zu}\n", _Alignof(off_t));
 #endif
-#if PART == 33
+#if PART == 32
   printf("{\"fact\":\"size\",\"of\":\"os_unfair_lock\",\"value\":%zu}\n", sizeof(os_unfair_lock));
   printf("{\"fact\":\"align\",\"of\":\"os_unfair_lock\",\"value\":%zu}\n", _Alignof(os_unfair_lock));
 #endif
-#if PART == 34
+#if PART == 33
   printf("{\"fact\":\"size\",\"of\":\"os_unfair_lock_s\",\"value\":%zu}\n", sizeof(struct os_unfair_lock_s));
   printf("{\"fact\":\"align\",\"of\":\"os_unfair_lock_s\",\"value\":%zu}\n", _Alignof(struct os_unfair_lock_s));
 #endif
-#if PART == 35
+#if PART == 34
   printf("{\"fact\":\"size\",\"of\":\"os_unfair_lock_t\",\"value\":%zu}\n", sizeof(os_unfair_lock_t));
   printf("{\"fact\":\"align\",\"of\":\"os_unfair_lock_t\",\"value\":%zu}\n", _Alignof(os_unfair_lock_t));
 #endif
-#if PART == 36
+#if PART == 35
   printf("{\"fact\":\"size\",\"of\":\"pid_t\",\"value\":%zu}\n", sizeof(pid_t));
   printf("{\"fact\":\"align\",\"of\":\"pid_t\",\"value\":%zu}\n", _Alignof(pid_t));
 #endif
-#if PART == 37
+#if PART == 36
   printf("{\"fact\":\"size\",\"of\":\"pollfd\",\"value\":%zu}\n", sizeof(struct pollfd));
   printf("{\"fact\":\"align\",\"of\":\"pollfd\",\"value\":%zu}\n", _Alignof(struct pollfd));
 #ifndef SKIP_pollfd_fd
@@ -364,15 +360,15 @@ int main(void) {
   printf("{\"fact\":\"field size\",\"of\":\"pollfd.revents\",\"value\":%zu}\n", sizeof(((struct pollfd *)0)->revents));
 #endif
 #endif
-#if PART == 38
+#if PART == 37
   printf("{\"fact\":\"size\",\"of\":\"posix_spawn_file_actions_t\",\"value\":%zu}\n", sizeof(posix_spawn_file_actions_t));
   printf("{\"fact\":\"align\",\"of\":\"posix_spawn_file_actions_t\",\"value\":%zu}\n", _Alignof(posix_spawn_file_actions_t));
 #endif
-#if PART == 39
+#if PART == 38
   printf("{\"fact\":\"size\",\"of\":\"posix_spawnattr_t\",\"value\":%zu}\n", sizeof(posix_spawnattr_t));
   printf("{\"fact\":\"align\",\"of\":\"posix_spawnattr_t\",\"value\":%zu}\n", _Alignof(posix_spawnattr_t));
 #endif
-#if PART == 40
+#if PART == 39
   printf("{\"fact\":\"size\",\"of\":\"processor_cpu_load_info\",\"value\":%zu}\n", sizeof(struct processor_cpu_load_info));
   printf("{\"fact\":\"align\",\"of\":\"processor_cpu_load_info\",\"value\":%zu}\n", _Alignof(struct processor_cpu_load_info));
 #ifndef SKIP_processor_cpu_load_info_cpu_ticks
@@ -380,27 +376,27 @@ int main(void) {
   printf("{\"fact\":\"field size\",\"of\":\"processor_cpu_load_info.cpu_ticks\",\"value\":%zu}\n", sizeof(((struct processor_cpu_load_info *)0)->cpu_ticks));
 #endif
 #endif
-#if PART == 41
+#if PART == 40
   printf("{\"fact\":\"size\",\"of\":\"processor_cpu_load_info_data_t\",\"value\":%zu}\n", sizeof(processor_cpu_load_info_data_t));
   printf("{\"fact\":\"align\",\"of\":\"processor_cpu_load_info_data_t\",\"value\":%zu}\n", _Alignof(processor_cpu_load_info_data_t));
 #endif
-#if PART == 42
+#if PART == 41
   printf("{\"fact\":\"size\",\"of\":\"processor_flavor_t\",\"value\":%zu}\n", sizeof(processor_flavor_t));
   printf("{\"fact\":\"align\",\"of\":\"processor_flavor_t\",\"value\":%zu}\n", _Alignof(processor_flavor_t));
 #endif
-#if PART == 43
+#if PART == 42
   printf("{\"fact\":\"size\",\"of\":\"processor_info_array_t\",\"value\":%zu}\n", sizeof(processor_info_array_t));
   printf("{\"fact\":\"align\",\"of\":\"processor_info_array_t\",\"value\":%zu}\n", _Alignof(processor_info_array_t));
 #endif
-#if PART == 44
+#if PART == 43
   printf("{\"fact\":\"size\",\"of\":\"pthread_t\",\"value\":%zu}\n", sizeof(pthread_t));
   printf("{\"fact\":\"align\",\"of\":\"pthread_t\",\"value\":%zu}\n", _Alignof(pthread_t));
 #endif
-#if PART == 45
+#if PART == 44
   printf("{\"fact\":\"size\",\"of\":\"sa_family_t\",\"value\":%zu}\n", sizeof(sa_family_t));
   printf("{\"fact\":\"align\",\"of\":\"sa_family_t\",\"value\":%zu}\n", _Alignof(sa_family_t));
 #endif
-#if PART == 46
+#if PART == 45
   printf("{\"fact\":\"size\",\"of\":\"sf_hdtr\",\"value\":%zu}\n", sizeof(struct sf_hdtr));
   printf("{\"fact\":\"align\",\"of\":\"sf_hdtr\",\"value\":%zu}\n", _Alignof(struct sf_hdtr));
 #ifndef SKIP_sf_hdtr_headers
@@ -420,15 +416,15 @@ int main(void) {
   printf("{\"fact\":\"field size\",\"of\":\"sf_hdtr.trl_cnt\",\"value\":%zu}\n", sizeof(((struct sf_hdtr *)0)->trl_cnt));
 #endif
 #endif
-#if PART == 47
+#if PART == 46
   printf("{\"fact\":\"size\",\"of\":\"sigset_t\",\"value\":%zu}\n", sizeof(sigset_t));
   printf("{\"fact\":\"align\",\"of\":\"sigset_t\",\"value\":%zu}\n", _Alignof(sigset_t));
 #endif
-#if PART == 48
+#if PART == 47
   printf("{\"fact\":\"size\",\"of\":\"size_t\",\"value\":%zu}\n", sizeof(size_t));
   printf("{\"fact\":\"align\",\"of\":\"size_t\",\"value\":%zu}\n", _Alignof(size_t));
 #endif
-#if PART == 49
+#if PART == 48
   printf("{\"fact\":\"size\",\"of\":\"sockaddr\",\"value\":%zu}\n", sizeof(struct sockaddr));
   printf("{\"fact\":\"align\",\"of\":\"sockaddr\",\"value\":%zu}\n", _Alignof(struct sockaddr));
 #ifndef SKIP_sockaddr_sa_len
@@ -444,7 +440,7 @@ int main(void) {
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr.sa_data\",\"value\":%zu}\n", sizeof(((struct sockaddr *)0)->sa_data));
 #endif
 #endif
-#if PART == 50
+#if PART == 49
   printf("{\"fact\":\"size\",\"of\":\"sockaddr_dl\",\"value\":%zu}\n", sizeof(struct sockaddr_dl));
   printf("{\"fact\":\"align\",\"of\":\"sockaddr_dl\",\"value\":%zu}\n", _Alignof(struct sockaddr_dl));
 #ifndef SKIP_sockaddr_dl_sdl_len
@@ -480,19 +476,15 @@ int main(void) {
   printf("{\"fact\":\"field size\",\"of\":\"sockaddr_dl.sdl_data\",\"value\":%zu}\n", sizeof(((struct sockaddr_dl *)0)->sdl_data));
 #endif
 #endif
-#if PART == 51
+#if PART == 50
   printf("{\"fact\":\"size\",\"of\":\"socklen_t\",\"value\":%zu}\n", sizeof(socklen_t));
   printf("{\"fact\":\"align\",\"of\":\"socklen_t\",\"value\":%zu}\n", _Alignof(socklen_t));
 #endif
-#if PART == 52
-  printf("{\"fact\":\"size\",\"of\":\"speed_t\",\"value\":%zu}\n", sizeof(speed_t));
-  printf("{\"fact\":\"align\",\"of\":\"speed_t\",\"value\":%zu}\n", _Alignof(speed_t));
-#endif
-#if PART == 53
+#if PART == 51
   printf("{\"fact\":\"size\",\"of\":\"ssize_t\",\"value\":%zu}\n", sizeof(ssize_t));
   printf("{\"fact\":\"align\",\"of\":\"ssize_t\",\"value\":%zu}\n", _Alignof(ssize_t));
 #endif
-#if PART == 54
+#if PART == 52
   printf("{\"fact\":\"size\",\"of\":\"stat\",\"value\":%zu}\n", sizeof(struct stat));
   printf("{\"fact\":\"align\",\"of\":\"stat\",\"value\":%zu}\n", _Alignof(struct stat));
 #ifndef SKIP_stat_st_dev
@@ -584,7 +576,7 @@ int main(void) {
   printf("{\"fact\":\"field size\",\"of\":\"stat.st_qspare\",\"value\":%zu}\n", sizeof(((struct stat *)0)->st_qspare));
 #endif
 #endif
-#if PART == 55
+#if PART == 53
   printf("{\"fact\":\"size\",\"of\":\"statfs\",\"value\":%zu}\n", sizeof(struct statfs));
   printf("{\"fact\":\"align\",\"of\":\"statfs\",\"value\":%zu}\n", _Alignof(struct statfs));
 #ifndef SKIP_statfs_f_bsize
@@ -656,19 +648,15 @@ int main(void) {
   printf("{\"fact\":\"field size\",\"of\":\"statfs.f_reserved\",\"value\":%zu}\n", sizeof(((struct statfs *)0)->f_reserved));
 #endif
 #endif
-#if PART == 56
+#if PART == 54
   printf("{\"fact\":\"size\",\"of\":\"suseconds_t\",\"value\":%zu}\n", sizeof(suseconds_t));
   printf("{\"fact\":\"align\",\"of\":\"suseconds_t\",\"value\":%zu}\n", _Alignof(suseconds_t));
 #endif
-#if PART == 57
-  printf("{\"fact\":\"size\",\"of\":\"tcflag_t\",\"value\":%zu}\n", sizeof(tcflag_t));
-  printf("{\"fact\":\"align\",\"of\":\"tcflag_t\",\"value\":%zu}\n", _Alignof(tcflag_t));
-#endif
-#if PART == 58
+#if PART == 55
   printf("{\"fact\":\"size\",\"of\":\"time_t\",\"value\":%zu}\n", sizeof(time_t));
   printf("{\"fact\":\"align\",\"of\":\"time_t\",\"value\":%zu}\n", _Alignof(time_t));
 #endif
-#if PART == 59
+#if PART == 56
   printf("{\"fact\":\"size\",\"of\":\"timespec\",\"value\":%zu}\n", sizeof(struct timespec));
   printf("{\"fact\":\"align\",\"of\":\"timespec\",\"value\":%zu}\n", _Alignof(struct timespec));
 #ifndef SKIP_timespec_tv_sec
@@ -680,7 +668,7 @@ int main(void) {
   printf("{\"fact\":\"field size\",\"of\":\"timespec.tv_nsec\",\"value\":%zu}\n", sizeof(((struct timespec *)0)->tv_nsec));
 #endif
 #endif
-#if PART == 60
+#if PART == 57
   printf("{\"fact\":\"size\",\"of\":\"timeval\",\"value\":%zu}\n", sizeof(struct timeval));
   printf("{\"fact\":\"align\",\"of\":\"timeval\",\"value\":%zu}\n", _Alignof(struct timeval));
 #ifndef SKIP_timeval_tv_sec
@@ -692,31 +680,31 @@ int main(void) {
   printf("{\"fact\":\"field size\",\"of\":\"timeval.tv_usec\",\"value\":%zu}\n", sizeof(((struct timeval *)0)->tv_usec));
 #endif
 #endif
-#if PART == 61
+#if PART == 58
   printf("{\"fact\":\"size\",\"of\":\"uid_t\",\"value\":%zu}\n", sizeof(uid_t));
   printf("{\"fact\":\"align\",\"of\":\"uid_t\",\"value\":%zu}\n", _Alignof(uid_t));
 #endif
-#if PART == 62
+#if PART == 59
   printf("{\"fact\":\"size\",\"of\":\"uintptr_t\",\"value\":%zu}\n", sizeof(uintptr_t));
   printf("{\"fact\":\"align\",\"of\":\"uintptr_t\",\"value\":%zu}\n", _Alignof(uintptr_t));
 #endif
-#if PART == 63
+#if PART == 60
   printf("{\"fact\":\"size\",\"of\":\"vm_address_t\",\"value\":%zu}\n", sizeof(vm_address_t));
   printf("{\"fact\":\"align\",\"of\":\"vm_address_t\",\"value\":%zu}\n", _Alignof(vm_address_t));
 #endif
-#if PART == 64
+#if PART == 61
   printf("{\"fact\":\"size\",\"of\":\"vm_map_t\",\"value\":%zu}\n", sizeof(vm_map_t));
   printf("{\"fact\":\"align\",\"of\":\"vm_map_t\",\"value\":%zu}\n", _Alignof(vm_map_t));
 #endif
-#if PART == 65
+#if PART == 62
   printf("{\"fact\":\"size\",\"of\":\"vm_offset_t\",\"value\":%zu}\n", sizeof(vm_offset_t));
   printf("{\"fact\":\"align\",\"of\":\"vm_offset_t\",\"value\":%zu}\n", _Alignof(vm_offset_t));
 #endif
-#if PART == 66
+#if PART == 63
   printf("{\"fact\":\"size\",\"of\":\"vm_size_t\",\"value\":%zu}\n", sizeof(vm_size_t));
   printf("{\"fact\":\"align\",\"of\":\"vm_size_t\",\"value\":%zu}\n", _Alignof(vm_size_t));
 #endif
-#if PART == 67
+#if PART == 64
   printf("{\"fact\":\"size\",\"of\":\"vm_statistics64\",\"value\":%zu}\n", sizeof(struct vm_statistics64));
   printf("{\"fact\":\"align\",\"of\":\"vm_statistics64\",\"value\":%zu}\n", _Alignof(struct vm_statistics64));
 #ifndef SKIP_vm_statistics64_free_count
@@ -816,11 +804,11 @@ int main(void) {
   printf("{\"fact\":\"field size\",\"of\":\"vm_statistics64.total_uncompressed_pages_in_compressor\",\"value\":%zu}\n", sizeof(((struct vm_statistics64 *)0)->total_uncompressed_pages_in_compressor));
 #endif
 #endif
-#if PART == 68
+#if PART == 65
   printf("{\"fact\":\"size\",\"of\":\"vm_statistics64_data_t\",\"value\":%zu}\n", sizeof(vm_statistics64_data_t));
   printf("{\"fact\":\"align\",\"of\":\"vm_statistics64_data_t\",\"value\":%zu}\n", _Alignof(vm_statistics64_data_t));
 #endif
-#if PART == 69
+#if PART == 66
 #ifdef AT_EACCESS
   printf("{\"fact\":\"constant\",\"of\":\"AT_EACCESS\",\"value\":%lld}\n", (long long)(AT_EACCESS));
 #else
@@ -1236,41 +1224,6 @@ int main(void) {
 #else
   printf("{\"fact\":\"constant\",\"of\":\"ECHILD\",\"value\":\"no macro of this name\"}\n");
 #endif
-#ifdef ECHO
-  printf("{\"fact\":\"constant\",\"of\":\"ECHO\",\"value\":%lld}\n", (long long)(ECHO));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"ECHO\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef ECHOCTL
-  printf("{\"fact\":\"constant\",\"of\":\"ECHOCTL\",\"value\":%lld}\n", (long long)(ECHOCTL));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"ECHOCTL\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef ECHOE
-  printf("{\"fact\":\"constant\",\"of\":\"ECHOE\",\"value\":%lld}\n", (long long)(ECHOE));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"ECHOE\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef ECHOK
-  printf("{\"fact\":\"constant\",\"of\":\"ECHOK\",\"value\":%lld}\n", (long long)(ECHOK));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"ECHOK\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef ECHOKE
-  printf("{\"fact\":\"constant\",\"of\":\"ECHOKE\",\"value\":%lld}\n", (long long)(ECHOKE));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"ECHOKE\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef ECHONL
-  printf("{\"fact\":\"constant\",\"of\":\"ECHONL\",\"value\":%lld}\n", (long long)(ECHONL));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"ECHONL\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef ECHOPRT
-  printf("{\"fact\":\"constant\",\"of\":\"ECHOPRT\",\"value\":%lld}\n", (long long)(ECHOPRT));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"ECHOPRT\",\"value\":\"no macro of this name\"}\n");
-#endif
 #ifdef ECONNABORTED
   printf("{\"fact\":\"constant\",\"of\":\"ECONNABORTED\",\"value\":%lld}\n", (long long)(ECONNABORTED));
 #else
@@ -1381,11 +1334,6 @@ int main(void) {
 #else
   printf("{\"fact\":\"constant\",\"of\":\"EISDIR\",\"value\":\"no macro of this name\"}\n");
 #endif
-#ifdef ELAST
-  printf("{\"fact\":\"constant\",\"of\":\"ELAST\",\"value\":%lld}\n", (long long)(ELAST));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"ELAST\",\"value\":\"no macro of this name\"}\n");
-#endif
 #ifdef ELOOP
   printf("{\"fact\":\"constant\",\"of\":\"ELOOP\",\"value\":%lld}\n", (long long)(ELOOP));
 #else
@@ -1400,11 +1348,6 @@ int main(void) {
   printf("{\"fact\":\"constant\",\"of\":\"EMLINK\",\"value\":%lld}\n", (long long)(EMLINK));
 #else
   printf("{\"fact\":\"constant\",\"of\":\"EMLINK\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef EMPTY
-  printf("{\"fact\":\"constant\",\"of\":\"EMPTY\",\"value\":%lld}\n", (long long)(EMPTY));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"EMPTY\",\"value\":\"no macro of this name\"}\n");
 #endif
 #ifdef EMSGSIZE
   printf("{\"fact\":\"constant\",\"of\":\"EMSGSIZE\",\"value\":%lld}\n", (long long)(EMSGSIZE));
@@ -1571,11 +1514,6 @@ int main(void) {
 #else
   printf("{\"fact\":\"constant\",\"of\":\"ENXIO\",\"value\":\"no macro of this name\"}\n");
 #endif
-#ifdef EOF
-  printf("{\"fact\":\"constant\",\"of\":\"EOF\",\"value\":%lld}\n", (long long)(EOF));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"EOF\",\"value\":\"no macro of this name\"}\n");
-#endif
 #ifdef EOPNOTSUPP
   printf("{\"fact\":\"constant\",\"of\":\"EOPNOTSUPP\",\"value\":%lld}\n", (long long)(EOPNOTSUPP));
 #else
@@ -1650,11 +1588,6 @@ int main(void) {
   printf("{\"fact\":\"constant\",\"of\":\"EQFULL\",\"value\":%lld}\n", (long long)(EQFULL));
 #else
   printf("{\"fact\":\"constant\",\"of\":\"EQFULL\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef ERA
-  printf("{\"fact\":\"constant\",\"of\":\"ERA\",\"value\":%lld}\n", (long long)(ERA));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"ERA\",\"value\":\"no macro of this name\"}\n");
 #endif
 #ifdef ERANGE
   printf("{\"fact\":\"constant\",\"of\":\"ERANGE\",\"value\":%lld}\n", (long long)(ERANGE));
@@ -1830,21 +1763,6 @@ int main(void) {
   printf("{\"fact\":\"constant\",\"of\":\"EXDEV\",\"value\":%lld}\n", (long long)(EXDEV));
 #else
   printf("{\"fact\":\"constant\",\"of\":\"EXDEV\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef EXTA
-  printf("{\"fact\":\"constant\",\"of\":\"EXTA\",\"value\":%lld}\n", (long long)(EXTA));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"EXTA\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef EXTB
-  printf("{\"fact\":\"constant\",\"of\":\"EXTB\",\"value\":%lld}\n", (long long)(EXTB));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"EXTB\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef EXTPROC
-  printf("{\"fact\":\"constant\",\"of\":\"EXTPROC\",\"value\":%lld}\n", (long long)(EXTPROC));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"EXTPROC\",\"value\":\"no macro of this name\"}\n");
 #endif
 #ifdef F_ALLOCATEALL
   printf("{\"fact\":\"constant\",\"of\":\"F_ALLOCATEALL\",\"value\":%lld}\n", (long long)(F_ALLOCATEALL));
@@ -2561,11 +2479,6 @@ int main(void) {
 #else
   printf("{\"fact\":\"constant\",\"of\":\"SIGKILL\",\"value\":\"no macro of this name\"}\n");
 #endif
-#ifdef SIGNATURE
-  printf("{\"fact\":\"constant\",\"of\":\"SIGNATURE\",\"value\":%lld}\n", (long long)(SIGNATURE));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"SIGNATURE\",\"value\":\"no macro of this name\"}\n");
-#endif
 #ifdef SIGPIPE
   printf("{\"fact\":\"constant\",\"of\":\"SIGPIPE\",\"value\":%lld}\n", (long long)(SIGPIPE));
 #else
@@ -2585,11 +2498,6 @@ int main(void) {
   printf("{\"fact\":\"constant\",\"of\":\"SIGSEGV\",\"value\":%lld}\n", (long long)(SIGSEGV));
 #else
   printf("{\"fact\":\"constant\",\"of\":\"SIGSEGV\",\"value\":\"no macro of this name\"}\n");
-#endif
-#ifdef SIGSTKSZ
-  printf("{\"fact\":\"constant\",\"of\":\"SIGSTKSZ\",\"value\":%lld}\n", (long long)(SIGSTKSZ));
-#else
-  printf("{\"fact\":\"constant\",\"of\":\"SIGSTKSZ\",\"value\":\"no macro of this name\"}\n");
 #endif
 #ifdef SIGSTOP
   printf("{\"fact\":\"constant\",\"of\":\"SIGSTOP\",\"value\":%lld}\n", (long long)(SIGSTOP));

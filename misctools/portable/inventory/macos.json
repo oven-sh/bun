@@ -1,6 +1,6 @@
 {
  "about": "Inventory of bun's code for macOS for the portable image. Written by misctools/portable/inventory/macos.ts; see the head of that file for what the kinds mean.",
- "tree": "112df562bf54ae3b324828ea20f0bc9a6cfb4766",
+ "tree": "cea941dcc6747147b96deec668e1d37543470438",
  "libc_crate": "0.2.186",
  "libc_of_the_image": "musl 1.2.5 with misctools/portable/libc/patch_musl.py",
  "host": "misctools/portable/host/host_posix.c",

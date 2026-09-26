@@ -1,7 +1,12 @@
 import { connect, listen } from "bun";
 import { fillRepeating } from "harness";
 
-const huge = Buffer.alloc(1024 * 1024 * 1024);
+// The test passes the transfer size; it is smaller on debug and ASAN builds.
+const size = process.argv[2] ? Number.parseInt(process.argv[2], 10) : 1024 * 1024 * 1024;
+if (!Number.isInteger(size) || size <= 0) {
+  throw new Error(`transfer size must be a positive integer, got ${process.argv[2]}`);
+}
+const huge = Buffer.alloc(size);
 for (let i = 0; i < 1024; i++) {
   huge[i] = (Math.random() * 255) | 0;
 }
@@ -17,22 +22,18 @@ var server = listen({
   data: { sent: 0 },
   socket: {
     open(socket) {
-      console.time("send 1 GB (server)");
       socket.data.sent = socket.write(huge);
       if (socket.data.sent === huge.length) {
-        console.timeEnd("send 1 GB (server)");
         socket.shutdown();
-        serverResolve();
+        serverResolve(socket.data.sent);
       }
     },
     async drain(socket) {
       socket.data.sent += socket.write(huge.subarray(socket.data.sent));
-      // console.error("Sent", socket.data.sent, "bytes");
 
       if (socket.data.sent === huge.length) {
-        console.timeEnd("send 1 GB (server)");
         socket.shutdown();
-        serverResolve();
+        serverResolve(socket.data.sent);
       }
     },
   },
@@ -44,25 +45,22 @@ const socket = await connect({
   data: { received: 0 },
   socket: {
     open(socket) {
-      console.time("recv 1 GB (client)");
       socket.data.received = 0;
     },
 
     data(socket, data) {
       socket.data.received += data.length;
-      // console.error("Received", data.length, "bytes");
       received.update(data);
 
       if (socket.data.received === huge.length) {
-        console.timeEnd("recv 1 GB (client)");
         socket.end();
-        clientResolve();
+        clientResolve(socket.data.received);
       }
     },
   },
 });
 
-await Promise.all([clientPromise, serverPromise]);
+const [receivedBytes, sentBytes] = await Promise.all([clientPromise, serverPromise]);
 server.stop(true);
 socket.end();
 
@@ -70,4 +68,5 @@ if (received.digest("hex") !== Bun.SHA256.hash(huge, "hex")) {
   throw new Error("Received data doesn't match sent data");
 }
 
+console.log(`sent ${sentBytes} bytes, received ${receivedBytes} bytes, digest matches`);
 process.exit(0);

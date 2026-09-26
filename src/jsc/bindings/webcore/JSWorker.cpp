@@ -162,10 +162,13 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     // Founding an env tree swaps the parent's process.env, so it is deferred until
     // every option has validated (below).
     bool shareEnv = false;
+    // Only the branded node:worker_threads instance selects the node kind, not arity.
     JSValue nodeWorkerObject {};
-    if (callFrame->argumentCount() == 3) {
-        nodeWorkerObject = callFrame->argument(2);
-        options.kind = WorkerOptions::Kind::Node;
+    if (auto* candidate = callFrame->argument(2).getObject()) {
+        if (!!candidate->getDirect(vm, builtinNames(vm).isNodeWorkerThreadsWorkerPrivateName())) {
+            nodeWorkerObject = candidate;
+            options.kind = WorkerOptions::Kind::Node;
+        }
     }
     JSValue workerData = jsUndefined();
     Vector<JSC::Strong<JSC::JSObject>> transferList;

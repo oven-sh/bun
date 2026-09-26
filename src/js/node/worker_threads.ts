@@ -102,9 +102,7 @@ const {
   typeof globalThis.MessagePort,
   typeof globalThis.MessageChannel,
   typeof globalThis.BroadcastChannel,
-  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
-  // instance. This is so that it can emit the `worker` event on the process with the
-  // node:worker_threads instance instead of the Web Worker instance.
+  // Hidden third argument: the branded node:worker_threads instance (selects the node kind).
   new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
 ];
 
@@ -628,17 +626,13 @@ if (
   // removing the listeners let the thread exit — node's parentPort lifecycle.
   if (transferredParentPort) {
     parentPort = transferredParentPort;
-    // node auto-starts parentPort, but delivery waits until the entry module has
-    // evaluated (registering it natively is how start() knows to defer). Only
-    // parentPort receives what the parent posts: `self.onmessage` on the global
-    // scope is not a channel in a node worker, as in node. The port arrives
-    // without a loop ref, so an unlistened parentPort does not by itself keep
-    // the thread alive (a 'message' listener refs it, as in node).
+    // Registered natively so start() defers delivery until the entry module has evaluated.
     _setParentPort(parentPort);
     parentPort.start();
   }
 }
-if (!isMainThread && parentPort === null) parentPort = fakeParentPort();
+// The fake port forwards to the Web Worker globals, which a node worker does not have.
+if (!isMainThread && !_isNodeWorker && parentPort === null) parentPort = fakeParentPort();
 function receiveMessageOnPort(port: MessagePort) {
   // Native returns node's shape directly: `undefined` when empty, else `{ message }`.
   return _receiveMessageOnPort(port);
@@ -935,6 +929,8 @@ class Worker extends EventEmitter {
         // user-supplied value so it can't trigger env sharing on its own.
         options = { ...options, shareEnv: undefined } as NodeWorkerOptions;
       }
+      // The brand is what selects the node worker kind natively (JSWorker.cpp).
+      $putByIdDirectPrivate(this, "isNodeWorkerThreadsWorker", true);
       this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their
@@ -984,11 +980,6 @@ class Worker extends EventEmitter {
     this.on("removeListener", function (this: Worker, name) {
       if (name === "message" && this.listenerCount("message") === 0) publicPort.unref();
     });
-    // A worker may also use the Web Worker global `postMessage()` / `self.onmessage`
-    // pair, which travels through the Worker object itself; surface those too.
-    this.#worker.addEventListener("message", this.#onMessage.bind(this));
-    this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
-
     if (this.#urlToRevoke) {
       if (!urlRevokeRegistry) {
         urlRevokeRegistry = new FinalizationRegistry<string>(url => {

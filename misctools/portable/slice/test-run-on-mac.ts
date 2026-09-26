@@ -30,6 +30,8 @@
 // (expected/kernel-of-linux.json) and for the names that HFS+ takes apart.
 //
 //   as on a Mac, x86_64 and arm64   every step has to pass, the second one under qemu
+//   what an earlier run left        the directory of the volume of step 5 is there, with a file in
+//                                   it: every step has to pass
 //   hdiutil refuses                 step 5 does not run, and that is no failure
 //   a step fails                    a step is expected to end in another way: the summary has to
 //                                   say how it ended, and what macOS itself said
@@ -185,6 +187,16 @@ const cases: Case[] = [
   },
   { name: `as on a Mac, ${arch}`, prepare: dir => asOnAMac(dir), env: dir => macEnv(dir, arch), expect: passes(arch) },
   { name: `as on a Mac, ${other}`, prepare: dir => asOnAMac(dir), env: dir => macEnv(dir, other), expect: passes(other) },
+  {
+    name: "as on a Mac, what an earlier run left",
+    prepare(dir) {
+      asOnAMac(dir);
+      mkdirSync(join(dir, "run-tmp-other/slice-tree"), { recursive: true });
+      writeFileSync(join(dir, "run-tmp-other/slice-tree/left.txt"), "left");
+    },
+    env: dir => macEnv(dir, arch),
+    expect: passes(arch),
+  },
   {
     name: "as on a Mac, hdiutil refuses",
     prepare: dir => asOnAMac(dir),

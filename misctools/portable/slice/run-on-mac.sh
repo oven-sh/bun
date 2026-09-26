@@ -36,6 +36,11 @@ logs=$here/logs
 build=$here/build
 other=$here/run-tmp-other
 seconds=${BUN_RUN_ON_MAC_SECONDS:-120}
+# The volume of step 5, if a run before this one could not take it away, and what is under its name.
+if [ -d "$other" ]; then
+  if command -v hdiutil > /dev/null 2>&1; then hdiutil detach "$other" -force > /dev/null 2>&1; fi
+  rm -rf "$other" 2>/dev/null
+fi
 rm -rf "$logs" "$build" "$here/run-on-mac-logs.tar" "$here/run-tmp"
 mkdir -p "$logs" "$build" || exit 1
 summary=$logs/summary.txt

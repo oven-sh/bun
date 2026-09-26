@@ -827,6 +827,10 @@ async function install(queueOption: string | undefined): Promise<void> {
 
   if (isOpenRc()) {
     const servicePath = "/etc/init.d/buildkite-agent";
+    // OpenRC starts the services of a runlevel one at a time, in the order of
+    // their names unless one names another. `after docker` is what keeps
+    // "buildkite-agent" from starting, and taking its job, before "docker" and
+    // every service whose name is between the two.
     const service = `#!/sbin/openrc-run
         name="buildkite-agent"
         description="Buildkite Agent"
@@ -844,6 +848,7 @@ async function install(queueOption: string | undefined): Promise<void> {
         depend() {
           need net
           use dns logger
+          after docker
         }
       `;
     writeFile(servicePath, service, 0o755);
@@ -989,6 +994,39 @@ async function install(queueOption: string | undefined): Promise<void> {
   }
 }
 
+/**
+ * How long `start` waits for the Docker daemon. dockerd answers within seconds
+ * of its service starting, so a machine that uses this up has a daemon that
+ * does not start, and the agent starts without it.
+ */
+const dockerDaemonWait = 2 * 60 * 1000;
+
+/**
+ * Whether the Docker daemon answers within `wait` ms, asked every `interval` ms
+ * until it does. While dockerd has its socket and does not serve yet, the
+ * question is not refused: it is answered once dockerd serves.
+ */
+export async function waitForDockerDaemon(docker: string, wait: number, interval: number = 500): Promise<boolean> {
+  const deadline = Date.now() + wait;
+  for (let probes = 0; ; probes++) {
+    const { status } = spawnSync(docker, ["version"], {
+      stdio: "ignore",
+      timeout: Math.max(1, deadline - Date.now()),
+      killSignal: "SIGKILL",
+    });
+    if (status === 0) {
+      return true;
+    }
+    if (Date.now() + interval >= deadline) {
+      return false;
+    }
+    if (probes === 0) {
+      console.log("Waiting for the Docker daemon...");
+    }
+    await new Promise(resolve => setTimeout(resolve, interval));
+  }
+}
+
 /** Runs the agent, as the service `install` registered does. */
 async function start(): Promise<void> {
   const command = requireCommand("buildkite-agent");
@@ -1099,6 +1137,18 @@ async function start(): Promise<void> {
     .filter(([, value]) => value !== undefined && value !== "")
     .map(([key, value]) => `${key}=${value}`)
     .join(",");
+
+  // The agent takes its job the moment it registers, and the job's tests use
+  // the Docker daemon. OpenRC's docker service has started once dockerd is
+  // spawned, which is before it listens. With systemd there is nothing to wait
+  // for: docker.socket exists before any service starts, and a client of a
+  // daemon that does not serve yet is kept waiting, not refused.
+  const docker = isOpenRc() ? which(["docker"]) : undefined;
+  if (docker !== undefined && !(await waitForDockerDaemon(docker, dockerDaemonWait))) {
+    console.warn(
+      `The Docker daemon did not answer in ${dockerDaemonWait / 1000} seconds: starting the agent without it`,
+    );
+  }
 
   await run([
     command,

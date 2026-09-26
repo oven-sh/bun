@@ -1567,7 +1567,8 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball --force refr
     await rm(join(String(dir), "b", "node_modules"), { recursive: true, force: true });
     {
       const { output, exitCode } = await run("b", ["--frozen-lockfile"]);
-      expect(output).toContain("Integrity check failed");
+      expect(output).toContain("Integrity check failed for tarball: my-url-pkg");
+      expect(output).toContain("run `bun install --force` to pin the new bytes");
       expect(exitCode).not.toBe(0);
       expect(await lockfile("b")).toBe(lockB);
     }

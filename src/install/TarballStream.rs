@@ -1164,8 +1164,9 @@ impl TarballStream {
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
-                            "Integrity check failed for tarball: {}",
+                            "Integrity check failed for tarball: {}{}",
                             bstr::BStr::new(tarball.name.slice()),
+                            tarball.integrity_mismatch_hint(),
                         ),
                     );
                     (*task).err = Some(crate::Error::IntegrityCheckFailed);

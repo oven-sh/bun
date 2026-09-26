@@ -53,8 +53,9 @@ impl ExtractTarball {
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
-                        "Integrity check failed for tarball: {}",
+                        "Integrity check failed for tarball: {}{}",
                         bun_fmt::s(self.name.slice()),
+                        self.integrity_mismatch_hint(),
                     ),
                 );
                 return Err(crate::Error::IntegrityCheckFailed);
@@ -462,6 +463,16 @@ impl ExtractTarball {
     /// Rename the freshly-extracted temp directory into the cache, read
     /// `package.json` if required, and build the `ExtractData` result. Shared
     /// between the buffered and streaming extraction paths.
+    /// A URL/local tarball is pinned by `bun.lock`, and the same URL can serve
+    /// new bytes on purpose. Name the way to accept them.
+    pub(crate) fn integrity_mismatch_hint(&self) -> &'static str {
+        if self.resolution.tag.is_tarball_cache_keyed_by_url() {
+            "\n  The bytes no longer match the hash pinned in bun.lock. If the tarball was republished on purpose, run `bun install --force` to pin the new bytes."
+        } else {
+            ""
+        }
+    }
+
     pub(crate) fn move_to_cache_directory(
         &self,
         log: &mut bun_ast::Log,
